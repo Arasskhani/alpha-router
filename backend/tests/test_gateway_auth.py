@@ -105,7 +105,7 @@ async def _test_missing_authorization_raises_401():
     _, sf = await _setup_db()
     async with sf() as db:
         with pytest.raises(HTTPException) as exc:
-            await gateway._resolve_gateway_auth(_FakeRequest(None), db, {})
+            await gateway._resolve_gateway_auth(_FakeRequest(None), db)
         assert exc.value.status_code == 401
         assert "Missing API key" in exc.value.detail
 
@@ -114,7 +114,7 @@ async def _test_empty_bearer_raises_401():
     _, sf = await _setup_db()
     async with sf() as db:
         with pytest.raises(HTTPException) as exc:
-            await gateway._resolve_gateway_auth(_FakeRequest("Bearer "), db, {})
+            await gateway._resolve_gateway_auth(_FakeRequest("Bearer "), db)
         assert exc.value.status_code == 401
 
 
@@ -122,7 +122,7 @@ async def _test_unknown_key_raises_401():
     _, sf = await _setup_db()
     async with sf() as db:
         with pytest.raises(HTTPException) as exc:
-            await gateway._resolve_gateway_auth(_FakeRequest("Bearer totally-bogus"), db, {})
+            await gateway._resolve_gateway_auth(_FakeRequest("Bearer totally-bogus"), db)
         assert exc.value.status_code == 401
         assert "Invalid API key" in exc.value.detail
 
@@ -132,7 +132,7 @@ async def _test_master_key_ignores_body_user_and_uses_service_account():
     async with sf() as db:
         # Attacker tries to impersonate "admin@evil" via body.user — must be ignored.
         auth = await gateway._resolve_gateway_auth(
-            _FakeRequest(f"Bearer {MASTER_KEY}"), db, {"user": "admin@evil"}
+            _FakeRequest(f"Bearer {MASTER_KEY}"), db
         )
         assert auth.source == "master"
         assert auth.username == GATEWAY_SERVICE_USERNAME
@@ -150,7 +150,7 @@ async def _test_master_key_ignores_body_user_and_uses_service_account():
         # Idempotent: a second call returns the same service user.
         async with sf() as db2:
             auth2 = await gateway._resolve_gateway_auth(
-                _FakeRequest(f"Bearer {MASTER_KEY}"), db2, {"user": "someone-else@x"}
+                _FakeRequest(f"Bearer {MASTER_KEY}"), db2
             )
             assert auth2.user_id == auth.user_id
             # And there is exactly one gateway-service user.
@@ -166,7 +166,7 @@ async def _test_user_api_key_resolves_owner_with_budget():
     _, sf = await _setup_db()
     _, raw = await _seed_user_key(sf)
     async with sf() as db:
-        auth = await gateway._resolve_gateway_auth(_FakeRequest(f"Bearer {raw}"), db, {})
+        auth = await gateway._resolve_gateway_auth(_FakeRequest(f"Bearer {raw}"), db)
         assert auth.source == "user_key"
         assert auth.username == "alice"
         assert auth.skip_budget is False
@@ -178,7 +178,7 @@ async def _test_alpha_router_api_key_skips_user_budget():
     _, sf = await _setup_db()
     _, raw = await _seed_alpha_router_key(sf, credit_limit_usd=0.0)
     async with sf() as db:
-        auth = await gateway._resolve_gateway_auth(_FakeRequest(f"Bearer {raw}"), db, {})
+        auth = await gateway._resolve_gateway_auth(_FakeRequest(f"Bearer {raw}"), db)
         assert auth.source == "alpha_router_key"
         assert auth.skip_budget is True
         assert auth.alpha_router_api_key_id is not None
@@ -190,7 +190,7 @@ async def _test_alpha_router_api_key_over_credit_limit_raises_402():
     _, raw = await _seed_alpha_router_key(sf, credit_limit_usd=1.0, period_used_usd=1.0)
     async with sf() as db:
         with pytest.raises(HTTPException) as exc:
-            await gateway._resolve_gateway_auth(_FakeRequest(f"Bearer {raw}"), db, {})
+            await gateway._resolve_gateway_auth(_FakeRequest(f"Bearer {raw}"), db)
         assert exc.value.status_code == 402
 
 
@@ -224,6 +224,22 @@ async def _test_read_gate_accepts_user_key():
     _, raw = await _seed_user_key(sf)
     async with sf() as db:
         await gateway._require_valid_gateway_key(_FakeRequest(f"Bearer {raw}"), db)
+
+
+async def _test_chat_completions_no_key_short_circuits_before_body_parse():
+    """Auth must run before request.json(): a keyless POST with a body that would
+    raise if parsed must still return 401, not 500."""
+    _, sf = await _setup_db()
+    async with sf() as db:
+        req = _FakeRequest(None)
+
+        async def _boom():
+            raise AssertionError("body must not be parsed before auth")
+
+        req.json = _boom
+        with pytest.raises(HTTPException) as exc:
+            await gateway.chat_completions(request=req, db=db)
+        assert exc.value.status_code == 401
 
 
 # ---- sync wrappers ----
@@ -270,3 +286,7 @@ def test_read_gate_rejects_unknown():
 
 def test_read_gate_accepts_user_key():
     asyncio.run(_test_read_gate_accepts_user_key())
+
+
+def test_chat_completions_no_key_short_circuits_before_body_parse():
+    asyncio.run(_test_chat_completions_no_key_short_circuits_before_body_parse())

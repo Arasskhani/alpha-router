@@ -76,6 +76,17 @@ services:
     volumes:
       - alpha_router_minio:/data
 
+  # Code-interpreter sandbox image. Not started as a long-running service; it is
+  # spawned on demand as a disposable, network-less container by the alpha-router app.
+  # Build explicitly with: docker compose build sandbox
+  sandbox:
+    build:
+      context: ./sandbox
+      dockerfile: Dockerfile
+    image: alpha-router-sandbox:latest
+    profiles: ["build-only"]
+    restart: "no"
+
   alpha_router:
     build:
       context: .
@@ -88,6 +99,11 @@ services:
       # Docker network overrides (env_file supplies pool/worker/rate-limit tuning)
       LDAP_BRIDGE_URL: http://host.docker.internal:8765
       LDAP_BRIDGE_TOKEN: alpha-router-ldap-bridge
+      # Code interpreter spawns this image via the mounted Docker socket.
+      CODE_SANDBOX_IMAGE: alpha-router-sandbox:latest
+    volumes:
+      # Required so the app can spawn disposable sandbox containers (Phase 2).
+      - /var/run/docker.sock:/var/run/docker.sock
     command:
       - uvicorn
       - app.main:app

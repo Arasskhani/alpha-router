@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     # OpenAI-compatible gateway master key (Open WebUI → Alpha Router)
     gateway_master_key: str = "sk-alpha-router-master"
 
+    # Code interpreter sandbox (Phase 2). When code_sandbox_image is set, user code
+    # runs in a disposable, network-less, read-only container instead of an in-process
+    # subprocess. Empty string disables container isolation (legacy subprocess path).
+    code_sandbox_image: str = ""  # env: CODE_SANDBOX_IMAGE (e.g. alpha-router-sandbox:latest)
+    code_sandbox_timeout_seconds: int = 20  # env: CODE_SANDBOX_TIMEOUT_SECONDS
+    code_sandbox_memory: str = "256m"  # env: CODE_SANDBOX_MEMORY
+    code_sandbox_pids_limit: int = 128  # env: CODE_SANDBOX_PIDS_LIMIT
+
     # Model sync default interval (hours)
     model_sync_interval_hours: int = 6
 

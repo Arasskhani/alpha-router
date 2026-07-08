@@ -1,0 +1,37 @@
+# Prevent host node_modules/dist from overwriting clean npm install in the image
+# (fixes "tsc: Permission denied" when building on Linux after copy from Windows).
+frontend/node_modules
+frontend/dist
+frontend/tsconfig.tsbuildinfo
+
+# Python local env and caches (runtime stage only copies backend/app)
+.venv
+venv
+backend/.venv
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+**/.pytest_cache
+*.egg-info
+
+# Secrets and local config — injected at runtime via compose env_file
+.env
+
+# VCS and editor noise
+.git
+.gitignore
+.idea
+.vscode
+.cursor
+.claude
+
+# Local databases
+*.db
+billi.db
+nitro.db
+
+# Docs and scripts not needed in the production image
+docs
+scripts

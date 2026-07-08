@@ -1,0 +1,154 @@
+import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import { api } from "../api";
+import { clearStoredImageGenerationForCurrentUser } from "../lib/chatStorage";
+import { formatSessionDuration, getMyActivityPath, getSessionUser, logout } from "../lib/session";
+import { MY_USAGE_AND_ACTIVITY_LABEL } from "../lib/usageActivityLabel";
+
+type Theme = "light" | "dark";
+
+type UserBudget = {
+  monthly_budget_usd: number;
+  used_usd: number;
+  remaining_usd: number | null;
+};
+
+function formatBudgetUsd(value: number): string {
+  const rounded = Math.round(value * 100) / 100;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
+}
+
+function formatBudgetLine(budget: UserBudget | null, loading: boolean): string {
+  if (loading) return "…";
+  if (!budget) return "—";
+  if ((budget.monthly_budget_usd ?? 0) <= 0) return "No Plan";
+  const used = formatBudgetUsd(budget.used_usd ?? 0);
+  const total = formatBudgetUsd(budget.monthly_budget_usd ?? 0);
+  return `${used}/${total} $`;
+}
+
+type Props = {
+  theme: Theme;
+  onThemeChange: (theme: Theme) => void;
+};
+
+function IconSun() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+    </svg>
+  );
+}
+
+function IconMoon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+    </svg>
+  );
+}
+
+export default function UserProfile({ theme, onThemeChange }: Props) {
+  const [open, setOpen] = useState(false);
+  const [duration, setDuration] = useState("");
+  const [budget, setBudget] = useState<UserBudget | null>(null);
+  const [budgetLoading, setBudgetLoading] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const user = getSessionUser();
+
+  useEffect(() => {
+    if (!user) return;
+    const tick = () => setDuration(formatSessionDuration(user.loginAt));
+    tick();
+    const id = window.setInterval(tick, 30_000);
+    return () => window.clearInterval(id);
+  }, [user?.loginAt]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    setBudgetLoading(true);
+    api<UserBudget>("/api/user/budget")
+      .then(setBudget)
+      .catch(() => setBudget(null))
+      .finally(() => setBudgetLoading(false));
+  }, [open]);
+
+  if (!user) return null;
+
+  const initials = user.username.slice(0, 2).toUpperCase();
+  const isDark = theme === "dark";
+
+  return (
+    <div className="user-profile" ref={wrapRef}>
+      <button
+        type="button"
+        className="user-profile-trigger"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+      >
+        <span className="user-avatar">{initials}</span>
+        <span className="user-profile-name">{user.username}</span>
+        <span className="user-profile-chevron" aria-hidden>▾</span>
+      </button>
+
+      {open && (
+        <div className="user-profile-menu" role="menu">
+          <div className="user-profile-menu-head">
+            <span className="user-avatar user-avatar-lg">{initials}</span>
+            <div>
+              <div className="user-profile-menu-name">{user.username}</div>
+              <div className="user-profile-menu-role">{user.role === "admin" ? "Administrator" : "User"}</div>
+            </div>
+          </div>
+          <div className="user-profile-menu-meta">
+            <span className="user-profile-meta-label">Signed in for</span>
+            <span className="user-profile-meta-value">{duration || "—"}</span>
+          </div>
+          <div className="user-profile-menu-meta">
+            <span className="user-profile-meta-label">Budget</span>
+            <span className="user-profile-meta-value">{formatBudgetLine(budget, budgetLoading)}</span>
+          </div>
+          <div className="user-profile-menu-divider" />
+          <Link
+            to={getMyActivityPath(user.role)}
+            className="user-profile-menu-item"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+          >
+            {MY_USAGE_AND_ACTIVITY_LABEL}
+          </Link>
+          <button
+            type="button"
+            className="user-profile-menu-item"
+            role="menuitem"
+            onClick={() => onThemeChange(isDark ? "light" : "dark")}
+          >
+            <span className="user-profile-menu-icon">{isDark ? <IconSun /> : <IconMoon />}</span>
+            <span>{isDark ? "Light mode" : "Dark mode"}</span>
+          </button>
+          <button
+            type="button"
+            className="user-profile-menu-item user-profile-menu-item-danger"
+            role="menuitem"
+            onClick={() => {
+              void clearStoredImageGenerationForCurrentUser().finally(() => logout());
+            }}
+          >
+            Log out
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -70,7 +70,6 @@ class GatewayAuth:
 async def _resolve_gateway_auth(
     request: Request,
     db: AsyncSession,
-    body: dict,
 ) -> GatewayAuth:
     auth = request.headers.get("Authorization", "")
     raw_key = auth.replace("Bearer ", "").strip() if auth.startswith("Bearer ") else ""
@@ -168,8 +167,8 @@ async def list_models(
 
 @router.post("/v1/chat/completions")
 async def chat_completions(request: Request, db: AsyncSession = Depends(get_db)):
+    auth_ctx = await _resolve_gateway_auth(request, db)
     body = await request.json()
-    auth_ctx = await _resolve_gateway_auth(request, db, body)
 
     if body.get("stream", True):
         resolved = await preflight_stream_chat(
@@ -200,8 +199,8 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
 
 @router.post("/v1/embeddings")
 async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
+    auth_ctx = await _resolve_gateway_auth(request, db)
     body = await request.json()
-    auth_ctx = await _resolve_gateway_auth(request, db, body)
     payload = await create_embedding(
         db,
         body,

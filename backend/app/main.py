@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 
 from app.api import admin, auth, authentication, chat, gateway, groups, images, logs, operations, plans, reports, smtp, user_chats, user_media, user_routes
-from app.config import get_settings
+from app.config import INSECURE_DEFAULTS, get_settings
 from app.core.security import hash_password
 from app.database import AsyncSessionLocal, Base, engine
 from app.db_migrate import apply_schema_column_patches, run_one_time_migrations
@@ -49,8 +49,56 @@ def resolve_frontend_dist(main_file: Path | None = None) -> Path:
 _FRONTEND_DIST = resolve_frontend_dist()
 
 
+def _assert_production_safe() -> None:
+    """Refuse to start in production while known insecure defaults are configured.
+
+    Env-gated: a no-op unless `settings.environment == "production"`. Existing
+    dev/single-box deployments (which default to "development") boot unchanged.
+    The guard only checks the three externally-exploitable secrets (JWT signing
+    key, admin bootstrap password, gateway master key); DB/object-storage creds
+    are deployment-specific and out of scope here.
+    """
+    _check_production_safe(
+        environment=settings.environment,
+        secret_key=settings.secret_key,
+        admin_password=settings.admin_password,
+        gateway_master_key=settings.gateway_master_key,
+    )
+
+
+def _check_production_safe(
+    *,
+    environment: str,
+    secret_key: str,
+    admin_password: str,
+    gateway_master_key: str,
+) -> None:
+    """Pure check used by the startup guard and by tests.
+
+    Raises RuntimeError when `environment == "production"` and any of the three
+    externally-exploitable secrets still holds a known insecure default. No-op
+    otherwise (including the default "development" environment).
+    """
+    if environment != "production":
+        return
+    insecure: list[str] = []
+    if secret_key in INSECURE_DEFAULTS:
+        insecure.append("SECRET_KEY")
+    if admin_password in INSECURE_DEFAULTS:
+        insecure.append("ADMIN_PASSWORD")
+    if gateway_master_key in INSECURE_DEFAULTS:
+        insecure.append("GATEWAY_MASTER_KEY")
+    if insecure:
+        raise RuntimeError(
+            "Refusing to start in production with insecure default value(s): "
+            + ", ".join(insecure)
+            + ". Override each in your environment/.env before booting with ENVIRONMENT=production."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _assert_production_safe()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await apply_schema_column_patches()

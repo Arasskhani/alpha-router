@@ -1,6 +1,7 @@
 """OpenAI-compatible gateway for Open WebUI and Alpha Router API keys."""
 
 from dataclasses import dataclass
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -10,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.database import get_db
 from app.models.model_catalog import AIModel
+from app.models.user import User
+from app.core.security import hash_password
 from app.services.proxy_service import (
     STREAM_SSE_HEADERS,
     configure_litellm_cache,
@@ -18,12 +21,40 @@ from app.services.proxy_service import (
     stream_chat,
 )
 from app.services.alpha_router_api_key_service import ensure_key_usable
-from app.services.user_service import get_or_create_user_from_request, get_user_by_api_key
+from app.services.user_service import get_user_by_api_key
 from app.utils.app_attribution import detect_client_app
 
 router = APIRouter(tags=["gateway"])
 settings = get_settings()
 configure_litellm_cache()
+
+GATEWAY_SERVICE_USERNAME = "gateway-service"
+
+
+async def _get_or_create_gateway_service_user(db: AsyncSession) -> User:
+    """Fixed service identity for master-key usage.
+
+    Replaces the previous body.user impersonation: the master key now maps to a
+    single dedicated service account instead of any caller-supplied identity.
+    The account carries an unknown random password so it cannot log in via the UI.
+    """
+    user = (
+        await db.execute(select(User).where(User.username == GATEWAY_SERVICE_USERNAME))
+    ).scalars().first()
+    if user:
+        return user
+    user = User(
+        username=GATEWAY_SERVICE_USERNAME,
+        email="gateway-service@alpha-router.local",
+        display_name="Gateway Service",
+        hashed_password=hash_password(secrets.token_urlsafe(32)),
+        role="user",
+        auth_provider="system",
+        is_active=True,
+    )
+    db.add(user)
+    await db.flush()
+    return user
 
 
 @dataclass
@@ -44,14 +75,27 @@ async def _resolve_gateway_auth(
     auth = request.headers.get("Authorization", "")
     raw_key = auth.replace("Bearer ", "").strip() if auth.startswith("Bearer ") else ""
 
+    if not raw_key:
+        raise HTTPException(status_code=401, detail="Missing API key")
+
     skip_budget = False
     source = "openwebui"
     user_id = None
     alpha_router_api_key_id = None
-    username = body.get("user", "anonymous@local")
+    username = "gateway"
     client_app = detect_client_app(request)
 
-    if raw_key and raw_key != settings.gateway_master_key:
+    if raw_key == settings.gateway_master_key:
+        # Master key → fixed service identity. body.user is intentionally ignored
+        # to prevent impersonation. Usage debits the service account's budget, so
+        # the key is denied (402) until an admin assigns a budget plan to it.
+        user = await _get_or_create_gateway_service_user(db)
+        if not user.is_active:
+            raise HTTPException(status_code=403, detail="Gateway service account disabled")
+        user_id = user.id
+        username = user.username
+        source = "master"
+    else:
         user, source, alpha_router_key = await get_user_by_api_key(db, raw_key)
         if source == "alpha_router_key" and alpha_router_key:
             await ensure_key_usable(db, alpha_router_key)
@@ -66,12 +110,6 @@ async def _resolve_gateway_auth(
             username = user.username
         else:
             raise HTTPException(status_code=401, detail="Invalid API key")
-    else:
-        user = await get_or_create_user_from_request(db, username)
-        if not user.is_active:
-            raise HTTPException(status_code=403, detail="Account disabled")
-        user_id = user.id
-        username = user.username
 
     return GatewayAuth(
         user_id=user_id,
@@ -83,8 +121,37 @@ async def _resolve_gateway_auth(
     )
 
 
+async def _require_valid_gateway_key(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Auth gate for read-only gateway routes (e.g. /v1/models).
+
+    Accepts the master key or any valid user/alpha-router API key; rejects missing or
+    unknown keys with 401. Does not consume budget.
+    """
+    auth = request.headers.get("Authorization", "")
+    raw_key = auth.replace("Bearer ", "").strip() if auth.startswith("Bearer ") else ""
+    if not raw_key:
+        raise HTTPException(status_code=401, detail="Missing API key")
+    if raw_key == settings.gateway_master_key:
+        return
+    user, source, alpha_router_key = await get_user_by_api_key(db, raw_key)
+    if source == "alpha_router_key" and alpha_router_key:
+        await ensure_key_usable(db, alpha_router_key)
+        return
+    if user:
+        if not user.is_active:
+            raise HTTPException(status_code=403, detail="Account disabled")
+        return
+    raise HTTPException(status_code=401, detail="Invalid API key")
+
+
 @router.get("/v1/models")
-async def list_models(db: AsyncSession = Depends(get_db)):
+async def list_models(
+    db: AsyncSession = Depends(get_db),
+    _auth: None = Depends(_require_valid_gateway_key),
+):
     rows = (await db.execute(select(AIModel).where(AIModel.is_enabled == True))).scalars().all()  # noqa: E712
     return {
         "object": "list",

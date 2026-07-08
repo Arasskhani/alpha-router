@@ -1,0 +1,555 @@
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { api } from "../api";
+import AdminPage from "../components/AdminPage";
+import AuthenticatedImage from "../components/AuthenticatedImage";
+import RowActionsMenu from "../components/RowActionsMenu";
+import { useConfirm } from "../context/ConfirmContext";
+import { useReadOnly } from "../context/ReadOnlyContext";
+import {
+  fetchAuthenticatedMediaBlob,
+  fetchAuthenticatedMediaObjectUrl,
+  isAlphaRouterMediaFileUrl,
+} from "../lib/mediaUrl";
+import {
+  dedupeMediaItemsForDisplay,
+  formatMediaBytes,
+  formatMediaDate,
+  formatMediaQuotaLabel,
+  loadMediaViewMode,
+  MEDIA_VIEW_OPTIONS,
+  type MediaItem,
+  type MediaQuota,
+  type MediaSchedule,
+  type MediaViewMode,
+  saveMediaViewMode,
+} from "../lib/mediaLibrary";
+
+type MediaLibraryProps = {
+  /** When set, admin views/manages this user's media library. */
+  adminUserId?: number;
+  backLink?: { to: string; label: string };
+};
+
+function buildQuery(search: string, fromDate: string, toDate: string) {
+  const q = new URLSearchParams();
+  q.set("limit", "1000");
+  if (search.trim()) q.set("q", search.trim());
+  if (fromDate) q.set("from_date", fromDate);
+  if (toDate) q.set("to_date", toDate);
+  return q.toString();
+}
+
+export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProps = {}) {
+  const readOnly = useReadOnly();
+  const isAdminScope = adminUserId != null && Number.isFinite(adminUserId);
+  const apiBase = isAdminScope ? `/api/admin/users/${adminUserId}/media` : "/api/user/media";
+  const { confirm } = useConfirm();
+  const [subjectName, setSubjectName] = useState("");
+  const [items, setItems] = useState<MediaItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [quota, setQuota] = useState<MediaQuota | null>(null);
+  const [schedule, setSchedule] = useState<MediaSchedule | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [flash, setFlash] = useState("");
+  const [search, setSearch] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [viewMode, setViewMode] = useState<MediaViewMode>(() => loadMediaViewMode());
+  const [selected, setSelected] = useState<Set<number>>(() => new Set());
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [retentionDays, setRetentionDays] = useState(30);
+  const [cleanupEnabled, setCleanupEnabled] = useState(false);
+  const [cleanupHour, setCleanupHour] = useState(3);
+  const [cleanupMinute, setCleanupMinute] = useState(0);
+  const [downloadingZip, setDownloadingZip] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const qs = buildQuery(search, fromDate, toDate);
+      const [listRes, quotaRes, scheduleRes] = await Promise.all([
+        api<{ items: MediaItem[]; total: number; username?: string; display_name?: string }>(
+          `${apiBase}?${qs}`,
+        ),
+        api<MediaQuota & { username?: string; display_name?: string }>(`${apiBase}/quota`),
+        api<MediaSchedule>(`${apiBase}/schedule`),
+      ]);
+      setItems(listRes.items);
+      setTotal(listRes.total);
+      if (isAdminScope) {
+        const label =
+          listRes.display_name?.trim() ||
+          quotaRes.display_name?.trim() ||
+          listRes.username ||
+          quotaRes.username ||
+          "";
+        if (label) setSubjectName(label);
+      }
+      setQuota(quotaRes);
+      setSchedule(scheduleRes);
+      setRetentionDays(scheduleRes.cleanup_retention_days);
+      setCleanupEnabled(scheduleRes.cleanup_enabled);
+      setCleanupHour(scheduleRes.cleanup_hour);
+      setCleanupMinute(scheduleRes.cleanup_minute);
+      setSelected(new Set());
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [search, fromDate, toDate, apiBase, isAdminScope]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const displayItems = useMemo(() => dedupeMediaItemsForDisplay(items), [items]);
+
+  const allSelected = displayItems.length > 0 && displayItems.every((m) => selected.has(m.id));
+  const someSelected = selected.size > 0;
+
+  function toggleSelect(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (allSelected) {
+      setSelected(new Set());
+      return;
+    }
+    setSelected(new Set(displayItems.map((m) => m.id)));
+  }
+
+  function changeView(mode: MediaViewMode) {
+    setViewMode(mode);
+    saveMediaViewMode(mode);
+  }
+
+  async function deleteIds(ids: number[]) {
+    if (!ids.length || readOnly) return;
+    const ok = await confirm({
+      title: "Delete media",
+      message: `Delete ${ids.length} file${ids.length === 1 ? "" : "s"}? This cannot be undone.`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
+    setError("");
+    try {
+      await api(`${apiBase}/bulk-delete`, {
+        method: "POST",
+        body: JSON.stringify({ ids }),
+      });
+      setFlash(`Removed ${ids.length} file(s).`);
+      await load();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function deleteAll() {
+    if (readOnly || !items.length) return;
+    const ok = await confirm({
+      title: "Delete all media",
+      message: isAdminScope
+        ? `Remove every media file for ${subjectName || "this user"}?`
+        : "Remove every media file in your library? This only affects your account.",
+      confirmLabel: "Delete all",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      const res = await api<{ removed: number }>(`${apiBase}/all`, { method: "DELETE" });
+      setFlash(`Removed ${res.removed} file(s).`);
+      await load();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function saveSchedule(e: FormEvent) {
+    e.preventDefault();
+    if (readOnly) return;
+    setSavingSchedule(true);
+    setError("");
+    try {
+      await api(`${apiBase}/schedule`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          cleanup_enabled: cleanupEnabled,
+          cleanup_retention_days: retentionDays,
+          cleanup_hour: cleanupHour,
+          cleanup_minute: cleanupMinute,
+        }),
+      });
+      setFlash("Cleanup schedule saved.");
+      setScheduleOpen(false);
+      await load();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setSavingSchedule(false);
+    }
+  }
+
+  async function downloadOne(item: MediaItem) {
+    const trigger = (href: string, name: string) => {
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    };
+    try {
+      if (isAlphaRouterMediaFileUrl(item.url)) {
+        const blob = await fetchAuthenticatedMediaBlob(item.url);
+        const blobUrl = URL.createObjectURL(blob);
+        trigger(blobUrl, item.file_name);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+        return;
+      }
+      trigger(item.url, item.file_name);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function downloadAsZip(targets: MediaItem[]) {
+    if (!targets.length) return;
+    setDownloadingZip(true);
+    setError("");
+    try {
+      const token = localStorage.getItem("alpha_router_token");
+      const res = await fetch(`${apiBase}/download-zip`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ ids: targets.map((m) => m.id) }),
+      });
+      if (!res.ok) {
+        let detail = `Download failed (${res.status})`;
+        try {
+          const j = (await res.json()) as { detail?: string };
+          if (j.detail) detail = j.detail;
+        } catch {
+          const text = await res.text();
+          if (text) detail = text;
+        }
+        throw new Error(detail);
+      }
+      const blob = await res.blob();
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `alpha-router-media-${stamp}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+      setFlash(`Downloaded ${targets.length} file(s) as ZIP.`);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setDownloadingZip(false);
+    }
+  }
+
+  async function downloadSelected(allFiltered = false) {
+    const targets = allFiltered ? displayItems : displayItems.filter((m) => selected.has(m.id));
+    if (!targets.length) return;
+    if (allFiltered || targets.length > 1) {
+      await downloadAsZip(targets);
+      return;
+    }
+    await downloadOne(targets[0]);
+    setFlash("Downloaded 1 file.");
+  }
+
+  async function openFull(item: MediaItem) {
+    try {
+      if (isAlphaRouterMediaFileUrl(item.url)) {
+        const blobUrl = await fetchAuthenticatedMediaObjectUrl(item.url);
+        window.open(blobUrl, "_blank", "noopener");
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+        return;
+      }
+      window.open(item.url, "_blank", "noopener");
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  const usagePercent = useMemo(() => {
+    if (!quota) return 0;
+    return Math.min(100, quota.used_percent);
+  }, [quota]);
+
+  const viewActions = MEDIA_VIEW_OPTIONS.map((opt) => ({
+    label: opt.label,
+    onClick: () => changeView(opt.id),
+  }));
+
+  const pageTitle = isAdminScope
+    ? subjectName
+      ? `User Storage — ${subjectName}`
+      : "User Storage"
+    : "Media";
+
+  return (
+    <AdminPage
+      title={pageTitle}
+      actions={
+        <RowActionsMenu
+          label="View"
+          actions={viewActions}
+        />
+      }
+    >
+      {backLink ? (
+        <p style={{ margin: "0 0 0.75rem" }}>
+          <Link to={backLink.to} className="btn btn-ghost activity-back">
+            {backLink.label}
+          </Link>
+        </p>
+      ) : null}
+      {isAdminScope ? (
+        <p className="muted-text" style={{ marginTop: 0 }}>
+          Admin view of this user&apos;s media library (same files, filters, and actions they see).
+        </p>
+      ) : null}
+      {flash ? <p className="alert alert-success">{flash}</p> : null}
+      {error ? <p className="alert alert-error">{error}</p> : null}
+
+      <section className="media-page-quota card">
+        <div className="media-page-quota__head">
+          <div>
+            <h2 className="media-page-quota__title">Storage</h2>
+            <p className="muted-text media-page-quota__sub">
+              {quota
+                ? `${formatMediaBytes(quota.used_bytes)} of ${formatMediaBytes(quota.quota_bytes)} used · ${quota.file_count} file${quota.file_count === 1 ? "" : "s"}`
+                : "Loading…"}
+            </p>
+          </div>
+          <span className="media-page-quota__badge">
+            {quota ? formatMediaQuotaLabel(quota.quota_bytes) : "…"}
+          </span>
+        </div>
+        <div className="media-page-quota__bar" aria-hidden>
+          <div className="media-page-quota__fill" style={{ width: `${usagePercent}%` }} />
+        </div>
+      </section>
+
+      <section className="media-page-toolbar card">
+        <div className="media-page-filters">
+          <input
+            type="search"
+            className="media-page-search"
+            placeholder="Search prompt, filename, model, type…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            dir="auto"
+          />
+          <label className="media-page-date">
+            <span>From</span>
+            <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+          </label>
+          <label className="media-page-date">
+            <span>To</span>
+            <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+          </label>
+          <button type="button" className="btn btn-ghost" onClick={() => void load()} disabled={loading}>
+            Refresh
+          </button>
+        </div>
+
+        <div className="media-page-actions">
+          <label className="media-page-select-all">
+            <input
+              type="checkbox"
+              checked={allSelected}
+              onChange={toggleSelectAll}
+              disabled={!displayItems.length}
+            />
+            <span>
+              {someSelected ? `${selected.size} selected` : "Select all"}
+              {total > displayItems.length ? ` (${displayItems.length} shown)` : ""}
+            </span>
+          </label>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={!someSelected || downloadingZip}
+            onClick={() => void downloadSelected(false)}
+          >
+            {downloadingZip ? "Preparing ZIP…" : "Download selected"}
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={!displayItems.length || downloadingZip}
+            onClick={() => void downloadSelected(true)}
+          >
+            {downloadingZip ? "Preparing ZIP…" : "Download all (filtered)"}
+          </button>
+          {!readOnly ? (
+            <>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={!someSelected}
+                onClick={() => void deleteIds([...selected])}
+              >
+                Delete selected
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={() => setScheduleOpen((o) => !o)}>
+                Schedule cleanup
+              </button>
+              <button type="button" className="btn btn-danger" disabled={!items.length} onClick={() => void deleteAll()}>
+                Delete all
+              </button>
+            </>
+          ) : null}
+        </div>
+      </section>
+
+      {scheduleOpen && !readOnly ? (
+        <form className="media-page-schedule card" onSubmit={(e) => void saveSchedule(e)}>
+          <h3>{isAdminScope ? "User cleanup schedule" : "Your cleanup schedule"}</h3>
+          <p className="muted-text">
+            {isAdminScope
+              ? `Automatically delete ${subjectName ? `${subjectName}'s` : "this user's"} media older than the retention period. Applies only to this user.`
+              : "Automatically delete your own media older than the retention period. This applies only to your account."}
+          </p>
+          <label className="media-page-schedule__row">
+            <input
+              type="checkbox"
+              checked={cleanupEnabled}
+              onChange={(e) => setCleanupEnabled(e.target.checked)}
+            />
+            <span>Enable scheduled cleanup</span>
+          </label>
+          <div className="media-page-schedule__grid">
+            <label>
+              Retention (days)
+              <input
+                type="number"
+                min={1}
+                max={3650}
+                value={retentionDays}
+                onChange={(e) => setRetentionDays(Number(e.target.value))}
+              />
+            </label>
+            <label>
+              Hour (UTC)
+              <input
+                type="number"
+                min={0}
+                max={23}
+                value={cleanupHour}
+                onChange={(e) => setCleanupHour(Number(e.target.value))}
+              />
+            </label>
+            <label>
+              Minute
+              <input
+                type="number"
+                min={0}
+                max={59}
+                value={cleanupMinute}
+                onChange={(e) => setCleanupMinute(Number(e.target.value))}
+              />
+            </label>
+          </div>
+          {schedule?.last_cleanup_at ? (
+            <p className="muted-text">Last run: {formatMediaDate(schedule.last_cleanup_at)}</p>
+          ) : null}
+          <div className="media-page-schedule__foot">
+            <button type="submit" className="btn" disabled={savingSchedule}>
+              {savingSchedule ? "Saving…" : "Save schedule"}
+            </button>
+          </div>
+        </form>
+      ) : null}
+
+      {loading && !items.length ? <p className="muted-text">Loading media…</p> : null}
+      {!loading && !displayItems.length && !error ? (
+        <p className="muted-text media-page-empty">
+          {search || fromDate || toDate ? "No media matches your filters." : "No media files yet."}
+        </p>
+      ) : null}
+
+      <div className={`media-page-grid media-page-grid--${viewMode}`}>
+        {displayItems.map((m) => (
+          <article
+            key={m.id}
+            className={`media-page-item${selected.has(m.id) ? " is-selected" : ""}`}
+          >
+            <label className="media-page-item__check">
+              <input
+                type="checkbox"
+                checked={selected.has(m.id)}
+                onChange={() => toggleSelect(m.id)}
+              />
+            </label>
+            <button
+              type="button"
+              className="media-page-item__preview"
+              onClick={() => void openFull(m)}
+              title={m.source_prompt || m.file_name}
+            >
+              {m.kind === "image" ? (
+                <AuthenticatedImage url={m.url} alt={m.file_name} className="media-page-item__img" />
+              ) : (
+                <div className="media-page-item__file">{m.file_name}</div>
+              )}
+            </button>
+            <div className="media-page-item__meta">
+              {viewMode === "title" ? (
+                <strong className="media-page-item__prompt" title={m.source_prompt || ""}>
+                  {m.source_prompt?.trim() || m.file_name}
+                </strong>
+              ) : (
+                <>
+                  <strong title={m.file_name}>{m.file_name}</strong>
+                  {m.source_prompt ? (
+                    <span className="media-page-item__prompt" title={m.source_prompt}>
+                      {m.source_prompt}
+                    </span>
+                  ) : null}
+                </>
+              )}
+              <span className="media-page-item__date">{formatMediaDate(m.created_at)}</span>
+              <span className="media-page-item__size">{formatMediaBytes(m.size_bytes)}</span>
+            </div>
+            <div className="media-page-item__actions">
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => void openFull(m)}>
+                Open
+              </button>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => void downloadOne(m)}>
+                Download
+              </button>
+              {!readOnly ? (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => void deleteIds([m.id])}>
+                  Delete
+                </button>
+              ) : null}
+            </div>
+          </article>
+        ))}
+      </div>
+    </AdminPage>
+  );
+}

@@ -1,0 +1,979 @@
+"""Per-user chat history in normalized PostgreSQL/SQLite tables."""
+
+from __future__ import annotations
+
+import calendar
+import datetime as dt
+import json
+import logging
+import time
+import uuid
+from typing import Any
+
+from sqlalchemy import delete, func, or_, select, text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import get_settings
+from app.models.chat import ChatFolder, ChatMessage, ChatSession, UserChatPrefs
+
+logger = logging.getLogger(__name__)
+settings = get_settings()
+
+_MAX_PREFS_BYTES = 64 * 1024
+_MAX_MESSAGE_BYTES = 512 * 1024
+_MAX_SESSIONS_PAGE = 200
+_MAX_MESSAGES_PAGE = 500
+_MAX_SEARCH_RESULTS = 20
+_PURGE_BATCH_SIZE = 5000
+
+IMAGE_PENDING_MARKER = "__ALPHA_ROUTER_IMAGE_PENDING__"
+IMAGE_MESSAGE_PREFIX = "__ALPHA_ROUTER_IMAGE_JSON__:"
+ATTACHMENT_MESSAGE_PREFIX = "__ALPHA_ROUTER_ATTACH_JSON__:"
+
+# Orphan placeholders (container restart / dead stream) — reconcile on read after this age.
+# Must exceed the OpenRouter read timeout (180s) plus the frontend client timeout (240s)
+# margin, so a slow-but-alive generation is never finalized as "stopped" mid-flight.
+_STALE_IMAGE_PENDING_SEC = 300
+_STALE_TEXT_STREAMING_SEC = 600
+
+
+def _compact_attachment_content_for_storage(content: str) -> str:
+    """Drop inline base64 from attachment JSON; persisted media remains via url."""
+    if not content.startswith(ATTACHMENT_MESSAGE_PREFIX):
+        return content
+    try:
+        payload = json.loads(content[len(ATTACHMENT_MESSAGE_PREFIX) :])
+    except json.JSONDecodeError:
+        return content
+    attachments = payload.get("attachments")
+    if not isinstance(attachments, list):
+        return content
+    compact: list[Any] = []
+    for item in attachments:
+        if isinstance(item, dict):
+            compact.append({k: v for k, v in item.items() if k != "data_url"})
+        else:
+            compact.append(item)
+    payload["attachments"] = compact
+    return ATTACHMENT_MESSAGE_PREFIX + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def _compact_message_content_for_storage(content: str, role: str) -> str:
+    if role == "user":
+        return _compact_attachment_content_for_storage(content)
+    return content
+
+
+class RevisionConflictError(Exception):
+    """Raised when expectedRevision does not match the stored session revision."""
+
+    def __init__(self, current_revision: int):
+        self.current_revision = current_revision
+        super().__init__(f"Session revision conflict (current={current_revision})")
+
+
+def _empty_session_cutoff() -> dt.datetime:
+    days = max(1, int(settings.chat_empty_session_hide_days))
+    return dt.datetime.utcnow() - dt.timedelta(days=days)
+
+
+def _default_prefs() -> dict[str, Any]:
+    return {
+        "default_model": None,
+        "theme": "light",
+    }
+
+
+def _normalize_prefs(raw: dict[str, Any] | None) -> dict[str, Any]:
+    base = _default_prefs()
+    if not raw:
+        return base
+
+    model = raw.get("default_model")
+    if isinstance(model, str) and model.strip():
+        base["default_model"] = model.strip()[:512]
+    elif model is None:
+        base["default_model"] = None
+
+    theme = str(raw.get("theme") or "light").lower()
+    base["theme"] = "dark" if theme == "dark" else "light"
+    return base
+
+
+def _check_json_size(payload: Any, max_bytes: int) -> None:
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    if len(encoded.encode("utf-8")) > max_bytes:
+        raise ValueError("Chat data exceeds storage limit")
+
+
+def _ms_to_dt(ms: int | float | None) -> dt.datetime:
+    if ms is None:
+        return dt.datetime.utcnow()
+    try:
+        return dt.datetime.utcfromtimestamp(float(ms) / 1000.0)
+    except (TypeError, ValueError, OSError):
+        return dt.datetime.utcnow()
+
+
+def _dt_to_ms(value: dt.datetime | None) -> int:
+    if value is None:
+        return 0
+    return int(calendar.timegm(value.timetuple()) * 1000)
+
+
+def _session_activity_dt(row: ChatSession) -> dt.datetime:
+    return row.last_message_at or row.created_at
+
+
+def _session_activity_expr():
+    return func.coalesce(ChatSession.last_message_at, ChatSession.created_at)
+
+
+def _message_meta_from_client(msg: dict[str, Any]) -> dict[str, Any]:
+    meta: dict[str, Any] = {}
+    for key, out in (
+        ("modelId", "modelId"),
+        ("modelName", "modelName"),
+        ("sentAt", "sentAt"),
+        ("receivedAt", "receivedAt"),
+        ("streaming", "streaming"),
+    ):
+        if msg.get(key) is not None:
+            meta[out] = msg[key]
+    return meta
+
+
+def _message_to_client(row: ChatMessage) -> dict[str, Any]:
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    out: dict[str, Any] = {
+        "id": row.id,
+        "role": row.role,
+        "content": row.content or "",
+        "sequence": row.sequence,
+    }
+    if meta.get("modelId"):
+        out["modelId"] = meta["modelId"]
+    if meta.get("modelName"):
+        out["modelName"] = meta["modelName"]
+    if meta.get("sentAt") is not None:
+        out["sentAt"] = meta["sentAt"]
+    if meta.get("receivedAt") is not None:
+        out["receivedAt"] = meta["receivedAt"]
+    if meta.get("streaming") is not None:
+        out["streaming"] = meta["streaming"]
+    if row.client_message_id:
+        out["clientMessageId"] = row.client_message_id
+    return out
+
+
+def _session_to_client(row: ChatSession, *, include_messages: bool = False, messages: list[dict] | None = None) -> dict[str, Any]:
+    tools = row.tools if isinstance(row.tools, dict) else {}
+    out: dict[str, Any] = {
+        "id": row.id,
+        "title": row.title or "New chat",
+        "titleLocked": bool(row.title_locked),
+        "titleGenerated": bool(row.title_generated),
+        "folderId": row.folder_id,
+        "model": row.model_id or "",
+        "tools": tools,
+        "toolsTouched": bool(row.tools_touched),
+        "privateMode": bool(row.private_mode),
+        "messageCount": row.message_count or 0,
+        "revision": int(row.revision or 1),
+        "createdAt": _dt_to_ms(row.created_at),
+        "updatedAt": _dt_to_ms(row.updated_at),
+        "lastMessageAt": _dt_to_ms(row.last_message_at) if row.last_message_at else None,
+    }
+    if include_messages:
+        out["messages"] = messages or []
+    return out
+
+
+def _folder_to_client(row: ChatFolder) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "name": row.name,
+        "color": row.color,
+        "createdAt": _dt_to_ms(row.created_at),
+        "updatedAt": _dt_to_ms(row.updated_at),
+    }
+
+
+async def ensure_user_chat_prefs(db: AsyncSession, user_id: int) -> UserChatPrefs:
+    row = await db.get(UserChatPrefs, user_id)
+    if row is None:
+        row = UserChatPrefs(
+            user_id=user_id,
+            prefs=_default_prefs(),
+            updated_at=dt.datetime.utcnow(),
+        )
+        db.add(row)
+        await db.flush()
+    return row
+
+
+async def ensure_user_chat_store(db: AsyncSession, user_id: int) -> UserChatPrefs:
+    """Backward-compatible alias for callers that ensured a chat store row."""
+    return await ensure_user_chat_prefs(db, user_id)
+
+
+async def load_user_prefs(db: AsyncSession, user_id: int) -> dict[str, Any]:
+    row = await ensure_user_chat_prefs(db, user_id)
+    return _normalize_prefs(row.prefs if isinstance(row.prefs, dict) else {})
+
+
+async def save_user_prefs(db: AsyncSession, user_id: int, updates: dict[str, Any]) -> dict[str, Any]:
+    row = await ensure_user_chat_prefs(db, user_id)
+    current = _normalize_prefs(row.prefs if isinstance(row.prefs, dict) else {})
+    merged = _normalize_prefs({**current, **updates})
+    _check_json_size(merged, _MAX_PREFS_BYTES)
+    row.prefs = merged
+    row.updated_at = dt.datetime.utcnow()
+    await db.flush()
+    return merged
+
+
+async def list_chat_folders(db: AsyncSession, user_id: int) -> list[dict[str, Any]]:
+    rows = (
+        await db.execute(
+            select(ChatFolder)
+            .where(ChatFolder.user_id == user_id)
+            .order_by(ChatFolder.sort_order.asc(), ChatFolder.name.asc())
+        )
+    ).scalars().all()
+    return [_folder_to_client(r) for r in rows]
+
+
+async def create_chat_folder(db: AsyncSession, user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    folder_id = str(payload.get("id") or uuid.uuid4())
+    now = dt.datetime.utcnow()
+    row = ChatFolder(
+        id=folder_id,
+        user_id=user_id,
+        name=str(payload.get("name") or "Folder")[:255],
+        color=payload.get("color"),
+        sort_order=int(payload.get("sort_order") or 0),
+        created_at=_ms_to_dt(payload.get("createdAt")) if payload.get("createdAt") else now,
+        updated_at=_ms_to_dt(payload.get("updatedAt")) if payload.get("updatedAt") else now,
+    )
+    db.add(row)
+    await db.flush()
+    return _folder_to_client(row)
+
+
+async def update_chat_folder(db: AsyncSession, user_id: int, folder_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
+    row = await db.get(ChatFolder, folder_id)
+    if row is None or row.user_id != user_id:
+        return None
+    if "name" in updates and updates["name"] is not None:
+        row.name = str(updates["name"])[:255]
+    if "color" in updates:
+        row.color = updates["color"]
+    if "sort_order" in updates and updates["sort_order"] is not None:
+        row.sort_order = int(updates["sort_order"])
+    row.updated_at = dt.datetime.utcnow()
+    await db.flush()
+    return _folder_to_client(row)
+
+
+async def delete_chat_folder(db: AsyncSession, user_id: int, folder_id: str) -> bool:
+    row = await db.get(ChatFolder, folder_id)
+    if row is None or row.user_id != user_id:
+        return False
+    sessions = (
+        await db.execute(
+            select(ChatSession).where(ChatSession.folder_id == folder_id, ChatSession.user_id == user_id)
+        )
+    ).scalars().all()
+    for s in sessions:
+        s.folder_id = None
+    await db.delete(row)
+    await db.flush()
+    return True
+
+
+async def _dialect_name(db: AsyncSession) -> str:
+    conn = await db.connection()
+    return conn.dialect.name
+
+
+def _check_expected_revision(session: ChatSession, expected: int | None) -> None:
+    if expected is None:
+        return
+    current = int(session.revision or 1)
+    if expected != current:
+        raise RevisionConflictError(current)
+
+
+def _bump_session_revision(session: ChatSession) -> int:
+    session.revision = int(session.revision or 1) + 1
+    session.updated_at = dt.datetime.utcnow()
+    return session.revision
+
+
+async def list_chat_sessions(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+    q: str | None = None,
+    since_ms: int | None = None,
+    min_activity_ms: int | None = None,
+    max_activity_ms: int | None = None,
+    exclude_empty_old: bool = True,
+) -> tuple[list[dict[str, Any]], int, int | None]:
+    limit = min(max(1, limit), _MAX_SESSIONS_PAGE)
+    offset = max(0, offset)
+    activity = _session_activity_expr()
+
+    base = select(ChatSession).where(ChatSession.user_id == user_id)
+    count_q = select(func.count()).select_from(ChatSession).where(ChatSession.user_id == user_id)
+
+    visible = None
+    if exclude_empty_old:
+        cutoff = _empty_session_cutoff()
+        visible = or_(
+            ChatSession.message_count > 0,
+            ChatSession.created_at >= cutoff,
+        )
+        base = base.where(visible)
+        count_q = count_q.where(visible)
+
+    if since_ms is not None:
+        since_dt = _ms_to_dt(since_ms)
+        base = base.where(ChatSession.updated_at > since_dt)
+        count_q = count_q.where(ChatSession.updated_at > since_dt)
+
+    if min_activity_ms is not None:
+        min_dt = _ms_to_dt(min_activity_ms)
+        base = base.where(activity >= min_dt)
+        count_q = count_q.where(activity >= min_dt)
+
+    if max_activity_ms is not None:
+        max_dt = _ms_to_dt(max_activity_ms)
+        base = base.where(activity < max_dt)
+        count_q = count_q.where(activity < max_dt)
+
+    search = (q or "").strip()
+    if search:
+        dialect = await _dialect_name(db)
+        if dialect == "postgresql" and len(search) >= 2:
+            pattern = f"%{search}%"
+            base = base.where(ChatSession.title.ilike(pattern))
+            count_q = count_q.where(ChatSession.title.ilike(pattern))
+        elif len(search) >= 2:
+            pattern = f"%{search.lower()}%"
+            base = base.where(func.lower(ChatSession.title).like(pattern))
+            count_q = count_q.where(func.lower(ChatSession.title).like(pattern))
+
+    older_total: int | None = None
+    if min_activity_ms is not None and not search and since_ms is None:
+        older_cutoff = _ms_to_dt(min_activity_ms)
+        older_q = select(func.count()).select_from(ChatSession).where(ChatSession.user_id == user_id)
+        if visible is not None:
+            older_q = older_q.where(visible)
+        older_total = int(
+            (await db.execute(older_q.where(activity < older_cutoff))).scalar_one()
+        )
+
+    total = (await db.execute(count_q)).scalar_one()
+    rows = (
+        await db.execute(
+            base.order_by(activity.desc(), ChatSession.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+    ).scalars().all()
+    return [_session_to_client(r) for r in rows], int(total), older_total
+
+
+async def search_chat_messages(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    q: str,
+    limit: int = _MAX_SEARCH_RESULTS,
+) -> list[dict[str, Any]]:
+    """Full-text message search (PostgreSQL tsvector); LIKE fallback for SQLite tests."""
+    term = (q or "").strip()
+    if len(term) < 2:
+        return []
+    limit = min(max(1, limit), _MAX_SEARCH_RESULTS)
+    dialect = await _dialect_name(db)
+
+    if dialect == "postgresql":
+        rows = (
+            await db.execute(
+                text(
+                    """
+                    SELECT m.id, m.session_id, m.role, m.content, m.sequence, m.created_at,
+                           s.title AS session_title
+                    FROM chat_messages m
+                    JOIN chat_sessions s ON s.id = m.session_id
+                    WHERE m.user_id = :uid
+                      AND to_tsvector('simple', coalesce(m.content, ''))
+                          @@ plainto_tsquery('simple', :q)
+                    ORDER BY m.created_at DESC
+                    LIMIT :lim
+                    """
+                ),
+                {"uid": user_id, "q": term, "lim": limit},
+            )
+        ).mappings().all()
+    else:
+        pattern = f"%{term.lower()}%"
+        rows = (
+            await db.execute(
+                select(ChatMessage, ChatSession.title)
+                .join(ChatSession, ChatSession.id == ChatMessage.session_id)
+                .where(ChatMessage.user_id == user_id)
+                .where(func.lower(ChatMessage.content).like(pattern))
+                .order_by(ChatMessage.created_at.desc())
+                .limit(limit)
+            )
+        ).all()
+
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if isinstance(row, dict):
+            out.append(
+                {
+                    "messageId": row["id"],
+                    "sessionId": row["session_id"],
+                    "sessionTitle": row["session_title"] or "New chat",
+                    "role": row["role"],
+                    "content": (row["content"] or "")[:500],
+                    "sequence": row["sequence"],
+                    "createdAt": _dt_to_ms(row["created_at"]),
+                }
+            )
+        else:
+            msg, title = row
+            out.append(
+                {
+                    "messageId": msg.id,
+                    "sessionId": msg.session_id,
+                    "sessionTitle": title or "New chat",
+                    "role": msg.role,
+                    "content": (msg.content or "")[:500],
+                    "sequence": msg.sequence,
+                    "createdAt": _dt_to_ms(msg.created_at),
+                }
+            )
+    return out
+
+
+async def get_chat_session(
+    db: AsyncSession, user_id: int, session_id: str
+) -> dict[str, Any] | None:
+    row = await db.get(ChatSession, session_id)
+    if row is None or row.user_id != user_id:
+        return None
+    return _session_to_client(row)
+
+
+async def create_chat_session(db: AsyncSession, user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    session_id = str(payload.get("id") or uuid.uuid4())
+    existing = await db.get(ChatSession, session_id)
+    if existing is not None:
+        if existing.user_id != user_id:
+            raise ValueError("Session id already in use")
+        return _session_to_client(existing)
+
+    folder_id = payload.get("folderId") or payload.get("folder_id")
+    if folder_id:
+        folder_row = await db.get(ChatFolder, str(folder_id))
+        if folder_row is None or folder_row.user_id != user_id:
+            folder_id = None
+
+    now = dt.datetime.utcnow()
+    tools = payload.get("tools") if isinstance(payload.get("tools"), dict) else {}
+    row = ChatSession(
+        id=session_id,
+        user_id=user_id,
+        title=str(payload.get("title") or "New chat")[:512],
+        folder_id=folder_id,
+        model_id=str(payload.get("model") or payload.get("model_id") or "")[:512],
+        tools=tools,
+        private_mode=bool(payload.get("privateMode") or payload.get("private_mode")),
+        title_locked=bool(payload.get("titleLocked") or payload.get("title_locked")),
+        title_generated=bool(payload.get("titleGenerated") or payload.get("title_generated")),
+        tools_touched=bool(payload.get("toolsTouched") or payload.get("tools_touched")),
+        message_count=0,
+        revision=1,
+        created_at=_ms_to_dt(payload.get("createdAt")) if payload.get("createdAt") else now,
+        updated_at=_ms_to_dt(payload.get("updatedAt")) if payload.get("updatedAt") else now,
+    )
+    try:
+        async with db.begin_nested():
+            db.add(row)
+            await db.flush()
+    except IntegrityError:
+        raced = await db.get(ChatSession, session_id)
+        if raced is None or raced.user_id != user_id:
+            raise
+        return _session_to_client(raced)
+    return _session_to_client(row)
+
+
+async def update_chat_session(
+    db: AsyncSession,
+    user_id: int,
+    session_id: str,
+    updates: dict[str, Any],
+    *,
+    expected_revision: int | None = None,
+) -> dict[str, Any] | None:
+    row = await db.get(ChatSession, session_id)
+    if row is None or row.user_id != user_id:
+        return None
+    _check_expected_revision(row, expected_revision)
+
+    field_map = {
+        "title": "title",
+        "folderId": "folder_id",
+        "folder_id": "folder_id",
+        "model": "model_id",
+        "model_id": "model_id",
+        "tools": "tools",
+        "privateMode": "private_mode",
+        "private_mode": "private_mode",
+        "titleLocked": "title_locked",
+        "title_locked": "title_locked",
+        "titleGenerated": "title_generated",
+        "title_generated": "title_generated",
+        "toolsTouched": "tools_touched",
+        "tools_touched": "tools_touched",
+    }
+    for src, dest in field_map.items():
+        if src in updates:
+            value = updates[src]
+            if dest == "title" and value is not None:
+                row.title = str(value)[:512]
+            elif dest == "model_id" and value is not None:
+                row.model_id = str(value)[:512]
+            elif dest == "tools" and value is not None:
+                if not isinstance(value, dict):
+                    raise ValueError("tools must be an object")
+                _check_json_size(value, 16 * 1024)
+                row.tools = value
+            else:
+                setattr(row, dest, value)
+
+    if "updatedAt" in updates and updates["updatedAt"]:
+        row.updated_at = _ms_to_dt(updates["updatedAt"])
+    _bump_session_revision(row)
+    await db.flush()
+    return _session_to_client(row)
+
+
+async def delete_chat_session(db: AsyncSession, user_id: int, session_id: str) -> bool:
+    row = await db.get(ChatSession, session_id)
+    if row is None or row.user_id != user_id:
+        return False
+    await db.delete(row)
+    await db.flush()
+    return True
+
+
+async def _try_reconcile_inflight_assistant(
+    db: AsyncSession,
+    user_id: int,
+    session_id: str,
+) -> bool:
+    """Finalize a trailing assistant placeholder left open by a killed stream or image job."""
+    session = await db.get(ChatSession, session_id)
+    if session is None or session.user_id != user_id:
+        return False
+
+    last = (
+        await db.execute(
+            select(ChatMessage)
+            .where(ChatMessage.session_id == session_id)
+            .order_by(ChatMessage.sequence.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if last is None or last.role != "assistant":
+        return False
+
+    meta = dict(last.meta) if isinstance(last.meta, dict) else {}
+    if meta.get("receivedAt") is not None:
+        return False
+
+    age = (dt.datetime.utcnow() - last.created_at).total_seconds()
+    content = str(last.content or "")
+    force = bool(meta.get("cancelRequested"))
+    if content == IMAGE_PENDING_MARKER and age >= _STALE_IMAGE_PENDING_SEC:
+        force = True
+    if (
+        not force
+        and not content.strip()
+        and meta.get("streaming")
+        and age >= _STALE_TEXT_STREAMING_SEC
+    ):
+        force = True
+    if not force:
+        return False
+
+    if content == IMAGE_PENDING_MARKER:
+        new_content = "Image generation stopped."
+    elif content.strip():
+        new_content = content
+    else:
+        new_content = "Generation stopped."
+
+    meta["streaming"] = False
+    meta["receivedAt"] = int(time.time() * 1000)
+    meta.pop("cancelRequested", None)
+    last.content = new_content
+    last.meta = meta
+    session.last_message_at = dt.datetime.utcnow()
+    _bump_session_revision(session)
+    await db.flush()
+    return True
+
+
+async def list_session_messages(
+    db: AsyncSession,
+    user_id: int,
+    session_id: str,
+    *,
+    limit: int = 100,
+    before: int | None = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    session = await db.get(ChatSession, session_id)
+    if session is None or session.user_id != user_id:
+        return [], False
+
+    if before is None:
+        await _try_reconcile_inflight_assistant(db, user_id, session_id)
+
+    limit = min(max(1, limit), _MAX_MESSAGES_PAGE)
+    q = select(ChatMessage).where(ChatMessage.session_id == session_id)
+    if before is not None:
+        q = q.where(ChatMessage.sequence < int(before))
+    q = q.order_by(ChatMessage.sequence.desc()).limit(limit + 1)
+    rows = (await db.execute(q)).scalars().all()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    rows.reverse()
+    return [_message_to_client(r) for r in rows], has_more
+
+
+async def _next_sequence(db: AsyncSession, session_id: str) -> int:
+    current = (
+        await db.execute(
+            select(func.max(ChatMessage.sequence)).where(ChatMessage.session_id == session_id)
+        )
+    ).scalar_one()
+    return int(current or 0) + 1
+
+
+async def _touch_session_messages(
+    db: AsyncSession,
+    session: ChatSession,
+    *,
+    added: int = 0,
+    last_at: dt.datetime | None = None,
+) -> None:
+    if added:
+        session.message_count = int(session.message_count or 0) + added
+    session.last_message_at = last_at or dt.datetime.utcnow()
+    _bump_session_revision(session)
+
+
+async def append_session_messages(
+    db: AsyncSession,
+    user_id: int,
+    session_id: str,
+    messages: list[dict[str, Any]],
+    *,
+    expected_revision: int | None = None,
+) -> list[dict[str, Any]] | None:
+    session = await db.get(ChatSession, session_id)
+    if session is None or session.user_id != user_id:
+        return None
+    _check_expected_revision(session, expected_revision)
+    if not messages:
+        return []
+
+    inserted: list[ChatMessage] = []
+    new_count = 0
+    seq = await _next_sequence(db, session_id)
+    last_created = dt.datetime.utcnow()
+    for msg in messages:
+        client_id = msg.get("clientMessageId") or msg.get("client_message_id")
+        if client_id:
+            existing = (
+                await db.execute(
+                    select(ChatMessage).where(
+                        ChatMessage.session_id == session_id,
+                        ChatMessage.client_message_id == str(client_id),
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing:
+                inserted.append(existing)
+                continue
+
+        content = _compact_message_content_for_storage(str(msg.get("content") or ""), str(msg.get("role") or "user"))
+        if len(content.encode("utf-8")) > _MAX_MESSAGE_BYTES:
+            raise ValueError("Message content exceeds storage limit")
+
+        last_created = dt.datetime.utcnow()
+        row = ChatMessage(
+            id=str(msg.get("id") or uuid.uuid4()),
+            session_id=session_id,
+            user_id=user_id,
+            role=str(msg.get("role") or "user")[:16],
+            content=content,
+            sequence=seq,
+            client_message_id=str(client_id) if client_id else None,
+            meta=_message_meta_from_client(msg),
+            created_at=last_created,
+        )
+        db.add(row)
+        inserted.append(row)
+        seq += 1
+        new_count += 1
+
+    await db.flush()
+    if new_count:
+        await _touch_session_messages(db, session, added=new_count, last_at=last_created)
+        await db.flush()
+    return [_message_to_client(r) for r in inserted]
+
+
+async def replace_session_messages(
+    db: AsyncSession,
+    user_id: int,
+    session_id: str,
+    messages: list[dict[str, Any]],
+    *,
+    expected_revision: int | None = None,
+) -> list[dict[str, Any]] | None:
+    session = await db.get(ChatSession, session_id)
+    if session is None or session.user_id != user_id:
+        return None
+    _check_expected_revision(session, expected_revision)
+
+    await db.execute(delete(ChatMessage).where(ChatMessage.session_id == session_id))
+    await db.flush()
+
+    if not messages:
+        session.message_count = 0
+        session.last_message_at = None
+        _bump_session_revision(session)
+        await db.flush()
+        return []
+
+    rows: list[ChatMessage] = []
+    last_created = dt.datetime.utcnow()
+    for idx, msg in enumerate(messages, start=1):
+        role = str(msg.get("role") or "user")
+        content = _compact_message_content_for_storage(str(msg.get("content") or ""), role)
+        if len(content.encode("utf-8")) > _MAX_MESSAGE_BYTES:
+            raise ValueError("Message content exceeds storage limit")
+        last_created = dt.datetime.utcnow()
+        row = ChatMessage(
+            id=str(msg.get("id") or uuid.uuid4()),
+            session_id=session_id,
+            user_id=user_id,
+            role=role[:16],
+            content=content,
+            sequence=idx,
+            client_message_id=str(msg.get("clientMessageId") or msg.get("client_message_id") or "") or None,
+            meta=_message_meta_from_client(msg),
+            created_at=last_created,
+        )
+        db.add(row)
+        rows.append(row)
+
+    session.message_count = len(rows)
+    session.last_message_at = last_created
+    _bump_session_revision(session)
+    await db.flush()
+    return [_message_to_client(r) for r in rows]
+
+
+def _build_image_message(url: str, prompt: str, model: str) -> str:
+    payload = {"url": url, "prompt": prompt, "model": model}
+    return f"{IMAGE_MESSAGE_PREFIX}{json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}"
+
+
+async def finalize_chat_session_image(
+    db: AsyncSession,
+    user_id: int,
+    session_id: str,
+    image_url: str,
+    prompt: str,
+    model: str,
+) -> bool:
+    """Replace trailing pending marker with the generated image message (idempotent)."""
+    if not session_id or not image_url:
+        return False
+
+    session = await db.get(ChatSession, session_id)
+    if session is None or session.user_id != user_id:
+        return False
+
+    last = (
+        await db.execute(
+            select(ChatMessage)
+            .where(ChatMessage.session_id == session_id)
+            .order_by(ChatMessage.sequence.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if last is None or last.role != "assistant":
+        return False
+
+    content = str(last.content or "")
+    image_content = _build_image_message(image_url, prompt, model)
+    if content == IMAGE_PENDING_MARKER:
+        last.content = image_content
+        session.last_message_at = dt.datetime.utcnow()
+        _bump_session_revision(session)
+        await db.flush()
+        return True
+    if content.startswith(IMAGE_MESSAGE_PREFIX):
+        return True
+    return False
+
+
+async def update_last_session_message(
+    db: AsyncSession,
+    user_id: int,
+    session_id: str,
+    content: str,
+    *,
+    meta: dict[str, Any] | None = None,
+    expected_revision: int | None = None,
+) -> dict[str, Any] | None:
+    """Update the last message in a session (streaming / image finalize)."""
+    session = await db.get(ChatSession, session_id)
+    if session is None or session.user_id != user_id:
+        return None
+    _check_expected_revision(session, expected_revision)
+
+    last = (
+        await db.execute(
+            select(ChatMessage)
+            .where(ChatMessage.session_id == session_id)
+            .order_by(ChatMessage.sequence.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if last is None:
+        return None
+
+    last.content = content
+    if meta:
+        merged = dict(last.meta) if isinstance(last.meta, dict) else {}
+        merged.update(meta)
+        last.meta = merged
+    session.last_message_at = dt.datetime.utcnow()
+    _bump_session_revision(session)
+    await db.flush()
+    return _session_to_client(session)
+
+
+async def cancel_streaming_reply(
+    db: AsyncSession,
+    user_id: int,
+    session_id: str,
+) -> dict[str, Any] | None:
+    """Stop and finalize the trailing assistant placeholder (live stream or orphan)."""
+    session = await db.get(ChatSession, session_id)
+    if session is None or session.user_id != user_id:
+        return None
+
+    last = (
+        await db.execute(
+            select(ChatMessage)
+            .where(ChatMessage.session_id == session_id)
+            .order_by(ChatMessage.sequence.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if last is None or last.role != "assistant":
+        return None
+
+    meta = dict(last.meta) if isinstance(last.meta, dict) else {}
+    if meta.get("receivedAt") is not None:
+        return _session_to_client(session)
+
+    content = str(last.content or "")
+    if content == IMAGE_PENDING_MARKER:
+        new_content = "Image generation stopped."
+    elif content.strip():
+        new_content = content
+    else:
+        new_content = "Generation stopped."
+
+    meta["streaming"] = False
+    meta["receivedAt"] = int(time.time() * 1000)
+    meta.pop("cancelRequested", None)
+    last.content = new_content
+    last.meta = meta
+    session.last_message_at = dt.datetime.utcnow()
+    _bump_session_revision(session)
+    await db.flush()
+    return _session_to_client(session)
+
+
+async def reconcile_session_message_stats(db: AsyncSession) -> int:
+    """Nightly reconcile: recompute message_count/last_message_at from messages."""
+    conn = await db.connection()
+    dialect = conn.dialect.name
+    if dialect == "postgresql":
+        await db.execute(
+            text(
+                """
+                UPDATE chat_sessions AS cs SET
+                    message_count = COALESCE(sub.cnt, 0),
+                    last_message_at = sub.last_at
+                FROM (
+                    SELECT session_id, COUNT(*)::int AS cnt, MAX(created_at) AS last_at
+                    FROM chat_messages
+                    GROUP BY session_id
+                ) AS sub
+                WHERE cs.id = sub.session_id
+                """
+            )
+        )
+        await db.execute(
+            text(
+                """
+                UPDATE chat_sessions SET message_count = 0, last_message_at = NULL
+                WHERE id NOT IN (SELECT DISTINCT session_id FROM chat_messages)
+                """
+            )
+        )
+    else:
+        sessions = (await db.execute(select(ChatSession.id))).scalars().all()
+        for session_id in sessions:
+            row = await db.get(ChatSession, session_id)
+            if row is None:
+                continue
+            count = (
+                await db.execute(
+                    select(func.count())
+                    .select_from(ChatMessage)
+                    .where(ChatMessage.session_id == session_id)
+                )
+            ).scalar() or 0
+            last_at = (
+                await db.execute(
+                    select(func.max(ChatMessage.created_at)).where(
+                        ChatMessage.session_id == session_id
+                    )
+                )
+            ).scalar()
+            row.message_count = int(count)
+            row.last_message_at = last_at
+    await db.flush()
+    return 0

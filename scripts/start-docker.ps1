@@ -27,7 +27,7 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host ""
 Write-Host "NITRO:         http://localhost:8080  (wait ~30s on first build)" -ForegroundColor Green
-Write-Host "MinIO console: http://localhost:9001  (nitro / ***REMOVED***)" -ForegroundColor Yellow
+Write-Host "MinIO console: http://localhost:9001  (credentials in .env)" -ForegroundColor Yellow
 Write-Host "PostgreSQL:    localhost:5432  (nitro / nitro)" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "Following nitro container logs (Ctrl+C to stop watching; containers keep running)..." -ForegroundColor Cyan

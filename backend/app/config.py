@@ -3,12 +3,27 @@
 from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Known placeholder values that must never reach a production deployment.
+# Used by the startup guard (_assert_production_safe) to refuse boot when an
+# operator forgot to override the bundled dev defaults.
+INSECURE_DEFAULTS: frozenset[str] = frozenset(
+    {
+        "change-me-in-production",  # SECRET_KEY
+        "admin",  # ADMIN_PASSWORD
+        "sk-alpha-router-master",  # GATEWAY_MASTER_KEY
+    }
+)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = "Alpha Router"
     debug: bool = False
+    # "development" (default) keeps all hardening opt-in so existing single-box
+    # deployments boot unchanged. "production" enables the startup guard that
+    # refuses to boot while insecure defaults are still configured.
+    environment: str = "development"
     secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24 * 7

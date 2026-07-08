@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import contextlib
 import json
 import re
 import sys
@@ -157,10 +158,99 @@ def _format_execution_result(stdout: str, stderr: str, exit_code: int) -> str:
     return "\n".join(lines)
 
 
+_PRELUDE = (
+    "import json, math, statistics, re, csv, io\n"
+    "from datetime import datetime\n"
+    "try:\n    import pandas as pd\n"
+    "except ImportError:\n    pd = None\n\n"
+)
+
+
 async def run_python_sandbox(code: str, workspace_files: dict[str, str] | None = None) -> str:
+    """Execute user code and return a formatted stdout/stderr summary.
+
+    Uses a disposable, network-less, read-only container when a sandbox image is
+    configured (settings.code_sandbox_image); otherwise falls back to the legacy
+    in-process subprocess. The signature and return format are stable so callers
+    (proxy_service) are unaffected.
+    """
     validate_python_code(code)
     workspace_files = workspace_files or {}
 
+    from app.config import get_settings
+
+    settings = get_settings()
+    image = (settings.code_sandbox_image or "").strip()
+    if image:
+        return await _run_in_container(code, workspace_files, settings, image)
+    return await _run_in_subprocess(code, workspace_files)
+
+
+async def _run_in_container(code: str, workspace_files: dict[str, str], settings, image: str) -> str:
+    """Run code in a throwaway container isolated from secrets, network, and host FS."""
+    payload = json.dumps({"code": _PRELUDE + code + "\n", "files": workspace_files})
+    timeout = int(settings.code_sandbox_timeout_seconds or CODE_TIMEOUT_SECONDS)
+
+    docker_args = [
+        "docker", "run", "--rm", "-i",
+        "--network", "none",
+        "--read-only",
+        "--tmpfs", "/tmp:rw,exec,size=64m",
+        "--memory", str(settings.code_sandbox_memory or "256m"),
+        "--memory-swap", str(settings.code_sandbox_memory or "256m"),
+        "--pids-limit", str(int(settings.code_sandbox_pids_limit or 128)),
+        "--cpus", "1.0",
+        "--user", "65534:65534",
+        "--cap-drop", "ALL",
+        "--security-opt", "no-new-privileges",
+        "--log-driver", "none",
+        image,
+    ]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *docker_args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        return "Code interpreter error: sandbox runtime unavailable (docker CLI not found)."
+
+    try:
+        stdout_b, stderr_b = await asyncio.wait_for(
+            proc.communicate(input=payload.encode("utf-8")),
+            # Grace beyond the in-sandbox timeout so we prefer a clean result over a kill.
+            timeout=timeout + 10,
+        )
+    except (TimeoutError, asyncio.TimeoutError):
+        proc.kill()
+        with contextlib.suppress(Exception):
+            await proc.communicate()
+        return f"Code interpreter error: execution timed out ({timeout}s limit)."
+
+    raw_out = stdout_b.decode("utf-8", errors="replace").strip()
+    raw_err = stderr_b.decode("utf-8", errors="replace")
+
+    if not raw_out:
+        # No JSON envelope => the docker invocation itself failed (image missing, etc.).
+        detail = raw_err.strip() or f"exit_code {proc.returncode}"
+        return f"Code interpreter error: sandbox did not run ({detail[:400]})."
+
+    try:
+        result = json.loads(raw_out.splitlines()[-1])
+    except json.JSONDecodeError:
+        return _format_execution_result(raw_out, raw_err, proc.returncode or 0)
+
+    return _format_execution_result(
+        str(result.get("stdout") or ""),
+        str(result.get("stderr") or ""),
+        int(result.get("exit_code") or 0),
+    )
+
+
+async def _run_in_subprocess(code: str, workspace_files: dict[str, str]) -> str:
+    """Legacy in-process execution (no container). Retained for dev/no-docker setups."""
     with tempfile.TemporaryDirectory(prefix="nitro-code-") as tmp:
         root = Path(tmp)
         for name, content in workspace_files.items():
@@ -168,13 +258,7 @@ async def run_python_sandbox(code: str, workspace_files: dict[str, str] | None =
             path.write_text(content, encoding="utf-8")
 
         script = root / "nitro_user_code.py"
-        prelude = (
-            "import json, math, statistics, re, csv, io\n"
-            "from datetime import datetime\n"
-            "try:\n    import pandas as pd\n"
-            "except ImportError:\n    pd = None\n\n"
-        )
-        script.write_text(prelude + code + "\n", encoding="utf-8")
+        script.write_text(_PRELUDE + code + "\n", encoding="utf-8")
 
         proc = await asyncio.create_subprocess_exec(
             sys.executable,

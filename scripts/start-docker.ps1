@@ -27,7 +27,7 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host ""
 Write-Host "Alpha Router:         http://localhost:8080  (wait ~30s on first build)" -ForegroundColor Green
-Write-Host "MinIO console: http://localhost:9001  (alpha-router / ***REMOVED***)" -ForegroundColor Yellow
+Write-Host "MinIO console: http://localhost:9001  (credentials in .env)" -ForegroundColor Yellow
 Write-Host "PostgreSQL:    localhost:5432  (alpha-router / alpha-router)" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "Following alpha-router container logs (Ctrl+C to stop watching; containers keep running)..." -ForegroundColor Cyan

@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     # Default admin (local auth panel)
     admin_username: str = "admin"
     admin_password: str = "admin"
-    service_admin_password: str = "***REMOVED***"
+    service_admin_password: str = "changeme"
 
     database_url: str = "postgresql+asyncpg://alpha_router:alpha_router@postgres:5432/alpha-router"  # env: DATABASE_URL
     database_read_url: str = ""  # env: DATABASE_READ_URL — optional read replica for GET chat routes
@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     # Object storage (MinIO / S3-compatible) — all media blobs
     s3_endpoint_url: str = "http://127.0.0.1:9000"
     s3_access_key: str = "alpha-router"
-    s3_secret_key: str = "***REMOVED***"
+    s3_secret_key: str = "minioadmin"
     s3_bucket: str = "alpha-router-media"
     s3_region: str = "us-east-1"
     s3_use_ssl: bool = False

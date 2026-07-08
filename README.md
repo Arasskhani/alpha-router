@@ -30,7 +30,7 @@ docker compose up --build -d
 |--------|-----|
 | UI + API | http://localhost:8080 |
 | Health | http://localhost:8080/health |
-| MinIO console | http://localhost:9001 (`alpha-router` / `***REMOVED***`) |
+| MinIO console | http://localhost:9001 (credentials in `.env`) |
 | PostgreSQL | localhost:5432 (`alpha-router` / `alpha-router`) |
 
 Default **admin panel** login: `admin` / `admin`

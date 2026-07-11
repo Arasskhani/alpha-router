@@ -36,11 +36,33 @@ async def is_migration_completed(db: AsyncSession, key: str) -> bool:
 
 
 async def mark_migration_completed(db: AsyncSession, key: str) -> None:
-    row = await db.get(SystemSetting, key)
-    if row:
-        row.value = "true"
+    """Record a migration as completed.
+
+    Race-safe across concurrent uvicorn workers: on first boot of a new
+    migration, every worker that passed the ``is_migration_completed`` check
+    before the flag existed will reach here. The ORM get-then-add pattern would
+    raise ``UniqueViolation`` on all but the first worker and crash startup, so
+    we use a dialect-aware upsert (ON CONFLICT for PostgreSQL, INSERT OR REPLACE
+    for SQLite) that makes concurrent inserts idempotent.
+    """
+    from sqlalchemy import text
+
+    dialect = db.bind.dialect.name if db.bind else "postgresql"
+    if dialect == "postgresql":
+        await db.execute(
+            text(
+                """
+                INSERT INTO system_settings (key, value) VALUES (:key, 'true')
+                ON CONFLICT (key) DO UPDATE SET value = 'true'
+                """
+            ),
+            {"key": key},
+        )
     else:
-        db.add(SystemSetting(key=key, value="true"))
+        await db.execute(
+            text("INSERT OR REPLACE INTO system_settings (key, value) VALUES (:key, 'true')"),
+            {"key": key},
+        )
     await db.flush()
 
 

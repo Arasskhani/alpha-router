@@ -97,6 +97,20 @@ class ChatCompletionPersister:
         self._last_persist_at = 0.0
         self._prepared = False
 
+    def reset_persist_state(self) -> None:
+        """Reset incremental-flush tracking after the DB session is rolled back.
+
+        When ``on_content`` raises and the caller rolls the session back, the
+        last successfully-committed flush is undone too — the row may revert to
+        a shorter content (or the empty placeholder). Without resetting these
+        counters, the next flush would see a small ``delta_chars`` and skip,
+        leaving the assistant message stuck at the pre-rollback content. Forcing
+        a full re-write on the next flush keeps the stored message consistent
+        with the in-memory ``collected_content``.
+        """
+        self._last_persist_len = 0
+        self._last_persist_at = 0.0
+
     async def _ensure_chat_session(self) -> None:
         existing = await get_chat_session(self.db, self.user_id, self.session_id)
         if existing is not None:
@@ -182,15 +196,32 @@ class ChatCompletionPersister:
                 content = f"Error: {error_message}"
         elif not content.strip() and not success:
             content = "No response from model."
-        await self._flush(content, partial=False)
-        if success:
-            await _maybe_set_fallback_session_title(
-                self.db,
-                self.user_id,
-                self.session_id,
-                self.user_message,
-            )
-            await self.db.commit()
+        # If a prior on_content flush was rolled back, the stored message may be
+        # stale; force a full re-write of the final content regardless of the
+        # incremental counters.
+        self.reset_persist_state()
+        try:
+            await self._flush(content, partial=False)
+            if success:
+                await _maybe_set_fallback_session_title(
+                    self.db,
+                    self.user_id,
+                    self.session_id,
+                    self.user_message,
+                )
+                await self.db.commit()
+        except Exception:
+            # Last-resort: roll back and retry the final write once on a clean
+            # transaction so the assistant message is not left streaming=True.
+            try:
+                await self.db.rollback()
+            except Exception:
+                pass
+            try:
+                await self._flush(content, partial=False)
+                await self.db.commit()
+            except Exception:
+                await self.db.rollback()
 
     async def _flush(self, content: str, *, partial: bool) -> None:
         meta: dict[str, Any] = {"streaming": partial}

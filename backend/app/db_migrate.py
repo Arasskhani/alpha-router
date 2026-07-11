@@ -11,6 +11,7 @@ from app.services.migration_flags import (
     MEDIA_DEDUPE_MIGRATION_KEY,
     PRICING_SANITY_MIGRATION_KEY,
     RBAC_MIGRATION_KEY,
+    SECRET_AT_REST_ENCRYPTION_KEY,
     USER_ROLES_MIGRATION_KEY,
     USER_BUDGET_PLAN_SYNC_KEY,
     is_migration_completed_sync,
@@ -828,6 +829,83 @@ async def apply_chat_performance_migrations() -> None:
         await conn.run_sync(migrate)
 
 
+async def apply_secret_at_rest_encryption(db) -> None:
+    """One-time: encrypt plaintext secrets already stored in the database.
+
+    Phase 3 introduced Fernet encryption for connection API keys, SMTP
+    passwords, and LDAP/Keycloak credentials in ``auth_providers.config_json``.
+    Existing rows written before this phase hold plaintext in the ``*_encrypted``
+    columns. This migration rewrites them as ciphertext in place.
+
+    Idempotent: ``encrypt_secret`` skips values that already look like
+    ciphertext, so a partial run that crashed mid-table can be re-run safely,
+    and re-running after completion is a no-op. Guarded by a completion flag so
+    the per-row scan only happens once.
+    """
+    from app.services.auth_config import _SENSITIVE_FIELDS
+    from app.services.migration_flags import is_migration_completed, mark_migration_completed
+    from app.services.secret_crypto import encrypt_secret, is_encrypted
+
+    if await is_migration_completed(db, SECRET_AT_REST_ENCRYPTION_KEY):
+        return
+
+    # connections.api_key_encrypted
+    from app.models.connection import Connection
+
+    conns = (await db.execute(text("SELECT id, api_key_encrypted FROM connections"))).all()
+    for row in conns:
+        cid, val = row[0], row[1]
+        if val and not is_encrypted(val):
+            await db.execute(
+                text("UPDATE connections SET api_key_encrypted = :v WHERE id = :id"),
+                {"v": encrypt_secret(val), "id": cid},
+            )
+
+    # smtp_settings.password_encrypted
+    try:
+        smtp_rows = (await db.execute(text("SELECT id, password_encrypted FROM smtp_settings"))).all()
+    except Exception:
+        smtp_rows = []
+    for row in smtp_rows:
+        sid, val = row[0], row[1]
+        if val and not is_encrypted(val):
+            await db.execute(
+                text("UPDATE smtp_settings SET password_encrypted = :v WHERE id = :id"),
+                {"v": encrypt_secret(val), "id": sid},
+            )
+
+    # auth_providers.config_json — encrypt the sensitive fields inside the JSON blob
+    try:
+        ap_rows = (await db.execute(text("SELECT provider, config_json FROM auth_providers"))).all()
+    except Exception:
+        ap_rows = []
+    import json as _json
+
+    for row in ap_rows:
+        provider, raw = row[0], row[1]
+        sensitive = _SENSITIVE_FIELDS.get(provider, set())
+        if not sensitive or not raw:
+            continue
+        try:
+            payload = _json.loads(raw)
+        except Exception:
+            continue
+        changed = False
+        for k in sensitive:
+            v = payload.get(k)
+            if v and not is_encrypted(v):
+                payload[k] = encrypt_secret(v)
+                changed = True
+        if changed:
+            await db.execute(
+                text("UPDATE auth_providers SET config_json = :v WHERE provider = :p"),
+                {"v": _json.dumps(payload), "p": provider},
+            )
+
+    await db.commit()
+    await mark_migration_completed(db, SECRET_AT_REST_ENCRYPTION_KEY)
+
+
 async def run_one_time_migrations(db) -> None:
     """Run all pending one-time data/storage migrations; no-op when already completed."""
     from app.services.storage_migration_service import (
@@ -849,6 +927,7 @@ async def run_one_time_migrations(db) -> None:
     await apply_chat_normalized_storage_migrations()
     await apply_chat_performance_migrations()
     await apply_user_budget_plan_sync(db)
+    await apply_secret_at_rest_encryption(db)
     await migrate_legacy_blob_storage(db)
     await migrate_legacy_storage_layout(db)
     await reconcile_media_storage_v3(db)

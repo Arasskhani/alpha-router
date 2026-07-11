@@ -31,6 +31,7 @@ from app.services.code_interpreter_service import (
 )
 from app.services.chat_completion_persistence import persister_from_body
 from app.services.llm_providers import litellm_model_for_provider, resolve_litellm_provider
+from app.services.secret_crypto import decrypt_secret
 
 # Backward-compatible aliases for internal modules that import from proxy_service.
 _litellm_model_for_provider = litellm_model_for_provider
@@ -112,7 +113,7 @@ async def resolve_model_and_key(
     conn = await db.get(Connection, row.connection_id)
     if not conn or not conn.is_active:
         return None, None, None, None
-    return row, conn.api_key_encrypted, conn.base_url, conn.provider_type
+    return row, decrypt_secret(conn.api_key_encrypted), conn.base_url, conn.provider_type
 
 
 def _extract_prompt_text(messages: list) -> str:

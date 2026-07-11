@@ -23,6 +23,7 @@ RBAC_REMOVED_ROLES_V3_MIGRATION_KEY = "rbac_removed_roles_v3_storage_migration_c
 USER_BUDGET_PLAN_SYNC_KEY = "user_budget_plan_sync_v1"
 CHAT_NORMALIZED_STORAGE_KEY = "chat_normalized_storage_v1"
 CHAT_PERFORMANCE_MIGRATION_KEY = "chat_performance_indexes_v1"
+SECRET_AT_REST_ENCRYPTION_KEY = "secret_at_rest_encryption_v1"
 
 
 def value_is_migration_completed(value: str | None) -> bool:

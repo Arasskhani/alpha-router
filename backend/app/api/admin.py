@@ -44,6 +44,7 @@ from app.services.model_sync import (
     sync_connection_models,
     sync_connection_with_flash,
 )
+from app.services.secret_crypto import decrypt_secret, encrypt_secret, mask_secret
 from app.services.log_export_service import request_logs_to_export_dataframe, resolve_log_export_maps
 from app.services.activity_pdf_service import ActivityPdfError, render_activity_page_pdf
 from app.services.reports_service import export_activity_logs_workbook
@@ -163,7 +164,7 @@ async def create_connection(
     conn = Connection(
         name=body.name.strip(),
         provider_type=provider,
-        api_key_encrypted=body.api_key,
+        api_key_encrypted=encrypt_secret(body.api_key),
         base_url=base_url,
         sync_interval_hours=body.sync_interval_hours,
     )
@@ -208,7 +209,7 @@ async def list_connections(db: AsyncSession = Depends(get_db), _: User = Depends
             "last_sync_at": c.last_sync_at.isoformat() if c.last_sync_at else None,
             "created_at": c.created_at.isoformat() if c.created_at else None,
             "updated_at": c.updated_at.isoformat() if c.updated_at else None,
-            "api_key_masked": "****" + (c.api_key_encrypted[-4:] if c.api_key_encrypted else ""),
+            "api_key_masked": mask_secret(c.api_key_encrypted),
             "usage_usd": usage_map.get(c.id, 0.0),
         }
         for c in rows
@@ -249,7 +250,7 @@ async def sync_models(conn_id: int, db: AsyncSession = Depends(get_db), _: User 
     conn = await db.get(Connection, conn_id)
     if not conn:
         raise HTTPException(404)
-    result = await sync_connection_with_flash(db, conn, conn.api_key_encrypted)
+    result = await sync_connection_with_flash(db, conn, decrypt_secret(conn.api_key_encrypted))
     await db.commit()
     return result
 
@@ -791,7 +792,7 @@ async def update_connection(
         conn.provider_type = provider
         patches["provider_type"] = conn.provider_type
     if body.api_key:
-        conn.api_key_encrypted = body.api_key
+        conn.api_key_encrypted = encrypt_secret(body.api_key)
     if body.base_url is not None:
         conn.base_url = (body.base_url or "").strip() or None
         patches["base_url"] = conn.base_url or ""

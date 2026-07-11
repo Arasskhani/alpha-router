@@ -11,7 +11,7 @@ from app.api.deps import require_authentication, require_authentication_write
 from app.database import get_db
 from app.models.auth_provider import AuthProviderConfig
 from app.models.user import User
-from app.services.auth_config import get_provider_config, save_provider_config
+from app.services.auth_config import get_provider_config, save_provider_config, decrypt_provider_config
 from app.services.ldap_auth import test_ldap_connection
 from app.services.ldap_config import (
     merge_simple_ldap_config,
@@ -59,7 +59,7 @@ class KeycloakConfigIn(BaseModel):
 async def get_ldap(db: AsyncSession = Depends(get_db), _: User = Depends(require_authentication)):
     row = await db.get(AuthProviderConfig, "ldap")
     if row and row.config_json:
-        raw = {"enabled": row.enabled, **json.loads(row.config_json)}
+        raw = decrypt_provider_config("ldap", {"enabled": row.enabled, **json.loads(row.config_json)})
     else:
         raw = await get_provider_config(db, "ldap")
     return simple_public_view(raw)
@@ -70,7 +70,7 @@ async def save_ldap(body: LdapSimpleIn, db: AsyncSession = Depends(get_db), _: U
     existing_row = await db.get(AuthProviderConfig, "ldap")
     existing: dict = {}
     if existing_row and existing_row.config_json:
-        existing = json.loads(existing_row.config_json)
+        existing = decrypt_provider_config("ldap", json.loads(existing_row.config_json))
 
     password = resolve_password(body.bind_password, existing)
     ous = parse_sync_ous(body.sync_ous)
@@ -124,7 +124,7 @@ async def test_ldap(
     existing_row = await db.get(AuthProviderConfig, "ldap")
     existing: dict = {}
     if existing_row and existing_row.config_json:
-        existing = json.loads(existing_row.config_json)
+        existing = decrypt_provider_config("ldap", json.loads(existing_row.config_json))
 
     password = resolve_password(body.bind_password, existing)
     ous = parse_sync_ous(body.sync_ous)

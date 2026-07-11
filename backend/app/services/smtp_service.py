@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.system import SmtpSettings
+from app.services.secret_crypto import decrypt_secret
 
 
 class SmtpNotConfiguredError(Exception):
@@ -56,7 +57,7 @@ async def send_email(
         client = aiosmtplib.SMTP(hostname=row.host, port=row.port, use_tls=bool(row.use_tls))
         await client.connect()
         if row.username and row.password_encrypted:
-            await client.login(row.username, row.password_encrypted)
+            await client.login(row.username, decrypt_secret(row.password_encrypted))
         await client.send_message(msg, recipients=recipients)
         await client.quit()
     except SmtpNotConfiguredError:

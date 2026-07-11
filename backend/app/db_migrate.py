@@ -904,6 +904,7 @@ async def apply_secret_at_rest_encryption(db) -> None:
 
     await db.commit()
     await mark_migration_completed(db, SECRET_AT_REST_ENCRYPTION_KEY)
+    await db.commit()
 
 
 async def run_one_time_migrations(db) -> None:

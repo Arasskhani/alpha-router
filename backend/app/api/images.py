@@ -259,8 +259,12 @@ async def _reference_image_dimensions(reference_image: str) -> tuple[int, int] |
     data = _reference_image_bytes(ref)
     if data is None and (ref.startswith("http://") or ref.startswith("https://")):
         try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+            from app.services.ssrf_guard import assert_response_target_safe, assert_url_safe, safe_client
+
+            assert_url_safe(ref)
+            async with safe_client() as client:
                 resp = await client.get(ref)
+                assert_response_target_safe(resp)
                 if resp.status_code == 200:
                     data = resp.content
         except Exception:

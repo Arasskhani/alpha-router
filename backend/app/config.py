@@ -105,6 +105,16 @@ class Settings(BaseSettings):
     # Headless PDF: chrome | msedge | chromium (bundled; requires playwright install chromium)
     playwright_browser_channel: str = "chrome"
 
+    # SSRF protection: block user-supplied fetches that resolve to private /
+    # loopback / link-local / metadata IPs. Set to true ONLY for self-hosted
+    # internal deployments where users must fetch from private servers.
+    allow_ssrf_private_ranges: bool = False
+    # Security headers: HSTS is only emitted when enabled AND environment is
+    # production (i.e. behind HTTPS). CSP is opt-in to avoid breaking the SPA
+    # without testing; when empty, no CSP header is sent.
+    enable_hsts: bool = False
+    content_security_policy: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

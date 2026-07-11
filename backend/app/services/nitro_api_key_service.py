@@ -6,6 +6,7 @@ import datetime
 from typing import Literal
 
 from fastapi import HTTPException
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.api_key import NitroApiKey
@@ -68,10 +69,24 @@ async def record_key_usage(db: AsyncSession, key: NitroApiKey, cost_usd: float) 
     if cost_usd <= 0:
         return
     await maybe_reset_key_period(db, key)
-    key.period_used_usd = float(key.period_used_usd or 0) + cost_usd
-    key.total_used_usd = float(key.total_used_usd or 0) + cost_usd
-    key.last_used_at = _utc_now()
-    await db.flush()
+    # Atomic increment via SQL UPDATE — concurrent gateway requests using the
+    # same nitro key would otherwise race on period_used_usd/total_used_usd and
+    # lose updates (read-modify-write on the ORM object is not atomic). The
+    # single UPDATE keeps the on-row counters consistent with the RequestLog
+    # ledger that is committed in the same transaction.
+    await db.execute(
+        text(
+            "UPDATE nitro_api_keys SET "
+            "period_used_usd = COALESCE(period_used_usd, 0) + :cost, "
+            "total_used_usd = COALESCE(total_used_usd, 0) + :cost, "
+            "last_used_at = :now WHERE id = :kid"
+        ),
+        {"cost": float(cost_usd), "now": _utc_now(), "kid": key.id},
+    )
+    # Refresh the in-memory ORM object so callers reading key.period_used_usd
+    # right after (e.g. admin UI, reports) see the post-increment value without
+    # waiting for the session to expire.
+    await db.refresh(key, attribute_names=["period_used_usd", "total_used_usd", "last_used_at"])
 
 
 def key_to_dict(key: NitroApiKey, owner: dict | None = None) -> dict:

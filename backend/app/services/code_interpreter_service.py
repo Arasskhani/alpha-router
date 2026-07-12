@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import ast
 import asyncio
-import contextlib
 import json
 import re
 import sys
 import tempfile
 from pathlib import Path
+
+import httpx
 
 PYTHON_BLOCK_RE = re.compile(r"```(?:python|py)\s*\n([\s\S]*?)```", re.IGNORECASE)
 ATTACH_PREFIX = "__ALPHA_ROUTER_ATTACH_JSON__:"
@@ -169,10 +170,9 @@ _PRELUDE = (
 async def run_python_sandbox(code: str, workspace_files: dict[str, str] | None = None) -> str:
     """Execute user code and return a formatted stdout/stderr summary.
 
-    Uses a disposable, network-less, read-only container when a sandbox image is
-    configured (settings.code_sandbox_image); otherwise falls back to the legacy
-    in-process subprocess. The signature and return format are stable so callers
-    (proxy_service) are unaffected.
+    Uses the authenticated internal sandbox broker when configured. The legacy
+    subprocess path remains available only as a compatibility fallback until
+    production fail-closed enforcement is enabled in the next remediation phase.
     """
     validate_python_code(code)
     workspace_files = workspace_files or {}
@@ -180,72 +180,57 @@ async def run_python_sandbox(code: str, workspace_files: dict[str, str] | None =
     from app.config import get_settings
 
     settings = get_settings()
-    image = (settings.code_sandbox_image or "").strip()
-    if image:
-        return await _run_in_container(code, workspace_files, settings, image)
+    broker_url = (settings.code_sandbox_broker_url or "").strip()
+    if broker_url:
+        return await _run_via_broker(code, workspace_files, settings, broker_url)
     return await _run_in_subprocess(code, workspace_files)
 
 
-async def _run_in_container(code: str, workspace_files: dict[str, str], settings, image: str) -> str:
-    """Run code in a throwaway container isolated from secrets, network, and host FS."""
-    payload = json.dumps({"code": _PRELUDE + code + "\n", "files": workspace_files})
+async def _run_via_broker(
+    code: str,
+    workspace_files: dict[str, str],
+    settings,
+    broker_url: str,
+) -> str:
+    """Send a bounded execution request to the isolated internal broker."""
+    payload = {"code": _PRELUDE + code + "\n", "files": workspace_files}
     timeout = int(settings.code_sandbox_timeout_seconds or CODE_TIMEOUT_SECONDS)
-
-    docker_args = [
-        "docker", "run", "--rm", "-i",
-        "--network", "none",
-        "--read-only",
-        "--tmpfs", "/tmp:rw,exec,size=64m",
-        "--memory", str(settings.code_sandbox_memory or "256m"),
-        "--memory-swap", str(settings.code_sandbox_memory or "256m"),
-        "--pids-limit", str(int(settings.code_sandbox_pids_limit or 128)),
-        "--cpus", "1.0",
-        "--user", "65534:65534",
-        "--cap-drop", "ALL",
-        "--security-opt", "no-new-privileges",
-        "--log-driver", "none",
-        image,
-    ]
-
+    token = (settings.code_sandbox_broker_token or "").strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *docker_args,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-    except FileNotFoundError:
-        return "Code interpreter error: sandbox runtime unavailable (docker CLI not found)."
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(max(timeout + 20, 45)),
+            trust_env=False,
+        ) as client:
+            response = await client.post(
+                f"{broker_url.rstrip('/')}/v1/execute",
+                json=payload,
+                headers=headers,
+            )
+    except httpx.RequestError:
+        return "Code interpreter error: sandbox broker unavailable."
 
+    if response.status_code == 504:
+        return "Code interpreter error: execution timed out."
+    if response.status_code == 413:
+        return "Code interpreter error: sandbox input or output exceeds the allowed limit."
+    if response.status_code != 200:
+        return "Code interpreter error: sandbox execution unavailable."
     try:
-        stdout_b, stderr_b = await asyncio.wait_for(
-            proc.communicate(input=payload.encode("utf-8")),
-            # Grace beyond the in-sandbox timeout so we prefer a clean result over a kill.
-            timeout=timeout + 10,
-        )
-    except (TimeoutError, asyncio.TimeoutError):
-        proc.kill()
-        with contextlib.suppress(Exception):
-            await proc.communicate()
-        return f"Code interpreter error: execution timed out ({timeout}s limit)."
-
-    raw_out = stdout_b.decode("utf-8", errors="replace").strip()
-    raw_err = stderr_b.decode("utf-8", errors="replace")
-
-    if not raw_out:
-        # No JSON envelope => the docker invocation itself failed (image missing, etc.).
-        detail = raw_err.strip() or f"exit_code {proc.returncode}"
-        return f"Code interpreter error: sandbox did not run ({detail[:400]})."
-
+        result = response.json()
+    except (json.JSONDecodeError, ValueError):
+        return "Code interpreter error: invalid sandbox response."
+    if not isinstance(result, dict):
+        return "Code interpreter error: invalid sandbox response."
     try:
-        result = json.loads(raw_out.splitlines()[-1])
-    except json.JSONDecodeError:
-        return _format_execution_result(raw_out, raw_err, proc.returncode or 0)
+        exit_code = int(result.get("exit_code") or 0)
+    except (TypeError, ValueError):
+        return "Code interpreter error: invalid sandbox response."
 
     return _format_execution_result(
         str(result.get("stdout") or ""),
         str(result.get("stderr") or ""),
-        int(result.get("exit_code") or 0),
+        exit_code,
     )
 
 

@@ -22,8 +22,11 @@ def _bridge_base() -> str:
 
 
 def _headers() -> dict[str, str]:
-    token = (get_settings().ldap_bridge_token or "").strip()
+    settings = get_settings()
+    token = (settings.ldap_bridge_token or "").strip()
     if not token:
+        if (settings.ldap_bridge_url or "").strip():
+            raise LdapBridgeError("LDAP bridge token is not configured")
         return {}
     return {"Authorization": f"Bearer {token}"}
 

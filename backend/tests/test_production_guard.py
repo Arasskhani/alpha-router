@@ -71,6 +71,38 @@ def test_production_accepts_when_all_secrets_overridden():
     _check_production_safe(**_prod_kwargs())
 
 
+@pytest.mark.parametrize(
+    "token",
+    [
+        "",
+        "short-token",
+        "alpha-router-ldap-bridge",
+    ],
+)
+def test_production_rejects_missing_weak_or_default_ldap_bridge_token(token):
+    with pytest.raises(RuntimeError) as exc:
+        _check_production_safe(
+            **_prod_kwargs(
+                ldap_bridge_url="http://host.docker.internal:8765",
+                ldap_bridge_token=token,
+            )
+        )
+    assert "LDAP_BRIDGE_TOKEN" in str(exc.value)
+
+
+def test_production_accepts_strong_ldap_bridge_token():
+    _check_production_safe(
+        **_prod_kwargs(
+            ldap_bridge_url="http://host.docker.internal:8765",
+            ldap_bridge_token="a-random-bridge-token-with-at-least-32-chars",
+        )
+    )
+
+
+def test_production_allows_disabled_ldap_bridge_without_token():
+    _check_production_safe(**_prod_kwargs(ldap_bridge_url="", ldap_bridge_token=""))
+
+
 def test_empty_string_is_not_treated_as_insecure_default():
     # An operator who sets a secret to empty (e.g. disables LDAP) must not trip the guard,
     # because "" is not in INSECURE_DEFAULTS. Only the known placeholder values trip it.
@@ -82,6 +114,7 @@ def test_insecure_defaults_set_contents():
     assert "change-me-in-production" in INSECURE_DEFAULTS
     assert "admin" in INSECURE_DEFAULTS
     assert "sk-alpha-router-master" in INSECURE_DEFAULTS
+    assert "alpha-router-ldap-bridge" in INSECURE_DEFAULTS
 
 
 def test_default_environment_is_development():

@@ -55,15 +55,16 @@ def _assert_production_safe() -> None:
 
     Env-gated: a no-op unless `settings.environment == "production"`. Existing
     dev/single-box deployments (which default to "development") boot unchanged.
-    The guard only checks the three externally-exploitable secrets (JWT signing
-    key, admin bootstrap password, gateway master key); DB/object-storage creds
-    are deployment-specific and out of scope here.
+    The guard checks externally exploitable application secrets and requires a
+    strong bridge token whenever the LDAP bridge is enabled.
     """
     _check_production_safe(
         environment=settings.environment,
         secret_key=settings.secret_key,
         admin_password=settings.admin_password,
         gateway_master_key=settings.gateway_master_key,
+        ldap_bridge_url=settings.ldap_bridge_url,
+        ldap_bridge_token=settings.ldap_bridge_token,
     )
 
 
@@ -73,12 +74,13 @@ def _check_production_safe(
     secret_key: str,
     admin_password: str,
     gateway_master_key: str,
+    ldap_bridge_url: str = "",
+    ldap_bridge_token: str = "",
 ) -> None:
     """Pure check used by the startup guard and by tests.
 
-    Raises RuntimeError when `environment == "production"` and any of the three
-    externally-exploitable secrets still holds a known insecure default. No-op
-    otherwise (including the default "development" environment).
+    Raises RuntimeError when production uses an insecure application secret or
+    enables the LDAP bridge without a strong token. No-op in development.
     """
     if environment != "production":
         return
@@ -89,6 +91,14 @@ def _check_production_safe(
         insecure.append("ADMIN_PASSWORD")
     if gateway_master_key in INSECURE_DEFAULTS:
         insecure.append("GATEWAY_MASTER_KEY")
+    if ldap_bridge_url.strip():
+        bridge_token = ldap_bridge_token.strip()
+        if (
+            not bridge_token
+            or bridge_token in INSECURE_DEFAULTS
+            or len(bridge_token) < 32
+        ):
+            insecure.append("LDAP_BRIDGE_TOKEN")
     if insecure:
         raise RuntimeError(
             "Refusing to start in production with insecure default value(s): "

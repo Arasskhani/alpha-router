@@ -26,6 +26,7 @@ from app.services.secret_crypto import decrypt_secret
 from app.services.image_model_resolver import resolve_auto_router_image_model
 from app.services.budget_service import budget_request_blocked, get_user_budget_state
 from app.config import get_settings
+from app.services.media_authorization_service import MediaAccessAction, load_authorized_media_asset
 from app.services.openrouter_image_service import (
     OPENROUTER_EMPTY_IMAGE_RETRY_DELAYS_SEC,
     OPENROUTER_FALLBACK_TIMEOUT,
@@ -39,7 +40,6 @@ from app.services.openrouter_image_service import (
     post_openrouter_json,
     prefer_openrouter_images_generations,
 )
-from app.services.rbac import user_is_admin_panel
 from app.services.storage_service import (
     media_content_hash,
     media_public_url,
@@ -50,7 +50,6 @@ from app.services.storage_service import (
 from app.services.user_chat_storage_service import finalize_chat_session_image
 from app.services.image_billing_service import ImageBillingCapture, log_image_usage
 from app.services.llm_providers import litellm_model_for_provider, resolve_litellm_provider
-from app.services.user_role_service import get_user_role_slugs
 
 router = APIRouter(prefix="/api/images", tags=["images"])
 _alpha_router_MEDIA_PATH = re.compile(r"/api/chat/media/(\d+)/file/?(?:\?.*)?$")
@@ -85,12 +84,13 @@ async def resolve_reference_image_for_upstream(
 
     asset_id = parse_alpha_router_media_asset_id(ref)
     if asset_id is not None:
-        row = await db.get(MediaAsset, asset_id)
-        if not row:
-            raise HTTPException(status_code=404, detail="Reference image not found")
-        slugs = await get_user_role_slugs(db, user.id)
-        if not user_is_admin_panel(slugs) and row.user_id != user.id:
-            raise HTTPException(status_code=403, detail="Cannot use this image as reference")
+        row = await load_authorized_media_asset(
+            db,
+            user,
+            asset_id,
+            action=MediaAccessAction.READ,
+            not_found_detail="Reference image not found",
+        )
         try:
             data = await read_media_bytes(row)
         except FileNotFoundError as exc:

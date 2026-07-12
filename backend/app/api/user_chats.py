@@ -134,14 +134,14 @@ async def list_user_chats(
 ):
     settings = get_settings()
     if q and q.strip():
-        check_rate_limit(f"chat-search:{user.id}", limit=settings.chat_search_rate_limit_per_min)
+        await check_rate_limit(f"chat-search:{user.id}", limit=settings.chat_search_rate_limit_per_min)
     elif since is not None:
-        check_rate_limit(
+        await check_rate_limit(
             f"chat-list-since:{user.id}",
             limit=settings.chat_list_since_rate_limit_per_min,
         )
     else:
-        check_rate_limit(f"chat-list:{user.id}", limit=settings.chat_list_rate_limit_per_min)
+        await check_rate_limit(f"chat-list:{user.id}", limit=settings.chat_list_rate_limit_per_min)
 
     sessions, total, older_total = await list_chat_sessions(
         db,
@@ -175,7 +175,7 @@ async def search_user_chat_messages(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_read_db),
 ):
-    check_rate_limit(
+    await check_rate_limit(
         f"chat-msg-search:{user.id}",
         limit=get_settings().chat_message_search_rate_limit_per_min,
     )

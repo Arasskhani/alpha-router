@@ -97,8 +97,8 @@ services:
       - "8080:8080"
     environment:
       # Docker network overrides (env_file supplies pool/worker/rate-limit tuning)
-      LDAP_BRIDGE_URL: http://host.docker.internal:8765
-      LDAP_BRIDGE_TOKEN: alpha-router-ldap-bridge
+      LDAP_BRIDGE_URL: ${LDAP_BRIDGE_URL:-}
+      LDAP_BRIDGE_TOKEN: ${LDAP_BRIDGE_TOKEN:-}
       # Code interpreter spawns this image via the mounted Docker socket.
       CODE_SANDBOX_IMAGE: alpha-router-sandbox:latest
     volumes:

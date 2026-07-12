@@ -473,11 +473,17 @@ async def create_local_user(body: LocalUserIn, db: AsyncSession = Depends(get_db
     plan_selected = sum([body.no_plan, body.inherit_group_plan, body.plan_id is not None])
     if plan_selected > 1:
         raise HTTPException(400, detail="Specify only one of plan_id, no_plan, or inherit_group_plan")
+    from app.services.password_policy import PasswordPolicyError, validate_password
+
+    try:
+        password = validate_password(body.password)
+    except PasswordPolicyError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
     user = User(
         username=body.username,
         email=body.email,
         display_name=body.display_name or body.username,
-        hashed_password=hash_password(body.password),
+        hashed_password=hash_password(password),
         role=_normalize_role(body.role),
         auth_provider="local",
         department=body.department,
@@ -1172,9 +1178,12 @@ async def reset_local_user_password(
         raise HTTPException(404)
     if user.auth_provider != "local":
         raise HTTPException(400, detail="Password reset is only available for local users")
-    pwd = (body.password or "").strip()
-    if len(pwd) < 6:
-        raise HTTPException(400, detail="Password must be at least 6 characters")
+    from app.services.password_policy import PasswordPolicyError, validate_password
+
+    try:
+        pwd = validate_password(body.password)
+    except PasswordPolicyError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
     user.hashed_password = hash_password(pwd)
     await db.commit()
     return {"ok": True}

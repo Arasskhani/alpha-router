@@ -249,7 +249,12 @@ async def voice_message(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Transcription failed: {exc}") from exc
+        # Log the full provider error server-side; return a generic message so
+        # upstream STT provider internals are not leaked to the chat client.
+        import logging
+
+        logging.getLogger("app.api.chat").exception("Transcription failed")
+        raise HTTPException(status_code=502, detail="Transcription failed. Please try again.") from exc
 
     data_url = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
     asset = await store_generated_media(

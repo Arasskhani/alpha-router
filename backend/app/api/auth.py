@@ -91,8 +91,19 @@ async def _token_response(db: AsyncSession, user: User) -> TokenResponse:
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login_local(body: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login_local(
+    body: LoginRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
     username = body.username.strip()
+    # Brute-force protection: per-username + per-IP sliding window (Redis,
+    # shared across workers; fail-open if Redis is down). Applied before the
+    # password check so failed attempts are counted too.
+    from app.services.rate_limit import check_login_rate_limit
+
+    source_ip = request.client.host if request.client else None
+    await check_login_rate_limit(username, source_ip)
     user = (await db.execute(select(User).where(User.username == username))).scalars().first()
     if user and user.deleted_at is not None:
         raise HTTPException(status_code=401, detail="Account removed")

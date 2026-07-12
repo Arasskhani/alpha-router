@@ -3,7 +3,7 @@
 import datetime as dt
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,13 +15,15 @@ from app.models.user_media_prefs import UserMediaPreferences
 from app.services.storage_service import purge_expired_media
 from app.services.user_media_service import (
     _media_row_dict,
-    build_media_zip_bytes,
+    MediaZipLimitError,
+    build_media_zip_file,
     delete_all_user_media,
     delete_user_media_ids,
     get_or_create_user_media_prefs,
     get_user_media_quota_bytes,
     list_user_media_filtered,
     prefs_to_dict,
+    stream_media_zip,
     user_media_quota_summary,
 )
 
@@ -108,13 +110,15 @@ async def download_media_zip(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        data, packed = await build_media_zip_bytes(db, user.id, body.ids)
+        path, _packed = await build_media_zip_file(db, user.id, body.ids)
+    except MediaZipLimitError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     stamp = dt.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     filename = f"nitro-media-{stamp}.zip"
-    return Response(
-        content=data,
+    return StreamingResponse(
+        stream_media_zip(path),
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

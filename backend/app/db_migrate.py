@@ -35,7 +35,14 @@ def _ensure_missing_indexes(connection, table, insp) -> None:
 
 
 async def apply_schema_column_patches() -> None:
-    """Add ORM columns/indexes missing from existing tables (PostgreSQL, SQLite, etc.)."""
+    """Add ORM columns/indexes missing from existing tables (PostgreSQL, SQLite, etc.).
+
+    Race-safe across concurrent uvicorn workers: each worker reads the existing
+    columns and tries ADD COLUMN for any missing. Under concurrency, the first
+    worker wins and the others hit a "column already exists" error, which we
+    treat as success (the desired end state). Without this, parallel startup
+    of N workers would crash N-1 of them the first time a new column is added.
+    """
     async with engine.begin() as conn:
 
         def patch(connection) -> None:
@@ -50,7 +57,16 @@ async def apply_schema_column_patches() -> None:
                         continue
                     # Nullable-only ADD COLUMN: required for SQLite; safe on PostgreSQL upgrades.
                     ddl = col.type.compile(dialect=connection.dialect)
-                    connection.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {col.name} {ddl}"))
+                    try:
+                        connection.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {col.name} {ddl}"))
+                    except Exception as exc:
+                        # Another worker added the column between our inspect and
+                        # our ALTER. Treat "already exists" as success; re-raise
+                        # anything else (e.g. a genuine syntax / permission error).
+                        msg = str(exc).lower()
+                        if "already exists" in msg or "duplicate column" in msg:
+                            continue
+                        raise
                 _ensure_missing_indexes(connection, table, insp)
 
         await conn.run_sync(patch)

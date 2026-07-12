@@ -50,6 +50,11 @@ class User(Base):
     auth_provider = Column(String(32), default="local")  # local | ldap | keycloak
     external_id = Column(String(255), nullable=True, index=True)
     is_active = Column(Boolean, default=True)
+    # Monotonic counter bumped to revoke all previously-issued JWTs for this
+    # user (on logout, password reset, admin disable). The JWT carries the
+    # value at issue time as ``ver``; a request is rejected when
+    # ``jwt.ver < user.token_version``.
+    token_version = Column(Integer, nullable=False, server_default="0", default=0)
 
     # Directory / HR fields for reporting filters
     job_title = Column(String(255), nullable=True)

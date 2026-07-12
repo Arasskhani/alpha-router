@@ -389,6 +389,7 @@ async def disable_group_members(
             continue
         if u.is_active:
             u.is_active = False
+            u.token_version = int(u.token_version or 0) + 1
             disabled += 1
     await db.commit()
     return {"ok": True, "disabled": disabled, "skipped_admins": skipped_admins}
@@ -438,6 +439,7 @@ async def bulk_update_groups(
                     continue
                 if u.is_active:
                     u.is_active = False
+                    u.token_version = int(u.token_version or 0) + 1
                     disabled_total += 1
         await db.commit()
         return {"ok": True, "disabled": disabled_total, "skipped_admins": skipped_admins}

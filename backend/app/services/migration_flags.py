@@ -23,6 +23,7 @@ RBAC_REMOVED_ROLES_V3_MIGRATION_KEY = "rbac_removed_roles_v3_storage_migration_c
 USER_BUDGET_PLAN_SYNC_KEY = "user_budget_plan_sync_v1"
 CHAT_NORMALIZED_STORAGE_KEY = "chat_normalized_storage_v1"
 CHAT_PERFORMANCE_MIGRATION_KEY = "chat_performance_indexes_v1"
+SECRET_AT_REST_ENCRYPTION_KEY = "secret_at_rest_encryption_v1"
 
 
 def value_is_migration_completed(value: str | None) -> bool:
@@ -35,11 +36,33 @@ async def is_migration_completed(db: AsyncSession, key: str) -> bool:
 
 
 async def mark_migration_completed(db: AsyncSession, key: str) -> None:
-    row = await db.get(SystemSetting, key)
-    if row:
-        row.value = "true"
+    """Record a migration as completed.
+
+    Race-safe across concurrent uvicorn workers: on first boot of a new
+    migration, every worker that passed the ``is_migration_completed`` check
+    before the flag existed will reach here. The ORM get-then-add pattern would
+    raise ``UniqueViolation`` on all but the first worker and crash startup, so
+    we use a dialect-aware upsert (ON CONFLICT for PostgreSQL, INSERT OR REPLACE
+    for SQLite) that makes concurrent inserts idempotent.
+    """
+    from sqlalchemy import text
+
+    dialect = db.bind.dialect.name if db.bind else "postgresql"
+    if dialect == "postgresql":
+        await db.execute(
+            text(
+                """
+                INSERT INTO system_settings (key, value) VALUES (:key, 'true')
+                ON CONFLICT (key) DO UPDATE SET value = 'true'
+                """
+            ),
+            {"key": key},
+        )
     else:
-        db.add(SystemSetting(key=key, value="true"))
+        await db.execute(
+            text("INSERT OR REPLACE INTO system_settings (key, value) VALUES (:key, 'true')"),
+            {"key": key},
+        )
     await db.flush()
 
 

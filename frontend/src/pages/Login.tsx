@@ -131,13 +131,51 @@ export default function Login() {
   }, []);
 
   useEffect(() => {
-    const t = params.get("token");
-    if (t) {
-      localStorage.setItem("alpha_router_token", t);
-      localStorage.setItem("alpha_router_role", "user");
-      markLoggedIn(true);
-      nav("/app/chat");
-    }
+    // OIDC (Keycloak) callback delivers a one-time exchange code (NOT the JWT
+    // itself) via ?code=. We POST it to /api/auth/keycloak/exchange to obtain
+    // the JWT in the response body, keeping the token out of the URL/history/
+    // Referer/logs. The code is single-use and short-lived server-side.
+    const code = params.get("code");
+    if (!code) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/auth/keycloak/exchange", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code }),
+        });
+        if (!res.ok) {
+          const raw = await res.text();
+          let detail = "";
+          try {
+            detail = (JSON.parse(raw) as { detail?: string }).detail || "";
+          } catch {
+            detail = raw || "";
+          }
+          if (!cancelled) setError(detail || "Keycloak login expired, please try again.");
+          return;
+        }
+        const data = await res.json();
+        if (cancelled) return;
+        localStorage.setItem("alpha_router_token", data.access_token);
+        localStorage.setItem("alpha_router_role", normalizeRole(data.role));
+        localStorage.setItem("alpha_router_auth_provider", "keycloak");
+        const active = data.is_active !== false;
+        markLoggedIn(active);
+        if (isAdminPanelRole(data.role)) {
+          const role = normalizeRole(data.role);
+          nav(firstAllowedAdminPath(filterAdminNav(adminNavSections, role)));
+        } else {
+          nav("/app/chat");
+        }
+      } catch {
+        if (!cancelled) setError("Cannot reach backend. Make sure backend is running on port 8080.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [params, nav]);
 
   async function onSubmit(e: FormEvent) {
@@ -169,6 +207,7 @@ export default function Login() {
       const data = await res.json();
       localStorage.setItem("alpha_router_token", data.access_token);
       localStorage.setItem("alpha_router_role", normalizeRole(data.role));
+      localStorage.setItem("alpha_router_auth_provider", "local");
       const active = data.is_active !== false;
       markLoggedIn(active);
       if (isAdminPanelRole(data.role)) {

@@ -202,12 +202,43 @@ def _folder_to_client(row: ChatFolder) -> dict[str, Any]:
 
 async def ensure_user_chat_prefs(db: AsyncSession, user_id: int) -> UserChatPrefs:
     row = await db.get(UserChatPrefs, user_id)
-    if row is None:
-        row = UserChatPrefs(
-            user_id=user_id,
-            prefs=_default_prefs(),
-            updated_at=dt.datetime.utcnow(),
+    if row is not None:
+        return row
+    # Race-safe insert: during startup multiple uvicorn workers run the lifespan
+    # concurrently and all reach here for each user. A plain ORM get-then-add
+    # would raise UniqueViolation on all but the first worker and crash startup
+    # (same class of bug as mark_migration_completed). Use a dialect-aware upsert
+    # that is idempotent, then re-fetch the row so callers always get the object.
+    import json as _json
+
+    prefs_json = _json.dumps(_default_prefs())
+    now = dt.datetime.utcnow()
+    dialect = db.bind.dialect.name if db.bind else "postgresql"
+    if dialect == "postgresql":
+        await db.execute(
+            text(
+                """
+                INSERT INTO user_chat_prefs (user_id, prefs, updated_at)
+                VALUES (:uid, CAST(:prefs AS JSONB), :now)
+                ON CONFLICT (user_id) DO NOTHING
+                """
+            ),
+            {"uid": user_id, "prefs": prefs_json, "now": now},
         )
+    else:
+        await db.execute(
+            text(
+                "INSERT OR IGNORE INTO user_chat_prefs (user_id, prefs, updated_at) "
+                "VALUES (:uid, :prefs, :now)"
+            ),
+            {"uid": user_id, "prefs": prefs_json, "now": now},
+        )
+    await db.flush()
+    # Re-fetch the committed row. A raw INSERT via text() does not put the row
+    # into the ORM identity map, so db.get() will SELECT and load it fresh.
+    row = await db.get(UserChatPrefs, user_id)
+    if row is None:  # extremely unlikely fallback
+        row = UserChatPrefs(user_id=user_id, prefs=_default_prefs(), updated_at=now)
         db.add(row)
         await db.flush()
     return row

@@ -9,6 +9,7 @@ from app.api.deps import require_smtp, require_smtp_write
 from app.database import get_db
 from app.models.system import SmtpSettings
 from app.models.user import User
+from app.services.secret_crypto import decrypt_secret, encrypt_secret
 
 router = APIRouter(prefix="/api/admin/smtp", tags=["smtp"])
 
@@ -49,7 +50,7 @@ async def save_smtp(body: SmtpIn, db: AsyncSession = Depends(get_db), _: User = 
     row.port = body.port
     row.username = body.username
     if body.password and body.password != "********":
-        row.password_encrypted = body.password
+        row.password_encrypted = encrypt_secret(body.password)
     row.from_address = body.from_address
     row.use_tls = body.use_tls
     await db.commit()

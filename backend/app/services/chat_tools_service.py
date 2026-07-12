@@ -102,12 +102,18 @@ async def fetch_url_text(url: str, max_chars: int = 14_000) -> str:
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise ValueError("Invalid URL")
-    async with httpx.AsyncClient(
-        follow_redirects=True,
-        timeout=httpx.Timeout(20.0, connect=10.0),
+    # SSRF guard: reject URLs that resolve to internal/private/metadata IPs.
+    # This runs before the fetch so a malicious user cannot make the server
+    # probe internal services or cloud metadata endpoints via the web-fetch
+    # chat tool.
+    from app.services.ssrf_guard import assert_response_target_safe, assert_url_safe, safe_client
+
+    assert_url_safe(url)
+    async with safe_client(
         headers={"User-Agent": "Alpha Router/1.0 (+https://alpha-router.local)"},
     ) as client:
         res = await client.get(url)
+        assert_response_target_safe(res)
         res.raise_for_status()
         ctype = (res.headers.get("content-type") or "").lower()
         if "html" in ctype or "<html" in res.text[:200].lower():

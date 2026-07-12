@@ -1,9 +1,9 @@
 """Unit tests for image size normalization and aspect-ratio mapping."""
 
+import asyncio
 import base64
 import io
 
-import pytest
 from PIL import Image
 
 from app.api.images import (
@@ -17,8 +17,7 @@ from app.api.images import (
 from app.services.openrouter_image_service import _gemini_image_size_tier
 
 
-@pytest.mark.asyncio
-async def test_resolve_generation_dimensions_from_aspect_ratio():
+async def _resolve_from_aspect_ratio() -> None:
     aspect, size = await _resolve_generation_dimensions(
         reference_image=None,
         aspect_ratio="16:9",
@@ -28,8 +27,7 @@ async def test_resolve_generation_dimensions_from_aspect_ratio():
     assert size == "1344x768"
 
 
-@pytest.mark.asyncio
-async def test_resolve_generation_dimensions_from_reference_image():
+async def _resolve_from_reference_image() -> None:
     img = Image.new("RGB", (640, 480), color="red")
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -42,6 +40,14 @@ async def test_resolve_generation_dimensions_from_reference_image():
     )
     assert size == "640x480"
     assert aspect == "4:3"
+
+
+def test_resolve_generation_dimensions_from_aspect_ratio():
+    asyncio.run(_resolve_from_aspect_ratio())
+
+
+def test_resolve_generation_dimensions_from_reference_image():
+    asyncio.run(_resolve_from_reference_image())
 
 
 def test_normalize_aspect_ratio():

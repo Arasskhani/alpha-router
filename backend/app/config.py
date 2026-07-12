@@ -114,6 +114,9 @@ class Settings(BaseSettings):
     # without testing; when empty, no CSP header is sent.
     enable_hsts: bool = False
     content_security_policy: str = ""
+    # Minimum length for local-account passwords (admin create/reset). The
+    # bootstrap admin password from env is not subject to this.
+    password_min_length: int = 8
 
 
 @lru_cache

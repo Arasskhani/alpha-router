@@ -1155,6 +1155,11 @@ async def patch_user(
             if await count_active_full_administrators(db) <= 1:
                 raise HTTPException(400, detail="Cannot disable the last active Full Administrator account")
         user.is_active = body.is_active
+        # Disabling a user revokes their active sessions immediately so a
+        # disabled account cannot keep making (even read-only) requests on
+        # an already-issued token. Re-enabling does not bump (no new token).
+        if not body.is_active:
+            user.token_version = int(user.token_version or 0) + 1
     from app.services.budget_service import resolve_monthly_budget
 
     user.monthly_budget_usd = await resolve_monthly_budget(db, user)
@@ -1185,6 +1190,9 @@ async def reset_local_user_password(
     except PasswordPolicyError as exc:
         raise HTTPException(400, detail=str(exc)) from exc
     user.hashed_password = hash_password(pwd)
+    # Revoke all existing sessions: a password reset must invalidate any
+    # previously-issued JWT (including any stolen ones).
+    user.token_version = int(user.token_version or 0) + 1
     await db.commit()
     return {"ok": True}
 
@@ -1246,6 +1254,8 @@ async def bulk_update_users(
         for u in users:
             if u.is_active != body.is_active:
                 u.is_active = body.is_active
+                if not body.is_active:
+                    u.token_version = int(u.token_version or 0) + 1
                 changed += 1
 
     if body.group_id and body.group_action:

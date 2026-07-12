@@ -17,6 +17,8 @@ def _prod_kwargs(**overrides):
         "secret_key": "a-real-secret-not-a-placeholder",
         "admin_password": "a-real-admin-password",
         "gateway_master_key": "a-real-master-key",
+        "code_sandbox_broker_url": "http://sandbox-broker:8081",
+        "code_sandbox_broker_token": "a-random-sandbox-token-with-at-least-32-chars",
     }
     base.update(overrides)
     return base
@@ -97,6 +99,25 @@ def test_production_accepts_strong_ldap_bridge_token():
             ldap_bridge_token="a-random-bridge-token-with-at-least-32-chars",
         )
     )
+
+
+@pytest.mark.parametrize(
+    ("url", "token", "expected"),
+    [
+        ("", "a-random-sandbox-token-with-at-least-32-chars", "CODE_SANDBOX_BROKER_URL"),
+        ("http://sandbox-broker:8081", "", "CODE_SANDBOX_BROKER_TOKEN"),
+        ("http://sandbox-broker:8081", "short-token", "CODE_SANDBOX_BROKER_TOKEN"),
+    ],
+)
+def test_production_requires_authenticated_sandbox_broker(url, token, expected):
+    with pytest.raises(RuntimeError) as exc:
+        _check_production_safe(
+            **_prod_kwargs(
+                code_sandbox_broker_url=url,
+                code_sandbox_broker_token=token,
+            )
+        )
+    assert expected in str(exc.value)
 
 
 def test_production_allows_disabled_ldap_bridge_without_token():

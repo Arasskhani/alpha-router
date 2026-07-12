@@ -55,8 +55,8 @@ def _assert_production_safe() -> None:
 
     Env-gated: a no-op unless `settings.environment == "production"`. Existing
     dev/single-box deployments (which default to "development") boot unchanged.
-    The guard checks externally exploitable application secrets and requires a
-    strong bridge token whenever the LDAP bridge is enabled.
+    The guard checks externally exploitable application secrets, requires a
+    strong LDAP bridge token when enabled, and requires the sandbox broker.
     """
     _check_production_safe(
         environment=settings.environment,
@@ -65,6 +65,8 @@ def _assert_production_safe() -> None:
         gateway_master_key=settings.gateway_master_key,
         ldap_bridge_url=settings.ldap_bridge_url,
         ldap_bridge_token=settings.ldap_bridge_token,
+        code_sandbox_broker_url=settings.code_sandbox_broker_url,
+        code_sandbox_broker_token=settings.code_sandbox_broker_token,
     )
 
 
@@ -76,11 +78,14 @@ def _check_production_safe(
     gateway_master_key: str,
     ldap_bridge_url: str = "",
     ldap_bridge_token: str = "",
+    code_sandbox_broker_url: str = "",
+    code_sandbox_broker_token: str = "",
 ) -> None:
     """Pure check used by the startup guard and by tests.
 
     Raises RuntimeError when production uses an insecure application secret or
-    enables the LDAP bridge without a strong token. No-op in development.
+    enables the LDAP bridge without a strong token, or lacks the authenticated
+    sandbox broker. No-op in development.
     """
     if environment != "production":
         return
@@ -99,6 +104,10 @@ def _check_production_safe(
             or len(bridge_token) < 32
         ):
             insecure.append("LDAP_BRIDGE_TOKEN")
+    if not code_sandbox_broker_url.strip():
+        insecure.append("CODE_SANDBOX_BROKER_URL")
+    if len(code_sandbox_broker_token.strip()) < 32:
+        insecure.append("CODE_SANDBOX_BROKER_TOKEN")
     if insecure:
         raise RuntimeError(
             "Refusing to start in production with insecure default value(s): "

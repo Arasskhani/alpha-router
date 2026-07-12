@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import delete, exists, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -98,8 +98,9 @@ from app.services.storage_service import (
     storage_stats,
 )
 from app.services.user_media_service import (
+    MediaZipLimitError,
     _media_row_dict,
-    build_media_zip_bytes,
+    build_media_zip_file,
     count_users_over_media_quota,
     delete_all_user_media,
     delete_user_media_ids,
@@ -109,6 +110,7 @@ from app.services.user_media_service import (
     list_user_media_filtered,
     prefs_to_dict,
     set_user_media_quota_gb,
+    stream_media_zip,
     user_media_quota_summary,
 )
 
@@ -2496,14 +2498,16 @@ async def admin_user_media_download_zip(
 ):
     target = await _admin_media_target_user(db, user_id)
     try:
-        data, _packed = await build_media_zip_bytes(db, target.id, body.ids)
+        path, _packed = await build_media_zip_file(db, target.id, body.ids)
+    except MediaZipLimitError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     safe_user = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in (target.username or "user"))
     filename = f"alpha-router-media-{safe_user}-{stamp}.zip"
-    return Response(
-        content=data,
+    return StreamingResponse(
+        stream_media_zip(path),
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

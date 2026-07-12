@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import io
 import re
 import time
 from urllib.parse import urlparse
@@ -41,6 +40,7 @@ from app.services.openrouter_image_service import (
     prefer_openrouter_images_generations,
 )
 from app.services.storage_service import (
+    media_input_limit,
     media_content_hash,
     media_public_url,
     read_media_bytes,
@@ -245,12 +245,15 @@ def _reference_image_bytes(reference_image: str) -> bytes | None:
     ref = (reference_image or "").strip()
     if not ref.startswith("data:"):
         return None
-    comma = ref.find(",")
-    if comma < 0:
-        return None
     try:
-        return base64.b64decode(ref[comma + 1 :], validate=False)
-    except Exception:
+        from app.services.bounded_io import decode_data_url_bounded
+
+        data, _mime = decode_data_url_bounded(
+            ref,
+            max_decoded_bytes=media_input_limit(),
+        )
+        return data
+    except ValueError:
         return None
 
 
@@ -259,25 +262,23 @@ async def _reference_image_dimensions(reference_image: str) -> tuple[int, int] |
     data = _reference_image_bytes(ref)
     if data is None and (ref.startswith("http://") or ref.startswith("https://")):
         try:
-            from app.services.ssrf_guard import assert_response_target_safe, assert_url_safe, safe_client
+            from app.services.bounded_io import bounded_get_bytes
+            from app.services.ssrf_guard import safe_client
 
-            assert_url_safe(ref)
             async with safe_client() as client:
-                resp = await client.get(ref)
-                assert_response_target_safe(resp)
-                if resp.status_code == 200:
-                    data = resp.content
+                data, _mime = await bounded_get_bytes(
+                    client,
+                    ref,
+                    max_bytes=media_input_limit(),
+                )
         except Exception:
             return None
     if not data:
         return None
     try:
-        from PIL import Image
+        from app.services.image_decode_policy import image_dimensions
 
-        with Image.open(io.BytesIO(data)) as img:
-            w, h = img.size
-            if w > 0 and h > 0:
-                return int(w), int(h)
+        return await asyncio.to_thread(image_dimensions, data)
     except Exception:
         return None
     return None
@@ -401,7 +402,12 @@ async def _persist_image_data_items(
         if not blob_mime:
             continue
         blob, mime = blob_mime
-        blob, mime, content_hash = media_content_hash(blob, mime, "image")
+        blob, mime, content_hash = await asyncio.to_thread(
+            media_content_hash,
+            blob,
+            mime,
+            "image",
+        )
         if content_hash in seen_hashes:
             continue
         seen_hashes.add(content_hash)

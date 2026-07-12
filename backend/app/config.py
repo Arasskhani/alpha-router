@@ -66,6 +66,19 @@ class Settings(BaseSettings):
     code_sandbox_image: str = ""  # env: CODE_SANDBOX_IMAGE (e.g. alpha-router-sandbox:latest)
     code_sandbox_timeout_seconds: int = 20  # env: CODE_SANDBOX_TIMEOUT_SECONDS
 
+    # Bounded I/O defaults. Callers clamp overrides to hard safety ceilings.
+    max_request_body_bytes: int = 64 * 1024 * 1024
+    max_attachment_bytes: int = 12 * 1024 * 1024
+    max_attachments_total_bytes: int = 36 * 1024 * 1024
+    max_voice_upload_bytes: int = 25 * 1024 * 1024
+    max_media_input_bytes: int = 25 * 1024 * 1024
+    max_web_fetch_bytes: int = 2 * 1024 * 1024
+    max_image_side_px: int = 4096
+    max_image_pixels: int = 4096 * 4096
+    max_zip_items: int = 100
+    max_zip_single_file_bytes: int = 50 * 1024 * 1024
+    max_zip_aggregate_bytes: int = 256 * 1024 * 1024
+
     # Model sync default interval (hours)
     model_sync_interval_hours: int = 6
 

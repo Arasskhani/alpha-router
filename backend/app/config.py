@@ -3,6 +3,8 @@
 from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+LDAP_BRIDGE_INSECURE_DEFAULT = "nitro-ldap-bridge"
+
 # Known placeholder values that must never reach a production deployment.
 # Used by the startup guard (_assert_production_safe) to refuse boot when an
 # operator forgot to override the bundled dev defaults.
@@ -11,6 +13,7 @@ INSECURE_DEFAULTS: frozenset[str] = frozenset(
         "change-me-in-production",  # SECRET_KEY
         "admin",  # ADMIN_PASSWORD
         "sk-nitro-master",  # GATEWAY_MASTER_KEY
+        LDAP_BRIDGE_INSECURE_DEFAULT,
     }
 )
 

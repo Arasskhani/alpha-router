@@ -11,11 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, require_active_user
 from app.database import get_db
 from app.models.connection import Connection
-from app.models.media import MediaAsset
 from app.models.model_catalog import AIModel
 from app.models.user import User
-from app.services.rbac import normalize_role_slug, primary_role_slug, session_payload_for_slugs, user_is_admin_panel
-from app.services.user_role_service import get_user_role_slugs
 from app.services.budget_service import (
     budget_request_blocked,
     ensure_budget_period,
@@ -23,6 +20,7 @@ from app.services.budget_service import (
     resolve_monthly_budget,
 )
 from app.services.model_capabilities import image_generation_capabilities
+from app.services.media_authorization_service import MediaAccessAction, load_authorized_media_asset
 from app.services.attachment_extract import processed_attachment_payload
 from app.services.attachment_policy import (
     AttachmentPolicyError,
@@ -399,12 +397,12 @@ async def media_file(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    row = await db.get(MediaAsset, asset_id)
-    if not row:
-        raise HTTPException(404, detail="Media not found")
-    slugs = await get_user_role_slugs(db, user.id)
-    if not user_is_admin_panel(slugs) and row.user_id != user.id:
-        raise HTTPException(403, detail="Forbidden")
+    row = await load_authorized_media_asset(
+        db,
+        user,
+        asset_id,
+        action=MediaAccessAction.READ,
+    )
     try:
         data = await read_media_bytes(row)
     except FileNotFoundError:
@@ -422,12 +420,12 @@ async def delete_media(
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    row = await db.get(MediaAsset, asset_id)
-    if not row:
-        raise HTTPException(404, detail="Media not found")
-    slugs = await get_user_role_slugs(db, user.id)
-    if not user_is_admin_panel(slugs) and row.user_id != user.id:
-        raise HTTPException(403, detail="Forbidden")
+    row = await load_authorized_media_asset(
+        db,
+        user,
+        asset_id,
+        action=MediaAccessAction.DELETE,
+    )
     storage_path = row.storage_path
     await db.delete(row)
     await db.flush()

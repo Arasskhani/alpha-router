@@ -16,6 +16,7 @@ from app.services.ldap_auth import (
     test_ldap_connection,
 )
 from app.services.ldap_config import expand_ldap_config
+from app.services.ldap_bridge_security import authorize_bridge_request
 from app.services.ldap_winldap import winldap_available
 
 if sys.platform != "win32":
@@ -45,12 +46,13 @@ class AuthenticateBody(BaseModel):
 
 
 def _authorize(authorization: str | None) -> None:
-    token = (get_settings().ldap_bridge_token or "").strip()
-    if not token:
-        return
-    expected = f"Bearer {token}"
-    if authorization != expected:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    authorize_bridge_request(authorization, get_settings().ldap_bridge_token)
+
+
+def _error_detail(exc: Exception) -> str:
+    if get_settings().environment == "production":
+        return "LDAP operation failed"
+    return str(exc)
 
 
 @app.get("/health")
@@ -64,7 +66,7 @@ def bridge_probe(body: ProbeBody, authorization: str | None = Header(default=Non
     try:
         return probe_directory(body.host, body.port, body.bind_username, body.bind_password)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=_error_detail(exc)) from exc
 
 
 @app.post("/v1/test")
@@ -74,7 +76,7 @@ def bridge_test(body: ConfigBody, authorization: str | None = Header(default=Non
     try:
         return test_ldap_connection(cfg)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=_error_detail(exc)) from exc
 
 
 @app.post("/v1/users")
@@ -84,7 +86,7 @@ def bridge_users(body: ConfigBody, authorization: str | None = Header(default=No
     try:
         return fetch_ldap_users(cfg)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=_error_detail(exc)) from exc
 
 
 @app.post("/v1/groups")
@@ -94,7 +96,7 @@ def bridge_groups(body: ConfigBody, authorization: str | None = Header(default=N
     try:
         return fetch_ldap_groups(cfg)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=_error_detail(exc)) from exc
 
 
 @app.post("/v1/authenticate")
@@ -104,4 +106,4 @@ def bridge_authenticate(body: AuthenticateBody, authorization: str | None = Head
     try:
         return authenticate_ldap_sync(body.username, body.password, cfg)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=_error_detail(exc)) from exc

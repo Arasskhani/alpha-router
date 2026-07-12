@@ -66,8 +66,11 @@ def _clear_settings_cache():
 
 
 def test_run_sandbox_uses_subprocess_when_no_broker(monkeypatch):
-    """Without a broker URL, execution takes the temporary compatibility path."""
+    """A subprocess requires an explicit development-only opt-in."""
     monkeypatch.delenv("CODE_SANDBOX_BROKER_URL", raising=False)
+    monkeypatch.delenv("CODE_SANDBOX_IMAGE", raising=False)
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("ALLOW_INSECURE_CODE_SUBPROCESS", "true")
     _clear_settings_cache()
 
     calls = {"subprocess": 0, "broker": 0}
@@ -89,8 +92,53 @@ def test_run_sandbox_uses_subprocess_when_no_broker(monkeypatch):
     _clear_settings_cache()
 
 
+@pytest.mark.parametrize(
+    ("environment", "allow_subprocess"),
+    [
+        ("production", "true"),
+        ("production", "false"),
+        ("development", "false"),
+    ],
+)
+def test_run_sandbox_fails_closed_without_broker(
+    monkeypatch,
+    environment: str,
+    allow_subprocess: str,
+):
+    monkeypatch.delenv("CODE_SANDBOX_BROKER_URL", raising=False)
+    monkeypatch.delenv("CODE_SANDBOX_IMAGE", raising=False)
+    monkeypatch.setenv("ENVIRONMENT", environment)
+    monkeypatch.setenv("ALLOW_INSECURE_CODE_SUBPROCESS", allow_subprocess)
+    _clear_settings_cache()
+
+    async def forbidden_subprocess(code, files):
+        raise AssertionError("subprocess must not run")
+
+    monkeypatch.setattr(cis, "_run_in_subprocess", forbidden_subprocess)
+    out = asyncio.run(run_python_sandbox("print(1)"))
+    assert "sandbox broker is required" in out
+    _clear_settings_cache()
+
+
+def test_legacy_image_only_configuration_cannot_downgrade(monkeypatch):
+    monkeypatch.delenv("CODE_SANDBOX_BROKER_URL", raising=False)
+    monkeypatch.setenv("CODE_SANDBOX_IMAGE", "nitro-sandbox:latest")
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("ALLOW_INSECURE_CODE_SUBPROCESS", "true")
+    _clear_settings_cache()
+
+    async def forbidden_subprocess(code, files):
+        raise AssertionError("legacy image config must not downgrade")
+
+    monkeypatch.setattr(cis, "_run_in_subprocess", forbidden_subprocess)
+    out = asyncio.run(run_python_sandbox("print(1)"))
+    assert "legacy sandbox image configuration" in out
+    _clear_settings_cache()
+
+
 def test_run_sandbox_uses_broker_when_configured(monkeypatch):
     monkeypatch.setenv("CODE_SANDBOX_BROKER_URL", "http://sandbox-broker:8081")
+    monkeypatch.setenv("CODE_SANDBOX_BROKER_TOKEN", "t" * 48)
     _clear_settings_cache()
 
     captured = {}
@@ -110,9 +158,24 @@ def test_run_sandbox_uses_broker_when_configured(monkeypatch):
     _clear_settings_cache()
 
 
+def test_run_sandbox_rejects_broker_without_strong_token(monkeypatch):
+    monkeypatch.setenv("CODE_SANDBOX_BROKER_URL", "http://sandbox-broker:8081")
+    monkeypatch.setenv("CODE_SANDBOX_BROKER_TOKEN", "short")
+    _clear_settings_cache()
+
+    async def forbidden_broker(code, files, settings, broker_url):
+        raise AssertionError("unauthenticated broker request must not be sent")
+
+    monkeypatch.setattr(cis, "_run_via_broker", forbidden_broker)
+    out = asyncio.run(run_python_sandbox("print(1)"))
+    assert "broker authentication is not configured" in out
+    _clear_settings_cache()
+
+
 def test_run_sandbox_broker_still_blocks_disallowed_imports(monkeypatch):
     """AST validation runs before a broker request (defense in depth)."""
     monkeypatch.setenv("CODE_SANDBOX_BROKER_URL", "http://sandbox-broker:8081")
+    monkeypatch.setenv("CODE_SANDBOX_BROKER_TOKEN", "t" * 48)
     _clear_settings_cache()
 
     async def fake_broker(code, files, settings, broker_url):
@@ -123,3 +186,31 @@ def test_run_sandbox_broker_still_blocks_disallowed_imports(monkeypatch):
         asyncio.run(run_python_sandbox("import os"))
     monkeypatch.delenv("CODE_SANDBOX_BROKER_URL", raising=False)
     _clear_settings_cache()
+
+
+def test_dynamic_import_is_blocked_before_execution():
+    _clear_settings_cache()
+    with pytest.raises(ValueError, match="Dynamic import"):
+        validate_python_code("socket = __import__('socket')")
+
+
+def test_development_subprocess_receives_scrubbed_environment(monkeypatch):
+    captured = {}
+
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return b"ok\n", b""
+
+    async def fake_spawn(*args, **kwargs):
+        del args
+        captured.update(kwargs)
+        return FakeProcess()
+
+    monkeypatch.setattr(cis.asyncio, "create_subprocess_exec", fake_spawn)
+    monkeypatch.setenv("SECRET_KEY", "must-not-propagate")
+    out = asyncio.run(cis._run_in_subprocess("print('ok')", {}))
+    assert "ok" in out
+    assert "SECRET_KEY" not in captured["env"]
+    assert set(captured["env"]) == {"PATH", "PYTHONIOENCODING", "PYTHONUNBUFFERED"}

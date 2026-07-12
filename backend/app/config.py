@@ -60,11 +60,11 @@ class Settings(BaseSettings):
     # only that broker has access to the Docker socket and fixed sandbox policy.
     code_sandbox_broker_url: str = ""
     code_sandbox_broker_token: str = ""
-    # Legacy settings retained temporarily for configuration compatibility.
+    # Explicit development-only escape hatch. Production always fails closed.
+    allow_insecure_code_subprocess: bool = False
+    # Retained only to detect and reject a legacy image-only configuration.
     code_sandbox_image: str = ""  # env: CODE_SANDBOX_IMAGE (e.g. nitro-sandbox:latest)
     code_sandbox_timeout_seconds: int = 20  # env: CODE_SANDBOX_TIMEOUT_SECONDS
-    code_sandbox_memory: str = "256m"  # env: CODE_SANDBOX_MEMORY
-    code_sandbox_pids_limit: int = 128  # env: CODE_SANDBOX_PIDS_LIMIT
 
     # Model sync default interval (hours)
     model_sync_interval_hours: int = 6

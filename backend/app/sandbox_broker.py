@@ -128,6 +128,22 @@ app.add_middleware(BrokerSecurityMiddleware)
 
 @app.get("/health")
 async def health() -> dict[str, str]:
+    if len((os.environ.get("SANDBOX_BROKER_TOKEN") or "").strip()) < 32:
+        raise HTTPException(status_code=503, detail="Broker authentication is not configured")
+    try:
+        check = await asyncio.create_subprocess_exec(
+            "docker",
+            "image",
+            "inspect",
+            SANDBOX_IMAGE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(check.wait(), timeout=3)
+    except (FileNotFoundError, TimeoutError, asyncio.TimeoutError):
+        raise HTTPException(status_code=503, detail="Sandbox runtime unavailable") from None
+    if check.returncode != 0:
+        raise HTTPException(status_code=503, detail="Sandbox image unavailable")
     return {"status": "ok"}
 
 

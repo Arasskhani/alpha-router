@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
+import os
 import re
 import sys
 import tempfile
@@ -85,6 +86,9 @@ def validate_python_code(code: str) -> None:
             root = (node.module or "").split(".")[0]
             if root in BLOCKED_ROOT_MODULES:
                 raise ValueError(f"Import not allowed: {node.module}")
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id == "__import__":
+                raise ValueError("Dynamic import is not allowed")
 
 
 def workspace_files_from_messages(messages: list[dict]) -> dict[str, str]:
@@ -170,9 +174,8 @@ _PRELUDE = (
 async def run_python_sandbox(code: str, workspace_files: dict[str, str] | None = None) -> str:
     """Execute user code and return a formatted stdout/stderr summary.
 
-    Uses the authenticated internal sandbox broker when configured. The legacy
-    subprocess path remains available only as a compatibility fallback until
-    production fail-closed enforcement is enabled in the next remediation phase.
+    Uses the authenticated internal sandbox broker. A scrubbed subprocess is
+    available only through an explicit development-only opt-in.
     """
     validate_python_code(code)
     workspace_files = workspace_files or {}
@@ -182,8 +185,14 @@ async def run_python_sandbox(code: str, workspace_files: dict[str, str] | None =
     settings = get_settings()
     broker_url = (settings.code_sandbox_broker_url or "").strip()
     if broker_url:
+        if len((settings.code_sandbox_broker_token or "").strip()) < 32:
+            return "Code interpreter error: sandbox broker authentication is not configured."
         return await _run_via_broker(code, workspace_files, settings, broker_url)
-    return await _run_in_subprocess(code, workspace_files)
+    if (settings.code_sandbox_image or "").strip():
+        return "Code interpreter error: legacy sandbox image configuration requires the sandbox broker."
+    if settings.environment == "development" and settings.allow_insecure_code_subprocess:
+        return await _run_in_subprocess(code, workspace_files)
+    return "Code interpreter error: sandbox broker is required."
 
 
 async def _run_via_broker(
@@ -250,6 +259,11 @@ async def _run_in_subprocess(code: str, workspace_files: dict[str, str]) -> str:
             "-I",
             str(script),
             cwd=str(root),
+            env={
+                "PATH": os.defpath,
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONUNBUFFERED": "1",
+            },
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

@@ -975,8 +975,14 @@ async def generate_image(
         raise HTTPException(status_code=502, detail=msg) from exc
     except Exception as exc:
         success = False
-        error_message = str(exc)[:500]
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        # Log the full exception server-side; return a generic message to the
+        # client so internal details (tracebacks, connection strings, library
+        # internals) are not leaked through the API response.
+        import logging
+
+        logging.getLogger("app.api.images").exception("Unhandled error during image generation")
+        error_message = "Image generation failed due to an internal error"
+        raise HTTPException(status_code=500, detail=error_message) from exc
     finally:
         elapsed_ms = (time.perf_counter() - generation_start) * 1000
         try:

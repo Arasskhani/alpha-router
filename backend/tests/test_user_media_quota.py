@@ -44,7 +44,11 @@ async def _run_quota_roundtrip() -> None:
         session.add(user)
         await session.flush()
 
-        half_gb = 512 * 1024 * 1024
+        # half_gb is HALF OF THE 5GB QUOTA (2.5GB), not half of one gigabyte.
+        # The variable name is historical; the round-trip logic depends on it
+        # being half of the configured quota, so both "fits exactly" and
+        # "exceeds by one byte" cases work below.
+        half_gb = (5 * 1024 * 1024 * 1024) // 2
         session.add(
             MediaAsset(
                 user_id=user.id,

@@ -13,10 +13,12 @@ from fastapi import UploadFile
 from app.services.bounded_io import (
     BoundedIOError,
     RequestBodyLimitMiddleware,
+    bounded_get_bytes,
     decode_data_url_bounded,
     read_http_response_bounded,
     read_upload_bounded,
 )
+from app.services.ssrf_guard import SSRFBlockedError
 
 
 def test_upload_reader_accepts_exact_limit_and_rejects_one_byte_over() -> None:
@@ -100,3 +102,61 @@ def test_request_middleware_caps_chunked_body_without_content_length() -> None:
     ):
         asyncio.run(middleware(scope, receive, send))
     assert any(message.get("status") == 413 for message in sent)
+
+
+def test_bounded_get_revalidates_each_manual_redirect_hop() -> None:
+    requested = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if request.url.host == "public.example":
+            return httpx.Response(302, headers={"location": "https://cdn.example/image"})
+        return httpx.Response(200, content=b"safe", headers={"content-type": "image/png"})
+
+    async def run():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            follow_redirects=False,
+        ) as client:
+            with (
+                patch("app.services.ssrf_guard.assert_url_safe") as validate,
+                patch("app.services.ssrf_guard.assert_response_target_safe"),
+            ):
+                body, mime = await bounded_get_bytes(
+                    client,
+                    "https://public.example/start",
+                    max_bytes=10,
+                )
+                assert [call.args[0] for call in validate.call_args_list] == [
+                    "https://public.example/start",
+                    "https://cdn.example/image",
+                ]
+                return body, mime
+
+    assert asyncio.run(run()) == (b"safe", "image/png")
+    assert requested == ["https://public.example/start", "https://cdn.example/image"]
+
+
+def test_bounded_get_blocks_redirect_before_second_request() -> None:
+    requests = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        return httpx.Response(302, headers={"location": "http://127.0.0.1/private"})
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with patch("app.services.ssrf_guard.assert_response_target_safe"):
+                await bounded_get_bytes(client, "https://public.example/", max_bytes=10)
+
+    with (
+        patch(
+            "app.services.ssrf_guard._resolve_hosts",
+            return_value=["93.184.216.34"],
+        ),
+        patch("app.services.ssrf_guard._private_ranges_allowed", return_value=False),
+        pytest.raises(SSRFBlockedError),
+    ):
+        asyncio.run(run())
+    assert requests == 1

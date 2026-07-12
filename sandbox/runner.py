@@ -25,6 +25,25 @@ class _Timeout(Exception):
     pass
 
 
+class _BoundedTextIO(io.StringIO):
+    def __init__(self, limit: int):
+        super().__init__()
+        self.limit = limit
+        self.truncated = False
+
+    def write(self, value: str) -> int:
+        text = str(value)
+        remaining = max(0, self.limit - self.tell())
+        if len(text) > remaining:
+            self.truncated = True
+        if remaining:
+            super().write(text[:remaining])
+        return len(text)
+
+    def bounded_value(self, marker: str) -> str:
+        return self.getvalue() + (marker if self.truncated else "")
+
+
 def _on_alarm(signum, frame):
     raise _Timeout()
 
@@ -65,7 +84,8 @@ def main() -> None:
             except Exception:  # noqa: BLE001
                 pass
 
-    out, err = io.StringIO(), io.StringIO()
+    out = _BoundedTextIO(MAX_STREAM_CHARS)
+    err = _BoundedTextIO(MAX_STREAM_CHARS)
     exit_code = 0
 
     if hasattr(signal, "SIGALRM"):
@@ -89,7 +109,11 @@ def main() -> None:
         if hasattr(signal, "SIGALRM"):
             signal.alarm(0)
 
-    _emit(out.getvalue(), err.getvalue(), exit_code)
+    _emit(
+        out.bounded_value("\n[…output truncated in sandbox…]"),
+        err.bounded_value("\n[…stderr truncated in sandbox…]"),
+        exit_code,
+    )
 
 
 if __name__ == "__main__":

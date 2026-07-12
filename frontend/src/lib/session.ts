@@ -74,11 +74,19 @@ export function getMyActivityPath(role: string): string {
 }
 
 export function logout() {
+  const provider = localStorage.getItem(STORAGE_KEYS.authProvider);
   localStorage.removeItem(STORAGE_KEYS.chatTools);
   localStorage.removeItem(STORAGE_KEYS.token);
   localStorage.removeItem(STORAGE_KEYS.role);
   localStorage.removeItem(STORAGE_KEYS.loginAt);
   localStorage.removeItem(STORAGE_KEYS.isActive);
+  localStorage.removeItem(STORAGE_KEYS.authProvider);
   // Keep STORAGE_KEYS.theme — device cache for login page before auth.
+  // For Keycloak SSO users, also terminate the IdP session so a quick
+  // re-click of "Keycloak login" does not silently restore the session.
+  if (provider === "keycloak") {
+    window.location.href = "/api/auth/keycloak/logout";
+    return;
+  }
   window.location.href = "/login";
 }

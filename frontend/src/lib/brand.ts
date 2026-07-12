@@ -14,6 +14,7 @@ export const STORAGE_KEYS = {
   chatTools: "alpha_router_chat_tools",
   defaultModel: "alpha_router_default_model",
   privateChats: "alpha_router_private_chats",
+  authProvider: "alpha_router_auth_provider",
 } as const;
 
 export const PAGE_TITLE = `${PRODUCT_NAME} | ${LOGIN_TAGLINE}`;

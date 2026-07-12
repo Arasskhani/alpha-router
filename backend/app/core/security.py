@@ -21,8 +21,14 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
 
-def create_access_token(subject: str, role: str, extra: dict | None = None) -> str:
-    payload = {"sub": subject, "role": role}
+def create_access_token(
+    subject: str,
+    role: str,
+    extra: dict | None = None,
+    *,
+    token_version: int = 0,
+) -> str:
+    payload = {"sub": subject, "role": role, "ver": int(token_version or 0)}
     if extra:
         payload.update(extra)
     expire = datetime.utcnow() + timedelta(minutes=settings.jwt_expire_minutes)

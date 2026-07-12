@@ -73,8 +73,22 @@ export function getMyActivityPath(role: string): string {
   return rbacMyActivityPath(role);
 }
 
-export function logout() {
+export async function logout() {
   const provider = localStorage.getItem(STORAGE_KEYS.authProvider);
+  const token = localStorage.getItem(STORAGE_KEYS.token);
+  // Server-side revocation: bump the user's token_version so the current JWT
+  // (and any stolen copy) is rejected from now on. Best-effort — we clear
+  // local state regardless of whether this call succeeds.
+  if (token) {
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      /* network error — proceed to clear local state anyway */
+    }
+  }
   localStorage.removeItem(STORAGE_KEYS.chatTools);
   localStorage.removeItem(STORAGE_KEYS.token);
   localStorage.removeItem(STORAGE_KEYS.role);

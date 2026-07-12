@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import base64
+import contextlib
 import datetime as dt
 import hashlib
-import io
 import json
 import logging
 import time
 from pathlib import Path
 from typing import Any
 
-import httpx
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,7 +29,18 @@ _KEY_CLEAR_SCHEDULE_ENABLED = "storage_clear_schedule_enabled"
 _KEY_CLEAR_SCHEDULE_HOUR = "storage_clear_schedule_hour"
 _KEY_CLEAR_SCHEDULE_MINUTE = "storage_clear_schedule_minute"
 _RETENTION_CACHE: tuple[float, int] | None = None
-_DOWNLOAD_CLIENT: httpx.AsyncClient | None = None
+MAX_MEDIA_INPUT_BYTES = 25 * 1024 * 1024
+
+
+def media_input_limit() -> int:
+    from app.config import get_settings
+    from app.services.bounded_io import clamp_limit
+
+    return clamp_limit(
+        get_settings().max_media_input_bytes,
+        minimum=1024 * 1024,
+        maximum=50 * 1024 * 1024,
+    )
 
 
 def _legacy_media_root() -> Path:
@@ -87,35 +96,6 @@ async def get_retention_days_cached(db: AsyncSession) -> int:
     days = max(1, int(settings["retention_days"]))
     _RETENTION_CACHE = (now, days)
     return days
-
-
-def _get_download_client() -> httpx.AsyncClient:
-    global _DOWNLOAD_CLIENT
-    if _DOWNLOAD_CLIENT is None or _DOWNLOAD_CLIENT.is_closed:
-        _DOWNLOAD_CLIENT = httpx.AsyncClient(
-            timeout=httpx.Timeout(30.0, connect=6.0),
-            limits=httpx.Limits(max_connections=16, max_keepalive_connections=8),
-            follow_redirects=True,
-        )
-    return _DOWNLOAD_CLIENT
-
-
-def _load_blob_sync(
-    *,
-    data_url: str | None,
-    source_url: str | None,
-) -> tuple[bytes, str]:
-    if data_url:
-        return _decode_data_url(data_url)
-    if source_url:
-        import httpx as _httpx
-
-        with _httpx.Client(timeout=30.0, follow_redirects=True) as client:
-            resp = client.get(source_url)
-            resp.raise_for_status()
-            mime = resp.headers.get("content-type", "application/octet-stream").split(";")[0].strip()
-            return resp.content, mime
-    raise ValueError("Either data_url or source_url is required")
 
 
 async def get_storage_settings(db: AsyncSession) -> dict[str, Any]:
@@ -175,27 +155,17 @@ async def set_storage_settings(
 
 
 def _decode_data_url(data_url: str) -> tuple[bytes, str]:
-    if not data_url.startswith("data:"):
-        raise ValueError("Invalid data URL")
-    head, b64 = data_url.split(",", 1)
-    mime = head.split(";")[0].replace("data:", "") or "application/octet-stream"
-    return base64.b64decode(b64), mime
+    from app.services.bounded_io import decode_data_url_bounded
+
+    return decode_data_url_bounded(data_url, max_decoded_bytes=media_input_limit())
 
 
 async def _download_url(url: str) -> tuple[bytes, str]:
-    # SSRF guard: validate target before fetch and re-validate the final
-    # (post-redirect) target before returning the body, so a public URL that
-    # 302s to an internal address cannot exfiltrate internal resources via
-    # the media import path.
-    from app.services.ssrf_guard import assert_response_target_safe, assert_url_safe
+    from app.services.bounded_io import bounded_get_bytes
+    from app.services.ssrf_guard import safe_client
 
-    assert_url_safe(url)
-    client = _get_download_client()
-    resp = await client.get(url)
-    assert_response_target_safe(resp)
-    resp.raise_for_status()
-    mime = resp.headers.get("content-type", "application/octet-stream").split(";")[0].strip()
-    return resp.content, mime
+    async with safe_client() as client:
+        return await bounded_get_bytes(client, url, max_bytes=media_input_limit())
 
 
 async def resolve_media_blob(
@@ -205,7 +175,7 @@ async def resolve_media_blob(
 ) -> tuple[bytes, str]:
     """Load media bytes from a data URL or remote URL."""
     if data_url:
-        return await asyncio.to_thread(_load_blob_sync, data_url=data_url, source_url=None)
+        return await asyncio.to_thread(_decode_data_url, data_url)
     if source_url:
         return await _download_url(source_url)
     raise ValueError("Either data_url or source_url is required")
@@ -225,21 +195,10 @@ def user_storage_slug(username: str | None) -> str:
 
 def normalize_image_for_storage(blob: bytes, mime: str) -> tuple[bytes, str, str] | None:
     """Decode to RGB pixels; store as PNG; digest from pixel grid (not file bytes)."""
-    if not (mime or "").lower().startswith("image/"):
-        return None
-    try:
-        from PIL import Image
+    del mime
+    from app.services.image_decode_policy import normalize_image
 
-        with Image.open(io.BytesIO(blob)) as img:
-            rgb = img.convert("RGB")
-            out = io.BytesIO()
-            rgb.save(out, format="PNG", optimize=True)
-            digest = sha256_hex(
-                f"{rgb.width}x{rgb.height}".encode() + rgb.mode.encode() + rgb.tobytes()
-            )
-            return out.getvalue(), "image/png", digest
-    except Exception:
-        return None
+    return normalize_image(blob)
 
 
 def media_content_hash(blob: bytes, mime: str, kind: str) -> tuple[bytes, str, str]:
@@ -291,10 +250,11 @@ def _legacy_local_path(storage_path: str) -> Path:
     return _legacy_media_root() / storage_path.replace("\\", "/")
 
 
-async def _put_object_once(key: str, blob: bytes, mime: str) -> None:
+async def _put_object_once(key: str, blob: bytes, mime: str) -> bool:
     if oss.object_exists(key):
-        return
+        return False
     await asyncio.to_thread(oss.put_object, key, blob, mime)
+    return True
 
 
 async def _count_storage_path_refs(db: AsyncSession, storage_path: str) -> int:
@@ -402,52 +362,58 @@ async def store_media_from_blob(
     retention_days = await get_retention_days_cached(db)
     now = dt.datetime.utcnow()
     expires_at = now + dt.timedelta(days=retention_days)
-    await _put_object_once(object_key, blob, mime)
-
     fallback_name = f"{kind}-{now.strftime('%Y%m%d-%H%M%S')}{ext}"
     file_name = _sanitize_name(file_name_hint, fallback_name)
-
-    row = MediaAsset(
-        user_id=user_id,
-        kind=kind,
-        mime_type=mime,
-        file_name=file_name,
-        storage_path=object_key,
-        content_hash=digest,
-        size_bytes=len(blob),
-        source_model=source_model,
-        source_prompt=source_prompt,
-        chat_session_id=chat_session_id,
-        metadata_json=json.dumps(metadata or {}),
-        created_at=now,
-        expires_at=expires_at,
-    )
-    db.add(row)
+    object_created = False
     try:
-        async with db.begin_nested():
+        object_created = await _put_object_once(object_key, blob, mime)
+        row = MediaAsset(
+            user_id=user_id,
+            kind=kind,
+            mime_type=mime,
+            file_name=file_name,
+            storage_path=object_key,
+            content_hash=digest,
+            size_bytes=len(blob),
+            source_model=source_model,
+            source_prompt=source_prompt,
+            chat_session_id=chat_session_id,
+            metadata_json=json.dumps(metadata or {}),
+            created_at=now,
+            expires_at=expires_at,
+        )
+        db.add(row)
+        try:
+            async with db.begin_nested():
+                await db.flush()
+        except IntegrityError:
+            await db.expunge(row)
+            raced = await _find_user_asset_by_hash(db, user_id, digest)
+            if not raced:
+                raise
+            raced.created_at = now
+            raced.expires_at = expires_at
+            raced.mime_type = mime
+            raced.file_name = file_name
+            raced.storage_path = object_key
+            raced.size_bytes = len(blob)
+            if chat_session_id is not None:
+                raced.chat_session_id = chat_session_id
+            if source_model is not None:
+                raced.source_model = source_model
+            if source_prompt is not None:
+                raced.source_prompt = source_prompt
+            if metadata:
+                raced.metadata_json = json.dumps(metadata)
             await db.flush()
-    except IntegrityError:
-        await db.expunge(row)
-        raced = await _find_user_asset_by_hash(db, user_id, digest)
-        if not raced:
-            raise
-        raced.created_at = now
-        raced.expires_at = expires_at
-        raced.mime_type = mime
-        raced.file_name = file_name
-        raced.storage_path = object_key
-        raced.size_bytes = len(blob)
-        if chat_session_id is not None:
-            raced.chat_session_id = chat_session_id
-        if source_model is not None:
-            raced.source_model = source_model
-        if source_prompt is not None:
-            raced.source_prompt = source_prompt
-        if metadata:
-            raced.metadata_json = json.dumps(metadata)
-        await db.flush()
-        return raced
-    return row
+            return raced
+        return row
+    except BaseException:
+        if object_created:
+            with contextlib.suppress(Exception):
+                if await _count_storage_path_refs(db, object_key) == 0:
+                    await asyncio.to_thread(oss.delete_object, object_key)
+        raise
 
 
 async def store_generated_media(
@@ -467,7 +433,38 @@ async def store_generated_media(
     if not data_url and not source_url:
         raise ValueError("Either data_url or source_url is required")
     blob, mime = await resolve_media_blob(data_url=data_url, source_url=source_url)
-    blob, mime, content_hash = media_content_hash(blob, mime, kind)
+    return await store_generated_blob(
+        db,
+        user_id=user_id,
+        kind=kind,
+        blob=blob,
+        mime=mime,
+        source_model=source_model,
+        source_prompt=source_prompt,
+        chat_session_id=chat_session_id,
+        file_name_hint=file_name_hint,
+        metadata=metadata,
+        username=username,
+    )
+
+
+async def store_generated_blob(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    kind: str,
+    blob: bytes,
+    mime: str,
+    source_model: str | None,
+    source_prompt: str | None,
+    chat_session_id: str | None,
+    file_name_hint: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    username: str | None = None,
+) -> MediaAsset:
+    if len(blob) > media_input_limit():
+        raise ValueError("Media exceeds the allowed input limit")
+    blob, mime, content_hash = await asyncio.to_thread(media_content_hash, blob, mime, kind)
     return await store_media_from_blob(
         db,
         user_id=user_id,

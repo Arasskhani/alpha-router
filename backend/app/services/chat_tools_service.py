@@ -106,20 +106,22 @@ async def fetch_url_text(url: str, max_chars: int = 14_000) -> str:
     # This runs before the fetch so a malicious user cannot make the server
     # probe internal services or cloud metadata endpoints via the web-fetch
     # chat tool.
-    from app.services.ssrf_guard import assert_response_target_safe, assert_url_safe, safe_client
+    from app.config import get_settings
+    from app.services.bounded_io import bounded_get_bytes, clamp_limit
+    from app.services.ssrf_guard import safe_client
 
-    assert_url_safe(url)
     async with safe_client(
         headers={"User-Agent": "NITRO/1.0 (+https://nitro.local)"},
     ) as client:
-        res = await client.get(url)
-        assert_response_target_safe(res)
-        res.raise_for_status()
-        ctype = (res.headers.get("content-type") or "").lower()
-        if "html" in ctype or "<html" in res.text[:200].lower():
-            text = _html_to_text(res.text)
-        else:
-            text = res.text
+        byte_limit = clamp_limit(
+            get_settings().max_web_fetch_bytes,
+            minimum=256 * 1024,
+            maximum=5 * 1024 * 1024,
+        )
+        raw, ctype = await bounded_get_bytes(client, url, max_bytes=byte_limit)
+        text = raw.decode("utf-8", errors="replace")
+        if "html" in ctype.lower() or "<html" in text[:200].lower():
+            text = _html_to_text(text)
     return text[:max_chars]
 
 

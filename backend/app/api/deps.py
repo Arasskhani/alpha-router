@@ -37,6 +37,13 @@ async def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     if user.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account removed")
+    # Revocation: reject tokens issued before the user's current token_version.
+    # Tokens without ``ver`` (issued before this feature) are treated as 0,
+    # which matches the default token_version for existing users — so they
+    # keep working until the user re-logs in.
+    jwt_ver = int(payload.get("ver", 0) or 0)
+    if jwt_ver < int(user.token_version or 0):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked, please log in again")
     return user
 
 

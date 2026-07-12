@@ -69,6 +69,20 @@ async def auth_session(user: User = Depends(get_current_user), db: AsyncSession 
     }
 
 
+@router.post("/logout")
+async def logout_local(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Revoke all previously-issued JWTs for this user.
+
+    Bumps ``token_version`` so every token issued before this call (including
+    the one used to authenticate this request) is rejected from now on. The
+    frontend clears its localStorage afterwards; this endpoint makes the
+    server-side revocation effective immediately even if the token was stolen.
+    """
+    user.token_version = int(user.token_version or 0) + 1
+    await db.commit()
+    return {"ok": True}
+
+
 @router.get("/methods")
 async def auth_methods(db: AsyncSession = Depends(get_db)):
     ldap_cfg = await get_provider_config(db, "ldap")
@@ -84,7 +98,7 @@ async def _token_response(db: AsyncSession, user: User) -> TokenResponse:
     slugs = await get_user_role_slugs(db, user.id)
     primary = primary_role_slug(slugs)
     return TokenResponse(
-        access_token=create_access_token(user.username, primary),
+        access_token=create_access_token(user.username, primary, token_version=user.token_version),
         role=primary,
         is_active=bool(user.is_active),
     )
@@ -251,7 +265,9 @@ async def keycloak_callback(
     slugs = await get_user_role_slugs(db, user.id)
     await record_user_login(db, user)
     await db.commit()
-    jwt_token = create_access_token(user.username, primary_role_slug(slugs))
+    jwt_token = create_access_token(
+        user.username, primary_role_slug(slugs), token_version=user.token_version
+    )
 
     # 5) Deliver the JWT via a one-time exchange code (NOT in the URL).
     xchg_code = generate_code()

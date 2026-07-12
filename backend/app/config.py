@@ -26,7 +26,11 @@ class Settings(BaseSettings):
     environment: str = "development"
     secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
-    jwt_expire_minutes: int = 60 * 24 * 7
+    # Token lifetime. Default 8h (480 min) — balances UX against stolen-token
+    # exposure. Revocation is enforced via the per-user ``token_version``
+    # column (bumped on logout / password reset / admin disable), so a token
+    # is also revocable before its natural expiry.
+    jwt_expire_minutes: int = 480
 
     # Default admin (local auth panel)
     admin_username: str = "admin"

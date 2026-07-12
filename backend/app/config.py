@@ -131,6 +131,9 @@ class Settings(BaseSettings):
     # loopback / link-local / metadata IPs. Set to true ONLY for self-hosted
     # internal deployments where users must fetch from private servers.
     allow_ssrf_private_ranges: bool = False
+    # Rollback switch for connection-time DNS pinning only. Base SSRF validation
+    # remains active even when this is disabled.
+    enable_ssrf_dns_pinning: bool = True
     # Security headers: HSTS is only emitted when enabled AND environment is
     # production (i.e. behind HTTPS). CSP is opt-in to avoid breaking the SPA
     # without testing; when empty, no CSP header is sent.

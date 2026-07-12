@@ -25,18 +25,28 @@ to block.
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
+import logging
 import socket
 from typing import Iterable
 from urllib.parse import urlparse
 
+import httpcore
 import httpx
+from httpcore._backends.auto import AutoBackend
 
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class SSRFBlockedError(ValueError):
     """Raised when a URL resolves to a forbidden (internal) target."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__("URL target is not allowed")
 
 
 def _private_ranges_allowed() -> bool:
@@ -75,8 +85,10 @@ def _check_resolved_ips(ips: Iterable[str]) -> None:
             ip = ipaddress.ip_address(ip_str)
         except ValueError:
             # If it's not a parseable IP, treat it as suspicious and block.
+            logger.warning("Blocked SSRF target with unparseable resolved IP")
             raise SSRFBlockedError(f"Unparseable resolved IP: {ip_str}")
         if _is_forbidden_ip(ip):
+            logger.warning("Blocked SSRF connection to forbidden IP %s", ip_str)
             raise SSRFBlockedError(f"URL resolves to forbidden IP {ip_str}")
 
 
@@ -92,18 +104,85 @@ def assert_url_safe(url: str) -> None:
         raise SSRFBlockedError(f"Disallowed scheme: {parsed.scheme!r}")
     if not parsed.hostname:
         raise SSRFBlockedError("No hostname in URL")
-    # If hostname is already an IP literal, check it directly.
+    if parsed.username is not None or parsed.password is not None:
+        raise SSRFBlockedError("URL userinfo is not allowed")
     try:
-        ip = ipaddress.ip_address(parsed.hostname)
-        _check_resolved_ips([str(ip)])
-        return
+        port = parsed.port
+    except ValueError as exc:
+        raise SSRFBlockedError("Invalid URL port") from exc
+    if port is not None and not 1 <= port <= 65535:
+        raise SSRFBlockedError("Invalid URL port")
+    _resolve_and_validate(parsed.hostname)
+
+
+def _resolve_and_validate(hostname: str) -> list[str]:
+    try:
+        literal = ipaddress.ip_address(hostname)
     except ValueError:
-        pass
-    ips = _resolve_hosts(parsed.hostname)
+        ips = _resolve_hosts(hostname)
+    else:
+        ips = [str(literal)]
     if not ips:
-        # Could be a relative/invalid host; block rather than risk a fallback.
-        raise SSRFBlockedError(f"Could not resolve hostname: {parsed.hostname}")
+        logger.warning("Blocked SSRF target with unresolvable hostname %s", hostname)
+        raise SSRFBlockedError(f"Could not resolve hostname: {hostname}")
     _check_resolved_ips(ips)
+    return ips
+
+
+class PinnedNetworkBackend:
+    """Resolve, validate, then connect to the exact approved IP."""
+
+    def __init__(self, backend=None):
+        self._backend = backend or AutoBackend()
+
+    async def connect_tcp(
+        self,
+        host: str | bytes,
+        port: int,
+        timeout: float | None = None,
+        local_address: bytes | None = None,
+        socket_options=None,
+    ):
+        hostname = host.decode("ascii") if isinstance(host, bytes) else host
+        ips = await asyncio.to_thread(_resolve_and_validate, hostname)
+        if not bool(getattr(get_settings(), "enable_ssrf_dns_pinning", True)):
+            return await self._backend.connect_tcp(
+                host,
+                port,
+                timeout=timeout,
+                local_address=local_address,
+                socket_options=socket_options,
+            )
+        last_error: Exception | None = None
+        for ip in ips:
+            try:
+                dial_host = ip.encode("ascii") if isinstance(host, bytes) else ip
+                return await self._backend.connect_tcp(
+                    dial_host,
+                    port,
+                    timeout=timeout,
+                    local_address=local_address,
+                    socket_options=socket_options,
+                )
+            except (OSError, httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
+                last_error = exc
+        if last_error:
+            raise last_error
+        raise httpcore.ConnectError(f"Unable to connect to {hostname}")
+
+    async def connect_unix_socket(self, *args, **kwargs):
+        raise httpcore.UnsupportedProtocol("Unix sockets are not allowed for SSRF-safe HTTP")
+
+    async def sleep(self, seconds: float) -> None:
+        await self._backend.sleep(seconds)
+
+
+class PinnedAsyncHTTPTransport(httpx.AsyncHTTPTransport):
+    """httpx transport whose TCP dial target is the validated DNS result."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._pool._network_backend = PinnedNetworkBackend()  # noqa: SLF001
 
 
 def assert_response_target_safe(response: httpx.Response) -> None:
@@ -127,7 +206,8 @@ def safe_client(**kwargs) -> httpx.AsyncClient:
     Redirects are followed (callers must call ``assert_response_target_safe``
     on the response) with a bounded redirect limit and default timeouts.
     """
-    kwargs.setdefault("follow_redirects", True)
-    kwargs.setdefault("max_redirects", 4)
+    kwargs.setdefault("follow_redirects", False)
     kwargs.setdefault("timeout", httpx.Timeout(20.0, connect=10.0))
+    kwargs.setdefault("trust_env", False)
+    kwargs.setdefault("transport", PinnedAsyncHTTPTransport())
     return httpx.AsyncClient(**kwargs)

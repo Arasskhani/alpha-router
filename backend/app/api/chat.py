@@ -1,7 +1,5 @@
 """In-app chat using enabled models (admin + user)."""
 
-import base64
-
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
@@ -9,6 +7,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_active_user
+from app.config import get_settings
 from app.database import get_db
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
@@ -19,11 +18,13 @@ from app.services.budget_service import (
     get_user_budget_state,
     resolve_monthly_budget,
 )
+from app.services.bounded_io import BoundedIOError, clamp_limit, read_upload_bounded
 from app.services.model_capabilities import image_generation_capabilities
 from app.services.media_authorization_service import MediaAccessAction, load_authorized_media_asset
 from app.services.attachment_extract import processed_attachment_payload
 from app.services.attachment_policy import (
     AttachmentPolicyError,
+    MAX_ATTACHMENT_BYTES,
     MAX_ATTACHMENTS_PER_REQUEST,
     validate_attachment_filename,
     validate_attachment_size,
@@ -42,11 +43,11 @@ from app.services.storage_service import (
     media_public_url,
     purge_expired_media,
     read_media_bytes,
+    store_generated_blob,
     store_generated_media,
     unlink_storage_if_unreferenced,
 )
 router = APIRouter(prefix="/api/chat", tags=["chat"])
-
 
 @router.get("/models")
 async def chat_models(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -236,7 +237,15 @@ async def voice_message(
     if blocked := budget_request_blocked(budget, usage):
         raise HTTPException(status_code=402, detail=blocked)
 
-    raw = await file.read()
+    try:
+        voice_limit = clamp_limit(
+            get_settings().max_voice_upload_bytes,
+            minimum=1024 * 1024,
+            maximum=25 * 1024 * 1024,
+        )
+        raw = await read_upload_bounded(file, max_bytes=voice_limit)
+    except BoundedIOError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
     mime = (file.content_type or "audio/webm").split(";")[0].strip() or "audio/webm"
     filename = file.filename or "voice.webm"
 
@@ -254,19 +263,23 @@ async def voice_message(
         logging.getLogger("app.api.chat").exception("Transcription failed")
         raise HTTPException(status_code=502, detail="Transcription failed. Please try again.") from exc
 
-    data_url = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
-    asset = await store_generated_media(
-        db,
-        user_id=user.id,
-        username=user.username,
-        kind="audio",
-        source_model=None,
-        source_prompt=transcript[:2000],
-        chat_session_id=chat_session_id,
-        data_url=data_url,
-        file_name_hint=filename,
-        metadata={"transcript": transcript},
-    )
+    try:
+        asset = await store_generated_blob(
+            db,
+            user_id=user.id,
+            username=user.username,
+            kind="audio",
+            blob=raw,
+            mime=mime,
+            source_model=None,
+            source_prompt=transcript[:2000],
+            chat_session_id=chat_session_id,
+            file_name_hint=filename,
+            metadata={"transcript": transcript},
+        )
+    except ValueError as exc:
+        status_code = 413 if "limit" in str(exc).lower() or "quota" in str(exc).lower() else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     return {
         "id": asset.id,
         "url": media_public_url(asset.id),
@@ -293,29 +306,54 @@ async def process_attachments(
         )
 
     out: list[dict] = []
+    total_bytes = 0
+    settings = get_settings()
+    attachment_limit = clamp_limit(
+        settings.max_attachment_bytes,
+        minimum=1024 * 1024,
+        maximum=MAX_ATTACHMENT_BYTES,
+    )
+    total_limit = clamp_limit(
+        settings.max_attachments_total_bytes,
+        minimum=attachment_limit,
+        maximum=MAX_ATTACHMENT_BYTES * MAX_ATTACHMENTS_PER_REQUEST,
+    )
     for upload in files:
         filename = upload.filename or "attachment"
         try:
             _, kind = validate_attachment_filename(filename)
-            raw = await upload.read()
+            remaining = total_limit - total_bytes
+            if remaining <= 0:
+                raise BoundedIOError("Attachments exceed the total request limit.")
+            raw = await read_upload_bounded(
+                upload,
+                max_bytes=min(attachment_limit, remaining),
+            )
             validate_attachment_size(len(raw))
+            total_bytes += len(raw)
+        except BoundedIOError as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
         except AttachmentPolicyError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         mime = (upload.content_type or "application/octet-stream").split(";")[0].strip()
-        data_url = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
-        asset = await store_generated_media(
-            db,
-            user_id=user.id,
-            username=user.username,
-            kind=kind,
-            source_model=None,
-            source_prompt=filename,
-            chat_session_id=chat_session_id,
-            data_url=data_url,
-            file_name_hint=filename,
-            metadata={"attachment": True},
-        )
+        try:
+            asset = await store_generated_blob(
+                db,
+                user_id=user.id,
+                username=user.username,
+                kind=kind,
+                blob=raw,
+                mime=mime,
+                source_model=None,
+                source_prompt=filename,
+                chat_session_id=chat_session_id,
+                file_name_hint=filename,
+                metadata={"attachment": True},
+            )
+        except ValueError as exc:
+            status_code = 413 if "limit" in str(exc).lower() or "quota" in str(exc).lower() else 400
+            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
         out.append(
             processed_attachment_payload(
                 filename=filename,
@@ -350,7 +388,8 @@ async def store_media(
             metadata=body.metadata or {},
         )
     except ValueError as exc:
-        if "quota" in str(exc).lower():
+        detail = str(exc)
+        if "quota" in detail.lower() or "limit" in detail.lower() or "too large" in detail.lower():
             raise HTTPException(status_code=413, detail=str(exc)) from exc
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
-import io
+import os
+import tempfile
 import time
 import zipfile
 from collections import defaultdict
-from typing import Any
+from pathlib import Path
+from typing import Any, AsyncIterator
 
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +26,32 @@ DEFAULT_USER_MEDIA_QUOTA_GB = 1
 MIN_USER_MEDIA_QUOTA_GB = 1
 MAX_USER_MEDIA_QUOTA_GB = 100
 _QUOTA_BYTES_CACHE: tuple[float, int] | None = None
+MAX_ZIP_ITEMS = 100
+MAX_ZIP_SINGLE_FILE_BYTES = 50 * 1024 * 1024
+MAX_ZIP_AGGREGATE_BYTES = 256 * 1024 * 1024
+
+
+class MediaZipLimitError(ValueError):
+    pass
+
+
+def _zip_limits() -> tuple[int, int, int]:
+    from app.config import get_settings
+    from app.services.bounded_io import clamp_limit
+
+    settings = get_settings()
+    items = clamp_limit(settings.max_zip_items, minimum=1, maximum=MAX_ZIP_ITEMS)
+    single = clamp_limit(
+        settings.max_zip_single_file_bytes,
+        minimum=1024 * 1024,
+        maximum=MAX_ZIP_SINGLE_FILE_BYTES,
+    )
+    aggregate = clamp_limit(
+        settings.max_zip_aggregate_bytes,
+        minimum=single,
+        maximum=MAX_ZIP_AGGREGATE_BYTES,
+    )
+    return items, single, aggregate
 
 
 def _gb_to_bytes(gb: int) -> int:
@@ -339,10 +368,13 @@ def _zip_arcname(row: MediaAsset, used: set[str]) -> str:
         n += 1
 
 
-async def build_media_zip_bytes(db: AsyncSession, user_id: int, ids: list[int]) -> tuple[bytes, int]:
+async def build_media_zip_file(db: AsyncSession, user_id: int, ids: list[int]) -> tuple[Path, int]:
+    max_items, max_single, max_aggregate = _zip_limits()
     unique = sorted({int(i) for i in ids if int(i) > 0})
     if not unique:
         raise ValueError("No media ids provided")
+    if len(unique) > max_items:
+        raise MediaZipLimitError(f"Too many media files (max {max_items})")
 
     rows = (
         await db.execute(
@@ -352,19 +384,57 @@ async def build_media_zip_bytes(db: AsyncSession, user_id: int, ids: list[int]) 
     if not rows:
         raise ValueError("No media files found")
 
-    buffer = io.BytesIO()
+    declared_total = 0
+    for row in rows:
+        size = max(0, int(row.size_bytes or 0))
+        if size > max_single:
+            raise MediaZipLimitError("A media file exceeds the ZIP single-file limit")
+        declared_total += size
+        if declared_total > max_aggregate:
+            raise MediaZipLimitError("Selected media exceeds the ZIP aggregate limit")
+
+    fd, raw_path = tempfile.mkstemp(prefix="alpha-router-media-", suffix=".zip")
+    os.close(fd)
+    path = Path(raw_path)
     used_names: set[str] = set()
     packed = 0
-    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
-        for row in rows:
-            try:
-                data = await read_media_bytes(row)
-            except FileNotFoundError:
-                continue
-            zf.writestr(_zip_arcname(row, used_names), data)
-            packed += 1
+    actual_total = 0
+    try:
+        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+            for row in rows:
+                try:
+                    data = await read_media_bytes(row)
+                except FileNotFoundError:
+                    continue
+                if len(data) > max_single:
+                    raise MediaZipLimitError("A media file exceeds the ZIP single-file limit")
+                actual_total += len(data)
+                if actual_total > max_aggregate:
+                    raise MediaZipLimitError("Selected media exceeds the ZIP aggregate limit")
+                arcname = _zip_arcname(row, used_names)
+                await asyncio.to_thread(zf.writestr, arcname, data)
+                packed += 1
+        if packed == 0:
+            raise ValueError("No media files available on disk")
+        return path, packed
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
 
-    if packed == 0:
-        raise ValueError("No media files available on disk")
 
-    return buffer.getvalue(), packed
+async def stream_media_zip(path: Path) -> AsyncIterator[bytes]:
+    try:
+        with path.open("rb") as handle:
+            while chunk := await asyncio.to_thread(handle.read, 64 * 1024):
+                yield chunk
+    finally:
+        path.unlink(missing_ok=True)
+
+
+async def build_media_zip_bytes(db: AsyncSession, user_id: int, ids: list[int]) -> tuple[bytes, int]:
+    """Compatibility wrapper; API endpoints use the temp-file streaming path."""
+    path, packed = await build_media_zip_file(db, user_id, ids)
+    try:
+        return await asyncio.to_thread(path.read_bytes), packed
+    finally:
+        path.unlink(missing_ok=True)

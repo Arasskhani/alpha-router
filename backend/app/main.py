@@ -19,6 +19,7 @@ from app.database import AsyncSessionLocal, Base, engine
 from app.db_migrate import apply_schema_column_patches, run_one_time_migrations
 from app.models.user import User
 from app.services.auth_sync_scheduler import refresh_auth_sync_schedules
+from app.services.bounded_io import RequestBodyLimitMiddleware
 from app.services.scheduler import (
     refresh_chat_retention_cleanup_schedule,
     refresh_storage_cleanup_schedule,
@@ -206,6 +207,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+app.add_middleware(RequestBodyLimitMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 
 

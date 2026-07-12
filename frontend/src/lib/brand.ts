@@ -14,6 +14,7 @@ export const STORAGE_KEYS = {
   chatTools: "nitro_chat_tools",
   defaultModel: "nitro_default_model",
   privateChats: "nitro_private_chats",
+  authProvider: "nitro_auth_provider",
 } as const;
 
 export const PAGE_TITLE = `${PRODUCT_NAME} | ${LOGIN_TAGLINE}`;

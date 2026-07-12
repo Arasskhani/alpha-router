@@ -56,9 +56,11 @@ class Settings(BaseSettings):
     # OpenAI-compatible gateway master key (Open WebUI → NITRO)
     gateway_master_key: str = "sk-nitro-master"
 
-    # Code interpreter sandbox (Phase 2). When code_sandbox_image is set, user code
-    # runs in a disposable, network-less, read-only container instead of an in-process
-    # subprocess. Empty string disables container isolation (legacy subprocess path).
+    # Code interpreter sandbox. NITRO sends bounded payloads to an internal broker;
+    # only that broker has access to the Docker socket and fixed sandbox policy.
+    code_sandbox_broker_url: str = ""
+    code_sandbox_broker_token: str = ""
+    # Legacy settings retained temporarily for configuration compatibility.
     code_sandbox_image: str = ""  # env: CODE_SANDBOX_IMAGE (e.g. nitro-sandbox:latest)
     code_sandbox_timeout_seconds: int = 20  # env: CODE_SANDBOX_TIMEOUT_SECONDS
     code_sandbox_memory: str = "256m"  # env: CODE_SANDBOX_MEMORY

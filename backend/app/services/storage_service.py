@@ -183,8 +183,16 @@ def _decode_data_url(data_url: str) -> tuple[bytes, str]:
 
 
 async def _download_url(url: str) -> tuple[bytes, str]:
+    # SSRF guard: validate target before fetch and re-validate the final
+    # (post-redirect) target before returning the body, so a public URL that
+    # 302s to an internal address cannot exfiltrate internal resources via
+    # the media import path.
+    from app.services.ssrf_guard import assert_response_target_safe, assert_url_safe
+
+    assert_url_safe(url)
     client = _get_download_client()
     resp = await client.get(url)
+    assert_response_target_safe(resp)
     resp.raise_for_status()
     mime = resp.headers.get("content-type", "application/octet-stream").split(";")[0].strip()
     return resp.content, mime

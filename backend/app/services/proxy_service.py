@@ -11,6 +11,7 @@ from typing import AsyncIterator
 import litellm
 from fastapi import HTTPException, Request
 from litellm import acompletion, aembedding
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -31,6 +32,7 @@ from app.services.code_interpreter_service import (
 )
 from app.services.chat_completion_persistence import persister_from_body
 from app.services.llm_providers import litellm_model_for_provider, resolve_litellm_provider
+from app.services.secret_crypto import decrypt_secret
 
 # Backward-compatible aliases for internal modules that import from proxy_service.
 _litellm_model_for_provider = litellm_model_for_provider
@@ -112,7 +114,7 @@ async def resolve_model_and_key(
     conn = await db.get(Connection, row.connection_id)
     if not conn or not conn.is_active:
         return None, None, None, None
-    return row, conn.api_key_encrypted, conn.base_url, conn.provider_type
+    return row, decrypt_secret(conn.api_key_encrypted), conn.base_url, conn.provider_type
 
 
 def _extract_prompt_text(messages: list) -> str:
@@ -303,9 +305,15 @@ def _extract_non_stream_content(response) -> tuple[str, tuple[int, int, int]]:
 async def _apply_cost_to_user(db: AsyncSession, user_id: int, cost: float) -> None:
     if cost <= 0:
         return
-    user = await db.get(User, user_id)
-    if user:
-        user.budget_used_usd = (user.budget_used_usd or 0) + cost
+    # Atomic increment via SQL UPDATE (col = col + :cost) instead of ORM
+    # read-modify-write. Concurrent requests otherwise race on the same row:
+    # both read the old value, both add their cost, both write — one update is
+    # lost. The single UPDATE statement is atomic at the row level under both
+    # PostgreSQL (row lock) and SQLite (database lock), so no lost updates.
+    await db.execute(
+        text("UPDATE users SET budget_used_usd = COALESCE(budget_used_usd, 0) + :cost WHERE id = :uid"),
+        {"cost": float(cost), "uid": user_id},
+    )
 
 
 def _usable_cost_per_1k(value: float | None) -> float | None:
@@ -539,6 +547,7 @@ async def stream_chat(
                                 await persister.on_content(collected_content)
                             except Exception:
                                 await db.rollback()
+                                persister.reset_persist_state()
                     if not client_disconnected:
                         yield f"data: {_serialize_stream_chunk(chunk)}\n\n".encode()
 
@@ -569,6 +578,7 @@ async def stream_chat(
                         await persister.on_content(collected_content)
                     except Exception:
                         await db.rollback()
+                        persister.reset_persist_state()
                 if not client_disconnected:
                     yield _sse_delta_chunk(formatted)
 
@@ -610,6 +620,7 @@ async def stream_chat(
                             await persister.on_content(collected_content)
                         except Exception:
                             await db.rollback()
+                            persister.reset_persist_state()
                     await _compute_cost()
                 except Exception as retry_exc:
                     success = False
@@ -629,28 +640,35 @@ async def stream_chat(
                 elapsed_ms = (stream_end_at - generation_start) * 1000
             else:
                 elapsed_ms = (time.perf_counter() - generation_start) * 1000
+            # Usage/cost accounting is logged in an INDEPENDENT session so that a
+            # persister rollback (which reverts the assistant message content)
+            # cannot also drop the RequestLog / budget increment — otherwise a
+            # user could be charged for a response whose stored message was
+            # lost, or conversely get a response for free. This decouples the
+            # two concerns (message persistence vs cost accounting).
             try:
-                await log_usage(
-                    db,
-                    user_id=user_id,
-                    username=username,
-                    model_id=model,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    cached_tokens=cached_tokens,
-                    total_cost_usd=total_cost,
-                    response_time_ms=elapsed_ms,
-                    prompt_language=prompt_lang,
-                    source_ip=request.client.host if request.client else None,
-                    source=source,
-                    success=success,
-                    error_message=error_message,
-                    nitro_api_key_id=nitro_api_key_id,
-                    client_app=client_app,
-                )
-                await db.commit()
+                async with AsyncSessionLocal() as log_db:
+                    await log_usage(
+                        log_db,
+                        user_id=user_id,
+                        username=username,
+                        model_id=model,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        cached_tokens=cached_tokens,
+                        total_cost_usd=total_cost,
+                        response_time_ms=elapsed_ms,
+                        prompt_language=prompt_lang,
+                        source_ip=request.client.host if request.client else None,
+                        source=source,
+                        success=success,
+                        error_message=error_message,
+                        nitro_api_key_id=nitro_api_key_id,
+                        client_app=client_app,
+                    )
+                    await log_db.commit()
             except Exception:
-                await db.rollback()
+                pass
             yield b"data: [DONE]\n\n"
 
 

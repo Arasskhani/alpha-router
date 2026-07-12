@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.connection import Connection
+from app.services.secret_crypto import decrypt_secret
 
 _MAX_BYTES = 25 * 1024 * 1024
 
@@ -54,10 +55,10 @@ async def _resolve_transcription_provider(
     for p in preferred:
         conn = by_type.get(p)
         if conn:
-            return p, conn.api_key_encrypted, conn.base_url
+            return p, decrypt_secret(conn.api_key_encrypted), conn.base_url
     if rows and rows[0].api_key_encrypted:
         c = rows[0]
-        return (c.provider_type or "openai").lower(), c.api_key_encrypted, c.base_url
+        return (c.provider_type or "openai").lower(), decrypt_secret(c.api_key_encrypted), c.base_url
     raise ValueError("No active connection with an API key is available for speech-to-text.")
 
 

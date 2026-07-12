@@ -22,6 +22,7 @@ from app.models.connection import Connection
 from app.models.media import MediaAsset
 from app.models.model_catalog import AIModel
 from app.models.user import User
+from app.services.secret_crypto import decrypt_secret
 from app.services.image_model_resolver import resolve_auto_router_image_model
 from app.services.budget_service import budget_request_blocked, get_user_budget_state
 from app.config import get_settings
@@ -258,8 +259,12 @@ async def _reference_image_dimensions(reference_image: str) -> tuple[int, int] |
     data = _reference_image_bytes(ref)
     if data is None and (ref.startswith("http://") or ref.startswith("https://")):
         try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+            from app.services.ssrf_guard import assert_response_target_safe, assert_url_safe, safe_client
+
+            assert_url_safe(ref)
+            async with safe_client() as client:
                 resp = await client.get(ref)
+                assert_response_target_safe(resp)
                 if resp.status_code == 200:
                     data = resp.content
         except Exception:
@@ -611,7 +616,7 @@ async def _resolve_image_model(
         if row:
             conn = await db.get(Connection, row.connection_id)
             if conn and conn.is_active:
-                return row.external_id, conn.api_key_encrypted, conn.base_url, conn.provider_type, row
+                return row.external_id, decrypt_secret(conn.api_key_encrypted), conn.base_url, conn.provider_type, row
             row = None
 
     if not row:
@@ -630,7 +635,7 @@ async def _resolve_image_model(
         ).first()
         if candidate:
             row, conn = candidate
-            return row.external_id, conn.api_key_encrypted, conn.base_url, conn.provider_type, row
+            return row.external_id, decrypt_secret(conn.api_key_encrypted), conn.base_url, conn.provider_type, row
 
     if not row:
         return model_id, None, None, None, None
@@ -674,7 +679,7 @@ async def generate_image(
                     ),
                 )
             model_id, ai_model, conn = picked
-            api_key = conn.api_key_encrypted
+            api_key = decrypt_secret(conn.api_key_encrypted)
             base_url = conn.base_url
             provider_type = conn.provider_type
             billing.model_id = model_id

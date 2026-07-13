@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     # column (bumped on logout / password reset / admin disable), so a token
     # is also revocable before its natural expiry.
     jwt_expire_minutes: int = 480
+    # Browser sessions use an HttpOnly cookie. Legacy Bearer JWTs remain
+    # accepted during the compatibility window; /v1 API-key auth is separate.
+    enable_cookie_auth: bool = True
+    allow_legacy_bearer_auth: bool = True
+    enable_csrf: bool = True
+    session_cookie_name: str = "alpha_router_session"
+    csrf_cookie_name: str = "alpha_router_csrf"
+    csrf_header_name: str = "X-CSRF-Token"
 
     # Default admin (local auth panel)
     admin_username: str = "admin"

@@ -38,7 +38,6 @@ export function useAdminShellNav() {
     api<SessionRbac>("/api/auth/session")
       .then((data) => {
         setSession(data);
-        localStorage.setItem("alpha_router_role", normalizeRole(data.role));
       })
       .catch(() => {
         setSession(null);

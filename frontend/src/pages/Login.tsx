@@ -6,6 +6,7 @@ import { applyThemeToDocument } from "../lib/themeCache";
 import { markLoggedIn } from "../lib/session";
 import { isAdminPanelRole, normalizeRole, filterAdminNav, firstAllowedAdminPath } from "../lib/rbac";
 import { adminNavSections } from "../nav/adminNav";
+import { authFetch, bootstrapSession } from "../api";
 function FeatureProvidersArt() {
   const dots = ["O", "A", "G", "M", "C", "R", "F", "N"];
   return (
@@ -127,7 +128,7 @@ export default function Login() {
     return () => document.body.classList.remove("login-route");
   }, []);
   useEffect(() => {
-    fetch("/api/auth/methods").then((r) => r.json()).then(setMethods).catch(() => {});
+    authFetch("/api/auth/methods").then((r) => r.json()).then(setMethods).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -140,7 +141,7 @@ export default function Login() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/auth/keycloak/exchange", {
+        const res = await authFetch("/api/auth/keycloak/exchange", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ code }),
@@ -156,15 +157,13 @@ export default function Login() {
           if (!cancelled) setError(detail || "Keycloak login expired, please try again.");
           return;
         }
-        const data = await res.json();
+        await res.json();
         if (cancelled) return;
-        localStorage.setItem("alpha_router_token", data.access_token);
-        localStorage.setItem("alpha_router_role", normalizeRole(data.role));
-        localStorage.setItem("alpha_router_auth_provider", "keycloak");
-        const active = data.is_active !== false;
+        const session = await bootstrapSession(true);
+        const active = session.is_active !== false;
         markLoggedIn(active);
-        if (isAdminPanelRole(data.role)) {
-          const role = normalizeRole(data.role);
+        if (isAdminPanelRole(session.role)) {
+          const role = normalizeRole(session.role);
           nav(firstAllowedAdminPath(filterAdminNav(adminNavSections, role)));
         } else {
           nav("/app/chat");
@@ -182,7 +181,7 @@ export default function Login() {
     e.preventDefault();
     setError("");
     try {
-      const res = await fetch("/api/auth/login", {
+      const res = await authFetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: username.trim(), password }),
@@ -204,14 +203,12 @@ export default function Login() {
         }
         throw new Error(detail || `Login failed (${res.status})`);
       }
-      const data = await res.json();
-      localStorage.setItem("alpha_router_token", data.access_token);
-      localStorage.setItem("alpha_router_role", normalizeRole(data.role));
-      localStorage.setItem("alpha_router_auth_provider", "local");
-      const active = data.is_active !== false;
+      await res.json();
+      const session = await bootstrapSession(true);
+      const active = session.is_active !== false;
       markLoggedIn(active);
-      if (isAdminPanelRole(data.role)) {
-        const role = normalizeRole(data.role);
+      if (isAdminPanelRole(session.role)) {
+        const role = normalizeRole(session.role);
         nav(firstAllowedAdminPath(filterAdminNav(adminNavSections, role)));
       } else {
         nav("/app/chat");

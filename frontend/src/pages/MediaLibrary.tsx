@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api";
+import { api, authFetch } from "../api";
 import AdminPage from "../components/AdminPage";
 import AuthenticatedImage from "../components/AuthenticatedImage";
 import RowActionsMenu from "../components/RowActionsMenu";
@@ -229,12 +229,10 @@ export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProp
     setDownloadingZip(true);
     setError("");
     try {
-      const token = localStorage.getItem("alpha_router_token");
-      const res = await fetch(`${apiBase}/download-zip`, {
+      const res = await authFetch(`${apiBase}/download-zip`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ ids: targets.map((m) => m.id) }),
       });

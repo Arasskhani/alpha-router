@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useOutletContext } from "react-router-dom";
-import { api, formatApiError, isApiAuthError } from "../api";
+import { api, authFetch, formatApiError, getCachedSession, isApiAuthError } from "../api";
 import { chatModelsEmptyMessage, normalizeChatModelsError } from "../lib/chatMessages";
 import AuthenticatedImage from "./AuthenticatedImage";
 import MarkdownContent from "./MarkdownContent";
@@ -822,7 +822,7 @@ export default function ChatPanel() {
           serverSaveTimerRef.current = null;
         }
         if (!chatsHydratedRef.current || readOnly) return;
-        if (!localStorage.getItem("alpha_router_token")) return;
+        if (!getCachedSession()) return;
         const sessionsForServer = sessionsRef.current.map((s) => ({
           ...s,
           messages: s.privateMode ? s.messages : compactChatMessagesForStorage(s.messages),
@@ -2287,7 +2287,6 @@ export default function ChatPanel() {
     modelId: string,
     history: ChatMessage[],
     forModel: Model | undefined,
-    token: string | null,
     signal: AbortSignal,
     onPartial: (text: string) => void,
     tools: ChatToolsState = chatTools,
@@ -2298,11 +2297,10 @@ export default function ChatPanel() {
     },
     privateMode = false,
   ): Promise<string> {
-    const res = await fetch("/api/chat/completions", {
+    const res = await authFetch("/api/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(
         await chatCompletionBody(modelId, history, forModel, tools, persist, privateMode),
@@ -2391,7 +2389,6 @@ export default function ChatPanel() {
     turnBaseCount: number,
     persistCtx?: TextTurnPersistCtx,
   ) {
-    const token = localStorage.getItem("alpha_router_token");
     const emptyReply =
       "No response from model. Check Connections and enable the model in Admin → Models.";
     const turnSession = sessionsRef.current.find((s) => s.id === sid);
@@ -2534,7 +2531,6 @@ export default function ChatPanel() {
       primaryModel.id,
       historyForApi,
       primaryModel,
-      token,
       controller.signal,
       (content) => {
         if (turnPhasesRef.current[sid] !== "writing") {
@@ -3280,11 +3276,9 @@ export default function ChatPanel() {
     const fd = new FormData();
     fd.append("file", blob, `voice-${Date.now()}.${extension}`);
     if (sid) fd.append("chat_session_id", sid);
-    const token = localStorage.getItem("alpha_router_token");
     try {
-      const res = await fetch("/api/chat/voice", {
+      const res = await authFetch("/api/chat/voice", {
         method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: fd,
       });
       if (!res.ok) throw new Error(parseApiError(await res.text(), res.status));
@@ -3430,10 +3424,8 @@ export default function ChatPanel() {
         const fd = new FormData();
         for (const file of files) fd.append("files", file);
         if (sid) fd.append("chat_session_id", sid);
-        const token = localStorage.getItem("alpha_router_token");
-        const res = await fetch("/api/chat/attachments/process", {
+        const res = await authFetch("/api/chat/attachments/process", {
           method: "POST",
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
           body: fd,
         });
         if (!res.ok) throw new Error(parseApiError(await res.text(), res.status));

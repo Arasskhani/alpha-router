@@ -324,14 +324,12 @@ export function markSessionMetadataDirty(sessionId: string) {
 }
 
 function legacyStorageKey(): string {
-  const token = localStorage.getItem("alpha_router_token");
-  const sub = token ? token.slice(0, 12) : "anon";
+  const sub = getSessionUser()?.username || "anon";
   return `alpha_router_chats_${sub}`;
 }
 
 function legacyFoldersStorageKey(): string {
-  const token = localStorage.getItem("alpha_router_token");
-  const sub = token ? token.slice(0, 12) : "anon";
+  const sub = getSessionUser()?.username || "anon";
   return `alpha_router_chat_folders_${sub}`;
 }
 

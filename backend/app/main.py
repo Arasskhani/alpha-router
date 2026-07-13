@@ -20,6 +20,7 @@ from app.db_migrate import apply_schema_column_patches, run_one_time_migrations
 from app.models.user import User
 from app.services.auth_sync_scheduler import refresh_auth_sync_schedules
 from app.services.bounded_io import RequestBodyLimitMiddleware
+from app.services.csrf_protection import CsrfProtectionMiddleware
 from app.services.scheduler import (
     refresh_chat_retention_cleanup_schedule,
     refresh_storage_cleanup_schedule,
@@ -221,8 +222,15 @@ app.add_middleware(
     allow_origins=[settings.frontend_url, "http://127.0.0.1:8080", "http://localhost:8080"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Requested-With", "X-Client-App"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "X-Requested-With",
+        "X-Client-App",
+        settings.csrf_header_name,
+    ],
 )
+app.add_middleware(CsrfProtectionMiddleware)
 
 app.include_router(auth.router)
 app.include_router(gateway.router)

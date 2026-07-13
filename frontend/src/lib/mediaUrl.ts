@@ -1,4 +1,6 @@
 /** Alpha Router media files are served from an authenticated API route. */
+import { authFetch } from "../api";
+
 
 export function isAlphaRouterMediaFileUrl(url: string): boolean {
   if (!url) return false;
@@ -11,10 +13,7 @@ export function isAlphaRouterMediaFileUrl(url: string): boolean {
 }
 
 export async function fetchAuthenticatedMediaBlob(url: string): Promise<Blob> {
-  const token = localStorage.getItem("alpha_router_token");
-  const res = await fetch(url, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
+  const res = await authFetch(url);
   if (!res.ok) {
     const text = await res.text();
     try {

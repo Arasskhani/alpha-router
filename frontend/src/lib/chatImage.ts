@@ -8,6 +8,7 @@ import {
 } from "./chatStorage";
 import { referenceImageFromUserContent, resolveReferenceImageFromUserContent } from "./chatAttachments";
 import { isPrivateBlobRef, resolvePrivateMediaUrlForApi } from "./privateMediaStore";
+import { authFetch } from "../api";
 import {
   normalizeImageAspectPreset,
   presetFromAspectRatio,
@@ -248,7 +249,6 @@ async function requestImageApi(
   aspectPreset: ImageAspectPresetId,
   sourceSize: string | undefined,
 ): Promise<ImagePayload> {
-  const token = localStorage.getItem("alpha_router_token");
   const operation = referenceImage ? "img2img" : "generation";
   const resolvedReference = referenceImage
     ? await resolvePrivateMediaUrlForApi(referenceImage)
@@ -266,11 +266,10 @@ async function requestImageApi(
   } else if (aspectRatio) {
     body.aspect_ratio = aspectRatio;
   }
-  const res = await fetch("/api/images/generate", {
+  const res = await authFetch("/api/images/generate", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(body),
     signal,

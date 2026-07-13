@@ -130,6 +130,18 @@ export async function deletePrivateBlob(id: string): Promise<void> {
   });
 }
 
+/** Delete all IndexedDB media kept for browser-only Private Mode. */
+export async function clearPrivateMediaStore(): Promise<void> {
+  for (const blobUrl of blobUrlToRef.keys()) URL.revokeObjectURL(blobUrl);
+  blobUrlToRef.clear();
+  await new Promise<void>((resolve, reject) => {
+    const req = indexedDB.deleteDatabase(DB_NAME);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error ?? new Error("Could not clear private media storage."));
+    req.onblocked = () => resolve();
+  });
+}
+
 /** Persist an in-memory media URL (data:, blob:, or existing ref) as a private blob ref. */
 export async function storePrivateMediaUrl(url: string): Promise<string> {
   const trimmed = url.trim();

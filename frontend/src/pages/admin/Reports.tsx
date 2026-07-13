@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import AdminPage from "../../components/AdminPage";
 import UserOwnerSelect from "../../components/apiKeys/UserOwnerSelect";
-import { api, formatApiError } from "../../api";
+import { api, authFetch, formatApiError } from "../../api";
 
 type ReportDef = {
   id: string;
@@ -92,8 +92,6 @@ function applyPreset(preset: string): { start: string; end: string } {
 function presetLabel(preset: string): string {
   return DATE_PRESETS.find((p) => p.value === preset)?.label ?? "Custom range";
 }
-
-const token = () => localStorage.getItem("alpha_router_token");
 
 export default function Reports() {
   const [catalog, setCatalog] = useState<ReportDef[]>([]);
@@ -217,11 +215,10 @@ export default function Reports() {
     setBusy(true);
     setErr("");
     try {
-      const res = await fetch("/api/admin/reports/export", {
+      const res = await authFetch("/api/admin/reports/export", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(token() ? { Authorization: `Bearer ${token()}` } : {}),
         },
         body: JSON.stringify(buildBody()),
       });

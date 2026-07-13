@@ -56,6 +56,8 @@ import {
   finalizeAssistantOnServer,
   syncSessionMessagesToServer,
   cancelStreamingReplyOnServer,
+  setMessageFeedbackOnServer,
+  patchLastSessionMessageOnServer,
   clearSessionMessageSyncQueue,
   replaceChatSessionMessagesOnServer,
   isChatRevisionConflict,
@@ -1507,7 +1509,7 @@ export default function ChatPanel() {
     if (!sid || readOnly) return;
     const session = sessionsRef.current.find((s) => s.id === sid);
     if (!session || session.privateMode) return;
-    const msgs = messages.length ? messages : session.messages;
+    const msgs = messagesRef.current.length ? messagesRef.current : session.messages;
     if (!sessionHasInFlightGeneration(msgs)) {
       if (streamingSessionsRef.current[sid] && !isBackgroundImageRunning(sid)) {
         setSessionStreaming(sid, false);
@@ -1552,7 +1554,7 @@ export default function ChatPanel() {
           if (cancelled || activeIdRef.current !== sid) return;
           const localMsgs =
             activeIdRef.current === sid
-              ? messages
+              ? messagesRef.current
               : sessionsRef.current.find((s) => s.id === sid)?.messages ?? [];
           if (!sessionHasInFlightGeneration(localMsgs)) {
             setSessionStreaming(sid, false);
@@ -1565,7 +1567,7 @@ export default function ChatPanel() {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [activeId, messages, readOnly, sessions]);
+  }, [activeId, readOnly]);
 
   useEffect(() => {
     if (readOnly) return;
@@ -2734,6 +2736,36 @@ export default function ChatPanel() {
     window.setTimeout(() => setCopiedMessageKey((prev) => (prev === key ? null : prev)), 1400);
   }
 
+  async function rateAssistantMessage(index: number, rating: -1 | 1) {
+    const sid = activeIdRef.current;
+    const current = messagesRef.current[index];
+    if (!sid || !current?.id || current.role !== "assistant") return;
+    const previous = current.feedback;
+    const nextRating: -1 | 0 | 1 = previous?.rating === rating ? 0 : rating;
+    const applyFeedback = (feedback: ChatMessage["feedback"]) => {
+      const nextMessages = messagesRef.current.map((message, messageIndex) =>
+        messageIndex === index ? { ...message, feedback } : message,
+      );
+      messagesRef.current = nextMessages;
+      setMessages(nextMessages);
+      setSessions((prev) => {
+        const next = prev.map((session) =>
+          session.id === sid ? { ...session, messages: nextMessages } : session,
+        );
+        sessionsRef.current = next;
+        return next;
+      });
+    };
+    applyFeedback(nextRating === 0 ? undefined : { rating: nextRating });
+    try {
+      const feedback = await setMessageFeedbackOnServer(sid, current.id, nextRating);
+      applyFeedback(feedback);
+    } catch (error) {
+      applyFeedback(previous);
+      setChatError(formatApiError(error) || "Could not save feedback.");
+    }
+  }
+
   function editUserPrompt(content: string) {
     const attach = readAttachmentMessage(content);
     if (attach) {
@@ -2839,33 +2871,45 @@ export default function ChatPanel() {
     setTurnPhase(sid, undefined);
 
     if (!sessionPrivateMode(sid) && isChatSessionOnServer(sid)) {
+      const hadPendingImage = localMsgs.some((m) => m.content === IMAGE_PENDING_MARKER);
+      const refreshAfterStop = () => {
+        void pollSessionMessagesFromServer(sid, { limit: 50 })
+          .then(({ messages: remoteMsgs, revision }) => {
+            if (activeIdRef.current !== sid) return;
+            const mergedMsgs = preferLocalMessagesOverRemote(sid, remoteMsgs);
+            setSessions((prev) => {
+              const next = prev.map((s) =>
+                s.id === sid
+                  ? {
+                      ...s,
+                      messages: mergedMsgs,
+                      revision,
+                      messageCount: Math.max(s.messageCount ?? 0, mergedMsgs.length),
+                    }
+                  : s,
+              );
+              sessionsRef.current = next;
+              return next;
+            });
+            if (activeIdRef.current === sid) setMessages(mergedMsgs);
+            if (!sessionHasInFlightGeneration(mergedMsgs)) {
+              setSessionStreaming(sid, false);
+            }
+          })
+          .catch(() => {});
+      };
       void cancelStreamingReplyOnServer(sid)
         .catch((err) => reportSyncError(err, sid))
         .finally(() => {
-          void pollSessionMessagesFromServer(sid, { limit: 50 })
-            .then(({ messages: remoteMsgs, revision }) => {
-              if (activeIdRef.current !== sid) return;
-              const mergedMsgs = preferLocalMessagesOverRemote(sid, remoteMsgs);
-              setSessions((prev) => {
-                const next = prev.map((s) =>
-                  s.id === sid
-                    ? {
-                        ...s,
-                        messages: mergedMsgs,
-                        revision,
-                        messageCount: Math.max(s.messageCount ?? 0, mergedMsgs.length),
-                      }
-                    : s,
-                );
-                sessionsRef.current = next;
-                return next;
-              });
-              if (activeIdRef.current === sid) setMessages(mergedMsgs);
-              if (!sessionHasInFlightGeneration(mergedMsgs)) {
-                setSessionStreaming(sid, false);
-              }
+          if (hadPendingImage) {
+            void patchLastSessionMessageOnServer(sid, "Image generation stopped.", {
+              receivedAt: Date.now(),
             })
-            .catch(() => {});
+              .catch(() => {})
+              .finally(refreshAfterStop);
+          } else {
+            refreshAfterStop();
+          }
         });
     }
   }
@@ -3953,6 +3997,36 @@ export default function ChatPanel() {
                 )}
                 {m.role !== "user" && (
                   <>
+                    {m.id &&
+                    !activePrivateMode &&
+                    m.content !== IMAGE_PENDING_MARKER &&
+                    !m.streaming &&
+                    !(isSessionStreaming && i === messages.length - 1) ? (
+                      <>
+                        <button
+                          type="button"
+                          className={`cgpt-msg-action-btn cgpt-msg-feedback-btn${m.feedback?.rating === 1 ? " is-active" : ""}`}
+                          disabled={readOnly}
+                          onClick={() => void rateAssistantMessage(i, 1)}
+                          title="Helpful"
+                          aria-label="Mark response as helpful"
+                          aria-pressed={m.feedback?.rating === 1}
+                        >
+                          👍
+                        </button>
+                        <button
+                          type="button"
+                          className={`cgpt-msg-action-btn cgpt-msg-feedback-btn${m.feedback?.rating === -1 ? " is-active" : ""}`}
+                          disabled={readOnly}
+                          onClick={() => void rateAssistantMessage(i, -1)}
+                          title="Not helpful"
+                          aria-label="Mark response as not helpful"
+                          aria-pressed={m.feedback?.rating === -1}
+                        >
+                          👎
+                        </button>
+                      </>
+                    ) : null}
                     <button
                       type="button"
                       className="cgpt-msg-action-btn"

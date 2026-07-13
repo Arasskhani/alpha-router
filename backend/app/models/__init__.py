@@ -10,7 +10,7 @@ from app.models.budget_reservation import BudgetReservation
 from app.models.system import SmtpSettings, ReportSchedule, SystemMetricSnapshot, SystemSetting
 from app.models.auth_provider import AuthProviderConfig
 from app.models.media import MediaAsset
-from app.models.chat import ChatFolder, ChatMessage, ChatSession, UserChatPrefs
+from app.models.chat import ChatFolder, ChatMessage, ChatMessageFeedback, ChatSession, UserChatPrefs
 
 __all__ = [
     "User",
@@ -34,6 +34,7 @@ __all__ = [
     "MediaAsset",
     "ChatFolder",
     "ChatMessage",
+    "ChatMessageFeedback",
     "ChatSession",
     "UserChatPrefs",
 ]

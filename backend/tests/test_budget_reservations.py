@@ -23,6 +23,41 @@ from app.services import proxy_service
 from app.services.proxy_service import log_usage
 
 
+def test_chat_hold_estimate_does_not_call_provider_tokenizer() -> None:
+    model = SimpleNamespace(
+        input_cost_per_1k=0.001,
+        output_cost_per_1k=0.002,
+    )
+    with patch.object(
+        reservations.litellm,
+        "token_counter",
+        side_effect=AssertionError("stream preflight must not tokenize"),
+    ):
+        estimate = reservations.estimate_chat_hold(
+            model,
+            {
+                "messages": [{"role": "user", "content": "سلام" * 100}],
+                "max_tokens": 1000,
+            },
+        )
+    assert estimate >= 0.0025
+
+
+def test_image_request_transaction_closes_before_billing() -> None:
+    async def run() -> None:
+        db = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
+        await images._close_image_request_transaction(db, success=True)
+        db.commit.assert_awaited_once()
+        db.rollback.assert_not_awaited()
+
+        db = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
+        await images._close_image_request_transaction(db, success=False)
+        db.rollback.assert_awaited_once()
+        db.commit.assert_not_awaited()
+
+    asyncio.run(run())
+
+
 async def _bootstrap():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:

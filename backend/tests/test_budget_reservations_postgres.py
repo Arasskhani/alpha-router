@@ -9,7 +9,8 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import delete, func, select
 
-from app.database import AsyncSessionLocal
+from app.database import AsyncSessionLocal, engine
+from app.api import images
 from app.models.api_key import AlphaRouterApiKey
 from app.models.budget import BudgetPlan, PlanAssignment
 from app.models.budget_reservation import BudgetReservation
@@ -22,6 +23,80 @@ pytestmark = pytest.mark.skipif(
     os.getenv("RUN_POSTGRES_RESERVATION_CANARY") != "1",
     reason="opt-in PostgreSQL reservation canary",
 )
+
+
+def test_image_transaction_releases_user_lock_before_settlement() -> None:
+    async def run() -> None:
+        suffix = uuid.uuid4().hex
+        user_id: int | None = None
+        plan_id: int | None = None
+        hold_id: str | None = None
+        try:
+            async with AsyncSessionLocal() as db:
+                plan = BudgetPlan(
+                    name=f"image-lock-canary-{suffix}",
+                    monthly_budget_usd=1.0,
+                )
+                user = User(
+                    username=f"image-lock-canary-{suffix}",
+                    email=f"image-lock-{suffix}@test.invalid",
+                    hashed_password="disabled",
+                    role="user",
+                    auth_provider="local",
+                    is_active=True,
+                    monthly_budget_usd=1.0,
+                    budget_used_usd=0.0,
+                    budget_reserved_usd=0.0,
+                )
+                db.add_all([plan, user])
+                await db.flush()
+                db.add(PlanAssignment(plan_id=plan.id, user_id=user.id))
+                await db.commit()
+                user_id = user.id
+                plan_id = plan.id
+
+            async with AsyncSessionLocal() as request_db:
+                await request_db.execute(
+                    select(User).where(User.id == user_id).with_for_update()
+                )
+                await images._close_image_request_transaction(request_db, success=True)
+
+                async def independent_billing() -> str:
+                    async with AsyncSessionLocal() as billing_db:
+                        hold = await reserve(
+                            billing_db,
+                            user_id=user_id,
+                            alpha_router_api_key_id=None,
+                            amount_usd=0.1,
+                            operation="image",
+                            model_id="canary/image",
+                            idempotency_key=f"image-lock-{suffix}",
+                        )
+                        await billing_db.commit()
+                        return hold.id
+
+                hold_id = await asyncio.wait_for(independent_billing(), timeout=3)
+        finally:
+            async with AsyncSessionLocal() as db:
+                if hold_id:
+                    await release(db, hold_id)
+                if user_id is not None:
+                    await db.execute(
+                        delete(BudgetReservation).where(
+                            BudgetReservation.subject_type == "user",
+                            BudgetReservation.subject_id == user_id,
+                        )
+                    )
+                    await db.execute(
+                        delete(PlanAssignment).where(PlanAssignment.user_id == user_id)
+                    )
+                    await db.execute(delete(User).where(User.id == user_id))
+                if plan_id is not None:
+                    await db.execute(delete(BudgetPlan).where(BudgetPlan.id == plan_id))
+                await db.commit()
+            await engine.dispose()
+
+    asyncio.run(run())
 
 
 def test_postgres_concurrent_user_and_key_reservations() -> None:

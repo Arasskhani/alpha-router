@@ -3483,6 +3483,24 @@ table.card tbody td:last-child {
   border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
 }
 
+.cgpt-msg-feedback-btn {
+  min-width: 1.9rem;
+  padding-inline: 0.32rem;
+  filter: grayscale(1);
+}
+
+.cgpt-msg-feedback-btn.is-active {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  filter: none;
+}
+
+.cgpt-msg-feedback-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .cgpt-msg-action-btn--info {
   display: inline-flex;
   align-items: center;

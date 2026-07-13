@@ -10,6 +10,7 @@ from app.api.deps import get_current_user, require_active_user
 from app.config import get_settings
 from app.database import get_db, get_read_db
 from app.models.user import User
+from app.services.chat_feedback_service import feedback_payload, set_message_feedback
 from app.services.rate_limit import check_rate_limit
 from app.services.user_chat_storage_service import (
     RevisionConflictError,
@@ -108,6 +109,11 @@ class LastMessagePatchIn(BaseModel):
     modelName: str | None = None
     receivedAt: int | None = None
     expectedRevision: int | None = None
+
+
+class MessageFeedbackIn(BaseModel):
+    rating: Literal[-1, 0, 1]
+    reason: Literal["incorrect", "irrelevant", "low_detail", "low_quality", "slow", "other"] | None = None
 
 
 def _revision_conflict(exc: RevisionConflictError) -> HTTPException:
@@ -395,6 +401,33 @@ async def patch_last_session_message(
         raise HTTPException(status_code=404, detail="Session not found")
     await db.commit()
     return session
+
+
+@messages_router.put("/{session_id}/messages/{message_id}/feedback")
+async def put_message_feedback(
+    session_id: str,
+    message_id: str,
+    body: MessageFeedbackIn,
+    user: User = Depends(require_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        feedback = await set_message_feedback(
+            db,
+            user_id=user.id,
+            session_id=session_id,
+            message_id=message_id,
+            rating=body.rating,
+            reason=body.reason,
+        )
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await db.commit()
+    return {"feedback": feedback_payload(feedback)}
 
 
 @messages_router.post("/{session_id}/cancel-stream")

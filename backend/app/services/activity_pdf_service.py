@@ -7,6 +7,7 @@ import logging
 import os
 from urllib.parse import urlencode, urlparse, urlunparse
 
+from app.config import get_settings
 from app.services.rbac import is_admin_panel_role, normalize_role_slug
 
 logger = logging.getLogger(__name__)
@@ -210,7 +211,6 @@ def _render_activity_page_pdf_sync(
             parsed_url = urlparse(url)
             if not parsed_url.hostname:
                 raise ActivityPdfError("PDF export URL has no hostname")
-            from app.config import get_settings
 
             context.add_cookies(
                 [

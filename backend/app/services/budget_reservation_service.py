@@ -45,29 +45,33 @@ def _clamp_hold(amount: float, fallback: float) -> float:
 
 
 def estimate_chat_hold(ai_model: AIModel, body: dict) -> float:
+    """Estimate a hold without blocking stream start on model tokenization."""
     settings = get_settings()
     fallback = float(settings.budget_chat_fallback_hold_usd or 0.05)
-    try:
-        prompt_tokens = int(
-            litellm.token_counter(
-                model=ai_model.external_id,
-                messages=body.get("messages") or [],
-            )
-            or 0
+    messages = body.get("messages")
+    if isinstance(messages, list):
+        # UTF-8 bytes / 3 is deliberately conservative for both Latin and
+        # multi-byte scripts while remaining O(input size) and provider-free.
+        prompt_bytes = sum(
+            len(str(message.get("content") or "").encode("utf-8"))
+            for message in messages
+            if isinstance(message, dict)
         )
-    except Exception:
-        prompt_tokens = 0
+    else:
+        prompt_bytes = 0
+    prompt_tokens = max(1, (prompt_bytes + 2) // 3)
     try:
         output_tokens = max(1, min(8192, int(body.get("max_tokens") or 4096)))
     except (TypeError, ValueError):
         output_tokens = 4096
     in_rate = _positive_float(ai_model.input_cost_per_1k, 0.0)
     out_rate = _positive_float(ai_model.output_cost_per_1k, 0.0)
-    estimate = (prompt_tokens / 1000) * in_rate + (output_tokens / 1000) * out_rate
+    priced_estimate = (prompt_tokens / 1000) * in_rate + (output_tokens / 1000) * out_rate
+    estimate = max(fallback, priced_estimate * 1.25)
     tools = body.get("tools") or {}
     if isinstance(tools, dict) and tools.get("code_interpreter"):
         estimate *= 4
-    return _clamp_hold(estimate * 1.25, fallback)
+    return _clamp_hold(estimate, fallback)
 
 
 def estimate_embedding_hold(ai_model: AIModel, body: dict) -> float:

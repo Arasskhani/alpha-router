@@ -31,12 +31,15 @@ export type ImagePayload = {
   aspectPreset?: ImageAspectPresetId;
   /** @deprecated legacy WxH from older messages */
   size?: string;
+  routing?: Record<string, unknown>;
 };
 
 type ImageResponse = {
   data?: Array<{ url?: string; b64_json?: string }>;
   size?: string;
   aspect_ratio?: string;
+  model?: string;
+  routing?: Record<string, unknown>;
 };
 
 /** Must exceed the backend OpenRouter read timeout (180s) so server errors win. */
@@ -284,10 +287,11 @@ async function requestImageApi(
   return {
     url: imageUrl,
     prompt,
-    model: modelId,
+    model: imageResult.model || modelId,
     aspectRatio: appliedAspect || undefined,
     aspectPreset: appliedPreset,
     size: imageResult.size || sourceSize,
+    ...(imageResult.routing ? { routing: imageResult.routing } : {}),
     ...(referenceImage ? { reference_image: referenceImage, operation: "img2img" as const } : { operation: "generation" as const }),
   };
 }

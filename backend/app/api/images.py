@@ -80,7 +80,20 @@ async def resolve_reference_image_for_upstream(
     if not ref:
         return None
     if ref.startswith("data:"):
-        return ref
+        try:
+            from app.services.bounded_io import decode_data_url_bounded
+            from app.services.image_decode_policy import image_dimensions
+
+            data, mime = decode_data_url_bounded(
+                ref,
+                max_decoded_bytes=media_input_limit(),
+            )
+            if not mime.lower().startswith("image/"):
+                raise ValueError("Reference data URL must be an image")
+            await asyncio.to_thread(image_dimensions, data)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
 
     asset_id = parse_alpha_router_media_asset_id(ref)
     if asset_id is not None:
@@ -96,11 +109,26 @@ async def resolve_reference_image_for_upstream(
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Reference image file not found") from exc
         mime = (row.mime_type or "image/png").split(";")[0].strip() or "image/png"
+        try:
+            from app.services.image_decode_policy import image_dimensions
+
+            await asyncio.to_thread(image_dimensions, data)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Reference image is invalid or unsafe") from exc
         encoded = base64.b64encode(data).decode("ascii")
         return f"data:{mime};base64,{encoded}"
 
     if ref.startswith("http://") or ref.startswith("https://"):
-        return ref
+        try:
+            data, mime = await resolve_media_blob(source_url=ref)
+            from app.services.image_decode_policy import image_dimensions
+
+            await asyncio.to_thread(image_dimensions, data)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail="Reference image fetch failed") from exc
+        return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
 
     raise HTTPException(status_code=400, detail=f"Invalid reference image URL: {ref[:160]}")
 

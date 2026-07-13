@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+from urllib.parse import urljoin
 
 import httpx
 from fastapi import UploadFile
@@ -137,10 +138,21 @@ async def bounded_get_bytes(
 ) -> tuple[bytes, str]:
     from app.services.ssrf_guard import assert_response_target_safe, assert_url_safe
 
-    assert_url_safe(url)
-    async with client.stream("GET", url) as response:
-        assert_response_target_safe(response)
-        response.raise_for_status()
-        body = await read_http_response_bounded(response, max_bytes=max_bytes)
-        mime = response.headers.get("content-type", "application/octet-stream").split(";", 1)[0].strip()
-        return body, mime
+    current_url = url
+    for hop in range(5):
+        assert_url_safe(current_url)
+        async with client.stream("GET", current_url) as response:
+            assert_response_target_safe(response)
+            if response.status_code in {301, 302, 303, 307, 308}:
+                location = response.headers.get("location")
+                if not location:
+                    raise BoundedIOError("Redirect response is missing Location")
+                if hop >= 4:
+                    raise BoundedIOError("Remote response exceeded the redirect limit")
+                current_url = urljoin(current_url, location)
+                continue
+            response.raise_for_status()
+            body = await read_http_response_bounded(response, max_bytes=max_bytes)
+            mime = response.headers.get("content-type", "application/octet-stream").split(";", 1)[0].strip()
+            return body, mime
+    raise BoundedIOError("Remote response exceeded the redirect limit")

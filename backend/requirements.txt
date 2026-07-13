@@ -8,7 +8,8 @@ alembic>=1.14.0
 pydantic>=2.10.0
 pydantic-settings>=2.6.0
 python-dotenv>=1.0.1
-httpx>=0.28.0
+httpx==0.28.1
+httpcore==1.0.9
 redis>=5.2.0
 psutil>=6.1.0
 apscheduler>=3.10.4

@@ -26,6 +26,7 @@ import json
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from jose import JWTError, jwt
@@ -163,15 +164,40 @@ def validate_realm(realm: str) -> str:
     return realm
 
 
-def validate_server_url(server_url: str) -> str:
-    """Require https in production; accept http only in development."""
+def _validate_web_origin_url(value: str, *, label: str) -> str:
     env = getattr(get_settings(), "environment", "development")
-    url = (server_url or "").strip()
-    if not url.startswith(("http://", "https://")):
-        raise ValueError("Invalid Keycloak server URL")
-    if env == "production" and not url.startswith("https://"):
-        raise ValueError("Keycloak server URL must be HTTPS in production")
+    url = (value or "").strip()
+    try:
+        parsed = urlsplit(url)
+    except ValueError as exc:
+        raise ValueError(f"Invalid {label}") from exc
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError(f"Invalid {label}")
+    if env == "production" and parsed.scheme != "https":
+        raise ValueError(f"{label} must be HTTPS in production")
     return url.rstrip("/")
+
+
+def validate_server_url(server_url: str) -> str:
+    """Validate the configured Keycloak origin without credentials/query injection."""
+    return _validate_web_origin_url(server_url, label="Keycloak server URL")
+
+
+def validate_frontend_url(frontend_url: str) -> str:
+    """Validate the fixed post-auth destination used by backend redirects."""
+    return _validate_web_origin_url(frontend_url, label="Frontend URL")
+
+
+def validate_oidc_redirect_uri(redirect_uri: str) -> str:
+    """Reject active or credential-bearing OIDC callback destinations."""
+    return _validate_web_origin_url(redirect_uri, label="Keycloak redirect URI")
 
 
 def issuer_for(server_url: str, realm: str) -> str:

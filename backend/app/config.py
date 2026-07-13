@@ -17,6 +17,23 @@ INSECURE_DEFAULTS: frozenset[str] = frozenset(
     }
 )
 
+DEFAULT_CSP_REPORT_ONLY = (
+    "default-src 'self'; "
+    "base-uri 'self'; "
+    "object-src 'none'; "
+    "frame-ancestors 'none'; "
+    "frame-src 'none'; "
+    "form-action 'self'; "
+    "script-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob: https:; "
+    "media-src 'self' data: blob: https:; "
+    "font-src 'self' data:; "
+    "connect-src 'self' blob:; "
+    "worker-src 'self' blob:; "
+    "manifest-src 'self'"
+)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -149,10 +166,12 @@ class Settings(BaseSettings):
     # Rollback switch for connection-time DNS pinning only. Base SSRF validation
     # remains active even when this is disabled.
     enable_ssrf_dns_pinning: bool = True
-    # Security headers: HSTS is only emitted when enabled AND environment is
-    # production (i.e. behind HTTPS). CSP is opt-in to avoid breaking the SPA
-    # without testing; when empty, no CSP header is sent.
+    # Browser hardening: CSP begins in Report-Only mode. Enforced CSP is opt-in.
+    # HSTS additionally requires production and an HTTPS request/proxy signal.
     enable_hsts: bool = False
+    hsts_max_age_seconds: int = 300
+    hsts_include_subdomains: bool = False
+    content_security_policy_report_only: str = DEFAULT_CSP_REPORT_ONLY
     content_security_policy: str = ""
     # Minimum length for local-account passwords (admin create/reset). The
     # bootstrap admin password from env is not subject to this.

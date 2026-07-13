@@ -32,7 +32,9 @@ from app.services.oidc import (
     sign_state_cookie,
     state_cookie_params,
     validate_id_token,
+    validate_frontend_url,
     validate_realm,
+    validate_oidc_redirect_uri,
     validate_server_url,
     verify_state_cookie,
 )
@@ -165,6 +167,7 @@ async def keycloak_login(db: AsyncSession = Depends(get_db)):
     try:
         server = validate_server_url(kc["server_url"])
         realm = validate_realm(kc["realm"])
+        redirect_uri = validate_oidc_redirect_uri(kc["redirect_uri"])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -180,7 +183,7 @@ async def keycloak_login(db: AsyncSession = Depends(get_db)):
         f"?client_id={quote(kc['client_id'])}"
         f"&response_type=code"
         f"&scope={quote('openid profile email')}"
-        f"&redirect_uri={quote(kc['redirect_uri'])}"
+        f"&redirect_uri={quote(redirect_uri)}"
         f"&state={params.state}"
         f"&nonce={params.nonce}"
         f"&code_challenge={params.code_challenge}"
@@ -204,6 +207,7 @@ async def keycloak_callback(
     try:
         server = validate_server_url(kc["server_url"])
         realm = validate_realm(kc["realm"])
+        redirect_uri = validate_oidc_redirect_uri(kc["redirect_uri"])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -224,7 +228,7 @@ async def keycloak_callback(
                 "code": code,
                 "client_id": kc["client_id"],
                 "client_secret": kc["client_secret"],
-                "redirect_uri": kc["redirect_uri"],
+                "redirect_uri": redirect_uri,
                 "code_verifier": flow.code_verifier,
             },
         )
@@ -289,7 +293,11 @@ async def keycloak_callback(
             "is_active": bool(user.is_active),
         },
     )
-    redirect = RedirectResponse(f"{settings.frontend_url}/login?code={xchg_code}")
+    try:
+        frontend_url = validate_frontend_url(settings.frontend_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail="Invalid frontend redirect configuration") from exc
+    redirect = RedirectResponse(f"{frontend_url}/login?code={xchg_code}")
     redirect.delete_cookie(**clear_state_cookie_params())
     return redirect
 
@@ -331,9 +339,13 @@ async def keycloak_logout(request: Request, db: AsyncSession = Depends(get_db)):
                 await db.commit()
 
     kc = await get_provider_config(db, "keycloak")
+    try:
+        frontend_url = validate_frontend_url(settings.frontend_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail="Invalid frontend redirect configuration") from exc
     if not kc.get("enabled"):
         # If Keycloak is disabled, just point the SPA at its own logout screen.
-        response = RedirectResponse(f"{settings.frontend_url}/login")
+        response = RedirectResponse(f"{frontend_url}/login")
         clear_session_cookies(response)
         return response
     try:
@@ -344,7 +356,7 @@ async def keycloak_logout(request: Request, db: AsyncSession = Depends(get_db)):
     url = (
         f"{server}/realms/{realm}/protocol/openid-connect/logout"
         f"?client_id={quote(kc['client_id'])}"
-        f"&post_logout_redirect_uri={quote(settings.frontend_url + '/login')}"
+        f"&post_logout_redirect_uri={quote(frontend_url + '/login')}"
     )
     response = RedirectResponse(url)
     clear_session_cookies(response)

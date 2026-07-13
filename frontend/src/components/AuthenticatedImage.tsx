@@ -3,6 +3,7 @@ import {
   fetchAuthenticatedMediaObjectUrl,
   isAlphaRouterMediaFileUrl,
 } from "../lib/mediaUrl";
+import { safeBrowserUrl } from "../lib/browserUrlPolicy";
 
 type Props = {
   url: string;
@@ -12,7 +13,7 @@ type Props = {
 
 export default function AuthenticatedImage({ url, alt, className }: Props) {
   const [src, setSrc] = useState<string | null>(() =>
-    url && !isAlphaRouterMediaFileUrl(url) ? url : null,
+    url && !isAlphaRouterMediaFileUrl(url) ? safeBrowserUrl(url, "image") : null,
   );
   const [failed, setFailed] = useState(false);
 
@@ -23,8 +24,9 @@ export default function AuthenticatedImage({ url, alt, className }: Props) {
       return;
     }
     if (!isAlphaRouterMediaFileUrl(url)) {
-      setSrc(url);
-      setFailed(false);
+      const safeUrl = safeBrowserUrl(url, "image");
+      setSrc(safeUrl);
+      setFailed(!safeUrl);
       return;
     }
 

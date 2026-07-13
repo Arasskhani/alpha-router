@@ -17,6 +17,10 @@ import {
   isAlphaRouterMediaFileUrl,
 } from "../lib/mediaUrl";
 import {
+  openSafeUrlInNewTab,
+  safeBrowserUrl,
+} from "../lib/browserUrlPolicy";
+import {
   ChatFolder,
   ChatMessage,
   ChatSession,
@@ -3096,8 +3100,10 @@ export default function ChatPanel() {
 
   async function downloadImage(url: string) {
     const triggerDownload = (href: string) => {
+      const safeHref = safeBrowserUrl(href, "download");
+      if (!safeHref) throw new Error("Blocked unsafe image URL.");
       const a = document.createElement("a");
-      a.href = href;
+      a.href = safeHref;
       a.download = "alpha-router-generated-image.png";
       document.body.appendChild(a);
       a.click();
@@ -3119,11 +3125,14 @@ export default function ChatPanel() {
         return;
       }
       if (url.startsWith("data:image/")) {
+        if (!safeBrowserUrl(url, "image")) throw new Error("Blocked unsafe image data URL.");
         triggerDownload(url);
         return;
       }
+      const safeUrl = safeBrowserUrl(url, "download");
+      if (!safeUrl) throw new Error("Blocked unsafe image URL.");
       const a = document.createElement("a");
-      a.href = url;
+      a.href = safeUrl;
       a.target = "_blank";
       a.rel = "noopener noreferrer";
       a.download = "alpha-router-generated-image.png";
@@ -3137,13 +3146,9 @@ export default function ChatPanel() {
 
   async function openImageFullSize(url: string) {
     const openByAnchor = (href: string) => {
-      const a = document.createElement("a");
-      a.href = href;
-      a.target = "_blank";
-      a.rel = "noopener";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      if (!openSafeUrlInNewTab(href, "image")) {
+        throw new Error("Blocked unsafe image URL.");
+      }
     };
 
     try {
@@ -3161,6 +3166,7 @@ export default function ChatPanel() {
       }
 
       if (url.startsWith("data:image/")) {
+        if (!safeBrowserUrl(url, "image")) throw new Error("Blocked unsafe image data URL.");
         const [meta, b64] = url.split(",", 2);
         if (!b64) return;
         const mime = meta.match(/^data:(.*?);base64$/)?.[1] || "image/png";
@@ -3917,7 +3923,11 @@ export default function ChatPanel() {
                   if (mdImage.imageUrl) {
                     return (
                       <div className="cgpt-generated-block">
-                        <img src={mdImage.imageUrl} alt="Generated" className="cgpt-generated-image" />
+                        <img
+                          src={safeBrowserUrl(mdImage.imageUrl, "image") ?? ""}
+                          alt="Generated"
+                          className="cgpt-generated-image"
+                        />
                         <div className="cgpt-generated-actions">
                           <button type="button" onClick={() => void downloadImage(mdImage.imageUrl || "")}>
                             Download

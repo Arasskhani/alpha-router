@@ -5,14 +5,20 @@ import { authFetch } from "../api";
 export function isAlphaRouterMediaFileUrl(url: string): boolean {
   if (!url) return false;
   try {
-    const path = url.startsWith("http") ? new URL(url).pathname : url.split("?")[0];
-    return /^\/api\/chat\/media\/\d+\/file$/.test(path);
+    const base =
+      typeof window !== "undefined" ? window.location.origin : "http://localhost";
+    const parsed = new URL(url, base);
+    return (
+      parsed.origin === new URL(base).origin &&
+      /^\/api\/chat\/media\/\d+\/file$/.test(parsed.pathname)
+    );
   } catch {
-    return /^\/api\/chat\/media\/\d+\/file(?:\?.*)?$/.test(url);
+    return false;
   }
 }
 
 export async function fetchAuthenticatedMediaBlob(url: string): Promise<Blob> {
+  if (!isAlphaRouterMediaFileUrl(url)) throw new Error("Blocked unsafe authenticated media URL.");
   const res = await authFetch(url);
   if (!res.ok) {
     const text = await res.text();

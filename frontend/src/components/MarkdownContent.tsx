@@ -4,6 +4,7 @@ import type { ExtraProps } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import ChatCodeBlock from "./chat/ChatCodeBlock";
+import { inertBrowserUrl, safeBrowserUrl } from "../lib/browserUrlPolicy";
 
 type Props = {
   content: string;
@@ -18,31 +19,13 @@ function stripTrailingNewline(raw: string): string {
   return raw.replace(/\n$/, "");
 }
 
-/**
- * Block dangerous URL schemes on markdown links/images.
- *
- * react-markdown v10 escapes raw HTML by default, so the remaining XSS vector
- * is a ``javascript:`` (or ``vbscript:`` / ``data:``) URL in a link or image
- * ``src``/``href``. We allow ``http:``, ``https:``, ``mailto:``, ``tel:``, and
- * ``data:image/...`` (inline images); everything else is rewritten to ``#`` so
- * the element renders but is inert.
- */
-function safeUrl(url: string | undefined): string {
-  if (!url) return "";
-  const trimmed = url.trim();
-  if (/^\s*javascript:/i.test(trimmed)) return "#";
-  if (/^\s*vbscript:/i.test(trimmed)) return "#";
-  if (/^\s*data:/i.test(trimmed) && !/^\s*data:image\//i.test(trimmed)) return "#";
-  return url;
-}
-
 function SafeLink({
   href,
   children,
   ...props
 }: ComponentPropsWithoutRef<"a"> & ExtraProps) {
   return (
-    <a href={safeUrl(href ?? undefined)} target="_blank" rel="noopener noreferrer" {...props}>
+    <a href={inertBrowserUrl(href, "navigation")} target="_blank" rel="noopener noreferrer" {...props}>
       {children}
     </a>
   );
@@ -53,7 +36,7 @@ function SafeImage({
   alt,
   ...props
 }: ComponentPropsWithoutRef<"img"> & ExtraProps) {
-  return <img src={safeUrl(src ?? undefined)} alt={alt ?? ""} {...props} />;
+  return <img src={safeBrowserUrl(src, "image") ?? ""} alt={alt ?? ""} {...props} />;
 }
 
 function MarkdownCode({

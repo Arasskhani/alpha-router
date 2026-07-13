@@ -5,12 +5,11 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
-from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api import admin, auth, authentication, chat, gateway, groups, images, logs, operations, plans, reports, smtp, user_chats, user_media, user_routes
 from app.config import INSECURE_DEFAULTS, get_settings
@@ -27,6 +26,7 @@ from app.services.scheduler import (
     start_scheduler,
     stop_scheduler,
 )
+from app.services.security_headers import SecurityHeadersMiddleware
 from app.services import object_storage_service as oss
 from app.services.openrouter_image_service import close_openrouter_http_client
 from app.services.proxy_service import configure_litellm_cache
@@ -177,40 +177,6 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Alpha Router Organizational AI Platform", version="1.0.0", lifespan=lifespan)
-
-
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Attach baseline security headers to every response.
-
-    HSTS is only emitted when ``ENABLE_HSTS=true`` AND ``ENVIRONMENT=production``
-    (i.e. the deployment is behind HTTPS). CSP is opt-in via
-    ``CONTENT_SECURITY_POLICY`` — empty by default to avoid breaking the SPA
-    without testing. The remaining headers are safe-by-default and applied to
-    all responses regardless of environment.
-    """
-
-    _BASE_HEADERS = {
-        "X-Content-Type-Options": "nosniff",
-        "X-Frame-Options": "DENY",
-        "Referrer-Policy": "strict-origin-when-cross-origin",
-        "Permissions-Policy": "camera=(), microphone=(), geolocation=(), interest-cohort=()",
-        "Cross-Origin-Opener-Policy": "same-origin",
-    }
-
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        for key, value in self._BASE_HEADERS.items():
-            response.headers.setdefault(key, value)
-        settings = get_settings()
-        if getattr(settings, "enable_hsts", False) and getattr(settings, "environment", "development") == "production":
-            response.headers.setdefault(
-                "Strict-Transport-Security",
-                "max-age=31536000; includeSubDomains",
-            )
-        csp = (getattr(settings, "content_security_policy", "") or "").strip()
-        if csp:
-            response.headers.setdefault("Content-Security-Policy", csp)
-        return response
 
 
 app.add_middleware(RequestBodyLimitMiddleware)

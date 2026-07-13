@@ -5,6 +5,7 @@ type Props = {
   open: boolean;
   title: string;
   message: string;
+  emphasize?: string;
   confirmLabel?: string;
   cancelLabel?: string;
   secondaryLabel?: string;
@@ -18,6 +19,7 @@ export default function ConfirmModal({
   open,
   title,
   message,
+  emphasize,
   confirmLabel = "Yes",
   cancelLabel = "No",
   secondaryLabel,
@@ -36,6 +38,17 @@ export default function ConfirmModal({
   }, [open, onCancel]);
 
   if (!open) return null;
+  const emphasisIndex = emphasize ? message.indexOf(emphasize) : -1;
+  const renderedMessage =
+    emphasize && emphasisIndex >= 0 ? (
+      <>
+        {message.slice(0, emphasisIndex)}
+        <strong>{emphasize}</strong>
+        {message.slice(emphasisIndex + emphasize.length)}
+      </>
+    ) : (
+      message
+    );
 
   return createPortal(
     <div className="modal-overlay modal-overlay-confirm" onClick={onCancel} role="presentation">
@@ -44,7 +57,7 @@ export default function ConfirmModal({
           <h3>{title}</h3>
         </div>
         <div className="modal-body">
-          <p className="confirm-message">{message}</p>
+          <p className="confirm-message">{renderedMessage}</p>
           <div className={`dialog-actions${secondaryLabel ? " dialog-actions-three" : ""}`}>
             <button
               type="button"

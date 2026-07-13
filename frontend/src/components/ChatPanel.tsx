@@ -2598,7 +2598,8 @@ export default function ChatPanel() {
       const ok = await confirm({
         title: "Private Mode",
         message:
-          "When Private Mode is on, this chat’s messages and any media generated in it are stored only in this browser — not on the Alpha Router server.\n\nThey will not appear in Media Library on other devices and may be lost if you clear browser data.\n\nEnable Private Mode for this chat?",
+          "When Private Mode is on, this chat’s messages and generated media are stored only in this browser and are never saved to the Alpha Router server.\n\nThey will not appear on other devices or in the Media Library, and will be permanently deleted when you log out or clear browser data.\n\nEnable Private Mode for this chat?",
+        emphasize: "permanently deleted when you log out or clear browser data",
         confirmLabel: "Enable Private Mode",
         cancelLabel: "Cancel",
         danger: true,

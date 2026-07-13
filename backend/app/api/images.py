@@ -16,14 +16,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_active_user
-from app.database import get_db
+from app.database import AsyncSessionLocal, get_db
 from app.models.connection import Connection
 from app.models.media import MediaAsset
 from app.models.model_catalog import AIModel
 from app.models.user import User
 from app.services.secret_crypto import decrypt_secret
-from app.services.image_model_resolver import resolve_auto_router_image_model
-from app.services.budget_service import budget_request_blocked, get_user_budget_state
+from app.services.image_model_resolver import resolve_auto_router_image_model_with_details
+from app.services.budget_reservation_service import (
+    estimate_image_hold,
+    release,
+    reservation_key,
+    reserve,
+)
 from app.config import get_settings
 from app.services.media_authorization_service import MediaAccessAction, load_authorized_media_asset
 from app.services.openrouter_image_service import (
@@ -465,6 +470,7 @@ async def _finalize_image_response(
     items: list[dict],
     *,
     aspect_ratio: str | None = None,
+    routing: dict[str, object] | None = None,
 ) -> dict:
     if body.persist and items:
         items = await _persist_image_data_items(
@@ -486,13 +492,29 @@ async def _finalize_image_response(
                     url.strip(),
                     body.prompt,
                     body.model,
+                    routing,
                 )
     result: dict = {"data": items}
     if body.size:
         result["size"] = body.size
     if aspect_ratio:
         result["aspect_ratio"] = aspect_ratio
+    result["model"] = body.model
+    if routing:
+        result["routing"] = routing
     return result
+
+
+async def _close_image_request_transaction(
+    db: AsyncSession,
+    *,
+    success: bool,
+) -> None:
+    """Release request-owned row locks before independent budget settlement."""
+    if success:
+        await db.commit()
+    else:
+        await db.rollback()
 
 
 def _collect_openrouter_images(data: dict) -> list[dict]:
@@ -685,13 +707,12 @@ async def generate_image(
 ):
     generation_start = time.perf_counter()
     billing = ImageBillingCapture(model_id=_normalize_model_id(body.model))
+    budget_reservation_id: str | None = None
+    routing_reason: dict[str, object] | None = None
     success = True
     error_message: str | None = None
 
     resolve_task = asyncio.create_task(_resolve_image_model(db, body.model))
-    budget, usage = await get_user_budget_state(db, user)
-    if blocked := budget_request_blocked(budget, usage):
-        raise HTTPException(status_code=402, detail=blocked)
 
     try:
         model_id, api_key, base_url, provider_type, ai_model = await resolve_task
@@ -700,7 +721,7 @@ async def generate_image(
         billing.provider_type = provider_type
 
         if is_openrouter_auto_model(model_id):
-            picked = await resolve_auto_router_image_model(
+            picked = await resolve_auto_router_image_model_with_details(
                 db,
                 connection_id=ai_model.connection_id if ai_model else None,
             )
@@ -712,13 +733,34 @@ async def generate_image(
                         "Enable at least one image-capable model on this connection in Admin → Models."
                     ),
                 )
-            model_id, ai_model, conn = picked
+            model_id, ai_model, conn = picked.external_id, picked.model, picked.connection
+            routing_reason = {
+                **picked.reason,
+                "selected_model": picked.external_id,
+                "score": picked.score,
+            }
             api_key = decrypt_secret(conn.api_key_encrypted)
             base_url = conn.base_url
             provider_type = conn.provider_type
             billing.model_id = model_id
             billing.ai_model = ai_model
             billing.provider_type = provider_type
+        body.model = model_id
+
+        hold_body = body.model_dump()
+        if request.headers.get("Idempotency-Key"):
+            hold_body["_idempotency_key"] = request.headers["Idempotency-Key"]
+        hold = await reserve(
+            db,
+            user_id=user.id,
+            alpha_router_api_key_id=None,
+            amount_usd=estimate_image_hold(ai_model),
+            operation="image",
+            model_id=model_id,
+            idempotency_key=reservation_key(hold_body, operation="image"),
+        )
+        budget_reservation_id = hold.id if hold else None
+        await db.commit()
 
         reference_image = await resolve_reference_image_for_upstream(db, user, body.reference_image)
         resolved_aspect, body.size = await _resolve_generation_dimensions(
@@ -784,6 +826,7 @@ async def generate_image(
                 if out_gen:
                     return await _finalize_image_response(
                         db, user, body, out_gen, aspect_ratio=resolved_aspect,
+                        routing=routing_reason,
                     )
 
             modalities = _openrouter_modalities(model_id)
@@ -909,6 +952,7 @@ async def generate_image(
             if out:
                 return await _finalize_image_response(
                     db, user, body, out, aspect_ratio=resolved_aspect,
+                    routing=routing_reason,
                 )
 
             msg = ((data or {}).get("choices") or [{}])[0].get("message") or {}
@@ -923,6 +967,7 @@ async def generate_image(
                         if out_gen:
                             return await _finalize_image_response(
                                 db, user, body, out_gen, aspect_ratio=resolved_aspect,
+                                routing=routing_reason,
                             )
                     if modalities != ["image"]:
                         retry_out, retry_data, _ = await _try_openrouter_chat_completion(
@@ -936,6 +981,7 @@ async def generate_image(
                         if retry_out:
                             return await _finalize_image_response(
                                 db, user, body, retry_out, aspect_ratio=resolved_aspect,
+                                routing=routing_reason,
                             )
                     raise HTTPException(
                         status_code=422,
@@ -964,6 +1010,7 @@ async def generate_image(
             if out_gen:
                 return await _finalize_image_response(
                     db, user, body, out_gen, aspect_ratio=resolved_aspect,
+                    routing=routing_reason,
                 )
 
             if text_only:
@@ -990,6 +1037,7 @@ async def generate_image(
         if out:
             return await _finalize_image_response(
                 db, user, body, out, aspect_ratio=resolved_aspect,
+                routing=routing_reason,
             )
         return response
     except HTTPException as exc:
@@ -1019,17 +1067,60 @@ async def generate_image(
         raise HTTPException(status_code=500, detail=error_message) from exc
     finally:
         elapsed_ms = (time.perf_counter() - generation_start) * 1000
+        commit_error: Exception | None = None
         try:
-            await log_image_usage(
-                db,
-                user=user,
-                capture=billing,
-                prompt=body.prompt,
-                response_time_ms=elapsed_ms,
-                success=success,
-                error_message=error_message,
-                source_ip=request.client.host if request.client else None,
-                operation=body.operation,
+            await _close_image_request_transaction(db, success=success)
+        except Exception as exc:
+            import logging
+
+            logging.getLogger("app.api.images").exception(
+                "Failed to close image request transaction before billing"
             )
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            if success:
+                success = False
+                error_message = "Image persistence failed"
+                commit_error = exc
+
+        settled = False
+        try:
+            async with AsyncSessionLocal() as log_db:
+                await log_image_usage(
+                    log_db,
+                    user=user,
+                    capture=billing,
+                    prompt=body.prompt,
+                    response_time_ms=elapsed_ms,
+                    success=success,
+                    error_message=error_message,
+                    source_ip=request.client.host if request.client else None,
+                    operation=body.operation,
+                    budget_reservation_id=budget_reservation_id,
+                )
+                await log_db.commit()
+                settled = True
         except Exception:
-            pass  # never fail image delivery because logging failed
+            import logging
+
+            logging.getLogger("app.api.images").exception(
+                "Image usage settlement failed; releasing reservation when possible"
+            )
+        if budget_reservation_id and not settled:
+            try:
+                async with AsyncSessionLocal() as release_db:
+                    await release(release_db, budget_reservation_id)
+                    await release_db.commit()
+            except Exception:
+                import logging
+
+                logging.getLogger("app.api.images").exception(
+                    "Failed to release image budget reservation after billing error"
+                )
+        if commit_error is not None:
+            raise HTTPException(
+                status_code=500,
+                detail="Image persistence failed due to an internal error",
+            ) from commit_error

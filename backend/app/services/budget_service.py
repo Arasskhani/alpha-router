@@ -245,7 +245,9 @@ async def get_user_budget_state(db: AsyncSession, user: User) -> tuple[float, fl
     """Ensure period is current and return (monthly_budget_usd, used_usd)."""
     await ensure_budget_period(db, user)
     budget = await resolve_monthly_budget(db, user)
-    usage = await get_month_usage(db, user.id)
+    # Atomic settlements and reservations enforce against this live counter.
+    # Read it here too so dashboards, admin resets, and blocking cannot drift.
+    usage = float(user.budget_used_usd or 0) + float(user.budget_reserved_usd or 0)
     return budget, usage
 
 

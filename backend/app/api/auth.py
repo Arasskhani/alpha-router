@@ -4,7 +4,7 @@ import asyncio
 from urllib.parse import quote
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -32,7 +32,9 @@ from app.services.oidc import (
     sign_state_cookie,
     state_cookie_params,
     validate_id_token,
+    validate_frontend_url,
     validate_realm,
+    validate_oidc_redirect_uri,
     validate_server_url,
     verify_state_cookie,
 )
@@ -40,6 +42,7 @@ from app.services.oidc_exchange import consume_code, generate_code, store_token
 from app.services.storage_service import ensure_user_media_directory
 from app.services.user_chat_storage_service import ensure_user_chat_store
 from app.services.user_lifecycle_service import record_user_login
+from app.services.session_cookie import clear_session_cookies, new_csrf_token, set_session_cookies
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 settings = get_settings()
@@ -70,7 +73,11 @@ async def auth_session(user: User = Depends(get_current_user), db: AsyncSession 
 
 
 @router.post("/logout")
-async def logout_local(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def logout_local(
+    response: Response,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Revoke all previously-issued JWTs for this user.
 
     Bumps ``token_version`` so every token issued before this call (including
@@ -80,6 +87,7 @@ async def logout_local(user: User = Depends(get_current_user), db: AsyncSession 
     """
     user.token_version = int(user.token_version or 0) + 1
     await db.commit()
+    clear_session_cookies(response)
     return {"ok": True}
 
 
@@ -90,15 +98,17 @@ async def auth_methods(db: AsyncSession = Depends(get_db)):
     return {"ldap": bool(ldap_cfg.get("enabled")), "keycloak": bool(kc_cfg.get("enabled"))}
 
 
-async def _token_response(db: AsyncSession, user: User) -> TokenResponse:
+async def _token_response(db: AsyncSession, user: User, response: Response) -> TokenResponse:
     if user.deleted_at is not None:
         raise HTTPException(status_code=401, detail="Account removed")
     await record_user_login(db, user)
     await db.commit()
     slugs = await get_user_role_slugs(db, user.id)
     primary = primary_role_slug(slugs)
+    token = create_access_token(user.username, primary, token_version=user.token_version)
+    set_session_cookies(response, access_token=token)
     return TokenResponse(
-        access_token=create_access_token(user.username, primary, token_version=user.token_version),
+        access_token=token,
         role=primary,
         is_active=bool(user.is_active),
     )
@@ -108,6 +118,7 @@ async def _token_response(db: AsyncSession, user: User) -> TokenResponse:
 async def login_local(
     body: LoginRequest,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     username = body.username.strip()
@@ -125,7 +136,7 @@ async def login_local(
         if verify_password(body.password, user.hashed_password):
             ensure_user_media_directory(user.username)
             await ensure_user_chat_store(db, user.id)
-            return await _token_response(db, user)
+            return await _token_response(db, user, response)
         if (user.auth_provider or "local") == "local":
             raise HTTPException(status_code=401, detail="Invalid username or password")
 
@@ -143,7 +154,7 @@ async def login_local(
             raise HTTPException(status_code=503, detail=str(exc) or LDAP_UNAVAILABLE_MESSAGE) from exc
         if profile:
             user = await _upsert_directory_user(db, profile, "ldap")
-            return await _token_response(db, user)
+            return await _token_response(db, user, response)
 
     raise HTTPException(status_code=401, detail="Invalid username or password")
 
@@ -156,6 +167,7 @@ async def keycloak_login(db: AsyncSession = Depends(get_db)):
     try:
         server = validate_server_url(kc["server_url"])
         realm = validate_realm(kc["realm"])
+        redirect_uri = validate_oidc_redirect_uri(kc["redirect_uri"])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -171,7 +183,7 @@ async def keycloak_login(db: AsyncSession = Depends(get_db)):
         f"?client_id={quote(kc['client_id'])}"
         f"&response_type=code"
         f"&scope={quote('openid profile email')}"
-        f"&redirect_uri={quote(kc['redirect_uri'])}"
+        f"&redirect_uri={quote(redirect_uri)}"
         f"&state={params.state}"
         f"&nonce={params.nonce}"
         f"&code_challenge={params.code_challenge}"
@@ -195,6 +207,7 @@ async def keycloak_callback(
     try:
         server = validate_server_url(kc["server_url"])
         realm = validate_realm(kc["realm"])
+        redirect_uri = validate_oidc_redirect_uri(kc["redirect_uri"])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -215,7 +228,7 @@ async def keycloak_callback(
                 "code": code,
                 "client_id": kc["client_id"],
                 "client_secret": kc["client_secret"],
-                "redirect_uri": kc["redirect_uri"],
+                "redirect_uri": redirect_uri,
                 "code_verifier": flow.code_verifier,
             },
         )
@@ -280,17 +293,26 @@ async def keycloak_callback(
             "is_active": bool(user.is_active),
         },
     )
-    redirect = RedirectResponse(f"{settings.frontend_url}/login?code={xchg_code}")
+    try:
+        frontend_url = validate_frontend_url(settings.frontend_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail="Invalid frontend redirect configuration") from exc
+    redirect = RedirectResponse(f"{frontend_url}/login?code={xchg_code}")
     redirect.delete_cookie(**clear_state_cookie_params())
     return redirect
 
 
 @router.post("/keycloak/exchange")
-async def keycloak_exchange(body: "ExchangeRequest", db: AsyncSession = Depends(get_db)):
+async def keycloak_exchange(
+    body: "ExchangeRequest",
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
     """Exchange a one-time OIDC code for the Alpha Router JWT (keeps JWT out of the URL)."""
     payload = await consume_code(body.code)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired login code")
+    set_session_cookies(response, access_token=payload["token"])
     return TokenResponse(
         access_token=payload["token"],
         token_type="bearer",
@@ -300,12 +322,32 @@ async def keycloak_exchange(body: "ExchangeRequest", db: AsyncSession = Depends(
 
 
 @router.get("/keycloak/logout")
-async def keycloak_logout(db: AsyncSession = Depends(get_db)):
+async def keycloak_logout(request: Request, db: AsyncSession = Depends(get_db)):
     """Redirect to the Keycloak end_session endpoint to terminate the SSO session."""
+    token = request.cookies.get(settings.session_cookie_name)
+    if token:
+        from app.core.security import decode_access_token
+
+        payload = decode_access_token(token)
+        username = payload.get("sub") if payload else None
+        if username:
+            user = (
+                await db.execute(select(User).where(User.username == username))
+            ).scalars().first()
+            if user:
+                user.token_version = int(user.token_version or 0) + 1
+                await db.commit()
+
     kc = await get_provider_config(db, "keycloak")
+    try:
+        frontend_url = validate_frontend_url(settings.frontend_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail="Invalid frontend redirect configuration") from exc
     if not kc.get("enabled"):
         # If Keycloak is disabled, just point the SPA at its own logout screen.
-        return RedirectResponse(f"{settings.frontend_url}/login")
+        response = RedirectResponse(f"{frontend_url}/login")
+        clear_session_cookies(response)
+        return response
     try:
         server = validate_server_url(kc["server_url"])
         realm = validate_realm(kc["realm"])
@@ -314,9 +356,32 @@ async def keycloak_logout(db: AsyncSession = Depends(get_db)):
     url = (
         f"{server}/realms/{realm}/protocol/openid-connect/logout"
         f"?client_id={quote(kc['client_id'])}"
-        f"&post_logout_redirect_uri={quote(settings.frontend_url + '/login')}"
+        f"&post_logout_redirect_uri={quote(frontend_url + '/login')}"
     )
-    return RedirectResponse(url)
+    response = RedirectResponse(url)
+    clear_session_cookies(response)
+    return response
+
+
+@router.get("/csrf")
+async def csrf_token(
+    response: Response,
+    user: User = Depends(get_current_user),
+):
+    """Refresh the readable double-submit token without exposing the JWT."""
+    del user
+    csrf = new_csrf_token()
+    settings = get_settings()
+    response.set_cookie(
+        key=settings.csrf_cookie_name,
+        value=csrf,
+        httponly=False,
+        secure=settings.environment.lower() == "production",
+        samesite="lax",
+        path="/",
+        max_age=max(300, int(settings.jwt_expire_minutes) * 60),
+    )
+    return {"csrf_token": csrf}
 
 
 class ExchangeRequest(BaseModel):

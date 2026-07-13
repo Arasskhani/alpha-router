@@ -220,6 +220,57 @@ async def _run_stale_pending_reconcile() -> None:
     await engine.dispose()
 
 
+async def _run_cancel_orphan_pending_with_received_at() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with session_factory() as session:
+        session.add(
+            User(
+                username="tester4",
+                email="tester4@alpha-router.local",
+                display_name="Tester",
+                hashed_password="x",
+                role="user",
+                auth_provider="local",
+            )
+        )
+        await session.commit()
+        user = (await session.execute(select(User))).scalar_one()
+
+        await create_chat_session(
+            session,
+            user.id,
+            {"id": "img3", "title": "Image", "model": "gpt-4"},
+        )
+        await append_session_messages(
+            session,
+            user.id,
+            "img3",
+            [
+                {"role": "user", "content": "Draw a bird", "clientMessageId": "u1"},
+                {
+                    "role": "assistant",
+                    "content": IMAGE_PENDING_MARKER,
+                    "clientMessageId": "a1",
+                    "receivedAt": 1_700_000_000_000,
+                    "streaming": False,
+                },
+            ],
+        )
+        await session.commit()
+
+        cancelled = await cancel_streaming_reply(session, user.id, "img3")
+        assert cancelled is not None
+        await session.commit()
+
+        msgs, _ = await list_session_messages(session, user.id, "img3")
+        assert msgs[-1]["content"] == "Image generation stopped."
+        assert msgs[-1].get("receivedAt") is not None
+    await engine.dispose()
+
+
 def test_cancel_streaming_reply_roundtrip() -> None:
     asyncio.run(_run_cancel_roundtrip())
 
@@ -230,3 +281,57 @@ def test_cancel_image_pending_finalizes() -> None:
 
 def test_stale_image_pending_reconciled_only_after_threshold() -> None:
     asyncio.run(_run_stale_pending_reconcile())
+
+
+async def _run_reconcile_orphan_pending_with_received_at() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with session_factory() as session:
+        session.add(
+            User(
+                username="tester5",
+                email="tester5@alpha-router.local",
+                display_name="Tester",
+                hashed_password="x",
+                role="user",
+                auth_provider="local",
+            )
+        )
+        await session.commit()
+        user = (await session.execute(select(User))).scalar_one()
+
+        await create_chat_session(
+            session,
+            user.id,
+            {"id": "img4", "title": "Image", "model": "gpt-4"},
+        )
+        await append_session_messages(
+            session,
+            user.id,
+            "img4",
+            [
+                {"role": "user", "content": "Draw a fish", "clientMessageId": "u1"},
+                {
+                    "role": "assistant",
+                    "content": IMAGE_PENDING_MARKER,
+                    "clientMessageId": "a1",
+                    "receivedAt": 1_700_000_000_000,
+                    "streaming": False,
+                },
+            ],
+        )
+        await session.commit()
+
+        msgs, _ = await list_session_messages(session, user.id, "img4")
+        assert msgs[-1]["content"] == "Image generation stopped."
+    await engine.dispose()
+
+
+def test_cancel_orphan_image_pending_with_received_at() -> None:
+    asyncio.run(_run_cancel_orphan_pending_with_received_at())
+
+
+def test_reconcile_orphan_image_pending_with_received_at() -> None:
+    asyncio.run(_run_reconcile_orphan_pending_with_received_at())

@@ -15,7 +15,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models.chat import ChatFolder, ChatMessage, ChatSession, UserChatPrefs
+from app.models.chat import (
+    ChatFolder,
+    ChatMessage,
+    ChatMessageFeedback,
+    ChatSession,
+    UserChatPrefs,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -631,14 +637,17 @@ async def _try_reconcile_inflight_assistant(
         return False
 
     meta = dict(last.meta) if isinstance(last.meta, dict) else {}
-    if meta.get("receivedAt") is not None:
+    content = str(last.content or "")
+    # Finalized assistant rows are done; a pending marker may still be open even
+    # when meta incorrectly carries receivedAt (orphan image placeholder).
+    if meta.get("receivedAt") is not None and content != IMAGE_PENDING_MARKER:
         return False
 
     age = (dt.datetime.utcnow() - last.created_at).total_seconds()
-    content = str(last.content or "")
     force = bool(meta.get("cancelRequested"))
-    if content == IMAGE_PENDING_MARKER and age >= _STALE_IMAGE_PENDING_SEC:
-        force = True
+    if content == IMAGE_PENDING_MARKER:
+        if meta.get("receivedAt") is not None or age >= _STALE_IMAGE_PENDING_SEC:
+            force = True
     if (
         not force
         and not content.strip()
@@ -691,7 +700,26 @@ async def list_session_messages(
     has_more = len(rows) > limit
     rows = rows[:limit]
     rows.reverse()
-    return [_message_to_client(r) for r in rows], has_more
+    messages = [_message_to_client(r) for r in rows]
+    message_ids = [row.id for row in rows]
+    if message_ids:
+        feedback_rows = (
+            await db.execute(
+                select(ChatMessageFeedback).where(
+                    ChatMessageFeedback.user_id == user_id,
+                    ChatMessageFeedback.message_id.in_(message_ids),
+                )
+            )
+        ).scalars().all()
+        feedback_by_message = {row.message_id: row for row in feedback_rows}
+        for payload, row in zip(messages, rows):
+            feedback = feedback_by_message.get(row.id)
+            if feedback is not None:
+                payload["feedback"] = {
+                    "rating": int(feedback.rating),
+                    "reason": feedback.reason,
+                }
+    return messages, has_more
 
 
 async def _next_sequence(db: AsyncSession, session_id: str) -> int:
@@ -830,8 +858,15 @@ async def replace_session_messages(
     return [_message_to_client(r) for r in rows]
 
 
-def _build_image_message(url: str, prompt: str, model: str) -> str:
+def _build_image_message(
+    url: str,
+    prompt: str,
+    model: str,
+    routing: dict[str, Any] | None = None,
+) -> str:
     payload = {"url": url, "prompt": prompt, "model": model}
+    if routing:
+        payload["routing"] = routing
     return f"{IMAGE_MESSAGE_PREFIX}{json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}"
 
 
@@ -842,6 +877,7 @@ async def finalize_chat_session_image(
     image_url: str,
     prompt: str,
     model: str,
+    routing: dict[str, Any] | None = None,
 ) -> bool:
     """Replace trailing pending marker with the generated image message (idempotent)."""
     if not session_id or not image_url:
@@ -863,9 +899,14 @@ async def finalize_chat_session_image(
         return False
 
     content = str(last.content or "")
-    image_content = _build_image_message(image_url, prompt, model)
+    image_content = _build_image_message(image_url, prompt, model, routing)
     if content == IMAGE_PENDING_MARKER:
         last.content = image_content
+        last.meta = {
+            **(last.meta if isinstance(last.meta, dict) else {}),
+            "modelId": model,
+            **({"routing": routing} if routing else {}),
+        }
         session.last_message_at = dt.datetime.utcnow()
         _bump_session_revision(session)
         await db.flush()
@@ -934,10 +975,10 @@ async def cancel_streaming_reply(
         return None
 
     meta = dict(last.meta) if isinstance(last.meta, dict) else {}
-    if meta.get("receivedAt") is not None:
+    content = str(last.content or "")
+    if meta.get("receivedAt") is not None and content != IMAGE_PENDING_MARKER:
         return _session_to_client(session)
 
-    content = str(last.content or "")
     if content == IMAGE_PENDING_MARKER:
         new_content = "Image generation stopped."
     elif content.strip():

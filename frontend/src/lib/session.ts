@@ -1,10 +1,10 @@
 import { STORAGE_KEYS } from "./brand";
+import { authFetch, clearCachedSession, getCachedSession } from "../api";
+import { clearPrivateMediaStore } from "./privateMediaStore";
 
 /** Copy legacy localStorage keys once after rebrand (alpha_router_* → alpha_router_*). */
 export function migrateLegacyStorageKeys() {
   const legacy: Record<string, string> = {
-    alpha_router_token: "alpha_router_token",
-    alpha_router_role: "alpha_router_role",
     alpha_router_theme: "alpha_router_theme",
     alpha_router_login_at: "alpha_router_login_at",
     alpha_router_is_active: "alpha_router_is_active",
@@ -16,27 +16,19 @@ export function migrateLegacyStorageKeys() {
     }
     localStorage.removeItem(alphaRouterKey);
   }
-}
-
-export function parseJwtPayload(token: string): Record<string, unknown> | null {
-  try {
-    const part = token.split(".")[1];
-    if (!part) return null;
-    const json = atob(part.replace(/-/g, "+").replace(/_/g, "/"));
-    return JSON.parse(json) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
+  localStorage.removeItem("alpha_router_token");
+  localStorage.removeItem("alpha_router_role");
+  localStorage.removeItem(STORAGE_KEYS.token);
+  localStorage.removeItem(STORAGE_KEYS.role);
 }
 
 export function getSessionUser(): { username: string; role: string; loginAt: number } | null {
-  const token = localStorage.getItem(STORAGE_KEYS.token);
-  if (!token) return null;
-  const payload = parseJwtPayload(token);
+  const session = getCachedSession();
+  if (!session) return null;
   const loginAt = Number(localStorage.getItem(STORAGE_KEYS.loginAt));
   return {
-    username: (payload?.sub as string) || "User",
-    role: localStorage.getItem(STORAGE_KEYS.role) || (payload?.role as string) || "user",
+    username: session.username || "User",
+    role: session.role || "user",
     loginAt: loginAt > 0 ? loginAt : Date.now(),
   };
 }
@@ -74,21 +66,30 @@ export function getMyActivityPath(role: string): string {
 }
 
 export async function logout() {
-  const provider = localStorage.getItem(STORAGE_KEYS.authProvider);
-  const token = localStorage.getItem(STORAGE_KEYS.token);
+  const session = getCachedSession();
+  const provider = session?.auth_provider || localStorage.getItem(STORAGE_KEYS.authProvider);
   // Server-side revocation: bump the user's token_version so the current JWT
   // (and any stolen copy) is rejected from now on. Best-effort — we clear
   // local state regardless of whether this call succeeds.
-  if (token) {
+  try {
+    await authFetch("/api/auth/logout", { method: "POST" });
+  } catch {
+    /* network error — proceed to clear local state anyway */
+  }
+  if (localStorage.getItem("alpha_router_private_persist") !== "1") {
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith(`${STORAGE_KEYS.privateChats}:`)) localStorage.removeItem(key);
+    }
+    for (const key of Object.keys(sessionStorage)) {
+      if (key.startsWith(`${STORAGE_KEYS.privateChats}:msgcache:`)) sessionStorage.removeItem(key);
+    }
     try {
-      await fetch("/api/auth/logout", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      await clearPrivateMediaStore();
     } catch {
-      /* network error — proceed to clear local state anyway */
+      /* best-effort browser cleanup */
     }
   }
+  clearCachedSession();
   localStorage.removeItem(STORAGE_KEYS.chatTools);
   localStorage.removeItem(STORAGE_KEYS.token);
   localStorage.removeItem(STORAGE_KEYS.role);

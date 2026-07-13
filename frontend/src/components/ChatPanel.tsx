@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useOutletContext } from "react-router-dom";
-import { api, formatApiError, isApiAuthError } from "../api";
+import { api, authFetch, formatApiError, getCachedSession, isApiAuthError } from "../api";
 import { chatModelsEmptyMessage, normalizeChatModelsError } from "../lib/chatMessages";
 import AuthenticatedImage from "./AuthenticatedImage";
 import MarkdownContent from "./MarkdownContent";
@@ -16,6 +16,10 @@ import {
   fetchAuthenticatedMediaObjectUrl,
   isAlphaRouterMediaFileUrl,
 } from "../lib/mediaUrl";
+import {
+  openSafeUrlInNewTab,
+  safeBrowserUrl,
+} from "../lib/browserUrlPolicy";
 import {
   ChatFolder,
   ChatMessage,
@@ -56,6 +60,8 @@ import {
   finalizeAssistantOnServer,
   syncSessionMessagesToServer,
   cancelStreamingReplyOnServer,
+  setMessageFeedbackOnServer,
+  patchLastSessionMessageOnServer,
   clearSessionMessageSyncQueue,
   replaceChatSessionMessagesOnServer,
   isChatRevisionConflict,
@@ -87,7 +93,6 @@ import {
 import VirtualSidebarList from "./chat/ChatSidebarVirtual";
 import UserProfile from "./UserProfile";
 import PrivateModeLockIcon from "./chat/PrivateModeLockIcon";
-import { migratePrivateSessionMediaToServer } from "../lib/privateModeMigration";
 import { BrowserSpeechCapture, pickVoiceRecordingMime } from "../lib/voiceInput";
 import {
   ATTACHMENT_ACCEPT,
@@ -394,8 +399,9 @@ function PrivateModeStrip() {
           :{" "}
         </span>
         <span className="cgpt-private-strip__body">
-          Private Mode is on for this chat. Messages and media are stored only in this browser, not on the
-          server.
+          Private Mode is permanent for this chat. Messages and media are stored only in this browser and
+          will be <strong className="cgpt-private-strip__danger">deleted</strong> when you log out or clear
+          browser data.
         </span>
       </p>
     </div>
@@ -822,7 +828,7 @@ export default function ChatPanel() {
           serverSaveTimerRef.current = null;
         }
         if (!chatsHydratedRef.current || readOnly) return;
-        if (!localStorage.getItem("alpha_router_token")) return;
+        if (!getCachedSession()) return;
         const sessionsForServer = sessionsRef.current.map((s) => ({
           ...s,
           messages: s.privateMode ? s.messages : compactChatMessagesForStorage(s.messages),
@@ -1507,7 +1513,7 @@ export default function ChatPanel() {
     if (!sid || readOnly) return;
     const session = sessionsRef.current.find((s) => s.id === sid);
     if (!session || session.privateMode) return;
-    const msgs = messages.length ? messages : session.messages;
+    const msgs = messagesRef.current.length ? messagesRef.current : session.messages;
     if (!sessionHasInFlightGeneration(msgs)) {
       if (streamingSessionsRef.current[sid] && !isBackgroundImageRunning(sid)) {
         setSessionStreaming(sid, false);
@@ -1552,7 +1558,7 @@ export default function ChatPanel() {
           if (cancelled || activeIdRef.current !== sid) return;
           const localMsgs =
             activeIdRef.current === sid
-              ? messages
+              ? messagesRef.current
               : sessionsRef.current.find((s) => s.id === sid)?.messages ?? [];
           if (!sessionHasInFlightGeneration(localMsgs)) {
             setSessionStreaming(sid, false);
@@ -1565,7 +1571,7 @@ export default function ChatPanel() {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [activeId, messages, readOnly, sessions]);
+  }, [activeId, readOnly]);
 
   useEffect(() => {
     if (readOnly) return;
@@ -2287,7 +2293,6 @@ export default function ChatPanel() {
     modelId: string,
     history: ChatMessage[],
     forModel: Model | undefined,
-    token: string | null,
     signal: AbortSignal,
     onPartial: (text: string) => void,
     tools: ChatToolsState = chatTools,
@@ -2298,11 +2303,10 @@ export default function ChatPanel() {
     },
     privateMode = false,
   ): Promise<string> {
-    const res = await fetch("/api/chat/completions", {
+    const res = await authFetch("/api/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(
         await chatCompletionBody(modelId, history, forModel, tools, persist, privateMode),
@@ -2391,7 +2395,6 @@ export default function ChatPanel() {
     turnBaseCount: number,
     persistCtx?: TextTurnPersistCtx,
   ) {
-    const token = localStorage.getItem("alpha_router_token");
     const emptyReply =
       "No response from model. Check Connections and enable the model in Admin → Models.";
     const turnSession = sessionsRef.current.find((s) => s.id === sid);
@@ -2534,7 +2537,6 @@ export default function ChatPanel() {
       primaryModel.id,
       historyForApi,
       primaryModel,
-      token,
       controller.signal,
       (content) => {
         if (turnPhasesRef.current[sid] !== "writing") {
@@ -2597,15 +2599,26 @@ export default function ChatPanel() {
     if (!sid) return;
     if (next) {
       setToolsMenuOpen(false);
-      const ok = await confirm({
-        title: "Private Mode",
+      const firstConfirmed = await confirm({
+        title: "Enable Private Mode?",
         message:
-          "When Private Mode is on, this chat’s messages and any media generated in it are stored only in this browser — not on the Alpha Router server.\n\nThey will not appear in Media Library on other devices and may be lost if you clear browser data.\n\nEnable Private Mode for this chat?",
-        confirmLabel: "Enable Private Mode",
+          "Messages and media will be stored only in this browser. Private Mode cannot be turned off for this chat.",
+        emphasize: "Private Mode cannot be turned off for this chat",
+        confirmLabel: "Continue",
+        cancelLabel: "Cancel",
+      });
+      if (!firstConfirmed) return;
+      const finalConfirmed = await confirm({
+        title: "Final confirmation",
+        message:
+          "This change is permanent. This chat will be deleted when you log out or clear browser data.",
+        emphasize: "deleted",
+        emphasizeDanger: true,
+        confirmLabel: "Enable Permanently",
         cancelLabel: "Cancel",
         danger: true,
       });
-      if (!ok) return;
+      if (!finalConfirmed) return;
       persistSessions(
         (prev) =>
           prev.map((s) =>
@@ -2616,25 +2629,8 @@ export default function ChatPanel() {
       return;
     }
 
-    const session = sessionsRef.current.find((s) => s.id === sid);
-    if (!session?.privateMode) return;
-
-    setChatError("");
-    try {
-      const migrated = await migratePrivateSessionMediaToServer(session);
-      const updated = { ...migrated, privateMode: false, updatedAt: Date.now() };
-      persistSessions(
-        (prev) => prev.map((s) => (s.id === sid ? updated : s)),
-        { debounce: false },
-      );
-      if (sid === activeIdRef.current) setMessages(updated.messages);
-    } catch (err) {
-      setChatError(
-        err instanceof Error
-          ? err.message
-          : "Could not upload private media to the server. Private Mode was not turned off.",
-      );
-    }
+    // Private Mode is intentionally irreversible for an existing chat.
+    return;
   }
 
   function updateChatTools(next: ChatToolsState) {
@@ -2736,6 +2732,36 @@ export default function ChatPanel() {
     }
     setCopiedMessageKey(key);
     window.setTimeout(() => setCopiedMessageKey((prev) => (prev === key ? null : prev)), 1400);
+  }
+
+  async function rateAssistantMessage(index: number, rating: -1 | 1) {
+    const sid = activeIdRef.current;
+    const current = messagesRef.current[index];
+    if (!sid || !current?.id || current.role !== "assistant") return;
+    const previous = current.feedback;
+    const nextRating: -1 | 0 | 1 = previous?.rating === rating ? 0 : rating;
+    const applyFeedback = (feedback: ChatMessage["feedback"]) => {
+      const nextMessages = messagesRef.current.map((message, messageIndex) =>
+        messageIndex === index ? { ...message, feedback } : message,
+      );
+      messagesRef.current = nextMessages;
+      setMessages(nextMessages);
+      setSessions((prev) => {
+        const next = prev.map((session) =>
+          session.id === sid ? { ...session, messages: nextMessages } : session,
+        );
+        sessionsRef.current = next;
+        return next;
+      });
+    };
+    applyFeedback(nextRating === 0 ? undefined : { rating: nextRating });
+    try {
+      const feedback = await setMessageFeedbackOnServer(sid, current.id, nextRating);
+      applyFeedback(feedback);
+    } catch (error) {
+      applyFeedback(previous);
+      setChatError(formatApiError(error) || "Could not save feedback.");
+    }
   }
 
   function editUserPrompt(content: string) {
@@ -2843,33 +2869,45 @@ export default function ChatPanel() {
     setTurnPhase(sid, undefined);
 
     if (!sessionPrivateMode(sid) && isChatSessionOnServer(sid)) {
+      const hadPendingImage = localMsgs.some((m) => m.content === IMAGE_PENDING_MARKER);
+      const refreshAfterStop = () => {
+        void pollSessionMessagesFromServer(sid, { limit: 50 })
+          .then(({ messages: remoteMsgs, revision }) => {
+            if (activeIdRef.current !== sid) return;
+            const mergedMsgs = preferLocalMessagesOverRemote(sid, remoteMsgs);
+            setSessions((prev) => {
+              const next = prev.map((s) =>
+                s.id === sid
+                  ? {
+                      ...s,
+                      messages: mergedMsgs,
+                      revision,
+                      messageCount: Math.max(s.messageCount ?? 0, mergedMsgs.length),
+                    }
+                  : s,
+              );
+              sessionsRef.current = next;
+              return next;
+            });
+            if (activeIdRef.current === sid) setMessages(mergedMsgs);
+            if (!sessionHasInFlightGeneration(mergedMsgs)) {
+              setSessionStreaming(sid, false);
+            }
+          })
+          .catch(() => {});
+      };
       void cancelStreamingReplyOnServer(sid)
         .catch((err) => reportSyncError(err, sid))
         .finally(() => {
-          void pollSessionMessagesFromServer(sid, { limit: 50 })
-            .then(({ messages: remoteMsgs, revision }) => {
-              if (activeIdRef.current !== sid) return;
-              const mergedMsgs = preferLocalMessagesOverRemote(sid, remoteMsgs);
-              setSessions((prev) => {
-                const next = prev.map((s) =>
-                  s.id === sid
-                    ? {
-                        ...s,
-                        messages: mergedMsgs,
-                        revision,
-                        messageCount: Math.max(s.messageCount ?? 0, mergedMsgs.length),
-                      }
-                    : s,
-                );
-                sessionsRef.current = next;
-                return next;
-              });
-              if (activeIdRef.current === sid) setMessages(mergedMsgs);
-              if (!sessionHasInFlightGeneration(mergedMsgs)) {
-                setSessionStreaming(sid, false);
-              }
+          if (hadPendingImage) {
+            void patchLastSessionMessageOnServer(sid, "Image generation stopped.", {
+              receivedAt: Date.now(),
             })
-            .catch(() => {});
+              .catch(() => {})
+              .finally(refreshAfterStop);
+          } else {
+            refreshAfterStop();
+          }
         });
     }
   }
@@ -3055,8 +3093,10 @@ export default function ChatPanel() {
 
   async function downloadImage(url: string) {
     const triggerDownload = (href: string) => {
+      const safeHref = safeBrowserUrl(href, "download");
+      if (!safeHref) throw new Error("Blocked unsafe image URL.");
       const a = document.createElement("a");
-      a.href = href;
+      a.href = safeHref;
       a.download = "alpha-router-generated-image.png";
       document.body.appendChild(a);
       a.click();
@@ -3078,11 +3118,14 @@ export default function ChatPanel() {
         return;
       }
       if (url.startsWith("data:image/")) {
+        if (!safeBrowserUrl(url, "image")) throw new Error("Blocked unsafe image data URL.");
         triggerDownload(url);
         return;
       }
+      const safeUrl = safeBrowserUrl(url, "download");
+      if (!safeUrl) throw new Error("Blocked unsafe image URL.");
       const a = document.createElement("a");
-      a.href = url;
+      a.href = safeUrl;
       a.target = "_blank";
       a.rel = "noopener noreferrer";
       a.download = "alpha-router-generated-image.png";
@@ -3096,13 +3139,9 @@ export default function ChatPanel() {
 
   async function openImageFullSize(url: string) {
     const openByAnchor = (href: string) => {
-      const a = document.createElement("a");
-      a.href = href;
-      a.target = "_blank";
-      a.rel = "noopener";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      if (!openSafeUrlInNewTab(href, "image")) {
+        throw new Error("Blocked unsafe image URL.");
+      }
     };
 
     try {
@@ -3120,6 +3159,7 @@ export default function ChatPanel() {
       }
 
       if (url.startsWith("data:image/")) {
+        if (!safeBrowserUrl(url, "image")) throw new Error("Blocked unsafe image data URL.");
         const [meta, b64] = url.split(",", 2);
         if (!b64) return;
         const mime = meta.match(/^data:(.*?);base64$/)?.[1] || "image/png";
@@ -3280,11 +3320,9 @@ export default function ChatPanel() {
     const fd = new FormData();
     fd.append("file", blob, `voice-${Date.now()}.${extension}`);
     if (sid) fd.append("chat_session_id", sid);
-    const token = localStorage.getItem("alpha_router_token");
     try {
-      const res = await fetch("/api/chat/voice", {
+      const res = await authFetch("/api/chat/voice", {
         method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: fd,
       });
       if (!res.ok) throw new Error(parseApiError(await res.text(), res.status));
@@ -3430,10 +3468,8 @@ export default function ChatPanel() {
         const fd = new FormData();
         for (const file of files) fd.append("files", file);
         if (sid) fd.append("chat_session_id", sid);
-        const token = localStorage.getItem("alpha_router_token");
-        const res = await fetch("/api/chat/attachments/process", {
+        const res = await authFetch("/api/chat/attachments/process", {
           method: "POST",
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
           body: fd,
         });
         if (!res.ok) throw new Error(parseApiError(await res.text(), res.status));
@@ -3880,7 +3916,11 @@ export default function ChatPanel() {
                   if (mdImage.imageUrl) {
                     return (
                       <div className="cgpt-generated-block">
-                        <img src={mdImage.imageUrl} alt="Generated" className="cgpt-generated-image" />
+                        <img
+                          src={safeBrowserUrl(mdImage.imageUrl, "image") ?? ""}
+                          alt="Generated"
+                          className="cgpt-generated-image"
+                        />
                         <div className="cgpt-generated-actions">
                           <button type="button" onClick={() => void downloadImage(mdImage.imageUrl || "")}>
                             Download
@@ -3961,6 +4001,36 @@ export default function ChatPanel() {
                 )}
                 {m.role !== "user" && (
                   <>
+                    {m.id &&
+                    !activePrivateMode &&
+                    m.content !== IMAGE_PENDING_MARKER &&
+                    !m.streaming &&
+                    !(isSessionStreaming && i === messages.length - 1) ? (
+                      <>
+                        <button
+                          type="button"
+                          className={`cgpt-msg-action-btn cgpt-msg-feedback-btn${m.feedback?.rating === 1 ? " is-active" : ""}`}
+                          disabled={readOnly}
+                          onClick={() => void rateAssistantMessage(i, 1)}
+                          title="Helpful"
+                          aria-label="Mark response as helpful"
+                          aria-pressed={m.feedback?.rating === 1}
+                        >
+                          👍
+                        </button>
+                        <button
+                          type="button"
+                          className={`cgpt-msg-action-btn cgpt-msg-feedback-btn${m.feedback?.rating === -1 ? " is-active" : ""}`}
+                          disabled={readOnly}
+                          onClick={() => void rateAssistantMessage(i, -1)}
+                          title="Not helpful"
+                          aria-label="Mark response as not helpful"
+                          aria-pressed={m.feedback?.rating === -1}
+                        >
+                          👎
+                        </button>
+                      </>
+                    ) : null}
                     <button
                       type="button"
                       className="cgpt-msg-action-btn"

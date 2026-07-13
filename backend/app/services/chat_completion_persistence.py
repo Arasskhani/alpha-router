@@ -21,6 +21,7 @@ from app.services.user_chat_storage_service import (
 
 _STREAM_PERSIST_INTERVAL_SEC = 0.45
 _STREAM_PERSIST_MIN_CHARS = 64
+_CANCEL_POLL_INTERVAL_SEC = 0.25
 
 
 async def _maybe_set_fallback_session_title(
@@ -95,6 +96,8 @@ class ChatCompletionPersister:
         self._content = ""
         self._last_persist_len = 0
         self._last_persist_at = 0.0
+        self._last_cancel_poll_at = 0.0
+        self._cancel_requested = False
         self._prepared = False
 
     def reset_persist_state(self) -> None:
@@ -156,8 +159,6 @@ class ChatCompletionPersister:
     async def on_content(self, content: str) -> None:
         if not self._prepared:
             return
-        if await self.is_cancel_requested():
-            return
         self._content = content
         now = time.monotonic()
         delta_chars = len(content) - self._last_persist_len
@@ -165,26 +166,26 @@ class ChatCompletionPersister:
             return
         await self._flush(content, partial=True)
 
-    async def is_cancel_requested(self) -> bool:
+    async def is_cancel_requested(self, *, force: bool = False) -> bool:
         if not self.session_id:
             return False
-        local_flag = False
-        try:
-            local_flag = await _read_cancel_flag(self.db, self.session_id)
-        except Exception:
-            local_flag = False
-        remote_flag = False
+        if self._cancel_requested:
+            return True
+        now = time.monotonic()
+        if not force and now - self._last_cancel_poll_at < _CANCEL_POLL_INTERVAL_SEC:
+            return False
+        self._last_cancel_poll_at = now
         try:
             async with AsyncSessionLocal() as db:
-                remote_flag = await _read_cancel_flag(db, self.session_id)
+                self._cancel_requested = await _read_cancel_flag(db, self.session_id)
         except Exception:
-            remote_flag = False
-        return local_flag or remote_flag
+            self._cancel_requested = False
+        return self._cancel_requested
 
     async def finalize(self, *, success: bool, error_message: str | None = None) -> None:
         if not self._prepared:
             return
-        cancelled = await self.is_cancel_requested()
+        cancelled = await self.is_cancel_requested(force=True)
         if cancelled:
             success = True
             error_message = None

@@ -1468,11 +1468,22 @@ class UserPlanIn(BaseModel):
 @router.post("/users/{user_id}/budget-reset")
 async def reset_user_budget(user_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(require_users_write)):
     from app.services.budget_service import resolve_monthly_budget
+    from app.models.budget_reservation import BudgetReservation
 
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404)
     user.budget_used_usd = 0.0
+    user.budget_reserved_usd = 0.0
+    await db.execute(
+        update(BudgetReservation)
+        .where(
+            BudgetReservation.subject_type == "user",
+            BudgetReservation.subject_id == user_id,
+            BudgetReservation.status == "held",
+        )
+        .values(status="released", settled_at=datetime.utcnow())
+    )
     user.monthly_budget_usd = await resolve_monthly_budget(db, user)
     await db.flush()
     return {"ok": True, "budget_used_usd": 0.0}

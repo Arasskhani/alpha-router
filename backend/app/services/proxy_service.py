@@ -19,8 +19,13 @@ from app.database import AsyncSessionLocal
 from app.core.language_detect import detect_prompt_language
 from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel
-from app.models.user import User
-from app.services.budget_service import budget_request_blocked, get_user_budget_state
+from app.services.budget_reservation_service import (
+    estimate_chat_hold,
+    estimate_embedding_hold,
+    reservation_key,
+    reserve,
+    settle,
+)
 from app.services.prompt_cache_service import apply_prompt_cache_breakpoints
 from app.services.chat_tools_service import augment_messages_with_tools, parse_tools_config
 from app.services.code_interpreter_service import (
@@ -62,6 +67,7 @@ class ResolvedStreamContext:
     base_url: str
     provider_type: str
     model_id: str
+    budget_reservation_id: str | None = None
 
 
 def _normalize_model_id(model_id: str | None) -> str:
@@ -266,31 +272,36 @@ async def preflight_stream_chat(
     user_id: int | None,
     skip_budget: bool,
     alpha_router_api_key_id: int | None = None,
+    operation: str = "chat",
 ) -> ResolvedStreamContext:
     """Validate budget/key/model while the request DB session is still open."""
-    if alpha_router_api_key_id:
-        from app.models.api_key import AlphaRouterApiKey
-        from app.services.alpha_router_api_key_service import ensure_key_usable
-
-        alpha_router_key = await db.get(AlphaRouterApiKey, alpha_router_api_key_id)
-        if alpha_router_key:
-            await ensure_key_usable(db, alpha_router_key)
-    elif not skip_budget and user_id:
-        user = await db.get(User, user_id)
-        budget, usage = await get_user_budget_state(db, user)
-        if blocked := budget_request_blocked(budget, usage):
-            raise HTTPException(status_code=402, detail=blocked)
-
     selected_model = body.get("model")
     ai_model, api_key, base_url, provider_type = await resolve_model_and_key(db, selected_model)
     if not ai_model or not api_key:
         raise HTTPException(status_code=404, detail=f"Model not enabled: {selected_model}")
+    hold = None
+    if alpha_router_api_key_id or (not skip_budget and user_id):
+        estimate = (
+            estimate_embedding_hold(ai_model, body)
+            if operation == "embedding"
+            else estimate_chat_hold(ai_model, body)
+        )
+        hold = await reserve(
+            db,
+            user_id=None if alpha_router_api_key_id else user_id,
+            alpha_router_api_key_id=alpha_router_api_key_id,
+            amount_usd=estimate,
+            operation=operation,
+            model_id=ai_model.external_id,
+            idempotency_key=reservation_key(body, operation=operation),
+        )
     return ResolvedStreamContext(
         ai_model=ai_model,
         api_key=api_key,
         base_url=base_url or "",
         provider_type=provider_type or ai_model.provider_type or "",
         model_id=litellm_model_for_provider(ai_model.external_id, provider_type or ai_model.provider_type),
+        budget_reservation_id=hold.id if hold else None,
     )
 
 
@@ -383,10 +394,10 @@ async def log_usage(
     error_message: str | None = None,
     alpha_router_api_key_id: int | None = None,
     client_app: str | None = None,
+    budget_reservation_id: str | None = None,
 ) -> None:
     total_cost_usd = _sanitize_cost_usd(total_cost_usd)
-    db.add(
-        RequestLog(
+    log_row = RequestLog(
             user_id=user_id,
             username=username,
             model_id=model_id,
@@ -402,16 +413,26 @@ async def log_usage(
             success=success,
             error_message=error_message,
             alpha_router_api_key_id=alpha_router_api_key_id,
+            budget_reservation_id=budget_reservation_id,
         )
-    )
-    if alpha_router_api_key_id and total_cost_usd > 0:
+    db.add(log_row)
+    await db.flush()
+    settled = False
+    if budget_reservation_id:
+        settled = await settle(
+            db,
+            budget_reservation_id,
+            actual_usd=total_cost_usd,
+            request_log_id=log_row.id,
+        )
+    if not settled and alpha_router_api_key_id and total_cost_usd > 0:
         from app.models.api_key import AlphaRouterApiKey
         from app.services.alpha_router_api_key_service import record_key_usage
 
         key = await db.get(AlphaRouterApiKey, alpha_router_api_key_id)
         if key:
             await record_key_usage(db, key, total_cost_usd)
-    elif user_id and total_cost_usd > 0:
+    elif not settled and user_id and total_cost_usd > 0:
         await _apply_cost_to_user(db, user_id, total_cost_usd)
     await db.flush()
 
@@ -444,6 +465,7 @@ async def stream_chat(
                 skip_budget=skip_budget,
                 alpha_router_api_key_id=alpha_router_api_key_id,
             )
+            await db.commit()
 
         ai_model = resolved.ai_model
         api_key = resolved.api_key
@@ -665,10 +687,19 @@ async def stream_chat(
                         error_message=error_message,
                         alpha_router_api_key_id=alpha_router_api_key_id,
                         client_app=client_app,
+                        budget_reservation_id=getattr(
+                            resolved,
+                            "budget_reservation_id",
+                            None,
+                        ),
                     )
                     await log_db.commit()
             except Exception:
-                pass
+                import logging
+
+                logging.getLogger("app.services.proxy_service").exception(
+                    "Chat usage settlement failed; reservation will expire safely"
+                )
             yield b"data: [DONE]\n\n"
 
 
@@ -714,7 +745,9 @@ async def create_embedding(
         user_id=user_id,
         skip_budget=skip_budget,
         alpha_router_api_key_id=alpha_router_api_key_id,
+        operation="embedding",
     )
+    await db.commit()
     ai_model = resolved.ai_model
     model = resolved.model_id
     provider = (resolved.provider_type or ai_model.provider_type or "").lower()
@@ -755,23 +788,37 @@ async def create_embedding(
         raise HTTPException(status_code=502, detail=error_message) from exc
     finally:
         elapsed_ms = (time.perf_counter() - start) * 1000
-        await log_usage(
-            db,
-            user_id=user_id,
-            username=username,
-            model_id=model,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=0,
-            cached_tokens=cached_tokens,
-            total_cost_usd=total_cost,
-            response_time_ms=elapsed_ms,
-            prompt_language=prompt_lang,
-            source_ip=source_ip,
-            source=source,
-            success=success,
-            error_message=error_message,
-            alpha_router_api_key_id=alpha_router_api_key_id,
-            client_app=client_app,
-        )
+        try:
+            async with AsyncSessionLocal() as log_db:
+                await log_usage(
+                    log_db,
+                    user_id=user_id,
+                    username=username,
+                    model_id=model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=0,
+                    cached_tokens=cached_tokens,
+                    total_cost_usd=total_cost,
+                    response_time_ms=elapsed_ms,
+                    prompt_language=prompt_lang,
+                    source_ip=source_ip,
+                    source=source,
+                    success=success,
+                    error_message=error_message,
+                    alpha_router_api_key_id=alpha_router_api_key_id,
+                    client_app=client_app,
+                    budget_reservation_id=getattr(
+                        resolved,
+                        "budget_reservation_id",
+                        None,
+                    ),
+                )
+                await log_db.commit()
+        except Exception:
+            import logging
+
+            logging.getLogger("app.services.proxy_service").exception(
+                "Embedding usage settlement failed; reservation will expire safely"
+            )
 
     return payload

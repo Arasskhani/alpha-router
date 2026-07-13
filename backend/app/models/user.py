@@ -65,6 +65,7 @@ class User(Base):
     # Budget: resolved from plan assignment; cached monthly remaining
     monthly_budget_usd = Column(Float, default=0.0)
     budget_used_usd = Column(Float, default=0.0)
+    budget_reserved_usd = Column(Float, nullable=False, server_default="0", default=0.0)
     budget_period_start = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=datetime.datetime.utcnow)

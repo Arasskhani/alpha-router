@@ -1,7 +1,7 @@
 """Per-request API logs for admin and user dashboards."""
 
 import datetime
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -9,6 +9,13 @@ from app.database import Base
 
 class RequestLog(Base):
     __tablename__ = "request_logs"
+    __table_args__ = (
+        Index(
+            "uq_request_logs_budget_reservation_id",
+            "budget_reservation_id",
+            unique=True,
+        ),
+    )
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=True)
@@ -19,6 +26,7 @@ class RequestLog(Base):
     source = Column(String(32), default="gateway")  # openwebui | alpha_router_key | user_key
     client_app = Column(String(128), nullable=True)  # Kilo Code, Open WebUI, etc.
     alpha_router_api_key_id = Column(Integer, ForeignKey("alpha_router_api_keys.id", ondelete="SET NULL"), index=True, nullable=True)
+    budget_reservation_id = Column(String(36), index=True, unique=True, nullable=True)
 
     prompt_tokens = Column(Integer, default=0)
     completion_tokens = Column(Integer, default=0)

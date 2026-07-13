@@ -15,7 +15,7 @@ from app.services.image_model_resolver import (
 )
 
 
-def test_score_image_model_candidate_prefers_gemini_flash():
+def test_score_image_model_candidate_is_quality_first():
     auto = score_image_model_candidate("openrouter/auto")
     gemini = score_image_model_candidate(
         "google/gemini-2.5-flash-image-preview",
@@ -25,8 +25,46 @@ def test_score_image_model_candidate_prefers_gemini_flash():
     text = score_image_model_candidate("anthropic/claude-sonnet-4.5")
 
     assert auto < 0
-    assert gemini > flux > 0
+    assert flux > gemini > 0
     assert text == 0
+
+
+def test_score_prefers_newer_model_at_same_quality_tier():
+    old = score_image_model_candidate("vendor/image-2.0-pro", is_image_model=True)
+    new = score_image_model_candidate("vendor/image-4.0-pro", is_image_model=True)
+    assert new > old
+
+
+def test_bayesian_feedback_can_change_close_model_ranking():
+    liked = score_image_model_candidate(
+        "vendor/image-2.0-pro",
+        is_image_model=True,
+        feedback_score=0.95,
+        feedback_count=30,
+    )
+    disliked = score_image_model_candidate(
+        "vendor/image-3.0-pro",
+        is_image_model=True,
+        feedback_score=0.15,
+        feedback_count=30,
+    )
+    assert liked > disliked
+
+
+def test_failure_signal_can_hold_back_an_unstable_new_model():
+    proven = score_image_model_candidate(
+        "vendor/image-2.0-pro",
+        is_image_model=True,
+        stability_score=0.99,
+        stability_count=50,
+    )
+    failing_canary = score_image_model_candidate(
+        "vendor/image-3.0-pro",
+        is_image_model=True,
+        stability_score=0.1,
+        stability_count=10,
+    )
+    assert proven > failing_canary
 
 
 def test_image_model_rank_prefers_non_lite_at_same_score():
@@ -84,8 +122,8 @@ async def _run_auto_resolve() -> None:
         picked = await resolve_auto_router_image_model(session, connection_id=conn.id)
         assert picked is not None
         external_id, model, picked_conn = picked
-        assert external_id == "google/gemini-2.5-flash-image-preview"
-        assert model.display_name == "Gemini Image"
+        assert external_id == "black-forest-labs/flux-1.1-pro"
+        assert model.display_name == "Flux"
         assert picked_conn.id == conn.id
 
         empty = await resolve_auto_router_image_model(session, connection_id=99999)

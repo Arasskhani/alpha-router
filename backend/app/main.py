@@ -5,12 +5,11 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select
-from starlette.middleware.base import BaseHTTPMiddleware
+from sqlalchemy import select, text
 
 from app.api import admin, auth, authentication, chat, gateway, groups, images, logs, operations, plans, reports, smtp, user_chats, user_media, user_routes
 from app.config import INSECURE_DEFAULTS, get_settings
@@ -20,12 +19,14 @@ from app.db_migrate import apply_schema_column_patches, run_one_time_migrations
 from app.models.user import User
 from app.services.auth_sync_scheduler import refresh_auth_sync_schedules
 from app.services.bounded_io import RequestBodyLimitMiddleware
+from app.services.csrf_protection import CsrfProtectionMiddleware
 from app.services.scheduler import (
     refresh_chat_retention_cleanup_schedule,
     refresh_storage_cleanup_schedule,
     start_scheduler,
     stop_scheduler,
 )
+from app.services.security_headers import SecurityHeadersMiddleware
 from app.services import object_storage_service as oss
 from app.services.openrouter_image_service import close_openrouter_http_client
 from app.services.proxy_service import configure_litellm_cache
@@ -121,6 +122,11 @@ def _check_production_safe(
 async def lifespan(app: FastAPI):
     _assert_production_safe()
     async with engine.begin() as conn:
+        # Multiple uvicorn workers enter lifespan concurrently. Serialize DDL
+        # discovery/creation so a newly introduced table cannot race in
+        # PostgreSQL's type catalog and abort worker startup.
+        if conn.dialect.name == "postgresql":
+            await conn.execute(text("SELECT pg_advisory_xact_lock(56023113)"))
         await conn.run_sync(Base.metadata.create_all)
     await apply_schema_column_patches()
 
@@ -173,40 +179,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Alpha Router Organizational AI Platform", version="1.0.0", lifespan=lifespan)
 
 
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Attach baseline security headers to every response.
-
-    HSTS is only emitted when ``ENABLE_HSTS=true`` AND ``ENVIRONMENT=production``
-    (i.e. the deployment is behind HTTPS). CSP is opt-in via
-    ``CONTENT_SECURITY_POLICY`` — empty by default to avoid breaking the SPA
-    without testing. The remaining headers are safe-by-default and applied to
-    all responses regardless of environment.
-    """
-
-    _BASE_HEADERS = {
-        "X-Content-Type-Options": "nosniff",
-        "X-Frame-Options": "DENY",
-        "Referrer-Policy": "strict-origin-when-cross-origin",
-        "Permissions-Policy": "camera=(), microphone=(), geolocation=(), interest-cohort=()",
-        "Cross-Origin-Opener-Policy": "same-origin",
-    }
-
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        for key, value in self._BASE_HEADERS.items():
-            response.headers.setdefault(key, value)
-        settings = get_settings()
-        if getattr(settings, "enable_hsts", False) and getattr(settings, "environment", "development") == "production":
-            response.headers.setdefault(
-                "Strict-Transport-Security",
-                "max-age=31536000; includeSubDomains",
-            )
-        csp = (getattr(settings, "content_security_policy", "") or "").strip()
-        if csp:
-            response.headers.setdefault("Content-Security-Policy", csp)
-        return response
-
-
 app.add_middleware(RequestBodyLimitMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 
@@ -216,8 +188,15 @@ app.add_middleware(
     allow_origins=[settings.frontend_url, "http://127.0.0.1:8080", "http://localhost:8080"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Requested-With", "X-Client-App"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "X-Requested-With",
+        "X-Client-App",
+        settings.csrf_header_name,
+    ],
 )
+app.add_middleware(CsrfProtectionMiddleware)
 
 app.include_router(auth.router)
 app.include_router(gateway.router)

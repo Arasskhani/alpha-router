@@ -8,6 +8,7 @@ import {
 } from "./chatStorage";
 import { referenceImageFromUserContent, resolveReferenceImageFromUserContent } from "./chatAttachments";
 import { isPrivateBlobRef, resolvePrivateMediaUrlForApi } from "./privateMediaStore";
+import { authFetch } from "../api";
 import {
   normalizeImageAspectPreset,
   presetFromAspectRatio,
@@ -30,12 +31,15 @@ export type ImagePayload = {
   aspectPreset?: ImageAspectPresetId;
   /** @deprecated legacy WxH from older messages */
   size?: string;
+  routing?: Record<string, unknown>;
 };
 
 type ImageResponse = {
   data?: Array<{ url?: string; b64_json?: string }>;
   size?: string;
   aspect_ratio?: string;
+  model?: string;
+  routing?: Record<string, unknown>;
 };
 
 /** Must exceed the backend OpenRouter read timeout (180s) so server errors win. */
@@ -248,7 +252,6 @@ async function requestImageApi(
   aspectPreset: ImageAspectPresetId,
   sourceSize: string | undefined,
 ): Promise<ImagePayload> {
-  const token = localStorage.getItem("alpha_router_token");
   const operation = referenceImage ? "img2img" : "generation";
   const resolvedReference = referenceImage
     ? await resolvePrivateMediaUrlForApi(referenceImage)
@@ -266,11 +269,10 @@ async function requestImageApi(
   } else if (aspectRatio) {
     body.aspect_ratio = aspectRatio;
   }
-  const res = await fetch("/api/images/generate", {
+  const res = await authFetch("/api/images/generate", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(body),
     signal,
@@ -285,10 +287,11 @@ async function requestImageApi(
   return {
     url: imageUrl,
     prompt,
-    model: modelId,
+    model: imageResult.model || modelId,
     aspectRatio: appliedAspect || undefined,
     aspectPreset: appliedPreset,
     size: imageResult.size || sourceSize,
+    ...(imageResult.routing ? { routing: imageResult.routing } : {}),
     ...(referenceImage ? { reference_image: referenceImage, operation: "img2img" as const } : { operation: "generation" as const }),
   };
 }

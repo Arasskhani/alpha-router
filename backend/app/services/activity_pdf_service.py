@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 from urllib.parse import urlencode, urlparse, urlunparse
 
+from app.config import get_settings
 from app.services.rbac import is_admin_panel_role, normalize_role_slug
 
 logger = logging.getLogger(__name__)
@@ -200,14 +200,7 @@ def _render_activity_page_pdf_sync(
             "Playwright is not installed. Run: pip install playwright && playwright install chromium"
         ) from exc
 
-    token_json = json.dumps(jwt_token)
-    role_json = json.dumps(user_role)
-    init_script = f"""
-localStorage.setItem("alpha_router_token", {token_json});
-localStorage.setItem("alpha_router_role", {role_json});
-localStorage.setItem("alpha_router_is_active", "1");
-localStorage.setItem("alpha_router_login_at", String(Date.now()));
-"""
+    del user_role
 
     logger.info("Rendering activity PDF from %s", url)
 
@@ -215,7 +208,23 @@ localStorage.setItem("alpha_router_login_at", String(Date.now()));
         browser = _launch_browser(playwright)
         try:
             context = browser.new_context(viewport={"width": 1440, "height": 900})
-            context.add_init_script(init_script)
+            parsed_url = urlparse(url)
+            if not parsed_url.hostname:
+                raise ActivityPdfError("PDF export URL has no hostname")
+
+            context.add_cookies(
+                [
+                    {
+                        "name": get_settings().session_cookie_name,
+                        "value": jwt_token,
+                        "domain": parsed_url.hostname,
+                        "path": "/api",
+                        "httpOnly": True,
+                        "secure": parsed_url.scheme == "https",
+                        "sameSite": "Lax",
+                    }
+                ]
+            )
             page = context.new_page()
 
             def _activity_response(resp) -> bool:

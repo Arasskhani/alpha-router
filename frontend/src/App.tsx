@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from "react-router-dom";
+import { useEffect, useState } from "react";
 import Login from "./pages/Login";
 import AdminLayout from "./pages/admin/AdminLayout";
 import UserLayout from "./pages/user/UserLayout";
@@ -31,18 +32,42 @@ import MediaLibrary from "./pages/MediaLibrary";
 import UserManual from "./pages/user/UserManual";
 import Roles from "./pages/admin/Roles";
 import { isAdminPanelRole } from "./lib/rbac";
+import { bootstrapSession, type SessionInfo } from "./api";
+
+function useSessionGate() {
+  const [session, setSession] = useState<SessionInfo | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let active = true;
+    bootstrapSession()
+      .then((value) => {
+        if (active) setSession(value);
+      })
+      .catch(() => {
+        if (active) setSession(null);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  return { session, loading };
+}
 
 function Private({ children }: { children: React.ReactNode }) {
-  const token = localStorage.getItem("alpha_router_token");
-  if (!token) return <Navigate to="/login" replace />;
+  const { session, loading } = useSessionGate();
+  if (loading) return <div className="app-loading">Loading…</div>;
+  if (!session) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
 
 function PrivateAdmin({ children }: { children: React.ReactNode }) {
-  const token = localStorage.getItem("alpha_router_token");
-  const userRole = localStorage.getItem("alpha_router_role") || "";
-  if (!token) return <Navigate to="/login" replace />;
-  if (!isAdminPanelRole(userRole)) return <Navigate to="/login" replace />;
+  const { session, loading } = useSessionGate();
+  if (loading) return <div className="app-loading">Loading…</div>;
+  if (!session) return <Navigate to="/login" replace />;
+  if (!isAdminPanelRole(session.role)) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
 

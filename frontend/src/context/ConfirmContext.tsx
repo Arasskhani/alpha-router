@@ -4,6 +4,9 @@ import ConfirmModal from "../components/ConfirmModal";
 export type ConfirmOptions = {
   title?: string;
   message: string;
+  /** Exact message fragment to render with strong emphasis. */
+  emphasize?: string;
+  emphasizeDanger?: boolean;
   confirmLabel?: string;
   cancelLabel?: string;
   /** Optional middle action (e.g. delete folder but keep chats). */
@@ -43,6 +46,8 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         open={pending !== null}
         title={pending?.title ?? "Confirm"}
         message={pending?.message ?? ""}
+        emphasize={pending?.emphasize}
+        emphasizeDanger={pending?.emphasizeDanger}
         confirmLabel={pending?.confirmLabel ?? "Yes"}
         cancelLabel={pending?.cancelLabel ?? "No"}
         secondaryLabel={pending?.secondaryLabel}

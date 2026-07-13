@@ -12,12 +12,20 @@ Covers:
 import asyncio
 
 from fastapi.security import HTTPAuthorizationCredentials
+from starlette.requests import Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.api.deps import get_current_user
 from app.core.security import create_access_token, decode_access_token
 from app.database import Base
 from app.models.user import User
+
+
+def _request(cookie: str | None = None) -> Request:
+    headers = []
+    if cookie:
+        headers.append((b"cookie", f"alpha_router_session={cookie}".encode()))
+    return Request({"type": "http", "method": "GET", "path": "/", "headers": headers})
 
 
 async def _setup() -> tuple[async_sessionmaker[AsyncSession], User]:
@@ -48,7 +56,7 @@ async def _run_revocation_scenarios() -> None:
     async with Session() as session:
         token = create_access_token("alice", "user", token_version=0)
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-        u = await get_current_user(creds=creds, db=session)
+        u = await get_current_user(request=_request(), creds=creds, db=session)
         assert u.username == "alice"
 
     # 2) Bump token_version (e.g. after logout) -> old token rejected.
@@ -59,7 +67,7 @@ async def _run_revocation_scenarios() -> None:
     async with Session() as session:
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
         try:
-            await get_current_user(creds=creds, db=session)
+            await get_current_user(request=_request(), creds=creds, db=session)
             raise AssertionError("expected revoked token to be rejected")
         except Exception as exc:
             # FastAPI HTTPException status code 401
@@ -69,7 +77,7 @@ async def _run_revocation_scenarios() -> None:
     async with Session() as session:
         new_token = create_access_token("alice", "user", token_version=1)
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=new_token)
-        u = await get_current_user(creds=creds, db=session)
+        u = await get_current_user(request=_request(new_token), creds=None, db=session)
         assert u.username == "alice"
 
 
@@ -93,7 +101,7 @@ async def _run_legacy_token_compat() -> None:
 
     async with Session() as session:
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=legacy_token)
-        u = await get_current_user(creds=creds, db=session)
+        u = await get_current_user(request=_request(), creds=creds, db=session)
         assert u.username == "alice"
 
     # After a bump, even a legacy (no-ver => 0) token is rejected.
@@ -104,7 +112,7 @@ async def _run_legacy_token_compat() -> None:
     async with Session() as session:
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=legacy_token)
         try:
-            await get_current_user(creds=creds, db=session)
+            await get_current_user(request=_request(), creds=creds, db=session)
             raise AssertionError("expected legacy token to be rejected after bump")
         except Exception as exc:
             assert getattr(exc, "status_code", None) == 401, exc

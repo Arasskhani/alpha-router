@@ -185,10 +185,6 @@ async def chat_completions(
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    budget, usage = await get_user_budget_state(db, user)
-    if blocked := budget_request_blocked(budget, usage):
-        raise HTTPException(status_code=402, detail=blocked)
-
     tools = body.tools.model_dump() if body.tools else {}
     payload = {
         "model": body.model,
@@ -208,6 +204,7 @@ async def chat_completions(
         user_id=user.id,
         skip_budget=False,
     )
+    await db.commit()
     gen = stream_chat(
         request,
         payload,

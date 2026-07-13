@@ -41,6 +41,14 @@ async def job_reset_budgets():
         await reset_all_monthly_budgets(db)
 
 
+async def job_expire_budget_reservations():
+    from app.services.budget_reservation_service import expire_stale_reservations
+
+    async with AsyncSessionLocal() as db:
+        await expire_stale_reservations(db)
+        await db.commit()
+
+
 async def job_storage_cleanup():
     async with AsyncSessionLocal() as db:
         settings = await get_storage_settings(db)
@@ -139,6 +147,12 @@ def start_scheduler():
     # Check every 30 minutes which connections are due for their own sync_interval_hours
     scheduler.add_job(job_sync_all_models, "interval", minutes=30, id="model_sync")
     scheduler.add_job(job_reset_budgets, "cron", day=1, hour=0, minute=5, id="budget_reset")
+    scheduler.add_job(
+        job_expire_budget_reservations,
+        "interval",
+        minutes=5,
+        id="budget_reservation_expiry",
+    )
     scheduler.add_job(
         job_storage_cleanup,
         "cron",

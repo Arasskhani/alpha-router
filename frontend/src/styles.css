@@ -2747,6 +2747,12 @@ table.card tbody td:last-child {
   color: color-mix(in srgb, var(--text) 68%, var(--muted));
 }
 
+.cgpt-private-strip__danger,
+.confirm-message__emphasis--danger {
+  color: var(--danger, #dc2626);
+  font-weight: 750;
+}
+
 @media (max-width: 720px) {
   .cgpt-private-strip__title,
   .cgpt-private-strip__body {
@@ -3483,6 +3489,24 @@ table.card tbody td:last-child {
   border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
 }
 
+.cgpt-msg-feedback-btn {
+  min-width: 1.9rem;
+  padding-inline: 0.32rem;
+  filter: grayscale(1);
+}
+
+.cgpt-msg-feedback-btn.is-active {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  filter: none;
+}
+
+.cgpt-msg-feedback-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .cgpt-msg-action-btn--info {
   display: inline-flex;
   align-items: center;
@@ -4181,6 +4205,10 @@ table.card tbody td:last-child {
   border-bottom: none;
 }
 
+.cgpt-server-tool.is-disabled {
+  opacity: 0.72;
+}
+
 .cgpt-server-tool__icon {
   display: inline-flex;
   align-items: center;
@@ -4337,6 +4365,11 @@ table.card tbody td:last-child {
 .cgpt-toggle.on {
   background: color-mix(in srgb, var(--accent) 35%, var(--surface));
   border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+}
+
+.cgpt-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
 }
 
 .cgpt-toggle-knob {

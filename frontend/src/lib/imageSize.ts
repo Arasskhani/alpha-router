@@ -1,3 +1,5 @@
+import { safeBrowserUrl } from "./browserUrlPolicy";
+
 /** Image aspect-ratio presets — aligned with OpenRouter `image_config.aspect_ratio`. */
 
 export type ImageAspectPresetId = "square" | "wide" | "tall" | "landscape" | "portrait" | "custom";
@@ -311,7 +313,7 @@ export function resolveRegenerateImageGeneration(opts: {
 export function readReferenceImageDimensions(
   referenceUrl: string,
 ): Promise<{ width: number; height: number } | null> {
-  const ref = referenceUrl.trim();
+  const ref = safeBrowserUrl(referenceUrl, "image");
   if (!ref) return Promise.resolve(null);
 
   return new Promise((resolve) => {

@@ -33,6 +33,8 @@ export type UserChatsPayload = {
 };
 
 export type ChatMessage = {
+  /** Stable server id; required for persisted feedback. */
+  id?: string;
   role: "user" | "assistant";
   content: string;
   /** Stable id for dedupe on append (generated client-side). */
@@ -48,6 +50,10 @@ export type ChatMessage = {
   streaming?: boolean;
   /** Server sequence for pagination (optional, from API). */
   sequence?: number;
+  feedback?: {
+    rating: -1 | 1;
+    reason?: string | null;
+  };
 };
 
 function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
@@ -324,14 +330,12 @@ export function markSessionMetadataDirty(sessionId: string) {
 }
 
 function legacyStorageKey(): string {
-  const token = localStorage.getItem("alpha_router_token");
-  const sub = token ? token.slice(0, 12) : "anon";
+  const sub = getSessionUser()?.username || "anon";
   return `alpha_router_chats_${sub}`;
 }
 
 function legacyFoldersStorageKey(): string {
-  const token = localStorage.getItem("alpha_router_token");
-  const sub = token ? token.slice(0, 12) : "anon";
+  const sub = getSessionUser()?.username || "anon";
   return `alpha_router_chat_folders_${sub}`;
 }
 
@@ -525,6 +529,7 @@ export function isPendingDelete(id: string): boolean {
 
 function mapApiMessage(raw: Record<string, unknown>): ChatMessage {
   return {
+    id: typeof raw.id === "string" ? raw.id : undefined,
     role: (raw.role as ChatMessage["role"]) || "user",
     content: String(raw.content || ""),
     clientMessageId:
@@ -535,6 +540,19 @@ function mapApiMessage(raw: Record<string, unknown>): ChatMessage {
     receivedAt: typeof raw.receivedAt === "number" ? raw.receivedAt : undefined,
     streaming: typeof raw.streaming === "boolean" ? raw.streaming : undefined,
     sequence: typeof raw.sequence === "number" ? raw.sequence : undefined,
+    feedback:
+      raw.feedback &&
+      typeof raw.feedback === "object" &&
+      (((raw.feedback as Record<string, unknown>).rating as number) === -1 ||
+        ((raw.feedback as Record<string, unknown>).rating as number) === 1)
+        ? {
+            rating: (raw.feedback as { rating: -1 | 1 }).rating,
+            reason:
+              typeof (raw.feedback as Record<string, unknown>).reason === "string"
+                ? String((raw.feedback as Record<string, unknown>).reason)
+                : null,
+          }
+        : undefined,
   };
 }
 
@@ -614,6 +632,22 @@ export async function cancelStreamingReplyOnServer(sessionId: string): Promise<v
   await api(`/api/user/chat-sessions/${encodeURIComponent(sessionId)}/cancel-stream`, {
     method: "POST",
   });
+}
+
+export async function setMessageFeedbackOnServer(
+  sessionId: string,
+  messageId: string,
+  rating: -1 | 0 | 1,
+  reason?: string,
+): Promise<ChatMessage["feedback"]> {
+  const result = await api<{ feedback?: ChatMessage["feedback"] | null }>(
+    `/api/user/chat-sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/feedback`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ rating, reason: reason || null }),
+    },
+  );
+  return result.feedback || undefined;
 }
 
 async function appendSessionMessagesOnServer(
@@ -1409,7 +1443,7 @@ export async function syncSessionMessages(
     // Never blank out a server-owned assistant row. The streaming persister may be
     // mid-write; patching it to "" here would erase live content and leave an
     // orphan placeholder that keeps the UI stuck "generating".
-    if (!content.trim()) return;
+    if (!content.trim() || content === _IMAGE_PENDING) return;
     const updated = await patchLastSessionMessageOnServer(sessionId, content, { receivedAt });
     if (updated) applyServerSessionToLocal(sessionId, updated);
     broadcastChatRefresh({ at: Date.now(), sessionId });
@@ -1450,6 +1484,7 @@ export async function syncSessionMessages(
     const toAppend = messages.slice(serverCount).map((m) => ({
       ...m,
       clientMessageId: m.clientMessageId || newClientMessageId(),
+      receivedAt: m.content === _IMAGE_PENDING ? undefined : m.receivedAt,
     }));
     const result = await appendSessionMessagesOnServer(sessionId, toAppend, undefined);
     noteServerSessionFromAppend(sessionId, result.session);

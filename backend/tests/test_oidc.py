@@ -122,6 +122,36 @@ def test_validate_server_url_https_in_production():
         assert oidc.validate_server_url("http://localhost:8090") == "http://localhost:8090"
 
 
+def test_redirect_origins_reject_credentials_query_and_fragments():
+    with _patch_settings():
+        for bad in (
+            "https://user:secret@keycloak.example.com",
+            "https://keycloak.example.com?next=https://evil.example",
+            "https://keycloak.example.com/#fragment",
+            "javascript:alert(1)",
+            "//keycloak.example.com",
+        ):
+            with pytest.raises(ValueError):
+                oidc.validate_server_url(bad)
+        assert oidc.validate_frontend_url("http://localhost:8080") == "http://localhost:8080"
+        assert (
+            oidc.validate_oidc_redirect_uri("http://localhost:8080/api/auth/keycloak/callback")
+            == "http://localhost:8080/api/auth/keycloak/callback"
+        )
+        with pytest.raises(ValueError):
+            oidc.validate_oidc_redirect_uri("https://user:pass@evil.example/callback")
+
+
+def test_frontend_redirect_requires_https_in_production():
+    with _patch_settings(env="production"):
+        with pytest.raises(ValueError):
+            oidc.validate_frontend_url("http://alpha-router.example.com")
+        assert (
+            oidc.validate_frontend_url("https://alpha-router.example.com/app")
+            == "https://alpha-router.example.com/app"
+        )
+
+
 # --- ID token validation (JWKS) ----------------------------------------------
 
 def _sign_id_token(pem, claims):

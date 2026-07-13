@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api";
+import { api, authFetch } from "../api";
 import AdminPage from "../components/AdminPage";
 import AuthenticatedImage from "../components/AuthenticatedImage";
 import RowActionsMenu from "../components/RowActionsMenu";
@@ -11,6 +11,7 @@ import {
   fetchAuthenticatedMediaObjectUrl,
   isAlphaRouterMediaFileUrl,
 } from "../lib/mediaUrl";
+import { openSafeUrlInNewTab, safeBrowserUrl } from "../lib/browserUrlPolicy";
 import {
   dedupeMediaItemsForDisplay,
   formatMediaBytes,
@@ -203,8 +204,10 @@ export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProp
 
   async function downloadOne(item: MediaItem) {
     const trigger = (href: string, name: string) => {
+      const safeHref = safeBrowserUrl(href, "download");
+      if (!safeHref) throw new Error("Blocked unsafe media URL.");
       const a = document.createElement("a");
-      a.href = href;
+      a.href = safeHref;
       a.download = name;
       document.body.appendChild(a);
       a.click();
@@ -229,12 +232,10 @@ export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProp
     setDownloadingZip(true);
     setError("");
     try {
-      const token = localStorage.getItem("alpha_router_token");
-      const res = await fetch(`${apiBase}/download-zip`, {
+      const res = await authFetch(`${apiBase}/download-zip`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ ids: targets.map((m) => m.id) }),
       });
@@ -282,11 +283,15 @@ export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProp
     try {
       if (isAlphaRouterMediaFileUrl(item.url)) {
         const blobUrl = await fetchAuthenticatedMediaObjectUrl(item.url);
-        window.open(blobUrl, "_blank", "noopener");
+        if (!openSafeUrlInNewTab(blobUrl, item.kind === "image" ? "image" : "media")) {
+          throw new Error("Blocked unsafe media URL.");
+        }
         setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
         return;
       }
-      window.open(item.url, "_blank", "noopener");
+      if (!openSafeUrlInNewTab(item.url, item.kind === "image" ? "image" : "media")) {
+        throw new Error("Blocked unsafe media URL.");
+      }
     } catch (e) {
       setError(String(e));
     }

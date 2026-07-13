@@ -9,6 +9,8 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    SmallInteger,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -81,6 +83,36 @@ class ChatMessage(Base):
         UniqueConstraint("session_id", "client_message_id", name="ux_chat_messages_client_id"),
         Index("ix_chat_messages_session_sequence", "session_id", "sequence"),
         Index("ix_chat_messages_created_at", "created_at"),
+    )
+
+
+class ChatMessageFeedback(Base):
+    __tablename__ = "chat_message_feedback"
+
+    id = Column(Integer, primary_key=True)
+    message_id = Column(
+        String(36),
+        ForeignKey("chat_messages.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    session_id = Column(
+        String(36),
+        ForeignKey("chat_sessions.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    rating = Column(SmallInteger, nullable=False)
+    reason = Column(String(64), nullable=True)
+    output_kind = Column(String(16), nullable=False)
+    model_id = Column(String(512), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("message_id", "user_id", name="ux_chat_message_feedback_user"),
+        Index("ix_chat_feedback_kind_model", "output_kind", "model_id"),
     )
 
 

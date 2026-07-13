@@ -169,6 +169,8 @@ async def list_models(
 async def chat_completions(request: Request, db: AsyncSession = Depends(get_db)):
     auth_ctx = await _resolve_gateway_auth(request, db)
     body = await request.json()
+    if request.headers.get("Idempotency-Key"):
+        body["_idempotency_key"] = request.headers["Idempotency-Key"]
 
     if body.get("stream", True):
         resolved = await preflight_stream_chat(
@@ -178,6 +180,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             skip_budget=auth_ctx.skip_budget,
             alpha_router_api_key_id=auth_ctx.alpha_router_api_key_id,
         )
+        await db.commit()
         gen = stream_chat(
             request,
             body,
@@ -201,6 +204,8 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
 async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
     auth_ctx = await _resolve_gateway_auth(request, db)
     body = await request.json()
+    if request.headers.get("Idempotency-Key"):
+        body["_idempotency_key"] = request.headers["Idempotency-Key"]
     payload = await create_embedding(
         db,
         body,

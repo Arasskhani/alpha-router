@@ -2,12 +2,13 @@
 
 from collections.abc import Callable
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decode_access_token
+from app.config import get_settings
 from app.database import get_db
 from app.models.user import User
 from app.services.rbac import (
@@ -22,13 +23,22 @@ bearer = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
+    request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """Resolve user from JWT. Inactive users remain authenticated (read-only chat/media/logs)."""
-    if not creds:
+    settings = get_settings()
+    token = (
+        request.cookies.get(settings.session_cookie_name)
+        if settings.enable_cookie_auth
+        else None
+    )
+    if not token and settings.allow_legacy_bearer_auth and creds:
+        token = creds.credentials
+    if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    payload = decode_access_token(creds.credentials)
+    payload = decode_access_token(token)
     if not payload:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     username = payload.get("sub")
@@ -169,8 +179,17 @@ require_developer_write = require_rbac_category("developer", write=True)
 
 
 async def get_bearer_token(
+    request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(bearer),
 ) -> str:
-    if not creds:
+    settings = get_settings()
+    token = (
+        request.cookies.get(settings.session_cookie_name)
+        if settings.enable_cookie_auth
+        else None
+    )
+    if not token and settings.allow_legacy_bearer_auth and creds:
+        token = creds.credentials
+    if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    return creds.credentials
+    return token

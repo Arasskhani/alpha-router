@@ -3,6 +3,7 @@ import {
   fetchAuthenticatedMediaObjectUrl,
   isAlphaRouterMediaFileUrl,
 } from "../../lib/mediaUrl";
+import { safeBrowserUrl } from "../../lib/browserUrlPolicy";
 
 type Props = {
   url: string;
@@ -24,7 +25,9 @@ export default function ChatAudioMessage({ url, transcript }: Props) {
           if (!cancelled) setSrc(objectUrl);
           return;
         }
-        if (!cancelled) setSrc(url);
+        const safeUrl = safeBrowserUrl(url, "media");
+        if (!safeUrl) throw new Error("Blocked unsafe audio URL.");
+        if (!cancelled) setSrc(safeUrl);
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : String(err));

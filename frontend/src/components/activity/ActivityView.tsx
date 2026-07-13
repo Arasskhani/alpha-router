@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { api } from "../../api";
+import { api, authFetch } from "../../api";
 import { MY_USAGE_AND_ACTIVITY_LABEL, USAGE_AND_ACTIVITY_LABEL } from "../../lib/usageActivityLabel";
 import Modal from "../Modal";
 import ActivityGroupByMenu from "./ActivityGroupByMenu";
@@ -37,10 +37,6 @@ type Props = {
 };
 
 type ExpandedCard = { kind: MetricKind; title: string } | null;
-
-function token() {
-  return localStorage.getItem("alpha_router_token");
-}
 
 export default function ActivityView({
   scope,
@@ -260,9 +256,7 @@ export default function ActivityView({
       setErr("");
     }
 
-    const res = await fetch(path, {
-      headers: { Authorization: `Bearer ${token()}` },
-    });
+    const res = await authFetch(path);
 
     if (fmt === "pdf") setExportingPdf(false);
 

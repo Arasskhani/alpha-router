@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select
+from sqlalchemy import select, text
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api import admin, auth, authentication, chat, gateway, groups, images, logs, operations, plans, reports, smtp, user_chats, user_media, user_routes
@@ -121,6 +121,11 @@ def _check_production_safe(
 async def lifespan(app: FastAPI):
     _assert_production_safe()
     async with engine.begin() as conn:
+        # Multiple uvicorn workers enter lifespan concurrently. Serialize DDL
+        # discovery/creation so a newly introduced table cannot race in
+        # PostgreSQL's type catalog and abort worker startup.
+        if conn.dialect.name == "postgresql":
+            await conn.execute(text("SELECT pg_advisory_xact_lock(56023113)"))
         await conn.run_sync(Base.metadata.create_all)
     await apply_schema_column_patches()
 

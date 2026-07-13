@@ -44,6 +44,8 @@ async def apply_schema_column_patches() -> None:
     of N workers would crash N-1 of them the first time a new column is added.
     """
     async with engine.begin() as conn:
+        if conn.dialect.name == "postgresql":
+            await conn.execute(text("SELECT pg_advisory_xact_lock(56023113)"))
 
         def patch(connection) -> None:
             insp = inspect(connection)

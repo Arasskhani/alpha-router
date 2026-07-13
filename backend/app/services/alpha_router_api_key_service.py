@@ -112,6 +112,7 @@ def key_to_dict(key: AlphaRouterApiKey, owner: dict | None = None) -> dict:
         "expires_at": expires.isoformat() if expires else None,
         "expiration_never": expires is None,
         "period_used_usd": float(key.period_used_usd or 0),
+        "period_reserved_usd": float(key.period_reserved_usd or 0),
         "total_used_usd": float(key.total_used_usd or 0),
         "period_started_at": key.period_started_at.isoformat() if key.period_started_at else None,
     }

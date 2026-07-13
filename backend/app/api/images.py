@@ -16,14 +16,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_active_user
-from app.database import get_db
+from app.database import AsyncSessionLocal, get_db
 from app.models.connection import Connection
 from app.models.media import MediaAsset
 from app.models.model_catalog import AIModel
 from app.models.user import User
 from app.services.secret_crypto import decrypt_secret
 from app.services.image_model_resolver import resolve_auto_router_image_model
-from app.services.budget_service import budget_request_blocked, get_user_budget_state
+from app.services.budget_reservation_service import (
+    estimate_image_hold,
+    reservation_key,
+    reserve,
+)
 from app.config import get_settings
 from app.services.media_authorization_service import MediaAccessAction, load_authorized_media_asset
 from app.services.openrouter_image_service import (
@@ -685,13 +689,11 @@ async def generate_image(
 ):
     generation_start = time.perf_counter()
     billing = ImageBillingCapture(model_id=_normalize_model_id(body.model))
+    budget_reservation_id: str | None = None
     success = True
     error_message: str | None = None
 
     resolve_task = asyncio.create_task(_resolve_image_model(db, body.model))
-    budget, usage = await get_user_budget_state(db, user)
-    if blocked := budget_request_blocked(budget, usage):
-        raise HTTPException(status_code=402, detail=blocked)
 
     try:
         model_id, api_key, base_url, provider_type, ai_model = await resolve_task
@@ -719,6 +721,21 @@ async def generate_image(
             billing.model_id = model_id
             billing.ai_model = ai_model
             billing.provider_type = provider_type
+
+        hold_body = body.model_dump()
+        if request.headers.get("Idempotency-Key"):
+            hold_body["_idempotency_key"] = request.headers["Idempotency-Key"]
+        hold = await reserve(
+            db,
+            user_id=user.id,
+            alpha_router_api_key_id=None,
+            amount_usd=estimate_image_hold(ai_model),
+            operation="image",
+            model_id=model_id,
+            idempotency_key=reservation_key(hold_body, operation="image"),
+        )
+        budget_reservation_id = hold.id if hold else None
+        await db.commit()
 
         reference_image = await resolve_reference_image_for_upstream(db, user, body.reference_image)
         resolved_aspect, body.size = await _resolve_generation_dimensions(
@@ -1020,16 +1037,23 @@ async def generate_image(
     finally:
         elapsed_ms = (time.perf_counter() - generation_start) * 1000
         try:
-            await log_image_usage(
-                db,
-                user=user,
-                capture=billing,
-                prompt=body.prompt,
-                response_time_ms=elapsed_ms,
-                success=success,
-                error_message=error_message,
-                source_ip=request.client.host if request.client else None,
-                operation=body.operation,
-            )
+            async with AsyncSessionLocal() as log_db:
+                await log_image_usage(
+                    log_db,
+                    user=user,
+                    capture=billing,
+                    prompt=body.prompt,
+                    response_time_ms=elapsed_ms,
+                    success=success,
+                    error_message=error_message,
+                    source_ip=request.client.host if request.client else None,
+                    operation=body.operation,
+                    budget_reservation_id=budget_reservation_id,
+                )
+                await log_db.commit()
         except Exception:
-            pass  # never fail image delivery because logging failed
+            import logging
+
+            logging.getLogger("app.api.images").exception(
+                "Image usage settlement failed; reservation will expire safely"
+            )

@@ -83,6 +83,7 @@ async def log_image_usage(
     error_message: str | None = None,
     source_ip: str | None = None,
     operation: str = "generation",
+    budget_reservation_id: str | None = None,
 ) -> None:
     """Write RequestLog row and apply budget/key usage (same path as chat completions)."""
     model_id = (capture.model_id or "").strip() or "unknown"
@@ -113,4 +114,5 @@ async def log_image_usage(
         success=success,
         error_message=error_message,
         client_app=client_app,
+        budget_reservation_id=budget_reservation_id,
     )

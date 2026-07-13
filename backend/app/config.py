@@ -79,6 +79,13 @@ class Settings(BaseSettings):
     max_zip_single_file_bytes: int = 50 * 1024 * 1024
     max_zip_aggregate_bytes: int = 256 * 1024 * 1024
 
+    # Conservative in-flight billing holds (USD) and stale recovery.
+    budget_chat_fallback_hold_usd: float = 0.05
+    budget_embedding_fallback_hold_usd: float = 0.01
+    budget_image_fallback_hold_usd: float = 0.25
+    budget_max_hold_usd: float = 5.0
+    budget_reservation_ttl_seconds: int = 7200
+
     # Model sync default interval (hours)
     model_sync_interval_hours: int = 6
 

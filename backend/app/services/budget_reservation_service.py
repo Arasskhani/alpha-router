@@ -1,0 +1,305 @@
+"""Atomic reservations for user budgets and Alpha Router API-key credit."""
+
+from __future__ import annotations
+
+import datetime
+import uuid
+
+import litellm
+from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import get_settings
+from app.models.api_key import AlphaRouterApiKey
+from app.models.budget_reservation import BudgetReservation
+from app.models.model_catalog import AIModel
+from app.models.user import User
+from app.services.budget_service import ensure_budget_period
+from app.services.alpha_router_api_key_service import ensure_key_usable
+
+SUBJECT_USER = "user"
+SUBJECT_ALPHA_ROUTER_KEY = "alpha_router_key"
+STATUS_HELD = "held"
+STATUS_SETTLED = "settled"
+STATUS_RELEASED = "released"
+STATUS_EXPIRED = "expired"
+
+
+def _now() -> datetime.datetime:
+    return datetime.datetime.utcnow()
+
+
+def _positive_float(value: float | int | None, fallback: float) -> float:
+    try:
+        amount = float(value or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    return amount if amount > 0 else fallback
+
+
+def _clamp_hold(amount: float, fallback: float) -> float:
+    settings = get_settings()
+    maximum = max(0.01, min(100.0, float(settings.budget_max_hold_usd or 5.0)))
+    return round(max(0.0001, min(maximum, _positive_float(amount, fallback))), 8)
+
+
+def estimate_chat_hold(ai_model: AIModel, body: dict) -> float:
+    settings = get_settings()
+    fallback = float(settings.budget_chat_fallback_hold_usd or 0.05)
+    try:
+        prompt_tokens = int(
+            litellm.token_counter(
+                model=ai_model.external_id,
+                messages=body.get("messages") or [],
+            )
+            or 0
+        )
+    except Exception:
+        prompt_tokens = 0
+    try:
+        output_tokens = max(1, min(8192, int(body.get("max_tokens") or 4096)))
+    except (TypeError, ValueError):
+        output_tokens = 4096
+    in_rate = _positive_float(ai_model.input_cost_per_1k, 0.0)
+    out_rate = _positive_float(ai_model.output_cost_per_1k, 0.0)
+    estimate = (prompt_tokens / 1000) * in_rate + (output_tokens / 1000) * out_rate
+    tools = body.get("tools") or {}
+    if isinstance(tools, dict) and tools.get("code_interpreter"):
+        estimate *= 4
+    return _clamp_hold(estimate * 1.25, fallback)
+
+
+def estimate_embedding_hold(ai_model: AIModel, body: dict) -> float:
+    settings = get_settings()
+    fallback = float(settings.budget_embedding_fallback_hold_usd or 0.01)
+    try:
+        prompt_tokens = int(
+            litellm.token_counter(model=ai_model.external_id, text=str(body.get("input") or ""))
+            or 0
+        )
+    except Exception:
+        prompt_tokens = 0
+    in_rate = _positive_float(ai_model.input_cost_per_1k, 0.0)
+    return _clamp_hold((prompt_tokens / 1000) * in_rate * 1.25, fallback)
+
+
+def estimate_image_hold(ai_model: AIModel | None) -> float:
+    del ai_model
+    settings = get_settings()
+    return _clamp_hold(
+        float(settings.budget_image_fallback_hold_usd or 0.25),
+        0.25,
+    )
+
+
+def reservation_key(body: dict, *, operation: str) -> str:
+    explicit = (
+        body.get("_idempotency_key")
+        or body.get("assistant_client_message_id")
+        or ""
+    )
+    if explicit:
+        return f"{operation}:{str(explicit).strip()[:128]}"
+    return f"{operation}:{uuid.uuid4()}"
+
+
+async def _existing_reservation(
+    db: AsyncSession,
+    key: str,
+) -> BudgetReservation | None:
+    return (
+        await db.execute(
+            select(BudgetReservation).where(BudgetReservation.idempotency_key == key)
+        )
+    ).scalar_one_or_none()
+
+
+async def reserve(
+    db: AsyncSession,
+    *,
+    user_id: int | None,
+    alpha_router_api_key_id: int | None,
+    amount_usd: float,
+    operation: str,
+    model_id: str,
+    idempotency_key: str,
+) -> BudgetReservation | None:
+    if user_id is None and alpha_router_api_key_id is None:
+        return None
+    subject_type = SUBJECT_ALPHA_ROUTER_KEY if alpha_router_api_key_id is not None else SUBJECT_USER
+    subject_id = int(alpha_router_api_key_id if alpha_router_api_key_id is not None else user_id)
+    scoped_key = f"{subject_type}:{subject_id}:{idempotency_key}"[:160]
+    amount = _clamp_hold(amount_usd, 0.01)
+    if alpha_router_api_key_id is not None:
+        key = (
+            await db.execute(
+                select(AlphaRouterApiKey)
+                .where(AlphaRouterApiKey.id == alpha_router_api_key_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if key is None:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        await ensure_key_usable(db, key)
+        if await _existing_reservation(db, scoped_key):
+            raise HTTPException(status_code=409, detail="Duplicate request idempotency key")
+        limit = float(key.credit_limit_usd or 0)
+        used = float(key.period_used_usd or 0)
+        held = float(key.period_reserved_usd or 0)
+        if limit > 0 and used + held + amount > limit:
+            raise HTTPException(status_code=402, detail="API key credit limit exceeded for this period")
+        key.period_reserved_usd = round(held + amount, 8)
+    else:
+        user = (
+            await db.execute(
+                select(User).where(User.id == user_id).with_for_update()
+            )
+        ).scalar_one_or_none()
+        if user is None or not user.is_active:
+            raise HTTPException(status_code=403, detail="Account disabled")
+        await ensure_budget_period(db, user)
+        if await _existing_reservation(db, scoped_key):
+            raise HTTPException(status_code=409, detail="Duplicate request idempotency key")
+        limit = float(user.monthly_budget_usd or 0)
+        used = float(user.budget_used_usd or 0)
+        held = float(user.budget_reserved_usd or 0)
+        if limit <= 0:
+            raise HTTPException(status_code=402, detail="No budget plan assigned")
+        if used + held + amount > limit:
+            raise HTTPException(status_code=402, detail="Monthly budget exceeded")
+        user.budget_reserved_usd = round(held + amount, 8)
+
+    settings = get_settings()
+    ttl = max(900, min(86400, int(settings.budget_reservation_ttl_seconds or 7200)))
+    row = BudgetReservation(
+        id=str(uuid.uuid4()),
+        subject_type=subject_type,
+        subject_id=subject_id,
+        idempotency_key=scoped_key,
+        operation=operation,
+        model_id=model_id,
+        reserved_usd=amount,
+        status=STATUS_HELD,
+        created_at=_now(),
+        expires_at=_now() + datetime.timedelta(seconds=ttl),
+    )
+    db.add(row)
+    await db.flush()
+    return row
+
+
+async def _lock_reservation(
+    db: AsyncSession,
+    reservation_id: str,
+) -> BudgetReservation | None:
+    return (
+        await db.execute(
+            select(BudgetReservation)
+            .where(BudgetReservation.id == reservation_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+
+
+async def _apply_release_to_subject(
+    db: AsyncSession,
+    row: BudgetReservation,
+    *,
+    actual_usd: float | None,
+) -> None:
+    reserved = max(0.0, float(row.reserved_usd or 0))
+    actual = max(0.0, float(actual_usd or 0))
+    if row.subject_type == SUBJECT_USER:
+        user = (
+            await db.execute(
+                select(User).where(User.id == row.subject_id).with_for_update()
+            )
+        ).scalar_one_or_none()
+        if user:
+            user.budget_reserved_usd = round(
+                max(0.0, float(user.budget_reserved_usd or 0) - reserved),
+                8,
+            )
+            if actual_usd is not None:
+                user.budget_used_usd = round(
+                    float(user.budget_used_usd or 0) + actual,
+                    8,
+                )
+    elif row.subject_type == SUBJECT_ALPHA_ROUTER_KEY:
+        key = (
+            await db.execute(
+                select(AlphaRouterApiKey)
+                .where(AlphaRouterApiKey.id == row.subject_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if key:
+            key.period_reserved_usd = round(
+                max(0.0, float(key.period_reserved_usd or 0) - reserved),
+                8,
+            )
+            if actual_usd is not None:
+                key.period_used_usd = round(
+                    float(key.period_used_usd or 0) + actual,
+                    8,
+                )
+                key.total_used_usd = round(
+                    float(key.total_used_usd or 0) + actual,
+                    8,
+                )
+                key.last_used_at = _now()
+
+
+async def settle(
+    db: AsyncSession,
+    reservation_id: str,
+    *,
+    actual_usd: float,
+    request_log_id: int | None = None,
+) -> bool:
+    row = await _lock_reservation(db, reservation_id)
+    if row is None or row.status != STATUS_HELD:
+        return False
+    actual = max(0.0, float(actual_usd or 0))
+    await _apply_release_to_subject(db, row, actual_usd=actual)
+    row.actual_usd = actual
+    row.status = STATUS_SETTLED
+    row.request_log_id = request_log_id
+    row.settled_at = _now()
+    await db.flush()
+    return True
+
+
+async def release(
+    db: AsyncSession,
+    reservation_id: str,
+    *,
+    expired: bool = False,
+) -> bool:
+    row = await _lock_reservation(db, reservation_id)
+    if row is None or row.status != STATUS_HELD:
+        return False
+    await _apply_release_to_subject(db, row, actual_usd=None)
+    row.status = STATUS_EXPIRED if expired else STATUS_RELEASED
+    row.settled_at = _now()
+    await db.flush()
+    return True
+
+
+async def expire_stale_reservations(db: AsyncSession) -> int:
+    rows = (
+        await db.execute(
+            select(BudgetReservation)
+            .where(
+                BudgetReservation.status == STATUS_HELD,
+                BudgetReservation.expires_at < _now(),
+            )
+            .with_for_update(skip_locked=True)
+        )
+    ).scalars().all()
+    expired = 0
+    for row in rows:
+        if await release(db, row.id, expired=True):
+            expired += 1
+    return expired

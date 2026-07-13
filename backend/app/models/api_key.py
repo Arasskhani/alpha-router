@@ -26,6 +26,7 @@ class AlphaRouterApiKey(Base):
     reset_period = Column(String(16), default="monthly")  # daily | weekly | monthly
     expires_at = Column(DateTime, nullable=True)
     period_used_usd = Column(Float, default=0.0)
+    period_reserved_usd = Column(Float, nullable=False, server_default="0", default=0.0)
     total_used_usd = Column(Float, default=0.0)
     period_started_at = Column(DateTime, nullable=True)
 

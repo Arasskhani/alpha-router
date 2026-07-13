@@ -6,6 +6,7 @@ type Props = {
   title: string;
   message: string;
   emphasize?: string;
+  emphasizeDanger?: boolean;
   confirmLabel?: string;
   cancelLabel?: string;
   secondaryLabel?: string;
@@ -20,6 +21,7 @@ export default function ConfirmModal({
   title,
   message,
   emphasize,
+  emphasizeDanger = false,
   confirmLabel = "Yes",
   cancelLabel = "No",
   secondaryLabel,
@@ -43,7 +45,9 @@ export default function ConfirmModal({
     emphasize && emphasisIndex >= 0 ? (
       <>
         {message.slice(0, emphasisIndex)}
-        <strong>{emphasize}</strong>
+        <strong className={emphasizeDanger ? "confirm-message__emphasis--danger" : undefined}>
+          {emphasize}
+        </strong>
         {message.slice(emphasisIndex + emphasize.length)}
       </>
     ) : (

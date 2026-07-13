@@ -24,15 +24,21 @@ function Toggle({
   on,
   onToggle,
   label,
+  disabled = false,
+  disabledTitle,
 }: {
   on: boolean;
   onToggle: () => void;
   label: string;
+  disabled?: boolean;
+  disabledTitle?: string;
 }) {
   return (
     <button
       type="button"
       className={`cgpt-toggle${on ? " on" : ""}`}
+      disabled={disabled}
+      title={disabled ? disabledTitle : undefined}
       onClick={(e) => {
         e.stopPropagation();
         onToggle();
@@ -51,15 +57,23 @@ function ToolRow({
   description,
   on,
   onToggle,
+  disabled = false,
+  disabledTitle,
 }: {
   icon: React.ReactNode;
   title: string;
   description: string;
   on: boolean;
   onToggle: () => void;
+  disabled?: boolean;
+  disabledTitle?: string;
 }) {
   return (
-    <div className="cgpt-server-tool" onMouseDown={(e) => e.stopPropagation()}>
+    <div
+      className={`cgpt-server-tool${disabled ? " is-disabled" : ""}`}
+      onMouseDown={(e) => e.stopPropagation()}
+      title={disabled ? disabledTitle : undefined}
+    >
       <span className="cgpt-server-tool__icon" aria-hidden>
         {icon}
       </span>
@@ -67,7 +81,13 @@ function ToolRow({
         <strong>{title}</strong>
         <span className="cgpt-server-tool__desc">{description}</span>
       </div>
-      <Toggle on={on} onToggle={onToggle} label={`Toggle ${title}`} />
+      <Toggle
+        on={on}
+        onToggle={onToggle}
+        label={`Toggle ${title}`}
+        disabled={disabled}
+        disabledTitle={disabledTitle}
+      />
     </div>
   );
 }
@@ -293,9 +313,15 @@ export default function ServerToolsMenu({
           </svg>
         }
         title="Private Mode"
-        description="Store this chat and its media on this device only"
+        description={
+          privateMode
+            ? "Permanent for this chat — start a new chat for normal mode"
+            : "Store this chat and its media on this device only"
+        }
         on={privateMode}
         onToggle={() => onPrivateModeChange(!privateMode)}
+        disabled={privateMode}
+        disabledTitle="Private Mode cannot be turned off for this chat. Start a new chat to use normal mode."
       />
 
       <footer className="cgpt-server-tools-menu__foot">

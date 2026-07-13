@@ -93,7 +93,6 @@ import {
 import VirtualSidebarList from "./chat/ChatSidebarVirtual";
 import UserProfile from "./UserProfile";
 import PrivateModeLockIcon from "./chat/PrivateModeLockIcon";
-import { migratePrivateSessionMediaToServer } from "../lib/privateModeMigration";
 import { BrowserSpeechCapture, pickVoiceRecordingMime } from "../lib/voiceInput";
 import {
   ATTACHMENT_ACCEPT,
@@ -400,8 +399,9 @@ function PrivateModeStrip() {
           :{" "}
         </span>
         <span className="cgpt-private-strip__body">
-          Private Mode is on for this chat. Messages and media are stored only in this browser, not on the
-          server.
+          Private Mode is permanent for this chat. Messages and media are stored only in this browser and
+          will be <strong className="cgpt-private-strip__danger">deleted</strong> when you log out or clear
+          browser data.
         </span>
       </p>
     </div>
@@ -2599,16 +2599,26 @@ export default function ChatPanel() {
     if (!sid) return;
     if (next) {
       setToolsMenuOpen(false);
-      const ok = await confirm({
-        title: "Private Mode",
+      const firstConfirmed = await confirm({
+        title: "Enable Private Mode?",
         message:
-          "When Private Mode is on, this chat’s messages and generated media are stored only in this browser and are never saved to the Alpha Router server.\n\nThey will not appear on other devices or in the Media Library, and will be permanently deleted when you log out or clear browser data.\n\nEnable Private Mode for this chat?",
-        emphasize: "permanently deleted when you log out or clear browser data",
-        confirmLabel: "Enable Private Mode",
+          "Messages and media will be stored only in this browser. Private Mode cannot be turned off for this chat.",
+        emphasize: "Private Mode cannot be turned off for this chat",
+        confirmLabel: "Continue",
+        cancelLabel: "Cancel",
+      });
+      if (!firstConfirmed) return;
+      const finalConfirmed = await confirm({
+        title: "Final confirmation",
+        message:
+          "This change is permanent. This chat will be deleted when you log out or clear browser data.",
+        emphasize: "deleted",
+        emphasizeDanger: true,
+        confirmLabel: "Enable Permanently",
         cancelLabel: "Cancel",
         danger: true,
       });
-      if (!ok) return;
+      if (!finalConfirmed) return;
       persistSessions(
         (prev) =>
           prev.map((s) =>
@@ -2619,25 +2629,8 @@ export default function ChatPanel() {
       return;
     }
 
-    const session = sessionsRef.current.find((s) => s.id === sid);
-    if (!session?.privateMode) return;
-
-    setChatError("");
-    try {
-      const migrated = await migratePrivateSessionMediaToServer(session);
-      const updated = { ...migrated, privateMode: false, updatedAt: Date.now() };
-      persistSessions(
-        (prev) => prev.map((s) => (s.id === sid ? updated : s)),
-        { debounce: false },
-      );
-      if (sid === activeIdRef.current) setMessages(updated.messages);
-    } catch (err) {
-      setChatError(
-        err instanceof Error
-          ? err.message
-          : "Could not upload private media to the server. Private Mode was not turned off.",
-      );
-    }
+    // Private Mode is intentionally irreversible for an existing chat.
+    return;
   }
 
   function updateChatTools(next: ChatToolsState) {

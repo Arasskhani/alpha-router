@@ -925,6 +925,116 @@ async def apply_secret_at_rest_encryption(db) -> None:
     await db.commit()
 
 
+async def apply_data_key_rotation(db) -> dict:
+    """Phase 9: re-encrypt every stored secret with the primary (data) key.
+
+    Re-writes ``connections.api_key_encrypted``, ``smtp_settings.password_encrypted``
+    and the sensitive fields inside ``auth_providers.config_json`` so they are
+    ciphertext under ``DATA_ENCRYPTION_KEY`` (the primary key). Values already
+    encrypted under the legacy key are decrypted via the multi-key fallback and
+    re-encrypted; plaintext values are encrypted in place.
+
+    Idempotent and race-safe: guarded by a completion flag, so a second trigger
+    is a no-op. Re-encrypting an already-rotated row is harmless (it produces
+    valid primary-key ciphertext again), so a crash mid-table can be recovered
+    by re-triggering before the flag is set.
+
+    Returns per-table counts of re-encrypted rows. No plaintext is ever logged
+    or returned.
+    """
+    import json as _json
+
+    from app.services.auth_config import _SENSITIVE_FIELDS
+    from app.services.migration_flags import (
+        DATA_KEY_ROTATION_V1_KEY,
+        is_migration_completed,
+        mark_migration_completed,
+    )
+    from app.services.secret_crypto import decrypt_secret, encrypt_secret, is_encrypted
+
+    if await is_migration_completed(db, DATA_KEY_ROTATION_V1_KEY):
+        return {"completed": True, "connections": 0, "smtp": 0, "auth_providers": 0, "skipped": True}
+
+    counts = {"connections": 0, "smtp": 0, "auth_providers": 0}
+
+    def _rotate(value):
+        """Return (new_value, changed) for a stored secret, never raising."""
+        if not value:
+            return value, False
+        plain = decrypt_secret(value)  # ciphertext (primary/legacy) or plaintext-as-is
+        if not plain:
+            return value, False
+        new_cipher = encrypt_secret(plain)  # always primary key
+        if new_cipher == value:
+            # Same plaintext re-encrypted: Fernet is non-deterministic so this
+            # only happens when encrypt_secret returned the input unchanged
+            # (already-ciphertext idempotency path). Skip the write.
+            return value, False
+        return new_cipher, True
+
+    # connections.api_key_encrypted
+    try:
+        conn_rows = (await db.execute(text("SELECT id, api_key_encrypted FROM connections"))).all()
+    except Exception:
+        conn_rows = []
+    for row in conn_rows:
+        cid, val = row[0], row[1]
+        new_val, changed = _rotate(val)
+        if changed:
+            await db.execute(
+                text("UPDATE connections SET api_key_encrypted = :v WHERE id = :id"),
+                {"v": new_val, "id": cid},
+            )
+            counts["connections"] += 1
+
+    # smtp_settings.password_encrypted
+    try:
+        smtp_rows = (await db.execute(text("SELECT id, password_encrypted FROM smtp_settings"))).all()
+    except Exception:
+        smtp_rows = []
+    for row in smtp_rows:
+        sid, val = row[0], row[1]
+        new_val, changed = _rotate(val)
+        if changed:
+            await db.execute(
+                text("UPDATE smtp_settings SET password_encrypted = :v WHERE id = :id"),
+                {"v": new_val, "id": sid},
+            )
+            counts["smtp"] += 1
+
+    # auth_providers.config_json sensitive fields
+    try:
+        ap_rows = (await db.execute(text("SELECT provider, config_json FROM auth_providers"))).all()
+    except Exception:
+        ap_rows = []
+    for row in ap_rows:
+        provider, raw = row[0], row[1]
+        sensitive = _SENSITIVE_FIELDS.get(provider, set())
+        if not sensitive or not raw:
+            continue
+        try:
+            payload = _json.loads(raw)
+        except Exception:
+            continue
+        changed = False
+        for k in sensitive:
+            new_val, did_change = _rotate(payload.get(k))
+            if did_change:
+                payload[k] = new_val
+                changed = True
+        if changed:
+            await db.execute(
+                text("UPDATE auth_providers SET config_json = :v WHERE provider = :p"),
+                {"v": _json.dumps(payload), "p": provider},
+            )
+            counts["auth_providers"] += 1
+
+    await db.commit()
+    await mark_migration_completed(db, DATA_KEY_ROTATION_V1_KEY)
+    await db.commit()
+    return {"completed": True, **counts, "skipped": False}
+
+
 async def run_one_time_migrations(db) -> None:
     """Run all pending one-time data/storage migrations; no-op when already completed."""
     from app.services.storage_migration_service import (

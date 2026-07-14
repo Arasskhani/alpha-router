@@ -95,6 +95,18 @@ async def require_admin(user: User = Depends(get_current_user), db: AsyncSession
     return user
 
 
+async def require_super_admin(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> User:
+    """Phase 9: gate destructive/rotation operations on the Super Admin role."""
+    if not user.is_active:
+        raise _forbidden("User inactive")
+    slugs = await get_user_role_slugs(db, user.id)
+    from app.services.rbac import user_has_super_admin_access
+
+    if not user_has_super_admin_access(slugs):
+        raise _forbidden("Super Admin only")
+    return user
+
+
 async def require_admin_write(user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)) -> User:
     slugs = await get_user_role_slugs(db, user.id)
     if not user_can_write_menu(slugs):

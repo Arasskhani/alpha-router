@@ -1,9 +1,11 @@
 """Alpha Router application entrypoint."""
 
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,6 +29,7 @@ from app.services.scheduler import (
     stop_scheduler,
 )
 from app.services.security_headers import SecurityHeadersMiddleware
+from app.services.docs_guard import OpenApiDocsGuardMiddleware
 from app.services import object_storage_service as oss
 from app.services.openrouter_image_service import close_openrouter_http_client
 from app.services.proxy_service import configure_litellm_cache
@@ -58,7 +61,10 @@ def _assert_production_safe() -> None:
     Env-gated: a no-op unless `settings.environment == "production"`. Existing
     dev/single-box deployments (which default to "development") boot unchanged.
     The guard checks externally exploitable application secrets, requires a
-    strong LDAP bridge token when enabled, and requires the sandbox broker.
+    strong LDAP bridge token when enabled, requires the sandbox broker,
+    requires Redis auth, a dedicated data-encryption key, and admin-only
+    OpenAPI docs. Behavior is controlled by `production_guard_mode`: "warning"
+    (default) logs and continues, "hard-fail" raises RuntimeError.
     """
     _check_production_safe(
         environment=settings.environment,
@@ -69,10 +75,33 @@ def _assert_production_safe() -> None:
         ldap_bridge_token=settings.ldap_bridge_token,
         code_sandbox_broker_url=settings.code_sandbox_broker_url,
         code_sandbox_broker_token=settings.code_sandbox_broker_token,
+        redis_url=settings.redis_url,
+        redis_password=settings.redis_password,
+        data_encryption_key=settings.data_encryption_key,
+        openapi_admin_only=settings.openapi_admin_only,
+        guard_mode=settings.production_guard_mode,
     )
 
 
-def _check_production_safe(
+def _redis_url_has_password(redis_url: str, *, redis_password: str = "") -> bool:
+    """True when the Redis connection URL carries an inline password.
+
+    Accepts redis/rediss schemes. A separately-configured `redis_password`
+    also satisfies the check (Phase 9 rebuilds the URL with it).
+    """
+    if redis_password.strip():
+        return True
+    url = (redis_url or "").strip()
+    if not url:
+        return False
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
+    return parsed.scheme in {"redis", "rediss"} and bool(parsed.password)
+
+
+def _collect_production_insecurities(
     *,
     environment: str,
     secret_key: str,
@@ -82,15 +111,21 @@ def _check_production_safe(
     ldap_bridge_token: str = "",
     code_sandbox_broker_url: str = "",
     code_sandbox_broker_token: str = "",
-) -> None:
-    """Pure check used by the startup guard and by tests.
+    redis_url: str = "",
+    redis_password: str = "",
+    data_encryption_key: str = "",
+    openapi_admin_only: bool = False,
+) -> list[str]:
+    """Pure collector used by the startup guard and by tests.
 
-    Raises RuntimeError when production uses an insecure application secret or
-    enables the LDAP bridge without a strong token, or lacks the authenticated
-    sandbox broker. No-op in development.
+    Returns the list of insecure-default names when production uses an insecure
+    application secret, enables the LDAP bridge without a strong token, lacks
+    the authenticated sandbox broker, runs Redis without a password, lacks a
+    dedicated data-encryption key, or exposes OpenAPI docs to non-admins.
+    Returns an empty list in development.
     """
     if environment != "production":
-        return
+        return []
     insecure: list[str] = []
     if secret_key in INSECURE_DEFAULTS:
         insecure.append("SECRET_KEY")
@@ -110,12 +145,68 @@ def _check_production_safe(
         insecure.append("CODE_SANDBOX_BROKER_URL")
     if len(code_sandbox_broker_token.strip()) < 32:
         insecure.append("CODE_SANDBOX_BROKER_TOKEN")
-    if insecure:
-        raise RuntimeError(
-            "Refusing to start in production with insecure default value(s): "
-            + ", ".join(insecure)
-            + ". Override each in your environment/.env before booting with ENVIRONMENT=production."
+    if not _redis_url_has_password(redis_url, redis_password=redis_password):
+        insecure.append("REDIS_PASSWORD")
+    if not data_encryption_key.strip() or data_encryption_key in INSECURE_DEFAULTS:
+        insecure.append("DATA_ENCRYPTION_KEY")
+    if not openapi_admin_only:
+        insecure.append("OPENAPI_DOCS")
+    return insecure
+
+
+def _check_production_safe(
+    *,
+    environment: str,
+    secret_key: str,
+    admin_password: str,
+    gateway_master_key: str,
+    ldap_bridge_url: str = "",
+    ldap_bridge_token: str = "",
+    code_sandbox_broker_url: str = "",
+    code_sandbox_broker_token: str = "",
+    redis_url: str = "",
+    redis_password: str = "",
+    data_encryption_key: str = "",
+    openapi_admin_only: bool = False,
+    guard_mode: str = "hard-fail",
+) -> None:
+    """Pure check used by the startup guard and by tests.
+
+    Collects insecure defaults and, when any are present, either logs a warning
+    (`guard_mode="warning"`) and returns, or raises RuntimeError
+    (`guard_mode="hard-fail"`, the default for backward compatibility). No-op
+    in development.
+    """
+    insecure = _collect_production_insecurities(
+        environment=environment,
+        secret_key=secret_key,
+        admin_password=admin_password,
+        gateway_master_key=gateway_master_key,
+        ldap_bridge_url=ldap_bridge_url,
+        ldap_bridge_token=ldap_bridge_token,
+        code_sandbox_broker_url=code_sandbox_broker_url,
+        code_sandbox_broker_token=code_sandbox_broker_token,
+        redis_url=redis_url,
+        redis_password=redis_password,
+        data_encryption_key=data_encryption_key,
+        openapi_admin_only=openapi_admin_only,
+    )
+    if not insecure:
+        return
+    message = (
+        "Refusing to start in production with insecure default value(s): "
+        + ", ".join(insecure)
+        + ". Override each in your environment/.env before booting with ENVIRONMENT=production."
+    )
+    if guard_mode == "warning":
+        _PRODUCTION_GUARD_LOG.warning(
+            "Production guard warning (non-blocking): %s", message
         )
+        return
+    raise RuntimeError(message)
+
+
+_PRODUCTION_GUARD_LOG = logging.getLogger("alpha_router.production_guard")
 
 
 @asynccontextmanager
@@ -176,11 +267,46 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 
-app = FastAPI(title="Alpha Router Organizational AI Platform", version="1.0.0", lifespan=lifespan)
+_DOCS_LOCKED = bool(settings.openapi_admin_only)
+
+app = FastAPI(
+    title="Alpha Router Organizational AI Platform",
+    version="1.0.0",
+    lifespan=lifespan,
+    # When docs are admin-locked, disable the public default endpoints and serve
+    # them under /api/* (see below) so the session cookie (path=/api) is sent.
+    docs_url=None if _DOCS_LOCKED else "/docs",
+    redoc_url=None if _DOCS_LOCKED else "/redoc",
+    openapi_url=None if _DOCS_LOCKED else "/openapi.json",
+)
+
+
+if _DOCS_LOCKED:
+    from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+    from fastapi.responses import HTMLResponse, JSONResponse as _JSONResponse
+
+    @app.get("/api/openapi.json", include_in_schema=False)
+    async def _protected_openapi_json():
+        return _JSONResponse(app.openapi())
+
+    @app.get("/api/docs", include_in_schema=False)
+    async def _protected_swagger_ui_html():
+        return get_swagger_ui_html(
+            openapi_url="/api/openapi.json",
+            title="Alpha Router Organizational AI Platform — API",
+        )
+
+    @app.get("/api/redoc", include_in_schema=False)
+    async def _protected_redoc_html():
+        return get_redoc_html(
+            openapi_url="/api/openapi.json",
+            title="Alpha Router Organizational AI Platform — ReDoc",
+        )
 
 
 app.add_middleware(RequestBodyLimitMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(OpenApiDocsGuardMiddleware)
 
 
 app.add_middleware(

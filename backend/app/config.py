@@ -1,6 +1,8 @@
 """Application configuration loaded from environment variables."""
 
 from functools import lru_cache
+from urllib.parse import urlsplit, urlunsplit
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LDAP_BRIDGE_INSECURE_DEFAULT = "alpha-router-ldap-bridge"
@@ -77,6 +79,21 @@ class Settings(BaseSettings):
     chat_message_search_rate_limit_per_min: int = 45  # env: CHAT_MESSAGE_SEARCH_RATE_LIMIT_PER_MIN
     uvicorn_workers: int = 4  # env: UVICORN_WORKERS — process count in Docker/production
     redis_url: str = "redis://redis:6379/0"  # env: REDIS_URL
+    # Phase 9: Redis auth. When set, the connection URL is rebuilt with this
+    # password so rate-limit and OIDC state caches authenticate to Redis.
+    redis_password: str = ""  # env: REDIS_PASSWORD
+    # Phase 9: data-at-rest encryption key, split from SECRET_KEY. Empty falls
+    # back to the legacy SECRET_KEY-derived key in secret_crypto. The production
+    # guard flags an empty value in production (warning by default).
+    data_encryption_key: str = ""  # env: DATA_ENCRYPTION_KEY
+    # Phase 9: lock OpenAPI docs/redoc/openapi.json to Super Admin in production.
+    # The guard flags a False value in production. Development leaves docs open.
+    openapi_admin_only: bool = False  # env: OPENAPI_ADMIN_ONLY
+    # Phase 9: production guard behavior. "warning" (default) logs insecure
+    # defaults and continues booting; "hard-fail" raises RuntimeError like the
+    # original Phase 0 behavior. Switch to hard-fail only after credentials are
+    # confirmed in production.
+    production_guard_mode: str = "warning"  # env: PRODUCTION_GUARD_MODE
 
     # OpenAI-compatible gateway master key (Open WebUI → Alpha Router)
     gateway_master_key: str = "sk-alpha-router-master"
@@ -181,3 +198,40 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def build_redis_url(redis_url: str, redis_password: str) -> str:
+    """Return ``redis_url`` with ``redis_password`` embedded when not already present.
+
+    Phase 9: Redis auth. Operators set ``REDIS_PASSWORD`` and every Redis client
+    (rate-limit, OIDC exchange, LiteLLM cache) authenticates without having to
+    embed credentials in ``REDIS_URL``. A URL that already carries a password is
+    returned unchanged so explicit URLs keep working.
+    """
+    url = (redis_url or "").strip()
+    password = (redis_password or "").strip()
+    if not url:
+        return url
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return url
+    if parsed.scheme not in {"redis", "rediss"}:
+        return url
+    if parsed.password:
+        return url
+    if not password:
+        return url
+    username = parsed.username or ""
+    userinfo = f"{username}:{password}@" if username else f":{password}@"
+    host = parsed.hostname or ""
+    netloc = f"{userinfo}{host}"
+    if parsed.port:
+        netloc += f":{parsed.port}"
+    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+
+
+def effective_redis_url() -> str:
+    """Resolve the Redis URL with the optional ``REDIS_PASSWORD`` applied."""
+    settings = get_settings()
+    return build_redis_url(settings.redis_url, settings.redis_password)

@@ -18,7 +18,7 @@ from threading import Lock
 
 from fastapi import HTTPException
 
-from app.config import get_settings
+from app.config import effective_redis_url
 
 _lock = Lock()
 _buckets: dict[str, list[float]] = defaultdict(list)
@@ -31,7 +31,7 @@ def _client():
     try:
         import redis.asyncio as redis_async
 
-        return redis_async.from_url(get_settings().redis_url, decode_responses=True)
+        return redis_async.from_url(effective_redis_url(), decode_responses=True)
     except Exception:
         return None
 

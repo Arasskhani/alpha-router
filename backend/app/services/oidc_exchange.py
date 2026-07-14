@@ -12,19 +12,34 @@ useless within seconds.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import secrets
+import time
 
 import redis.asyncio as redis_async
 
-from app.config import get_settings
+from app.config import effective_redis_url
 
 _CODE_TTL_SECONDS = 30
 _KEY_PREFIX = "oidc:xchg:"
 
+# In-memory fallback so a Redis outage does not break Keycloak login. The
+# callback and the code-exchange may be served by different workers, so this is
+# a best-effort degradation (single-worker or sticky-session deployments get a
+# full round-trip). Entries expire on read to keep the single-use contract.
+_mem_lock = asyncio.Lock()
+_mem_store: dict[str, tuple[str, float]] = {}
+
 
 def _client() -> redis_async.Redis:
-    return redis_async.from_url(get_settings().redis_url, decode_responses=True)
+    return redis_async.from_url(effective_redis_url(), decode_responses=True)
+
+
+def _prune_expired(now: float) -> None:
+    expired = [k for k, (_, exp) in _mem_store.items() if exp <= now]
+    for k in expired:
+        _mem_store.pop(k, None)
 
 
 def generate_code() -> str:
@@ -32,12 +47,28 @@ def generate_code() -> str:
 
 
 async def store_token(code: str, payload: dict) -> None:
-    """Store a token payload under ``code`` with a short TTL."""
+    """Store a token payload under ``code`` with a short TTL.
+
+    Falls back to an in-process store when Redis is unreachable so the OIDC
+    callback can still complete the redirect instead of returning a 500.
+    """
+    raw = json.dumps(payload)
     client = _client()
     try:
-        await client.set(_KEY_PREFIX + code, json.dumps(payload), ex=_CODE_TTL_SECONDS)
+        await client.set(_KEY_PREFIX + code, raw, ex=_CODE_TTL_SECONDS)
+        return
+    except Exception:
+        # Redis unavailable: degrade to in-memory (best-effort, per-worker).
+        pass
     finally:
-        await client.aclose()
+        try:
+            await client.aclose()
+        except Exception:
+            pass
+    expires = time.monotonic() + _CODE_TTL_SECONDS
+    async with _mem_lock:
+        _prune_expired(time.monotonic())
+        _mem_store[code] = (raw, expires)
 
 
 async def consume_code(code: str) -> dict | None:
@@ -50,8 +81,25 @@ async def consume_code(code: str) -> dict | None:
         pipe.get(_KEY_PREFIX + code)
         pipe.delete(_KEY_PREFIX + code)
         raw, _deleted = await pipe.execute()
-        if not raw:
-            return None
-        return json.loads(raw)
+    except Exception:
+        raw = None
     finally:
-        await client.aclose()
+        try:
+            await client.aclose()
+        except Exception:
+            pass
+    if not raw:
+        # Fall back to the in-memory store used when Redis was unavailable.
+        async with _mem_lock:
+            now = time.monotonic()
+            _prune_expired(now)
+            entry = _mem_store.pop(code, None)
+        if entry is None:
+            return None
+        raw, expires = entry
+        if expires <= time.monotonic():
+            return None
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None

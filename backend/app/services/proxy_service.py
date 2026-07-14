@@ -14,7 +14,7 @@ from litellm import acompletion, aembedding
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
+from app.config import effective_redis_url, get_settings
 from app.database import AsyncSessionLocal
 from app.core.language_detect import detect_prompt_language
 from app.models.logging import RequestLog
@@ -79,13 +79,14 @@ def _normalize_model_id(model_id: str | None) -> str:
 
 def configure_litellm_cache() -> None:
     litellm.suppress_debug_info = True
-    if not settings.redis_url:
+    redis_url = effective_redis_url()
+    if not redis_url:
         litellm.cache = litellm.Cache()
         return
     try:
         import redis  # noqa: F401
 
-        litellm.cache = litellm.Cache(type="redis", url=settings.redis_url)
+        litellm.cache = litellm.Cache(type="redis", url=redis_url)
     except Exception:
         litellm.cache = litellm.Cache()
 

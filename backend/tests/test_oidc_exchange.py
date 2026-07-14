@@ -91,3 +91,74 @@ def test_consume_unknown_code_returns_none():
             assert await oidc_exchange.consume_code("") is None
 
     asyncio.run(run())
+
+
+class _BrokenRedis:
+    """A Redis-like client that always raises to simulate a Redis outage."""
+
+    async def set(self, key, value, ex=None):
+        raise RuntimeError("redis unreachable")
+
+    def pipeline(self):
+        class _Pipe:
+            def get(self, key):
+                return self
+
+            def delete(self, key):
+                return self
+
+            async def execute(self):
+                raise RuntimeError("redis unreachable")
+
+        return _Pipe()
+
+    async def aclose(self):
+        pass
+
+
+def test_store_token_falls_back_to_memory_when_redis_down():
+    broken = _BrokenRedis()
+
+    async def run():
+        oidc_exchange._mem_store.clear()
+        with patch("app.services.oidc_exchange._client", return_value=broken):
+            code = oidc_exchange.generate_code()
+            # Must not raise even though Redis is unreachable.
+            await oidc_exchange.store_token(code, {"token": "JWT-FALLBACK"})
+            payload = await oidc_exchange.consume_code(code)
+        assert payload == {"token": "JWT-FALLBACK"}
+
+    asyncio.run(run())
+
+
+def test_consume_expired_memory_entry_returns_none():
+    broken = _BrokenRedis()
+
+    async def run():
+        oidc_exchange._mem_store.clear()
+        with patch("app.services.oidc_exchange._client", return_value=broken):
+            code = oidc_exchange.generate_code()
+            await oidc_exchange.store_token(code, {"token": "JWT-EXPIRED"})
+            # Force expiry to simulate TTL elapsing in the in-memory fallback.
+            raw, _ = oidc_exchange._mem_store[code]
+            oidc_exchange._mem_store[code] = (raw, 0.0)
+            payload = await oidc_exchange.consume_code(code)
+        assert payload is None
+
+    asyncio.run(run())
+
+
+def test_consume_is_single_use_via_memory_fallback():
+    broken = _BrokenRedis()
+
+    async def run():
+        oidc_exchange._mem_store.clear()
+        with patch("app.services.oidc_exchange._client", return_value=broken):
+            code = oidc_exchange.generate_code()
+            await oidc_exchange.store_token(code, {"token": "JWT-ONCE"})
+            first = await oidc_exchange.consume_code(code)
+            second = await oidc_exchange.consume_code(code)
+        assert first == {"token": "JWT-ONCE"}
+        assert second is None
+
+    asyncio.run(run())

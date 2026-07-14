@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_operations, require_operations_write
+from app.api.deps import require_operations, require_operations_write, require_super_admin
 from app.database import get_db
 from app.models.user import User
 from app.services.operations_service import get_operations_dashboard
@@ -31,3 +31,18 @@ async def operations_check_now(
     _: User = Depends(require_operations_write),
 ):
     return await get_operations_dashboard(db, record=True, range_key=range)
+
+
+@router.post("/data-key-rotation")
+async def data_key_rotation(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_super_admin),
+):
+    """Phase 9: re-encrypt all stored secrets with the primary data key.
+
+    Super Admin only. Idempotent — a second call is a no-op once the rotation
+    flag is set. Returns per-table counts of re-encrypted rows; no plaintext.
+    """
+    from app.db_migrate import apply_data_key_rotation
+
+    return await apply_data_key_rotation(db)

@@ -342,18 +342,20 @@ app.include_router(groups.router)
 app.include_router(chat.router)
 
 
-@app.get("/health")
+def health_payload() -> dict[str, str]:
+    """Return a stable, deliberately minimal liveness response.
+
+    Health is a public endpoint used by local operators and container probes.
+    It must not enumerate routes or expose build/layout details that help
+    fingerprint the application. Dependency readiness is checked separately by
+    the deployment layer rather than turning this endpoint into a data probe.
+    """
+    return {"status": "ok", "service": "alpha-router"}
+
+
+@app.get("/health", include_in_schema=False)
 async def health():
-    routes = [getattr(r, "path", None) for r in app.routes]
-    return {
-        "status": "ok",
-        "service": "alpha-router",
-        "frontend_built": _FRONTEND_DIST.is_dir(),
-        "connections_list_api": any(
-            getattr(r, "path", "") == "/api/admin/connections" and "GET" in getattr(r, "methods", set())
-            for r in app.routes
-        ),
-    }
+    return health_payload()
 
 
 def _fallback_html() -> str:

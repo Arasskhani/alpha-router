@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import require_operations, require_operations_write, require_super_admin
 from app.database import get_db
 from app.models.user import User
+from app.services.observability import snapshot
 from app.services.operations_service import get_operations_dashboard
 
 router = APIRouter(prefix="/api/admin/operations", tags=["operations"])
@@ -46,3 +47,11 @@ async def data_key_rotation(
     from app.db_migrate import apply_data_key_rotation
 
     return await apply_data_key_rotation(db)
+
+
+@router.get("/observability")
+async def operations_observability(
+    _: User = Depends(require_operations),
+):
+    """Return bounded process-local security counters for operator review."""
+    return {"scope": "process", "counters": snapshot()}

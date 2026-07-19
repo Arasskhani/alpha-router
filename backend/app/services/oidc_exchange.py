@@ -20,6 +20,7 @@ import time
 import redis.asyncio as redis_async
 
 from app.config import effective_redis_url
+from app.services.observability import increment
 
 _CODE_TTL_SECONDS = 30
 _KEY_PREFIX = "oidc:xchg:"
@@ -59,6 +60,7 @@ async def store_token(code: str, payload: dict) -> None:
         return
     except Exception:
         # Redis unavailable: degrade to in-memory (best-effort, per-worker).
+        increment("redis_fallback")
         pass
     finally:
         try:
@@ -82,6 +84,7 @@ async def consume_code(code: str) -> dict | None:
         pipe.delete(_KEY_PREFIX + code)
         raw, _deleted = await pipe.execute()
     except Exception:
+        increment("redis_fallback")
         raw = None
     finally:
         try:

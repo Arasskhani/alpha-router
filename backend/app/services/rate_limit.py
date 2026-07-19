@@ -19,6 +19,7 @@ from threading import Lock
 from fastapi import HTTPException
 
 from app.config import effective_redis_url
+from app.services.observability import increment
 
 _lock = Lock()
 _buckets: dict[str, list[float]] = defaultdict(list)
@@ -66,6 +67,7 @@ async def check_rate_limit(key: str, *, limit: int, window_seconds: int = 60) ->
             raise
         except Exception:
             # Redis hiccup: fall through to in-memory fallback (fail-open).
+            increment("redis_fallback")
             pass
     # In-memory fallback (per-worker).
     with _lock:

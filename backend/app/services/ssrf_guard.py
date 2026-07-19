@@ -37,6 +37,7 @@ import httpx
 from httpcore._backends.auto import AutoBackend
 
 from app.config import get_settings
+from app.services.observability import increment
 
 logger = logging.getLogger(__name__)
 
@@ -86,9 +87,11 @@ def _check_resolved_ips(ips: Iterable[str]) -> None:
         except ValueError:
             # If it's not a parseable IP, treat it as suspicious and block.
             logger.warning("Blocked SSRF target with unparseable resolved IP")
+            increment("ssrf_block")
             raise SSRFBlockedError(f"Unparseable resolved IP: {ip_str}")
         if _is_forbidden_ip(ip):
             logger.warning("Blocked SSRF connection to forbidden IP %s", ip_str)
+            increment("ssrf_block")
             raise SSRFBlockedError(f"URL resolves to forbidden IP {ip_str}")
 
 
@@ -124,6 +127,7 @@ def _resolve_and_validate(hostname: str) -> list[str]:
         ips = [str(literal)]
     if not ips:
         logger.warning("Blocked SSRF target with unresolvable hostname %s", hostname)
+        increment("ssrf_block")
         raise SSRFBlockedError(f"Could not resolve hostname: {hostname}")
     _check_resolved_ips(ips)
     return ips

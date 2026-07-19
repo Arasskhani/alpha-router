@@ -30,6 +30,7 @@ from app.services.scheduler import (
 )
 from app.services.security_headers import SecurityHeadersMiddleware
 from app.services.docs_guard import OpenApiDocsGuardMiddleware
+from app.services.observability import increment
 from app.services import object_storage_service as oss
 from app.services.openrouter_image_service import close_openrouter_http_client
 from app.services.proxy_service import configure_litellm_cache
@@ -199,6 +200,7 @@ def _check_production_safe(
         + ". Override each in your environment/.env before booting with ENVIRONMENT=production."
     )
     if guard_mode == "warning":
+        increment("production_guard_warning")
         _PRODUCTION_GUARD_LOG.warning(
             "Production guard warning (non-blocking): %s", message
         )

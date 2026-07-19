@@ -21,6 +21,7 @@ from app.database import AsyncSessionLocal
 from app.models.user import User
 from app.services.rbac import user_has_super_admin_access
 from app.services.user_role_service import get_user_role_slugs
+from app.services.observability import increment
 
 _DOCS_PATHS = frozenset(
     {
@@ -80,5 +81,6 @@ class OpenApiDocsGuardMiddleware(BaseHTTPMiddleware):
         settings = get_settings()
         if settings.openapi_admin_only and is_docs_path(request.url.path):
             if not await request_has_super_admin(request):
+                increment("docs_denied")
                 return JSONResponse(status_code=404, content={"detail": "Not Found"})
         return await call_next(request)

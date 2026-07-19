@@ -9,6 +9,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
+from app.services.observability import increment
 
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 EXEMPT_PATHS = frozenset(
@@ -62,6 +63,7 @@ class CsrfProtectionMiddleware:
         if path in EXEMPT_PATHS:
             origin = request.headers.get("origin")
             if origin and _normalized_origin(origin) not in allowed_origins():
+                increment("csrf_failure")
                 response = JSONResponse(
                     status_code=403,
                     content={"detail": "CSRF validation failed"},
@@ -80,6 +82,7 @@ class CsrfProtectionMiddleware:
 
         origin = request.headers.get("origin")
         if origin and _normalized_origin(origin) not in allowed_origins():
+            increment("csrf_failure")
             response = JSONResponse(status_code=403, content={"detail": "CSRF validation failed"})
             await response(scope, receive, send)
             return
@@ -91,6 +94,7 @@ class CsrfProtectionMiddleware:
             or not header_token
             or not hmac.compare_digest(cookie_token, header_token)
         ):
+            increment("csrf_failure")
             response = JSONResponse(status_code=403, content={"detail": "CSRF validation failed"})
             await response(scope, receive, send)
             return

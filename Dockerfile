@@ -8,7 +8,7 @@ RUN npm run build
 
 FROM python:3.12-slim AS runtime
 WORKDIR /app
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HOME=/home/alpha-router
 
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential curl ca-certificates && rm -rf /var/lib/apt/lists/*
 
@@ -17,6 +17,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/app ./app
 COPY --from=frontend-build /fe/dist ./frontend/dist
+RUN groupadd --system --gid 10001 alpha-router \
+    && useradd --system --uid 10001 --gid 10001 --create-home --home-dir /home/alpha-router alpha-router \
+    && chown -R alpha_router:alpha-router /app /home/alpha-router
+
+USER alpha-router
 
 EXPOSE 8080
 ENV DATABASE_URL=postgresql+asyncpg://alpha_router:alpha_router@postgres:5432/alpha-router

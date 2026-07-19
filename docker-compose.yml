@@ -137,6 +137,12 @@ services:
       LDAP_BRIDGE_TOKEN: ${LDAP_BRIDGE_TOKEN:-}
       CODE_SANDBOX_BROKER_URL: http://sandbox-broker:8081
       CODE_SANDBOX_BROKER_TOKEN: ${SANDBOX_BROKER_TOKEN:?SANDBOX_BROKER_TOKEN must be set in .env}
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=128m
     command:
       - uvicorn
       - app.main:app

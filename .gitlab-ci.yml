@@ -17,6 +17,7 @@ backend-tests:
   script:
     - python -m pip install --no-cache-dir -r backend/requirements.txt
     - python -m pip install --no-cache-dir pytest
+    - python -m pip check
     - PYTHONPATH=backend python -m pytest backend/tests -q
 
 frontend-tests-and-build:
@@ -51,12 +52,11 @@ frontend-audit:
     - cd frontend
     - npm ci --cache .npm --prefer-offline
   script:
-    - npm audit --omit=dev
+    - npm audit --omit=dev --audit-level=high
 
 backend-audit:
   stage: audit
   image: python:3.12-slim
-  allow_failure: true
   rules:
     - changes:
         - backend/requirements.txt
@@ -68,7 +68,7 @@ backend-audit:
     - cat pip-audit.json
     - |
       if [ "${audit_status:-0}" -ne 0 ]; then
-        echo "pip-audit reported vulnerabilities; review the artifact before enforcing this job."
+        echo "pip-audit reported vulnerabilities; review pip-audit.json before merging."
         exit "${audit_status}"
       fi
   artifacts:

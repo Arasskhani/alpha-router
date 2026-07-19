@@ -31,6 +31,8 @@ export type ImagePayload = {
   aspectPreset?: ImageAspectPresetId;
   /** @deprecated legacy WxH from older messages */
   size?: string;
+  /** OpenRouter image generation tier used by the successful request. */
+  imageSizeTier?: string;
   routing?: Record<string, unknown>;
 };
 
@@ -40,6 +42,7 @@ type ImageResponse = {
   aspect_ratio?: string;
   model?: string;
   routing?: Record<string, unknown>;
+  image_size_tier?: string;
 };
 
 /** Must exceed the backend OpenRouter read timeout (180s) so server errors win. */
@@ -241,6 +244,36 @@ function parseApiError(raw: string, status: number): string {
   }
 }
 
+export function buildImageRequestBody(opts: {
+  prompt: string;
+  modelId: string;
+  sessionId: string;
+  persist: boolean;
+  referenceImage?: string;
+  aspectRatio?: string;
+  sourceSize?: string;
+  imageSizeTier?: string;
+  routing?: Record<string, unknown>;
+}): Record<string, unknown> {
+  const operation = opts.referenceImage ? "img2img" : "generation";
+  const body: Record<string, unknown> = {
+    prompt: opts.prompt,
+    model: opts.modelId,
+    operation,
+    reference_image: opts.referenceImage || null,
+    chat_session_id: opts.persist ? opts.sessionId : null,
+    persist: opts.persist,
+  };
+  if (opts.imageSizeTier) body.image_size_tier = opts.imageSizeTier;
+  if (opts.routing) body.routing = opts.routing;
+  if (opts.referenceImage && opts.sourceSize) {
+    body.size = opts.sourceSize;
+  } else if (opts.aspectRatio) {
+    body.aspect_ratio = opts.aspectRatio;
+  }
+  return body;
+}
+
 async function requestImageApi(
   prompt: string,
   modelId: string,
@@ -251,24 +284,23 @@ async function requestImageApi(
   aspectRatio: string | undefined,
   aspectPreset: ImageAspectPresetId,
   sourceSize: string | undefined,
+  imageSizeTier: string | undefined,
+  routing: Record<string, unknown> | undefined,
 ): Promise<ImagePayload> {
-  const operation = referenceImage ? "img2img" : "generation";
   const resolvedReference = referenceImage
     ? await resolvePrivateMediaUrlForApi(referenceImage)
     : undefined;
-  const body: Record<string, unknown> = {
+  const body = buildImageRequestBody({
     prompt,
-    model: modelId,
-    operation,
-    reference_image: resolvedReference || null,
-    chat_session_id: persist ? sessionId : null,
+    modelId,
+    sessionId,
     persist,
-  };
-  if (referenceImage && sourceSize) {
-    body.size = sourceSize;
-  } else if (aspectRatio) {
-    body.aspect_ratio = aspectRatio;
-  }
+    referenceImage: resolvedReference,
+    aspectRatio,
+    sourceSize,
+    imageSizeTier,
+    routing,
+  });
   const res = await authFetch("/api/images/generate", {
     method: "POST",
     headers: {
@@ -291,6 +323,7 @@ async function requestImageApi(
     aspectRatio: appliedAspect || undefined,
     aspectPreset: appliedPreset,
     size: imageResult.size || sourceSize,
+    ...(imageResult.image_size_tier ? { imageSizeTier: imageResult.image_size_tier } : {}),
     ...(imageResult.routing ? { routing: imageResult.routing } : {}),
     ...(referenceImage ? { reference_image: referenceImage, operation: "img2img" as const } : { operation: "generation" as const }),
   };
@@ -315,6 +348,9 @@ export async function runBackgroundImageGeneration(opts: {
   imageCustomSize?: string;
   /** Regenerate: keep ratio from prior image message. */
   regenerateFrom?: Pick<ImagePayload, "aspectRatio" | "aspectPreset" | "size">;
+  /** Reuse provider routing details from a successful image request. */
+  imageSizeTier?: string;
+  routing?: Record<string, unknown>;
   /** When set, pending/final image replace this index instead of appending. */
   replaceIndex?: number;
   fullMessages?: ChatMessage[];
@@ -392,6 +428,8 @@ export async function runBackgroundImageGeneration(opts: {
         resolved.useSourceDimensions ? undefined : resolved.aspectRatio,
         resolved.preset,
         undefined,
+        opts.imageSizeTier,
+        opts.routing,
       );
     } finally {
       window.clearTimeout(timer);

@@ -162,6 +162,12 @@ def test_default_environment_is_development(monkeypatch):
     assert settings.environment == "development"
 
 
+def test_production_guard_defaults_to_hard_fail(monkeypatch):
+    monkeypatch.delenv("PRODUCTION_GUARD_MODE", raising=False)
+    settings = Settings(_env_file=None)
+    assert settings.production_guard_mode == "hard-fail"
+
+
 # --- Phase 9: expanded checks (Redis auth, data key, OpenAPI lockdown) --------
 
 
@@ -169,6 +175,8 @@ def test_redis_url_has_password_detection():
     assert _redis_url_has_password("redis://:secret@redis:6379/0")
     assert _redis_url_has_password("rediss://:secret@redis:6379/0")
     assert _redis_url_has_password("redis://redis:6379/0", redis_password="secret")
+    assert not _redis_url_has_password("redis://:changeme@redis:6379/0")
+    assert not _redis_url_has_password("redis://redis:6379/0", redis_password="changeme")
     assert not _redis_url_has_password("redis://redis:6379/0")
     assert not _redis_url_has_password("redis://user@redis:6379/0")
     assert not _redis_url_has_password("http://redis:6379/0")
@@ -219,6 +227,27 @@ def test_production_warning_mode_clean_when_secure(caplog):
     with caplog.at_level(logging.WARNING, logger="alpha_router.production_guard"):
         _check_production_safe(**_prod_kwargs(), guard_mode="warning")
     assert not [r for r in caplog.records if r.name == "alpha_router.production_guard"]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"service_admin_password": "changeme"}, "SERVICE_ADMIN_PASSWORD"),
+        ({"database_url": "postgresql+asyncpg://alpha_router:alpha_router@postgres:5432/alpha-router"}, "DATABASE_URL"),
+        ({"keycloak_enabled": True, "keycloak_server_url": "http://keycloak", "keycloak_redirect_uri": "http://app/callback"}, "KEYCLOAK_TLS"),
+        ({"smtp_host": "smtp.internal", "smtp_tls": False}, "SMTP_TLS"),
+        ({"s3_endpoint_url": "http://minio:9000", "s3_use_ssl": False}, "S3_TLS"),
+        ({"s3_access_key": "alpha-router", "s3_secret_key": "minioadmin"}, "S3_CREDENTIALS"),
+        ({"frontend_url": "http://app", "api_public_url": "https://api"}, "FRONTEND_TLS"),
+        ({"api_public_url": "http://api", "frontend_url": "https://app"}, "API_PUBLIC_TLS"),
+        ({"enable_hsts": False}, "HSTS"),
+        ({"allow_insecure_code_subprocess": True}, "INSECURE_CODE_SUBPROCESS"),
+    ],
+)
+def test_production_detects_insecure_runtime_fallbacks(overrides, expected):
+    with pytest.raises(RuntimeError) as exc:
+        _check_production_safe(**_prod_kwargs(**overrides))
+    assert expected in str(exc.value)
 
 
 def test_production_hard_fail_mode_raises():

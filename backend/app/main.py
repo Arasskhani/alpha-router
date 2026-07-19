@@ -63,14 +63,16 @@ def _assert_production_safe() -> None:
     dev/single-box deployments (which default to "development") boot unchanged.
     The guard checks externally exploitable application secrets, requires a
     strong LDAP bridge token when enabled, requires the sandbox broker,
-    requires Redis auth, a dedicated data-encryption key, and admin-only
-    OpenAPI docs. Behavior is controlled by `production_guard_mode`: "warning"
-    (default) logs and continues, "hard-fail" raises RuntimeError.
+    requires Redis auth, a dedicated data-encryption key, admin-only OpenAPI
+    docs, and secure transport settings. Behavior is controlled by
+    `production_guard_mode`: "hard-fail" (default) raises RuntimeError;
+    "warning" logs and continues for temporary migrations.
     """
     _check_production_safe(
         environment=settings.environment,
         secret_key=settings.secret_key,
         admin_password=settings.admin_password,
+        service_admin_password=settings.service_admin_password,
         gateway_master_key=settings.gateway_master_key,
         ldap_bridge_url=settings.ldap_bridge_url,
         ldap_bridge_token=settings.ldap_bridge_token,
@@ -80,6 +82,20 @@ def _assert_production_safe() -> None:
         redis_password=settings.redis_password,
         data_encryption_key=settings.data_encryption_key,
         openapi_admin_only=settings.openapi_admin_only,
+        database_url=settings.database_url,
+        keycloak_enabled=settings.keycloak_enabled,
+        keycloak_server_url=settings.keycloak_server_url,
+        keycloak_redirect_uri=settings.keycloak_redirect_uri,
+        smtp_host=settings.smtp_host,
+        smtp_tls=settings.smtp_tls,
+        s3_endpoint_url=settings.s3_endpoint_url,
+        s3_use_ssl=settings.s3_use_ssl,
+        frontend_url=settings.frontend_url,
+        api_public_url=settings.api_public_url,
+        enable_hsts=settings.enable_hsts,
+        allow_insecure_code_subprocess=settings.allow_insecure_code_subprocess,
+        s3_access_key=settings.s3_access_key,
+        s3_secret_key=settings.s3_secret_key,
         guard_mode=settings.production_guard_mode,
     )
 
@@ -90,7 +106,7 @@ def _redis_url_has_password(redis_url: str, *, redis_password: str = "") -> bool
     Accepts redis/rediss schemes. A separately-configured `redis_password`
     also satisfies the check (Phase 9 rebuilds the URL with it).
     """
-    if redis_password.strip():
+    if redis_password.strip() and redis_password.strip() not in INSECURE_DEFAULTS:
         return True
     url = (redis_url or "").strip()
     if not url:
@@ -99,7 +115,28 @@ def _redis_url_has_password(redis_url: str, *, redis_password: str = "") -> bool
         parsed = urlsplit(url)
     except ValueError:
         return False
-    return parsed.scheme in {"redis", "rediss"} and bool(parsed.password)
+    return (
+        parsed.scheme in {"redis", "rediss"}
+        and bool(parsed.password)
+        and parsed.password not in INSECURE_DEFAULTS
+    )
+
+
+def _url_uses_tls(url: str) -> bool:
+    """Return whether a configured URL uses an encrypted transport."""
+    try:
+        return urlsplit((url or "").strip()).scheme in {"https", "rediss"}
+    except ValueError:
+        return False
+
+
+def _url_has_secure_password(url: str) -> bool:
+    """Return whether a configured URL contains a non-placeholder password."""
+    try:
+        parsed = urlsplit((url or "").strip())
+    except ValueError:
+        return False
+    return bool(parsed.password and parsed.password not in INSECURE_DEFAULTS)
 
 
 def _collect_production_insecurities(
@@ -107,7 +144,8 @@ def _collect_production_insecurities(
     environment: str,
     secret_key: str,
     admin_password: str,
-    gateway_master_key: str,
+    service_admin_password: str = "",
+    gateway_master_key: str = "",
     ldap_bridge_url: str = "",
     ldap_bridge_token: str = "",
     code_sandbox_broker_url: str = "",
@@ -116,6 +154,20 @@ def _collect_production_insecurities(
     redis_password: str = "",
     data_encryption_key: str = "",
     openapi_admin_only: bool = False,
+    database_url: str = "",
+    keycloak_enabled: bool = False,
+    keycloak_server_url: str = "",
+    keycloak_redirect_uri: str = "",
+    smtp_host: str = "",
+    smtp_tls: bool = True,
+    s3_endpoint_url: str = "",
+    s3_use_ssl: bool = True,
+    frontend_url: str = "",
+    api_public_url: str = "",
+    enable_hsts: bool = True,
+    allow_insecure_code_subprocess: bool = False,
+    s3_access_key: str = "",
+    s3_secret_key: str = "",
 ) -> list[str]:
     """Pure collector used by the startup guard and by tests.
 
@@ -132,6 +184,8 @@ def _collect_production_insecurities(
         insecure.append("SECRET_KEY")
     if admin_password in INSECURE_DEFAULTS:
         insecure.append("ADMIN_PASSWORD")
+    if service_admin_password in INSECURE_DEFAULTS:
+        insecure.append("SERVICE_ADMIN_PASSWORD")
     if gateway_master_key in INSECURE_DEFAULTS:
         insecure.append("GATEWAY_MASTER_KEY")
     if ldap_bridge_url.strip():
@@ -152,6 +206,30 @@ def _collect_production_insecurities(
         insecure.append("DATA_ENCRYPTION_KEY")
     if not openapi_admin_only:
         insecure.append("OPENAPI_DOCS")
+    if database_url in {
+        "postgresql+asyncpg://alpha_router:alpha_router@postgres:5432/alpha-router",
+        "postgresql+asyncpg://alpha_router:changeme@pgbouncer:6432/alpha-router",
+    } or (database_url.strip() and not _url_has_secure_password(database_url)):
+        insecure.append("DATABASE_URL")
+    if keycloak_enabled and (
+        not _url_uses_tls(keycloak_server_url)
+        or not _url_uses_tls(keycloak_redirect_uri)
+    ):
+        insecure.append("KEYCLOAK_TLS")
+    if smtp_host.strip() and not smtp_tls:
+        insecure.append("SMTP_TLS")
+    if s3_endpoint_url.strip() and not s3_use_ssl:
+        insecure.append("S3_TLS")
+    if s3_access_key in INSECURE_DEFAULTS or s3_secret_key in INSECURE_DEFAULTS:
+        insecure.append("S3_CREDENTIALS")
+    if frontend_url.strip() and not _url_uses_tls(frontend_url):
+        insecure.append("FRONTEND_TLS")
+    if api_public_url.strip() and not _url_uses_tls(api_public_url):
+        insecure.append("API_PUBLIC_TLS")
+    if not enable_hsts:
+        insecure.append("HSTS")
+    if allow_insecure_code_subprocess:
+        insecure.append("INSECURE_CODE_SUBPROCESS")
     return insecure
 
 
@@ -160,7 +238,8 @@ def _check_production_safe(
     environment: str,
     secret_key: str,
     admin_password: str,
-    gateway_master_key: str,
+    service_admin_password: str = "",
+    gateway_master_key: str = "",
     ldap_bridge_url: str = "",
     ldap_bridge_token: str = "",
     code_sandbox_broker_url: str = "",
@@ -169,6 +248,20 @@ def _check_production_safe(
     redis_password: str = "",
     data_encryption_key: str = "",
     openapi_admin_only: bool = False,
+    database_url: str = "",
+    keycloak_enabled: bool = False,
+    keycloak_server_url: str = "",
+    keycloak_redirect_uri: str = "",
+    smtp_host: str = "",
+    smtp_tls: bool = True,
+    s3_endpoint_url: str = "",
+    s3_use_ssl: bool = True,
+    frontend_url: str = "",
+    api_public_url: str = "",
+    enable_hsts: bool = True,
+    allow_insecure_code_subprocess: bool = False,
+    s3_access_key: str = "",
+    s3_secret_key: str = "",
     guard_mode: str = "hard-fail",
 ) -> None:
     """Pure check used by the startup guard and by tests.
@@ -182,6 +275,7 @@ def _check_production_safe(
         environment=environment,
         secret_key=secret_key,
         admin_password=admin_password,
+        service_admin_password=service_admin_password,
         gateway_master_key=gateway_master_key,
         ldap_bridge_url=ldap_bridge_url,
         ldap_bridge_token=ldap_bridge_token,
@@ -191,6 +285,20 @@ def _check_production_safe(
         redis_password=redis_password,
         data_encryption_key=data_encryption_key,
         openapi_admin_only=openapi_admin_only,
+        database_url=database_url,
+        keycloak_enabled=keycloak_enabled,
+        keycloak_server_url=keycloak_server_url,
+        keycloak_redirect_uri=keycloak_redirect_uri,
+        smtp_host=smtp_host,
+        smtp_tls=smtp_tls,
+        s3_endpoint_url=s3_endpoint_url,
+        s3_use_ssl=s3_use_ssl,
+        frontend_url=frontend_url,
+        api_public_url=api_public_url,
+        enable_hsts=enable_hsts,
+        allow_insecure_code_subprocess=allow_insecure_code_subprocess,
+        s3_access_key=s3_access_key,
+        s3_secret_key=s3_secret_key,
     )
     if not insecure:
         return

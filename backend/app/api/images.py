@@ -36,6 +36,7 @@ from app.services.openrouter_image_service import (
     OPENROUTER_FALLBACK_TIMEOUT,
     build_fast_openrouter_payload,
     build_openrouter_headers,
+    gemini_image_size_for_model,
     is_openai_gpt_image_model,
     is_openrouter_auto_model,
     is_transient_empty_openrouter_image_response,
@@ -166,6 +167,8 @@ class ImageRequest(BaseModel):
     reference_image: str | None = None  # data URL or http(s) URL for image-to-image
     chat_session_id: str | None = None
     persist: bool = True
+    image_size_tier: str | None = None
+    routing: dict[str, object] | None = None
 
 
 def _is_openrouter_chat_image_model(model_id: str) -> bool:
@@ -499,6 +502,8 @@ async def _finalize_image_response(
         result["size"] = body.size
     if aspect_ratio:
         result["aspect_ratio"] = aspect_ratio
+    if body.image_size_tier:
+        result["image_size_tier"] = body.image_size_tier
     result["model"] = body.model
     if routing:
         result["routing"] = routing
@@ -708,7 +713,7 @@ async def generate_image(
     generation_start = time.perf_counter()
     billing = ImageBillingCapture(model_id=_normalize_model_id(body.model))
     budget_reservation_id: str | None = None
-    routing_reason: dict[str, object] | None = None
+    routing_reason: dict[str, object] | None = body.routing
     success = True
     error_message: str | None = None
 
@@ -863,6 +868,8 @@ async def generate_image(
                     return None, None, chat_resp
                 chat_data = chat_resp.json()
                 collected = _collect_openrouter_images(chat_data) if isinstance(chat_data, dict) else None
+                if collected:
+                    body.image_size_tier = tier or gemini_image_size_for_model(model_id, pixel_size)
                 return collected, chat_data if isinstance(chat_data, dict) else None, chat_resp
 
             async def _openrouter_chat_image_with_retries() -> tuple[list[dict] | None, dict | None, httpx.Response | None]:
@@ -871,7 +878,7 @@ async def generate_image(
                         "pixel_size": body.size,
                         "mods": modalities,
                         "fallbacks": allow_fallbacks,
-                        "tier": None,
+                        "tier": body.image_size_tier,
                         "provider_sort": "latency",
                         "apply_default_provider_sort": False,
                     },
@@ -895,7 +902,7 @@ async def generate_image(
                         "pixel_size": body.size,
                         "mods": modalities,
                         "fallbacks": allow_fallbacks,
-                        "tier": None,
+                        "tier": body.image_size_tier,
                         "provider_sort": None,
                         "apply_default_provider_sort": False,
                     },

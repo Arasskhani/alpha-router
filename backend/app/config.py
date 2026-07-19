@@ -14,6 +14,9 @@ INSECURE_DEFAULTS: frozenset[str] = frozenset(
     {
         "change-me-in-production",  # SECRET_KEY
         "admin",  # ADMIN_PASSWORD
+        "changeme",  # SERVICE_ADMIN_PASSWORD and template credentials
+        "alpha-router",  # bundled database/S3 development identity
+        "minioadmin",  # S3_SECRET_KEY
         "sk-alpha-router-master",  # GATEWAY_MASTER_KEY
         LDAP_BRIDGE_INSECURE_DEFAULT,
     }
@@ -89,11 +92,9 @@ class Settings(BaseSettings):
     # Phase 9: lock OpenAPI docs/redoc/openapi.json to Super Admin in production.
     # The guard flags a False value in production. Development leaves docs open.
     openapi_admin_only: bool = False  # env: OPENAPI_ADMIN_ONLY
-    # Phase 9: production guard behavior. "warning" (default) logs insecure
-    # defaults and continues booting; "hard-fail" raises RuntimeError like the
-    # original Phase 0 behavior. Switch to hard-fail only after credentials are
-    # confirmed in production.
-    production_guard_mode: str = "warning"  # env: PRODUCTION_GUARD_MODE
+    # Production must fail closed when an insecure fallback is still active.
+    # Development is unaffected because the guard is environment-gated.
+    production_guard_mode: str = "hard-fail"  # env: PRODUCTION_GUARD_MODE
 
     # OpenAI-compatible gateway master key (Open WebUI → Alpha Router)
     gateway_master_key: str = "sk-alpha-router-master"

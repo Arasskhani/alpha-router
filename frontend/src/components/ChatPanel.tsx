@@ -3208,6 +3208,8 @@ export default function ChatPanel() {
           aspectPreset: payload.aspectPreset,
           size: payload.size,
         },
+        imageSizeTier: payload.imageSizeTier,
+        routing: payload.routing,
         replaceIndex: msgIndex,
         fullMessages: messages,
       });
@@ -3235,6 +3237,55 @@ export default function ChatPanel() {
     }
     const target = messages[index];
     if (!target || target.role !== "user") return;
+
+    // A generated image is persisted immediately after its user prompt. Retry
+    // that turn with the concrete model and provider parameters that actually
+    // produced the image; do not send Auto Router back through selection.
+    const imageAfterPrompt =
+      messages[index + 1]?.role === "assistant"
+        ? parseImageMessage(messages[index + 1].content)
+        : null;
+    if (imageAfterPrompt) {
+      const retryModelId = imageAfterPrompt.model?.trim();
+      if (!retryModelId) {
+        setChatError("The previous image request did not record a model.");
+        return;
+      }
+      const tools = sessionTools(sessionsRef.current.find((x) => x.id === sid));
+      setChatError("");
+      setSessionStreaming(sid, true);
+      try {
+        await runBackgroundImageGeneration({
+          sessionId: sid,
+          historyWithUser: historyForModelRequest(messages.slice(0, index + 1)),
+          localMessageBase: messages.slice(0, index + 1),
+          prompt: imageAfterPrompt.prompt || target.content,
+          modelId: retryModelId,
+          privateMode: sessionPrivateMode(sid),
+          referenceImage: imageAfterPrompt.reference_image,
+          imageAspectPreset: tools.imageAspectRatio,
+          imageCustomAspectRatio: tools.imageCustomAspectRatio,
+          imageCustomSize: tools.imageCustomSize,
+          regenerateFrom: {
+            aspectRatio: imageAfterPrompt.aspectRatio,
+            aspectPreset: imageAfterPrompt.aspectPreset,
+            size: imageAfterPrompt.size,
+          },
+          imageSizeTier: imageAfterPrompt.imageSizeTier,
+          routing: imageAfterPrompt.routing,
+          replaceIndex: index + 1,
+          fullMessages: messages,
+        });
+        if (!sessionPrivateMode(sid)) await syncSessionsFromServer(sid);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setChatError(message);
+        if (!sessionPrivateMode(sid)) await syncSessionsFromServer(sid);
+      } finally {
+        setSessionStreaming(sid, false);
+      }
+      return;
+    }
 
     const validModel =
       models.find((m) => m.id === model) ||

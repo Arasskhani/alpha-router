@@ -46,7 +46,26 @@ Investigate repeated events rather than disabling the control. For example:
 - `csrf_failure`: check browser session/CSRF state and origin configuration.
 - `docs_denied`: expected for anonymous or non-Super-Admin requests.
 - `production_guard_warning`: replace the named configuration category and
-  prefer `PRODUCTION_GUARD_MODE=hard-fail` after validation.
+  keep `PRODUCTION_GUARD_MODE=hard-fail` in production. The default is now
+  fail-closed; use `warning` only for a deliberate, temporary migration.
+
+## Production configuration gate
+
+Set `ENVIRONMENT=production` only with a deployment-specific secret/config
+source. The startup guard refuses insecure fallbacks without logging values.
+Before starting, verify the following categories are explicitly configured:
+
+- unique application, admin, service-admin, gateway, Redis, broker, database,
+  data-encryption, and object-storage credentials;
+- authenticated Redis and admin-only OpenAPI documentation;
+- HTTPS for the public API, frontend, Keycloak endpoints, and redirect URI;
+- TLS for SMTP and object storage, plus `ENABLE_HSTS=true`;
+- `ALLOW_INSECURE_CODE_SUBPROCESS=false` and a reachable authenticated broker.
+
+Do not place real values in `.env.example`, tickets, CI logs, or this runbook.
+After a clean boot and validation, rotate credentials through the approved
+secret-management process. Credential rotation is intentionally separate from
+this code/configuration tranche.
 
 ## Rollback
 

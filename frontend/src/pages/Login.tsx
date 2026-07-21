@@ -102,7 +102,7 @@ const LOGIN_HIGHLIGHTS = [
   },
   {
     title: "Enterprise access",
-    desc: "LDAP, Keycloak, local accounts, and scoped RBAC with Super Admin and per-menu roles.",
+    desc: "LDAP, SAML SSO, local accounts, and scoped RBAC with Super Admin and per-menu roles.",
     art: <FeatureSecurityArt />,
   },
   {
@@ -116,7 +116,7 @@ export default function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [methods, setMethods] = useState({ ldap: false, keycloak: false });
+  const [methods, setMethods] = useState({ ldap: false, saml: false });
   const nav = useNavigate();
   const [params] = useSearchParams();
 
@@ -132,16 +132,15 @@ export default function Login() {
   }, []);
 
   useEffect(() => {
-    // OIDC (Keycloak) callback delivers a one-time exchange code (NOT the JWT
-    // itself) via ?code=. We POST it to /api/auth/keycloak/exchange to obtain
-    // the JWT in the response body, keeping the token out of the URL/history/
-    // Referer/logs. The code is single-use and short-lived server-side.
+    // SAML ACS delivers a one-time exchange code (NOT the JWT itself) via
+    // ?code=. We POST it to /api/auth/saml/exchange to obtain the session,
+    // keeping the token out of the URL/history/Referer/logs.
     const code = params.get("code");
     if (!code) return;
     let cancelled = false;
     (async () => {
       try {
-        const res = await authFetch("/api/auth/keycloak/exchange", {
+        const res = await authFetch("/api/auth/saml/exchange", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ code }),
@@ -154,7 +153,7 @@ export default function Login() {
           } catch {
             detail = raw || "";
           }
-          if (!cancelled) setError(detail || "Keycloak login expired, please try again.");
+          if (!cancelled) setError(detail || "SAML login expired, please try again.");
           return;
         }
         await res.json();
@@ -296,11 +295,11 @@ export default function Login() {
               </button>
             </form>
 
-            {(methods.keycloak || methods.ldap) && (
+            {(methods.saml || methods.ldap) && (
               <div className="login-panel__footer">
-                {methods.keycloak && (
-                  <a className="login-panel__sso" href="/api/auth/keycloak/login">
-                    Sign in with Keycloak
+                {methods.saml && (
+                  <a className="login-panel__sso" href="/api/auth/saml/login">
+                    Sign in with SAML
                   </a>
                 )}
                 {methods.ldap && <p className="login-panel__hint">LDAP: use your directory credentials.</p>}

@@ -5,8 +5,6 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-LDAP_BRIDGE_INSECURE_DEFAULT = "alpha-router-ldap-bridge"
-
 # Known placeholder values that must never reach a production deployment.
 # Used by the startup guard (_assert_production_safe) to refuse boot when an
 # operator forgot to override the bundled dev defaults.
@@ -18,7 +16,6 @@ INSECURE_DEFAULTS: frozenset[str] = frozenset(
         "alpha-router",  # bundled database/S3 development identity
         "minioadmin",  # S3_SECRET_KEY
         "sk-alpha-router-master",  # GATEWAY_MASTER_KEY
-        LDAP_BRIDGE_INSECURE_DEFAULT,
     }
 )
 
@@ -143,17 +140,10 @@ class Settings(BaseSettings):
     ldap_connect_timeout_seconds: int = 4
     ldap_receive_timeout_seconds: int = 5
     ldap_login_timeout_seconds: int = 10
-    # Windows host bridge for signed LDAP when Alpha Router runs in Docker/Linux (env: LDAP_BRIDGE_URL)
-    ldap_bridge_url: str = ""
-    ldap_bridge_token: str = ""
-
-    # Keycloak OIDC
-    keycloak_enabled: bool = False
-    keycloak_server_url: str = ""
-    keycloak_realm: str = ""
-    keycloak_client_id: str = ""
-    keycloak_client_secret: str = ""
-    keycloak_redirect_uri: str = "http://localhost:8080/auth/keycloak/callback"
+    # SAML 2.0 SP (env fallback when no DB row)
+    saml_enabled: bool = False
+    saml_idp_metadata_url: str = ""
+    saml_entity_id: str = ""
 
     # SMTP (admin-configured)
     smtp_host: str = ""

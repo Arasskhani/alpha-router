@@ -70,7 +70,7 @@ export const userManualSections: DocSection[] = [
         <p>As a user, Alpha Router gives you:</p>
         <ul>
           <li>
-            <strong>One sign-in</strong> — local account, LDAP/Active Directory, or SSO (Keycloak), depending on what
+            <strong>One sign-in</strong> — local account, LDAP/Active Directory, or SSO (SAML), depending on what
             your admin configured.
           </li>
           <li>

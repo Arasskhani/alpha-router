@@ -1,4 +1,4 @@
-"""Groups: local, LDAP, and Keycloak."""
+"""Groups: local and LDAP directory groups."""
 
 import asyncio
 from typing import Literal
@@ -16,7 +16,6 @@ from app.models.budget import PlanAssignment
 from app.models.user import User, UserGroup, user_group_members
 from app.services import activity_service
 from app.services.auth_config import get_provider_config
-from app.services.keycloak_sync import fetch_keycloak_groups
 from app.services.ldap_auth import fetch_ldap_groups
 
 router = APIRouter(prefix="/api/admin/groups", tags=["groups"])
@@ -139,39 +138,6 @@ async def sync_ldap_groups(db: AsyncSession = Depends(get_db), _: User = Depends
                     name=item["name"],
                     description=item.get("description"),
                     source="ldap",
-                    external_id=item["external_id"],
-                )
-            )
-            count += 1
-    await db.commit()
-    return {"synced_new": count, "total": len(items)}
-
-
-@router.post("/sync/keycloak")
-async def sync_keycloak_groups(db: AsyncSession = Depends(get_db), _: User = Depends(require_groups_write)):
-    cfg = await get_provider_config(db, "keycloak")
-    if not cfg.get("enabled"):
-        raise HTTPException(400, "Keycloak is not enabled")
-    items = await fetch_keycloak_groups(cfg)
-    count = 0
-    for item in items:
-        existing = (
-            await db.execute(
-                select(UserGroup).where(
-                    UserGroup.source == "keycloak",
-                    UserGroup.external_id == item["external_id"],
-                )
-            )
-        ).scalars().first()
-        if existing:
-            existing.name = item["name"]
-            existing.description = item.get("description")
-        else:
-            db.add(
-                UserGroup(
-                    name=item["name"],
-                    description=item.get("description"),
-                    source="keycloak",
                     external_id=item["external_id"],
                 )
             )

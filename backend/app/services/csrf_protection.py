@@ -12,10 +12,17 @@ from app.config import get_settings
 from app.services.observability import increment
 
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+# Origin still checked (same-site SPA posts).
 EXEMPT_PATHS = frozenset(
     {
         "/api/auth/login",
-        "/api/auth/keycloak/exchange",
+        "/api/auth/saml/exchange",
+    }
+)
+# Cross-origin IdP form POST — skip Origin + CSRF header checks entirely.
+FULL_EXEMPT_PATHS = frozenset(
+    {
+        "/api/auth/saml/acs",
     }
 )
 
@@ -60,6 +67,9 @@ class CsrfProtectionMiddleware:
             return
 
         request = Request(scope)
+        if path in FULL_EXEMPT_PATHS:
+            await self.app(scope, receive, send)
+            return
         if path in EXEMPT_PATHS:
             origin = request.headers.get("origin")
             if origin and _normalized_origin(origin) not in allowed_origins():

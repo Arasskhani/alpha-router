@@ -62,7 +62,7 @@ def _assert_production_safe() -> None:
     Env-gated: a no-op unless `settings.environment == "production"`. Existing
     dev/single-box deployments (which default to "development") boot unchanged.
     The guard checks externally exploitable application secrets, requires a
-    strong LDAP bridge token when enabled, requires the sandbox broker,
+    requires the sandbox broker,
     requires Redis auth, a dedicated data-encryption key, admin-only OpenAPI
     docs, and secure transport settings. Behavior is controlled by
     `production_guard_mode`: "hard-fail" (default) raises RuntimeError;
@@ -74,8 +74,6 @@ def _assert_production_safe() -> None:
         admin_password=settings.admin_password,
         service_admin_password=settings.service_admin_password,
         gateway_master_key=settings.gateway_master_key,
-        ldap_bridge_url=settings.ldap_bridge_url,
-        ldap_bridge_token=settings.ldap_bridge_token,
         code_sandbox_broker_url=settings.code_sandbox_broker_url,
         code_sandbox_broker_token=settings.code_sandbox_broker_token,
         redis_url=settings.redis_url,
@@ -83,9 +81,7 @@ def _assert_production_safe() -> None:
         data_encryption_key=settings.data_encryption_key,
         openapi_admin_only=settings.openapi_admin_only,
         database_url=settings.database_url,
-        keycloak_enabled=settings.keycloak_enabled,
-        keycloak_server_url=settings.keycloak_server_url,
-        keycloak_redirect_uri=settings.keycloak_redirect_uri,
+        saml_enabled=settings.saml_enabled,
         smtp_host=settings.smtp_host,
         smtp_tls=settings.smtp_tls,
         s3_endpoint_url=settings.s3_endpoint_url,
@@ -170,8 +166,6 @@ def _collect_production_insecurities(
     admin_password: str,
     service_admin_password: str = "",
     gateway_master_key: str = "",
-    ldap_bridge_url: str = "",
-    ldap_bridge_token: str = "",
     code_sandbox_broker_url: str = "",
     code_sandbox_broker_token: str = "",
     redis_url: str = "",
@@ -179,9 +173,7 @@ def _collect_production_insecurities(
     data_encryption_key: str = "",
     openapi_admin_only: bool = False,
     database_url: str = "",
-    keycloak_enabled: bool = False,
-    keycloak_server_url: str = "",
-    keycloak_redirect_uri: str = "",
+    saml_enabled: bool = False,
     smtp_host: str = "",
     smtp_tls: bool = True,
     s3_endpoint_url: str = "",
@@ -197,10 +189,9 @@ def _collect_production_insecurities(
     """Pure collector used by the startup guard and by tests.
 
     Returns the list of insecure-default names when production uses an insecure
-    application secret, enables the LDAP bridge without a strong token, lacks
-    the authenticated sandbox broker, runs Redis without a password, lacks a
-    dedicated data-encryption key, or exposes OpenAPI docs to non-admins.
-    Returns an empty list in development.
+    application secret, lacks the authenticated sandbox broker, runs Redis
+    without a password, lacks a dedicated data-encryption key, or exposes
+    OpenAPI docs to non-admins. Returns an empty list in development.
 
     Loopback HTTP frontend/API URLs and Compose-internal object storage are
     accepted for single-box / internal deployments; non-loopback cleartext and
@@ -217,14 +208,6 @@ def _collect_production_insecurities(
         insecure.append("SERVICE_ADMIN_PASSWORD")
     if gateway_master_key in INSECURE_DEFAULTS:
         insecure.append("GATEWAY_MASTER_KEY")
-    if ldap_bridge_url.strip():
-        bridge_token = ldap_bridge_token.strip()
-        if (
-            not bridge_token
-            or bridge_token in INSECURE_DEFAULTS
-            or len(bridge_token) < 32
-        ):
-            insecure.append("LDAP_BRIDGE_TOKEN")
     if not code_sandbox_broker_url.strip():
         insecure.append("CODE_SANDBOX_BROKER_URL")
     if len(code_sandbox_broker_token.strip()) < 32:
@@ -240,11 +223,11 @@ def _collect_production_insecurities(
         "postgresql+asyncpg://alpha_router:changeme@pgbouncer:6432/alpha-router",
     } or (database_url.strip() and not _url_has_secure_password(database_url)):
         insecure.append("DATABASE_URL")
-    if keycloak_enabled and (
-        not _url_uses_tls(keycloak_server_url)
-        or not _url_uses_tls(keycloak_redirect_uri)
+    # SAML ACS/metadata are derived from api_public_url; require HTTPS when enabled.
+    if saml_enabled and api_public_url.strip() and (
+        not _url_uses_tls(api_public_url) and not _url_is_loopback(api_public_url)
     ):
-        insecure.append("KEYCLOAK_TLS")
+        insecure.append("SAML_TLS")
     if smtp_host.strip() and not smtp_tls:
         insecure.append("SMTP_TLS")
     if (
@@ -287,8 +270,6 @@ def _check_production_safe(
     admin_password: str,
     service_admin_password: str = "",
     gateway_master_key: str = "",
-    ldap_bridge_url: str = "",
-    ldap_bridge_token: str = "",
     code_sandbox_broker_url: str = "",
     code_sandbox_broker_token: str = "",
     redis_url: str = "",
@@ -296,9 +277,7 @@ def _check_production_safe(
     data_encryption_key: str = "",
     openapi_admin_only: bool = False,
     database_url: str = "",
-    keycloak_enabled: bool = False,
-    keycloak_server_url: str = "",
-    keycloak_redirect_uri: str = "",
+    saml_enabled: bool = False,
     smtp_host: str = "",
     smtp_tls: bool = True,
     s3_endpoint_url: str = "",
@@ -325,8 +304,6 @@ def _check_production_safe(
         admin_password=admin_password,
         service_admin_password=service_admin_password,
         gateway_master_key=gateway_master_key,
-        ldap_bridge_url=ldap_bridge_url,
-        ldap_bridge_token=ldap_bridge_token,
         code_sandbox_broker_url=code_sandbox_broker_url,
         code_sandbox_broker_token=code_sandbox_broker_token,
         redis_url=redis_url,
@@ -334,9 +311,7 @@ def _check_production_safe(
         data_encryption_key=data_encryption_key,
         openapi_admin_only=openapi_admin_only,
         database_url=database_url,
-        keycloak_enabled=keycloak_enabled,
-        keycloak_server_url=keycloak_server_url,
-        keycloak_redirect_uri=keycloak_redirect_uri,
+        saml_enabled=saml_enabled,
         smtp_host=smtp_host,
         smtp_tls=smtp_tls,
         s3_endpoint_url=s3_endpoint_url,

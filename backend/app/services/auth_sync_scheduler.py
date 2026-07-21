@@ -1,4 +1,4 @@
-"""Scheduled LDAP / Keycloak directory sync."""
+"""Scheduled LDAP directory sync."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import logging
 
 from app.database import AsyncSessionLocal
 from app.services.auth_config import get_provider_config
-from app.services.keycloak_sync import sync_keycloak_directory
 from app.services.ldap_sync import sync_ldap_directory
 from app.services.scheduler import scheduler
 
@@ -32,22 +31,9 @@ async def job_ldap_directory_sync() -> None:
             logger.exception("Scheduled LDAP sync failed")
 
 
-async def job_keycloak_directory_sync() -> None:
-    async with AsyncSessionLocal() as db:
-        cfg = await get_provider_config(db, "keycloak")
-        if not cfg.get("enabled"):
-            return
-        try:
-            result = await sync_keycloak_directory(db, cfg)
-            logger.info("Scheduled Keycloak sync finished: %s", result)
-        except Exception:
-            logger.exception("Scheduled Keycloak sync failed")
-
-
 async def refresh_auth_sync_schedules() -> None:
     async with AsyncSessionLocal() as db:
         ldap_cfg = await get_provider_config(db, "ldap")
-        kc_cfg = await get_provider_config(db, "keycloak")
 
     for job_id in ("ldap_directory_sync", "keycloak_directory_sync"):
         if scheduler.get_job(job_id):
@@ -61,16 +47,6 @@ async def refresh_auth_sync_schedules() -> None:
             hour=ldap_hour,
             minute=ldap_minute,
             id="ldap_directory_sync",
-        )
-
-    kc_enabled, kc_hour, kc_minute = _schedule_fields(kc_cfg)
-    if kc_cfg.get("enabled") and kc_enabled:
-        scheduler.add_job(
-            job_keycloak_directory_sync,
-            "cron",
-            hour=kc_hour,
-            minute=kc_minute,
-            id="keycloak_directory_sync",
         )
 
     if not scheduler.running and scheduler.get_jobs():

@@ -1,13 +1,9 @@
-"""One-time exchange-code store backed by Redis for OIDC token delivery.
+"""One-time exchange-code store for SSO token delivery (SAML / former OIDC).
 
-After the Keycloak callback validates the IdP response, we mint a Alpha Router JWT but
-must NOT put it in the redirect URL (it would leak via history/Referer/logs).
-Instead we store the JWT under a random opaque code in Redis with a short TTL,
-redirect the browser to ``/login?code=<opaque>``, and the frontend exchanges
-the code for the JWT via ``POST /api/auth/keycloak/exchange``.
-
-Codes are single-use (deleted on read). TTL is short so a leaked code is
-useless within seconds.
+After ACS validates the IdP response, we mint a Alpha Router JWT but must NOT put it
+in the redirect URL. Instead we store the JWT under a random opaque code in
+Redis with a short TTL, redirect to ``/login?code=<opaque>``, and the frontend
+exchanges the code via ``POST /api/auth/saml/exchange``.
 """
 
 from __future__ import annotations
@@ -23,12 +19,8 @@ from app.config import effective_redis_url
 from app.services.observability import increment
 
 _CODE_TTL_SECONDS = 30
-_KEY_PREFIX = "oidc:xchg:"
+_KEY_PREFIX = "auth:xchg:"
 
-# In-memory fallback so a Redis outage does not break Keycloak login. The
-# callback and the code-exchange may be served by different workers, so this is
-# a best-effort degradation (single-worker or sticky-session deployments get a
-# full round-trip). Entries expire on read to keep the single-use contract.
 _mem_lock = asyncio.Lock()
 _mem_store: dict[str, tuple[str, float]] = {}
 
@@ -48,20 +40,13 @@ def generate_code() -> str:
 
 
 async def store_token(code: str, payload: dict) -> None:
-    """Store a token payload under ``code`` with a short TTL.
-
-    Falls back to an in-process store when Redis is unreachable so the OIDC
-    callback can still complete the redirect instead of returning a 500.
-    """
     raw = json.dumps(payload)
     client = _client()
     try:
         await client.set(_KEY_PREFIX + code, raw, ex=_CODE_TTL_SECONDS)
         return
     except Exception:
-        # Redis unavailable: degrade to in-memory (best-effort, per-worker).
         increment("redis_fallback")
-        pass
     finally:
         try:
             await client.aclose()
@@ -74,7 +59,6 @@ async def store_token(code: str, payload: dict) -> None:
 
 
 async def consume_code(code: str) -> dict | None:
-    """Atomically retrieve and delete the payload for ``code`` (single-use)."""
     if not code:
         return None
     client = _client()
@@ -92,7 +76,6 @@ async def consume_code(code: str) -> dict | None:
         except Exception:
             pass
     if not raw:
-        # Fall back to the in-memory store used when Redis was unavailable.
         async with _mem_lock:
             now = time.monotonic()
             _prune_expired(now)

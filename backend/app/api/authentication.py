@@ -1,4 +1,4 @@
-"""Admin UI: configure LDAP and Keycloak."""
+"""Admin UI: configure LDAP and SAML 2.0."""
 
 import asyncio
 import json
@@ -14,6 +14,7 @@ from app.models.user import User
 from app.services.auth_config import get_provider_config, save_provider_config, decrypt_provider_config
 from app.services.ldap_auth import test_ldap_connection
 from app.services.ldap_config import (
+    LDAPS_PORT,
     merge_simple_ldap_config,
     parse_sync_ous,
     resolve_password,
@@ -21,7 +22,13 @@ from app.services.ldap_config import (
 )
 from app.services.ldap_sync import sync_ldap_directory
 from app.services.auth_sync_scheduler import refresh_auth_sync_schedules
-from app.services.keycloak_sync import fetch_keycloak_groups, sync_keycloak_directory
+from app.services.saml_sp import (
+    DEFAULT_ATTR_DISPLAY_NAME,
+    DEFAULT_ATTR_EMAIL,
+    DEFAULT_ATTR_USERNAME,
+    public_view as saml_public_view,
+    validate_saml_config,
+)
 
 router = APIRouter(prefix="/api/admin/authentication", tags=["authentication"])
 
@@ -31,8 +38,9 @@ class LdapSimpleIn(BaseModel):
     dc_host: str = ""
     bind_username: str = ""
     bind_password: str = ""
-    port: int = Field(default=389, ge=1, le=65535)
-    use_ssl: bool = False
+    # Accepted for backward-compatible clients; always forced to LDAPS server-side.
+    port: int = Field(default=LDAPS_PORT, ge=1, le=65535)
+    use_ssl: bool = True
     trust_untrusted_cert: bool = False
     sync_ous: str = ""
     sync_ous_prune: bool = False
@@ -41,18 +49,16 @@ class LdapSimpleIn(BaseModel):
     sync_schedule_minute: int = Field(default=0, ge=0, le=59)
 
 
-class KeycloakConfigIn(BaseModel):
+class SamlConfigIn(BaseModel):
     enabled: bool = False
-    server_url: str = ""
-    realm: str = ""
-    client_id: str = ""
-    client_secret: str = ""
-    redirect_uri: str = "http://localhost:8080/api/auth/keycloak/callback"
-    admin_client_id: str = ""
-    admin_client_secret: str = ""
-    sync_schedule_enabled: bool = False
-    sync_schedule_hour: int = Field(default=3, ge=0, le=23)
-    sync_schedule_minute: int = Field(default=0, ge=0, le=59)
+    idp_metadata_url: str = ""
+    idp_metadata_xml: str = ""
+    entity_id: str = ""
+    attr_username: str = DEFAULT_ATTR_USERNAME
+    attr_email: str = DEFAULT_ATTR_EMAIL
+    attr_display_name: str = DEFAULT_ATTR_DISPLAY_NAME
+    strict: bool = True
+    want_assertions_signed: bool = True
 
 
 @router.get("/ldap")
@@ -83,8 +89,8 @@ async def save_ldap(body: LdapSimpleIn, db: AsyncSession = Depends(get_db), _: U
             body.dc_host,
             body.bind_username,
             password,
-            body.port,
-            use_ssl=body.use_ssl,
+            LDAPS_PORT,
+            use_ssl=True,
             trust_untrusted_cert=body.trust_untrusted_cert,
             sync_ous=ous,
             sync_ous_prune=body.sync_ous_prune,
@@ -120,7 +126,7 @@ async def test_ldap(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_authentication_write),
 ):
-    """Bind with the service account and run a small LDAP query."""
+    """Bind with the service account and run a small LDAP query over LDAPS."""
     existing_row = await db.get(AuthProviderConfig, "ldap")
     existing: dict = {}
     if existing_row and existing_row.config_json:
@@ -137,8 +143,8 @@ async def test_ldap(
             body.dc_host,
             body.bind_username,
             password,
-            body.port,
-            use_ssl=body.use_ssl,
+            LDAPS_PORT,
+            use_ssl=True,
             trust_untrusted_cert=body.trust_untrusted_cert,
             sync_ous=ous,
             sync_ous_prune=body.sync_ous_prune,
@@ -156,52 +162,33 @@ async def test_ldap(
     return {
         "ok": True,
         "status": "Success",
-        "port": result.get("port"),
-        "use_ssl": result.get("use_ssl"),
-        "encryption": result.get("encryption"),
+        "port": result.get("port") or LDAPS_PORT,
+        "use_ssl": True,
+        "encryption": result.get("encryption") or "LDAPS",
     }
 
 
-@router.get("/keycloak")
-async def get_keycloak(db: AsyncSession = Depends(get_db), _: User = Depends(require_authentication)):
-    cfg = await get_provider_config(db, "keycloak")
-    safe = {**cfg}
-    for key in ("client_secret", "admin_client_secret"):
-        if safe.get(key):
-            safe[key] = "********"
-    return safe
+@router.get("/saml")
+async def get_saml(db: AsyncSession = Depends(get_db), _: User = Depends(require_authentication)):
+    cfg = await get_provider_config(db, "saml")
+    return saml_public_view(cfg)
 
 
-@router.put("/keycloak")
-async def save_keycloak(body: KeycloakConfigIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_authentication_write)):
-    existing = await get_provider_config(db, "keycloak")
-    data = body.model_dump()
-    for key in ("client_secret", "admin_client_secret"):
-        if data.get(key) == "********":
-            data[key] = existing.get(key, "")
-    await save_provider_config(db, "keycloak", body.enabled, data)
-    await refresh_auth_sync_schedules()
-    return {"ok": True}
-
-
-@router.post("/keycloak/sync")
-async def sync_keycloak_ad(db: AsyncSession = Depends(get_db), _: User = Depends(require_authentication_write)):
-    cfg = await get_provider_config(db, "keycloak")
-    if not cfg.get("enabled"):
-        raise HTTPException(400, "Keycloak is not enabled")
+@router.put("/saml")
+async def save_saml(body: SamlConfigIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_authentication_write)):
     try:
-        return await sync_keycloak_directory(db, cfg)
+        data = validate_saml_config(body.model_dump())
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(400, f"Keycloak sync failed: {exc}") from exc
+    await save_provider_config(db, "saml", body.enabled, data)
+    return {"ok": True, **saml_public_view({**data, "enabled": body.enabled})}
 
 
 @router.get("/providers/status")
 async def providers_status(db: AsyncSession = Depends(get_db), _: User = Depends(require_authentication)):
     ldap = await get_provider_config(db, "ldap")
-    kc = await get_provider_config(db, "keycloak")
+    saml = await get_provider_config(db, "saml")
     return {
         "ldap": {"enabled": ldap.get("enabled", False)},
-        "keycloak": {"enabled": kc.get("enabled", False)},
+        "saml": {"enabled": saml.get("enabled", False)},
     }

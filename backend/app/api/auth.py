@@ -1,11 +1,9 @@
-"""Authentication: local, LDAP, Keycloak OIDC."""
+"""Authentication: local, LDAP, SAML 2.0 SP."""
 
 import asyncio
-from urllib.parse import quote
 
-import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
+from fastapi.responses import RedirectResponse, Response as RawResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +13,7 @@ from app.core.security import create_access_token, verify_password
 from app.api.deps import get_current_user
 from app.database import get_db
 from app.models.user import User
-from app.services.rbac import normalize_role_slug, primary_role_slug, session_payload_for_slugs
+from app.services.rbac import primary_role_slug, session_payload_for_slugs
 from app.services.user_role_service import get_user_role_slugs
 from app.services.auth_config import get_provider_config
 from app.services.ldap_auth import (
@@ -24,21 +22,14 @@ from app.services.ldap_auth import (
     authenticate_ldap_sync,
     map_ldap_profile,
 )
-from app.services.oidc import (
-    OIDCFlowParams,
-    clear_state_cookie_params,
-    generate_flow_params,
-    issuer_for,
-    sign_state_cookie,
-    state_cookie_params,
-    validate_id_token,
-    validate_frontend_url,
-    validate_realm,
-    validate_oidc_redirect_uri,
-    validate_server_url,
-    verify_state_cookie,
+from app.services.auth_exchange import consume_code, generate_code, store_token
+from app.services.auth_urls import validate_frontend_url
+from app.services.saml_sp import (
+    login_redirect_url,
+    logout_redirect_url,
+    process_acs,
+    sp_metadata_xml,
 )
-from app.services.oidc_exchange import consume_code, generate_code, store_token
 from app.services.storage_service import ensure_user_media_directory
 from app.services.user_chat_storage_service import ensure_user_chat_store
 from app.services.user_lifecycle_service import record_user_login
@@ -60,6 +51,10 @@ class TokenResponse(BaseModel):
     is_active: bool = True
 
 
+class ExchangeRequest(BaseModel):
+    code: str
+
+
 @router.get("/session")
 async def auth_session(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     slugs = await get_user_role_slugs(db, user.id)
@@ -78,13 +73,7 @@ async def logout_local(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Revoke all previously-issued JWTs for this user.
-
-    Bumps ``token_version`` so every token issued before this call (including
-    the one used to authenticate this request) is rejected from now on. The
-    frontend clears its localStorage afterwards; this endpoint makes the
-    server-side revocation effective immediately even if the token was stolen.
-    """
+    """Revoke all previously-issued JWTs for this user."""
     user.token_version = int(user.token_version or 0) + 1
     await db.commit()
     clear_session_cookies(response)
@@ -94,8 +83,8 @@ async def logout_local(
 @router.get("/methods")
 async def auth_methods(db: AsyncSession = Depends(get_db)):
     ldap_cfg = await get_provider_config(db, "ldap")
-    kc_cfg = await get_provider_config(db, "keycloak")
-    return {"ldap": bool(ldap_cfg.get("enabled")), "keycloak": bool(kc_cfg.get("enabled"))}
+    saml_cfg = await get_provider_config(db, "saml")
+    return {"ldap": bool(ldap_cfg.get("enabled")), "saml": bool(saml_cfg.get("enabled"))}
 
 
 async def _token_response(db: AsyncSession, user: User, response: Response) -> TokenResponse:
@@ -108,8 +97,6 @@ async def _token_response(db: AsyncSession, user: User, response: Response) -> T
     token = create_access_token(user.username, primary, token_version=user.token_version)
     set_session_cookies(response, access_token=token)
     settings = get_settings()
-    # Do not return a browser JWT in the JSON body when legacy Bearer auth is
-    # disabled — the HttpOnly session cookie is the only browser credential.
     body_token = token if settings.allow_legacy_bearer_auth else ""
     return TokenResponse(
         access_token=body_token,
@@ -126,9 +113,6 @@ async def login_local(
     db: AsyncSession = Depends(get_db),
 ):
     username = body.username.strip()
-    # Brute-force protection: per-username + per-IP sliding window (Redis,
-    # shared across workers; fail-closed if Redis is down → HTTP 503).
-    # Applied before the password check so failed attempts are counted too.
     from app.services.rate_limit import check_login_rate_limit
 
     source_ip = request.client.host if request.client else None
@@ -163,130 +147,53 @@ async def login_local(
     raise HTTPException(status_code=401, detail="Invalid username or password")
 
 
-@router.get("/keycloak/login")
-async def keycloak_login(db: AsyncSession = Depends(get_db)):
-    kc = await get_provider_config(db, "keycloak")
-    if not kc.get("enabled"):
-        raise HTTPException(status_code=400, detail="Keycloak disabled")
+def _request_public_url(request: Request) -> str:
+    """Absolute URL for the current request path (for python3-saml)."""
+    from app.services.auth_urls import public_api_base
+
+    return f"{public_api_base()}{request.url.path}"
+
+
+@router.get("/saml/login")
+async def saml_login(request: Request, db: AsyncSession = Depends(get_db)):
+    cfg = await get_provider_config(db, "saml")
+    if not cfg.get("enabled"):
+        raise HTTPException(status_code=400, detail="SAML is disabled")
     try:
-        server = validate_server_url(kc["server_url"])
-        realm = validate_realm(kc["realm"])
-        redirect_uri = validate_oidc_redirect_uri(kc["redirect_uri"])
+        url = await asyncio.to_thread(login_redirect_url, cfg, _request_public_url(request))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    # Generate a fresh state/nonce/PKCE triplet and bind it to the user's
-    # browser via a short-lived signed cookie. The callback verifies the
-    # cookie + the IdP-echoed ``state`` to prevent login CSRF, and uses the
-    # PKCE verifier + nonce to protect the code exchange and ID token.
-    params = generate_flow_params()
-    cookie_value = sign_state_cookie(params)
-
-    url = (
-        f"{server}/realms/{realm}/protocol/openid-connect/auth"
-        f"?client_id={quote(kc['client_id'])}"
-        f"&response_type=code"
-        f"&scope={quote('openid profile email')}"
-        f"&redirect_uri={quote(redirect_uri)}"
-        f"&state={params.state}"
-        f"&nonce={params.nonce}"
-        f"&code_challenge={params.code_challenge}"
-        f"&code_challenge_method=S256"
-    )
-    resp = RedirectResponse(url)
-    resp.set_cookie(value=cookie_value, **state_cookie_params())
-    return resp
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"SAML login failed: {exc}") from exc
+    return RedirectResponse(url)
 
 
-@router.get("/keycloak/callback")
-async def keycloak_callback(
+@router.post("/saml/acs")
+async def saml_acs(
     request: Request,
-    code: str | None = None,
-    state: str | None = None,
+    SAMLResponse: str = Form(...),
+    RelayState: str | None = Form(None),
     db: AsyncSession = Depends(get_db),
 ):
-    kc = await get_provider_config(db, "keycloak")
-    if not kc.get("enabled"):
-        raise HTTPException(status_code=400, detail="Keycloak disabled")
+    del RelayState
+    cfg = await get_provider_config(db, "saml")
+    if not cfg.get("enabled"):
+        raise HTTPException(status_code=400, detail="SAML is disabled")
+    form = {"SAMLResponse": SAMLResponse}
     try:
-        server = validate_server_url(kc["server_url"])
-        realm = validate_realm(kc["realm"])
-        redirect_uri = validate_oidc_redirect_uri(kc["redirect_uri"])
+        profile = await asyncio.to_thread(process_acs, cfg, _request_public_url(request), form)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail=f"SAML ACS failed: {exc}") from exc
 
-    # 1) Verify the signed state cookie + the IdP-echoed state (CSRF).
-    cookie_value = request.cookies.get("alpha_router_oidc_state")
-    flow = verify_state_cookie(cookie_value, state or "")
-    if flow is None or not code:
-        raise HTTPException(status_code=400, detail="Invalid or expired OIDC state")
-
-    issuer = issuer_for(server, realm)
-    token_url = f"{issuer}/protocol/openid-connect/token"
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        # 2) Exchange the authorization code WITH the PKCE verifier.
-        token_resp = await client.post(
-            token_url,
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "client_id": kc["client_id"],
-                "client_secret": kc["client_secret"],
-                "redirect_uri": redirect_uri,
-                "code_verifier": flow.code_verifier,
-            },
-        )
-        if token_resp.status_code != 200:
-            raise HTTPException(status_code=401, detail="Keycloak token exchange failed")
-        tokens = token_resp.json()
-        access = tokens.get("access_token")
-        id_token = tokens.get("id_token")
-        if not access or not id_token:
-            raise HTTPException(status_code=401, detail="Keycloak did not return tokens")
-
-        # 3) Validate the ID token: signature (JWKS) + iss/aud/exp/nonce.
-        try:
-            claims = validate_id_token(
-                id_token,
-                issuer=issuer,
-                audience=kc["client_id"],
-                nonce=flow.nonce,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=401, detail=str(exc)) from exc
-
-        # 4) Fetch verified profile claims from the userinfo endpoint.
-        userinfo = await client.get(
-            f"{issuer}/protocol/openid-connect/userinfo",
-            headers={"Authorization": f"Bearer {access}"},
-        )
-        if userinfo.status_code != 200:
-            raise HTTPException(status_code=401, detail="Keycloak userinfo failed")
-
-    info = userinfo.json()
-    # The OIDC identity is the subject (``sub``); it MUST match the ID-token sub.
-    sub = claims.get("sub") or info.get("sub")
-    if not sub or info.get("sub") and info.get("sub") != sub:
-        raise HTTPException(status_code=401, detail="OIDC subject mismatch")
-    profile = {
-        "username": info.get("preferred_username") or info.get("email"),
-        "email": info.get("email"),
-        "display_name": info.get("name"),
-        "job_title": info.get("title") or info.get("job_title"),
-        "department": info.get("department"),
-        "office": info.get("office"),
-        "reporting_to": info.get("manager") or info.get("reporting_to"),
-        "external_id": sub,
-    }
-    user = await _upsert_directory_user(db, profile, "keycloak")
+    user = await _upsert_directory_user(db, profile, "saml")
     slugs = await get_user_role_slugs(db, user.id)
     await record_user_login(db, user)
     await db.commit()
     jwt_token = create_access_token(
         user.username, primary_role_slug(slugs), token_version=user.token_version
     )
-
-    # 5) Deliver the JWT via a one-time exchange code (NOT in the URL).
     xchg_code = generate_code()
     await store_token(
         xchg_code,
@@ -301,18 +208,17 @@ async def keycloak_callback(
         frontend_url = validate_frontend_url(settings.frontend_url)
     except ValueError as exc:
         raise HTTPException(status_code=500, detail="Invalid frontend redirect configuration") from exc
-    redirect = RedirectResponse(f"{frontend_url}/login?code={xchg_code}")
-    redirect.delete_cookie(**clear_state_cookie_params())
-    return redirect
+    return RedirectResponse(f"{frontend_url}/login?code={xchg_code}")
 
 
-@router.post("/keycloak/exchange")
-async def keycloak_exchange(
-    body: "ExchangeRequest",
+@router.post("/saml/exchange")
+async def saml_exchange(
+    body: ExchangeRequest,
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    """Exchange a one-time OIDC code for the Alpha Router JWT (keeps JWT out of the URL)."""
+    """Exchange a one-time SSO code for the Alpha Router session (keeps JWT out of the URL)."""
+    del db
     payload = await consume_code(body.code)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired login code")
@@ -327,10 +233,30 @@ async def keycloak_exchange(
     )
 
 
-@router.get("/keycloak/logout")
-async def keycloak_logout(request: Request, db: AsyncSession = Depends(get_db)):
-    """Redirect to the Keycloak end_session endpoint to terminate the SSO session."""
+@router.get("/saml/metadata")
+async def saml_metadata(db: AsyncSession = Depends(get_db)):
+    """Public SP metadata when SAML is enabled; opaque 404 otherwise.
+
+    SP metadata is intentionally unauthenticated (standard SAML practice) but
+    is not advertised while the provider is disabled. Generation does not
+    require IdP metadata.
+    """
+    cfg = await get_provider_config(db, "saml")
+    if not cfg.get("enabled"):
+        raise HTTPException(status_code=404, detail="Not Found")
+    try:
+        xml = await asyncio.to_thread(sp_metadata_xml, cfg)
+    except Exception:
+        # Avoid leaking configuration details on a public endpoint.
+        raise HTTPException(status_code=404, detail="Not Found") from None
+    return RawResponse(content=xml, media_type="application/samlmetadata+xml")
+
+
+@router.get("/saml/logout")
+async def saml_logout(request: Request, db: AsyncSession = Depends(get_db)):
+    """Terminate Alpha Router session and optionally redirect to IdP SLO."""
     token = request.cookies.get(settings.session_cookie_name)
+    name_id: str | None = None
     if token:
         from app.core.security import decode_access_token
 
@@ -341,30 +267,26 @@ async def keycloak_logout(request: Request, db: AsyncSession = Depends(get_db)):
                 await db.execute(select(User).where(User.username == username))
             ).scalars().first()
             if user:
+                name_id = user.external_id
                 user.token_version = int(user.token_version or 0) + 1
                 await db.commit()
 
-    kc = await get_provider_config(db, "keycloak")
     try:
         frontend_url = validate_frontend_url(settings.frontend_url)
     except ValueError as exc:
         raise HTTPException(status_code=500, detail="Invalid frontend redirect configuration") from exc
-    if not kc.get("enabled"):
-        # If Keycloak is disabled, just point the SPA at its own logout screen.
-        response = RedirectResponse(f"{frontend_url}/login")
-        clear_session_cookies(response)
-        return response
-    try:
-        server = validate_server_url(kc["server_url"])
-        realm = validate_realm(kc["realm"])
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    url = (
-        f"{server}/realms/{realm}/protocol/openid-connect/logout"
-        f"?client_id={quote(kc['client_id'])}"
-        f"&post_logout_redirect_uri={quote(frontend_url + '/login')}"
-    )
-    response = RedirectResponse(url)
+
+    cfg = await get_provider_config(db, "saml")
+    slo_url = None
+    if cfg.get("enabled"):
+        try:
+            slo_url = await asyncio.to_thread(
+                logout_redirect_url, cfg, _request_public_url(request), name_id
+            )
+        except Exception:
+            slo_url = None
+
+    response = RedirectResponse(slo_url or f"{frontend_url}/login")
     clear_session_cookies(response)
     return response
 
@@ -390,22 +312,13 @@ async def csrf_token(
     return {"csrf_token": csrf}
 
 
-class ExchangeRequest(BaseModel):
-    code: str
-
-
 async def _upsert_directory_user(db: AsyncSession, profile: dict, provider: str) -> User:
-    """Upsert a directory (LDAP/Keycloak) user WITHOUT cross-provider takeover.
+    """Upsert a directory (LDAP/SAML) user WITHOUT cross-provider takeover.
 
-    Identity binding rules (Phase 6 hardening):
-
-    * Keycloak: the stable identity is the OIDC ``sub`` (external_id). We first
-      look up by ``(auth_provider='keycloak', external_id=sub)``. Only if that
-      fails do we consider the username — and if a user with the same username
-      exists under a *different* provider (local/ldap), we REJECT rather than
-      silently taking over that account (which would be account takeover /
-      privilege escalation).
-    * LDAP: keeps the legacy username-based binding (no stable sub).
+    * SAML: stable identity is NameID (external_id). Lookup by
+      ``(auth_provider='saml', external_id=NameID)`` first; username collision
+      with a different provider is rejected (409).
+    * LDAP: username-based binding.
     """
     username = profile["username"]
     if not username:
@@ -414,21 +327,17 @@ async def _upsert_directory_user(db: AsyncSession, profile: dict, provider: str)
     external_id = (profile.get("external_id") or "").strip() or None
     user: User | None = None
 
-    if provider == "keycloak" and external_id:
-        # 1) Bind by stable OIDC subject.
+    if provider == "saml" and external_id:
         user = (
             await db.execute(
                 select(User).where(
-                    User.auth_provider == "keycloak",
+                    User.auth_provider == "saml",
                     User.external_id == external_id,
                 )
             )
         ).scalars().first()
 
     if user is None:
-        # 2) Fall back to username lookup, but guard against cross-provider
-        #    collisions so a Keycloak user cannot hijack a local/ldap account
-        #    (including an admin) that merely shares a username.
         by_username = (
             await db.execute(select(User).where(User.username == username))
         ).scalars().first()
@@ -442,7 +351,6 @@ async def _upsert_directory_user(db: AsyncSession, profile: dict, provider: str)
                         "Refusing cross-provider account takeover."
                     ),
                 )
-            # Same provider — safe to claim/backfill external_id.
             user = by_username
 
     if user and user.deleted_at is not None:

@@ -182,7 +182,7 @@ export default function CreateLocalUserModal({ open, roles, plans, onClose, onSu
           </p>
         ) : (
           <p className="muted-text" style={{ marginTop: "-0.35rem", marginBottom: "0.75rem" }}>
-            Only local groups are listed. LDAP and Keycloak membership is managed by directory sync.
+            Only local groups are listed. LDAP membership is managed by directory sync; SAML users are provisioned on login.
           </p>
         )}
         <label>Budget plan</label>

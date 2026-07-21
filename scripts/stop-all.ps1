@@ -1,48 +1,14 @@
-# Alpha Router - Stop entire stack (Docker Compose + host LDAP bridge)
-# Stops: alpha-router app, PostgreSQL, Redis, MinIO, and the optional Windows LDAP bridge (port 8765).
+# Alpha Router - Stop entire stack (Docker Compose)
+# Stops: alpha-router app, PostgreSQL, Redis, MinIO, and related compose services.
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
 $AlphaRouterPorts = @(8080, 5432, 6379, 9000, 9001)
-$LdapBridgePort = if ($env:LDAP_BRIDGE_PORT) { [int]$env:LDAP_BRIDGE_PORT } else { 8765 }
 
 function Write-Step {
     param([string]$Message)
     Write-Host ("==> " + $Message) -ForegroundColor Cyan
-}
-
-function Stop-LdapBridge {
-    Write-Step ("Stopping LDAP bridge if running on port " + $LdapBridgePort)
-    $stopped = $false
-
-    Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -match "ldap_bridge_server" } |
-        ForEach-Object {
-            Write-Host ("    Stopping python PID " + $_.ProcessId + " ldap_bridge_server") -ForegroundColor DarkGray
-            Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-            $script:stopped = $true
-        }
-
-    try {
-        Get-NetTCPConnection -LocalPort $LdapBridgePort -State Listen -ErrorAction Stop |
-            ForEach-Object {
-                $proc = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue
-                if ($proc) {
-                    Write-Host (
-                        "    Stopping " + $proc.ProcessName + " PID " + $proc.Id + " on port " + $LdapBridgePort
-                    ) -ForegroundColor DarkGray
-                    Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-                    $script:stopped = $true
-                }
-            }
-    } catch {
-        # Port not listening or Get-NetTCPConnection unavailable.
-    }
-
-    if (-not $stopped) {
-        Write-Host "    No LDAP bridge process found." -ForegroundColor DarkGray
-    }
 }
 
 function Stop-DockerStack {
@@ -99,7 +65,6 @@ Write-Host ""
 Write-Host "Alpha Router - shutdown all services" -ForegroundColor Cyan
 Write-Host ""
 
-Stop-LdapBridge
 Stop-DockerStack
 
 Write-Host ""
@@ -112,7 +77,7 @@ if ($containerCount -gt 0) {
     $issues += "Docker Compose still has " + $containerCount + " running container(s). Run: docker compose ps"
 }
 
-foreach ($port in ($AlphaRouterPorts + @($LdapBridgePort))) {
+foreach ($port in $AlphaRouterPorts) {
     if (Test-PortListening -Port $port) {
         $issues += "Port " + $port + " is still listening"
     }
@@ -122,8 +87,7 @@ if ($issues.Count -eq 0) {
     Write-Host ""
     Write-Host "All Alpha Router services appear stopped." -ForegroundColor Green
     Write-Host "  Docker stack: down - postgres, redis, minio, alpha-router" -ForegroundColor DarkGray
-    Write-Host ("  LDAP bridge: stopped on port " + $LdapBridgePort) -ForegroundColor DarkGray
-    Write-Host ("  Ports checked: " + ($AlphaRouterPorts -join ", ") + ", " + $LdapBridgePort) -ForegroundColor DarkGray
+    Write-Host ("  Ports checked: " + ($AlphaRouterPorts -join ", ")) -ForegroundColor DarkGray
     Write-Host ""
     Write-Host "Data volumes were kept. To remove them too, run: docker compose down -v" -ForegroundColor DarkGray
     Write-Host ""

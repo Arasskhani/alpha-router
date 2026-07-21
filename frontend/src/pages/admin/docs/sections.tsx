@@ -40,7 +40,7 @@ export const docSections: DocSection[] = [
         <p>
           This guide is for administrators and integrators. It reflects current product behaviour: grouped admin
           navigation with a dedicated <strong>User panel</strong> section, scoped RBAC with a single{" "}
-          <strong>Super Admin</strong> role, LDAP/Keycloak directory sync, chat with attachments and tools, connection
+          <strong>Super Admin</strong> role, LDAP directory sync, SAML SSO, chat with attachments and tools, connection
           sync schedules, object storage for media, per-user budgets and deactivation, Usage &amp; Activity views,
           Operations and Database monitoring (for Super Admin), and optional gateway access via <code>/v1</code>. End-user
           help lives in the in-app <strong>User Manual</strong> (<code>/app/manual</code>). This guide does not contain
@@ -93,7 +93,7 @@ export const docSections: DocSection[] = [
             messages).
           </li>
           <li>
-            Supporting <strong>local, LDAP/Active Directory, and Keycloak</strong> sign-in, with scheduled directory
+            Supporting <strong>local, LDAP/Active Directory, and SAML 2.0</strong> sign-in, with scheduled LDAP directory
             sync for users and groups.
           </li>
           <li>
@@ -509,7 +509,7 @@ export const docSections: DocSection[] = [
             <strong>Budgets &amp; visibility</strong> — plan-based limits, dashboards, and API logs.
           </li>
           <li>
-            <strong>Enterprise access</strong> — LDAP, Keycloak, local accounts, and scoped RBAC with Super Admin.
+            <strong>Enterprise access</strong> — LDAP, SAML SSO, local accounts, and scoped RBAC with Super Admin.
           </li>
           <li>
             <strong>Optional /v1 API</strong> — OpenAI-compatible gateway for external tools when you need it.
@@ -531,8 +531,8 @@ export const docSections: DocSection[] = [
           </li>
         </ul>
         <Note>
-          Local, LDAP, and Keycloak sign-in methods appear based on <strong>Authentication</strong> configuration. LDAP
-          users sign in with directory credentials; Keycloak uses the SSO link when enabled.
+          Local, LDAP, and SAML sign-in methods appear based on <strong>Authentication</strong> configuration. LDAP
+          users sign in with directory credentials; SAML uses the SSO link when enabled.
         </Note>
       </>
     ),
@@ -781,20 +781,53 @@ export const docSections: DocSection[] = [
             <strong>Local</strong> — Accounts created under Users.
           </li>
           <li>
-            <strong>LDAP / Active Directory</strong> — Service account bind, domain controller host, optional sync OUs.
-            Use <em>Test Connection</em> then <em>Save</em>. <em>Sync AD</em> imports users and groups; optional{" "}
-            <strong>sync schedule</strong> (daily time) runs automatically. Users sync with{" "}
-            <strong>sAMAccountName</strong> (logon name) as username; display name is stored separately.
+            <strong>LDAP / Active Directory</strong> — Direct <strong>LDAPS on port 636</strong> only (no plaintext LDAP,
+            no Windows bridge). Enter the domain controller host and a service account, optionally enable{" "}
+            <em>Support Untrusted Certificate</em> for self-signed DC certs, then <em>Test</em> and <em>Save</em>.{" "}
+            <em>Sync AD</em> imports users and groups; optional <strong>Sync OUs</strong> limits both user and group
+            search to those OUs; optional <strong>sync schedule</strong> (daily time) runs automatically. Prune only
+            removes out-of-scope directory objects from Alpha Router after sync. Users sync with{" "}
+            <strong>sAMAccountName</strong> as username; display name is stored separately.
           </li>
           <li>
-            <strong>Keycloak</strong> — OIDC/OAuth SSO for the web UI. <em>Sync Keycloak</em> imports users/groups;
-            optional daily sync schedule mirrors LDAP.
+            <strong>SAML 2.0</strong> — Alpha Router acts as a SAML Service Provider. Configure IdP metadata (URL or XML),
+            register the fixed ACS URL and SP metadata with your Identity Provider, then use <em>Sign in with SAML</em>.
+            Users are created or updated on first successful SSO login (no directory sync).
           </li>
         </ul>
+        <h3>SAML Service Provider</h3>
         <p>
-          On Windows, Alpha Router uses signed LDAP when plain ldap3 bind fails (typical for AD). Store bind passwords in secure
-          configuration only.
+          On the Authentication → SAML tab: enable SAML, provide an IdP metadata URL and/or upload an IdP metadata XML
+          file (URL wins if both are set), set the SP Entity ID, and adjust attribute mapping if needed. ACS is fixed at{" "}
+          <code>/api/auth/saml/acs</code>. When SAML is enabled,
+          SP metadata is available at <code>/api/auth/saml/metadata</code> for your IdP (standard unauthenticated
+          SAML practice); when disabled the URL returns 404. Require signed assertions in production.{" "}
+          <code>API_PUBLIC_URL</code> must be reachable by the IdP (HTTPS in production).
         </p>
+        <h3>LDAPS certificate on the domain controller</h3>
+        <p>
+          Alpha Router connects with LDAPS only. On the DC, create a certificate for the server FQDN, then trust it locally so
+          Active Directory can present it on port 636. The Alpha Router container must reach the DC on TCP{" "}
+          <strong>636</strong>.
+        </p>
+        <ol>
+          <li>
+            Open an elevated PowerShell on the domain controller and run, for example:
+            <pre>
+              New-SelfSignedCertificate -DnsName dc01.alpha-router.local -CertStoreLocation cert:\localmachine\my
+            </pre>
+            Replace <code>dc01.alpha-router.local</code> with your domain controller FQDN.
+          </li>
+          <li>
+            The certificate is created under <strong>Local Computer → Personal</strong> (
+            <code>Cert:\\LocalMachine\\My</code>).
+          </li>
+          <li>
+            Copy that certificate to <strong>Local Computer → Trusted Root Certification Authorities</strong> (
+            <code>Cert:\\LocalMachine\\Root</code>).
+          </li>
+          <li>Confirm LDAPS with ldp.exe (or equivalent) on port 636, then use <em>Test</em> in Alpha Router.</li>
+        </ol>
       </>
     ),
   },
@@ -1074,7 +1107,7 @@ export const docSections: DocSection[] = [
       <>
         <h2>Groups</h2>
         <p>
-          Sync LDAP or Keycloak groups, attach plans at group level, and keep membership aligned with your directory.
+          Sync LDAP groups, attach plans at group level, and keep membership aligned with your directory.
         </p>
         <ul>
           <li>

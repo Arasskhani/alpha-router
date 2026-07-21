@@ -142,8 +142,6 @@ services:
       - "8080:8080"
     environment:
       # Docker network overrides (env_file supplies pool/worker/rate-limit tuning)
-      LDAP_BRIDGE_URL: ${LDAP_BRIDGE_URL:-}
-      LDAP_BRIDGE_TOKEN: ${LDAP_BRIDGE_TOKEN:-}
       CODE_SANDBOX_BROKER_URL: http://sandbox-broker:8081
       CODE_SANDBOX_BROKER_TOKEN: ${SANDBOX_BROKER_TOKEN:?SANDBOX_BROKER_TOKEN must be set in .env}
     cap_drop:

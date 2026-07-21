@@ -1132,6 +1132,46 @@ async def apply_data_key_rotation(db) -> dict:
     return {"completed": True, **counts, "skipped": False}
 
 
+async def apply_keycloak_to_saml_migration(db) -> None:
+    """Rename Keycloak OIDC provider rows to SAML SP; clear incompatible OIDC JSON."""
+    from app.services.migration_flags import (
+        KEYCLOAK_TO_SAML_MIGRATION_KEY,
+        is_migration_completed,
+        mark_migration_completed,
+    )
+    from app.services.saml_sp import default_saml_config
+
+    if await is_migration_completed(db, KEYCLOAK_TO_SAML_MIGRATION_KEY):
+        return
+
+    import json as _json
+
+    saml_defaults = {k: v for k, v in default_saml_config().items() if k != "enabled"}
+    # Prefer keeping enabled flag from the old Keycloak row.
+    row = (
+        await db.execute(text("SELECT enabled, config_json FROM auth_providers WHERE provider = 'keycloak'"))
+    ).first()
+    if row is not None:
+        enabled = bool(row[0])
+        # Drop OIDC secrets/config — not transferable to SAML.
+        await db.execute(text("DELETE FROM auth_providers WHERE provider = 'saml'"))
+        await db.execute(
+            text(
+                "UPDATE auth_providers SET provider = 'saml', config_json = :cfg WHERE provider = 'keycloak'"
+            ),
+            {"cfg": _json.dumps(saml_defaults)},
+        )
+        await db.execute(
+            text("UPDATE auth_providers SET enabled = :en WHERE provider = 'saml'"),
+            {"en": enabled},
+        )
+    await db.execute(text("UPDATE users SET auth_provider = 'saml' WHERE auth_provider = 'keycloak'"))
+    await db.execute(text("UPDATE user_groups SET source = 'saml' WHERE source = 'keycloak'"))
+    await db.commit()
+    await mark_migration_completed(db, KEYCLOAK_TO_SAML_MIGRATION_KEY)
+    await db.commit()
+
+
 async def run_one_time_migrations(db) -> None:
     """Run all pending one-time data/storage migrations; no-op when already completed."""
     from app.services.storage_migration_service import (
@@ -1153,6 +1193,7 @@ async def run_one_time_migrations(db) -> None:
     await apply_pricing_sanity_migrations()
     await apply_chat_normalized_storage_migrations()
     await apply_chat_performance_migrations()
+    await apply_keycloak_to_saml_migration(db)
     await apply_user_budget_plan_sync(db)
     await apply_secret_at_rest_encryption(db)
     await migrate_legacy_blob_storage(db)

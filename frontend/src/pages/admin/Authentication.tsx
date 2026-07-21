@@ -1,11 +1,15 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 import AdminPage from "../../components/AdminPage";
-
 import { api } from "../../api";
 import { useConfirm } from "../../context/ConfirmContext";
+import { copyTextToClipboard } from "../../lib/clipboard";
 
+const LDAPS_PORT = 636;
+const SAML_METADATA_MAX_BYTES = 1024 * 1024;
 
+const LDAPS_CERT_EXAMPLE =
+  "New-SelfSignedCertificate -DnsName dc01.alpha-router.local -CertStoreLocation cert:\\localmachine\\my";
 
 type LdapSimple = {
   enabled: boolean;
@@ -22,76 +26,27 @@ type LdapSimple = {
   sync_schedule_minute: number;
 };
 
-
-
-type KcCfg = {
+type SamlCfg = {
   enabled: boolean;
-  server_url: string;
-  realm: string;
-  client_id: string;
-  client_secret: string;
-  redirect_uri: string;
-  admin_client_id: string;
-  admin_client_secret: string;
-  sync_schedule_enabled: boolean;
-  sync_schedule_hour: number;
-  sync_schedule_minute: number;
+  idp_metadata_url: string;
+  idp_metadata_xml: string;
+  entity_id: string;
+  acs_url: string;
+  metadata_url: string;
+  attr_username: string;
+  attr_email: string;
+  attr_display_name: string;
+  strict: boolean;
+  want_assertions_signed: boolean;
 };
-
-
-
-function parsePortInput(raw: string): number {
-  const digits = raw.replace(/\D/g, "");
-  if (!digits) return 0;
-  const n = Number.parseInt(digits, 10);
-  if (!Number.isFinite(n)) return 0;
-  return Math.min(65535, Math.max(0, n));
-}
-
-function effectivePort(port: number): number {
-  return port > 0 && port <= 65535 ? port : 389;
-}
-
-function portFieldValue(port: number): string {
-  return port > 0 ? String(port) : "";
-}
-
-const PLAIN_LDAP_PORT = 389;
-const LDAPS_PORT = 636;
-
-function applyLdapSslToggle(prev: LdapSimple, enabled: boolean, lastPlainPort: number): LdapSimple {
-  if (enabled) {
-    return { ...prev, use_ssl: true, port: LDAPS_PORT };
-  }
-  const restore =
-    lastPlainPort > 0 && lastPlainPort !== LDAPS_PORT ? lastPlainPort : PLAIN_LDAP_PORT;
-  return {
-    ...prev,
-    use_ssl: false,
-    port: prev.port === LDAPS_PORT ? restore : prev.port,
-  };
-}
-
-function applyLdapPortChange(prev: LdapSimple, port: number, lastPlainPort: number): {
-  next: LdapSimple;
-  lastPlainPort: number;
-} {
-  if (port === LDAPS_PORT) {
-    return { next: { ...prev, port, use_ssl: true }, lastPlainPort };
-  }
-  if (port > 0 && port !== LDAPS_PORT) {
-    return { next: { ...prev, port, use_ssl: false }, lastPlainPort: port };
-  }
-  return { next: { ...prev, port }, lastPlainPort };
-}
 
 const defaultLdap = (): LdapSimple => ({
   enabled: false,
   dc_host: "",
   bind_username: "",
   bind_password: "",
-  port: 389,
-  use_ssl: false,
+  port: LDAPS_PORT,
+  use_ssl: true,
   trust_untrusted_cert: false,
   sync_ous: "",
   sync_ous_prune: false,
@@ -100,233 +55,161 @@ const defaultLdap = (): LdapSimple => ({
   sync_schedule_minute: 0,
 });
 
+function normalizeLdap(r: Partial<LdapSimple>): LdapSimple {
+  return {
+    enabled: Boolean(r.enabled),
+    dc_host: r.dc_host || "",
+    bind_username: r.bind_username || "",
+    bind_password: r.bind_password || "",
+    port: LDAPS_PORT,
+    use_ssl: true,
+    trust_untrusted_cert: Boolean(r.trust_untrusted_cert),
+    sync_ous: r.sync_ous || "",
+    sync_ous_prune: Boolean(r.sync_ous_prune),
+    sync_schedule_enabled: Boolean(r.sync_schedule_enabled),
+    sync_schedule_hour: Number.isFinite(r.sync_schedule_hour) ? Number(r.sync_schedule_hour) : 3,
+    sync_schedule_minute: Number.isFinite(r.sync_schedule_minute) ? Number(r.sync_schedule_minute) : 0,
+  };
+}
 
+const defaultSaml = (): SamlCfg => ({
+  enabled: false,
+  idp_metadata_url: "",
+  idp_metadata_xml: "",
+  entity_id: "",
+  acs_url: "/api/auth/saml/acs",
+  metadata_url: "/api/auth/saml/metadata",
+  attr_username: "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name",
+  attr_email: "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress",
+  attr_display_name: "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname",
+  strict: true,
+  want_assertions_signed: true,
+});
 
 export default function Authentication() {
-
-  const [tab, setTab] = useState<"ldap" | "keycloak">("ldap");
-
+  const [tab, setTab] = useState<"ldap" | "saml">("ldap");
   const [ldap, setLdap] = useState<LdapSimple>(defaultLdap);
   const { confirm } = useConfirm();
-  const lastPlainPortRef = useRef(PLAIN_LDAP_PORT);
-
-  const [kc, setKc] = useState<KcCfg>({
-    enabled: false,
-    server_url: "",
-    realm: "",
-    client_id: "",
-    client_secret: "",
-    redirect_uri: "http://localhost:8080/api/auth/keycloak/callback",
-    admin_client_id: "",
-    admin_client_secret: "",
-    sync_schedule_enabled: false,
-    sync_schedule_hour: 3,
-    sync_schedule_minute: 0,
-  });
+  const [saml, setSaml] = useState<SamlCfg>(defaultSaml);
   const [msg, setMsg] = useState("");
   const [syncing, setSyncing] = useState(false);
-  const [kcSyncing, setKcSyncing] = useState(false);
-
   const [saving, setSaving] = useState(false);
-
   const [testing, setTesting] = useState(false);
+  const [certCmdCopied, setCertCmdCopied] = useState(false);
+  const [idpXmlFileName, setIdpXmlFileName] = useState("");
+  const idpXmlInputRef = useRef<HTMLInputElement>(null);
 
-
+  async function copyLdapsCertCommand() {
+    const ok = await copyTextToClipboard(LDAPS_CERT_EXAMPLE);
+    if (!ok) return;
+    setCertCmdCopied(true);
+    window.setTimeout(() => setCertCmdCopied(false), 2000);
+  }
 
   useEffect(() => {
-
-    api<LdapSimple>("/api/admin/authentication/ldap").then((r) => {
-      const port = r.port && r.port > 0 ? r.port : PLAIN_LDAP_PORT;
-      if (port !== LDAPS_PORT) {
-        lastPlainPortRef.current = port;
-      }
-      setLdap({
-        enabled: r.enabled,
-        dc_host: r.dc_host || "",
-        bind_username: r.bind_username || "",
-        bind_password: r.bind_password || "",
-        port,
-        use_ssl: Boolean(r.use_ssl),
-        trust_untrusted_cert: Boolean(r.trust_untrusted_cert),
-        sync_ous: r.sync_ous || "",
-        sync_ous_prune: Boolean(r.sync_ous_prune),
-        sync_schedule_enabled: Boolean(r.sync_schedule_enabled),
-        sync_schedule_hour: Number.isFinite(r.sync_schedule_hour) ? r.sync_schedule_hour : 3,
-        sync_schedule_minute: Number.isFinite(r.sync_schedule_minute) ? r.sync_schedule_minute : 0,
+    api<LdapSimple>("/api/admin/authentication/ldap").then((r) => setLdap(normalizeLdap(r)));
+    api<SamlCfg>("/api/admin/authentication/saml").then((r) => {
+      setSaml({
+        ...defaultSaml(),
+        ...r,
+        enabled: Boolean(r.enabled),
+        strict: r.strict !== false,
+        want_assertions_signed: r.want_assertions_signed !== false,
       });
+      setIdpXmlFileName(r.idp_metadata_xml?.trim() ? "Stored IdP metadata XML" : "");
     });
-    api<KcCfg>("/api/admin/authentication/keycloak").then((r) =>
-      setKc({
-        enabled: r.enabled,
-        server_url: r.server_url || "",
-        realm: r.realm || "",
-        client_id: r.client_id || "",
-        client_secret: r.client_secret || "",
-        redirect_uri: r.redirect_uri || "http://localhost:8080/api/auth/keycloak/callback",
-        admin_client_id: r.admin_client_id || "",
-        admin_client_secret: r.admin_client_secret || "",
-        sync_schedule_enabled: Boolean(r.sync_schedule_enabled),
-        sync_schedule_hour: Number.isFinite(r.sync_schedule_hour) ? r.sync_schedule_hour : 3,
-        sync_schedule_minute: Number.isFinite(r.sync_schedule_minute) ? r.sync_schedule_minute : 0,
-      }),
-    );
-
   }, []);
 
+  async function onIdpMetadataFile(file: File | null) {
+    if (!file) return;
+    const lower = file.name.toLowerCase();
+    if (!lower.endsWith(".xml") && file.type !== "text/xml" && file.type !== "application/xml") {
+      setMsg("Please upload an .xml metadata file.");
+      return;
+    }
+    if (file.size > SAML_METADATA_MAX_BYTES) {
+      setMsg("Metadata file is too large (max 1 MB).");
+      return;
+    }
+    try {
+      const text = await file.text();
+      const trimmed = text.trim();
+      if (!trimmed.startsWith("<") || !/EntityDescriptor/i.test(trimmed)) {
+        setMsg("File does not look like SAML IdP metadata XML.");
+        return;
+      }
+      setSaml({ ...saml, idp_metadata_xml: trimmed });
+      setIdpXmlFileName(file.name);
+      setMsg("");
+    } catch {
+      setMsg("Could not read the metadata file.");
+    }
+  }
 
+  function clearIdpMetadataXml() {
+    setSaml({ ...saml, idp_metadata_xml: "" });
+    setIdpXmlFileName("");
+    if (idpXmlInputRef.current) idpXmlInputRef.current.value = "";
+  }
 
   function ldapPayload(): LdapSimple {
-
-    return { ...ldap, port: effectivePort(ldap.port) };
-
+    return { ...ldap, port: LDAPS_PORT, use_ssl: true };
   }
-
-
 
   async function saveLdap(e: FormEvent) {
-
     e.preventDefault();
-
     setSaving(true);
-
     setMsg("");
-
     try {
-
       await api("/api/admin/authentication/ldap", {
-
         method: "PUT",
-
         body: JSON.stringify(ldapPayload()),
-
       });
-
       setMsg("Active Directory settings saved.");
-
       const refreshed = await api<LdapSimple>("/api/admin/authentication/ldap");
-
-      const port = refreshed.port && refreshed.port > 0 ? refreshed.port : PLAIN_LDAP_PORT;
-      if (port !== LDAPS_PORT) {
-        lastPlainPortRef.current = port;
-      }
-      setLdap({
-        enabled: refreshed.enabled,
-        dc_host: refreshed.dc_host,
-        bind_username: refreshed.bind_username,
-        bind_password: refreshed.bind_password || "********",
-        port,
-        use_ssl: Boolean(refreshed.use_ssl),
-        trust_untrusted_cert: Boolean(refreshed.trust_untrusted_cert),
-        sync_ous: refreshed.sync_ous || "",
-        sync_ous_prune: Boolean(refreshed.sync_ous_prune),
-        sync_schedule_enabled: Boolean(refreshed.sync_schedule_enabled),
-        sync_schedule_hour: refreshed.sync_schedule_hour ?? 3,
-        sync_schedule_minute: refreshed.sync_schedule_minute ?? 0,
-      });
-
+      setLdap(normalizeLdap({ ...refreshed, bind_password: refreshed.bind_password || "********" }));
     } catch (err) {
-
       setMsg(String(err));
-
     } finally {
-
       setSaving(false);
-
     }
-
   }
 
-
-
   async function runLdapTest() {
-
     setTesting(true);
-
     setMsg("");
-
     try {
-
       const res = await api<{ ok: boolean; status: string; encryption?: string; port?: number }>(
         "/api/admin/authentication/ldap/test",
         {
-        method: "POST",
-
-        body: JSON.stringify(ldapPayload()),
-
+          method: "POST",
+          body: JSON.stringify(ldapPayload()),
         },
       );
-
-      const via = res.encryption ? ` via ${res.encryption}` : "";
-      const portNote = res.port ? ` (port ${res.port})` : "";
+      const via = res.encryption ? ` via ${res.encryption}` : " via LDAPS";
+      const portNote = res.port ? ` (port ${res.port})` : ` (port ${LDAPS_PORT})`;
       setMsg(`Success${via}${portNote}`);
-      if (res.port && res.port !== ldap.port) {
-        setLdap((prev) => ({ ...prev, port: res.port!, use_ssl: res.port === 636 || prev.use_ssl }));
-      }
-
     } catch (e) {
-
       const text = String(e);
-
       setMsg(text.toLowerCase().includes("failed") ? text : `Failed: ${text}`);
-
     } finally {
-
       setTesting(false);
-
     }
-
   }
-
-
 
   async function syncAd() {
-
     setSyncing(true);
-
     setMsg("");
-
     try {
-
       const r = await api<{ users_synced: number; groups_synced: number }>(
-
         "/api/admin/authentication/ldap/sync",
-
         { method: "POST" },
-
       );
-
       setMsg(`${r.users_synced} users synced, ${r.groups_synced} groups synced.`);
-
     } catch (e) {
-
       setMsg(String(e));
-
     } finally {
-
       setSyncing(false);
-
-    }
-
-  }
-
-
-
-  async function syncKc() {
-    setKcSyncing(true);
-    setMsg("");
-    try {
-      const r = await api<{ users_synced: number; groups_synced: number; members_linked?: number }>(
-        "/api/admin/authentication/keycloak/sync",
-        { method: "POST" },
-      );
-      setMsg(
-        `${r.users_synced} users synced, ${r.groups_synced} groups synced` +
-          (r.members_linked != null ? `, ${r.members_linked} memberships linked.` : "."),
-      );
-    } catch (e) {
-      setMsg(String(e));
-    } finally {
-      setKcSyncing(false);
     }
   }
 
@@ -379,269 +262,212 @@ export default function Authentication() {
     );
   }
 
-  async function saveKc(e: FormEvent) {
-
+  async function saveSaml(e: FormEvent) {
     e.preventDefault();
-
-    await api("/api/admin/authentication/keycloak", { method: "PUT", body: JSON.stringify(kc) });
-
-    setMsg("Keycloak settings saved.");
-
+    setSaving(true);
+    setMsg("");
+    try {
+      const res = await api<SamlCfg & { ok?: boolean }>("/api/admin/authentication/saml", {
+        method: "PUT",
+        body: JSON.stringify({
+          enabled: saml.enabled,
+          idp_metadata_url: saml.idp_metadata_url,
+          idp_metadata_xml: saml.idp_metadata_xml,
+          entity_id: saml.entity_id,
+          attr_username: saml.attr_username,
+          attr_email: saml.attr_email,
+          attr_display_name: saml.attr_display_name,
+          strict: saml.strict,
+          want_assertions_signed: saml.want_assertions_signed,
+        }),
+      });
+      setSaml({
+        ...defaultSaml(),
+        ...res,
+        enabled: Boolean(res.enabled),
+        strict: res.strict !== false,
+        want_assertions_signed: res.want_assertions_signed !== false,
+      });
+      setIdpXmlFileName(res.idp_metadata_xml?.trim() ? idpXmlFileName || "Stored IdP metadata XML" : "");
+      setMsg("SAML settings saved.");
+    } catch (err) {
+      setMsg(String(err));
+    } finally {
+      setSaving(false);
+    }
   }
-
-
 
   const canTry = ldap.dc_host.trim() && ldap.bind_username.trim();
 
-
-
   return (
-
     <AdminPage title="Authentication">
-
       <p style={{ color: "var(--muted)" }}>
-
-        Connect Alpha Router to your corporate directory. For Active Directory you only need the domain controller and a
-
-        service account — encryption and LDAP paths are configured automatically.
-
+        Connect Alpha Router to your corporate directory with a domain controller and service account. Active Directory uses{" "}
+        <strong>LDAPS on port 636</strong> only — the Alpha Router container must be able to reach the DC on that port.
       </p>
 
       {msg && <p className="card">{msg}</p>}
 
-
-
       <div className="tabs">
-
         <button type="button" className={`tab ${tab === "ldap" ? "active" : ""}`} onClick={() => setTab("ldap")}>
-
           Active Directory
-
         </button>
-
-        <button type="button" className={`tab ${tab === "keycloak" ? "active" : ""}`} onClick={() => setTab("keycloak")}>
-
-          Keycloak
-
+        <button
+          type="button"
+          className={`tab ${tab === "saml" ? "active" : ""}`}
+          onClick={() => setTab("saml")}
+        >
+          SAML
         </button>
-
       </div>
 
-
-
       {tab === "ldap" && (
-
         <form className="card" onSubmit={saveLdap}>
-
           <label>
-
             <input
-
               type="checkbox"
-
               checked={ldap.enabled}
-
               onChange={(e) => setLdap({ ...ldap, enabled: e.target.checked })}
-
             />{" "}
-
             Enable Active Directory sign-in
-
           </label>
-
-
 
           <label className="input-block" style={{ marginTop: 12 }}>
-
             <span className="muted-text">Domain Controller (hostname or IP)</span>
-
             <input
-
               value={ldap.dc_host}
-
               onChange={(e) => setLdap({ ...ldap, dc_host: e.target.value })}
-
               placeholder="dc01.corp.example.com"
-
               style={{ width: "100%" }}
-
               required
-
             />
-
           </label>
 
-
-
           <label className="input-block">
-
             <span className="muted-text">Port</span>
-
-            <input
-
-              type="text"
-
-              inputMode="numeric"
-
-              autoComplete="off"
-
-              value={portFieldValue(ldap.port)}
-
-              onChange={(e) => {
-                const parsed = parsePortInput(e.target.value);
-                if (parsed > 0 && parsed !== LDAPS_PORT) {
-                  lastPlainPortRef.current = parsed;
-                }
-                const { next } = applyLdapPortChange(ldap, parsed, lastPlainPortRef.current);
-                setLdap(next);
-              }}
-
-              placeholder="389"
-
-              style={{ width: "100%" }}
-
-            />
-
-            <span className="muted-text" style={{ fontSize: "0.85rem" }}>
-
-              Use <strong>389</strong> for plain LDAP or <strong>636</strong> for LDAPS. If the DC requires LDAP signing,
-              Alpha Router will try LDAPS automatically when testing from Docker/Linux.
-
-            </span>
-
+            <input type="text" value={String(LDAPS_PORT)} readOnly disabled style={{ width: "100%" }} />
           </label>
 
-
-
-          <label className="input-block" style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-
-            <input
-
-              type="checkbox"
-
-              checked={ldap.use_ssl}
-
-              onChange={(e) => {
-                if (e.target.checked && ldap.port > 0 && ldap.port !== LDAPS_PORT) {
-                  lastPlainPortRef.current = ldap.port;
-                }
-                setLdap(applyLdapSslToggle(ldap, e.target.checked, lastPlainPortRef.current));
-              }}
-
-            />
-
+          <label
+            className="input-block"
+            style={{ display: "flex", alignItems: "center", gap: "0.5rem", opacity: 0.85 }}
+          >
+            <input type="checkbox" checked disabled readOnly />
             <span className="muted-text">Use LDAPS (port 636)</span>
-
           </label>
 
-
-
-          {ldap.use_ssl && (
-
-          <label className="input-block" style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-
+          <label className="input-block" style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem" }}>
             <input
-
               type="checkbox"
-
               checked={ldap.trust_untrusted_cert}
-
               onChange={(e) => setLdap({ ...ldap, trust_untrusted_cert: e.target.checked })}
-
             />
-
-            <span className="muted-text">Support Untrusted Certificate</span>
-
-            <span className="muted-text" style={{ fontSize: "0.85rem" }}>
-
-              Accept self-signed or non-CA LDAPS certificates (hostname should still match the DC).
-
+            <span>
+              <span className="muted-text">Support Untrusted Certificate</span>
+              <br />
+              <span className="muted-text" style={{ fontSize: "0.85rem" }}>
+                Accept self-signed or non-CA LDAPS certificates (hostname should still match the DC).
+              </span>
             </span>
-
           </label>
 
-          )}
-
-
+          <div className="card" style={{ marginTop: 12, background: "var(--surface-2, transparent)" }}>
+            <h3 style={{ marginTop: 0 }}>LDAPS certificate on the domain controller</h3>
+            <p className="muted-text" style={{ marginTop: 0 }}>
+              Alpha Router connects with LDAPS only. On the DC, create a certificate for the server FQDN, then trust it locally
+              so Active Directory can present it on port 636.
+            </p>
+            <ol className="muted-text" style={{ paddingLeft: "1.25rem", marginBottom: 0 }}>
+              <li>
+                Open an elevated PowerShell on the domain controller and run, for example:
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.5rem",
+                    margin: "0.5rem 0",
+                    padding: "0.5rem 0.75rem",
+                    borderRadius: "var(--radius-sm, 6px)",
+                    border: "1px solid var(--border)",
+                    background: "var(--surface)",
+                  }}
+                >
+                  <pre
+                    style={{
+                      margin: 0,
+                      flex: 1,
+                      overflowX: "auto",
+                      fontSize: "0.8rem",
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-all",
+                    }}
+                  >
+                    {LDAPS_CERT_EXAMPLE}
+                  </pre>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => void copyLdapsCertCommand()}
+                    title="Copy command"
+                    aria-label="Copy command"
+                    style={{ flexShrink: 0, padding: "0.35rem 0.65rem", fontSize: "0.8rem" }}
+                  >
+                    {certCmdCopied ? "Copied" : "Copy"}
+                  </button>
+                </div>
+                Replace <code>dc01.alpha-router.local</code> with your domain controller FQDN.
+              </li>
+              <li>
+                The certificate is created under <strong>Local Computer → Personal</strong> (
+                <code>Cert:\\LocalMachine\\My</code>).
+              </li>
+              <li>
+                Copy that certificate to <strong>Local Computer → Trusted Root Certification Authorities</strong> (
+                <code>Cert:\\LocalMachine\\Root</code>).
+              </li>
+              <li>Confirm LDAPS with ldp.exe (or equivalent) on port 636, then use Test in Alpha Router.</li>
+            </ol>
+          </div>
 
           <label className="input-block">
-
             <span className="muted-text">Username (service account)</span>
-
             <input
-
               value={ldap.bind_username}
-
               onChange={(e) => setLdap({ ...ldap, bind_username: e.target.value })}
-
               placeholder="Administrator or CORP\\Administrator"
-
               style={{ width: "100%" }}
-
               autoComplete="off"
-
               required
-
             />
-
             <span className="muted-text" style={{ fontSize: "0.85rem" }}>
-
               Examples: short name, <strong>DOMAIN\user</strong>, or <strong>user@corp.example.com</strong>
-
             </span>
-
           </label>
 
-
-
           <label className="input-block">
-
             <span className="muted-text">Password</span>
-
             <input
-
               type="password"
-
               value={ldap.bind_password}
-
               onChange={(e) => setLdap({ ...ldap, bind_password: e.target.value })}
-
               placeholder={ldap.bind_password === "********" ? "Saved (leave or replace)" : ""}
-
               style={{ width: "100%" }}
-
               autoComplete="new-password"
-
             />
-
           </label>
 
-
-
           <label className="input-block">
-
             <span className="muted-text">Sync OUs (optional)</span>
-
             <textarea
-
               value={ldap.sync_ous}
-
               onChange={(e) => setLdap({ ...ldap, sync_ous: e.target.value })}
-
               placeholder={"OU=Staff,DC=corp,DC=local\nOU=Contractors,DC=corp,DC=local"}
-
               rows={4}
-
               style={{ width: "100%", resize: "vertical" }}
-
             />
-
             <span className="muted-text" style={{ fontSize: "0.85rem" }}>
-
-              One OU per line. Limits user and group sync when prune is enabled. Leave empty for all users.
-
+              One OU per line. Limits user and group sync to these OUs. Leave empty for the whole domain.
             </span>
-
           </label>
 
           <label className="input-block" style={{ display: "flex", gap: 8, alignItems: "flex-start", marginTop: 8 }}>
@@ -683,185 +509,153 @@ export default function Authentication() {
           )}
 
           <div className="dialog-actions" style={{ marginTop: 12 }}>
-
             <button className="btn" type="submit" disabled={saving || !canTry}>
-
               {saving ? "Saving…" : "Save"}
-
             </button>
-
-            <button
-
-              className="btn btn-ghost"
-
-              type="button"
-
-              disabled={!canTry || testing}
-
-              onClick={() => void runLdapTest()}
-
-            >
-
+            <button className="btn btn-ghost" type="button" disabled={!canTry || testing} onClick={() => void runLdapTest()}>
               {testing ? "Testing…" : "Test"}
-
             </button>
-
-            <button
-
-              className="btn btn-ghost"
-
-              type="button"
-
-              disabled={!ldap.enabled || syncing}
-
-              onClick={() => void syncAd()}
-
-            >
-
+            <button className="btn btn-ghost" type="button" disabled={!ldap.enabled || syncing} onClick={() => void syncAd()}>
               {syncing ? "Syncing…" : "Sync AD"}
-
             </button>
-
           </div>
-
         </form>
-
       )}
 
-
-
-      {tab === "keycloak" && (
-
-        <form className="card" onSubmit={saveKc}>
-
+      {tab === "saml" && (
+        <form className="card" onSubmit={(e) => void saveSaml(e)}>
+          <p className="muted-text" style={{ marginTop: 0 }}>
+            Alpha Router is a SAML 2.0 Service Provider. Users are created or updated on first successful SSO login (no
+            directory sync). Register the ACS URL and SP metadata with your Identity Provider.
+          </p>
           <label>
-
-            <input type="checkbox" checked={kc.enabled} onChange={(e) => setKc({ ...kc, enabled: e.target.checked })} />{" "}
-
-            Enable Keycloak
-
+            <input
+              type="checkbox"
+              checked={saml.enabled}
+              onChange={(e) => setSaml({ ...saml, enabled: e.target.checked })}
+            />{" "}
+            Enable SAML
           </label>
 
-          <input
+          <label className="input-block" style={{ marginTop: 12 }}>
+            <span className="muted-text">IdP Metadata URL</span>
+            <input
+              value={saml.idp_metadata_url}
+              onChange={(e) => setSaml({ ...saml, idp_metadata_url: e.target.value })}
+              placeholder="https://idp.example.com/metadata"
+              style={{ width: "100%" }}
+            />
+          </label>
 
-            placeholder="Server URL"
+          <div className="input-block" style={{ marginTop: 8 }}>
+            <span className="muted-text">IdP Metadata XML file (optional if URL is set)</span>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.5rem", marginTop: 6 }}>
+              <input
+                ref={idpXmlInputRef}
+                type="file"
+                accept=".xml,text/xml,application/xml"
+                style={{ display: "none" }}
+                onChange={(e) => void onIdpMetadataFile(e.target.files?.[0] ?? null)}
+              />
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => idpXmlInputRef.current?.click()}
+              >
+                Upload metadata XML
+              </button>
+              {saml.idp_metadata_xml.trim() ? (
+                <>
+                  <span className="muted-text" style={{ fontSize: "0.9rem" }}>
+                    {idpXmlFileName || "XML stored"}
+                  </span>
+                  <button type="button" className="btn btn-ghost" onClick={clearIdpMetadataXml}>
+                    Clear
+                  </button>
+                </>
+              ) : (
+                <span className="muted-text" style={{ fontSize: "0.9rem" }}>
+                  No file uploaded
+                </span>
+              )}
+            </div>
+            <span className="muted-text" style={{ fontSize: "0.85rem", display: "block", marginTop: 4 }}>
+              If both URL and file are set, the URL is used.
+            </span>
+          </div>
 
-            value={kc.server_url}
+          <label className="input-block" style={{ marginTop: 8 }}>
+            <span className="muted-text">SP Entity ID</span>
+            <input
+              value={saml.entity_id}
+              onChange={(e) => setSaml({ ...saml, entity_id: e.target.value })}
+              placeholder="https://alpha-router.example.com/api/auth/saml/metadata"
+              style={{ width: "100%" }}
+            />
+          </label>
 
-            onChange={(e) => setKc({ ...kc, server_url: e.target.value })}
+          <label className="input-block" style={{ marginTop: 8 }}>
+            <span className="muted-text">ACS URL (fixed)</span>
+            <input type="text" value={saml.acs_url || "/api/auth/saml/acs"} readOnly disabled style={{ width: "100%" }} />
+          </label>
 
-            style={{ width: "100%", marginTop: 8 }}
+          <p className="muted-text" style={{ marginTop: 8 }}>
+            SP Metadata (public only while SAML is enabled):{" "}
+            <a href={saml.metadata_url || "/api/auth/saml/metadata"} target="_blank" rel="noreferrer">
+              {saml.metadata_url || "/api/auth/saml/metadata"}
+            </a>
+          </p>
 
-          />
+          <h3 style={{ marginTop: 16 }}>Attribute mapping</h3>
+          <label className="input-block">
+            <span className="muted-text">Username attribute</span>
+            <input
+              value={saml.attr_username}
+              onChange={(e) => setSaml({ ...saml, attr_username: e.target.value })}
+              style={{ width: "100%" }}
+            />
+          </label>
+          <label className="input-block" style={{ marginTop: 8 }}>
+            <span className="muted-text">Email attribute</span>
+            <input
+              value={saml.attr_email}
+              onChange={(e) => setSaml({ ...saml, attr_email: e.target.value })}
+              style={{ width: "100%" }}
+            />
+          </label>
+          <label className="input-block" style={{ marginTop: 8 }}>
+            <span className="muted-text">Display name attribute</span>
+            <input
+              value={saml.attr_display_name}
+              onChange={(e) => setSaml({ ...saml, attr_display_name: e.target.value })}
+              style={{ width: "100%" }}
+            />
+          </label>
 
-          <input
-
-            placeholder="Realm"
-
-            value={kc.realm}
-
-            onChange={(e) => setKc({ ...kc, realm: e.target.value })}
-
-            style={{ width: "100%", marginTop: 8 }}
-
-          />
-
-          <input
-
-            placeholder="Client ID"
-
-            value={kc.client_id}
-
-            onChange={(e) => setKc({ ...kc, client_id: e.target.value })}
-
-            style={{ width: "100%", marginTop: 8 }}
-
-          />
-
-          <input
-
-            type="password"
-
-            placeholder="Client secret"
-
-            value={kc.client_secret}
-
-            onChange={(e) => setKc({ ...kc, client_secret: e.target.value })}
-
-            style={{ width: "100%", marginTop: 8 }}
-
-          />
-
-          <input
-
-            placeholder="Redirect URI"
-
-            value={kc.redirect_uri}
-
-            onChange={(e) => setKc({ ...kc, redirect_uri: e.target.value })}
-
-            style={{ width: "100%", marginTop: 8 }}
-
-          />
-
-          <h3>Admin API (group sync)</h3>
-
-          <input
-
-            placeholder="Admin client ID"
-
-            value={kc.admin_client_id}
-
-            onChange={(e) => setKc({ ...kc, admin_client_id: e.target.value })}
-
-            style={{ width: "100%", marginTop: 8 }}
-
-          />
-
-          <input
-
-            type="password"
-
-            placeholder="Admin client secret"
-
-            value={kc.admin_client_secret}
-
-            onChange={(e) => setKc({ ...kc, admin_client_secret: e.target.value })}
-
-            style={{ width: "100%", marginTop: 8 }}
-
-          />
-
-          {renderSyncSchedule(kc.sync_schedule_enabled, kc.sync_schedule_hour, kc.sync_schedule_minute, (patch) =>
-            setKc({
-              ...kc,
-              sync_schedule_enabled: patch.enabled ?? kc.sync_schedule_enabled,
-              sync_schedule_hour: patch.hour ?? kc.sync_schedule_hour,
-              sync_schedule_minute: patch.minute ?? kc.sync_schedule_minute,
-            }),
-          )}
+          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: 12 }}>
+            <input
+              type="checkbox"
+              checked={saml.want_assertions_signed}
+              onChange={(e) => setSaml({ ...saml, want_assertions_signed: e.target.checked })}
+            />
+            <span className="muted-text">Require signed assertions</span>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: 8 }}>
+            <input
+              type="checkbox"
+              checked={saml.strict}
+              onChange={(e) => setSaml({ ...saml, strict: e.target.checked })}
+            />
+            <span className="muted-text">Strict SAML validation</span>
+          </label>
 
           <div className="dialog-actions" style={{ marginTop: 12 }}>
-            <button className="btn" type="submit">
-              Save Keycloak
-            </button>
-            <button
-              className="btn btn-ghost"
-              type="button"
-              disabled={!kc.enabled || kcSyncing}
-              onClick={() => void syncKc()}
-            >
-              {kcSyncing ? "Syncing…" : "Sync Keycloak"}
+            <button className="btn" type="submit" disabled={saving}>
+              {saving ? "Saving…" : "Save SAML"}
             </button>
           </div>
         </form>
-
       )}
-
     </AdminPage>
-
   );
-
 }
-
-

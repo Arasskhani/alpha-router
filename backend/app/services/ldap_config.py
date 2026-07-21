@@ -7,7 +7,8 @@ import ssl
 from typing import Any
 from urllib.parse import urlparse
 
-_DEFAULT_PORT = 389
+LDAPS_PORT = 636
+_DEFAULT_PORT = LDAPS_PORT
 
 
 def clean_bind_password(password: str | None) -> str:
@@ -43,15 +44,19 @@ def _escape_filter(value: str) -> str:
 
 def discover_root_dse(host: str, port: int = _DEFAULT_PORT) -> dict[str, str]:
     """Anonymous rootDSE read (no credentials) to learn base DN and DNS domain name."""
+    import ssl as _ssl
+
     import ldap3
-    from ldap3 import ALL, ANONYMOUS, AUTO_BIND_NO_TLS, Connection, Server
+    from ldap3 import ALL, ANONYMOUS, AUTO_BIND_NO_TLS, Connection, Server, Tls
 
     host = (host or "").strip()
     if not host:
         return {}
     port = int(port or _DEFAULT_PORT)
+    use_ssl = port == LDAPS_PORT
     try:
-        srv = Server(host, port=port, get_info=ALL, connect_timeout=10)
+        tls = Tls(validate=_ssl.CERT_NONE, version=_ssl.PROTOCOL_TLS_CLIENT) if use_ssl else None
+        srv = Server(host, port=port, use_ssl=use_ssl, tls=tls, get_info=ALL, connect_timeout=10)
         conn = Connection(
             srv,
             authentication=ANONYMOUS,
@@ -185,27 +190,18 @@ def simple_public_view(cfg: dict) -> dict:
     """Fields shown in admin UI (simple fields only — not internal bind_dn)."""
     ous_text = sync_ous_to_text(cfg.get("sync_ous"))
     stored_user = (cfg.get("bind_username") or "").strip()
-    port = int(cfg.get("port") or 0)
     if cfg.get("dc_host"):
         host = cfg.get("dc_host") or ""
     else:
-        host, parsed_port, _ = _parse_legacy_server(cfg.get("server", ""))
-        if not port:
-            port = parsed_port
-    if not port:
-        port = _DEFAULT_PORT
-    stored_use_ssl = bool(cfg.get("use_ssl"))
-    if port == 636:
-        use_ssl = True
-    else:
-        use_ssl = stored_use_ssl
+        host, _, _ = _parse_legacy_server(cfg.get("server", ""))
+    # Alpha Router supports LDAPS only — always present fixed transport to the admin UI.
     return {
         "enabled": bool(cfg.get("enabled")),
         "dc_host": host,
         "bind_username": stored_user,
         "bind_password": "********" if cfg.get("bind_password") else "",
-        "port": port,
-        "use_ssl": use_ssl,
+        "port": LDAPS_PORT,
+        "use_ssl": True,
         "trust_untrusted_cert": bool(cfg.get("trust_untrusted_cert")),
         "sync_ous": ous_text,
         "sync_ous_prune": bool(cfg.get("sync_ous_prune")),
@@ -235,9 +231,10 @@ def expand_ldap_config(raw: dict) -> dict:
         out.setdefault("user_list_filter", _AD_USER_LIST_FILTER)
         out.setdefault("group_filter", _AD_GROUP_FILTER)
         out["sync_ous"] = parse_sync_ous(out.get("sync_ous"))
-        out_port = int(out.get("port") or _DEFAULT_PORT)
-        out["use_ssl"] = bool(out.get("use_ssl")) or out_port == 636
-        out["use_starttls"] = bool(out.get("use_starttls")) and not out["use_ssl"]
+        out["port"] = LDAPS_PORT
+        out["use_ssl"] = True
+        out["use_starttls"] = False
+        out["server"] = f"ldaps://{(out.get('dc_host') or '').strip()}:{LDAPS_PORT}"
         out.setdefault("trust_untrusted_cert", bool(out.get("trust_untrusted_cert")))
         out.setdefault("sync_ous_prune", bool(out.get("sync_ous_prune")))
         return out
@@ -247,7 +244,7 @@ def expand_ldap_config(raw: dict) -> dict:
         return {**raw, "enabled": bool(raw.get("enabled"))}
 
     domain = infer_domain(simple["bind_username"], raw.get("base_dn"))
-    port = int(simple.get("port") or _DEFAULT_PORT)
+    port = LDAPS_PORT
     host = simple["dc_host"]
     base_dn_existing = (raw.get("base_dn") or "").strip()
     if host and not base_dn_existing:
@@ -255,9 +252,6 @@ def expand_ldap_config(raw: dict) -> dict:
         if discovered.get("base_dn"):
             raw = {**raw, "base_dn": discovered["base_dn"]}
             domain = discovered.get("domain") or infer_domain(simple["bind_username"], discovered["base_dn"]) or domain
-    use_ssl = bool(raw.get("use_ssl")) or port == 636
-    use_starttls = bool(raw.get("use_starttls")) and not use_ssl
-    scheme = "ldaps" if use_ssl else "ldap"
     bind_password = raw.get("bind_password") or ""
     bind_username = simple["bind_username"]
 
@@ -267,11 +261,11 @@ def expand_ldap_config(raw: dict) -> dict:
         "bind_username": bind_username,
         "bind_password": bind_password,
         "port": port,
-        "use_ssl": use_ssl,
-        "use_starttls": use_starttls,
+        "use_ssl": True,
+        "use_starttls": False,
         "trust_untrusted_cert": bool(raw.get("trust_untrusted_cert")),
         "sync_ous_prune": bool(raw.get("sync_ous_prune")),
-        "server": f"{scheme}://{host}:{port}",
+        "server": f"ldaps://{host}:{port}",
         "bind_dn": format_bind_identity(bind_username, domain),
         "base_dn": raw.get("base_dn") or domain_to_base_dn(domain),
         "domain": domain,
@@ -305,23 +299,14 @@ def merge_simple_ldap_config(
     if not user:
         raise ValueError("Username is required")
 
-    port = int(port or 0)
-    if port <= 0 or port > 65535:
-        port = int(existing.get("port") or _DEFAULT_PORT)
-    if use_ssl is None:
-        use_ssl = bool(existing.get("use_ssl"))
-    if not use_ssl and port == 636:
-        port = _DEFAULT_PORT
-    elif port == 636:
-        use_ssl = True
-    else:
-        use_ssl = bool(use_ssl)
-    use_starttls = bool(existing.get("use_starttls")) and not use_ssl
+    # LDAPS-only product path — ignore legacy port/use_ssl inputs.
+    port = LDAPS_PORT
+    use_ssl = True
+    use_starttls = False
     if trust_untrusted_cert is None:
         trust_untrusted_cert = bool(existing.get("trust_untrusted_cert"))
     if sync_ous_prune is None:
         sync_ous_prune = bool(existing.get("sync_ous_prune"))
-    scheme = "ldaps" if use_ssl else "ldap"
 
     base_dn = (existing.get("base_dn") or "").strip()
     domain = infer_domain(user, base_dn)
@@ -351,7 +336,7 @@ def merge_simple_ldap_config(
         "use_starttls": use_starttls,
         "trust_untrusted_cert": bool(trust_untrusted_cert),
         "sync_ous_prune": bool(sync_ous_prune),
-        "server": f"{scheme}://{host}:{port}",
+        "server": f"ldaps://{host}:{port}",
         "bind_dn": bind_dn,
         "base_dn": base_dn,
         "domain": domain or existing.get("domain") or "",

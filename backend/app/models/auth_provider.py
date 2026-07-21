@@ -1,4 +1,4 @@
-"""LDAP / Keycloak configuration stored in database (admin UI)."""
+"""LDAP / SAML configuration stored in database (admin UI)."""
 
 from datetime import datetime
 
@@ -10,7 +10,7 @@ from app.database import Base
 class AuthProviderConfig(Base):
     __tablename__ = "auth_providers"
 
-    provider = Column(String(32), primary_key=True)  # ldap | keycloak
+    provider = Column(String(32), primary_key=True)  # ldap | saml
     enabled = Column(Boolean, default=False)
     config_json = Column(Text, nullable=False, default="{}")
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

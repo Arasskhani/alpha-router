@@ -27,7 +27,7 @@ function isUnsafe(method: string): boolean {
 function onUnauthorized(path: string) {
   if (
     path.startsWith("/api/auth/login")
-    || path.startsWith("/api/auth/keycloak/exchange")
+    || path.startsWith("/api/auth/saml/exchange")
     || path.startsWith("/api/auth/logout")
   ) return;
   cachedSession = null;

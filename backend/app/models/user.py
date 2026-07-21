@@ -28,7 +28,7 @@ class UserGroup(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(128), nullable=False, index=True)
     description = Column(Text, nullable=True)
-    # local | ldap | keycloak
+    # local | ldap | saml
     source = Column(String(32), default="local", index=True)
     external_id = Column(String(255), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
@@ -47,7 +47,7 @@ class User(Base):
     hashed_password = Column(String(255), nullable=True)
 
     role = Column(String(64), default="user")  # RBAC role slug
-    auth_provider = Column(String(32), default="local")  # local | ldap | keycloak
+    auth_provider = Column(String(32), default="local")  # local | ldap | saml
     external_id = Column(String(255), nullable=True, index=True)
     is_active = Column(Boolean, default=True)
     # Monotonic counter bumped to revoke all previously-issued JWTs for this

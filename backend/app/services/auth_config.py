@@ -2,27 +2,24 @@
 
 import json
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.auth_provider import AuthProviderConfig
 from app.services.ldap_config import expand_ldap_config
+from app.services.saml_sp import default_saml_config, public_view as saml_public_view
 from app.services.secret_crypto import decrypt_secret, encrypt_secret
 
 settings = get_settings()
 
 # Fields inside each provider's config_json that hold live credentials and must
-# be encrypted at rest. Everything else (hosts, DNs, ports, schedules) stays
-# plaintext so admins can read it back and so direct DB inspection still works.
+# be encrypted at rest. Everything else stays plaintext.
 _SENSITIVE_FIELDS: dict[str, set[str]] = {
     "ldap": {"bind_password"},
-    "keycloak": {"client_secret", "admin_client_secret"},
 }
 
 
 def _encrypt_config_fields(provider: str, payload: dict) -> dict:
-    """Return a copy of ``payload`` with sensitive fields encrypted (idempotent)."""
     sensitive = _SENSITIVE_FIELDS.get(provider, set())
     if not sensitive:
         return payload
@@ -34,12 +31,6 @@ def _encrypt_config_fields(provider: str, payload: dict) -> dict:
 
 
 def decrypt_provider_config(provider: str, payload: dict) -> dict:
-    """Return a copy of ``payload`` with sensitive fields decrypted.
-
-    Used by ``get_provider_config`` and by admin endpoints that read
-    ``config_json`` directly (so they never see ciphertext for ``resolve_password``
-    or test-bind flows, which would otherwise double-encrypt on save).
-    """
     sensitive = _SENSITIVE_FIELDS.get(provider, set())
     if not sensitive:
         return payload
@@ -57,10 +48,14 @@ async def get_provider_config(db: AsyncSession, provider: str) -> dict:
         raw = decrypt_provider_config(provider, raw)
         if provider == "ldap":
             return expand_ldap_config(raw)
+        if provider == "saml":
+            return {**saml_public_view(raw), "enabled": bool(raw.get("enabled"))}
         return raw
     fallback = _env_fallback(provider)
     if provider == "ldap":
         return expand_ldap_config(fallback)
+    if provider == "saml":
+        return {**saml_public_view(fallback), "enabled": bool(fallback.get("enabled"))}
     return fallback
 
 
@@ -75,17 +70,17 @@ def _env_fallback(provider: str) -> dict:
             "dc_host": settings.ldap_server.split("://")[-1].split(":")[0] if settings.ldap_server else "",
             "bind_username": settings.ldap_bind_dn,
             "port": 636,
+            "use_ssl": True,
         }
-    return {
-        "enabled": settings.keycloak_enabled,
-        "server_url": settings.keycloak_server_url,
-        "realm": settings.keycloak_realm,
-        "client_id": settings.keycloak_client_id,
-        "client_secret": settings.keycloak_client_secret,
-        "redirect_uri": settings.keycloak_redirect_uri,
-        "admin_client_id": "",
-        "admin_client_secret": "",
-    }
+    if provider == "saml":
+        base = default_saml_config()
+        base["enabled"] = bool(settings.saml_enabled)
+        if settings.saml_idp_metadata_url:
+            base["idp_metadata_url"] = settings.saml_idp_metadata_url
+        if settings.saml_entity_id:
+            base["entity_id"] = settings.saml_entity_id
+        return base
+    return {"enabled": False}
 
 
 async def save_provider_config(db: AsyncSession, provider: str, enabled: bool, config: dict) -> None:

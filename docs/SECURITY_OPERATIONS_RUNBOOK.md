@@ -58,7 +58,7 @@ Before starting, verify the following categories are explicitly configured:
 - unique application, admin, service-admin, gateway, Redis, broker, database,
   data-encryption, and object-storage credentials;
 - authenticated Redis and admin-only OpenAPI documentation;
-- HTTPS for the public API, frontend, Keycloak endpoints, and redirect URI;
+- HTTPS for the public API, frontend, and SAML ACS/metadata URLs when SAML is enabled;
 - TLS for SMTP and object storage, plus `ENABLE_HSTS=true`;
 - `ALLOW_INSECURE_CODE_SUBPROCESS=false` and a reachable authenticated broker.
 

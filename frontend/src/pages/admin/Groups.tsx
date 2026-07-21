@@ -90,12 +90,6 @@ export default function Groups() {
     load();
   }
 
-  async function syncKc() {
-    await api("/api/admin/groups/sync/keycloak", { method: "POST" });
-    setFlash("Keycloak groups synced.");
-    load();
-  }
-
   async function assignPlan(groupId: number, planId: string) {
     setErr("");
     try {
@@ -296,13 +290,10 @@ export default function Groups() {
           <option value="">All sources</option>
           <option value="local">Local</option>
           <option value="ldap">LDAP</option>
-          <option value="keycloak">Keycloak</option>
+          <option value="saml">SAML</option>
         </select>
         <button className="btn btn-ghost" type="button" onClick={syncLdap}>
           Sync LDAP
-        </button>
-        <button className="btn btn-ghost" type="button" onClick={syncKc}>
-          Sync Keycloak
         </button>
         <button
           className="btn btn-ghost"

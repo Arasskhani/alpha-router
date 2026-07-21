@@ -88,34 +88,6 @@ def test_production_accepts_when_all_secrets_overridden():
 
 
 @pytest.mark.parametrize(
-    "token",
-    [
-        "",
-        "short-token",
-        "alpha-router-ldap-bridge",
-    ],
-)
-def test_production_rejects_missing_weak_or_default_ldap_bridge_token(token):
-    with pytest.raises(RuntimeError) as exc:
-        _check_production_safe(
-            **_prod_kwargs(
-                ldap_bridge_url="http://host.docker.internal:8765",
-                ldap_bridge_token=token,
-            )
-        )
-    assert "LDAP_BRIDGE_TOKEN" in str(exc.value)
-
-
-def test_production_accepts_strong_ldap_bridge_token():
-    _check_production_safe(
-        **_prod_kwargs(
-            ldap_bridge_url="http://host.docker.internal:8765",
-            ldap_bridge_token="a-random-bridge-token-with-at-least-32-chars",
-        )
-    )
-
-
-@pytest.mark.parametrize(
     ("url", "token", "expected"),
     [
         ("", "a-random-sandbox-token-with-at-least-32-chars", "CODE_SANDBOX_BROKER_URL"),
@@ -134,10 +106,6 @@ def test_production_requires_authenticated_sandbox_broker(url, token, expected):
     assert expected in str(exc.value)
 
 
-def test_production_allows_disabled_ldap_bridge_without_token():
-    _check_production_safe(**_prod_kwargs(ldap_bridge_url="", ldap_bridge_token=""))
-
-
 def test_empty_string_is_not_treated_as_insecure_default():
     # An operator who sets a secret to empty (e.g. disables LDAP) must not trip the guard,
     # because "" is not in INSECURE_DEFAULTS. Only the known placeholder values trip it.
@@ -149,7 +117,7 @@ def test_insecure_defaults_set_contents():
     assert "change-me-in-production" in INSECURE_DEFAULTS
     assert "admin" in INSECURE_DEFAULTS
     assert "sk-alpha-router-master" in INSECURE_DEFAULTS
-    assert "alpha-router-ldap-bridge" in INSECURE_DEFAULTS
+    assert "alpha-router-ldap-bridge" not in INSECURE_DEFAULTS
 
 
 def test_default_environment_is_development(monkeypatch):
@@ -234,7 +202,7 @@ def test_production_warning_mode_clean_when_secure(caplog):
     [
         ({"service_admin_password": "changeme"}, "SERVICE_ADMIN_PASSWORD"),
         ({"database_url": "postgresql+asyncpg://alpha_router:alpha_router@postgres:5432/alpha-router"}, "DATABASE_URL"),
-        ({"keycloak_enabled": True, "keycloak_server_url": "http://keycloak", "keycloak_redirect_uri": "http://app/callback"}, "KEYCLOAK_TLS"),
+        ({"saml_enabled": True, "api_public_url": "http://api.example.com"}, "SAML_TLS"),
         ({"smtp_host": "smtp.internal", "smtp_tls": False}, "SMTP_TLS"),
         ({"s3_endpoint_url": "http://objects.example.com", "s3_use_ssl": False}, "S3_TLS"),
         ({"s3_access_key": "alpha-router", "s3_secret_key": "minioadmin"}, "S3_CREDENTIALS"),
@@ -296,8 +264,6 @@ def test_production_reports_full_insecurity_matrix():
         secret_key="change-me-in-production",
         admin_password="admin",
         gateway_master_key="sk-alpha-router-master",
-        ldap_bridge_url="http://bridge:8765",
-        ldap_bridge_token="short",
         code_sandbox_broker_url="",
         code_sandbox_broker_token="short",
         redis_url="redis://redis:6379/0",
@@ -309,7 +275,6 @@ def test_production_reports_full_insecurity_matrix():
             "SECRET_KEY",
             "ADMIN_PASSWORD",
             "GATEWAY_MASTER_KEY",
-            "LDAP_BRIDGE_TOKEN",
             "CODE_SANDBOX_BROKER_URL",
             "CODE_SANDBOX_BROKER_TOKEN",
             "REDIS_PASSWORD",

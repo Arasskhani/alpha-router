@@ -1464,6 +1464,7 @@ table.card tbody td:last-child {
 .badge-local { color: #059669; }
 .badge-ldap { color: #2563eb; }
 .badge-keycloak { color: #7c3aed; }
+.badge-saml { color: #0f766e; }
 .badge-role-admin {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, var(--surface));
@@ -4909,6 +4910,16 @@ table.card tbody td:last-child {
   border: 1px solid #fecaca;
   color: #dc2626;
   background: #fef2f2;
+}
+.alert-warning {
+  border: 1px solid #f59e0b;
+  color: #92400e;
+  background: #fffbeb;
+}
+[data-theme="dark"] .alert-warning {
+  border-color: color-mix(in srgb, #f59e0b 55%, var(--border));
+  color: #fbbf24;
+  background: color-mix(in srgb, #f59e0b 14%, var(--surface));
 }
 .muted-text { color: var(--muted); font-size: clamp(0.8rem, 0.75rem + 0.15vw, 0.9rem); }
 

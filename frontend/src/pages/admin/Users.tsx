@@ -505,7 +505,8 @@ export default function Users() {
     }
   }
 
-  const prov = (p: string) => `badge badge-${p === "local" ? "local" : p === "ldap" ? "ldap" : "keycloak"}`;
+  const prov = (p: string) =>
+    `badge badge-${p === "local" ? "local" : p === "ldap" ? "ldap" : p === "saml" ? "saml" : "keycloak"}`;
 
   function userRowActions(u: U): RowAction[] {
     const items: RowAction[] = [
@@ -837,7 +838,9 @@ export default function Users() {
             </p>
             {editUser.auth_provider !== "local" && (
               <p className="muted-text" style={{ marginBottom: "0.75rem" }}>
-                Profile fields sync from {editUser.auth_provider === "ldap" ? "LDAP" : "Keycloak"} on login; you can override them here.
+                Profile fields sync from{" "}
+                {editUser.auth_provider === "ldap" ? "LDAP" : editUser.auth_provider === "saml" ? "SAML" : "directory"} on
+                login; you can override them here.
               </p>
             )}
             <label>Display name</label>

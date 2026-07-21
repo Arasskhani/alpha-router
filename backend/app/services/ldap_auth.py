@@ -248,34 +248,8 @@ def _ldap_tls(cfg: dict | None = None):
 
 
 def ldap_connection_modes(cfg: dict) -> list[tuple[int, bool, bool]]:
-    """Ordered (port, use_ssl, use_starttls) attempts for Active Directory."""
-    port = int(cfg.get("port") or 389)
-    want_ssl = bool(cfg.get("use_ssl")) or port == 636
-    want_starttls = bool(cfg.get("use_starttls")) and not want_ssl
-    modes: list[tuple[int, bool, bool]] = []
-
-    def add(p: int, ssl_mode: bool, starttls: bool) -> None:
-        starttls = bool(starttls) and not ssl_mode
-        item = (p, ssl_mode, starttls)
-        if item not in modes:
-            modes.append(item)
-
-    if want_ssl:
-        add(636, True, False)
-        return modes
-
-    if port == 389:
-        if want_starttls:
-            add(389, False, True)
-        else:
-            add(389, False, True)
-            add(389, False, False)
-        add(636, True, False)
-    else:
-        add(port, False, want_starttls)
-        if port != 389:
-            add(389, False, True)
-    return modes
+    """LDAPS-only connection modes for Active Directory."""
+    return [(636, True, False)]
 
 
 def _encryption_label(use_ssl: bool, use_starttls: bool) -> str:
@@ -508,17 +482,15 @@ def _open_connection(cfg: dict, *, user: str | None = None, password: str | None
         msg = str(ldap3_error)
         if _needs_signed_ldap([msg]):
             raise RuntimeError(
-                f"{msg} — Active Directory requires a signed or encrypted LDAP bind from non-Windows hosts. "
-                "Install a valid LDAPS certificate on the domain controller and use port 636 (or check Use LDAPS), "
-                "run scripts/start-ldap-bridge.ps1 on the Windows host and set LDAP_BRIDGE_URL for Docker, "
-                "or run the Alpha Router backend on Windows with pythonnet for signed LDAP on port 389."
+                f"{msg} — Active Directory requires LDAPS. Configure a valid certificate on the domain "
+                "controller for port 636, then retry from Alpha Router."
             ) from ldap3_error
         lower = msg.lower()
         if _is_tls_error(RuntimeError(msg)) or "starttls failed" in lower:
-            if "unexpected_eof" in lower or "eof occurred" in lower:
+            if "unexpected_eof" in lower or "eof occurred" in lower or "10054" in lower or "forcibly closed" in lower:
                 hint = (
-                    "Port 636 accepts TCP connections but LDAPS/TLS is not configured on the domain controller. "
-                    "Install an LDAPS certificate on the DC, or use port 389 with Alpha Router on Windows for signed LDAP."
+                    "TCP to port 636 may succeed while LDAPS/TLS is not actually configured on the domain "
+                    "controller. Install and bind an LDAPS certificate on the DC, then retry."
                 )
             else:
                 hint = (
@@ -526,31 +498,20 @@ def _open_connection(cfg: dict, *, user: str | None = None, password: str | None
                     "or install a CA-trusted certificate on the domain controller."
                 )
             raise RuntimeError(
-                f"{msg} — LDAPS/STARTTLS could not be negotiated with the domain controller. {hint}"
+                f"{msg} — LDAPS could not be negotiated with the domain controller. {hint}"
             ) from ldap3_error
         raise ldap3_error
     raise RuntimeError("LDAP connection failed")
 
 
-def _ldap_bridge_enabled() -> bool:
-    from app.services.ldap_bridge_client import ldap_bridge_enabled
-
-    return ldap_bridge_enabled()
-
-
 def probe_directory(host: str, port: int, bind_username: str, password: str) -> dict[str, Any]:
     """Probe AD using the same bind candidate logic as sync/test."""
-    if _ldap_bridge_enabled():
-        from app.services.ldap_bridge_client import bridge_probe_directory
-
-        return bridge_probe_directory(host, port, bind_username, password)
-    try_port = int(port or 389)
     domain_guess = infer_domain(bind_username)
     cfg = {
         "enabled": True,
         "dc_host": host,
-        "port": try_port,
-        "use_ssl": try_port == 636,
+        "port": 636,
+        "use_ssl": True,
         "bind_username": bind_username.strip(),
         "bind_password": password,
         "bind_dn": format_bind_identity(bind_username, domain_guess),
@@ -561,19 +522,15 @@ def probe_directory(host: str, port: int, bind_username: str, password: str) -> 
     try:
         base_dn = _discover_base_dn(conn) or ""
         domain = infer_domain(bind_username, base_dn) or domain_guess
-        resolved_port = int(cfg.get("_resolved_port") or try_port)
-        use_ssl = bool(cfg.get("_resolved_use_ssl"))
-        use_starttls = bool(cfg.get("_resolved_use_starttls"))
-        scheme = "ldaps" if use_ssl else "ldap"
         return {
-            "port": resolved_port,
-            "use_ssl": use_ssl,
-            "use_starttls": use_starttls,
-            "server": f"{scheme}://{host}:{resolved_port}",
+            "port": 636,
+            "use_ssl": True,
+            "use_starttls": False,
+            "server": f"ldaps://{host}:636",
             "bind_dn": cfg["bind_dn"],
             "base_dn": base_dn,
             "domain": domain,
-            "encryption": cfg.get("_resolved_encryption"),
+            "encryption": cfg.get("_resolved_encryption") or "LDAPS",
         }
     finally:
         conn.unbind()
@@ -651,11 +608,6 @@ def authenticate_ldap_sync(username: str, password: str, config: dict | None = N
     cfg = _runtime_config(config)
     if not cfg.get("enabled") or not password:
         return None
-    if _ldap_bridge_enabled():
-        from app.services.ldap_bridge_client import bridge_authenticate
-
-        return bridge_authenticate(username, password, cfg)
-
     domain = cfg.get("domain") or ""
     base = (cfg.get("base_dn") or "").strip()
     if not base:
@@ -707,20 +659,18 @@ def _sync_search_bases(cfg: dict) -> list[str]:
 
 
 def _group_search_bases(cfg: dict) -> list[str]:
-    """Group sync: sync OUs when prune enabled, else domain base."""
-    if bool(cfg.get("sync_ous_prune")):
-        ous = parse_sync_ous(cfg.get("sync_ous"))
-        if ous:
-            return ous
+    """Group sync: same OU scope as users when sync_ous is set.
+
+    ``sync_ous_prune`` only controls post-sync DB cleanup, not the LDAP search base.
+    """
+    ous = parse_sync_ous(cfg.get("sync_ous"))
+    if ous:
+        return ous
     gbase = (cfg.get("group_base_dn") or cfg.get("base_dn") or "").strip()
     return [gbase] if gbase else []
 
 
 def fetch_ldap_users(config: dict) -> list[dict[str, Any]]:
-    if _ldap_bridge_enabled():
-        from app.services.ldap_bridge_client import bridge_fetch_users
-
-        return bridge_fetch_users(expand_ldap_config(config))
     cfg = expand_ldap_config(config)
     bases = _sync_search_bases(cfg)
     if not bases:
@@ -745,10 +695,6 @@ def fetch_ldap_users(config: dict) -> list[dict[str, Any]]:
 
 
 def fetch_ldap_groups(config: dict) -> list[dict[str, Any]]:
-    if _ldap_bridge_enabled():
-        from app.services.ldap_bridge_client import bridge_fetch_groups
-
-        return bridge_fetch_groups(expand_ldap_config(config))
     cfg = expand_ldap_config(config)
     bases = _group_search_bases(cfg)
     if not bases:
@@ -778,18 +724,9 @@ def fetch_ldap_groups(config: dict) -> list[dict[str, Any]]:
 
 
 def test_ldap_connection(config: dict) -> dict[str, Any]:
-    from app.services.ldap_winldap import WinLdapConnection
-
     cfg = expand_ldap_config({**config, "enabled": True})
-    if _ldap_bridge_enabled():
-        from app.services.ldap_bridge_client import bridge_test_connection
-
-        return bridge_test_connection(cfg)
     conn = _open_connection(cfg)
-    if isinstance(conn, WinLdapConnection):
-        encryption = "LDAP (signed)"
-    else:
-        encryption = str(cfg.get("_resolved_encryption") or "LDAP")
+    encryption = str(cfg.get("_resolved_encryption") or "LDAPS")
     base = (cfg.get("base_dn") or "").strip()
     warnings: list[str] = []
     sample_users = 0
@@ -811,9 +748,9 @@ def test_ldap_connection(config: dict) -> dict[str, Any]:
             warnings.append(f"Group search: {exc}")
 
     conn.unbind()
-    resolved_port = int(cfg.get("_resolved_port") or cfg.get("port") or 389)
-    use_ssl = bool(cfg.get("_resolved_use_ssl", cfg.get("use_ssl")))
-    scheme = "ldaps" if use_ssl else "ldap"
+    resolved_port = 636
+    use_ssl = True
+    scheme = "ldaps"
     return {
         "bind_ok": True,
         "server": f"{scheme}://{cfg.get('dc_host')}:{resolved_port}",

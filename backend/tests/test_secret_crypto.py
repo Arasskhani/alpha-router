@@ -120,7 +120,7 @@ async def _dispose_db(session: AsyncSession) -> None:
 
 
 # ---------------------------------------------------------------------------
-# auth_config: LDAP / Keycloak config_json secrets
+# auth_config: LDAP config_json secrets
 # ---------------------------------------------------------------------------
 
 
@@ -131,30 +131,26 @@ async def _test_save_and_load_provider_config_encrypts_secrets():
     try:
         await save_provider_config(
             db,
-            "keycloak",
+            "ldap",
             enabled=True,
             config={
-                "server_url": "http://kc:8080",
-                "realm": "demo",
-                "client_id": "alpha-router",
-                "client_secret": "super-secret-client-secret",
-                "admin_client_secret": "super-secret-admin-secret",
+                "dc_host": "dc.example.com",
+                "bind_username": "svc",
+                "bind_password": "super-secret-bind-password",
+                "port": 636,
+                "use_ssl": True,
             },
         )
 
-        row = await db.get(AuthProviderConfig, "keycloak")
+        row = await db.get(AuthProviderConfig, "ldap")
         stored = json.loads(row.config_json)
-        assert "super-secret-client-secret" not in row.config_json
-        assert "super-secret-admin-secret" not in row.config_json
-        assert is_encrypted(stored["client_secret"])
-        assert is_encrypted(stored["admin_client_secret"])
-        assert stored["server_url"] == "http://kc:8080"
-        assert stored["realm"] == "demo"
+        assert "super-secret-bind-password" not in row.config_json
+        assert is_encrypted(stored["bind_password"])
+        assert stored["dc_host"] == "dc.example.com"
 
-        cfg = await get_provider_config(db, "keycloak")
-        assert cfg["client_secret"] == "super-secret-client-secret"
-        assert cfg["admin_client_secret"] == "super-secret-admin-secret"
-        assert cfg["server_url"] == "http://kc:8080"
+        cfg = await get_provider_config(db, "ldap")
+        assert cfg["bind_password"] == "super-secret-bind-password"
+        assert cfg["dc_host"] == "dc.example.com"
     finally:
         await _dispose_db(db)
 
@@ -177,8 +173,7 @@ def test_decrypt_provider_config_helper_handles_plaintext_and_cipher():
 
 def test_sensitive_fields_catalog():
     assert "bind_password" in _SENSITIVE_FIELDS["ldap"]
-    assert "client_secret" in _SENSITIVE_FIELDS["keycloak"]
-    assert "admin_client_secret" in _SENSITIVE_FIELDS["keycloak"]
+    assert "keycloak" not in _SENSITIVE_FIELDS
 
 
 # ---------------------------------------------------------------------------

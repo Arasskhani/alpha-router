@@ -797,9 +797,8 @@ export const userManualSections: DocSection[] = [
           A banner explains read-only status. Contact your administrator if you believe deactivation was a mistake.
         </p>
         <Note>
-          This is different from an administrator who holds a <strong>Read Only</strong> role on one admin menu (for
-          example Groups Read Only Administrator). Those users remain fully able to chat and upload in{" "}
-          <code>/app</code>; only their assigned admin pages are read-only.
+          This is different from an administrator who holds <strong>API Key Admin</strong>. Those users remain fully able
+          to chat and upload in <code>/app</code>; only the API Keys admin menu is added for them.
         </Note>
       </>
     ),

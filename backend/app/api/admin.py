@@ -74,6 +74,7 @@ from app.services.alpha_router_api_key_service import (
 from app.services.smtp_service import SmtpNotConfiguredError, SmtpSendError, send_email
 from app.services.rbac import (
     FULL_ADMIN_SLUG,
+    actor_may_assign_roles,
     is_valid_role_slug,
     list_roles,
     normalize_role_slug,
@@ -122,6 +123,22 @@ async def _ensure_not_last_full_admin_removal(db: AsyncSession, user_id: int, ne
     if user_has_super_admin_access(current) and not user_has_super_admin_access(new_slugs):
         if await count_full_administrators(db) <= 1:
             raise HTTPException(400, detail="Cannot demote the last Full Administrator account")
+
+
+async def _ensure_actor_may_assign_roles(
+    db: AsyncSession,
+    actor: User,
+    new_slugs: list[str],
+    *,
+    previous_slugs: list[str] | None = None,
+) -> None:
+    """Reject Super Admin privilege changes from non–Super-Admin actors."""
+    actor_slugs = await get_user_role_slugs(db, actor.id)
+    if not actor_may_assign_roles(actor_slugs, new_slugs, previous_slugs):
+        raise HTTPException(
+            status_code=403,
+            detail="Only Super Admin can grant, change, or revoke Super Admin access",
+        )
 
 
 @router.get("/roles")
@@ -468,7 +485,11 @@ def _normalize_role(role: str) -> str:
 
 
 @router.post("/users")
-async def create_local_user(body: LocalUserIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_users_write)):
+async def create_local_user(
+    body: LocalUserIn,
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(require_users_write),
+):
     exists = (await db.execute(select(User).where(User.username == body.username))).scalars().first()
     if exists:
         raise HTTPException(400, "Username already exists")
@@ -481,19 +502,21 @@ async def create_local_user(body: LocalUserIn, db: AsyncSession = Depends(get_db
         password = validate_password(body.password)
     except PasswordPolicyError as exc:
         raise HTTPException(400, detail=str(exc)) from exc
+    new_slugs = [_normalize_role(body.role)]
+    await _ensure_actor_may_assign_roles(db, actor, new_slugs)
     user = User(
         username=body.username,
         email=body.email,
         display_name=body.display_name or body.username,
         hashed_password=hash_password(password),
-        role=_normalize_role(body.role),
+        role=new_slugs[0],
         auth_provider="local",
         department=body.department,
         job_title=body.job_title,
     )
     db.add(user)
     await db.flush()
-    await set_user_roles(db, user, [_normalize_role(body.role)])
+    await set_user_roles(db, user, new_slugs)
     if body.group_id is not None:
         group = await db.get(UserGroup, body.group_id)
         if not group:
@@ -1111,7 +1134,7 @@ async def patch_user(
     user_id: int,
     body: UserAdminPatch,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_users_write),
+    actor: User = Depends(require_users_write),
 ):
     user = await db.get(User, user_id)
     if not user:
@@ -1136,10 +1159,14 @@ async def patch_user(
         user.display_name = _clean_optional_str(body.display_name)
     if body.roles is not None:
         new_slugs = [_normalize_role(s) for s in body.roles] if body.roles else ["user"]
+        previous = await get_user_role_slugs(db, user.id)
+        await _ensure_actor_may_assign_roles(db, actor, new_slugs, previous_slugs=previous)
         await _ensure_not_last_full_admin_removal(db, user.id, new_slugs)
         saved_roles = await set_user_roles(db, user, new_slugs)
     elif body.role is not None:
         new_role = _normalize_role(body.role)
+        previous = await get_user_role_slugs(db, user.id)
+        await _ensure_actor_may_assign_roles(db, actor, [new_role], previous_slugs=previous)
         await _ensure_not_last_full_admin_removal(db, user.id, [new_role])
         saved_roles = await set_user_roles(db, user, [new_role])
     else:
@@ -1216,7 +1243,7 @@ class UsersBulkIn(BaseModel):
 async def bulk_update_users(
     body: UsersBulkIn,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_users_write),
+    actor: User = Depends(require_users_write),
 ):
     if not body.user_ids:
         raise HTTPException(400, detail="No users selected")
@@ -1242,6 +1269,7 @@ async def bulk_update_users(
         for u in users:
             cur = await get_user_role_slugs(db, u.id)
             if cur != new_slugs:
+                await _ensure_actor_may_assign_roles(db, actor, new_slugs, previous_slugs=cur)
                 await set_user_roles(db, u, new_slugs)
                 changed += 1
 

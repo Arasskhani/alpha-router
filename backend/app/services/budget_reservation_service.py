@@ -7,7 +7,7 @@ import uuid
 
 import litellm
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -307,3 +307,74 @@ async def expire_stale_reservations(db: AsyncSession) -> int:
         if await release(db, row.id, expired=True):
             expired += 1
     return expired
+
+
+async def reconcile_subject_reserved(
+    db: AsyncSession,
+    subject_type: str,
+    subject_id: int,
+) -> float:
+    """Set the subject reserved counter to the sum of open HELD rows."""
+    held = float(
+        (
+            await db.execute(
+                select(func.coalesce(func.sum(BudgetReservation.reserved_usd), 0.0)).where(
+                    BudgetReservation.subject_type == subject_type,
+                    BudgetReservation.subject_id == subject_id,
+                    BudgetReservation.status == STATUS_HELD,
+                )
+            )
+        ).scalar_one()
+    )
+    held = round(max(0.0, held), 8)
+    if subject_type == SUBJECT_USER:
+        user = (
+            await db.execute(
+                select(User).where(User.id == subject_id).with_for_update()
+            )
+        ).scalar_one_or_none()
+        if user:
+            user.budget_reserved_usd = held
+    elif subject_type == SUBJECT_ALPHA_ROUTER_KEY:
+        key = (
+            await db.execute(
+                select(AlphaRouterApiKey)
+                .where(AlphaRouterApiKey.id == subject_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if key:
+            key.period_reserved_usd = held
+    await db.flush()
+    return held
+
+
+async def release_open_holds_for_subject(
+    db: AsyncSession,
+    subject_type: str,
+    subject_id: int,
+) -> int:
+    """Expire all open holds for a subject (used on budget/credit period rollover).
+
+    Prevents month/period resets from leaving ``budget_reserved_usd`` /
+    ``period_reserved_usd`` out of sync with reservation rows. In-flight
+    requests that finish later charge via the settle-miss fallback on the new
+    period instead of mutating a stale hold.
+    """
+    rows = (
+        await db.execute(
+            select(BudgetReservation)
+            .where(
+                BudgetReservation.subject_type == subject_type,
+                BudgetReservation.subject_id == int(subject_id),
+                BudgetReservation.status == STATUS_HELD,
+            )
+            .with_for_update()
+        )
+    ).scalars().all()
+    released = 0
+    for row in rows:
+        if await release(db, row.id, expired=True):
+            released += 1
+    await reconcile_subject_reserved(db, subject_type, int(subject_id))
+    return released

@@ -107,8 +107,12 @@ async def _token_response(db: AsyncSession, user: User, response: Response) -> T
     primary = primary_role_slug(slugs)
     token = create_access_token(user.username, primary, token_version=user.token_version)
     set_session_cookies(response, access_token=token)
+    settings = get_settings()
+    # Do not return a browser JWT in the JSON body when legacy Bearer auth is
+    # disabled — the HttpOnly session cookie is the only browser credential.
+    body_token = token if settings.allow_legacy_bearer_auth else ""
     return TokenResponse(
-        access_token=token,
+        access_token=body_token,
         role=primary,
         is_active=bool(user.is_active),
     )
@@ -123,8 +127,8 @@ async def login_local(
 ):
     username = body.username.strip()
     # Brute-force protection: per-username + per-IP sliding window (Redis,
-    # shared across workers; fail-open if Redis is down). Applied before the
-    # password check so failed attempts are counted too.
+    # shared across workers; fail-closed if Redis is down → HTTP 503).
+    # Applied before the password check so failed attempts are counted too.
     from app.services.rate_limit import check_login_rate_limit
 
     source_ip = request.client.host if request.client else None
@@ -313,8 +317,10 @@ async def keycloak_exchange(
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired login code")
     set_session_cookies(response, access_token=payload["token"])
+    settings = get_settings()
+    body_token = payload["token"] if settings.allow_legacy_bearer_auth else ""
     return TokenResponse(
-        access_token=payload["token"],
+        access_token=body_token,
         token_type="bearer",
         role=payload.get("role", "user"),
         is_active=bool(payload.get("is_active", True)),

@@ -80,3 +80,39 @@ def test_collect_openrouter_skips_message_level_when_images_array_present():
     items = _collect_openrouter_images(data)
     assert len(items) == 1
     assert items[0] == {"b64_json": "YmFy"}
+
+
+def test_collect_openrouter_images_accepts_camelcase_image_url():
+    data = {
+        "choices": [
+            {
+                "message": {
+                    "content": "Here is your image.",
+                    "images": [
+                        {
+                            "type": "image_url",
+                            "imageUrl": {"url": "data:image/png;base64,Zm9vYmFy"},
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+    items = _collect_openrouter_images(data)
+    assert len(items) == 1
+    assert items[0]["url"].startswith("data:image/png;base64,")
+
+
+def test_collect_openrouter_falls_through_when_images_unparseable():
+    data = {
+        "choices": [
+            {
+                "message": {
+                    "images": [{"type": "image_url", "image_url": {}}],
+                    "content": "![img](https://cdn.example.com/from-markdown.png)",
+                }
+            }
+        ]
+    }
+    items = _collect_openrouter_images(data)
+    assert items == [{"url": "https://cdn.example.com/from-markdown.png"}]

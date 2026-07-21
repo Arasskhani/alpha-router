@@ -22,7 +22,10 @@ from app.models.media import MediaAsset
 from app.models.model_catalog import AIModel
 from app.models.user import User
 from app.services.secret_crypto import decrypt_secret
-from app.services.image_model_resolver import resolve_auto_router_image_model_with_details
+from app.services.image_model_resolver import (
+    is_image_model_failover_error,
+    list_auto_router_image_candidates,
+)
 from app.services.budget_reservation_service import (
     estimate_image_hold,
     release,
@@ -39,6 +42,7 @@ from app.services.openrouter_image_service import (
     gemini_image_size_for_model,
     is_openai_gpt_image_model,
     is_openrouter_auto_model,
+    is_retryable_openrouter_transport_error,
     is_transient_empty_openrouter_image_response,
     openrouter_image_modalities,
     optimize_openrouter_image_model,
@@ -522,6 +526,38 @@ async def _close_image_request_transaction(
         await db.rollback()
 
 
+def _extract_image_url_and_b64(obj: dict) -> tuple[str | None, str | None]:
+    """Pull url/b64 from snake_case, camelCase, and nested OpenRouter/Gemini shapes."""
+    image_url_field = obj.get("image_url") or obj.get("imageUrl") or obj.get("image")
+    url_val: str | None = None
+    if isinstance(image_url_field, str):
+        url_val = image_url_field
+    elif isinstance(image_url_field, dict):
+        url_val = (
+            image_url_field.get("url")
+            or image_url_field.get("uri")
+            or image_url_field.get("data")
+        )
+    url_val = url_val or obj.get("url") or obj.get("uri")
+    inline = obj.get("inline_data") or obj.get("inlineData")
+    b64_val = (
+        obj.get("b64_json")
+        or obj.get("b64Json")
+        or obj.get("image_base64")
+        or obj.get("imageBase64")
+    )
+    if not b64_val and isinstance(inline, dict):
+        b64_val = inline.get("data") or inline.get("b64_json")
+        mime = str(inline.get("mime_type") or inline.get("mimeType") or "image/png")
+        if b64_val and not str(b64_val).startswith("data:"):
+            url_val = url_val or f"data:{mime};base64,{b64_val}"
+            b64_val = None
+    return (
+        str(url_val) if url_val else None,
+        str(b64_val) if b64_val else None,
+    )
+
+
 def _collect_openrouter_images(data: dict) -> list[dict]:
     """
     OpenRouter image-capable models can return image payloads in different shapes.
@@ -552,30 +588,22 @@ def _collect_openrouter_images(data: dict) -> list[dict]:
     choices = data.get("choices") or []
     for choice in choices:
         msg = (choice or {}).get("message") or {}
+        before = len(out)
         structured_images = msg.get("images") or []
 
         if structured_images:
             for img in structured_images:
                 if not isinstance(img, dict):
                     continue
-                image_url_field = img.get("image_url")
-                url_val: str | None = None
-                if isinstance(image_url_field, str):
-                    url_val = image_url_field
-                elif isinstance(image_url_field, dict):
-                    url_val = image_url_field.get("url")
-                url_val = url_val or img.get("url")
-                b64_val = img.get("b64_json") or img.get("image_base64")
+                url_val, b64_val = _extract_image_url_and_b64(img)
                 add_image(url=url_val, b64=b64_val)
-            continue
+            # Only skip other variants when structured images actually yielded bytes.
+            if len(out) > before:
+                continue
 
         # Variant B: message.image_url / message.url / message.b64_json
-        add_image(
-            url=(msg.get("image_url") or {}).get("url")
-            if isinstance(msg.get("image_url"), dict)
-            else msg.get("image_url") or msg.get("url"),
-            b64=msg.get("b64_json") or msg.get("image_base64"),
-        )
+        url_val, b64_val = _extract_image_url_and_b64(msg)
+        add_image(url=url_val, b64=b64_val)
 
         # Variant C: message.content as list of multimodal parts
         content = msg.get("content")
@@ -584,17 +612,12 @@ def _collect_openrouter_images(data: dict) -> list[dict]:
                 if not isinstance(part, dict):
                     continue
                 ptype = str(part.get("type") or "").lower()
-                part_url = (
-                    (part.get("image_url") or {}).get("url")
-                    if isinstance(part.get("image_url"), dict)
-                    else part.get("image_url")
-                ) or part.get("url")
-                if ptype in {"output_image", "image"}:
-                    part_url = part_url or part.get("data")
-                add_image(
-                    url=part_url,
-                    b64=part.get("b64_json") or part.get("image_base64"),
-                )
+                part_url, part_b64 = _extract_image_url_and_b64(part)
+                if ptype in {"output_image", "image", "image_url", "inline_data"}:
+                    part_url = part_url or (
+                        str(part.get("data")) if part.get("data") else None
+                    )
+                add_image(url=part_url, b64=part_b64)
                 if isinstance(part.get("text"), str):
                     extract_from_text(part.get("text"))
         elif isinstance(content, str):
@@ -602,27 +625,16 @@ def _collect_openrouter_images(data: dict) -> list[dict]:
 
         # Variant D: top-level/message-level metadata blobs sometimes carry image URLs.
         if isinstance(choice, dict):
-            add_image(
-                url=(choice.get("image_url") or {}).get("url")
-                if isinstance(choice.get("image_url"), dict)
-                else choice.get("image_url") or choice.get("url"),
-                b64=choice.get("b64_json"),
-            )
+            url_val, b64_val = _extract_image_url_and_b64(choice)
+            add_image(url=url_val, b64=b64_val)
 
     # Variant E: top-level data[] when choices did not already yield images.
     if not out:
         for item in data.get("data") or []:
             if not isinstance(item, dict):
                 continue
-            add_image(
-                url=item.get("url")
-                or (
-                    (item.get("image_url") or {}).get("url")
-                    if isinstance(item.get("image_url"), dict)
-                    else item.get("image_url")
-                ),
-                b64=item.get("b64_json") or item.get("image_base64"),
-            )
+            url_val, b64_val = _extract_image_url_and_b64(item)
+            add_image(url=url_val, b64=b64_val)
 
     return _dedupe_image_items(out)
 
@@ -717,6 +729,8 @@ async def generate_image(
     success = True
     error_message: str | None = None
 
+    requested_model = _normalize_model_id(body.model)
+    auto_router_requested = is_openrouter_auto_model(requested_model)
     resolve_task = asyncio.create_task(_resolve_image_model(db, body.model))
 
     try:
@@ -725,12 +739,14 @@ async def generate_image(
         billing.ai_model = ai_model
         billing.provider_type = provider_type
 
-        if is_openrouter_auto_model(model_id):
-            picked = await resolve_auto_router_image_model_with_details(
+        auto_candidates = []
+        if is_openrouter_auto_model(model_id) or auto_router_requested:
+            auto_candidates = await list_auto_router_image_candidates(
                 db,
                 connection_id=ai_model.connection_id if ai_model else None,
+                limit=3,
             )
-            if not picked:
+            if not auto_candidates:
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -738,11 +754,14 @@ async def generate_image(
                         "Enable at least one image-capable model on this connection in Admin → Models."
                     ),
                 )
+            picked = auto_candidates[0]
             model_id, ai_model, conn = picked.external_id, picked.model, picked.connection
             routing_reason = {
                 **picked.reason,
                 "selected_model": picked.external_id,
                 "score": picked.score,
+                "requested_model": requested_model,
+                "candidate_models": [c.external_id for c in auto_candidates],
             }
             api_key = decrypt_secret(conn.api_key_encrypted)
             base_url = conn.base_url
@@ -774,57 +793,321 @@ async def generate_image(
             size=body.size,
         )
 
-        provider = (provider_type or "").lower()
-        provider_model = litellm_model_for_provider(model_id, provider_type)
-        kwargs = {
-            "model": provider_model,
-            "prompt": body.prompt,
-            "n": body.n,
-            "size": body.size,
-        }
-        if api_key:
-            kwargs["api_key"] = api_key
-        if base_url:
-            kwargs["base_url"] = base_url
-        llm_provider = resolve_litellm_provider(provider_type)
-        if llm_provider:
-            kwargs["custom_llm_provider"] = llm_provider
-        kwargs["timeout"] = 180
+        async def _attempt_one_model(
+            *,
+            attempt_model_id: str,
+            attempt_api_key: str | None,
+            attempt_base_url: str | None,
+            attempt_provider_type: str | None,
+            attempt_ai_model,
+            attempt_routing: dict[str, object] | None,
+        ):
+            nonlocal model_id, api_key, base_url, provider_type, ai_model, routing_reason
+            model_id = attempt_model_id
+            api_key = attempt_api_key
+            base_url = attempt_base_url
+            provider_type = attempt_provider_type
+            ai_model = attempt_ai_model
+            routing_reason = attempt_routing
+            body.model = model_id
+            billing.model_id = model_id
+            billing.ai_model = ai_model
+            billing.provider_type = provider_type
+            provider = (provider_type or "").lower()
+            provider_model = litellm_model_for_provider(model_id, provider_type)
+            kwargs = {
+                "model": provider_model,
+                "prompt": body.prompt,
+                "n": body.n,
+                "size": body.size,
+            }
+            if api_key:
+                kwargs["api_key"] = api_key
+            if base_url:
+                kwargs["base_url"] = base_url
+            llm_provider = resolve_litellm_provider(provider_type)
+            if llm_provider:
+                kwargs["custom_llm_provider"] = llm_provider
+            kwargs["timeout"] = 180
 
-        settings = get_settings()
+            settings = get_settings()
 
-        # OpenRouter image models (e.g. Gemini image) use chat/completions with modalities.
-        if provider == "openrouter":
-            if not api_key:
-                raise HTTPException(status_code=400, detail="OpenRouter connection has no API key")
-            openrouter_base = _normalize_openrouter_base(base_url)
-            kwargs["base_url"] = openrouter_base
-            headers = build_openrouter_headers(api_key, referer=settings.frontend_url)
-            chat_image_model = _is_openrouter_chat_image_model(model_id)
-            if reference_image and body.operation not in ("img2img", "imagine", "outpaint"):
-                body.operation = "img2img"
+            # OpenRouter image models (e.g. Gemini image) use chat/completions with modalities.
+            if provider == "openrouter":
+                if not api_key:
+                    raise HTTPException(status_code=400, detail="OpenRouter connection has no API key")
+                openrouter_base = _normalize_openrouter_base(base_url)
+                kwargs["base_url"] = openrouter_base
+                headers = build_openrouter_headers(api_key, referer=settings.frontend_url)
+                chat_image_model = _is_openrouter_chat_image_model(model_id)
+                if reference_image and body.operation not in ("img2img", "imagine", "outpaint"):
+                    body.operation = "img2img"
 
-            async def _try_openrouter_images_generations() -> tuple[list[dict] | None, dict | None]:
-                img_payload = {
-                    "model": optimize_openrouter_image_model(model_id),
-                    "prompt": body.prompt,
-                    "n": max(1, min(4, int(body.n or 1))),
-                    "size": body.size,
-                    "response_format": "b64_json",
-                }
-                img_resp = await post_openrouter_json(
-                    f"{openrouter_base}/images/generations",
-                    headers=headers,
-                    json_payload=img_payload,
-                    read_timeout=OPENROUTER_FALLBACK_TIMEOUT,
-                )
-                if img_resp.status_code >= 400:
-                    return None, None
-                img_data = img_resp.json()
-                items = _collect_standard_image_payload(img_data) or None
-                return items, img_data if isinstance(img_data, dict) else None
+                async def _try_openrouter_images_generations() -> tuple[list[dict] | None, dict | None]:
+                    img_payload = {
+                        "model": optimize_openrouter_image_model(model_id),
+                        "prompt": body.prompt,
+                        "n": max(1, min(4, int(body.n or 1))),
+                        "size": body.size,
+                        "response_format": "b64_json",
+                    }
+                    img_resp = await post_openrouter_json(
+                        f"{openrouter_base}/images/generations",
+                        headers=headers,
+                        json_payload=img_payload,
+                        read_timeout=OPENROUTER_FALLBACK_TIMEOUT,
+                    )
+                    if img_resp.status_code >= 400:
+                        return None, None
+                    img_data = img_resp.json()
+                    items = _collect_standard_image_payload(img_data) or None
+                    return items, img_data if isinstance(img_data, dict) else None
 
-            if _prefer_openrouter_images_generations(model_id) and not reference_image:
+                if _prefer_openrouter_images_generations(model_id) and not reference_image:
+                    out_gen, usage_data = await _try_openrouter_images_generations()
+                    if usage_data:
+                        billing.usage_source = usage_data
+                    if out_gen:
+                        return await _finalize_image_response(
+                            db, user, body, out_gen, aspect_ratio=resolved_aspect,
+                            routing=routing_reason,
+                        )
+
+                modalities = _openrouter_modalities(model_id)
+                allow_fallbacks = not is_openai_gpt_image_model(model_id)
+                safe_1k_size = _aspect_ratio_to_default_size(resolved_aspect)
+
+                async def _try_openrouter_chat_completion(
+                    *,
+                    pixel_size: str,
+                    mods: list[str],
+                    fallbacks: bool,
+                    tier: str | None = None,
+                    provider_sort: str | None = None,
+                    apply_default_provider_sort: bool = True,
+                ) -> tuple[list[dict] | None, dict | None, httpx.Response | None]:
+                    chat_payload = build_fast_openrouter_payload(
+                        model_id=model_id,
+                        prompt=body.prompt,
+                        size=pixel_size,
+                        modalities=mods,
+                        aspect_ratio=resolved_aspect,
+                        reference_image=reference_image,
+                        allow_fallbacks=fallbacks,
+                        image_size_tier=tier,
+                        provider_sort=provider_sort,
+                        apply_default_provider_sort=apply_default_provider_sort,
+                    )
+                    chat_resp = await post_openrouter_json(
+                        f"{openrouter_base}/chat/completions",
+                        headers=headers,
+                        json_payload=chat_payload,
+                    )
+                    if chat_resp.status_code >= 400:
+                        return None, None, chat_resp
+                    chat_data = chat_resp.json()
+                    collected = _collect_openrouter_images(chat_data) if isinstance(chat_data, dict) else None
+                    if collected:
+                        body.image_size_tier = tier or gemini_image_size_for_model(model_id, pixel_size)
+                    return collected, chat_data if isinstance(chat_data, dict) else None, chat_resp
+
+                async def _openrouter_chat_image_with_retries() -> tuple[list[dict] | None, dict | None, httpx.Response | None]:
+                    # Gemini Pro: prefer stable 1K + provider fallbacks before latency-sorted hops.
+                    gemini_pro = "gemini" in model_id.lower() and "pro" in model_id.lower()
+                    if gemini_pro:
+                        strategies: list[dict] = [
+                            {
+                                "pixel_size": safe_1k_size,
+                                "mods": ["image", "text"],
+                                "fallbacks": True,
+                                "tier": "1K",
+                                "provider_sort": None,
+                                "apply_default_provider_sort": False,
+                            },
+                            {
+                                "pixel_size": body.size,
+                                "mods": modalities,
+                                "fallbacks": True,
+                                "tier": body.image_size_tier or "1K",
+                                "provider_sort": None,
+                                "apply_default_provider_sort": False,
+                            },
+                            {
+                                "pixel_size": safe_1k_size,
+                                "mods": ["image", "text"],
+                                "fallbacks": True,
+                                "tier": "1K",
+                                "provider_sort": "throughput",
+                                "apply_default_provider_sort": False,
+                            },
+                            {
+                                "pixel_size": safe_1k_size,
+                                "mods": ["image"],
+                                "fallbacks": True,
+                                "tier": "1K",
+                                "provider_sort": None,
+                                "apply_default_provider_sort": False,
+                            },
+                            {
+                                "pixel_size": body.size,
+                                "mods": modalities,
+                                "fallbacks": allow_fallbacks,
+                                "tier": body.image_size_tier,
+                                "provider_sort": "latency",
+                                "apply_default_provider_sort": False,
+                            },
+                        ]
+                    else:
+                        strategies = [
+                            {
+                                "pixel_size": body.size,
+                                "mods": modalities,
+                                "fallbacks": allow_fallbacks,
+                                "tier": body.image_size_tier,
+                                "provider_sort": "latency",
+                                "apply_default_provider_sort": False,
+                            },
+                            {
+                                "pixel_size": safe_1k_size,
+                                "mods": ["image", "text"],
+                                "fallbacks": True,
+                                "tier": "1K",
+                                "provider_sort": None,
+                                "apply_default_provider_sort": False,
+                            },
+                            {
+                                "pixel_size": safe_1k_size,
+                                "mods": ["image"],
+                                "fallbacks": False,
+                                "tier": "1K",
+                                "provider_sort": None,
+                                "apply_default_provider_sort": False,
+                            },
+                            {
+                                "pixel_size": body.size,
+                                "mods": modalities,
+                                "fallbacks": allow_fallbacks,
+                                "tier": body.image_size_tier,
+                                "provider_sort": None,
+                                "apply_default_provider_sort": False,
+                            },
+                            {
+                                "pixel_size": safe_1k_size,
+                                "mods": ["image"],
+                                "fallbacks": True,
+                                "tier": "1K",
+                                "provider_sort": "latency",
+                                "apply_default_provider_sort": False,
+                            },
+                        ]
+                    last_out: list[dict] | None = None
+                    last_data: dict | None = None
+                    last_resp: httpx.Response | None = None
+                    last_transport_exc: BaseException | None = None
+                    for attempt, strat in enumerate(strategies):
+                        if attempt > 0:
+                            delay_idx = min(attempt - 1, len(OPENROUTER_EMPTY_IMAGE_RETRY_DELAYS_SEC) - 1)
+                            await asyncio.sleep(OPENROUTER_EMPTY_IMAGE_RETRY_DELAYS_SEC[delay_idx])
+                        try:
+                            out, data, resp = await _try_openrouter_chat_completion(**strat)
+                        except Exception as exc:
+                            if not is_retryable_openrouter_transport_error(exc):
+                                raise
+                            last_transport_exc = exc
+                            continue
+                        last_out, last_data, last_resp = out, data, resp
+                        last_transport_exc = None
+                        if resp is not None and resp.status_code >= 400:
+                            if resp.status_code in {408, 429, 500, 502, 503, 504}:
+                                continue
+                            return None, data, resp
+                        if out:
+                            return out, data, resp
+                        if not is_transient_empty_openrouter_image_response(data, collected=out):
+                            return None, data, resp
+                    if last_transport_exc is not None and last_out is None and last_resp is None:
+                        raise last_transport_exc
+                    return last_out, last_data, last_resp
+
+                out, data, resp = await _openrouter_chat_image_with_retries()
+                if resp is not None and resp.status_code >= 400:
+                    body_preview = (resp.text or "").strip()
+                    detail_msg = body_preview
+                    try:
+                        j = resp.json()
+                        if isinstance(j, dict):
+                            billing.usage_source = j
+                        detail_msg = (
+                            (j.get("error") or {}).get("message")
+                            or j.get("message")
+                            or body_preview
+                        )
+                    except Exception:
+                        detail_msg = body_preview
+                    if body_preview.startswith("<!DOCTYPE html"):
+                        detail_msg = "Upstream returned HTML page instead of JSON API response. Check OpenRouter base URL."
+                    status = 402 if resp.status_code == 402 else 500
+                    raise HTTPException(
+                        status_code=status,
+                        detail=f"OpenRouter image request failed ({resp.status_code}): {detail_msg[:500] or 'Image generation failed'}",
+                    )
+                if isinstance(data, dict):
+                    billing.usage_source = data
+                if out:
+                    return await _finalize_image_response(
+                        db, user, body, out, aspect_ratio=resolved_aspect,
+                        routing=routing_reason,
+                    )
+
+                msg = ((data or {}).get("choices") or [{}])[0].get("message") or {}
+                content_preview = str(msg.get("content") or "")[:300]
+                text_only = isinstance(msg.get("content"), str) and bool(str(msg.get("content") or "").strip())
+                if chat_image_model:
+                    if text_only:
+                        if not reference_image:
+                            out_gen, usage_data = await _try_openrouter_images_generations()
+                            if usage_data:
+                                billing.usage_source = usage_data
+                            if out_gen:
+                                return await _finalize_image_response(
+                                    db, user, body, out_gen, aspect_ratio=resolved_aspect,
+                                    routing=routing_reason,
+                                )
+                        if modalities != ["image"]:
+                            retry_out, retry_data, _ = await _try_openrouter_chat_completion(
+                                pixel_size=safe_1k_size,
+                                mods=["image"],
+                                fallbacks=False,
+                                tier="1K",
+                            )
+                            if isinstance(retry_data, dict):
+                                billing.usage_source = retry_data
+                            if retry_out:
+                                return await _finalize_image_response(
+                                    db, user, body, retry_out, aspect_ratio=resolved_aspect,
+                                    routing=routing_reason,
+                                )
+                        raise HTTPException(
+                            status_code=422,
+                            detail=(
+                                "The model returned text instead of an image. "
+                                "Try another image model (e.g. Gemini 2.5 Flash Image) or shorten the prompt."
+                            ),
+                        )
+                    if not text_only:
+                        images_meta = msg.get("images")
+                        top_keys = ",".join(sorted(list((data or {}).keys()))[:10])
+                        raise HTTPException(
+                            status_code=502,
+                            detail=(
+                                "The image provider returned an empty response after automatic retries. "
+                                "Please try again, use a shorter prompt, or pick another image model. "
+                                f"(debug: keys={top_keys}, "
+                                f"images_field={type(images_meta).__name__}:{len(images_meta or [])})"
+                            ).strip(),
+                        )
+
+                # Legacy / non-chat image models only: short fallback attempts.
                 out_gen, usage_data = await _try_openrouter_images_generations()
                 if usage_data:
                     billing.usage_source = usage_data
@@ -834,219 +1117,109 @@ async def generate_image(
                         routing=routing_reason,
                     )
 
-            modalities = _openrouter_modalities(model_id)
-            allow_fallbacks = not is_openai_gpt_image_model(model_id)
-            safe_1k_size = _aspect_ratio_to_default_size(resolved_aspect)
-
-            async def _try_openrouter_chat_completion(
-                *,
-                pixel_size: str,
-                mods: list[str],
-                fallbacks: bool,
-                tier: str | None = None,
-                provider_sort: str | None = None,
-                apply_default_provider_sort: bool = True,
-            ) -> tuple[list[dict] | None, dict | None, httpx.Response | None]:
-                chat_payload = build_fast_openrouter_payload(
-                    model_id=model_id,
-                    prompt=body.prompt,
-                    size=pixel_size,
-                    modalities=mods,
-                    aspect_ratio=resolved_aspect,
-                    reference_image=reference_image,
-                    allow_fallbacks=fallbacks,
-                    image_size_tier=tier,
-                    provider_sort=provider_sort,
-                    apply_default_provider_sort=apply_default_provider_sort,
-                )
-                chat_resp = await post_openrouter_json(
-                    f"{openrouter_base}/chat/completions",
-                    headers=headers,
-                    json_payload=chat_payload,
-                )
-                if chat_resp.status_code >= 400:
-                    return None, None, chat_resp
-                chat_data = chat_resp.json()
-                collected = _collect_openrouter_images(chat_data) if isinstance(chat_data, dict) else None
-                if collected:
-                    body.image_size_tier = tier or gemini_image_size_for_model(model_id, pixel_size)
-                return collected, chat_data if isinstance(chat_data, dict) else None, chat_resp
-
-            async def _openrouter_chat_image_with_retries() -> tuple[list[dict] | None, dict | None, httpx.Response | None]:
-                strategies: list[dict] = [
-                    {
-                        "pixel_size": body.size,
-                        "mods": modalities,
-                        "fallbacks": allow_fallbacks,
-                        "tier": body.image_size_tier,
-                        "provider_sort": "latency",
-                        "apply_default_provider_sort": False,
-                    },
-                    {
-                        "pixel_size": safe_1k_size,
-                        "mods": ["image"],
-                        "fallbacks": False,
-                        "tier": "1K",
-                        "provider_sort": None,
-                        "apply_default_provider_sort": False,
-                    },
-                    {
-                        "pixel_size": safe_1k_size,
-                        "mods": ["image", "text"],
-                        "fallbacks": False,
-                        "tier": "1K",
-                        "provider_sort": None,
-                        "apply_default_provider_sort": False,
-                    },
-                    {
-                        "pixel_size": body.size,
-                        "mods": modalities,
-                        "fallbacks": allow_fallbacks,
-                        "tier": body.image_size_tier,
-                        "provider_sort": None,
-                        "apply_default_provider_sort": False,
-                    },
-                    {
-                        "pixel_size": safe_1k_size,
-                        "mods": ["image"],
-                        "fallbacks": True,
-                        "tier": "1K",
-                        "provider_sort": "latency",
-                        "apply_default_provider_sort": False,
-                    },
-                ]
-                last_out: list[dict] | None = None
-                last_data: dict | None = None
-                last_resp: httpx.Response | None = None
-                for attempt, strat in enumerate(strategies):
-                    if attempt > 0:
-                        delay_idx = min(attempt - 1, len(OPENROUTER_EMPTY_IMAGE_RETRY_DELAYS_SEC) - 1)
-                        await asyncio.sleep(OPENROUTER_EMPTY_IMAGE_RETRY_DELAYS_SEC[delay_idx])
-                    out, data, resp = await _try_openrouter_chat_completion(**strat)
-                    last_out, last_data, last_resp = out, data, resp
-                    if resp is not None and resp.status_code >= 400:
-                        return None, data, resp
-                    if out:
-                        return out, data, resp
-                    if not is_transient_empty_openrouter_image_response(data, collected=out):
-                        return None, data, resp
-                return last_out, last_data, last_resp
-
-            out, data, resp = await _openrouter_chat_image_with_retries()
-            if resp is not None and resp.status_code >= 400:
-                body_preview = (resp.text or "").strip()
-                detail_msg = body_preview
-                try:
-                    j = resp.json()
-                    if isinstance(j, dict):
-                        billing.usage_source = j
-                    detail_msg = (
-                        (j.get("error") or {}).get("message")
-                        or j.get("message")
-                        or body_preview
+                if text_only:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            "The model returned text instead of an image. "
+                            "Select an image-capable model in chat, or turn off the Image Generation tool for text prompts."
+                        ),
                     )
-                except Exception:
-                    detail_msg = body_preview
-                if body_preview.startswith("<!DOCTYPE html"):
-                    detail_msg = "Upstream returned HTML page instead of JSON API response. Check OpenRouter base URL."
-                status = 402 if resp.status_code == 402 else 500
+                top_keys = ",".join(sorted(list((data or {}).keys()))[:10])
                 raise HTTPException(
-                    status_code=status,
-                    detail=f"OpenRouter image request failed ({resp.status_code}): {detail_msg[:500] or 'Image generation failed'}",
+                    status_code=502,
+                    detail=(
+                        "The image provider returned an empty response after automatic retries. "
+                        "Please try again, use a shorter prompt, or pick another image model. "
+                        f"(debug: keys={top_keys})"
+                    ).strip(),
                 )
-            if isinstance(data, dict):
-                billing.usage_source = data
+
+            response = await litellm.aimage_generation(**kwargs)
+            billing.usage_source = response
+            out = _collect_litellm_image_items(response)
             if out:
                 return await _finalize_image_response(
                     db, user, body, out, aspect_ratio=resolved_aspect,
                     routing=routing_reason,
                 )
-
-            msg = ((data or {}).get("choices") or [{}])[0].get("message") or {}
-            content_preview = str(msg.get("content") or "")[:300]
-            text_only = isinstance(msg.get("content"), str) and bool(str(msg.get("content") or "").strip())
-            if chat_image_model:
-                if text_only:
-                    if not reference_image:
-                        out_gen, usage_data = await _try_openrouter_images_generations()
-                        if usage_data:
-                            billing.usage_source = usage_data
-                        if out_gen:
-                            return await _finalize_image_response(
-                                db, user, body, out_gen, aspect_ratio=resolved_aspect,
-                                routing=routing_reason,
-                            )
-                    if modalities != ["image"]:
-                        retry_out, retry_data, _ = await _try_openrouter_chat_completion(
-                            pixel_size=safe_1k_size,
-                            mods=["image"],
-                            fallbacks=False,
-                            tier="1K",
-                        )
-                        if isinstance(retry_data, dict):
-                            billing.usage_source = retry_data
-                        if retry_out:
-                            return await _finalize_image_response(
-                                db, user, body, retry_out, aspect_ratio=resolved_aspect,
-                                routing=routing_reason,
-                            )
-                    raise HTTPException(
-                        status_code=422,
-                        detail=(
-                            "The model returned text instead of an image. "
-                            "Try another image model (e.g. Gemini 2.5 Flash Image) or shorten the prompt."
-                        ),
+        model_attempts = auto_candidates if auto_candidates else [None]
+        last_failover_exc: BaseException | None = None
+        for attempt_idx, candidate in enumerate(model_attempts):
+            if candidate is None:
+                attempt_routing = routing_reason
+                attempt_model_id = model_id
+                attempt_api_key = api_key
+                attempt_base_url = base_url
+                attempt_provider_type = provider_type
+                attempt_ai_model = ai_model
+            else:
+                attempt_model_id = candidate.external_id
+                attempt_ai_model = candidate.model
+                attempt_api_key = decrypt_secret(candidate.connection.api_key_encrypted)
+                attempt_base_url = candidate.connection.base_url
+                attempt_provider_type = candidate.connection.provider_type
+                attempt_routing = {
+                    **(candidate.reason or {}),
+                    "selected_model": candidate.external_id,
+                    "score": candidate.score,
+                    "requested_model": requested_model,
+                    "candidate_models": [c.external_id for c in auto_candidates],
+                    "attempt_index": attempt_idx,
+                    "failover": attempt_idx > 0,
+                }
+                if attempt_idx > 0 and last_failover_exc is not None:
+                    prev = (
+                        last_failover_exc.detail
+                        if isinstance(last_failover_exc, HTTPException)
+                        else str(last_failover_exc)
                     )
-                if not text_only:
-                    images_meta = msg.get("images")
-                    top_keys = ",".join(sorted(list((data or {}).keys()))[:10])
-                    raise HTTPException(
-                        status_code=502,
-                        detail=(
-                            "The image provider returned an empty response after automatic retries. "
-                            "Please try again, use a shorter prompt, or pick another image model. "
-                            f"(debug: keys={top_keys}, "
-                            f"images_field={type(images_meta).__name__}:{len(images_meta or [])})"
-                        ).strip(),
+                    attempt_routing["failover_from_error"] = str(prev)[:240]
+            try:
+                return await _attempt_one_model(
+                    attempt_model_id=attempt_model_id,
+                    attempt_api_key=attempt_api_key,
+                    attempt_base_url=attempt_base_url,
+                    attempt_provider_type=attempt_provider_type,
+                    attempt_ai_model=attempt_ai_model,
+                    attempt_routing=attempt_routing,
+                )
+            except HTTPException as attempt_exc:
+                can_failover = (
+                    bool(auto_candidates)
+                    and attempt_idx + 1 < len(model_attempts)
+                    and is_image_model_failover_error(attempt_exc)
+                )
+                if can_failover:
+                    last_failover_exc = attempt_exc
+                    continue
+                raise
+            except httpx.HTTPError as attempt_exc:
+                detail = str(attempt_exc).strip() or attempt_exc.__class__.__name__
+                if "disconnected" in detail.lower():
+                    detail = (
+                        "Image provider closed the connection before responding. "
+                        "Please retry; if it persists, try another image model or check the OpenRouter connection."
                     )
-
-            # Legacy / non-chat image models only: short fallback attempts.
-            out_gen, usage_data = await _try_openrouter_images_generations()
-            if usage_data:
-                billing.usage_source = usage_data
-            if out_gen:
-                return await _finalize_image_response(
-                    db, user, body, out_gen, aspect_ratio=resolved_aspect,
-                    routing=routing_reason,
+                wrapped = HTTPException(status_code=502, detail=detail[:500])
+                can_failover = (
+                    bool(auto_candidates)
+                    and attempt_idx + 1 < len(model_attempts)
+                    and is_image_model_failover_error(wrapped)
                 )
-
-            if text_only:
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
-                        "The model returned text instead of an image. "
-                        "Select an image-capable model in chat, or turn off the Image Generation tool for text prompts."
-                    ),
-                )
-            top_keys = ",".join(sorted(list((data or {}).keys()))[:10])
+                if can_failover:
+                    last_failover_exc = wrapped
+                    continue
+                success = False
+                error_message = detail[:500]
+                raise wrapped from attempt_exc
+        if last_failover_exc is not None:
+            if isinstance(last_failover_exc, HTTPException):
+                raise last_failover_exc
             raise HTTPException(
                 status_code=502,
-                detail=(
-                    "The image provider returned an empty response after automatic retries. "
-                    "Please try again, use a shorter prompt, or pick another image model. "
-                    f"(debug: keys={top_keys})"
-                ).strip(),
-            )
-
-        response = await litellm.aimage_generation(**kwargs)
-        billing.usage_source = response
-        out = _collect_litellm_image_items(response)
-        if out:
-            return await _finalize_image_response(
-                db, user, body, out, aspect_ratio=resolved_aspect,
-                routing=routing_reason,
-            )
-        return response
+                detail=str(last_failover_exc)[:500],
+            ) from last_failover_exc
     except HTTPException as exc:
         success = False
         detail = exc.detail

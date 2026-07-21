@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 WORKDIR /srv
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HOME=/tmp
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
@@ -14,9 +14,17 @@ RUN curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${
     && chmod +x /usr/local/bin/docker \
     && rm -rf /tmp/docker /tmp/docker.tgz
 
-RUN pip install --no-cache-dir fastapi uvicorn
+RUN pip install --no-cache-dir fastapi uvicorn \
+    && groupadd --system --gid 10001 broker \
+    && useradd --system --uid 10001 --gid 10001 --home-dir /tmp --shell /usr/sbin/nologin broker \
+    && chown -R broker:broker /srv
 
 COPY backend/app/sandbox_broker.py /srv/broker.py
+RUN chown broker:broker /srv/broker.py
+
+# Non-root process. Compose adds the host docker.sock group (gid 0 on Desktop)
+# via group_add so the broker can still call the Docker API without uid 0.
+USER broker
 
 EXPOSE 8081
 HEALTHCHECK --interval=5s --timeout=3s --retries=5 \

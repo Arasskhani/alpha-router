@@ -101,9 +101,16 @@ services:
       dockerfile: sandbox-broker/Dockerfile
     image: alpha-router-sandbox-broker:latest
     restart: unless-stopped
+    # Runs as uid 10001. docker.sock on Docker Desktop is root:root mode 660, so
+    # the supplementary root group is required for API access without process uid 0.
+    # The socket remains a residual host trust boundary; never publish port 8081.
+    user: "10001:10001"
+    group_add:
+      - "0"
     environment:
       SANDBOX_BROKER_TOKEN: ${SANDBOX_BROKER_TOKEN:?SANDBOX_BROKER_TOKEN must be set in .env}
       HOME: /tmp
+      DOCKER_HOST: unix:///var/run/docker.sock
     expose:
       - "8081"
     volumes:
@@ -111,6 +118,8 @@ services:
     read_only: true
     tmpfs:
       - /tmp:rw,nosuid,nodev,size=16m
+    mem_limit: 256m
+    pids_limit: 128
     cap_drop:
       - ALL
     security_opt:

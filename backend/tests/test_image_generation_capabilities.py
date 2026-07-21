@@ -65,6 +65,20 @@ def test_build_openrouter_payload_text_to_image():
     assert payload["provider"]["allow_fallbacks"] is True
     assert payload["provider"]["sort"] == "latency"
     assert payload["image_config"]["image_size"] == "1K"
+    assert payload["max_tokens"] == 4096
+
+
+def test_build_openrouter_payload_gemini_pro_skips_latency_sort():
+    payload = build_fast_openrouter_payload(
+        model_id="google/gemini-3-pro-image",
+        prompt="A red cat",
+        size="1024x1024",
+        modalities=["image", "text"],
+        aspect_ratio="1:1",
+    )
+    assert "sort" not in payload["provider"]
+    assert payload["max_tokens"] == 4096
+    assert payload["image_config"]["image_size"] == "1K"
 
 
 def test_build_openrouter_payload_wide_preview_clamps_to_1k():

@@ -56,10 +56,11 @@ class Settings(BaseSettings):
     # column (bumped on logout / password reset / admin disable), so a token
     # is also revocable before its natural expiry.
     jwt_expire_minutes: int = 480
-    # Browser sessions use an HttpOnly cookie. Legacy Bearer JWTs remain
-    # accepted during the compatibility window; /v1 API-key auth is separate.
+    # Browser sessions use an HttpOnly cookie. Legacy browser Bearer JWTs are
+    # disabled by default so CSRF cannot be bypassed without a session cookie.
+    # /v1 API-key auth is separate and unaffected.
     enable_cookie_auth: bool = True
-    allow_legacy_bearer_auth: bool = True
+    allow_legacy_bearer_auth: bool = False  # env: ALLOW_LEGACY_BEARER_AUTH
     enable_csrf: bool = True
     session_cookie_name: str = "alpha_router_session"
     csrf_cookie_name: str = "alpha_router_csrf"

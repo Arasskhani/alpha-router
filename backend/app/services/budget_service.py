@@ -262,12 +262,23 @@ async def get_month_usage(db: AsyncSession, user_id: int) -> float:
 
 
 async def ensure_budget_period(db: AsyncSession, user: User) -> None:
-    """Reset usage at month boundary; always sync cached budget from plan assignments."""
+    """Reset usage at month boundary; always sync cached budget from plan assignments.
+
+    On rollover, open budget holds are expired and ``budget_reserved_usd`` is
+    reconciled so reserved counters cannot leak from the previous month.
+    """
     now = datetime.datetime.utcnow()
     month_start = datetime.datetime(now.year, now.month, 1)
     if not user.budget_period_start or user.budget_period_start < month_start:
+        from app.services.budget_reservation_service import (
+            SUBJECT_USER,
+            release_open_holds_for_subject,
+        )
+
+        await release_open_holds_for_subject(db, SUBJECT_USER, int(user.id))
         user.budget_period_start = month_start
         user.budget_used_usd = await get_month_usage(db, user.id)
+        user.budget_reserved_usd = 0.0
     user.monthly_budget_usd = await resolve_monthly_budget(db, user)
     await db.flush()
 
@@ -277,10 +288,17 @@ async def reset_all_monthly_budgets(db: AsyncSession) -> int:
     now = datetime.datetime.utcnow()
     if now.day != 1:
         return 0
+    from app.services.budget_reservation_service import (
+        SUBJECT_USER,
+        release_open_holds_for_subject,
+    )
+
     users = (await db.execute(select(User))).scalars().all()
     count = 0
     for u in users:
+        await release_open_holds_for_subject(db, SUBJECT_USER, int(u.id))
         u.budget_used_usd = 0.0
+        u.budget_reserved_usd = 0.0
         u.budget_period_start = datetime.datetime(now.year, now.month, 1)
         u.monthly_budget_usd = await resolve_monthly_budget(db, u)
         count += 1

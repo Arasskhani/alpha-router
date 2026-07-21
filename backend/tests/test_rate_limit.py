@@ -1,8 +1,7 @@
 """Tests for the rate limiter.
 
-The Redis path is exercised via a fake async client. The in-memory fallback
-is exercised when the fake client raises (simulating a Redis outage), proving
-fail-open behavior.
+The Redis path is exercised via a fake async client. Chat endpoints keep
+fail-open in-memory fallback; login is fail-closed (HTTP 503) on Redis outage.
 """
 
 import asyncio
@@ -104,7 +103,7 @@ def test_check_rate_limit_blocks_over_limit():
 
 
 def test_check_rate_limit_fails_open_to_in_memory_when_redis_down():
-    # When the fake client raises, the limiter must fall back to the
+    # When the fake client raises, non-auth limiters fall back to the
     # in-memory per-process counter (fail-open) instead of erroring.
     broken = _FakeRedisBroken()
     rl._buckets.clear()
@@ -115,5 +114,50 @@ def test_check_rate_limit_fails_open_to_in_memory_when_redis_down():
             await rl.check_rate_limit("k3", limit=2)
         with pytest.raises(HTTPException):
             await rl.check_rate_limit("k3", limit=2)
+
+    asyncio.run(go())
+
+
+def test_check_rate_limit_fail_closed_when_redis_errors():
+    broken = _FakeRedisBroken()
+
+    async def go():
+        rl._client = lambda: broken  # type: ignore[assignment]
+        with pytest.raises(HTTPException) as exc:
+            await rl.check_rate_limit("login:user:alice", limit=20, fail_closed=True)
+        assert exc.value.status_code == 503
+        assert "unavailable" in exc.value.detail.lower()
+
+    asyncio.run(go())
+
+
+def test_check_rate_limit_fail_closed_when_client_missing():
+    async def go():
+        rl._client = lambda: None  # type: ignore[assignment]
+        with pytest.raises(HTTPException) as exc:
+            await rl.check_rate_limit("login:ip:1.2.3.4", limit=60, fail_closed=True)
+        assert exc.value.status_code == 503
+
+    asyncio.run(go())
+
+
+def test_check_login_rate_limit_fail_closed_on_redis_outage():
+    broken = _FakeRedisBroken()
+
+    async def go():
+        rl._client = lambda: broken  # type: ignore[assignment]
+        with pytest.raises(HTTPException) as exc:
+            await rl.check_login_rate_limit("alice", "10.0.0.1")
+        assert exc.value.status_code == 503
+
+    asyncio.run(go())
+
+
+def test_check_login_rate_limit_allows_under_limit_via_redis():
+    fake = _FakeRedisOk()
+
+    async def go():
+        rl._client = lambda: fake  # type: ignore[assignment]
+        await rl.check_login_rate_limit("bob", "10.0.0.2")
 
     asyncio.run(go())

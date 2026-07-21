@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>گزارش تست نفوذ Alpha Router — نسخه فارسی (شبکه داخلی)</title>
+  <style>
+    :root {
+      --bg: #f4f3ef;
+      --card: #fff;
+      --ink: #171717;
+      --muted: #5a5a5a;
+      --line: #d5d4ce;
+      --high: #9a3412;
+      --med: #854d0e;
+      --low: #3f6212;
+      --vlow: #475569;
+      --info: #1e3a5f;
+      --ok: #14532d;
+      --fix: #1e293b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, "Noto Naskh Arabic", system-ui, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.75;
+      font-size: 15.5px;
+      direction: rtl;
+    }
+    header {
+      background: #111;
+      color: #f3f3f3;
+      padding: 2.2rem 1.5rem 1.8rem;
+    }
+    header h1 { margin: 0 0 0.5rem; font-size: 1.65rem; font-weight: 650; }
+    header p { margin: 0.35rem 0; color: #c8c8c8; max-width: 85ch; }
+    main { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+    h2 {
+      margin: 2.4rem 0 0.8rem;
+      padding-bottom: 0.4rem;
+      border-bottom: 1px solid var(--line);
+      font-size: 1.25rem;
+    }
+    h3 { margin: 0 0 0.55rem; font-size: 1.05rem; }
+    .meta { color: var(--muted); font-size: 0.92rem; }
+    .grid {
+      display: grid;
+      gap: 0.75rem;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      margin: 1rem 0 1.4rem;
+    }
+    .stat {
+      background: var(--card);
+      border: 1px solid var(--line);
+      padding: 0.9rem 1rem;
+    }
+    .stat strong { display: block; font-size: 1.4rem; line-height: 1.2; }
+    nav.toc {
+      background: var(--card);
+      border: 1px solid var(--line);
+      padding: 1rem 1.25rem;
+      margin: 1rem 0 1.5rem;
+    }
+    nav.toc ol { margin: 0.45rem 0 0; padding-right: 1.25rem; padding-left: 0; }
+    nav.toc a { color: var(--ink); text-decoration: none; border-bottom: 1px solid #bbb; }
+    table { width: 100%; border-collapse: collapse; background: var(--card); margin: 1rem 0; font-size: 0.9rem; }
+    th, td { border: 1px solid var(--line); padding: 0.55rem 0.65rem; vertical-align: top; text-align: right; }
+    th { background: #ecebe6; }
+    .finding {
+      background: var(--card);
+      border: 1px solid var(--line);
+      padding: 1.05rem 1.15rem;
+      margin: 1rem 0;
+    }
+    .label {
+      display: block;
+      margin-top: 0.75rem;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      color: var(--muted);
+    }
+    .sev { font-weight: 700; }
+    .sev-high { color: var(--high); }
+    .sev-medium { color: var(--med); }
+    .sev-low { color: var(--low); }
+    .sev-vlow { color: var(--vlow); }
+    .sev-info { color: var(--info); }
+    .sev-ok { color: var(--ok); }
+    .fix {
+      margin-top: 0.55rem;
+      padding: 0.75rem 0.9rem;
+      background: #f1f5f9;
+      border-right: 3px solid var(--fix);
+      border-left: none;
+    }
+    .context {
+      background: #fff7ed;
+      border: 1px solid #fdba74;
+      padding: 0.9rem 1rem;
+      margin: 1rem 0;
+    }
+    code, pre { font-family: Consolas, "Courier New", monospace; font-size: 0.86em; direction: ltr; text-align: left; unicode-bidi: embed; }
+    pre {
+      background: #ecebe6;
+      border: 1px solid var(--line);
+      padding: 0.8rem 1rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+    }
+    ul, ol { padding-right: 1.25rem; padding-left: 0; }
+    .badge {
+      display: inline-block;
+      padding: 0.1rem 0.45rem;
+      border: 1px solid var(--line);
+      background: #f8f7f4;
+      font-size: 0.78rem;
+      margin-left: 0.35rem;
+    }
+    footer {
+      margin: 2.8rem 0 1.2rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+    @media print {
+      body { background: #fff; }
+      header { background: #fff; color: #000; border-bottom: 2px solid #000; }
+      header p { color: #333; }
+      .finding, .stat, nav.toc, table { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>گزارش تست نفوذ تازهٔ Alpha Router</h1>
+    <p>
+      ارزیابی ایستا و پویا بدون پیش‌فرض قبلی، روی استقرار محلی Docker Compose.
+      این نسخه برای <strong>استفاده در شبکهٔ داخلی سازمان</strong> بازنویسی شده و شدت ریسک‌ها با همین زمینه تنظیم شده است.
+      <strong>هیچ کدی برای remediation تغییر نکرده است.</strong>
+    </p>
+    <p class="meta">تاریخ: ۲۰۲۶-۰۷-۲۰ · حالت: تست نفوذ فقط‌خواندنی · بدون افشای secret</p>
+    <p class="meta">هدف: alpha-router، postgres، pgbouncer، redis، minio، sandbox-broker</p>
+  </header>
+
+  <main>
+    <nav class="toc" aria-label="فهرست">
+      <strong>فهرست مطالب</strong>
+      <ol>
+        <li><a href="#exec">خلاصه اجرایی</a></li>
+        <li><a href="#context">فرض استقرار داخلی و مقیاس ریسک</a></li>
+        <li><a href="#method">محدوده و روش کار</a></li>
+        <li><a href="#recon">شواهد شناسایی زنده</a></li>
+        <li><a href="#matrix">جدول یافته‌ها</a></li>
+        <li><a href="#findings">شرح یافته‌ها و راهکار فیکس</a></li>
+        <li><a href="#positive">کنترل‌های موفق</a></li>
+        <li><a href="#priority">اولویت remediation</a></li>
+        <li><a href="#limits">محدودیت‌ها</a></li>
+      </ol>
+    </nav>
+
+    <section id="exec">
+      <h2>۱. خلاصه اجرایی</h2>
+      <p>
+        Alpha Router برای استقرار در شبکه داخلی سازمان ارزیابی شد. بسیاری از کنترل‌ها (کانتینر non-root،
+        احراز هویت Redis، قفل Docs، پیش‌فرض‌های SSRF، توکن broker، مالکیت رسانه/چت برای کاربر عادی)
+        درست کار می‌کنند. ریسک‌های باقی‌مانده بیشتر از جنس <em>افزایش سطح دسترسی داخل سازمان</em>،
+        <em>سوءاستفاده توسط حساب‌های ادمین محدود</em>، و <em>معماری Docker socket</em> هستند —
+        نه لزوماً حملهٔ مستقیم از اینترنت عمومی.
+      </p>
+      <div class="grid">
+        <div class="stat"><strong class="sev-high">۴</strong>High</div>
+        <div class="stat"><strong class="sev-medium">۱۰</strong>Medium</div>
+        <div class="stat"><strong class="sev-low">۶</strong>Low</div>
+        <div class="stat"><strong class="sev-vlow">۳</strong>Very Low</div>
+        <div class="stat"><strong>۲۳</strong>کل یافته‌ها</div>
+      </div>
+      <p><strong>مهم‌ترین ریسک‌ها در شبکه داخلی:</strong></p>
+      <ol>
+        <li><strong>F-15</strong> — ادمین Users می‌تواند خودش را Super Admin کند.</li>
+        <li><strong>F-01</strong> — در اختیار داشتن docker.sock توسط sandbox-broker.</li>
+        <li><strong>F-03</strong> — Legacy Bearer و دور زدن CSRF در سناریوی XSS داخلی.</li>
+        <li><strong>F-02</strong> — Production Guard در حالت warning (soft-fail).</li>
+        <li><strong>F-18 / F-17</strong> — سطح حملهٔ بالای تنظیمات OIDC/IdP توسط ادمین Authentication.</li>
+      </ol>
+    </section>
+
+    <section id="context">
+      <h2>۲. فرض استقرار داخلی و مقیاس ریسک</h2>
+      <div class="context">
+        <strong>فرض این گزارش:</strong> Alpha Router فقط روی شبکه داخلی سازمان در دسترس است
+        (VLAN/کاربران سازمانی)، نه به‌صورت عمومی روی اینترنت. مهاجم محتمل شامل:
+        کاربر داخلی مخرب، حساب لو‌رفته، بدافزار روی کلاینت سازمانی، یا ادمین با نقش محدود است.
+      </div>
+      <p><strong>مقیاس شدت در این نسخه:</strong></p>
+      <ul>
+        <li><span class="sev sev-high">High</span> — امکان تصاحب گسترده، ارتقای نقش حساس، یا کنترل host/Docker از داخل شبکه.</li>
+        <li><span class="sev sev-medium">Medium</span> — سوءاستفاده عملی با پیش‌شرط حساب/نقش یا پیکربندی غلط؛ اثر محدودتر یا نیازمند چند گام.</li>
+        <li><span class="sev sev-low">Low</span> — اثر محدود، یا عمدتاً defense-in-depth روی شبکه داخلی.</li>
+        <li><span class="sev sev-vlow">Very Low</span> — ریسک نظری/عملیاتی جزئی با احتمال یا اثر پایین در زمینهٔ داخلی.</li>
+      </ul>
+      <p class="meta">
+        توجه: مواردی مثل bind روی <code>0.0.0.0</code> یا نبود HSTS که در اینترنت عمومی «Critical/High» دیده می‌شوند،
+        در شبکه داخلی با فرض فایروال سازمانی معمولاً به Medium یا پایین‌تر کاهش یافته‌اند —
+        مگر اینکه بخش‌های guest/Wi‑Fi ناامن به همان VLAN دسترسی داشته باشند.
+      </p>
+    </section>
+
+    <section id="method">
+      <h2>۳. محدوده و روش کار</h2>
+      <h3>داخل محدوده</h3>
+      <ul>
+        <li>بررسی ایستای auth، RBAC، gateway، admin، SSRF، sandbox، آپلود/ZIP، OIDC/LDAP، crypto، frontend، Compose، CI</li>
+        <li>آزمون پویا روی localhost (وضعیت HTTP، هدرها، inspect کانتینر، فلگ‌های غیرحساس)</li>
+        <li>راهکار فیکس به‌صورت مشورتی</li>
+      </ul>
+      <h3>قوانین سخت</h3>
+      <ul>
+        <li>بدون تغییر کد، بدون commit، بدون چرخش credential، بدون ویرایش <code>.env</code></li>
+        <li>بدون exploit سلاح‌شده و بدون حمله به سیستم‌های خارجی سازمان</li>
+        <li>بدون درج مقدار secret در گزارش</li>
+      </ul>
+    </section>
+
+    <section id="recon">
+      <h2>۴. شواهد شناسایی زنده</h2>
+      <table>
+        <thead><tr><th>آزمون</th><th>نتیجه</th></tr></thead>
+        <tbody>
+          <tr><td><code>GET /health</code></td><td>۲۰۰ · پاسخ حداقلی</td></tr>
+          <tr><td>Docs / OpenAPI بدون احراز هویت</td><td>همه مسیرهای docs → ۴۰۴</td></tr>
+          <tr><td><code>/v1</code> بدون/با کلید غلط</td><td>۴۰۱ / ۴۰۱</td></tr>
+          <tr><td>Login با Origin بد</td><td>۴۰۳</td></tr>
+          <tr><td>Admin / ops / logs بدون auth</td><td>۴۰۱</td></tr>
+          <tr><td>Broker از host روی :808۱</td><td>غیرقابل دسترس (publish نشده)</td></tr>
+          <tr><td>Broker از شبکه alpha-router</td><td>Health ۲۰۰؛ execute بدون/با توکن غلط → ۴۰۱</td></tr>
+          <tr><td>کانتینر alpha-router</td><td>user=alpha-router، read-only، CapDrop=ALL، بدون docker.sock؛ پورت ۰٫۰٫۰٫۰:۸۰۸۰</td></tr>
+          <tr><td>کانتینر sandbox-broker</td><td>mount شدن docker.sock؛ پورت ۸۰۸۱ publish نشده؛ USER خالی</td></tr>
+          <tr><td>Redis بدون رمز</td><td><code>NOAUTH</code></td></tr>
+          <tr><td>هدرهای امنیتی</td><td>CSP فقط Report-Only؛ بدون HSTS؛ nosniff؛ X-Frame-Options DENY</td></tr>
+          <tr><td>CORS</td><td>localhost با credentials مجاز؛ Origin بد بدون ACAO</td></tr>
+          <tr><td>مسیر با <code>../</code></td><td>۲۰۰ HTML مربوط به SPA (نه نشت فایل سیستم)</td></tr>
+        </tbody>
+      </table>
+      <h3>فلگ‌های زمان اجرا (غیرحساس)</h3>
+      <pre>ENVIRONMENT=production
+PRODUCTION_GUARD_MODE=warning
+OPENAPI_ADMIN_ONLY=true
+allow_legacy_bearer_auth=True
+enable_csrf=True
+allow_ssrf_private_ranges=False
+enable_ssrf_dns_pinning=True
+allow_insecure_code_subprocess=False
+enable_hsts=False
+DATA_ENCRYPTION_KEY=SET
+REDIS_PASSWORD=SET
+SANDBOX_BROKER_TOKEN=SET (len&gt;=32)
+GATEWAY_MASTER_KEY=CUSTOM
+SECRET_KEY=CUSTOM</pre>
+    </section>
+
+    <section id="matrix">
+      <h2>۵. جدول یافته‌ها (ریسک برای شبکه داخلی)</h2>
+      <table>
+        <thead>
+          <tr><th>شناسه</th><th>ریسک داخلی</th><th>عنوان</th><th>حوزه</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>F-15</td><td class="sev-high">High</td><td>ادمین Users می‌تواند Super Admin بسازد</td><td>RBAC</td></tr>
+          <tr><td>F-01</td><td class="sev-high">High</td><td>docker.sock روی sandbox-broker</td><td>Sandbox / Host</td></tr>
+          <tr><td>F-03</td><td class="sev-high">High</td><td>Legacy Bearer باعث دور زدن CSRF می‌شود</td><td>نشست</td></tr>
+          <tr><td>F-02</td><td class="sev-high">High</td><td>Production Guard در حالت warning</td><td>پیکربندی</td></tr>
+          <tr><td>F-18</td><td class="sev-medium">Medium</td><td>قدرت بالای ادمین Authentication روی IdP</td><td>OIDC/LDAP Admin</td></tr>
+          <tr><td>F-17</td><td class="sev-medium">Medium</td><td>پین نشدن OIDC redirect_uri</td><td>OIDC</td></tr>
+          <tr><td>F-19</td><td class="sev-medium">Medium</td><td>امکان fallback به LDAP plaintext</td><td>LDAP</td></tr>
+          <tr><td>F-05</td><td class="sev-medium">Medium</td><td>Rate-limit لاگین در قطعی Redis fail-open است</td><td>Auth</td></tr>
+          <tr><td>F-08</td><td class="sev-medium">Medium</td><td>Fallback decrypt برای plaintext قدیمی</td><td>Crypto</td></tr>
+          <tr><td>F-20</td><td class="sev-medium">Medium</td><td>شکاف hold بودجه در تغییر ماه</td><td>Billing</td></tr>
+          <tr><td>F-21</td><td class="sev-medium">Medium</td><td>برگرداندن متن خطای provider به کلاینت/لاگ</td><td>افشا</td></tr>
+          <tr><td>F-10</td><td class="sev-medium">Medium</td><td>broker بدون USER غیرroot</td><td>Sandbox</td></tr>
+          <tr><td>F-07</td><td class="sev-medium">Medium</td><td>کلیدهای خاموش‌کننده SSRF</td><td>Egress</td></tr>
+          <tr><td>F-09</td><td class="sev-medium">Medium</td><td>مدل محرمانگی Private Mode سمت کلاینت</td><td>کلاینت</td></tr>
+          <tr><td>F-04</td><td class="sev-low">Low</td><td>Publish اپ روی ۰٫۰٫۰٫۰:۸۰۸۰</td><td>شبکه</td></tr>
+          <tr><td>F-16</td><td class="sev-low">Low</td><td>CORS همیشه localhost را با credentials می‌پذیرد</td><td>CORS</td></tr>
+          <tr><td>F-06</td><td class="sev-low">Low</td><td>CSP فقط Report-Only</td><td>مرورگر</td></tr>
+          <tr><td>F-22</td><td class="sev-low">Low</td><td>نبود rate limit روی Gateway</td><td>هزینه/DoS</td></tr>
+          <tr><td>F-13</td><td class="sev-low">Low</td><td>dangerouslySetInnerHTML در ChatCodeBlock</td><td>XSS</td></tr>
+          <tr><td>F-25</td><td class="sev-low">Low</td><td>مسیر API با <code>../</code> به SPA می‌افتد</td><td>Routing</td></tr>
+          <tr><td>F-11</td><td class="sev-vlow">Very Low</td><td>مقایسه غیر ثابت‌زمانی master key</td><td>Gateway</td></tr>
+          <tr><td>F-12</td><td class="sev-vlow">Very Low</td><td>نمایش ۴ کاراکتر آخر secret ماسک‌شده</td><td>Admin UI</td></tr>
+          <tr><td>F-23</td><td class="sev-vlow">Very Low</td><td>اعتماد HSTS به X-Forwarded-Proto</td><td>هدرها</td></tr>
+          <tr><td>F-14</td><td class="sev-info">اطلاعاتی</td><td>خواندن رسانهٔ دیگران توسط Users-menu (طراحی)</td><td>RBAC</td></tr>
+          <tr><td>F-24</td><td class="sev-info">اطلاعاتی</td><td>قدرت LDAP bridge پس از داشتن توکن</td><td>LDAP Bridge</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="findings">
+      <h2>۶. شرح یافته‌ها و راهکار فیکس</h2>
+
+      <article class="finding" id="F-15">
+        <h3><span class="sev sev-high">High</span> · F-15 · ادمین Users می‌تواند Super Admin بسازد</h3>
+        <span class="badge">ارتقای سطح دسترسی</span>
+        <p class="label">چرا در شبکه داخلی High است؟</p>
+        <p>
+          در سازمان، حساب‌های «مدیر کاربران» رایج‌اند. اگر این نقش بتواند خودش را Super Admin کند،
+          یک insider یا حساب لو‌رفته به کل پنل، اسرار، Docs و تنظیمات هویت دسترسی پیدا می‌کند —
+          بدون نیاز به نفوذ از اینترنت.
+        </p>
+        <p class="label">محل</p>
+        <p><code>backend/app/api/admin.py</code> (PATCH کاربران / نقش‌های گروهی)، <code>user_role_service.py</code>، <code>rbac.py</code></p>
+        <p class="label">یافته</p>
+        <p>
+          به‌روزرسانی نقش فقط به <code>require_users_write</code> وابسته است. حفاظت از حذف آخرین ادمین کامل وجود دارد،
+          اما برای <strong>اعطای</strong> <code>super_admin</code> (یا مجموعه نقش‌های معادل) گیت جداگانه دیده نشد.
+        </p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul>
+            <li>اعطای/حذف <code>super_admin</code> فقط توسط Super Admin مجاز باشد.</li>
+            <li>قانون «نمی‌توان نقشی بالاتر از خود اعطا کرد» روی همهٔ endpointهای نقش اعمال شود.</li>
+            <li>تست regression: Users-admin برای ساخت Super Admin باید ۴۰۳ بگیرد.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-01">
+        <h3><span class="sev sev-high">High</span> · F-01 · docker.sock روی sandbox-broker</h3>
+        <span class="badge">Sandbox</span><span class="badge">Host</span>
+        <p class="label">چرا در شبکه داخلی هنوز High است؟</p>
+        <p>
+          حتی بدون اینترنت، هر کسی که به broker یا توکن آن برسد (از داخل Docker network، از لاگ، از backup)
+          می‌تواند به Docker host مسلط شود. این ریسک معماری است و با «داخلی بودن» حذف نمی‌شود.
+        </p>
+        <p class="label">شواهد</p>
+        <p>Inspect: mount شدن sock؛ پورت ۸۰۸۱ publish نشده؛ alpha-router بدون sock؛ توکن غلط → ۴۰۱؛ USER خالی.</p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul>
+            <li>Broker را روی host/VM جدا ایزوله کنید؛ توکن را rotate کنید؛ هرگز پورت را publish نکنید.</li>
+            <li>در میان‌مدت: اجرای non-root، یا جایگزینی با runtime بدون sock (gVisor / Firecracker / runner جدا).</li>
+            <li>مانیتورینگ شکست‌های auth broker.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-03">
+        <h3><span class="sev sev-high">High</span> · F-03 · Legacy Bearer و دور زدن CSRF</h3>
+        <p class="label">چرا در شبکه داخلی High است؟</p>
+        <p>
+          XSS از یک سایت داخلی دیگر، افزونهٔ مرورگر، یا صفحهٔ مخرب اینترانت می‌تواند JWT لاگین را
+          بدون CSRF مصرف کند. مدل cookie+CSRF عملاً تضعیف می‌شود.
+        </p>
+        <p class="label">شواهد</p>
+        <p>زمان اجرا: <code>allow_legacy_bearer_auth=True</code> و <code>enable_csrf=True</code>.</p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul>
+            <li>پس از soak: <code>ALLOW_LEGACY_BEARER_AUTH=false</code> برای مرورگر.</li>
+            <li>عدم بازگرداندن <code>access_token</code> به SPA؛ نگه‌داشتن API key فقط برای <code>/v1</code>.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-02">
+        <h3><span class="sev sev-high">High</span> · F-02 · Production Guard در حالت warning</h3>
+        <p class="label">چرا High؟</p>
+        <p>
+          با <code>ENVIRONMENT=production</code> و <code>warning</code>، پیکربندی ناامن آینده فقط هشدار می‌دهد و سرویس بالا می‌ماند.
+          در سازمان این یعنی drift پیکربندی ممکن است ماه‌ها دیده نشود.
+        </p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul>
+            <li>پس از چک‌لیست secretها: <code>PRODUCTION_GUARD_MODE=hard-fail</code>.</li>
+            <li>حالت warning فقط برای پنجرهٔ کوتاه مهاجرت.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-18">
+        <h3><span class="sev sev-medium">Medium</span> · F-18 · قدرت بالای ادمین Authentication روی IdP</h3>
+        <p class="label">یافته</p>
+        <p>
+          ادمین با دسترسی نوشتن Authentication می‌تواند <code>server_url</code> و secretهای IdP را عوض کند.
+          فراخوانی JWKS/token از مسیر SSRF مشترک عبور نمی‌کند. IdP مخرب می‌تواند هویت جعلی وارد Alpha Router کند.
+        </p>
+        <p class="label">چرا Medium؟</p>
+        <p>نیاز به نقش خاص دارد؛ ولی اثر در صورت سوءاستفاده بسیار بالا است.</p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul>
+            <li>نوشتن تنظیمات Keycloak/LDAP را به Super Admin یا dual-control محدود کنید.</li>
+            <li>Allowlist برای hostهای IdP؛ پین کردن issuer؛ عبور از کنترل SSRF.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-17">
+        <h3><span class="sev sev-medium">Medium</span> · F-17 · پین نشدن OIDC redirect_uri</h3>
+        <p class="label">یافته</p>
+        <p>اعتبارسنجی شکل/HTTPS انجام می‌شود، اما به callback ثابت خود Alpha Router قفل نیست.</p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul>
+            <li>قفل روی <code>{API_PUBLIC_URL}/api/auth/keycloak/callback</code> یا allowlist صریح.</li>
+            <li>اعتبارسنجی هم در ذخیره و هم در login/callback.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-19">
+        <h3><span class="sev sev-medium">Medium</span> · F-19 · امکان fallback به LDAP plaintext</h3>
+        <p class="label">چرا در اینترانت Medium؟</p>
+        <p>
+          در شبکه داخلی هنوز sniff/MITM روی VLAN ناامن یا سگمنت مشترک ممکن است.
+          عبور رمز LDAP به‌صورت cleartext برای سازمان حساس است.
+        </p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul>
+            <li>در production فقط LDAPS یا STARTTLS موفق؛ بدون fallback plaintext.</li>
+            <li>پیش‌فرض <code>trust_untrusted_cert=false</code> و هشدار واضح در UI.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-05">
+        <h3><span class="sev sev-medium">Medium</span> · F-05 · Rate-limit لاگین در قطعی Redis fail-open</h3>
+        <p>Redis الان auth دارد (مثبت). در قطعی Redis، محدودیت لاگین به شمارندهٔ per-worker سقوط می‌کند و brute-force داخلی آسان‌تر می‌شود.</p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul>
+            <li>برای login به‌صورت fail-closed یا سقف محلی خیلی سخت‌گیرانه.</li>
+            <li>هشدار روی شمارندهٔ <code>redis_fallback</code>.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-08">
+        <h3><span class="sev sev-medium">Medium</span> · F-08 · Fallback decrypt برای plaintext قدیمی</h3>
+        <p>مقادیر غیرFernet به‌صورت plaintext برمی‌گردند؛ ciphertext غیرقابل‌decrypt هم as-is برمی‌گردد.</p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul>
+            <li>تأیید تکمیل migration؛ پس از cutover رد کردن plaintext در production.</li>
+            <li>برای ciphertext خراب، fail-closed به‌جای برگرداندن بایت خام.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-20">
+        <h3><span class="sev sev-medium">Medium</span> · F-20 · شکاف hold بودجه در تغییر ماه</h3>
+        <p>قفل همزمانی reserve/settle خوب است؛ اما در rollover ماهانه، holdهای باز ممکن است با دورهٔ جدید ناسازگار شوند.</p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul>
+            <li>قبل از reset دوره: settle/expire کردن holdها، یا انتساب settle به دورهٔ ایجاد reservation.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-21">
+        <h3><span class="sev sev-medium">Medium</span> · F-21 · برگرداندن متن خطای provider</h3>
+        <p>متن خام upstream ممکن است به کاربر یا API لاگ برسد و جزئیات داخلی/کلید را لو دهد.</p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul>
+            <li>کد خطای پایدار برای کلاینت؛ جزئیات کامل فقط در لاگ سرور.</li>
+            <li>ذخیرهٔ <code>error_code</code> redact‌شده در DB.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-10">
+        <h3><span class="sev sev-medium">Medium</span> · F-10 · broker بدون USER غیرroot</h3>
+        <p>برخلاف alpha-router، broker معمولاً به‌صورت root داخل کانتینر اجرا می‌شود و همزمان sock دارد.</p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul><li>اجرای non-root در صورت امکان؛ محدود کردن دسترسی گروه به docker.sock.</li></ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-07">
+        <h3><span class="sev sev-medium">Medium</span> · F-07 · کلیدهای خاموش‌کننده SSRF</h3>
+        <p>پیش‌فرض‌ها امن‌اند. روشن کردن private ranges یا خاموش کردن DNS pinning، سرویس‌های داخلی Docker/سازمان را در تیررس web-fetch قرار می‌دهد — در اینترانت اثرش بیشتر است.</p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul><li>قفل کردن فلگ‌ها در production؛ تغییر فقط با تأیید دو نفره؛ هشدار drift.</li></ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-09">
+        <h3><span class="sev sev-medium">Medium</span> · F-09 · Private Mode سمت کلاینت</h3>
+        <p>محرمانگی به رفتار مرورگر وابسته است. روی سیستم‌های اشتراکی سازمانی (کیوسک، سیستم همکار) دادهٔ private ممکن است بماند.</p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul><li>پاک‌سازی پیش‌فرض در logout؛ هشدار برای دستگاه اشتراکی؛ عدم persist روی کیوسک.</li></ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-04">
+        <h3><span class="sev sev-low">Low</span> · F-04 · Publish اپ روی ۰٫۰٫۰٫۰:۸۰۸۰</h3>
+        <p class="label">چرا از High به Low کاهش یافت؟</p>
+        <p>
+          در فرض شبکه داخلیِ کنترل‌شده، دسترسی از اینترنت عمومی مطرح نیست.
+          ریسک باقی‌مانده: دسترسی از سگمنت‌های داخلی ناخواسته (مثلاً guest Wi‑Fi مشترک) اگر فایروال host باز باشد.
+        </p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul>
+            <li>در صورت امکان bind به <code>127.0.0.1</code> پشت reverse proxy داخلی، یا محدودسازی با فایروال host به VLANهای مجاز.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-16">
+        <h3><span class="sev sev-low">Low</span> · F-16 · CORS و localhost با credentials</h3>
+        <p>شواهد: Origin لوکال → ACAO + credentials؛ Origin بد → بدون ACAO. در production داخلی معمولاً کم‌اثرتر است مگر با F-03 ترکیب شود.</p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul><li>در production فقط <code>FRONTEND_URL</code>؛ localhost فقط در development.</li></ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-06">
+        <h3><span class="sev sev-low">Low</span> · F-06 · CSP فقط Report-Only</h3>
+        <p>دفاع مرورگر در برابر XSS کامل نیست؛ ولی Markdown بدون raw HTML کمک می‌کند. روی اینترانت اولویت پایین‌تر از RBAC/session است.</p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul><li>پس از جمع‌آوری violation، CSP را enforce کنید.</li></ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-22">
+        <h3><span class="sev sev-low">Low</span> · F-22 · نبود rate limit روی Gateway</h3>
+        <p>سوءاستفاده از API key داخلی می‌تواند هزینهٔ مدل را سریع بالا ببرد؛ بودجه تا حدی جلوی آن را می‌گیرد.</p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul><li>Rate limit per-key/IP روی Redis؛ سقف سخت‌گیرانه‌تر برای master key.</li></ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-13">
+        <h3><span class="sev sev-low">Low</span> · F-13 · dangerouslySetInnerHTML در ChatCodeBlock</h3>
+        <p>تنها sink شناسایی‌شده از نوع HTML خطرناک؛ وابسته به highlight.js.</p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul><li>Enforce CSP؛ پین/بازبینی hljs.</li></ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-25">
+        <h3><span class="sev sev-low">Low</span> · F-25 · مسیر با <code>../</code> به SPA می‌افتد</h3>
+        <p>پاسخ ۲۰۰ از نوع HTML اپ است، نه خواندن فایل سیستم. Dist containment جلوی نشت فایل را گرفته است.</p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul><li>رد کردن خام مسیرهای دارای <code>..</code> یا برگرداندن JSON 404 یکنواخت برای escape از <code>/api</code>.</li></ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-11">
+        <h3><span class="sev sev-vlow">Very Low</span> · F-11 · مقایسه غیر ثابت‌زمانی master key</h3>
+        <p>ریسک timing روی شبکه معمولاً عملی نیست؛ همچنان بهتر است اصلاح شود.</p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul><li>استفاده از <code>hmac.compare_digest</code>.</li></ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-12">
+        <h3><span class="sev sev-vlow">Very Low</span> · F-12 · نمایش ۴ کاراکتر آخر secret ماسک‌شده</h3>
+        <p>فقط برای ادمین دارای دسترسی؛ کمک به تأیید کلید.</p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul><li>ماسک بدون decrypt tail؛ فقط طول/اثرانگشت.</li></ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-23">
+        <h3><span class="sev sev-vlow">Very Low</span> · F-23 · اعتماد HSTS به X-Forwarded-Proto</h3>
+        <p class="label">چرا Very Low؟</p>
+        <p>HSTS الان خاموش است و استقرار داخلی معمولاً HTTP یا TLS روی proxy داخلی دارد. ریسک عملی فعلی ناچیز است.</p>
+        <div class="fix">
+          <strong>راهکار فیکس</strong>
+          <ul><li>فقط وقتی TLS سازمانی دارید HSTS را روشن کنید؛ هدر forwarded را فقط از proxy قابل اعتماد بپذیرید.</li></ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-14">
+        <h3><span class="sev sev-info">اطلاعاتی</span> · F-14 · خواندن رسانهٔ دیگران توسط Users-menu</h3>
+        <p>قابلیت عمدی ادمین است، نه IDOR کاربر عادی. نقش Users را با احتیاط بدهید و دسترسی cross-user را لاگ کنید.</p>
+      </article>
+
+      <article class="finding" id="F-24">
+        <h3><span class="sev sev-info">اطلاعاتی</span> · F-24 · قدرت LDAP bridge پس از داشتن توکن</h3>
+        <p>بدون توکن fail-closed است و bind پیش‌فرض لوکال است. با توکن معتبر، blast radius بالا است — طراحی پل است، نه باگ fail-open.</p>
+        <div class="fix">
+          <strong>راهکار فیکس / بلندمدت</strong>
+          <ul>
+            <li>پین کردن config سمت سرور؛ rate-limit؛ فایروال؛ چرخش توکن؛ در نهایت LDAPS بومی یا Keycloak Federation.</li>
+          </ul>
+        </div>
+      </article>
+    </section>
+
+    <section id="positive">
+      <h2>۷. کنترل‌های موفق</h2>
+      <ul>
+        <li>alpha_router: non-root، read-only، CapDrop ALL، بدون docker.sock</li>
+        <li>broker: publish نشده؛ الزام توکن؛ سیاست image/network ثابت</li>
+        <li>subprocess ناامن خاموش؛ SSRF private خاموش؛ DNS pinning روشن</li>
+        <li>Gateway بدون کلید → ۴۰۱؛ Origin بد روی login → ۴۰۳؛ Admin بدون auth → ۴۰۱</li>
+        <li>Docs برای ناشناس قفل است؛ Redis نیاز به auth دارد</li>
+        <li>کلیدهای پیش‌فرض ناامن در runtime زنده دیده نشد (CUSTOM/SET)</li>
+        <li>IDOR کلاسیک برای کاربر عادی روی chat/media تأیید نشد</li>
+        <li>Markdown بدون rehype-raw؛ سیاست URL؛ پاک‌سازی کلید JWT از localStorage</li>
+        <li>محدودیت اندازهٔ بدنه و سقف ZIP/نام فایل در مسیرهای بررسی‌شده سالم به نظر می‌رسد</li>
+      </ul>
+    </section>
+
+    <section id="priority">
+      <h2>۸. اولویت remediation برای استقرار داخلی</h2>
+      <ol>
+        <li><strong>فوری:</strong> F-15 (ارتقای نقش)، F-03 (خاموش کردن Legacy Bearer)، F-02 (<code>hard-fail</code>)</li>
+        <li><strong>کوتاه‌مدت:</strong> F-01/F-10 (ایزوله broker)، F-18/F-17/F-19 (هویت سازمانی)</li>
+        <li><strong>سخت‌سازی عملیاتی:</strong> F-05، F-08، F-20، F-21، F-07، F-09</li>
+        <li><strong>defense-in-depth:</strong> F-04، F-16، F-06، F-22، F-13، F-25، سپس Very Lowها</li>
+      </ol>
+      <p class="meta">در این مرحله هیچ remediation اعمال نشده است. فیکس فقط پس از تأیید جداگانه انجام شود.</p>
+    </section>
+
+    <section id="limits">
+      <h2>۹. محدودیت‌ها</h2>
+      <ul>
+        <li>ماتریس کامل دوکاربره CSRF/IDOR در UI به‌صورت end-to-end کامل اجرا نشد؛ مالکیت بیشتر از روی کد و probe بدون auth تأیید شد.</li>
+        <li>LDAP/Keycloak سازمانی واقعی و OpenRouter خارجی مورد حمله قرار نگرفتند.</li>
+        <li>بهره‌برداری عملی از docker.sock فراتر از مستندسازی معماری انجام نشد.</li>
+        <li>ارزیابی شدت برای فرض «فقط شبکه داخلی» است؛ اگر سرویس بعداً اینترنتی شود، شدت F-04/F-06/F-23 باید دوباره بالا ارزیابی شود.</li>
+        <li>هیچ مقدار secret در گزارش نیست.</li>
+      </ul>
+    </section>
+
+    <footer>
+      <p><strong>بیانیه:</strong> این سند نتیجهٔ تست نفوذ و تحلیل است. هیچ کد اپلیکیشن برای رفع یافته‌ها تغییر نکرده است.</p>
+      <p>مسیر گزارش فارسی: <code>docs/ALPHA_ROUTER_SECURITY_AUDIT_FRESH_REPORT_FA.html</code></p>
+      <p>نسخه انگلیسی قبلی: <code>docs/ALPHA_ROUTER_SECURITY_AUDIT_FRESH_REPORT.html</code></p>
+    </footer>
+  </main>
+</body>
+</html>

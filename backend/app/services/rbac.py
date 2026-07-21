@@ -49,6 +49,7 @@ READ_ONLY_FULL_ADMIN_SLUG = "read_only_full_administrator"
 LEGACY_READ_ONLY_ADMIN_SLUG = "read_only_administrator"
 USER_SLUG = "user"
 SUPER_ADMIN_SLUG = "super_admin"
+API_KEY_ADMIN_SLUG = "api_keys_full_administrator"
 
 MENU_DEFINITIONS: tuple[tuple[MenuKey, str, CategoryKey], ...] = (
     ("dashboard", "Dashboard", "overview"),
@@ -74,24 +75,12 @@ MENU_DEFINITIONS: tuple[tuple[MenuKey, str, CategoryKey], ...] = (
     ("user_manual", "User Manual", "developer"),
 )
 
-# Menus available to every admin-panel user (no dedicated administrator role).
-MENUS_WITHOUT_ASSIGNABLE_ROLES: frozenset[MenuKey] = frozenset(
-    {
-        "dashboard",
-        "chat",
-        "media",
-        "recommendations",
-        "roles",
-        "deleted_users",
-        "storage",
-        "database",
-        "admin_guide",
-        "user_manual",
-    }
-)
+# Only API Keys keeps a dedicated assignable admin role (API Key Admin).
+ASSIGNABLE_ADMIN_MENUS: frozenset[MenuKey] = frozenset({"api_keys"})
 
-ASSIGNABLE_ADMIN_MENUS: frozenset[MenuKey] = frozenset(
-    menu for menu, _, _ in MENU_DEFINITIONS if menu not in MENUS_WITHOUT_ASSIGNABLE_ROLES
+# All other menus are Super Admin only (no dedicated assignable role).
+MENUS_WITHOUT_ASSIGNABLE_ROLES: frozenset[MenuKey] = frozenset(
+    menu for menu, _, _ in MENU_DEFINITIONS if menu not in ASSIGNABLE_ADMIN_MENUS
 )
 
 # End-user features (chat, media, …) — not admin RBAC menus; always writable when the account is active.
@@ -104,32 +93,18 @@ USER_APP_MENUS: frozenset[MenuKey] = frozenset(
     }
 )
 
-# Legacy slugs removed from the assignable catalog (still recognized for migration/access).
+def _all_historical_menu_role_slugs() -> frozenset[str]:
+    slugs: set[str] = set()
+    for menu, _, _ in MENU_DEFINITIONS:
+        slugs.add(f"{menu}_full_administrator")
+        slugs.add(f"{menu}_read_only_administrator")
+    return frozenset(slugs)
+
+
+# Legacy / retired slugs removed from the assignable catalog (still remapped on migration).
 REMOVED_ASSIGNABLE_ROLE_SLUGS: frozenset[str] = frozenset(
-    {
-        FULL_ADMIN_SLUG,
-        READ_ONLY_FULL_ADMIN_SLUG,
-        "dashboard_full_administrator",
-        "dashboard_read_only_administrator",
-        "chat_full_administrator",
-        "chat_read_only_administrator",
-        "media_full_administrator",
-        "media_read_only_administrator",
-        "recommendations_full_administrator",
-        "recommendations_read_only_administrator",
-        "roles_full_administrator",
-        "roles_read_only_administrator",
-        "deleted_users_full_administrator",
-        "deleted_users_read_only_administrator",
-        "database_full_administrator",
-        "database_read_only_administrator",
-        "admin_guide_full_administrator",
-        "admin_guide_read_only_administrator",
-        "user_manual_full_administrator",
-        "user_manual_read_only_administrator",
-        "storage_full_administrator",
-        "storage_read_only_administrator",
-    }
+    {FULL_ADMIN_SLUG, READ_ONLY_FULL_ADMIN_SLUG}
+    | (_all_historical_menu_role_slugs() - {API_KEY_ADMIN_SLUG})
 )
 
 LEGACY_SUPER_ADMIN_SLUGS: frozenset[str] = frozenset(
@@ -193,38 +168,6 @@ class RoleDefinition:
     is_user_panel: bool = False
 
 
-def _menu_roles(menu_key: MenuKey, label: str, group: CategoryKey) -> tuple[RoleDefinition, RoleDefinition]:
-    group_label = CATEGORY_LABELS[group]
-    full_slug = f"{menu_key}_full_administrator"
-    read_slug = f"{menu_key}_read_only_administrator"
-    return (
-        RoleDefinition(
-            slug=full_slug,
-            name=f"{label} Full Administrator",
-            description=f"Full read and write access to the {label} admin menu.",
-            category=group_label,
-            menu_key=menu_key,
-            read_only=False,
-        ),
-        RoleDefinition(
-            slug=read_slug,
-            name=f"{label} Read Only Administrator",
-            description=f"Read-only access to the {label} admin menu — view data but cannot change settings.",
-            category=group_label,
-            menu_key=menu_key,
-            read_only=True,
-        ),
-    )
-
-
-def _assignable_full_role_slugs() -> list[str]:
-    return [f"{menu}_full_administrator" for menu in sorted(ASSIGNABLE_ADMIN_MENUS)]
-
-
-def _assignable_read_only_role_slugs() -> list[str]:
-    return [f"{menu}_read_only_administrator" for menu in sorted(ASSIGNABLE_ADMIN_MENUS)]
-
-
 def bootstrap_super_admin_role_slugs() -> list[str]:
     """Single Super Admin role — full platform access for the default local admin account."""
     return [SUPER_ADMIN_SLUG]
@@ -240,22 +183,38 @@ def user_has_super_admin_access(slugs: list[str]) -> bool:
         return True
     if FULL_ADMIN_SLUG in normalized or LEGACY_ADMIN_SLUG in normalized:
         return True
-    required = set(_assignable_full_role_slugs())
-    return required.issubset(normalized)
+    return False
+
+
+def actor_may_assign_roles(
+    actor_slugs: list[str],
+    new_slugs: list[str],
+    previous_slugs: list[str] | None = None,
+) -> bool:
+    """Return whether ``actor_slugs`` may apply ``new_slugs`` to a target user.
+
+    Super Admin privilege may only be granted, changed, or revoked by an actor
+    that already has Super Admin access (explicit ``super_admin`` or legacy
+    global full-admin slugs). API Key Admin and User must not escalate to
+    platform-wide control.
+    """
+    actor_is_super = user_has_super_admin_access(actor_slugs)
+    if user_has_super_admin_access(new_slugs) and not actor_is_super:
+        return False
+    if previous_slugs is not None and user_has_super_admin_access(previous_slugs) and not actor_is_super:
+        return False
+    return True
 
 
 def user_has_super_read_only_access(slugs: list[str]) -> bool:
     normalized = {normalize_role_slug(s) for s in slugs if s}
     if READ_ONLY_FULL_ADMIN_SLUG in normalized or LEGACY_READ_ONLY_ADMIN_SLUG in normalized:
         return True
-    if user_has_super_admin_access(slugs):
-        return False
-    required = set(_assignable_read_only_role_slugs())
-    return required.issubset(normalized)
+    return False
 
 
 def _build_role_catalog() -> tuple[RoleDefinition, ...]:
-    roles: list[RoleDefinition] = [
+    return (
         RoleDefinition(
             slug=USER_SLUG,
             name="User",
@@ -273,12 +232,15 @@ def _build_role_catalog() -> tuple[RoleDefinition, ...]:
             menu_key=None,
             read_only=False,
         ),
-    ]
-    for menu_key, label, group in MENU_DEFINITIONS:
-        if menu_key in MENUS_WITHOUT_ASSIGNABLE_ROLES:
-            continue
-        roles.extend(_menu_roles(menu_key, label, group))
-    return tuple(roles)
+        RoleDefinition(
+            slug=API_KEY_ADMIN_SLUG,
+            name="API Key Admin",
+            description="Full read and write access to the API Keys admin menu.",
+            category=CATEGORY_LABELS["models_api"],
+            menu_key="api_keys",
+            read_only=False,
+        ),
+    )
 
 
 ROLE_CATALOG: tuple[RoleDefinition, ...] = _build_role_catalog()
@@ -290,14 +252,15 @@ LEGACY_SECTION_ROLE_PREFIXES: tuple[str, ...] = tuple(CATEGORY_LABELS.keys())
 
 
 def expand_legacy_role_slug(slug: str) -> list[str]:
-    """Map legacy admin/section roles to current per-menu slugs (for DB migration)."""
+    """Map legacy admin/section roles to current assignable slugs (for DB migration)."""
     raw = (slug or "").strip().lower()
     if raw in (LEGACY_ADMIN_SLUG, FULL_ADMIN_SLUG, SUPER_ADMIN_SLUG):
         return [SUPER_ADMIN_SLUG]
-    if raw == LEGACY_READ_ONLY_ADMIN_SLUG:
-        return _assignable_read_only_role_slugs()
-    if raw == READ_ONLY_FULL_ADMIN_SLUG:
-        return _assignable_read_only_role_slugs()
+    if raw in (LEGACY_READ_ONLY_ADMIN_SLUG, READ_ONLY_FULL_ADMIN_SLUG):
+        # Former platform-wide admins keep platform access as Super Admin.
+        return [SUPER_ADMIN_SLUG]
+    if raw == API_KEY_ADMIN_SLUG:
+        return [API_KEY_ADMIN_SLUG]
     if raw in REMOVED_ASSIGNABLE_ROLE_SLUGS:
         return []
     if raw in ROLE_BY_SLUG:
@@ -307,7 +270,8 @@ def expand_legacy_role_slug(slug: str) -> list[str]:
         if raw == f"{section}_full_administrator":
             return [f"{menu}_full_administrator" for menu in assignable]
         if raw == f"{section}_read_only_administrator":
-            return [f"{menu}_read_only_administrator" for menu in assignable]
+            # Read-only section bundles are retired; drop them.
+            return []
     return []
 
 

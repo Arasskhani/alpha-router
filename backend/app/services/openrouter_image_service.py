@@ -8,13 +8,17 @@ import re
 import httpcore
 import httpx
 
-OPENROUTER_CONNECT_TIMEOUT = 10.0
+OPENROUTER_CONNECT_TIMEOUT = 15.0
 # GPT-5.4 Image and similar OpenRouter image models often need 130–150s; keep headroom.
 OPENROUTER_READ_TIMEOUT = 180.0
 OPENROUTER_FALLBACK_TIMEOUT = 180.0
-OPENROUTER_IMAGE_MAX_ATTEMPTS = 3
+# Gemini Pro Image often drops mid-flight; give each strategy several reconnects.
+OPENROUTER_IMAGE_MAX_ATTEMPTS = 5
+OPENROUTER_DISCONNECT_BACKOFF_SEC = (1.0, 2.0, 4.0, 6.0)
 # Backoff between chat/completions retries when OpenRouter returns HTTP 200 with no image.
-OPENROUTER_EMPTY_IMAGE_RETRY_DELAYS_SEC = (1.5, 3.0, 5.0)
+OPENROUTER_EMPTY_IMAGE_RETRY_DELAYS_SEC = (1.5, 3.0, 5.0, 7.0)
+# Cap completion budget so providers do not advertise 32k tokens (seen causing 402 / drops).
+OPENROUTER_IMAGE_MAX_TOKENS = 4096
 
 _RETRYABLE_EXC: tuple[type[BaseException], ...] = (
     httpx.RemoteProtocolError,
@@ -22,6 +26,10 @@ _RETRYABLE_EXC: tuple[type[BaseException], ...] = (
     httpx.ConnectError,
     httpx.WriteError,
     httpx.PoolTimeout,
+    httpx.ReadTimeout,
+    httpx.WriteTimeout,
+    httpx.ConnectTimeout,
+    httpx.TimeoutException,
     httpcore.RemoteProtocolError,
     httpcore.ReadError,
     httpcore.ConnectError,
@@ -31,13 +39,33 @@ _RETRYABLE_EXC: tuple[type[BaseException], ...] = (
 _shared_client: httpx.AsyncClient | None = None
 
 
+def is_retryable_openrouter_transport_error(exc: BaseException) -> bool:
+    """True for disconnects / timeouts that should try another connection or strategy."""
+    if isinstance(exc, _RETRYABLE_EXC):
+        return True
+    msg = str(exc).lower()
+    return any(
+        token in msg
+        for token in (
+            "disconnected",
+            "connection reset",
+            "connection closed",
+            "server disconnected",
+            "timed out",
+            "timeout",
+        )
+    )
+
+
 def get_openrouter_http_client() -> httpx.AsyncClient:
     global _shared_client
     if _shared_client is None or _shared_client.is_closed:
+        # Keepalive=0 avoids reusing half-closed sockets after long Gemini image waits.
         _shared_client = httpx.AsyncClient(
             timeout=httpx.Timeout(OPENROUTER_READ_TIMEOUT, connect=OPENROUTER_CONNECT_TIMEOUT),
-            limits=httpx.Limits(max_connections=16, max_keepalive_connections=4, keepalive_expiry=20.0),
+            limits=httpx.Limits(max_connections=8, max_keepalive_connections=0),
             follow_redirects=True,
+            http2=False,
         )
     return _shared_client
 
@@ -135,26 +163,19 @@ def optimize_openrouter_image_model(model_id: str, *, chat_completions: bool = F
 
 
 def default_openrouter_image_provider_sort(model_id: str) -> str | None:
-    """Route multimodal image models for stability; omit sort for diffusion-style ids."""
+    """Route multimodal image models for stability; omit sort for diffusion-style ids.
+
+    Gemini Pro Image is more reliable without latency-sorting (fastest hops often
+    drop long image responses). Flash-tier Gemini still prefers latency.
+    """
     low = (model_id or "").lower()
+    if "gemini" in low and "pro" in low and "image" in low:
+        return None
     if _is_gemini_image_model(model_id) or is_openai_gpt_image_model(model_id):
         return "latency"
     if any(h in low for h in ("flux", "dall-e", "dalle", "stable-diffusion", "sdxl")):
         return None
     return "latency"
-
-
-def _message_has_text_content(message: dict) -> bool:
-    content = message.get("content")
-    if isinstance(content, str) and content.strip():
-        return True
-    if isinstance(content, list):
-        for part in content:
-            if not isinstance(part, dict):
-                continue
-            if str(part.get("type") or "").lower() == "text" and str(part.get("text") or "").strip():
-                return True
-    return False
 
 
 def is_transient_empty_openrouter_image_response(
@@ -163,23 +184,14 @@ def is_transient_empty_openrouter_image_response(
     collected: list | None,
 ) -> bool:
     """
-    True when OpenRouter returned HTTP 200 but no image and no assistant text.
+    True when OpenRouter returned HTTP 200 but no usable image payload.
 
-    These responses are often transient (provider flake), especially on long prompts.
+    Empty shells, text-only replies, and unparseable ``images`` fields are all
+    treated as retryable — Gemini/OpenRouter often flake to a text acknowledgement
+    on one provider route and succeed on the next strategy.
     """
-    if collected:
-        return False
-    if not isinstance(data, dict):
-        return True
-    choices = data.get("choices") or []
-    if not choices:
-        return True
-    msg = (choices[0] or {}).get("message") or {}
-    if msg.get("images"):
-        return False
-    if _message_has_text_content(msg):
-        return False
-    return True
+    del data  # shape inspected by callers for errors; retry decision is payload-based
+    return not bool(collected)
 
 
 def build_openrouter_headers(api_key: str, *, referer: str | None = None) -> dict[str, str]:
@@ -202,17 +214,23 @@ async def post_openrouter_json(
     last_exc: Exception | None = None
     timeout = httpx.Timeout(read_timeout or OPENROUTER_READ_TIMEOUT, connect=OPENROUTER_CONNECT_TIMEOUT)
     attempts = max(1, int(max_attempts))
+    req_headers = dict(headers)
+    # Prefer a fresh TCP connection for large multimodal responses.
+    req_headers.setdefault("Connection", "close")
 
     for attempt in range(attempts):
         client = get_openrouter_http_client()
         try:
-            return await client.post(url, headers=headers, json=json_payload, timeout=timeout)
-        except _RETRYABLE_EXC as exc:
+            return await client.post(url, headers=req_headers, json=json_payload, timeout=timeout)
+        except Exception as exc:
+            if not is_retryable_openrouter_transport_error(exc):
+                raise
             last_exc = exc
             await close_openrouter_http_client()
             if attempt + 1 >= attempts:
                 break
-            await asyncio.sleep(0.35 * (attempt + 1))
+            delay_idx = min(attempt, len(OPENROUTER_DISCONNECT_BACKOFF_SEC) - 1)
+            await asyncio.sleep(OPENROUTER_DISCONNECT_BACKOFF_SEC[delay_idx])
 
     if last_exc is not None:
         raise last_exc
@@ -307,7 +325,7 @@ def build_fast_openrouter_payload(
     if provider_sort:
         provider["sort"] = provider_sort
 
-    return {
+    payload: dict = {
         "model": model,
         "messages": [{"role": "user", "content": content}],
         "modalities": modalities,
@@ -315,3 +333,6 @@ def build_fast_openrouter_payload(
         "image_config": image_config,
         "provider": provider,
     }
+    if _is_gemini_image_model(model_id) or is_openai_gpt_image_model(model_id):
+        payload["max_tokens"] = OPENROUTER_IMAGE_MAX_TOKENS
+    return payload

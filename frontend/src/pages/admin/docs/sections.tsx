@@ -87,8 +87,8 @@ export const docSections: DocSection[] = [
           <li>Terminating client traffic at the organizational AI platform you operate.</li>
           <li>Syncing models and <strong>provider-native pricing</strong> from connections (no markup).</li>
           <li>
-            Applying <strong>Super Admin</strong> (full platform access), <strong>scoped per-menu roles</strong>{" "}
-            (assignable for eleven admin menus), <strong>plans</strong>, <strong>monthly budgets</strong>, and optional{" "}
+            Applying <strong>Super Admin</strong> (full platform access), <strong>API Key Admin</strong> (API Keys menu
+            only), <strong>plans</strong>, <strong>monthly budgets</strong>, and optional{" "}
             <strong>deactivation</strong> (account read-only — users can still browse chat history but cannot send new
             messages).
           </li>
@@ -522,13 +522,12 @@ export const docSections: DocSection[] = [
           </li>
           <li>
             <strong>Administrators</strong> are redirected to their <strong>first allowed admin menu</strong> — for
-            example <code>/admin/groups</code> for a Groups Full Administrator, or the Dashboard for Super Admin. They
-            do not need Dashboard access to use the admin panel.
+            example <code>/admin/api-keys</code> for <strong>API Key Admin</strong>, or the Dashboard for Super Admin.
+            They do not need Dashboard access to use the admin panel.
           </li>
           <li>
             Every admin account also sees the <strong>User panel</strong> group at the top of the admin sidebar (links
-            to <code>/app/chat</code>, Media, Recommendations, and so on). Scoped read-only admins keep full write access
-            in the user panel even when their assigned admin menu is read-only.
+            to <code>/app/chat</code>, Media, Recommendations, and so on).
           </li>
         </ul>
         <Note>
@@ -549,7 +548,8 @@ export const docSections: DocSection[] = [
           The left sidebar is grouped so related tasks sit together. The top group — <strong>User panel</strong> — links
           to the end-user app (<code>/app</code>) and is always visible to every administrator, regardless of scoped
           roles. Configuration lives in the middle groups; health and traffic live under <strong>Monitoring</strong>.
-          Only menus your roles grant appear below User panel; Super Admin sees every group.
+          Only menus your roles grant appear below User panel; Super Admin sees every group.{" "}
+          <strong>API Key Admin</strong> sees API Keys under Models &amp; API.
         </p>
         <table className="docs-table">
           <thead>
@@ -573,27 +573,27 @@ export const docSections: DocSection[] = [
             <tr>
               <td><strong>Models &amp; API</strong></td>
               <td>Connections, Models, API Keys</td>
-              <td>Per-menu Full / Read Only</td>
+              <td>API Keys: <strong>API Key Admin</strong>; Connections &amp; Models: Super Admin only</td>
             </tr>
             <tr>
               <td><strong>People &amp; access</strong></td>
               <td>Roles, Users, Deleted Users, Groups, Plans, Authentication</td>
-              <td>Per-menu for Users, Groups, Plans, Authentication; Super Admin for Roles &amp; Deleted Users</td>
+              <td>Super Admin only</td>
             </tr>
             <tr>
               <td><strong>Integrations</strong></td>
               <td>SMTP Server</td>
-              <td>Per-menu Full / Read Only</td>
+              <td>Super Admin only</td>
             </tr>
             <tr>
               <td><strong>Data &amp; reports</strong></td>
               <td>Storage Management, Retention Policy, Reports, API Logs</td>
-              <td>Storage Management &amp; Retention Policy: Super Admin only; Reports &amp; API Logs: per-menu Full / Read Only</td>
+              <td>Super Admin only</td>
             </tr>
             <tr>
               <td><strong>Monitoring</strong></td>
               <td>Operations (incl. model experience), Database (read-only monitor)</td>
-              <td>Operations: per-menu; Database: Super Admin only</td>
+              <td>Super Admin only</td>
             </tr>
             <tr>
               <td><strong>Developer</strong></td>
@@ -609,7 +609,7 @@ export const docSections: DocSection[] = [
         </p>
         <p>
           If you open a URL outside your allowed menus, Alpha Router redirects you to your <strong>first allowed admin path</strong>{" "}
-          (for example <code>/admin/groups</code> when you hold Groups Full Administrator), not to the user chat page.
+          (for example <code>/admin/api-keys</code> for API Key Admin), not to the user chat page.
         </p>
       </>
     ),
@@ -944,16 +944,18 @@ export const docSections: DocSection[] = [
           </li>
         </ol>
         <p>
-          Read-only roles show a <strong>Read only</strong> badge in the Name column. <strong>Super Admin</strong> uses
-          category <strong>All sections</strong> (not a sidebar group name).
+          <strong>Super Admin</strong> uses category <strong>All sections</strong> (not a sidebar group name).{" "}
+          <strong>API Key Admin</strong> is listed under <strong>Models &amp; API</strong>.
         </p>
-        <h3>Super Admin</h3>
+        <h3>Assignable roles</h3>
         <ul>
           <li>
-            <strong>Super Admin</strong> — The only global admin role in the assignable catalog. Full read/write on
-            every admin menu (Dashboard, Database, Roles, Deleted Users, Developer docs, and all assignable menus).
-            Legacy <code>admin</code> and former <strong>Full Administrator</strong> accounts were migrated to this role
-            on startup.
+            <strong>Super Admin</strong> — Full read/write on every admin menu and the entire platform. Legacy{" "}
+            <code>admin</code> / <strong>Full Administrator</strong> accounts migrate to this role on startup.
+          </li>
+          <li>
+            <strong>API Key Admin</strong> — Full read/write on the API Keys admin menu only (
+            <code>/admin/api-keys</code>). Does not grant Users, Roles, Connections, or other admin pages.
           </li>
           <li>
             <strong>User</strong> — Standard end-user panel only: Chat, Media, Recommendations, My Usage &amp; Activity,
@@ -961,91 +963,25 @@ export const docSections: DocSection[] = [
           </li>
         </ul>
         <Note>
-          Former global roles <strong>Full Administrator</strong> and <strong>Read Only Full Administrator</strong> were
-          removed from the assignable catalog. Existing assignments were remapped automatically (full → Super Admin;
-          read-only full → all eleven per-menu Read Only roles).
+          Former per-menu roles (Users Full Administrator, Groups Full Administrator, API Keys Read Only, and so on) were
+          removed from the catalog. Existing assignments for those retired roles are cleared on migration; former platform
+          Full / Read Only Full admins remap to <strong>Super Admin</strong>. Keep or re-assign{" "}
+          <strong>API Key Admin</strong> only where API Keys management is needed.
         </Note>
-        <h3>Per-menu roles (eleven assignable menus)</h3>
+        <h3>Everything else is Super Admin only</h3>
         <p>
-          These admin menus have two dedicated assignable roles each — <strong>&lt;Menu&gt; Full Administrator</strong>{" "}
-          (read/write) and <strong>&lt;Menu&gt; Read Only Administrator</strong> (read-only):
+          Connections, Models, Users, Groups, Plans, Authentication, SMTP, Reports, API Logs, Operations, Dashboard,
+          Database, Storage, Roles, Deleted Users, and Developer docs have <strong>no</strong> dedicated assignable role.
+          Only <strong>Super Admin</strong> can open them.
         </p>
-        <ul>
-          <li>
-            <strong>Models &amp; API</strong> — Connections, Models, API Keys
-          </li>
-          <li>
-            <strong>People &amp; access</strong> — Users, Groups, Plans, Authentication
-          </li>
-          <li>
-            <strong>Integrations</strong> — SMTP Server
-          </li>
-          <li>
-            <strong>Data &amp; reports</strong> — Reports, API Logs
-          </li>
-          <li>
-            <strong>Monitoring</strong> — Operations
-          </li>
-        </ul>
+        <h3>User panel</h3>
         <p>
-          Example: <strong>Groups Full Administrator</strong> grants read/write on Groups only; the sidebar shows User
-          panel plus Groups — not Dashboard, Database, or unrelated menus. The Roles table <strong>Category</strong> column
-          shows the sidebar group each menu belongs to.
+          Every administrator still sees the <strong>User panel</strong> group (Chat, Media, Recommendations on{" "}
+          <code>/app</code>). Those paths are not gated by admin menu roles. Only deactivated accounts lose write access
+          there — see <a href="#user-panel">User panel</a> and the User Manual.
         </p>
-        <h3>Menus without assignable roles (Super Admin only)</h3>
-        <p>
-          These admin pages have <strong>no</strong> per-menu Full/Read Only roles. Only Super Admin (or legacy full-admin
-          slugs still recognized at login) can open them:
-        </p>
-        <ul>
-          <li>
-            <strong>Overview</strong> — Dashboard, admin Chat, admin Media, admin Recommendations, admin My Usage &amp;
-            Activity
-          </li>
-          <li>
-            <strong>People &amp; access</strong> — Roles, Deleted Users
-          </li>
-          <li>
-            <strong>Monitoring</strong> — Database
-          </li>
-          <li>
-            <strong>Data &amp; reports</strong> — Storage Management (usage, quota, delete all media), Retention Policy
-            (media + chat retention)
-          </li>
-          <li>
-            <strong>Developer</strong> — Admin Guide, User Manual (admin copies)
-          </li>
-        </ul>
-        <p>
-          Users with <strong>Users Full Administrator</strong> (or Users Read Only) can still assign roles from the Users
-          table role picker even when they cannot open the Roles page — the API allows role listing when you have Users or
-          Roles menu access.
-        </p>
-        <h3>User panel vs scoped read-only</h3>
-        <p>
-          Every administrator sees the <strong>User panel</strong> group at the top of the admin sidebar (links to{" "}
-          <code>/app/chat</code>, Media, Recommendations, and so on). Those paths are <strong>not</strong> governed by
-          scoped admin RBAC:
-        </p>
-        <ul>
-          <li>
-            A <strong>Groups Read Only Administrator</strong> is read-only on <code>/admin/groups</code> but keeps full
-            write access in Chat and Media on <code>/app</code>.
-          </li>
-          <li>
-            Only <strong>deactivated accounts</strong> (or a future global read-only flag) block writes in the user panel
-            — see <a href="#user-panel">User panel</a> and the User Manual.
-          </li>
-        </ul>
-        <h3>Multiple roles</h3>
-        <p>
-          A user can hold <strong>more than one role</strong>. Effective permissions use the{" "}
-          <strong>lowest access level per menu</strong>: they can open only menus granted by their assigned roles, and{" "}
-          <strong>write</strong> actions in a menu require every covering role to allow writes. If a user has both{" "}
-          <strong>API Keys Full Administrator</strong> and <strong>API Keys Read Only Administrator</strong>, API Keys is
-          read-only.
-        </p>
-        <p>Assign roles in two places:</p>
+        <h3>Assigning roles</h3>
+        <p>A user can hold more than one role. Assign roles in two places:</p>
         <ul>
           <li>
             <strong>Roles → Assign Roles</strong> — Super Admin only. Bulk-apply <strong>one</strong> role to many users
@@ -1053,8 +989,8 @@ export const docSections: DocSection[] = [
           </li>
           <li>
             <strong>Users → Role column</strong> — Open the role dropdown, tick <strong>checkboxes</strong> for every
-            role the user should keep, then click <strong>Apply</strong>. Combine menu-scoped roles (for example API Keys
-            read-only plus Groups full admin).
+            role the user should keep (for example <strong>User</strong> plus <strong>API Key Admin</strong>), then click{" "}
+            <strong>Apply</strong>. Only Super Admin may grant or revoke Super Admin.
           </li>
         </ul>
         <p>
@@ -1705,9 +1641,9 @@ export const docSections: DocSection[] = [
           that opens their first allowed admin menu.
         </p>
         <Note>
-          <strong>Scoped read-only admin</strong> (for example Groups Read Only Administrator) does <strong>not</strong>{" "}
-          restrict the user panel — chat, media, and recommendations stay fully writable. Only{" "}
-          <strong>deactivated accounts</strong> enter account-wide read-only mode (see User Manual → Deactivated accounts).
+          Holding <strong>API Key Admin</strong> does <strong>not</strong> restrict the user panel — chat, media, and
+          recommendations stay fully writable. Only <strong>deactivated accounts</strong> enter account-wide read-only
+          mode (see User Manual → Deactivated accounts).
         </Note>
       </>
     ),
@@ -1906,8 +1842,8 @@ client.chat.completions.create(
           <li>Rotate provider and Alpha Router keys regularly; disable unused keys.</li>
           <li>TLS in production; restrict admin access by network or SSO.</li>
           <li>
-            Use <strong>least-privilege RBAC</strong>: assign scoped per-menu roles instead of Super Admin when a
-            colleague needs only one area (for example API Keys or Groups). Super Admin remains for platform owners.
+            Use <strong>least-privilege RBAC</strong>: assign <strong>API Key Admin</strong> instead of Super Admin when
+            a colleague only needs API Keys. Super Admin remains for platform owners.
           </li>
           <li>
             Back up PostgreSQL and the MinIO/S3 media bucket outside Alpha Router; use{" "}

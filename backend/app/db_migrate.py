@@ -744,6 +744,103 @@ async def apply_rbac_removed_roles_v3_migration() -> None:
         await conn.run_sync(migrate)
 
 
+async def apply_rbac_removed_roles_v4_migration() -> None:
+    """Keep only Super Admin, API Key Admin, and User; drop all other menu roles."""
+    from app.services.migration_flags import RBAC_REMOVED_ROLES_V4_MIGRATION_KEY
+    from app.services.rbac import expand_legacy_role_slug, primary_role_slug
+
+    async with engine.begin() as conn:
+
+        def migrate(connection) -> None:
+            if is_migration_completed_sync(connection, RBAC_REMOVED_ROLES_V4_MIGRATION_KEY):
+                return
+            insp = inspect(connection)
+            tables = set(insp.get_table_names())
+            if "users" not in tables or "user_role_assignments" not in tables:
+                return
+
+            rows = connection.execute(
+                text("SELECT user_id, role_slug FROM user_role_assignments")
+            ).fetchall()
+            by_user: dict[int, set[str]] = {}
+            for uid, slug in rows:
+                if uid is None:
+                    continue
+                for mapped in expand_legacy_role_slug(str(slug)):
+                    by_user.setdefault(int(uid), set()).add(mapped)
+            connection.execute(text("DELETE FROM user_role_assignments"))
+            for uid, slugs in by_user.items():
+                for slug in sorted(slugs):
+                    if connection.dialect.name == "postgresql":
+                        connection.execute(
+                            text(
+                                """
+                                INSERT INTO user_role_assignments (user_id, role_slug)
+                                VALUES (:uid, :slug)
+                                ON CONFLICT DO NOTHING
+                                """
+                            ),
+                            {"uid": uid, "slug": slug},
+                        )
+                    else:
+                        connection.execute(
+                            text(
+                                """
+                                INSERT OR IGNORE INTO user_role_assignments (user_id, role_slug)
+                                VALUES (:uid, :slug)
+                                """
+                            ),
+                            {"uid": uid, "slug": slug},
+                        )
+
+            user_rows = connection.execute(text("SELECT id, role FROM users")).fetchall()
+            for uid, role in user_rows:
+                if uid is None:
+                    continue
+                slugs = connection.execute(
+                    text(
+                        "SELECT role_slug FROM user_role_assignments WHERE user_id = :uid ORDER BY role_slug"
+                    ),
+                    {"uid": int(uid)},
+                ).fetchall()
+                if slugs:
+                    primary = primary_role_slug([str(s[0]) for s in slugs])
+                else:
+                    expanded = expand_legacy_role_slug(str(role or "user"))
+                    primary = primary_role_slug(expanded or ["user"])
+                    if expanded:
+                        for slug in expanded:
+                            if connection.dialect.name == "postgresql":
+                                connection.execute(
+                                    text(
+                                        """
+                                        INSERT INTO user_role_assignments (user_id, role_slug)
+                                        VALUES (:uid, :slug)
+                                        ON CONFLICT DO NOTHING
+                                        """
+                                    ),
+                                    {"uid": int(uid), "slug": slug},
+                                )
+                            else:
+                                connection.execute(
+                                    text(
+                                        """
+                                        INSERT OR IGNORE INTO user_role_assignments (user_id, role_slug)
+                                        VALUES (:uid, :slug)
+                                        """
+                                    ),
+                                    {"uid": int(uid), "slug": slug},
+                                )
+                connection.execute(
+                    text("UPDATE users SET role = :role WHERE id = :uid"),
+                    {"role": primary, "uid": int(uid)},
+                )
+
+            mark_migration_completed_sync(connection, RBAC_REMOVED_ROLES_V4_MIGRATION_KEY)
+
+        await conn.run_sync(migrate)
+
+
 async def apply_chat_normalized_storage_migrations() -> None:
     """Wipe legacy JSONB chat blobs; create normalized tables; migrate prefs only."""
     from app.services.migration_flags import CHAT_NORMALIZED_STORAGE_KEY
@@ -1051,6 +1148,7 @@ async def run_one_time_migrations(db) -> None:
     await apply_rbac_removed_roles_migration()
     await apply_rbac_removed_roles_v2_migration()
     await apply_rbac_removed_roles_v3_migration()
+    await apply_rbac_removed_roles_v4_migration()
     await apply_media_dedupe_migrations()
     await apply_pricing_sanity_migrations()
     await apply_chat_normalized_storage_migrations()

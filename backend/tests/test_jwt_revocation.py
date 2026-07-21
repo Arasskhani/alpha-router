@@ -10,15 +10,23 @@ Covers:
 """
 
 import asyncio
+import os
 
 from fastapi.security import HTTPAuthorizationCredentials
 from starlette.requests import Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.api.deps import get_current_user
+from app.config import get_settings
 from app.core.security import create_access_token, decode_access_token
 from app.database import Base
 from app.models.user import User
+
+
+def _enable_legacy_bearer_for_test() -> None:
+    """Bearer-path revocation tests opt into the compatibility flag explicitly."""
+    os.environ["ALLOW_LEGACY_BEARER_AUTH"] = "true"
+    get_settings.cache_clear()
 
 
 def _request(cookie: str | None = None) -> Request:
@@ -130,8 +138,10 @@ def test_create_access_token_embeds_ver():
 
 
 def test_revocation_scenarios():
+    _enable_legacy_bearer_for_test()
     asyncio.run(_run_revocation_scenarios())
 
 
 def test_legacy_token_backward_compatible():
+    _enable_legacy_bearer_for_test()
     asyncio.run(_run_legacy_token_compat())

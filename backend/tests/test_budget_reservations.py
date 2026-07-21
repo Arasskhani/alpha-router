@@ -218,7 +218,8 @@ def test_alpha_router_key_reservation_and_log_settlement_are_atomic() -> None:
     asyncio.run(run())
 
 
-def test_period_rollover_keeps_inflight_holds_enforced() -> None:
+def test_period_rollover_releases_inflight_holds() -> None:
+    """F-20: month/key period reset must expire open holds and clear reserved."""
     async def run():
         engine, factory, user_id, key_id = await _bootstrap()
         async with factory() as db:
@@ -246,10 +247,61 @@ def test_period_rollover_keeps_inflight_holds_enforced() -> None:
         async with factory() as db:
             user = await db.get(User, user_id)
             key = await db.get(AlphaRouterApiKey, key_id)
-            assert user.budget_reserved_usd == pytest.approx(0.2)
-            assert key.period_reserved_usd == pytest.approx(0.3)
-            assert (await db.get(BudgetReservation, user_hold.id)).status == reservations.STATUS_HELD
-            assert (await db.get(BudgetReservation, key_hold.id)).status == reservations.STATUS_HELD
+            assert user.budget_reserved_usd == pytest.approx(0.0)
+            assert key.period_reserved_usd == pytest.approx(0.0)
+            assert (await db.get(BudgetReservation, user_hold.id)).status == reservations.STATUS_EXPIRED
+            assert (await db.get(BudgetReservation, key_hold.id)).status == reservations.STATUS_EXPIRED
+        await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_settle_after_rollover_charges_new_period_via_fallback() -> None:
+    """After rollover expires a hold, log_usage still applies cost once."""
+    async def run():
+        engine, factory, user_id, _ = await _bootstrap()
+        async with factory() as db:
+            hold = await _reserve_user(db, user_id, 0.25, "rollover-settle")
+            user = await db.get(User, user_id)
+            user.budget_period_start = datetime.datetime.utcnow() - datetime.timedelta(days=40)
+            await db.commit()
+            hold_id = hold.id
+        async with factory() as db:
+            user = await db.get(User, user_id)
+            await ensure_budget_period(db, user)
+            await db.commit()
+            assert user.budget_reserved_usd == pytest.approx(0.0)
+            assert (await db.get(BudgetReservation, hold_id)).status == reservations.STATUS_EXPIRED
+        async with factory() as db:
+            await log_usage(
+                db,
+                user_id=user_id,
+                username="reserve-user",
+                model_id="chat/model",
+                prompt_tokens=10,
+                completion_tokens=20,
+                cached_tokens=0,
+                total_cost_usd=0.11,
+                response_time_ms=1,
+                prompt_language="en",
+                source_ip=None,
+                source="user_key",
+                success=True,
+                budget_reservation_id=hold_id,
+            )
+            await db.commit()
+        async with factory() as db:
+            user = await db.get(User, user_id)
+            row = await db.get(BudgetReservation, hold_id)
+            log = (
+                await db.execute(
+                    select(RequestLog).where(RequestLog.budget_reservation_id == hold_id)
+                )
+            ).scalar_one()
+            assert row.status == reservations.STATUS_EXPIRED
+            assert user.budget_reserved_usd == pytest.approx(0.0)
+            assert user.budget_used_usd == pytest.approx(0.11)
+            assert float(log.total_cost_usd) == pytest.approx(0.11)
         await engine.dispose()
 
     asyncio.run(run())

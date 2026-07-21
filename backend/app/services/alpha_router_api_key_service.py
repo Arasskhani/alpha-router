@@ -38,11 +38,20 @@ async def maybe_reset_key_period(db: AsyncSession, key: AlphaRouterApiKey) -> No
     if not key.period_started_at:
         key.period_started_at = now
         key.period_used_usd = 0.0
+        key.period_reserved_usd = 0.0
         await db.flush()
         return
     if (now - key.period_started_at) >= _period_delta(key.reset_period or "monthly"):
+        # Lazy import avoids cycle with budget_reservation_service.
+        from app.services.budget_reservation_service import (
+            SUBJECT_ALPHA_ROUTER_KEY,
+            release_open_holds_for_subject,
+        )
+
+        await release_open_holds_for_subject(db, SUBJECT_ALPHA_ROUTER_KEY, int(key.id))
         key.period_started_at = now
         key.period_used_usd = 0.0
+        key.period_reserved_usd = 0.0
         await db.flush()
 
 

@@ -96,6 +96,7 @@ def _assert_production_safe() -> None:
         allow_insecure_code_subprocess=settings.allow_insecure_code_subprocess,
         s3_access_key=settings.s3_access_key,
         s3_secret_key=settings.s3_secret_key,
+        allow_legacy_bearer_auth=settings.allow_legacy_bearer_auth,
         guard_mode=settings.production_guard_mode,
     )
 
@@ -128,6 +129,29 @@ def _url_uses_tls(url: str) -> bool:
         return urlsplit((url or "").strip()).scheme in {"https", "rediss"}
     except ValueError:
         return False
+
+
+def _url_is_loopback(url: str) -> bool:
+    """True for localhost / loopback browser URLs used by single-box installs."""
+    try:
+        host = (urlsplit((url or "").strip()).hostname or "").lower()
+    except ValueError:
+        return False
+    return host in {"localhost", "127.0.0.1", "::1"}
+
+
+def _url_host_is_internal(url: str) -> bool:
+    """True for loopback or single-label Docker Compose service hostnames."""
+    try:
+        host = (urlsplit((url or "").strip()).hostname or "").lower()
+    except ValueError:
+        return False
+    if not host:
+        return False
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    # Compose service names are single DNS labels (e.g. minio, redis).
+    return "." not in host
 
 
 def _url_has_secure_password(url: str) -> bool:
@@ -168,6 +192,7 @@ def _collect_production_insecurities(
     allow_insecure_code_subprocess: bool = False,
     s3_access_key: str = "",
     s3_secret_key: str = "",
+    allow_legacy_bearer_auth: bool = False,
 ) -> list[str]:
     """Pure collector used by the startup guard and by tests.
 
@@ -176,6 +201,10 @@ def _collect_production_insecurities(
     the authenticated sandbox broker, runs Redis without a password, lacks a
     dedicated data-encryption key, or exposes OpenAPI docs to non-admins.
     Returns an empty list in development.
+
+    Loopback HTTP frontend/API URLs and Compose-internal object storage are
+    accepted for single-box / internal deployments; non-loopback cleartext and
+    legacy browser Bearer auth are still rejected.
     """
     if environment != "production":
         return []
@@ -218,18 +247,36 @@ def _collect_production_insecurities(
         insecure.append("KEYCLOAK_TLS")
     if smtp_host.strip() and not smtp_tls:
         insecure.append("SMTP_TLS")
-    if s3_endpoint_url.strip() and not s3_use_ssl:
+    if (
+        s3_endpoint_url.strip()
+        and not s3_use_ssl
+        and not _url_host_is_internal(s3_endpoint_url)
+    ):
         insecure.append("S3_TLS")
     if s3_access_key in INSECURE_DEFAULTS or s3_secret_key in INSECURE_DEFAULTS:
         insecure.append("S3_CREDENTIALS")
-    if frontend_url.strip() and not _url_uses_tls(frontend_url):
+    if (
+        frontend_url.strip()
+        and not _url_uses_tls(frontend_url)
+        and not _url_is_loopback(frontend_url)
+    ):
         insecure.append("FRONTEND_TLS")
-    if api_public_url.strip() and not _url_uses_tls(api_public_url):
+    if (
+        api_public_url.strip()
+        and not _url_uses_tls(api_public_url)
+        and not _url_is_loopback(api_public_url)
+    ):
         insecure.append("API_PUBLIC_TLS")
-    if not enable_hsts:
+    public_surface = any(
+        url.strip() and not _url_is_loopback(url)
+        for url in (frontend_url, api_public_url)
+    )
+    if public_surface and not enable_hsts:
         insecure.append("HSTS")
     if allow_insecure_code_subprocess:
         insecure.append("INSECURE_CODE_SUBPROCESS")
+    if allow_legacy_bearer_auth:
+        insecure.append("LEGACY_BEARER_AUTH")
     return insecure
 
 
@@ -262,6 +309,7 @@ def _check_production_safe(
     allow_insecure_code_subprocess: bool = False,
     s3_access_key: str = "",
     s3_secret_key: str = "",
+    allow_legacy_bearer_auth: bool = False,
     guard_mode: str = "hard-fail",
 ) -> None:
     """Pure check used by the startup guard and by tests.
@@ -299,6 +347,7 @@ def _check_production_safe(
         allow_insecure_code_subprocess=allow_insecure_code_subprocess,
         s3_access_key=s3_access_key,
         s3_secret_key=s3_secret_key,
+        allow_legacy_bearer_auth=allow_legacy_bearer_auth,
     )
     if not insecure:
         return

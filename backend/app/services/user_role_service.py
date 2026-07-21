@@ -11,7 +11,6 @@ from app.services.rbac import (
     LEGACY_ADMIN_SLUG,
     SUPER_ADMIN_SLUG,
     USER_SLUG,
-    _assignable_full_role_slugs,
     bootstrap_super_admin_role_slugs,
     is_assignable_role_slug,
     normalize_role_slug,
@@ -117,10 +116,6 @@ async def ensure_super_admin_roles(db: AsyncSession, user: User, *, admin_userna
         if normalized == {SUPER_ADMIN_SLUG}:
             return
         if FULL_ADMIN_SLUG in normalized or LEGACY_ADMIN_SLUG in normalized:
-            await set_user_roles(db, user, bootstrap_super_admin_role_slugs())
-            return
-        required = set(_assignable_full_role_slugs())
-        if required.issubset(normalized):
             await set_user_roles(db, user, bootstrap_super_admin_role_slugs())
         return
 

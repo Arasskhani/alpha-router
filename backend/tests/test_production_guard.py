@@ -236,18 +236,33 @@ def test_production_warning_mode_clean_when_secure(caplog):
         ({"database_url": "postgresql+asyncpg://alpha_router:alpha_router@postgres:5432/alpha-router"}, "DATABASE_URL"),
         ({"keycloak_enabled": True, "keycloak_server_url": "http://keycloak", "keycloak_redirect_uri": "http://app/callback"}, "KEYCLOAK_TLS"),
         ({"smtp_host": "smtp.internal", "smtp_tls": False}, "SMTP_TLS"),
-        ({"s3_endpoint_url": "http://minio:9000", "s3_use_ssl": False}, "S3_TLS"),
+        ({"s3_endpoint_url": "http://objects.example.com", "s3_use_ssl": False}, "S3_TLS"),
         ({"s3_access_key": "alpha-router", "s3_secret_key": "minioadmin"}, "S3_CREDENTIALS"),
         ({"frontend_url": "http://app", "api_public_url": "https://api"}, "FRONTEND_TLS"),
         ({"api_public_url": "http://api", "frontend_url": "https://app"}, "API_PUBLIC_TLS"),
-        ({"enable_hsts": False}, "HSTS"),
+        ({"enable_hsts": False, "frontend_url": "https://app.example"}, "HSTS"),
         ({"allow_insecure_code_subprocess": True}, "INSECURE_CODE_SUBPROCESS"),
+        ({"allow_legacy_bearer_auth": True}, "LEGACY_BEARER_AUTH"),
     ],
 )
 def test_production_detects_insecure_runtime_fallbacks(overrides, expected):
     with pytest.raises(RuntimeError) as exc:
         _check_production_safe(**_prod_kwargs(**overrides))
     assert expected in str(exc.value)
+
+
+def test_production_allows_loopback_http_and_compose_minio_without_hsts():
+    """Single-box / internal Compose installs may use loopback HTTP and MinIO."""
+    _check_production_safe(
+        **_prod_kwargs(
+            frontend_url="http://localhost:8080",
+            api_public_url="http://127.0.0.1:8080",
+            enable_hsts=False,
+            s3_endpoint_url="http://minio:9000",
+            s3_use_ssl=False,
+            allow_legacy_bearer_auth=False,
+        )
+    )
 
 
 def test_production_hard_fail_mode_raises():

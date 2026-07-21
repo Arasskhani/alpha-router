@@ -71,10 +71,8 @@ def test_unrelated_roles_cannot_access_cross_user_media(
 @pytest.mark.parametrize(
     ("slugs", "action", "allowed"),
     [
-        (["users_read_only_administrator"], media_auth.MediaAccessAction.READ, True),
-        (["users_read_only_administrator"], media_auth.MediaAccessAction.DELETE, False),
-        (["users_full_administrator"], media_auth.MediaAccessAction.READ, True),
-        (["users_full_administrator"], media_auth.MediaAccessAction.DELETE, True),
+        (["api_keys_full_administrator"], media_auth.MediaAccessAction.READ, False),
+        (["api_keys_full_administrator"], media_auth.MediaAccessAction.DELETE, False),
         (["super_admin"], media_auth.MediaAccessAction.READ, True),
         (["super_admin"], media_auth.MediaAccessAction.DELETE, True),
         (["read_only_full_administrator"], media_auth.MediaAccessAction.READ, True),
@@ -158,7 +156,7 @@ def test_chat_delete_route_requires_cross_user_write_permission() -> None:
         with patch.object(
             media_auth,
             "get_user_role_slugs",
-            AsyncMock(return_value=["users_read_only_administrator"]),
+            AsyncMock(return_value=["api_keys_full_administrator"]),
         ):
             await chat.delete_media(7, user=SimpleNamespace(id=20), db=db)
 

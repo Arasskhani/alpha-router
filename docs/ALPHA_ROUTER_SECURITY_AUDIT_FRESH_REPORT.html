@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Alpha Router Fresh Penetration Test Report</title>
+  <style>
+    :root {
+      --bg: #f4f3ef;
+      --card: #fff;
+      --ink: #171717;
+      --muted: #5a5a5a;
+      --line: #d5d4ce;
+      --crit: #7f1d1d;
+      --high: #9a3412;
+      --med: #854d0e;
+      --low: #3f6212;
+      --info: #1e3a5f;
+      --ok: #14532d;
+      --fix: #1e293b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.55;
+      font-size: 15px;
+    }
+    header {
+      background: #111;
+      color: #f3f3f3;
+      padding: 2.2rem 1.5rem 1.8rem;
+    }
+    header h1 { margin: 0 0 0.5rem; font-size: 1.7rem; font-weight: 650; }
+    header p { margin: 0.3rem 0; color: #c8c8c8; max-width: 78ch; }
+    main { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+    h2 {
+      margin: 2.4rem 0 0.8rem;
+      padding-bottom: 0.4rem;
+      border-bottom: 1px solid var(--line);
+      font-size: 1.28rem;
+    }
+    h3 { margin: 0 0 0.6rem; font-size: 1.05rem; }
+    .meta { color: var(--muted); font-size: 0.92rem; }
+    .grid {
+      display: grid;
+      gap: 0.75rem;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      margin: 1rem 0 1.4rem;
+    }
+    .stat {
+      background: var(--card);
+      border: 1px solid var(--line);
+      padding: 0.9rem 1rem;
+    }
+    .stat strong { display: block; font-size: 1.45rem; line-height: 1.2; }
+    nav.toc {
+      background: var(--card);
+      border: 1px solid var(--line);
+      padding: 1rem 1.25rem;
+      margin: 1rem 0 1.5rem;
+    }
+    nav.toc ol { margin: 0.45rem 0 0; padding-left: 1.25rem; }
+    nav.toc a { color: var(--ink); text-decoration: none; border-bottom: 1px solid #bbb; }
+    table { width: 100%; border-collapse: collapse; background: var(--card); margin: 1rem 0; font-size: 0.9rem; }
+    th, td { border: 1px solid var(--line); padding: 0.5rem 0.65rem; vertical-align: top; text-align: left; }
+    th { background: #ecebe6; }
+    .finding {
+      background: var(--card);
+      border: 1px solid var(--line);
+      padding: 1.05rem 1.15rem;
+      margin: 1rem 0;
+    }
+    .label {
+      display: block;
+      margin-top: 0.75rem;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .sev { font-weight: 700; }
+    .sev-critical { color: var(--crit); }
+    .sev-high { color: var(--high); }
+    .sev-medium { color: var(--med); }
+    .sev-low { color: var(--low); }
+    .sev-info { color: var(--info); }
+    .sev-ok { color: var(--ok); }
+    .fix {
+      margin-top: 0.55rem;
+      padding: 0.7rem 0.85rem;
+      background: #f1f5f9;
+      border-left: 3px solid var(--fix);
+    }
+    code, pre { font-family: Consolas, "Courier New", monospace; font-size: 0.86em; }
+    pre {
+      background: #ecebe6;
+      border: 1px solid var(--line);
+      padding: 0.8rem 1rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+    }
+    ul, ol { padding-left: 1.25rem; }
+    .badge {
+      display: inline-block;
+      padding: 0.1rem 0.45rem;
+      border: 1px solid var(--line);
+      background: #f8f7f4;
+      font-size: 0.78rem;
+      margin-right: 0.35rem;
+    }
+    footer {
+      margin: 2.8rem 0 1.2rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+    @media print {
+      body { background: #fff; }
+      header { background: #fff; color: #000; border-bottom: 2px solid #000; }
+      header p { color: #333; }
+      .finding, .stat, nav.toc, table { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Alpha Router Fresh Penetration Test Report</h1>
+    <p>
+      Zero-assumption Static + Dynamic assessment of the local Docker Compose deployment.
+      This report lists every material attack surface finding identified in this engagement,
+      with evidence and concrete fix guidance. <strong>No application code was changed.</strong>
+    </p>
+    <p class="meta">Date: 2026-07-20 · Mode: Read-only pentest · Secrets omitted by design</p>
+    <p class="meta">Target: alpha-router, postgres, pgbouncer, redis, minio, sandbox-broker (localhost)</p>
+  </header>
+
+  <main>
+    <nav class="toc" aria-label="Table of contents">
+      <strong>Contents</strong>
+      <ol>
+        <li><a href="#exec">Executive summary</a></li>
+        <li><a href="#method">Scope, rules, methodology</a></li>
+        <li><a href="#recon">Live recon evidence</a></li>
+        <li><a href="#matrix">Findings matrix</a></li>
+        <li><a href="#findings">Detailed findings and fixes</a></li>
+        <li><a href="#positive">Controls that held</a></li>
+        <li><a href="#priority">Remediation priority</a></li>
+        <li><a href="#limits">Limitations</a></li>
+      </ol>
+    </nav>
+
+    <section id="exec">
+      <h2>1. Executive summary</h2>
+      <p>
+        Alpha Router was assessed as if never previously hardened. The stack has meaningful defenses
+        (non-root app container, Redis auth, docs lockdown, SSRF defaults, broker token checks,
+        media/chat ownership for normal users). Residual risk remains concentrated in
+        <em>architecture</em> (Docker socket), <em>authz escalation</em>, <em>dual browser auth</em>,
+        and <em>production soft-fail / exposure</em>.
+      </p>
+      <div class="grid">
+        <div class="stat"><strong class="sev-critical">1</strong>Critical</div>
+        <div class="stat"><strong class="sev-high">4</strong>High</div>
+        <div class="stat"><strong class="sev-medium">12</strong>Medium</div>
+        <div class="stat"><strong class="sev-low">6</strong>Low / Info</div>
+        <div class="stat"><strong>23</strong>Total findings</div>
+      </div>
+      <p><strong>Highest-priority issues:</strong></p>
+      <ol>
+        <li><strong>F-01</strong> — Sandbox broker mounts host <code>docker.sock</code> (host RCE class if broker/token compromised).</li>
+        <li><strong>F-15</strong> — Users-menu administrator can promote accounts to Super Admin.</li>
+        <li><strong>F-02</strong> — <code>ENVIRONMENT=production</code> but <code>PRODUCTION_GUARD_MODE=warning</code> (soft-fail).</li>
+        <li><strong>F-03</strong> — Legacy Bearer JWT still enabled; CSRF skipped without session cookie.</li>
+        <li><strong>F-04</strong> — App published on <code>0.0.0.0:8080</code> without HSTS / enforced CSP.</li>
+      </ol>
+    </section>
+
+    <section id="method">
+      <h2>2. Scope, rules, methodology</h2>
+      <h3>In scope</h3>
+      <ul>
+        <li>Static review of auth, RBAC, gateway, admin, SSRF, sandbox, uploads/ZIP, OIDC/LDAP, crypto, frontend, Compose, CI.</li>
+        <li>Dynamic probes against localhost (status codes, headers, container inspect, non-secret env flags).</li>
+        <li>Fix recommendations (advisory only).</li>
+      </ul>
+      <h3>Hard rules for this engagement</h3>
+      <ul>
+        <li>No application code changes, no commits, no credential rotation, no <code>.env</code> edits.</li>
+        <li>No weaponized exploit payloads; no attacks on external third-party systems.</li>
+        <li>No secret values in this report (names/lengths/categories only).</li>
+      </ul>
+      <h3>Severity</h3>
+      <p>Critical · High · Medium · Low · Informational</p>
+    </section>
+
+    <section id="recon">
+      <h2>3. Live recon evidence</h2>
+      <table>
+        <thead><tr><th>Probe</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td><code>GET /health</code></td><td>200 · minimal JSON <code>{"status":"ok","service":"alpha-router"}</code></td></tr>
+          <tr><td>Docs / OpenAPI (unauth)</td><td>All of <code>/docs</code>, <code>/redoc</code>, <code>/openapi.json</code>, <code>/api/docs</code>, <code>/api/openapi.json</code>, <code>/api/redoc</code> → 404</td></tr>
+          <tr><td><code>/v1</code> no/bad key</td><td>401 / 401</td></tr>
+          <tr><td>Login <code>Origin: https://evil.example</code></td><td>403</td></tr>
+          <tr><td>Admin / ops / logs unauth</td><td>401</td></tr>
+          <tr><td>Broker host <code>:8081</code></td><td>Not reachable (unpublished)</td></tr>
+          <tr><td>Broker from alpha-router net</td><td>Health 200; execute no/bad token → 401</td></tr>
+          <tr><td>alpha-router runtime</td><td>user=alpha-router, read-only rootfs, CapDrop=ALL, no-new-privileges, no docker.sock; ports 0.0.0.0:8080</td></tr>
+          <tr><td>sandbox-broker runtime</td><td>docker.sock RW mount; CapDrop=ALL; read_only; Config.User empty; 8081 unpublished</td></tr>
+          <tr><td>Redis ping without auth</td><td><code>NOAUTH Authentication required</code></td></tr>
+          <tr><td>Headers on <code>/</code></td><td>CSP Report-Only present; enforcing CSP absent; HSTS absent; nosniff; X-Frame-Options DENY</td></tr>
+          <tr><td>CORS</td><td><code>Origin: http://localhost:8080</code> → ACAO + credentials; evil origin → no ACAO</td></tr>
+          <tr><td>Path <code>/api/chat/media/../../../etc/passwd/file</code></td><td>200 <code>text/html</code> SPA shell (not filesystem leak)</td></tr>
+        </tbody>
+      </table>
+      <h3>Runtime flags (non-secret)</h3>
+      <pre>ENVIRONMENT=production
+PRODUCTION_GUARD_MODE=warning
+OPENAPI_ADMIN_ONLY=true
+allow_legacy_bearer_auth=True
+enable_csrf=True
+enable_cookie_auth=True
+allow_ssrf_private_ranges=False
+enable_ssrf_dns_pinning=True
+allow_insecure_code_subprocess=False
+enable_hsts=False
+DATA_ENCRYPTION_KEY=SET
+REDIS_PASSWORD=SET
+SANDBOX_BROKER_TOKEN=SET (len&gt;=32)
+GATEWAY_MASTER_KEY=CUSTOM
+SECRET_KEY=CUSTOM</pre>
+    </section>
+
+    <section id="matrix">
+      <h2>4. Findings matrix</h2>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>Sev</th><th>Title</th><th>Area</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>F-01</td><td class="sev-critical">Critical</td><td>Docker socket on sandbox-broker</td><td>Sandbox / Host</td></tr>
+          <tr><td>F-15</td><td class="sev-high">High</td><td>Users admin can grant Super Admin</td><td>RBAC</td></tr>
+          <tr><td>F-02</td><td class="sev-high">High</td><td>Production guard soft-fail</td><td>Config</td></tr>
+          <tr><td>F-03</td><td class="sev-high">High</td><td>Legacy Bearer bypasses CSRF</td><td>Session</td></tr>
+          <tr><td>F-04</td><td class="sev-high">High</td><td>App bound to 0.0.0.0:8080</td><td>Network</td></tr>
+          <tr><td>F-05</td><td class="sev-medium">Medium</td><td>Redis/login rate-limit fail-open</td><td>Auth DoS</td></tr>
+          <tr><td>F-06</td><td class="sev-medium">Medium</td><td>CSP Report-Only only</td><td>Browser</td></tr>
+          <tr><td>F-07</td><td class="sev-medium">Medium</td><td>SSRF kill-switches</td><td>Egress</td></tr>
+          <tr><td>F-08</td><td class="sev-medium">Medium</td><td>Plaintext decrypt fallback</td><td>Crypto</td></tr>
+          <tr><td>F-09</td><td class="sev-medium">Medium</td><td>Private Mode client confidentiality</td><td>Client</td></tr>
+          <tr><td>F-10</td><td class="sev-medium">Medium</td><td>Broker without non-root USER</td><td>Sandbox</td></tr>
+          <tr><td>F-16</td><td class="sev-medium">Medium</td><td>CORS always allows localhost + credentials</td><td>CORS</td></tr>
+          <tr><td>F-17</td><td class="sev-medium">Medium</td><td>OIDC redirect_uri not pinned</td><td>OIDC</td></tr>
+          <tr><td>F-18</td><td class="sev-medium">Medium</td><td>Auth-admin IdP URL / session mint blast radius</td><td>OIDC/LDAP admin</td></tr>
+          <tr><td>F-19</td><td class="sev-medium">Medium</td><td>LDAP plaintext bind fallback</td><td>LDAP</td></tr>
+          <tr><td>F-20</td><td class="sev-medium">Medium</td><td>Budget month-rollover reservation gap</td><td>Billing</td></tr>
+          <tr><td>F-21</td><td class="sev-medium">Medium</td><td>Provider errors echoed to clients/logs</td><td>Disclosure</td></tr>
+          <tr><td>F-11</td><td class="sev-low">Low</td><td>Gateway master key non-constant-time compare</td><td>Gateway</td></tr>
+          <tr><td>F-12</td><td class="sev-low">Low</td><td>Masked secrets show last 4 chars</td><td>Admin UI</td></tr>
+          <tr><td>F-13</td><td class="sev-low">Low</td><td>ChatCodeBlock dangerouslySetInnerHTML</td><td>XSS sink</td></tr>
+          <tr><td>F-22</td><td class="sev-low">Low</td><td>Gateway lacks request rate limits</td><td>Spend/DoS</td></tr>
+          <tr><td>F-23</td><td class="sev-low">Low</td><td>HSTS trusts X-Forwarded-Proto</td><td>Headers</td></tr>
+          <tr><td>F-25</td><td class="sev-low">Low</td><td>API path with <code>../</code> falls through to SPA HTML</td><td>Routing</td></tr>
+          <tr><td>F-14</td><td class="sev-info">Info</td><td>Users-menu cross-user media read (by design)</td><td>RBAC</td></tr>
+          <tr><td>F-24</td><td class="sev-info">Info</td><td>LDAP bridge is powerful once token known</td><td>LDAP bridge</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="findings">
+      <h2>5. Detailed findings and fixes</h2>
+
+      <article class="finding" id="F-01">
+        <h3><span class="sev sev-critical">Critical</span> · F-01 · Docker socket on sandbox-broker</h3>
+        <span class="badge">Sandbox</span><span class="badge">Host RCE class</span>
+        <p class="label">Location</p>
+        <p><code>docker-compose.yml</code> (sandbox-broker volume), <code>backend/app/sandbox_broker.py</code></p>
+        <p class="label">Finding</p>
+        <p>
+          The broker mounts host <code>/var/run/docker.sock</code> and runs Docker CLI with a hardcoded execute policy.
+          Auth is a shared bearer token. Compromising the broker process or stealing the token yields host Docker control
+          (privileged containers, host FS mounts, etc.).
+        </p>
+        <p class="label">Evidence</p>
+        <p>Live inspect: sock RW mount; 8081 unpublished; alpha-router has no sock; execute missing/wrong token → 401. Broker <code>Config.User</code> empty.</p>
+        <p class="label">Impact</p>
+        <p>Full host compromise class — highest privilege surface in the stack.</p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>Keep broker unpublished; isolate on a dedicated host/VM; rotate <code>SANDBOX_BROKER_TOKEN</code>.</li>
+            <li>Prefer rootless Docker / gVisor / Firecracker / remote job runner without host sock if feasible.</li>
+            <li>Run broker as non-root (see F-10); monitor broker auth failures; never expose 8081.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-15">
+        <h3><span class="sev sev-high">High</span> · F-15 · Users admin can grant Super Admin</h3>
+        <span class="badge">Privilege escalation</span>
+        <p class="label">Location</p>
+        <p><code>backend/app/api/admin.py</code> (<code>PATCH /users/{id}</code>, bulk roles), <code>user_role_service.py</code>, <code>rbac.py</code></p>
+        <p class="label">Finding</p>
+        <p>
+          Role updates require only <code>require_users_write</code>. There is demotion protection for the last full admin,
+          but <strong>no promotion gate</strong> preventing assignment of <code>super_admin</code> or an equivalent full-menu set.
+        </p>
+        <p class="label">Impact</p>
+        <p>Horizontal privilege escalation: Users administrator → full platform Super Admin (docs, secrets, auth config, etc.).</p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>Require Super Admin to grant/remove <code>super_admin</code> and global-equivalent role bundles.</li>
+            <li>Enforce “cannot assign roles above actor privilege” on all role PATCH/bulk endpoints.</li>
+            <li>Add regression tests for Users-admin attempting Super Admin assignment → 403.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-02">
+        <h3><span class="sev sev-high">High</span> · F-02 · Production guard soft-fail</h3>
+        <p class="label">Location</p>
+        <p><code>backend/app/main.py</code> production guard; runtime <code>PRODUCTION_GUARD_MODE=warning</code> + <code>ENVIRONMENT=production</code></p>
+        <p class="label">Finding</p>
+        <p>Production is labeled correctly, but insecure configuration only warns and continues booting.</p>
+        <p class="label">Evidence</p>
+        <p>Settings probe: <code>environment=production</code>, <code>production_guard_mode=warning</code>; service is up.</p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>Set <code>PRODUCTION_GUARD_MODE=hard-fail</code> after a secret/config checklist.</li>
+            <li>Use warning mode only for a short, tracked migration window.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-03">
+        <h3><span class="sev sev-high">High</span> · F-03 · Legacy Bearer bypasses CSRF</h3>
+        <p class="label">Location</p>
+        <p><code>backend/app/api/deps.py</code>, <code>csrf_protection.py</code>, <code>auth.py</code>, settings</p>
+        <p class="label">Finding</p>
+        <p>
+          Cookie session + CSRF are enabled, but <code>allow_legacy_bearer_auth=True</code>.
+          CSRF middleware skips checks when the session cookie is absent. A Bearer JWT (still returned by login)
+          can mutate <code>/api/*</code> without CSRF.
+        </p>
+        <p class="label">Evidence</p>
+        <p>Runtime: <code>allow_legacy_bearer_auth=True</code>, <code>enable_csrf=True</code>.</p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>Disable legacy Bearer for browser clients after soak (<code>ALLOW_LEGACY_BEARER_AUTH=false</code>).</li>
+            <li>Stop returning <code>access_token</code> in SPA login JSON; keep <code>/v1</code> on API keys only.</li>
+            <li>Retain CSRF double-submit for cookie session mutating routes.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-04">
+        <h3><span class="sev sev-high">High</span> · F-04 · App bound to all interfaces on :8080</h3>
+        <p class="label">Location</p>
+        <p><code>docker-compose.yml</code> alpha-router ports; live inspect <code>0.0.0.0:8080</code> / <code>:::8080</code></p>
+        <p class="label">Finding</p>
+        <p>Data planes bind to localhost, but the HTTP app is published on all interfaces. HSTS disabled; no TLS terminator verified.</p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>Publish as <code>127.0.0.1:8080:8080</code> behind a TLS reverse proxy, or enforce host firewall + TLS edge.</li>
+            <li>Enable HSTS only after HTTPS is guaranteed end-to-end.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-05">
+        <h3><span class="sev sev-medium">Medium</span> · F-05 · Redis / login rate-limit fail-open</h3>
+        <p class="label">Location</p>
+        <p><code>backend/app/services/rate_limit.py</code></p>
+        <p class="label">Finding</p>
+        <p>Redis is authenticated live (good). On Redis errors, limits fall back to per-worker memory counters, including login.</p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>Fail-closed (or stricter local limit) specifically for login.</li>
+            <li>Alert on <code>redis_fallback</code> observability counters.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-06">
+        <h3><span class="sev sev-medium">Medium</span> · F-06 · CSP Report-Only only</h3>
+        <p class="label">Evidence</p>
+        <p>Live headers: Report-Only CSP present; enforcing CSP absent.</p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>Collect violations, then enforce CSP.</li>
+            <li>Enable HSTS only with HTTPS (paired with F-04 / F-23).</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-07">
+        <h3><span class="sev sev-medium">Medium</span> · F-07 · SSRF kill-switches</h3>
+        <p class="label">Location</p>
+        <p><code>ssrf_guard.py</code>, config flags</p>
+        <p class="label">Finding</p>
+        <p>Defaults are safe (private ranges blocked, DNS pinning on). Enabling private ranges or disabling pinning reopens internal reachability / rebinding.</p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>Keep production defaults; require dual approval to change flags; alert on drift.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-08">
+        <h3><span class="sev sev-medium">Medium</span> · F-08 · Plaintext decrypt fallback</h3>
+        <p class="label">Location</p>
+        <p><code>backend/app/services/secret_crypto.py</code> <code>decrypt_secret</code></p>
+        <p class="label">Finding</p>
+        <p>Non-Fernet values returned as plaintext; undecryptable tokens returned as-is (migration UX).</p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>Confirm re-encryption migration complete; reject plaintext in production after cutover.</li>
+            <li>Fail closed on undecryptable ciphertext rather than returning raw DB bytes.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-09">
+        <h3><span class="sev sev-medium">Medium</span> · F-09 · Private Mode client confidentiality</h3>
+        <p class="label">Finding</p>
+        <p>Confidentiality depends on the browser client. Persist flags / shared machines can leave local transcripts and IndexedDB blobs.</p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>Wipe private stores on logout by default; warn on shared devices; avoid persist on kiosks.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-10">
+        <h3><span class="sev sev-medium">Medium</span> · F-10 · Broker without explicit non-root USER</h3>
+        <p class="label">Evidence</p>
+        <p>Inspect: sandbox-broker <code>Config.User</code> empty while holding docker.sock.</p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>Run broker as non-root where Docker API access still works; tighten socket group permissions.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-16">
+        <h3><span class="sev sev-medium">Medium</span> · F-16 · CORS always allows localhost with credentials</h3>
+        <p class="label">Location</p>
+        <p><code>backend/app/main.py</code> CORSMiddleware allow_origins</p>
+        <p class="label">Evidence</p>
+        <p><code>Origin: http://localhost:8080</code> → ACAO + Allow-Credentials; evil origin gets no ACAO.</p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>In production, allow only <code>FRONTEND_URL</code> (explicit allowlist).</li>
+            <li>Include localhost origins only when <code>ENVIRONMENT=development</code>.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-17">
+        <h3><span class="sev sev-medium">Medium</span> · F-17 · OIDC redirect_uri not pinned</h3>
+        <p class="label">Location</p>
+        <p><code>backend/app/services/oidc.py</code>, auth/authentication APIs</p>
+        <p class="label">Finding</p>
+        <p>Redirect URI validation checks shape/HTTPS but does not pin to this app’s callback path under <code>API_PUBLIC_URL</code>.</p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>Pin to <code>{API_PUBLIC_URL}/api/auth/keycloak/callback</code> (or strict allowlist).</li>
+            <li>Validate on save and on login/callback.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-18">
+        <h3><span class="sev sev-medium">Medium</span> · F-18 · Auth-admin IdP URL / session mint blast radius</h3>
+        <p class="label">Finding</p>
+        <p>
+          Authentication-write admins can set IdP <code>server_url</code>/secrets. JWKS/token calls do not go through SSRF guard.
+          A rogue IdP can mint identities into Alpha Router.
+        </p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>Gate Keycloak/LDAP writes to Super Admin (or dual-control).</li>
+            <li>Allowlist IdP hosts; route fetches through SSRF controls; pin issuer.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-19">
+        <h3><span class="sev sev-medium">Medium</span> · F-19 · LDAP plaintext bind fallback</h3>
+        <p class="label">Location</p>
+        <p><code>backend/app/services/ldap_auth.py</code></p>
+        <p class="label">Finding</p>
+        <p>On port 389, client may fall back to plaintext bind after STARTTLS failure; untrusted cert mode also exists.</p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>Fail closed unless LDAPS or successful STARTTLS in production.</li>
+            <li>Default <code>trust_untrusted_cert=false</code>; surface strong UI warnings.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-20">
+        <h3><span class="sev sev-medium">Medium</span> · F-20 · Budget month-rollover reservation gap</h3>
+        <p class="label">Location</p>
+        <p><code>budget_service.py</code> period reset vs <code>budget_reservation_service.py</code> holds</p>
+        <p class="label">Finding</p>
+        <p>Concurrent reserve/settle locking looks solid, but month rollover can reset used totals without consistently clearing open reservations/holds.</p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>On period change: expire/settle open holds first, or attribute settlement to reservation period.</li>
+            <li>Keep <code>budget_reserved_usd</code> consistent with reservation rows after rollover.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-21">
+        <h3><span class="sev sev-medium">Medium</span> · F-21 · Provider errors echoed to clients/logs APIs</h3>
+        <p class="label">Location</p>
+        <p><code>proxy_service.py</code>, <code>images.py</code>, logs APIs, SMTP error paths</p>
+        <p class="label">Finding</p>
+        <p>Raw upstream/provider exception text (truncated) can reach end users and admin/user log surfaces.</p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>Return stable client error codes; keep full detail in server logs only.</li>
+            <li>Store redacted <code>error_code</code> in DB, not raw provider bodies.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-11">
+        <h3><span class="sev sev-low">Low</span> · F-11 · Gateway master key non-constant-time compare</h3>
+        <p class="label">Location</p>
+        <p><code>backend/app/api/gateway.py</code></p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul><li>Compare with <code>hmac.compare_digest</code> (as broker token already does).</li></ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-12">
+        <h3><span class="sev sev-low">Low</span> · F-12 · Masked secrets show last 4 characters</h3>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul><li>Mask without decrypting tails; show length/fingerprint metadata only.</li></ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-13">
+        <h3><span class="sev sev-low">Low</span> · F-13 · ChatCodeBlock <code>dangerouslySetInnerHTML</code></h3>
+        <p class="label">Location</p>
+        <p><code>frontend/src/components/chat/ChatCodeBlock.tsx</code> (Markdown itself has no <code>rehype-raw</code> — positive)</p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul><li>Enforce CSP (F-06); pin/review highlight.js; prefer safer rendering where possible.</li></ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-22">
+        <h3><span class="sev sev-low">Low</span> · F-22 · Gateway lacks request rate limits</h3>
+        <p class="label">Finding</p>
+        <p><code>/v1</code> authenticates then relies mainly on budget/credit — no per-key/IP request rate limit observed.</p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>Add Redis per-key and per-IP limits; stricter defaults for master key; concurrency caps.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-23">
+        <h3><span class="sev sev-low">Low</span> · F-23 · HSTS trusts <code>X-Forwarded-Proto</code></h3>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>Trust forwarded proto only from known reverse proxies; strip/overwrite at the edge.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-25">
+        <h3><span class="sev sev-low">Low</span> · F-25 · API-looking path with <code>../</code> falls through to SPA HTML</h3>
+        <p class="label">Evidence</p>
+        <p>
+          Request to <code>/api/chat/media/../../../etc/passwd/file</code> returned <strong>200 text/html</strong> SPA shell (~692 bytes),
+          not a filesystem read. After client/server normalization the path no longer starts with <code>api/</code>,
+          so SPA fallback serves <code>index.html</code>. Dist containment prevents arbitrary file read.
+        </p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>Reject requests whose raw path contains <code>..</code> before routing, or always return JSON 404 for normalized escapes from <code>/api</code>.</li>
+            <li>Keep serving only files under frontend dist (already present).</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-14">
+        <h3><span class="sev sev-info">Informational</span> · F-14 · Users-menu cross-user media read (by design)</h3>
+        <p>Accounts with Users menu can read any user’s media via shared authorization helper. Treat as high-trust capability, not a normal-user IDOR.</p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul><li>Audit role assignments; log cross-user media access; prefer just-in-time elevation.</li></ul>
+        </div>
+      </article>
+
+      <article class="finding" id="F-24">
+        <h3><span class="sev sev-info">Informational</span> · F-24 · LDAP bridge powerful once token known</h3>
+        <p>Bridge fail-closes without token and defaults to loopback bind (good). With a valid token it accepts client-supplied LDAP config/passwords — high blast radius by design.</p>
+        <div class="fix">
+          <strong>Fix recommendation</strong>
+          <ul>
+            <li>Pin bridge config server-side; rate-limit; keep loopback + firewall; rotate token; prefer native LDAPS/Keycloak federation long-term.</li>
+          </ul>
+        </div>
+      </article>
+    </section>
+
+    <section id="positive">
+      <h2>6. Controls that held</h2>
+      <ul>
+        <li>Alpha Router: non-root, read-only rootfs, CapDrop ALL, no-new-privileges, no docker.sock.</li>
+        <li>Broker: unpublished; execute auth required; policy hardcodes image/network; extras forbidden.</li>
+        <li>Insecure code subprocess disabled; SSRF private ranges off; DNS pinning on.</li>
+        <li>Gateway anonymous/bad key → 401; gateway <code>body.user</code> impersonation appears blocked.</li>
+        <li>Evil Origin on login → 403; admin/ops/logs unauthenticated → 401.</li>
+        <li>OpenAPI/docs locked for anonymous callers.</li>
+        <li>Redis requires authentication.</li>
+        <li>Custom (non-default) SECRET_KEY / gateway master; data encryption key set; broker token length ≥ 32.</li>
+        <li>Minimal health payload; body-size middleware present; ZIP export caps / filename sanitize look solid.</li>
+        <li>No confirmed cross-user IDOR for normal users on chat sessions/messages/media.</li>
+        <li>Markdown without rehype-raw; URL policy hardening; JWT localStorage keys cleared on logout paths.</li>
+        <li>OIDC PKCE/state/nonce/one-time exchange design looks sound (redirect pinning aside).</li>
+        <li>SPA dist path containment blocks arbitrary file read for traversal candidates.</li>
+      </ul>
+    </section>
+
+    <section id="priority">
+      <h2>7. Remediation priority (advisory — not performed)</h2>
+      <ol>
+        <li><strong>Immediate:</strong> F-15 (RBAC promotion), F-02 (hard-fail guard), F-03 (disable legacy Bearer for browsers).</li>
+        <li><strong>Short term:</strong> F-04/F-16/F-06/F-23 (network bind, CORS, CSP/HSTS behind proxy).</li>
+        <li><strong>Auth federation:</strong> F-17, F-18, F-19, F-24.</li>
+        <li><strong>Architecture:</strong> F-01, F-10 (broker/docker.sock isolation).</li>
+        <li><strong>Hardening polish:</strong> F-05, F-08, F-20, F-21, F-11, F-12, F-13, F-22, F-25, F-09.</li>
+      </ol>
+      <p class="meta">No remediation was applied in this engagement. Implement fixes only after explicit approval in a separate change window.</p>
+    </section>
+
+    <section id="limits">
+      <h2>8. Limitations</h2>
+      <ul>
+        <li>Authenticated dual-user browser matrix (full CSRF cookie + IDOR with two disposable accounts) was not exhaustively executed end-to-end in UI; ownership was verified primarily via code + unauth probes.</li>
+        <li>External OpenRouter / corporate LDAP / remote Keycloak were not attacked.</li>
+        <li>No destructive load tests or Docker-socket exploitation beyond architecture documentation.</li>
+        <li>Findings reflect the observed local Compose state on 2026-07-20.</li>
+        <li>This report contains zero secret values by design.</li>
+      </ul>
+    </section>
+
+    <footer>
+      <p><strong>Statement:</strong> Penetration testing and analysis only. No application source code was modified to remediate findings. This HTML file is the audit deliverable.</p>
+      <p>Report path: <code>docs/ALPHA_ROUTER_SECURITY_AUDIT_FRESH_REPORT.html</code></p>
+      <p>Companion Markdown (earlier draft): <code>docs/ALPHA_ROUTER_SECURITY_AUDIT_FRESH_REPORT.md</code></p>
+    </footer>
+  </main>
+</body>
+</html>

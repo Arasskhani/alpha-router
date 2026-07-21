@@ -65,24 +65,33 @@ def test_cookie_authenticated_mutations_require_matching_csrf(monkeypatch) -> No
     get_settings.cache_clear()
 
 
-def test_v1_and_legacy_bearer_requests_are_csrf_exempt(monkeypatch) -> None:
+def test_v1_requests_are_csrf_exempt(monkeypatch) -> None:
     monkeypatch.setenv("ENABLE_CSRF", "true")
+    monkeypatch.setenv("ALLOW_LEGACY_BEARER_AUTH", "false")
     get_settings.cache_clear()
     client = TestClient(_app())
     assert client.post("/v1/chat/completions").status_code == 200
-    assert (
-        client.post(
-            "/api/mutate",
-            headers={"Authorization": "Bearer legacy-jwt"},
-        ).status_code
-        == 200
-    )
     assert (
         client.post(
             "/api/auth/login",
             headers={"Origin": "https://evil.example"},
         ).status_code
         == 403
+    )
+    get_settings.cache_clear()
+
+
+def test_legacy_bearer_csrf_bypass_requires_explicit_opt_in(monkeypatch) -> None:
+    monkeypatch.setenv("ENABLE_CSRF", "true")
+    monkeypatch.setenv("ALLOW_LEGACY_BEARER_AUTH", "true")
+    get_settings.cache_clear()
+    client = TestClient(_app())
+    assert (
+        client.post(
+            "/api/mutate",
+            headers={"Authorization": "Bearer legacy-jwt"},
+        ).status_code
+        == 200
     )
     get_settings.cache_clear()
 

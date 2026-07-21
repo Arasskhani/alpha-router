@@ -1,21 +1,36 @@
-"""Resolve auto-router catalog entries to a concrete image-capable model."""
+"""Resolve auto-router catalog entries to concrete image-capable models.
+
+Scoring is measurement-first: recent success rate, successful latency, user
+feedback, and real capabilities. Marketing-name "strength" is intentionally
+absent — labels like pro/flash do not predict reliability.
+"""
 
 from __future__ import annotations
 
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.connection import Connection
-from app.models.model_catalog import AIModel
 from app.models.logging import RequestLog
+from app.models.model_catalog import AIModel
 from app.services.chat_feedback_service import feedback_quality_signals
 from app.services.model_capabilities import image_generation_capabilities
 from app.services.openrouter_image_service import is_openrouter_auto_model
+
+# Recent-window signals so a currently-flaky model can lose rank quickly.
+_STABILITY_WINDOW = timedelta(hours=72)
+_STABILITY_PRIOR_MEAN = 0.75
+_STABILITY_PRIOR_WEIGHT = 5.0
+_MIN_SAMPLES_FOR_HARD_THRESHOLD = 8
+_HARD_SUCCESS_FLOOR = 0.70
+# Latency score: ~5s → high, ~45s+ → low (successful requests only).
+_LATENCY_HALF_LIFE_MS = 12_000.0
+_AUTO_ROUTER_FAILOVER_LIMIT = 3
 
 
 @dataclass(frozen=True)
@@ -33,21 +48,6 @@ def _catalog_raw(pricing_raw: str | None) -> dict[str, object]:
     except (json.JSONDecodeError, TypeError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
-
-
-def _strength_ratio(external_id: str, pricing_raw: str | None) -> float:
-    ext = external_id.lower()
-    raw = _catalog_raw(pricing_raw)
-    text = " ".join(
-        [ext, str(raw.get("name") or ""), str(raw.get("description") or "")]
-    ).lower()
-    if any(term in text for term in ("ultra", "max", "pro", "gpt-image-1", "imagen")):
-        return 1.0
-    if any(term in text for term in ("lite", "mini", "small", "turbo")):
-        return 0.42
-    if "flash" in text:
-        return 0.68
-    return 0.78
 
 
 def _newness_ratio(external_id: str, pricing_raw: str | None) -> float:
@@ -81,15 +81,23 @@ def _capability_ratio(
     )
     if not caps.get("supports_text_to_image"):
         return 0.0
-    ratio = 0.65
+    ratio = 0.7
     if caps.get("supports_image_to_image"):
-        ratio += 0.15
+        ratio += 0.2
     text = f"{external_id} {pricing_raw or ''}".lower()
     if "4k" in text or "4096" in text:
-        ratio += 0.2
-    elif "2k" in text or "2048" in text or "hd" in text:
         ratio += 0.1
+    elif "2k" in text or "2048" in text or "hd" in text:
+        ratio += 0.05
     return min(1.0, ratio)
+
+
+def _latency_ratio(avg_success_ms: float | None, *, sample_count: int) -> float:
+    """Higher is better (faster). Neutral prior when we lack successful timings."""
+    if sample_count <= 0 or avg_success_ms is None or avg_success_ms <= 0:
+        return 0.55
+    # 1 / (1 + t/half_life): 0ms→1.0, 12s→0.5, 36s→0.25
+    return max(0.05, min(1.0, 1.0 / (1.0 + float(avg_success_ms) / _LATENCY_HALF_LIFE_MS)))
 
 
 def image_model_score_details(
@@ -99,44 +107,70 @@ def image_model_score_details(
     pricing_raw: str | None = None,
     feedback_score: float = 0.75,
     feedback_count: int = 0,
-    stability_score: float = 0.9,
+    stability_score: float = _STABILITY_PRIOR_MEAN,
     stability_count: int = 0,
+    latency_score: float = 0.55,
+    latency_count: int = 0,
+    avg_success_ms: float | None = None,
 ) -> dict[str, object]:
-    """Quality-first score: strength 35%, newness 20%, capabilities 15%,
-    Bayesian user satisfaction 20%, and stability 10%. Cost is intentionally absent.
+    """Measurement-first score for Auto Router image selection.
+
+    Weights: stability 40%, latency 20%, user satisfaction 25%, capabilities 15%.
+    Newness is a tiny tie-breaker only (5 points max). Name/marketing strength
+    is not used.
     """
     ext = (external_id or "").strip().lower()
     if is_openrouter_auto_model(ext):
-        return {"total": -1, "eligible": False}
+        return {"total": -1, "eligible": False, "policy": "measurement-first-v2"}
     capability = _capability_ratio(
         external_id,
         is_image_model=is_image_model,
         pricing_raw=pricing_raw,
     )
     if capability <= 0:
-        return {"total": 0, "eligible": False}
-    strength = _strength_ratio(ext, pricing_raw)
-    newness = _newness_ratio(ext, pricing_raw)
-    maturity = 0.65 if any(x in ext for x in ("preview", "experimental", "beta")) else 1.0
-    stable = max(0.0, min(1.0, float(stability_score))) * maturity
+        return {"total": 0, "eligible": False, "policy": "measurement-first-v2"}
+
+    stable = max(0.0, min(1.0, float(stability_score)))
+    # Preview/experimental maturity soft-damps stability only (not a name-tier boost).
+    if any(x in ext for x in ("preview", "experimental", "beta")):
+        stable *= 0.9
     satisfaction = max(0.0, min(1.0, float(feedback_score)))
+    speed = max(0.0, min(1.0, float(latency_score)))
+    if avg_success_ms is not None and latency_count > 0:
+        speed = _latency_ratio(avg_success_ms, sample_count=latency_count)
+    newness = _newness_ratio(external_id, pricing_raw)
+
     components = {
-        "strength": round(strength * 350),
-        "newness": round(newness * 200),
+        "stability": round(stable * 400),
+        "latency": round(speed * 200),
+        "user_satisfaction": round(satisfaction * 250),
         "capabilities": round(capability * 150),
-        "user_satisfaction": round(satisfaction * 200),
-        "stability": round(stable * 100),
+        "newness": round(newness * 50),
     }
+    total = int(sum(components.values()))
+    below_floor = (
+        int(stability_count) >= _MIN_SAMPLES_FOR_HARD_THRESHOLD
+        and float(stability_score) < _HARD_SUCCESS_FLOOR
+    )
+    if below_floor:
+        # Keep eligible for failover chains, but demote hard as a primary pick.
+        total = max(1, int(total * 0.35))
+
     return {
-        "total": int(sum(components.values())),
+        "total": total,
         "eligible": True,
         "components": components,
         "feedback_count": int(feedback_count),
         "feedback_score": round(satisfaction, 4),
         "stability_count": int(stability_count),
         "stability_score": round(stable, 4),
-        "policy": "quality-first-hybrid-v1",
+        "latency_count": int(latency_count),
+        "latency_score": round(speed, 4),
+        "avg_success_ms": round(float(avg_success_ms), 1) if avg_success_ms else None,
+        "below_success_floor": below_floor,
+        "policy": "measurement-first-v2",
         "cost_considered": False,
+        "name_strength_considered": False,
     }
 
 
@@ -147,10 +181,13 @@ def score_image_model_candidate(
     pricing_raw: str | None = None,
     feedback_score: float = 0.75,
     feedback_count: int = 0,
-    stability_score: float = 0.9,
+    stability_score: float = _STABILITY_PRIOR_MEAN,
     stability_count: int = 0,
+    latency_score: float = 0.55,
+    latency_count: int = 0,
+    avg_success_ms: float | None = None,
 ) -> int:
-    """Higher score = better quality-first Auto Router candidate."""
+    """Higher score = better Auto Router candidate."""
     return int(
         image_model_score_details(
             external_id,
@@ -160,46 +197,146 @@ def score_image_model_candidate(
             feedback_count=feedback_count,
             stability_score=stability_score,
             stability_count=stability_count,
+            latency_score=latency_score,
+            latency_count=latency_count,
+            avg_success_ms=avg_success_ms,
         )["total"]
     )
 
 
-async def _model_stability_signals(
+async def _model_runtime_signals(
     db: AsyncSession,
     model_ids: list[str],
-) -> dict[str, dict[str, float | int]]:
+) -> dict[str, dict[str, float | int | None]]:
+    """Recent success rate + avg successful latency from request_logs."""
     if not model_ids:
         return {}
+    cutoff = datetime.utcnow() - _STABILITY_WINDOW
     rows = (
         await db.execute(
             select(
                 RequestLog.model_id,
                 func.count(RequestLog.id),
                 func.sum(case((RequestLog.success == True, 1), else_=0)),  # noqa: E712
+                func.avg(
+                    case(
+                        (
+                            RequestLog.success == True,  # noqa: E712
+                            RequestLog.response_time_ms,
+                        ),
+                        else_=None,
+                    )
+                ),
+                func.sum(
+                    case(
+                        (
+                            (RequestLog.success == True)  # noqa: E712
+                            & (RequestLog.response_time_ms.is_not(None))
+                            & (RequestLog.response_time_ms > 0),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ),
             )
-            .where(RequestLog.model_id.in_(model_ids))
+            .where(
+                RequestLog.model_id.in_(model_ids),
+                RequestLog.request_time >= cutoff,
+            )
             .group_by(RequestLog.model_id)
         )
     ).all()
-    out: dict[str, dict[str, float | int]] = {}
-    prior_mean = 0.9
-    prior_weight = 10.0
-    for model_id, total, successes in rows:
+    out: dict[str, dict[str, float | int | None]] = {}
+    for model_id, total, successes, avg_ms, latency_n in rows:
         count = int(total or 0)
         success_count = int(successes or 0)
+        bayes = (success_count + _STABILITY_PRIOR_MEAN * _STABILITY_PRIOR_WEIGHT) / (
+            count + _STABILITY_PRIOR_WEIGHT
+        )
         out[str(model_id)] = {
             "count": count,
-            "score": (success_count + prior_mean * prior_weight) / (count + prior_weight),
+            "score": bayes,
+            "avg_success_ms": float(avg_ms) if avg_ms is not None else None,
+            "latency_count": int(latency_n or 0),
         }
     return out
 
 
-def _image_model_rank(external_id: str, score: int) -> tuple[int, int, int, str]:
-    """Lower tuple wins: higher score, then non-lite, then non-preview."""
+def _image_model_rank(external_id: str, score: int, *, below_floor: bool = False) -> tuple:
+    """Lower tuple wins: prefer above-floor, higher score, non-lite, non-preview."""
     ext = (external_id or "").lower()
+    floor_penalty = 1 if below_floor else 0
     lite_penalty = 1 if "lite" in ext else 0
     preview_penalty = 1 if "preview" in ext else 0
-    return (-score, lite_penalty, preview_penalty, ext)
+    return (floor_penalty, -score, lite_penalty, preview_penalty, ext)
+
+
+async def list_auto_router_image_candidates(
+    db: AsyncSession,
+    *,
+    connection_id: int | None = None,
+    limit: int = _AUTO_ROUTER_FAILOVER_LIMIT,
+) -> list[ImageModelResolution]:
+    """Ranked image models for Auto Router (primary + failover targets)."""
+    statement = (
+        select(AIModel, Connection)
+        .join(Connection, Connection.id == AIModel.connection_id)
+        .where(
+            AIModel.is_enabled == True,  # noqa: E712
+            Connection.is_active == True,  # noqa: E712
+        )
+    )
+    if connection_id is not None:
+        statement = statement.where(Connection.id == connection_id)
+    rows = (await db.execute(statement)).all()
+    feedback = await feedback_quality_signals(
+        db,
+        model_ids=[str(model.external_id) for model, _ in rows],
+        output_kind="image",
+    )
+    runtime = await _model_runtime_signals(
+        db,
+        [str(model.external_id) for model, _ in rows],
+    )
+    ranked: list[tuple[tuple, ImageModelResolution]] = []
+    for model, conn in rows:
+        signal = feedback.get(str(model.external_id), {})
+        runtime_signal = runtime.get(str(model.external_id), {})
+        avg_ms = runtime_signal.get("avg_success_ms")
+        latency_count = int(runtime_signal.get("latency_count", 0) or 0)
+        details = image_model_score_details(
+            model.external_id or "",
+            is_image_model=bool(model.is_image_model),
+            pricing_raw=model.pricing_raw,
+            feedback_score=float(signal.get("score", 0.75)),
+            feedback_count=int(signal.get("count", 0)),
+            stability_score=float(runtime_signal.get("score", _STABILITY_PRIOR_MEAN)),
+            stability_count=int(runtime_signal.get("count", 0)),
+            latency_score=_latency_ratio(
+                float(avg_ms) if avg_ms is not None else None,
+                sample_count=latency_count,
+            ),
+            latency_count=latency_count,
+            avg_success_ms=float(avg_ms) if avg_ms is not None else None,
+        )
+        score = int(details["total"])
+        if score <= 0 or not details.get("eligible"):
+            continue
+        resolution = ImageModelResolution(
+            external_id=model.external_id,
+            model=model,
+            connection=conn,
+            score=score,
+            reason=details,
+        )
+        rank = _image_model_rank(
+            model.external_id or "",
+            score,
+            below_floor=bool(details.get("below_success_floor")),
+        )
+        ranked.append((rank, resolution))
+    ranked.sort(key=lambda item: item[0])
+    return [item[1] for item in ranked[: max(1, int(limit))]]
 
 
 async def resolve_auto_router_image_model(
@@ -213,21 +350,9 @@ async def resolve_auto_router_image_model(
     Auto-router entries are text-only routing; image generation must target a concrete
     image-capable catalog model on that connection (any provider).
     """
-    stmt = (
-        select(AIModel, Connection)
-        .join(Connection, Connection.id == AIModel.connection_id)
-        .where(
-            AIModel.is_enabled == True,  # noqa: E712
-            Connection.is_active == True,  # noqa: E712
-        )
-    )
-    if connection_id is not None:
-        stmt = stmt.where(Connection.id == connection_id)
-
     resolution = await resolve_auto_router_image_model_with_details(
         db,
         connection_id=connection_id,
-        statement=stmt,
     )
     if resolution is None:
         return None
@@ -240,55 +365,13 @@ async def resolve_auto_router_image_model_with_details(
     connection_id: int | None = None,
     statement=None,
 ) -> ImageModelResolution | None:
-    if statement is None:
-        statement = (
-            select(AIModel, Connection)
-            .join(Connection, Connection.id == AIModel.connection_id)
-            .where(
-                AIModel.is_enabled == True,  # noqa: E712
-                Connection.is_active == True,  # noqa: E712
-            )
-        )
-        if connection_id is not None:
-            statement = statement.where(Connection.id == connection_id)
-    rows = (await db.execute(statement)).all()
-    feedback = await feedback_quality_signals(
+    del statement  # kept for call-site compatibility; listing builds its own query
+    candidates = await list_auto_router_image_candidates(
         db,
-        model_ids=[str(model.external_id) for model, _ in rows],
-        output_kind="image",
+        connection_id=connection_id,
+        limit=1,
     )
-    stability = await _model_stability_signals(
-        db,
-        [str(model.external_id) for model, _ in rows],
-    )
-    best: ImageModelResolution | None = None
-    best_rank: tuple[int, int, int, str] | None = None
-    for model, conn in rows:
-        signal = feedback.get(str(model.external_id), {})
-        stability_signal = stability.get(str(model.external_id), {})
-        details = image_model_score_details(
-            model.external_id or "",
-            is_image_model=bool(model.is_image_model),
-            pricing_raw=model.pricing_raw,
-            feedback_score=float(signal.get("score", 0.75)),
-            feedback_count=int(signal.get("count", 0)),
-            stability_score=float(stability_signal.get("score", 0.9)),
-            stability_count=int(stability_signal.get("count", 0)),
-        )
-        score = int(details["total"])
-        if score <= 0:
-            continue
-        rank = _image_model_rank(model.external_id or "", score)
-        if best_rank is None or rank < best_rank:
-            best_rank = rank
-            best = ImageModelResolution(
-                external_id=model.external_id,
-                model=model,
-                connection=conn,
-                score=score,
-                reason=details,
-            )
-    return best
+    return candidates[0] if candidates else None
 
 
 async def resolve_openrouter_auto_image_model(
@@ -298,3 +381,30 @@ async def resolve_openrouter_auto_image_model(
 ) -> tuple[str, AIModel, Connection] | None:
     """Backward-compatible alias for OpenRouter auto-router image resolution."""
     return await resolve_auto_router_image_model(db, connection_id=connection_id)
+
+
+def is_image_model_failover_error(exc: BaseException) -> bool:
+    """Errors that justify trying the next Auto Router candidate."""
+    from fastapi import HTTPException
+
+    if isinstance(exc, HTTPException):
+        detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        low = detail.lower()
+        if exc.status_code in {408, 429, 500, 502, 503, 504, 422}:
+            return any(
+                token in low
+                for token in (
+                    "closed the connection",
+                    "disconnected",
+                    "text instead of an image",
+                    "empty response",
+                    "timed out",
+                    "timeout",
+                    "image generation failed",
+                )
+            )
+        return False
+    # Transport failures before HTTPException wrapping
+    from app.services.openrouter_image_service import is_retryable_openrouter_transport_error
+
+    return is_retryable_openrouter_transport_error(exc)

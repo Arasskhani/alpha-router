@@ -38,5 +38,5 @@ def public_api_base() -> str:
     settings = get_settings()
     base = (settings.api_public_url or settings.frontend_url or "").strip().rstrip("/")
     if not base:
-        raise ValueError("API_PUBLIC_URL (or FRONTEND_URL) must be configured for SAML")
+        raise ValueError("API_PUBLIC_URL (or FRONTEND_URL) must be configured for SSO")
     return base

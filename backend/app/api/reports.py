@@ -172,7 +172,7 @@ async def report_options(db: AsyncSession = Depends(get_db), _: User = Depends(r
         "providers": [str(r[0]) for r in provider_rows if r[0]],
         "models": [str(r[0]) for r in model_rows if r[0]],
         "alpha_router_api_keys": [{"id": k[0], "name": k[1]} for k in keys],
-        "auth_providers": ["local", "ldap", "saml", "openwebui"],
+        "auth_providers": ["local", "ldap", "saml", "oidc", "openwebui"],
         "group_by_options": [
             {"value": "model", "label": "By model"},
             {"value": "app", "label": "By app"},

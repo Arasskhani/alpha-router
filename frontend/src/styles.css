@@ -1465,6 +1465,7 @@ table.card tbody td:last-child {
 .badge-ldap { color: #2563eb; }
 .badge-keycloak { color: #7c3aed; }
 .badge-saml { color: #0f766e; }
+.badge-oidc { color: #0369a1; }
 .badge-role-admin {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, var(--surface));

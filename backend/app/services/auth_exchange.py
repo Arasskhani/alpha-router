@@ -1,9 +1,9 @@
-"""One-time exchange-code store for SSO token delivery (SAML / former OIDC).
+"""One-time exchange-code store for SSO token delivery (SAML / OIDC).
 
-After ACS validates the IdP response, we mint a Alpha Router JWT but must NOT put it
-in the redirect URL. Instead we store the JWT under a random opaque code in
-Redis with a short TTL, redirect to ``/login?code=<opaque>``, and the frontend
-exchanges the code via ``POST /api/auth/saml/exchange``.
+After the IdP callback validates the response, we mint a Alpha Router JWT but must NOT
+put it in the redirect URL. Instead we store the JWT under a random opaque code
+in Redis with a short TTL, redirect to ``/login?code=<opaque>``, and the
+frontend exchanges the code via ``POST /api/auth/sso/exchange``.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Authentication: local, LDAP, SAML 2.0 SP."""
+"""Authentication: local, LDAP, SAML 2.0 SP, generic OIDC."""
 
 import asyncio
 
@@ -24,6 +24,20 @@ from app.services.ldap_auth import (
 )
 from app.services.auth_exchange import consume_code, generate_code, store_token
 from app.services.auth_urls import validate_frontend_url
+from app.services.oidc_client import (
+    build_authorize_url,
+    build_profile_from_claims,
+    clear_state_cookie_params,
+    end_session_url,
+    exchange_code_for_tokens,
+    fetch_userinfo,
+    generate_flow_params,
+    sign_state_cookie,
+    state_cookie_params,
+    validate_id_token,
+    validate_issuer_url,
+    verify_state_cookie,
+)
 from app.services.saml_sp import (
     login_redirect_url,
     logout_redirect_url,
@@ -84,7 +98,12 @@ async def logout_local(
 async def auth_methods(db: AsyncSession = Depends(get_db)):
     ldap_cfg = await get_provider_config(db, "ldap")
     saml_cfg = await get_provider_config(db, "saml")
-    return {"ldap": bool(ldap_cfg.get("enabled")), "saml": bool(saml_cfg.get("enabled"))}
+    oidc_cfg = await get_provider_config(db, "oidc")
+    return {
+        "ldap": bool(ldap_cfg.get("enabled")),
+        "saml": bool(saml_cfg.get("enabled")),
+        "oidc": bool(oidc_cfg.get("enabled")),
+    }
 
 
 async def _token_response(db: AsyncSession, user: User, response: Response) -> TokenResponse:
@@ -211,14 +230,8 @@ async def saml_acs(
     return RedirectResponse(f"{frontend_url}/login?code={xchg_code}")
 
 
-@router.post("/saml/exchange")
-async def saml_exchange(
-    body: ExchangeRequest,
-    response: Response,
-    db: AsyncSession = Depends(get_db),
-):
+async def _sso_exchange(body: ExchangeRequest, response: Response) -> TokenResponse:
     """Exchange a one-time SSO code for the Alpha Router session (keeps JWT out of the URL)."""
-    del db
     payload = await consume_code(body.code)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired login code")
@@ -231,6 +244,129 @@ async def saml_exchange(
         role=payload.get("role", "user"),
         is_active=bool(payload.get("is_active", True)),
     )
+
+
+@router.post("/sso/exchange")
+async def sso_exchange(body: ExchangeRequest, response: Response):
+    return await _sso_exchange(body, response)
+
+
+@router.post("/saml/exchange")
+async def saml_exchange(body: ExchangeRequest, response: Response):
+    """Compatibility alias for shared SSO exchange."""
+    return await _sso_exchange(body, response)
+
+
+@router.get("/oidc/login")
+async def oidc_login(db: AsyncSession = Depends(get_db)):
+    cfg = await get_provider_config(db, "oidc")
+    if not cfg.get("enabled"):
+        raise HTTPException(status_code=400, detail="OIDC is disabled")
+    try:
+        validate_issuer_url(cfg.get("issuer") or "")
+        if not (cfg.get("client_id") or "").strip():
+            raise ValueError("OIDC client_id is not configured")
+        params = generate_flow_params()
+        url = await asyncio.to_thread(build_authorize_url, cfg, params)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="OIDC configuration error") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="OIDC login failed") from exc
+    resp = RedirectResponse(url)
+    resp.set_cookie(value=sign_state_cookie(params), **state_cookie_params())
+    return resp
+
+
+@router.get("/oidc/callback")
+async def oidc_callback(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    cfg = await get_provider_config(db, "oidc")
+    if not cfg.get("enabled"):
+        raise HTTPException(status_code=400, detail="OIDC is disabled")
+    cookie_value = request.cookies.get("alpha_router_oidc_state")
+    flow = verify_state_cookie(cookie_value, state or "")
+    if flow is None or not code:
+        raise HTTPException(status_code=400, detail="Invalid or expired OIDC state")
+    try:
+        tokens = await asyncio.to_thread(
+            exchange_code_for_tokens, cfg, code=code, code_verifier=flow.code_verifier
+        )
+        claims = await asyncio.to_thread(
+            validate_id_token,
+            tokens["id_token"],
+            issuer=cfg["issuer"],
+            audience=cfg["client_id"],
+            nonce=flow.nonce,
+        )
+        userinfo: dict = {}
+        access = tokens.get("access_token")
+        if access:
+            userinfo = await asyncio.to_thread(fetch_userinfo, cfg, access) or {}
+        profile = build_profile_from_claims(cfg, claims, userinfo)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="OIDC authentication failed") from exc
+
+    user = await _upsert_directory_user(db, profile, "oidc")
+    slugs = await get_user_role_slugs(db, user.id)
+    await record_user_login(db, user)
+    await db.commit()
+    jwt_token = create_access_token(
+        user.username, primary_role_slug(slugs), token_version=user.token_version
+    )
+    xchg_code = generate_code()
+    await store_token(
+        xchg_code,
+        {
+            "token": jwt_token,
+            "role": primary_role_slug(slugs),
+            "username": user.username,
+            "is_active": bool(user.is_active),
+        },
+    )
+    try:
+        frontend_url = validate_frontend_url(settings.frontend_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail="Invalid frontend redirect configuration") from exc
+    redirect = RedirectResponse(f"{frontend_url}/login?code={xchg_code}")
+    redirect.delete_cookie(**clear_state_cookie_params())
+    return redirect
+
+
+@router.get("/oidc/logout")
+async def oidc_logout(request: Request, db: AsyncSession = Depends(get_db)):
+    token = request.cookies.get(settings.session_cookie_name)
+    if token:
+        from app.core.security import decode_access_token
+
+        payload = decode_access_token(token)
+        username = payload.get("sub") if payload else None
+        if username:
+            user = (
+                await db.execute(select(User).where(User.username == username))
+            ).scalars().first()
+            if user:
+                user.token_version = int(user.token_version or 0) + 1
+                await db.commit()
+    try:
+        frontend_url = validate_frontend_url(settings.frontend_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail="Invalid frontend redirect configuration") from exc
+    cfg = await get_provider_config(db, "oidc")
+    slo = None
+    if cfg.get("enabled"):
+        try:
+            slo = await asyncio.to_thread(end_session_url, cfg)
+        except Exception:
+            slo = None
+    response = RedirectResponse(slo or f"{frontend_url}/login")
+    clear_session_cookies(response)
+    return response
 
 
 @router.get("/saml/metadata")
@@ -313,12 +449,12 @@ async def csrf_token(
 
 
 async def _upsert_directory_user(db: AsyncSession, profile: dict, provider: str) -> User:
-    """Upsert a directory (LDAP/SAML) user WITHOUT cross-provider takeover.
+    """Upsert a directory (LDAP/SAML/OIDC) user WITHOUT cross-provider takeover.
 
-    * SAML: stable identity is NameID (external_id). Lookup by
-      ``(auth_provider='saml', external_id=NameID)`` first; username collision
-      with a different provider is rejected (409).
+    * SAML: stable identity is NameID (external_id).
+    * OIDC: stable identity is ``sub`` (external_id).
     * LDAP: username-based binding.
+    Username collision with a different provider is rejected (409).
     """
     username = profile["username"]
     if not username:
@@ -327,11 +463,11 @@ async def _upsert_directory_user(db: AsyncSession, profile: dict, provider: str)
     external_id = (profile.get("external_id") or "").strip() or None
     user: User | None = None
 
-    if provider == "saml" and external_id:
+    if provider in {"saml", "oidc"} and external_id:
         user = (
             await db.execute(
                 select(User).where(
-                    User.auth_provider == "saml",
+                    User.auth_provider == provider,
                     User.external_id == external_id,
                 )
             )

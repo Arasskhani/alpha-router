@@ -144,6 +144,11 @@ class Settings(BaseSettings):
     saml_enabled: bool = False
     saml_idp_metadata_url: str = ""
     saml_entity_id: str = ""
+    # OIDC (env fallback when no DB row)
+    oidc_enabled: bool = False
+    oidc_issuer: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
 
     # SMTP (admin-configured)
     smtp_host: str = ""

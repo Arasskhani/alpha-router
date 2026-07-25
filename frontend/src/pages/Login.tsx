@@ -116,7 +116,7 @@ export default function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [methods, setMethods] = useState({ ldap: false, saml: false });
+  const [methods, setMethods] = useState({ ldap: false, saml: false, oidc: false });
   const nav = useNavigate();
   const [params] = useSearchParams();
 
@@ -132,15 +132,15 @@ export default function Login() {
   }, []);
 
   useEffect(() => {
-    // SAML ACS delivers a one-time exchange code (NOT the JWT itself) via
-    // ?code=. We POST it to /api/auth/saml/exchange to obtain the session,
+    // SSO callbacks deliver a one-time exchange code (NOT the JWT itself) via
+    // ?code=. We POST it to /api/auth/sso/exchange to obtain the session,
     // keeping the token out of the URL/history/Referer/logs.
     const code = params.get("code");
     if (!code) return;
     let cancelled = false;
     (async () => {
       try {
-        const res = await authFetch("/api/auth/saml/exchange", {
+        const res = await authFetch("/api/auth/sso/exchange", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ code }),
@@ -153,7 +153,7 @@ export default function Login() {
           } catch {
             detail = raw || "";
           }
-          if (!cancelled) setError(detail || "SAML login expired, please try again.");
+          if (!cancelled) setError(detail || "SSO login expired, please try again.");
           return;
         }
         await res.json();
@@ -295,11 +295,16 @@ export default function Login() {
               </button>
             </form>
 
-            {(methods.saml || methods.ldap) && (
+            {(methods.saml || methods.oidc || methods.ldap) && (
               <div className="login-panel__footer">
                 {methods.saml && (
                   <a className="login-panel__sso" href="/api/auth/saml/login">
                     Sign in with SAML
+                  </a>
+                )}
+                {methods.oidc && (
+                  <a className="login-panel__sso" href="/api/auth/oidc/login">
+                    Sign in with OIDC
                   </a>
                 )}
                 {methods.ldap && <p className="login-panel__hint">LDAP: use your directory credentials.</p>}

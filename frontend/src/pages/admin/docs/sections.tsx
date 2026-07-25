@@ -40,7 +40,7 @@ export const docSections: DocSection[] = [
         <p>
           This guide is for administrators and integrators. It reflects current product behaviour: grouped admin
           navigation with a dedicated <strong>User panel</strong> section, scoped RBAC with a single{" "}
-          <strong>Super Admin</strong> role, LDAP directory sync, SAML SSO, chat with attachments and tools, connection
+          <strong>Super Admin</strong> role, LDAP directory sync, SAML/OIDC SSO, chat with attachments and tools, connection
           sync schedules, object storage for media, per-user budgets and deactivation, Usage &amp; Activity views,
           Operations and Database monitoring (for Super Admin), and optional gateway access via <code>/v1</code>. End-user
           help lives in the in-app <strong>User Manual</strong> (<code>/app/manual</code>). This guide does not contain
@@ -93,8 +93,8 @@ export const docSections: DocSection[] = [
             messages).
           </li>
           <li>
-            Supporting <strong>local, LDAP/Active Directory, and SAML 2.0</strong> sign-in, with scheduled LDAP directory
-            sync for users and groups.
+            Supporting <strong>local, LDAP/Active Directory, SAML 2.0, and generic OIDC</strong> sign-in, with scheduled
+            LDAP directory sync for users and groups.
           </li>
           <li>
             Offering in-app chat, per-user media libraries, Usage &amp; Activity analytics (CSV/PDF export), and
@@ -509,7 +509,7 @@ export const docSections: DocSection[] = [
             <strong>Budgets &amp; visibility</strong> — plan-based limits, dashboards, and API logs.
           </li>
           <li>
-            <strong>Enterprise access</strong> — LDAP, SAML SSO, local accounts, and scoped RBAC with Super Admin.
+            <strong>Enterprise access</strong> — LDAP, SAML/OIDC SSO, local accounts, and scoped RBAC with Super Admin.
           </li>
           <li>
             <strong>Optional /v1 API</strong> — OpenAI-compatible gateway for external tools when you need it.
@@ -531,8 +531,8 @@ export const docSections: DocSection[] = [
           </li>
         </ul>
         <Note>
-          Local, LDAP, and SAML sign-in methods appear based on <strong>Authentication</strong> configuration. LDAP
-          users sign in with directory credentials; SAML uses the SSO link when enabled.
+          Local, LDAP, SAML, and OIDC sign-in methods appear based on <strong>Authentication</strong> configuration. LDAP
+          users sign in with directory credentials; SAML/OIDC use the SSO links when enabled.
         </Note>
       </>
     ),
@@ -794,6 +794,11 @@ export const docSections: DocSection[] = [
             register the fixed ACS URL and SP metadata with your Identity Provider, then use <em>Sign in with SAML</em>.
             Users are created or updated on first successful SSO login (no directory sync).
           </li>
+          <li>
+            <strong>OIDC</strong> — Generic OpenID Connect (Authorization Code + PKCE). Configure Issuer, Client ID, and
+            Client Secret, register the fixed redirect URI on your IdP, then use <em>Sign in with OIDC</em>. JIT
+            provisioning only (no directory sync).
+          </li>
         </ul>
         <h3>SAML Service Provider</h3>
         <p>
@@ -803,6 +808,18 @@ export const docSections: DocSection[] = [
           SP metadata is available at <code>/api/auth/saml/metadata</code> for your IdP (standard unauthenticated
           SAML practice); when disabled the URL returns 404. Require signed assertions in production.{" "}
           <code>API_PUBLIC_URL</code> must be reachable by the IdP (HTTPS in production).
+        </p>
+        <h3>OIDC (OpenID Connect)</h3>
+        <p>
+          On the Authentication → OIDC tab: enable OIDC, set the Issuer URL (discovery at{" "}
+          <code>{"{issuer}/.well-known/openid-configuration"}</code>), Client ID, and Client Secret (encrypted at rest;
+          admin GET shows <code>********</code>). Redirect URI is server-pinned to{" "}
+          <code>/api/auth/oidc/callback</code> and cannot be changed in the UI — register that exact URI on the IdP.
+          Login uses Authorization Code + mandatory PKCE S256, signed state/nonce cookies, and JWKS validation of the ID
+          token (<code>RS256</code>/<code>ES256</code> only). Session delivery uses a one-time exchange code (JWT never
+          appears in the redirect URL). In production the Issuer and non-loopback <code>API_PUBLIC_URL</code> must be
+          HTTPS. Default JIT role is <code>user</code>; usernames already bound to another provider are rejected (no
+          takeover).
         </p>
         <h3>LDAPS certificate on the domain controller</h3>
         <p>

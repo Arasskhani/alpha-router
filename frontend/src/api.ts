@@ -27,7 +27,8 @@ function isUnsafe(method: string): boolean {
 function onUnauthorized(path: string) {
   if (
     path.startsWith("/api/auth/login")
-    || path.startsWith("/api/auth/saml/exchange")
+    ||     path.startsWith("/api/auth/saml/exchange")
+    || path.startsWith("/api/auth/sso/exchange")
     || path.startsWith("/api/auth/logout")
   ) return;
   cachedSession = null;
@@ -71,6 +72,9 @@ export function bootstrapSession(force = false): Promise<SessionInfo> {
       if (!response.ok) throw new Error("Not authenticated");
       const session = (await response.json()) as SessionInfo;
       cachedSession = session;
+      if (session.auth_provider) {
+        localStorage.setItem("alpha_router_auth_provider", session.auth_provider);
+      }
       handlingUnauthorized = false;
       return session;
     })

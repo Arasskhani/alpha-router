@@ -17,6 +17,7 @@ EXEMPT_PATHS = frozenset(
     {
         "/api/auth/login",
         "/api/auth/saml/exchange",
+        "/api/auth/sso/exchange",
     }
 )
 # Cross-origin IdP form POST — skip Origin + CSRF header checks entirely.

@@ -1,4 +1,4 @@
-"""Admin UI: configure LDAP and SAML 2.0."""
+"""Admin UI: configure LDAP, SAML 2.0, and generic OIDC."""
 
 import asyncio
 import json
@@ -22,6 +22,11 @@ from app.services.ldap_config import (
 )
 from app.services.ldap_sync import sync_ldap_directory
 from app.services.auth_sync_scheduler import refresh_auth_sync_schedules
+from app.services.oidc_client import (
+    DEFAULT_SCOPES,
+    public_view as oidc_public_view,
+    validate_oidc_config,
+)
 from app.services.saml_sp import (
     DEFAULT_ATTR_DISPLAY_NAME,
     DEFAULT_ATTR_EMAIL,
@@ -59,6 +64,17 @@ class SamlConfigIn(BaseModel):
     attr_display_name: str = DEFAULT_ATTR_DISPLAY_NAME
     strict: bool = True
     want_assertions_signed: bool = True
+
+
+class OidcConfigIn(BaseModel):
+    enabled: bool = False
+    issuer: str = ""
+    client_id: str = ""
+    client_secret: str = ""
+    scopes: str = DEFAULT_SCOPES
+    claim_username: str = "preferred_username"
+    claim_email: str = "email"
+    claim_display_name: str = "name"
 
 
 @router.get("/ldap")
@@ -184,11 +200,33 @@ async def save_saml(body: SamlConfigIn, db: AsyncSession = Depends(get_db), _: U
     return {"ok": True, **saml_public_view({**data, "enabled": body.enabled})}
 
 
+@router.get("/oidc")
+async def get_oidc(db: AsyncSession = Depends(get_db), _: User = Depends(require_authentication)):
+    cfg = await get_provider_config(db, "oidc")
+    return oidc_public_view(cfg)
+
+
+@router.put("/oidc")
+async def save_oidc(body: OidcConfigIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_authentication_write)):
+    existing = await get_provider_config(db, "oidc")
+    data = body.model_dump()
+    if data.get("client_secret") == "********":
+        data["client_secret"] = existing.get("client_secret", "")
+    try:
+        saved = validate_oidc_config(data, enabled=body.enabled)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await save_provider_config(db, "oidc", body.enabled, saved)
+    return {"ok": True, **oidc_public_view({**saved, "enabled": body.enabled})}
+
+
 @router.get("/providers/status")
 async def providers_status(db: AsyncSession = Depends(get_db), _: User = Depends(require_authentication)):
     ldap = await get_provider_config(db, "ldap")
     saml = await get_provider_config(db, "saml")
+    oidc = await get_provider_config(db, "oidc")
     return {
         "ldap": {"enabled": ldap.get("enabled", False)},
         "saml": {"enabled": saml.get("enabled", False)},
+        "oidc": {"enabled": oidc.get("enabled", False)},
     }

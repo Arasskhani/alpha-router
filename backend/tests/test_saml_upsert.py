@@ -109,3 +109,51 @@ def test_saml_same_provider_username_backfills_external_id():
 
 def test_ldap_keeps_username_binding():
     asyncio.run(_test_ldap_keeps_username_binding())
+
+
+async def _test_oidc_binds_by_sub_not_username() -> None:
+    engine, factory = _make_factory()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    async with factory() as db:
+        u1 = await _upsert_directory_user(
+            db,
+            {"username": "alice", "email": "a@x", "external_id": "oidc-sub-1"},
+            "oidc",
+        )
+        assert u1.auth_provider == "oidc"
+        assert u1.external_id == "oidc-sub-1"
+    async with factory() as db:
+        u2 = await _upsert_directory_user(
+            db,
+            {"username": "alice2", "email": "a@x", "external_id": "oidc-sub-1"},
+            "oidc",
+        )
+        assert u2.id == u1.id
+    await engine.dispose()
+
+
+async def _test_oidc_refuses_local_username_takeover() -> None:
+    engine, factory = _make_factory()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    async with factory() as db:
+        db.add(User(username="admin", hashed_password="x", role="user", auth_provider="local"))
+        await db.commit()
+    async with factory() as db:
+        with pytest.raises(HTTPException) as exc:
+            await _upsert_directory_user(
+                db,
+                {"username": "admin", "email": "o@idp", "external_id": "oidc-admin"},
+                "oidc",
+            )
+        assert exc.value.status_code == 409
+    await engine.dispose()
+
+
+def test_oidc_binds_by_sub_not_username():
+    asyncio.run(_test_oidc_binds_by_sub_not_username())
+
+
+def test_oidc_refuses_local_username_takeover():
+    asyncio.run(_test_oidc_refuses_local_username_takeover())

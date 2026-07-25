@@ -40,6 +40,18 @@ type SamlCfg = {
   want_assertions_signed: boolean;
 };
 
+type OidcCfg = {
+  enabled: boolean;
+  issuer: string;
+  client_id: string;
+  client_secret: string;
+  redirect_uri: string;
+  scopes: string;
+  claim_username: string;
+  claim_email: string;
+  claim_display_name: string;
+};
+
 const defaultLdap = (): LdapSimple => ({
   enabled: false,
   dc_host: "",
@@ -86,11 +98,24 @@ const defaultSaml = (): SamlCfg => ({
   want_assertions_signed: true,
 });
 
+const defaultOidc = (): OidcCfg => ({
+  enabled: false,
+  issuer: "",
+  client_id: "",
+  client_secret: "",
+  redirect_uri: "/api/auth/oidc/callback",
+  scopes: "openid profile email",
+  claim_username: "preferred_username",
+  claim_email: "email",
+  claim_display_name: "name",
+});
+
 export default function Authentication() {
-  const [tab, setTab] = useState<"ldap" | "saml">("ldap");
+  const [tab, setTab] = useState<"ldap" | "saml" | "oidc">("ldap");
   const [ldap, setLdap] = useState<LdapSimple>(defaultLdap);
   const { confirm } = useConfirm();
   const [saml, setSaml] = useState<SamlCfg>(defaultSaml);
+  const [oidc, setOidc] = useState<OidcCfg>(defaultOidc);
   const [msg, setMsg] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -117,6 +142,14 @@ export default function Authentication() {
         want_assertions_signed: r.want_assertions_signed !== false,
       });
       setIdpXmlFileName(r.idp_metadata_xml?.trim() ? "Stored IdP metadata XML" : "");
+    });
+    api<OidcCfg>("/api/admin/authentication/oidc").then((r) => {
+      setOidc({
+        ...defaultOidc(),
+        ...r,
+        enabled: Boolean(r.enabled),
+        client_secret: r.client_secret || "",
+      });
     });
   }, []);
 
@@ -297,6 +330,38 @@ export default function Authentication() {
     }
   }
 
+  async function saveOidc(e: FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setMsg("");
+    try {
+      const res = await api<OidcCfg & { ok?: boolean }>("/api/admin/authentication/oidc", {
+        method: "PUT",
+        body: JSON.stringify({
+          enabled: oidc.enabled,
+          issuer: oidc.issuer,
+          client_id: oidc.client_id,
+          client_secret: oidc.client_secret || "********",
+          scopes: oidc.scopes,
+          claim_username: oidc.claim_username,
+          claim_email: oidc.claim_email,
+          claim_display_name: oidc.claim_display_name,
+        }),
+      });
+      setOidc({
+        ...defaultOidc(),
+        ...res,
+        enabled: Boolean(res.enabled),
+        client_secret: res.client_secret || "",
+      });
+      setMsg("OIDC settings saved.");
+    } catch (err) {
+      setMsg(String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const canTry = ldap.dc_host.trim() && ldap.bind_username.trim();
 
   return (
@@ -318,6 +383,13 @@ export default function Authentication() {
           onClick={() => setTab("saml")}
         >
           SAML
+        </button>
+        <button
+          type="button"
+          className={`tab ${tab === "oidc" ? "active" : ""}`}
+          onClick={() => setTab("oidc")}
+        >
+          OIDC
         </button>
       </div>
 
@@ -652,6 +724,112 @@ export default function Authentication() {
           <div className="dialog-actions" style={{ marginTop: 12 }}>
             <button className="btn" type="submit" disabled={saving}>
               {saving ? "Saving…" : "Save SAML"}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {tab === "oidc" && (
+        <form className="card" onSubmit={saveOidc}>
+          <p className="muted-text">
+            Generic OpenID Connect (Authorization Code + PKCE). Users are created or updated on first successful SSO
+            login (no directory sync). Redirect URI is fixed by the server — register it exactly on your IdP.
+          </p>
+          <label>
+            <input
+              type="checkbox"
+              checked={oidc.enabled}
+              onChange={(e) => setOidc({ ...oidc, enabled: e.target.checked })}
+            />{" "}
+            Enable OIDC
+          </label>
+
+          <label className="input-block" style={{ marginTop: 12 }}>
+            <span className="muted-text">Issuer URL</span>
+            <input
+              value={oidc.issuer}
+              onChange={(e) => setOidc({ ...oidc, issuer: e.target.value })}
+              placeholder="https://idp.example.com/realms/alpha-router"
+              style={{ width: "100%" }}
+            />
+            <span className="muted-text" style={{ display: "block", marginTop: 4 }}>
+              Discovery: {"{issuer}"}/.well-known/openid-configuration — HTTPS required in production
+            </span>
+          </label>
+
+          <label className="input-block" style={{ marginTop: 8 }}>
+            <span className="muted-text">Client ID</span>
+            <input
+              value={oidc.client_id}
+              onChange={(e) => setOidc({ ...oidc, client_id: e.target.value })}
+              style={{ width: "100%" }}
+            />
+          </label>
+
+          <label className="input-block" style={{ marginTop: 8 }}>
+            <span className="muted-text">Client Secret</span>
+            <input
+              type="password"
+              value={oidc.client_secret}
+              onChange={(e) => setOidc({ ...oidc, client_secret: e.target.value })}
+              placeholder={oidc.client_secret === "********" ? "******** (unchanged)" : ""}
+              style={{ width: "100%" }}
+              autoComplete="new-password"
+            />
+            <span className="muted-text" style={{ display: "block", marginTop: 4 }}>
+              Stored encrypted. Leave as ******** to keep the existing secret.
+            </span>
+          </label>
+
+          <label className="input-block" style={{ marginTop: 8 }}>
+            <span className="muted-text">Redirect URI (fixed)</span>
+            <input
+              type="text"
+              value={oidc.redirect_uri || "/api/auth/oidc/callback"}
+              readOnly
+              disabled
+              style={{ width: "100%" }}
+            />
+          </label>
+
+          <label className="input-block" style={{ marginTop: 8 }}>
+            <span className="muted-text">Scopes</span>
+            <input
+              value={oidc.scopes}
+              onChange={(e) => setOidc({ ...oidc, scopes: e.target.value })}
+              style={{ width: "100%" }}
+            />
+          </label>
+
+          <h3 style={{ marginTop: 16 }}>Claim mapping</h3>
+          <label className="input-block">
+            <span className="muted-text">Username claim</span>
+            <input
+              value={oidc.claim_username}
+              onChange={(e) => setOidc({ ...oidc, claim_username: e.target.value })}
+              style={{ width: "100%" }}
+            />
+          </label>
+          <label className="input-block" style={{ marginTop: 8 }}>
+            <span className="muted-text">Email claim</span>
+            <input
+              value={oidc.claim_email}
+              onChange={(e) => setOidc({ ...oidc, claim_email: e.target.value })}
+              style={{ width: "100%" }}
+            />
+          </label>
+          <label className="input-block" style={{ marginTop: 8 }}>
+            <span className="muted-text">Display name claim</span>
+            <input
+              value={oidc.claim_display_name}
+              onChange={(e) => setOidc({ ...oidc, claim_display_name: e.target.value })}
+              style={{ width: "100%" }}
+            />
+          </label>
+
+          <div className="dialog-actions" style={{ marginTop: 12 }}>
+            <button className="btn" type="submit" disabled={saving}>
+              {saving ? "Saving…" : "Save OIDC"}
             </button>
           </div>
         </form>

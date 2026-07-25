@@ -203,6 +203,8 @@ def test_production_warning_mode_clean_when_secure(caplog):
         ({"service_admin_password": "changeme"}, "SERVICE_ADMIN_PASSWORD"),
         ({"database_url": "postgresql+asyncpg://alpha_router:alpha_router@postgres:5432/alpha-router"}, "DATABASE_URL"),
         ({"saml_enabled": True, "api_public_url": "http://api.example.com"}, "SAML_TLS"),
+        ({"oidc_enabled": True, "oidc_issuer": "http://idp.example.com", "api_public_url": "https://api.example.com"}, "OIDC_TLS"),
+        ({"oidc_enabled": True, "oidc_issuer": "https://idp.example.com", "api_public_url": "http://api.example.com"}, "OIDC_TLS"),
         ({"smtp_host": "smtp.internal", "smtp_tls": False}, "SMTP_TLS"),
         ({"s3_endpoint_url": "http://objects.example.com", "s3_use_ssl": False}, "S3_TLS"),
         ({"s3_access_key": "alpha-router", "s3_secret_key": "minioadmin"}, "S3_CREDENTIALS"),

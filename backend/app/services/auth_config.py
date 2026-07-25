@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.models.auth_provider import AuthProviderConfig
 from app.services.ldap_config import expand_ldap_config
+from app.services.oidc_client import default_oidc_config, public_view as oidc_public_view
 from app.services.saml_sp import default_saml_config, public_view as saml_public_view
 from app.services.secret_crypto import decrypt_secret, encrypt_secret
 
@@ -16,6 +17,7 @@ settings = get_settings()
 # be encrypted at rest. Everything else stays plaintext.
 _SENSITIVE_FIELDS: dict[str, set[str]] = {
     "ldap": {"bind_password"},
+    "oidc": {"client_secret"},
 }
 
 
@@ -50,12 +52,17 @@ async def get_provider_config(db: AsyncSession, provider: str) -> dict:
             return expand_ldap_config(raw)
         if provider == "saml":
             return {**saml_public_view(raw), "enabled": bool(raw.get("enabled"))}
+        if provider == "oidc":
+            # Keep decrypted secret for runtime; admin endpoints mask separately.
+            return {**raw, "enabled": bool(raw.get("enabled"))}
         return raw
     fallback = _env_fallback(provider)
     if provider == "ldap":
         return expand_ldap_config(fallback)
     if provider == "saml":
         return {**saml_public_view(fallback), "enabled": bool(fallback.get("enabled"))}
+    if provider == "oidc":
+        return fallback
     return fallback
 
 
@@ -79,6 +86,16 @@ def _env_fallback(provider: str) -> dict:
             base["idp_metadata_url"] = settings.saml_idp_metadata_url
         if settings.saml_entity_id:
             base["entity_id"] = settings.saml_entity_id
+        return base
+    if provider == "oidc":
+        base = default_oidc_config()
+        base["enabled"] = bool(getattr(settings, "oidc_enabled", False))
+        if getattr(settings, "oidc_issuer", ""):
+            base["issuer"] = settings.oidc_issuer
+        if getattr(settings, "oidc_client_id", ""):
+            base["client_id"] = settings.oidc_client_id
+        if getattr(settings, "oidc_client_secret", ""):
+            base["client_secret"] = settings.oidc_client_secret
         return base
     return {"enabled": False}
 

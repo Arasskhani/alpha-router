@@ -144,7 +144,9 @@ export default function DeletedUsers() {
   }
 
   const prov = (p: string) =>
-    `badge badge-${p === "local" ? "local" : p === "ldap" ? "ldap" : p === "saml" ? "saml" : "keycloak"}`;
+    `badge badge-${
+      p === "local" ? "local" : p === "ldap" ? "ldap" : p === "saml" ? "saml" : p === "oidc" ? "oidc" : "keycloak"
+    }`;
 
   return (
     <AdminPage title="Deleted Users">

@@ -97,9 +97,13 @@ export async function logout() {
   localStorage.removeItem(STORAGE_KEYS.isActive);
   localStorage.removeItem(STORAGE_KEYS.authProvider);
   // Keep STORAGE_KEYS.theme — device cache for login page before auth.
-  // For SAML SSO users, also terminate the IdP session when SLO is available.
+  // For SSO users, also terminate the IdP session when available.
   if (provider === "saml") {
     window.location.href = "/api/auth/saml/logout";
+    return;
+  }
+  if (provider === "oidc") {
+    window.location.href = "/api/auth/oidc/logout";
     return;
   }
   window.location.href = "/login";

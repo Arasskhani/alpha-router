@@ -82,6 +82,8 @@ def _assert_production_safe() -> None:
         openapi_admin_only=settings.openapi_admin_only,
         database_url=settings.database_url,
         saml_enabled=settings.saml_enabled,
+        oidc_enabled=settings.oidc_enabled,
+        oidc_issuer=settings.oidc_issuer,
         smtp_host=settings.smtp_host,
         smtp_tls=settings.smtp_tls,
         s3_endpoint_url=settings.s3_endpoint_url,
@@ -174,6 +176,8 @@ def _collect_production_insecurities(
     openapi_admin_only: bool = False,
     database_url: str = "",
     saml_enabled: bool = False,
+    oidc_enabled: bool = False,
+    oidc_issuer: str = "",
     smtp_host: str = "",
     smtp_tls: bool = True,
     s3_endpoint_url: str = "",
@@ -228,6 +232,15 @@ def _collect_production_insecurities(
         not _url_uses_tls(api_public_url) and not _url_is_loopback(api_public_url)
     ):
         insecure.append("SAML_TLS")
+    if oidc_enabled and (
+        (oidc_issuer.strip() and not _url_uses_tls(oidc_issuer))
+        or (
+            api_public_url.strip()
+            and not _url_uses_tls(api_public_url)
+            and not _url_is_loopback(api_public_url)
+        )
+    ):
+        insecure.append("OIDC_TLS")
     if smtp_host.strip() and not smtp_tls:
         insecure.append("SMTP_TLS")
     if (
@@ -278,6 +291,8 @@ def _check_production_safe(
     openapi_admin_only: bool = False,
     database_url: str = "",
     saml_enabled: bool = False,
+    oidc_enabled: bool = False,
+    oidc_issuer: str = "",
     smtp_host: str = "",
     smtp_tls: bool = True,
     s3_endpoint_url: str = "",
@@ -312,6 +327,8 @@ def _check_production_safe(
         openapi_admin_only=openapi_admin_only,
         database_url=database_url,
         saml_enabled=saml_enabled,
+        oidc_enabled=oidc_enabled,
+        oidc_issuer=oidc_issuer,
         smtp_host=smtp_host,
         smtp_tls=smtp_tls,
         s3_endpoint_url=s3_endpoint_url,

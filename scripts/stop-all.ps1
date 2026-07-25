@@ -1,10 +1,10 @@
 # Alpha Router - Stop entire stack (Docker Compose)
-# Stops: alpha-router app, PostgreSQL, Redis, MinIO, and related compose services.
+# Stops: alpha-router app, PostgreSQL, Redis, SeaweedFS, and related compose services.
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
-$AlphaRouterPorts = @(8080, 5432, 6379, 9000, 9001)
+$AlphaRouterPorts = @(8080, 5432, 6379, 8333, 23646)
 
 function Write-Step {
     param([string]$Message)
@@ -30,7 +30,7 @@ function Stop-DockerStack {
         return
     }
 
-    Write-Step "Stopping Docker Compose stack: alpha-router, postgres, redis, minio"
+    Write-Step "Stopping Docker Compose stack: alpha-router, postgres, redis, seaweedfs"
     docker compose down --remove-orphans
     if ($LASTEXITCODE -ne 0) {
         Write-Host ("docker compose down failed with exit code " + $LASTEXITCODE + ".") -ForegroundColor Red
@@ -86,7 +86,7 @@ foreach ($port in $AlphaRouterPorts) {
 if ($issues.Count -eq 0) {
     Write-Host ""
     Write-Host "All Alpha Router services appear stopped." -ForegroundColor Green
-    Write-Host "  Docker stack: down - postgres, redis, minio, alpha-router" -ForegroundColor DarkGray
+    Write-Host "  Docker stack: down - postgres, redis, seaweedfs, alpha-router" -ForegroundColor DarkGray
     Write-Host ("  Ports checked: " + ($AlphaRouterPorts -join ", ")) -ForegroundColor DarkGray
     Write-Host ""
     Write-Host "Data volumes were kept. To remove them too, run: docker compose down -v" -ForegroundColor DarkGray

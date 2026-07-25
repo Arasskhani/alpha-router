@@ -168,7 +168,7 @@ async def _purge_roundtrip(monkeypatch) -> None:
 
         assert stats["chat_store"] == 1
 
-        assert stats["minio_objects"] == 2
+        assert stats["object_storage_objects"] == 2
 
         assert unlinked == ["cdn/u/alice/abc123.png"]
 

@@ -24,7 +24,6 @@ from app.services.media_authorization_service import MediaAccessAction, load_aut
 from app.services.attachment_extract import processed_attachment_payload
 from app.services.attachment_policy import (
     AttachmentPolicyError,
-    MAX_ATTACHMENT_BYTES,
     MAX_ATTACHMENTS_PER_REQUEST,
     validate_attachment_filename,
     validate_attachment_size,
@@ -304,16 +303,18 @@ async def process_attachments(
 
     out: list[dict] = []
     total_bytes = 0
-    settings = get_settings()
+    from app.services.transfer_limits_service import get_transfer_limits
+
+    transfer = await get_transfer_limits(db)
     attachment_limit = clamp_limit(
-        settings.max_attachment_bytes,
+        int(transfer["max_upload_file_bytes"]),
         minimum=1024 * 1024,
-        maximum=MAX_ATTACHMENT_BYTES,
+        maximum=1024 * 1024 * 1024,
     )
     total_limit = clamp_limit(
-        settings.max_attachments_total_bytes,
+        int(transfer["max_chat_attachments_total_bytes"]),
         minimum=attachment_limit,
-        maximum=MAX_ATTACHMENT_BYTES * MAX_ATTACHMENTS_PER_REQUEST,
+        maximum=2048 * 1024 * 1024,
     )
     for upload in files:
         filename = upload.filename or "attachment"
@@ -321,12 +322,15 @@ async def process_attachments(
             _, kind = validate_attachment_filename(filename)
             remaining = total_limit - total_bytes
             if remaining <= 0:
-                raise BoundedIOError("Attachments exceed the total request limit.")
+                raise BoundedIOError(
+                    f"Attachments exceed the total per-message limit "
+                    f"({max(1, total_limit // (1024 * 1024))} MB)."
+                )
             raw = await read_upload_bounded(
                 upload,
                 max_bytes=min(attachment_limit, remaining),
             )
-            validate_attachment_size(len(raw))
+            validate_attachment_size(len(raw), max_bytes=attachment_limit)
             total_bytes += len(raw)
         except BoundedIOError as exc:
             raise HTTPException(status_code=413, detail=str(exc)) from exc

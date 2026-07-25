@@ -28,7 +28,9 @@ MAX_USER_MEDIA_QUOTA_GB = 100
 _QUOTA_BYTES_CACHE: tuple[float, int] | None = None
 MAX_ZIP_ITEMS = 100
 MAX_ZIP_SINGLE_FILE_BYTES = 50 * 1024 * 1024
-MAX_ZIP_AGGREGATE_BYTES = 256 * 1024 * 1024
+MAX_ZIP_AGGREGATE_BYTES = 256 * 1024 * 1024  # legacy env fallback ceiling
+# Absolute ceiling aligned with transfer_limits_service / 10g /tmp headroom.
+MAX_ZIP_AGGREGATE_BYTES_HARD = 8192 * 1024 * 1024
 
 
 class MediaZipLimitError(ValueError):
@@ -38,6 +40,7 @@ class MediaZipLimitError(ValueError):
 def _zip_limits() -> tuple[int, int, int]:
     from app.config import get_settings
     from app.services.bounded_io import clamp_limit
+    from app.services.transfer_limits_service import cached_zip_aggregate_limit_bytes
 
     settings = get_settings()
     items = clamp_limit(settings.max_zip_items, minimum=1, maximum=MAX_ZIP_ITEMS)
@@ -47,9 +50,9 @@ def _zip_limits() -> tuple[int, int, int]:
         maximum=MAX_ZIP_SINGLE_FILE_BYTES,
     )
     aggregate = clamp_limit(
-        settings.max_zip_aggregate_bytes,
+        cached_zip_aggregate_limit_bytes(),
         minimum=single,
-        maximum=MAX_ZIP_AGGREGATE_BYTES,
+        maximum=MAX_ZIP_AGGREGATE_BYTES_HARD,
     )
     return items, single, aggregate
 
@@ -369,6 +372,9 @@ def _zip_arcname(row: MediaAsset, used: set[str]) -> str:
 
 
 async def build_media_zip_file(db: AsyncSession, user_id: int, ids: list[int]) -> tuple[Path, int]:
+    from app.services.transfer_limits_service import get_transfer_limits
+
+    await get_transfer_limits(db)
     max_items, max_single, max_aggregate = _zip_limits()
     unique = sorted({int(i) for i in ids if int(i) > 0})
     if not unique:
@@ -391,7 +397,11 @@ async def build_media_zip_file(db: AsyncSession, user_id: int, ids: list[int]) -
             raise MediaZipLimitError("A media file exceeds the ZIP single-file limit")
         declared_total += size
         if declared_total > max_aggregate:
-            raise MediaZipLimitError("Selected media exceeds the ZIP aggregate limit")
+            raise MediaZipLimitError(
+                f"Selected media exceeds the ZIP download limit "
+                f"({max(1, max_aggregate // (1024 * 1024))} MB). "
+                "Select fewer files or ask an admin to raise Maximum ZIP download size."
+            )
 
     fd, raw_path = tempfile.mkstemp(prefix="alpha-router-media-", suffix=".zip")
     os.close(fd)
@@ -410,7 +420,11 @@ async def build_media_zip_file(db: AsyncSession, user_id: int, ids: list[int]) -
                     raise MediaZipLimitError("A media file exceeds the ZIP single-file limit")
                 actual_total += len(data)
                 if actual_total > max_aggregate:
-                    raise MediaZipLimitError("Selected media exceeds the ZIP aggregate limit")
+                    raise MediaZipLimitError(
+                        f"Selected media exceeds the ZIP download limit "
+                        f"({max(1, max_aggregate // (1024 * 1024))} MB). "
+                        "Select fewer files or ask an admin to raise Maximum ZIP download size."
+                    )
                 arcname = _zip_arcname(row, used_names)
                 await asyncio.to_thread(zf.writestr, arcname, data)
                 packed += 1

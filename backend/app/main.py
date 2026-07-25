@@ -148,7 +148,7 @@ def _url_host_is_internal(url: str) -> bool:
         return False
     if host in {"localhost", "127.0.0.1", "::1"}:
         return True
-    # Compose service names are single DNS labels (e.g. minio, redis).
+    # Compose service names are single DNS labels (e.g. seaweedfs, redis).
     return "." not in host
 
 
@@ -406,6 +406,11 @@ async def lifespan(app: FastAPI):
             await ensure_super_admin_roles(db, row, admin_username=settings.admin_username)
             await ensure_user_chat_store(db, row.id)  # ensures user_chat_prefs row
         await db.commit()
+
+    async with AsyncSessionLocal() as db:
+        from app.services.transfer_limits_service import get_transfer_limits
+
+        await get_transfer_limits(db)
 
     start_scheduler()
     await refresh_storage_cleanup_schedule()

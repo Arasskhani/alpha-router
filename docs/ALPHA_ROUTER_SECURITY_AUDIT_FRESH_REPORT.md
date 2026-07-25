@@ -2,7 +2,7 @@
 
 **Engagement:** Zero-assumption, read-only Static + Dynamic assessment  
 **Date:** 2026-07-20  
-**Target:** Local Docker Compose (`alpha-router`, `postgres`, `pgbouncer`, `redis`, `minio`, `sandbox-broker`)  
+**Target:** Local Docker Compose (`alpha-router`, `postgres`, `pgbouncer`, `redis`, `seaweedfs`, `sandbox-broker`)  
 **Rules:** No remediation · No secret values · No weaponized exploits · No credential rotation  
 
 ---
@@ -118,7 +118,7 @@ SECRET_KEY=CUSTOM (not default change-me-in-production)
 ### F-04 · High · App bound to all interfaces on :8080
 
 - **Location:** `docker-compose.yml` alpha-router ports; live inspect
-- **Finding:** App on `0.0.0.0:8080` / `:::8080`; DB/Redis/MinIO are localhost-bound; HSTS off; no TLS terminator verified.
+- **Finding:** App on `0.0.0.0:8080` / `:::8080`; DB/Redis/SeaweedFS are localhost-bound; HSTS off; no TLS terminator verified.
 - **Evidence:** Inspect ports; `enable_hsts=False`; no HSTS header.
 - **Impact:** LAN/WAN cleartext reachability if host firewall open.
 - **Advisory:** Bind `127.0.0.1` behind TLS reverse proxy, or strict network ACLs + TLS.

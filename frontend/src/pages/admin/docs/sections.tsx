@@ -198,7 +198,7 @@ export const docSections: DocSection[] = [
             <strong>Image turn</strong> — client syncs placeholders, calls <code>POST /api/images/generate</code> with an{" "}
             <code>aspect_ratio</code> (text-to-image) or source dimensions (image-to-image). The server finalizes the
             assistant row when the image is ready. With <strong>Private Mode</strong>, the client sends{" "}
-            <code>persist: false</code> — the image is returned to the browser only and is not written to MinIO or{" "}
+            <code>persist: false</code> — the image is returned to the browser only and is not written to object storage or{" "}
             <code>media_assets</code>.
           </li>
           <li>
@@ -234,14 +234,15 @@ export const docSections: DocSection[] = [
             <code>DATABASE_READ_URL</code> routes chat GET traffic to a read replica when configured.
           </li>
           <li>
-            <strong>Media</strong> — file bytes in <strong>MinIO/S3</strong> (<code>S3_*</code> env vars); metadata in{" "}
-            <code>media_assets</code> (hash, path, prompt, retention). Object keys use{" "}
-            <code>cdn/u/&lt;username&gt;/&lt;content_hash&gt;&lt;ext&gt;</code>. Identical content per user is deduplicated by
-            SHA-256.
+            <strong>Media</strong> — file bytes in <strong>SeaweedFS</strong> (S3 API via <code>S3_*</code> env vars);
+            metadata in <code>media_assets</code> (display name, hash, path, prompt, retention). Object keys use{" "}
+            <code>cdn/u/&lt;username&gt;/&lt;content_hash&gt;&lt;ext&gt;</code> (content-addressed; the Media UI{" "}
+            <code>file_name</code> is separate). Identical content per user is deduplicated by SHA-256.
           </li>
           <li>
-            <strong>MinIO</strong> — required object storage (Docker Compose <code>minio</code> service). Not exposed to
-            end users; the app serves files through authenticated <code>/api/chat/media/…</code> routes.
+            <strong>SeaweedFS</strong> — required object storage (Docker Compose <code>seaweedfs</code> service: S3 on{" "}
+            <code>8333</code>, Admin UI on <code>23646</code>, both localhost-bound). End users never talk to SeaweedFS
+            directly; the app serves files through authenticated <code>/api/chat/media/…</code> routes.
           </li>
           <li>
             <strong>Redis</strong> is used for LiteLLM prompt caching when Redis is reachable; otherwise caching falls
@@ -292,7 +293,7 @@ export const docSections: DocSection[] = [
               </td>
               <td>
                 <code>DATABASE_URL</code> points at <code>pgbouncer:6432</code>; PgBouncer pools to{" "}
-                <code>postgres</code>. <code>minio</code> stores media blobs; Redis supplies optional LiteLLM prompt
+                <code>postgres</code>. <code>seaweedfs</code> stores media blobs; Redis supplies optional LiteLLM prompt
                 cache. Default stack targets ~5k concurrent users (see scale env vars below).
               </td>
             </tr>
@@ -382,7 +383,7 @@ export const docSections: DocSection[] = [
         </Note>
         <h3>Environment variables (production)</h3>
         <p>
-          Compose wires Postgres, MinIO, and Redis automatically. Before exposing Alpha Router to real users, change at least:
+          Compose wires Postgres, SeaweedFS, and Redis automatically. Before exposing Alpha Router to real users, change at least:
         </p>
         <ul>
           <li>
@@ -398,8 +399,8 @@ export const docSections: DocSection[] = [
             <code>API_PUBLIC_URL</code> and <code>FRONTEND_URL</code> — public HTTPS URLs (shown in API key modals)
           </li>
           <li>
-            <code>S3_ACCESS_KEY</code>, <code>S3_SECRET_KEY</code>, <code>MINIO_ROOT_PASSWORD</code> — object storage
-            credentials (defaults are for local dev only)
+            <code>S3_ACCESS_KEY</code>, <code>S3_SECRET_KEY</code>, <code>SEAWEEDFS_ADMIN_PASSWORD</code> — object
+            storage credentials (defaults are for local dev only)
           </li>
         </ul>
         <p>
@@ -466,8 +467,10 @@ export const docSections: DocSection[] = [
             provider key). See <a href="#platform-api">Platform API</a> and <a href="#kilo-code">Kilo Code</a>.
           </li>
           <li>
-            <strong>Storage Management</strong> (Super Admin) — Platform media usage, global per-user storage quota, and{" "}
-            <strong>DELETE ALL MEDIA</strong>. See <a href="#admin-storage-management">Storage Management</a>.
+            <strong>Storage Management</strong> (Super Admin) — Platform media usage, per-user quota, global transfer
+            limits (upload / chat attachments total / ZIP download), and <strong>DELETE ALL MEDIA</strong>. Object
+            storage is <strong>SeaweedFS</strong> (S3-compatible). See{" "}
+            <a href="#admin-storage-management">Storage Management</a>.
           </li>
           <li>
             <strong>Retention Policy</strong> (Super Admin) — Media and chat retention days, scheduled cleanup, overview
@@ -755,7 +758,7 @@ export const docSections: DocSection[] = [
         <h2>Media</h2>
         <p>
           Standalone view of <strong>your</strong> admin account media library—the same component users see at{" "}
-          <code>/app/media</code>, useful for testing uploads and retention. Files are stored in MinIO/S3 with metadata in{" "}
+          <code>/app/media</code>, useful for testing uploads and retention. Files are stored in SeaweedFS/S3 with metadata in{" "}
           <code>media_assets</code>. To manage another user&apos;s files, open{" "}
           <strong>Users → row menu → Media</strong> (<code>/admin/users/:id/media</code>).
         </p>
@@ -1167,8 +1170,13 @@ export const docSections: DocSection[] = [
         <p>
           Admin menu <strong>Storage Management</strong> (<code>/admin/storage-management</code>; legacy{" "}
           <code>/admin/storage</code> redirects here) shows platform-wide media usage, sets the global per-user storage
-          quota, and provides destructive maintenance actions. Super Admin only — there are no per-menu Storage
-          administrator roles.
+          quota, configures global transfer size limits, and provides destructive maintenance actions. Super Admin only —
+          there are no per-menu Storage administrator roles.
+        </p>
+        <p>
+          Media blobs are stored in <strong>SeaweedFS</strong> (S3-compatible). Alpha Router talks to it with the standard S3
+          client (<code>S3_*</code> env vars). Operators may optionally open the SeaweedFS Admin UI for browsing buckets;
+          day-to-day media QA for users should use the Alpha Router <strong>Media</strong> page.
         </p>
         <h3>Media &amp; files — usage</h3>
         <ul>
@@ -1186,11 +1194,36 @@ export const docSections: DocSection[] = [
           quota and usage on the <strong>Media</strong> page in the user panel; uploads and generated images count toward
           the limit.
         </p>
+        <h3>Transfer size limits</h3>
+        <p>
+          Global limits in <strong>megabytes</strong>, applied to every user. Saved from this page into system settings
+          (not only env defaults).
+        </p>
+        <ul>
+          <li>
+            <strong>Maximum upload size (MB)</strong> — max size of a <em>single</em> file for Media library uploads and
+            chat attachments (unified).
+          </li>
+          <li>
+            <strong>Maximum chat attachments total per message (MB)</strong> — max combined size of all files attached in
+            one chat message. Must be greater than or equal to the single-file upload limit.
+          </li>
+          <li>
+            <strong>Maximum ZIP download size (MB)</strong> — max combined size of files selected for{" "}
+            <strong>Download selected</strong> / <strong>Download all</strong> on the user Media page. If the selection
+            exceeds this limit, the API returns a clear error (select fewer files or raise this limit).
+          </li>
+        </ul>
+        <Note>
+          ZIP packing uses temporary space inside the <code>alpha-router</code> container (<code>/tmp</code>). Compose defaults
+          give a large tmpfs so ZIP downloads can succeed up to the admin-configured ZIP limit. Single-file downloads are
+          not limited by the ZIP setting.
+        </Note>
         <h3>Maintenance — DELETE ALL MEDIA</h3>
         <ul>
           <li>
-            Permanently deletes <strong>all</strong> media blobs for <strong>all users</strong> from object storage and
-            clears <code>media_assets</code> metadata.
+            Permanently deletes <strong>all</strong> media blobs for <strong>all users</strong> from SeaweedFS and clears{" "}
+            <code>media_assets</code> metadata.
           </li>
           <li>
             Does <strong>not</strong> delete chat message text in PostgreSQL, but image and attachment links inside old
@@ -1206,9 +1239,8 @@ export const docSections: DocSection[] = [
           <a href="#admin-storage">Retention Policy</a> and run <strong>Purge expired media now</strong> when needed.
         </Warn>
         <Note>
-          Object storage configuration (<code>S3_*</code> env vars) is shared with chat media uploads. See{" "}
-          <a href="#admin-storage">Retention Policy</a> for architecture notes on MinIO/S3 keys and{" "}
-          <code>media_assets</code>.
+          Object storage env (<code>S3_*</code>, <code>SEAWEEDFS_ADMIN_PASSWORD</code>) is documented under{" "}
+          <a href="#admin-storage">Retention Policy → Environment (object storage)</a>.
         </Note>
       </>
     ),
@@ -1223,8 +1255,9 @@ export const docSections: DocSection[] = [
         <p>
           Admin menu <strong>Retention Policy</strong> (<code>/admin/retention-policy</code>) configures how long{" "}
           <strong>media files</strong> and <strong>chat messages</strong> are kept, plus overview stats and manual purge
-          actions. Super Admin only. Platform usage, quotas, and <strong>DELETE ALL MEDIA</strong> are on{" "}
-          <a href="#admin-storage-management">Storage Management</a>.
+          actions. Super Admin only. Platform usage, quotas, transfer limits, and <strong>DELETE ALL MEDIA</strong> are
+          on <a href="#admin-storage-management">Storage Management</a>. Blobs themselves live in SeaweedFS; this page
+          controls retention policy, not the object-store product.
         </p>
         <p>
           At the top of the page, a note shows the <strong>server timezone</strong> (from the <code>TZ</code> environment
@@ -1271,11 +1304,18 @@ export const docSections: DocSection[] = [
         <h3>Media files</h3>
         <ul>
           <li>
-            Blobs live in <strong>MinIO/S3</strong> (<code>S3_BUCKET</code>, default <code>alpha-router-media</code>). Keys:{" "}
-            <code>cdn/u/&lt;username&gt;/&lt;content_hash&gt;&lt;ext&gt;</code> (username is sanitized, not numeric id).
+            Blobs live in <strong>SeaweedFS</strong> (<code>S3_BUCKET</code>, default <code>alpha-router-media</code>). Object
+            keys: <code>cdn/u/&lt;username&gt;/&lt;content_hash&gt;&lt;ext&gt;</code> (username sanitized, not numeric
+            id). The Media library <code>file_name</code> is a display label and may differ from the object key basename.
           </li>
           <li>
-            Table <code>media_assets</code> — per-user metadata (filename, MIME, prompt, model, chat session, expiry).
+            In the SeaweedFS Admin file browser, the same objects appear under{" "}
+            <code>/buckets/alpha-router-media/cdn/u/&lt;username&gt;/</code>. The browser is often paginated by name (not
+            newest-first), so new hash-named files may not be on the first page.
+          </li>
+          <li>
+            Table <code>media_assets</code> — per-user metadata (filename, MIME, prompt, model, chat session, expiry,{" "}
+            <code>storage_path</code>).
           </li>
           <li>
             <strong>Deduplication</strong> — identical file content (SHA-256) is stored once per user in object storage;
@@ -1283,7 +1323,8 @@ export const docSections: DocSection[] = [
             the list.
           </li>
           <li>
-            Files are served only through authenticated API routes, not as public bucket URLs.
+            Files are served only through authenticated API routes (<code>/api/chat/media/…/file</code>), not as public
+            bucket URLs. Do not expose SeaweedFS ports to the internet.
           </li>
         </ul>
         <h3>Admin Retention Policy page</h3>
@@ -1345,17 +1386,44 @@ export const docSections: DocSection[] = [
           Media referenced from deleted messages is not automatically deleted from object storage unless media retention
           also applies.
         </Warn>
-        <h3>Environment (object storage)</h3>
+        <h3>Environment (object storage — SeaweedFS)</h3>
         <p>
-          Configure via <code>S3_ENDPOINT_URL</code>, <code>S3_ACCESS_KEY</code>, <code>S3_SECRET_KEY</code>,{" "}
-          <code>S3_BUCKET</code>, and optional <code>S3_REGION</code> / <code>S3_USE_SSL</code>. In Docker Compose the{" "}
-          <code>minio</code> service listens on port 9000 inside the stack; keep it off the public internet in
-          production.
+          Alpha Router uses <strong>SeaweedFS</strong> as the S3-compatible object store (Compose service{" "}
+          <code>seaweedfs</code>). Configure:
+        </p>
+        <ul>
+          <li>
+            <code>S3_ENDPOINT_URL</code> — for the app container Compose forces{" "}
+            <code>http://seaweedfs:8333</code>. From the host, operators use <code>http://127.0.0.1:8333</code>.
+          </li>
+          <li>
+            <code>S3_ACCESS_KEY</code> / <code>S3_SECRET_KEY</code> — mapped to SeaweedFS{" "}
+            <code>AWS_ACCESS_KEY_ID</code> / <code>AWS_SECRET_ACCESS_KEY</code> so S3 auth is enabled (never anonymous).
+          </li>
+          <li>
+            <code>S3_BUCKET</code> — default <code>alpha-router-media</code>; created on SeaweedFS startup when configured.
+          </li>
+          <li>
+            Optional <code>S3_REGION</code> / <code>S3_USE_SSL</code> — for non-Compose or TLS fronted deployments.
+          </li>
+          <li>
+            <code>SEAWEEDFS_ADMIN_PASSWORD</code> — password for the SeaweedFS Admin UI (username{" "}
+            <code>admin</code>). If the password contains <code>$</code>, escape it as <code>$$</code> in{" "}
+            <code>.env</code> so Docker Compose does not treat it as variable interpolation. After changing the password,
+            recreate the service: <code>docker compose up -d --force-recreate seaweedfs</code>.
+          </li>
+        </ul>
+        <p>
+          Ports (localhost-bound only): S3 API <code>127.0.0.1:8333</code>, Admin UI{" "}
+          <code>127.0.0.1:23646</code>. Opening the S3 URL in a browser without credentials returns{" "}
+          <code>AccessDenied</code> by design. Use the Admin UI (or Alpha Router Media) to inspect objects — not a bare browser
+          GET to port 8333.
         </p>
         <Note>
-          Back up PostgreSQL (normalized chat tables + <code>media_assets</code> metadata) and your MinIO bucket/volume
-          together for a full restore. The in-app <a href="#admin-database">Database</a> page shows row counts only—it
-          does not browse object storage.
+          Back up PostgreSQL (normalized chat tables + <code>media_assets</code> metadata) and the SeaweedFS Docker
+          volume (<code>*_alpha_router_seaweedfs</code>) together for a full restore. The in-app{" "}
+          <a href="#admin-database">Database</a> page shows row counts only—it does not browse object storage. Host-side
+          inventory helper: <code>scripts/backup-object-storage-baseline.ps1</code>.
         </Note>
       </>
     ),
@@ -1896,10 +1964,15 @@ client.chat.completions.create(
             a colleague only needs API Keys. Super Admin remains for platform owners.
           </li>
           <li>
-            Back up PostgreSQL and the MinIO/S3 media bucket outside Alpha Router; use{" "}
-            <a href="#admin-database">Database</a> only to inspect size and row counts.
+            Back up PostgreSQL and the SeaweedFS media volume/bucket outside Alpha Router; use{" "}
+            <a href="#admin-database">Database</a> only to inspect size and row counts. See{" "}
+            <a href="#admin-storage">Retention Policy → Environment (object storage)</a>.
           </li>
-          <li>Do not expose MinIO port 9000 or Postgres 5432 to the public internet without network controls.</li>
+          <li>
+            Do not expose SeaweedFS ports 8333/23646 or Postgres 5432 to the public internet without network controls.
+            Keep strong <code>S3_*</code> keys and <code>SEAWEEDFS_ADMIN_PASSWORD</code>; escape <code>$</code> as{" "}
+            <code>$$</code> in <code>.env</code> when needed.
+          </li>
           <li>Use least-privilege upstream keys where vendors allow scopes.</li>
           <li>
             Monitor <a href="#admin-operations">Operations</a>, <a href="#admin-database">Database</a>, Dashboard, and API

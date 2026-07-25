@@ -6,6 +6,9 @@ import { useConfirm } from "../../context/ConfirmContext";
 type StorageSettings = {
   user_media_quota_gb?: number;
   user_media_quota_bytes?: number;
+  max_upload_file_mb?: number;
+  max_chat_attachments_total_mb?: number;
+  max_media_zip_download_mb?: number;
 };
 
 type StorageOverview = {
@@ -32,7 +35,11 @@ export default function StorageManagement() {
   const { confirm } = useConfirm();
   const [stats, setStats] = useState<StorageOverview | null>(null);
   const [quotaGb, setQuotaGb] = useState(1);
+  const [uploadMb, setUploadMb] = useState(25);
+  const [chatTotalMb, setChatTotalMb] = useState(36);
+  const [zipMb, setZipMb] = useState(256);
   const [savingQuota, setSavingQuota] = useState(false);
+  const [savingTransfer, setSavingTransfer] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [flash, setFlash] = useState("");
   const [error, setError] = useState("");
@@ -44,6 +51,15 @@ export default function StorageManagement() {
       setStats(data);
       const gb = data.settings?.user_media_quota_gb;
       if (typeof gb === "number" && gb >= 1) setQuotaGb(gb);
+      if (typeof data.settings?.max_upload_file_mb === "number") {
+        setUploadMb(data.settings.max_upload_file_mb);
+      }
+      if (typeof data.settings?.max_chat_attachments_total_mb === "number") {
+        setChatTotalMb(data.settings.max_chat_attachments_total_mb);
+      }
+      if (typeof data.settings?.max_media_zip_download_mb === "number") {
+        setZipMb(data.settings.max_media_zip_download_mb);
+      }
     } catch (e) {
       setError(String(e));
     }
@@ -90,6 +106,38 @@ export default function StorageManagement() {
       setError(String(e));
     } finally {
       setSavingQuota(false);
+    }
+  }
+
+  async function saveTransferSettings(e: FormEvent) {
+    e.preventDefault();
+    const nextUpload = Math.max(1, Math.min(1024, Math.round(Number(uploadMb) || 1)));
+    const nextChat = Math.max(1, Math.min(2048, Math.round(Number(chatTotalMb) || 1)));
+    const nextZip = Math.max(1, Math.min(8192, Math.round(Number(zipMb) || 1)));
+    if (nextChat < nextUpload) {
+      setError("Maximum chat attachments total must be greater than or equal to maximum upload size.");
+      return;
+    }
+    setSavingTransfer(true);
+    setError("");
+    setFlash("");
+    try {
+      await api("/api/admin/storage/settings", {
+        method: "PATCH",
+        body: JSON.stringify({
+          max_upload_file_mb: nextUpload,
+          max_chat_attachments_total_mb: nextChat,
+          max_media_zip_download_mb: nextZip,
+        }),
+      });
+      setFlash(
+        `Transfer limits updated for all users: upload ${nextUpload} MB, chat total ${nextChat} MB, ZIP download ${nextZip} MB.`,
+      );
+      await load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSavingTransfer(false);
     }
   }
 
@@ -147,7 +195,7 @@ export default function StorageManagement() {
   return (
     <AdminPage title="Storage Management">
       <p className="muted-text" style={{ marginTop: "-0.25rem", marginBottom: "1rem" }}>
-        Platform media usage and per-user storage limits.
+        Platform media usage, per-user storage limits, and global transfer size limits.
       </p>
       {flash && <p className="alert alert-success">{flash}</p>}
       {error && <p className="alert alert-error">{error}</p>}
@@ -224,6 +272,65 @@ export default function StorageManagement() {
         <div className="dialog-actions">
           <button type="submit" className="btn" disabled={savingQuota}>
             {savingQuota ? "Saving…" : "Save quota"}
+          </button>
+        </div>
+      </form>
+
+      <form className="card" onSubmit={saveTransferSettings}>
+        <h3>Transfer size limits</h3>
+        <p className="muted-text">
+          Global limits for all users (megabytes). Upload size applies to Media and chat attachments. Chat total is
+          the sum of files in one message. ZIP download is the combined size of selected Media files.
+        </p>
+
+        <label htmlFor="max-upload-file-mb">Maximum upload size (MB)</label>
+        <input
+          id="max-upload-file-mb"
+          type="number"
+          min={1}
+          max={1024}
+          step={1}
+          className="input-block"
+          value={uploadMb}
+          onChange={(e) => setUploadMb(Number(e.target.value || 1))}
+        />
+
+        <label htmlFor="max-chat-attachments-total-mb" style={{ marginTop: "0.75rem", display: "block" }}>
+          Maximum chat attachments total per message (MB)
+        </label>
+        <input
+          id="max-chat-attachments-total-mb"
+          type="number"
+          min={1}
+          max={2048}
+          step={1}
+          className="input-block"
+          value={chatTotalMb}
+          onChange={(e) => setChatTotalMb(Number(e.target.value || 1))}
+        />
+
+        <label htmlFor="max-media-zip-download-mb" style={{ marginTop: "0.75rem", display: "block" }}>
+          Maximum ZIP download size (MB)
+        </label>
+        <input
+          id="max-media-zip-download-mb"
+          type="number"
+          min={1}
+          max={8192}
+          step={1}
+          className="input-block"
+          value={zipMb}
+          onChange={(e) => setZipMb(Number(e.target.value || 1))}
+        />
+
+        <p className="muted-text" style={{ marginTop: "0.5rem" }}>
+          Current: upload {stats?.settings?.max_upload_file_mb ?? 25} MB · chat total{" "}
+          {stats?.settings?.max_chat_attachments_total_mb ?? 36} MB · ZIP{" "}
+          {stats?.settings?.max_media_zip_download_mb ?? 256} MB
+        </p>
+        <div className="dialog-actions">
+          <button type="submit" className="btn" disabled={savingTransfer}>
+            {savingTransfer ? "Saving…" : "Save transfer limits"}
           </button>
         </div>
       </form>

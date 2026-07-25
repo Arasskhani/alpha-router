@@ -193,10 +193,13 @@ def validate_attachment_filename(filename: str) -> tuple[str, str]:
     return ext, kind
 
 
-def validate_attachment_size(size: int) -> None:
+def validate_attachment_size(size: int, *, max_bytes: int | None = None) -> None:
     if size <= 0:
         raise AttachmentPolicyError("Empty file.")
-    if size > MAX_ATTACHMENT_BYTES:
+    limit = int(max_bytes) if max_bytes is not None else MAX_ATTACHMENT_BYTES
+    if limit <= 0:
+        limit = MAX_ATTACHMENT_BYTES
+    if size > limit:
         raise AttachmentPolicyError(
-            f"File is too large (max {MAX_ATTACHMENT_BYTES // (1024 * 1024)} MB)."
+            f"File is too large (max {max(1, limit // (1024 * 1024))} MB)."
         )

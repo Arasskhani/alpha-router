@@ -75,7 +75,7 @@ async def _mark_migration_completed(db: AsyncSession) -> None:
 
 
 async def migrate_legacy_storage_layout(db: AsyncSession) -> dict[str, Any]:
-    """Move chats → JSONB table, media → MinIO/S3, then remove legacy directories."""
+    """Move chats → JSONB table, media → object storage/S3, then remove legacy directories."""
     if await _migration_completed(db):
         return {"skipped": True}
 
@@ -287,7 +287,7 @@ async def _mark_storage_v3_completed(db: AsyncSession) -> None:
 
 async def reconcile_media_storage_v3(db: AsyncSession) -> dict[str, Any]:
     """
-    One-time repair: username-based MinIO paths, normalized image hashes, duplicate row cleanup.
+    One-time repair: username-based object-storage paths, normalized image hashes, duplicate row cleanup.
     Safe to run after upgrades; idempotent once flagged complete.
     """
     if await _storage_v3_completed(db):

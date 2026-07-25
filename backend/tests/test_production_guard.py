@@ -207,7 +207,7 @@ def test_production_warning_mode_clean_when_secure(caplog):
         ({"oidc_enabled": True, "oidc_issuer": "https://idp.example.com", "api_public_url": "http://api.example.com"}, "OIDC_TLS"),
         ({"smtp_host": "smtp.internal", "smtp_tls": False}, "SMTP_TLS"),
         ({"s3_endpoint_url": "http://objects.example.com", "s3_use_ssl": False}, "S3_TLS"),
-        ({"s3_access_key": "alpha-router", "s3_secret_key": "minioadmin"}, "S3_CREDENTIALS"),
+        ({"s3_access_key": "alpha-router", "s3_secret_key": "changeme"}, "S3_CREDENTIALS"),
         ({"frontend_url": "http://app", "api_public_url": "https://api"}, "FRONTEND_TLS"),
         ({"api_public_url": "http://api", "frontend_url": "https://app"}, "API_PUBLIC_TLS"),
         ({"enable_hsts": False, "frontend_url": "https://app.example"}, "HSTS"),
@@ -221,14 +221,14 @@ def test_production_detects_insecure_runtime_fallbacks(overrides, expected):
     assert expected in str(exc.value)
 
 
-def test_production_allows_loopback_http_and_compose_minio_without_hsts():
-    """Single-box / internal Compose installs may use loopback HTTP and MinIO."""
+def test_production_allows_loopback_http_and_compose_seaweedfs_without_hsts():
+    """Single-box / internal Compose installs may use loopback HTTP and SeaweedFS."""
     _check_production_safe(
         **_prod_kwargs(
             frontend_url="http://localhost:8080",
             api_public_url="http://127.0.0.1:8080",
             enable_hsts=False,
-            s3_endpoint_url="http://minio:9000",
+            s3_endpoint_url="http://seaweedfs:8333",
             s3_use_ssl=False,
             allow_legacy_bearer_auth=False,
         )

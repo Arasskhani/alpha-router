@@ -1,4 +1,4 @@
-"""Media storage helpers, retention, and object storage (MinIO/S3)."""
+"""Media storage helpers, retention, and object storage (SeaweedFS/S3)."""
 
 from __future__ import annotations
 
@@ -33,13 +33,17 @@ MAX_MEDIA_INPUT_BYTES = 25 * 1024 * 1024
 
 
 def media_input_limit() -> int:
-    from app.config import get_settings
+    """Single-file upload/media limit (bytes). Prefers admin transfer-limits cache."""
     from app.services.bounded_io import clamp_limit
+    from app.services.transfer_limits_service import (
+        MAX_UPLOAD_FILE_MB,
+        cached_upload_limit_bytes,
+    )
 
     return clamp_limit(
-        get_settings().max_media_input_bytes,
+        cached_upload_limit_bytes(),
         minimum=1024 * 1024,
-        maximum=50 * 1024 * 1024,
+        maximum=MAX_UPLOAD_FILE_MB * 1024 * 1024,
     )
 
 

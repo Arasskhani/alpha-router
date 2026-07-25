@@ -15,7 +15,7 @@ class MediaAsset(Base):
     kind = Column(String(32), nullable=False, default="image")  # image | document | other
     mime_type = Column(String(128), nullable=False, default="application/octet-stream")
     file_name = Column(String(255), nullable=False)
-    storage_path = Column(Text, nullable=False)  # object key under MinIO/S3 (cdn/u/{user_id}/…)
+    storage_path = Column(Text, nullable=False)  # object key under S3 (cdn/u/{user}/…)
     content_hash = Column(String(64), nullable=True, index=True)  # SHA-256 hex; deduped per user
     size_bytes = Column(Integer, nullable=False, default=0)
     source_model = Column(String(512), nullable=True)

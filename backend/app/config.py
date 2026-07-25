@@ -14,7 +14,8 @@ INSECURE_DEFAULTS: frozenset[str] = frozenset(
         "admin",  # ADMIN_PASSWORD
         "changeme",  # SERVICE_ADMIN_PASSWORD and template credentials
         "alpha-router",  # bundled database/S3 development identity
-        "minioadmin",  # S3_SECRET_KEY
+        "rustfsadmin",  # common S3-compatible placeholder
+        "change-me-seaweed-admin",  # SEAWEEDFS_ADMIN_PASSWORD example
         "sk-alpha-router-master",  # GATEWAY_MASTER_KEY
     }
 )
@@ -158,10 +159,10 @@ class Settings(BaseSettings):
     smtp_from: str = "alpha_router@localhost"
     smtp_tls: bool = True
 
-    # Object storage (MinIO / S3-compatible) — all media blobs
-    s3_endpoint_url: str = "http://127.0.0.1:9000"
+    # Object storage (SeaweedFS / S3-compatible) — all media blobs
+    s3_endpoint_url: str = "http://127.0.0.1:8333"
     s3_access_key: str = "alpha-router"
-    s3_secret_key: str = "minioadmin"
+    s3_secret_key: str = "changeme"
     s3_bucket: str = "alpha-router-media"
     s3_region: str = "us-east-1"
     s3_use_ssl: bool = False

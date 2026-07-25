@@ -1,4 +1,4 @@
-"""S3-compatible object storage (MinIO) for all media blobs."""
+"""S3-compatible object storage (SeaweedFS) for media blobs."""
 
 from __future__ import annotations
 
@@ -28,7 +28,13 @@ def _client():
         aws_secret_access_key=settings.s3_secret_key,
         region_name=settings.s3_region,
         use_ssl=settings.s3_use_ssl,
-        config=Config(signature_version="s3v4", connect_timeout=5, read_timeout=10, retries={"max_attempts": 2}),
+        config=Config(
+            signature_version="s3v4",
+            s3={"addressing_style": "path"},
+            connect_timeout=5,
+            read_timeout=10,
+            retries={"max_attempts": 2},
+        ),
     )
 
 
@@ -52,14 +58,14 @@ def _normalize_key(key: str) -> str:
 
 
 def verify_connection() -> None:
-    """Fail fast when MinIO/S3 is unreachable."""
+    """Fail fast when object storage (S3 API) is unreachable."""
     try:
         _client().list_buckets()
     except (ClientError, EndpointConnectionError, OSError, ConnectionError) as exc:
         settings = get_settings()
         raise RuntimeError(
-            f"MinIO/S3 unavailable at {settings.s3_endpoint_url}. "
-            "Start MinIO (docker compose up -d minio) and retry."
+            f"Object storage unavailable at {settings.s3_endpoint_url}. "
+            "Start SeaweedFS (docker compose up -d seaweedfs) and retry."
         ) from exc
 
 

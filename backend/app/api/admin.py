@@ -2313,6 +2313,9 @@ class StorageSettingsPatch(BaseModel):
     clear_schedule_hour: int | None = None
     clear_schedule_minute: int | None = None
     user_media_quota_gb: int | None = None
+    max_upload_file_mb: int | None = None
+    max_chat_attachments_total_mb: int | None = None
+    max_media_zip_download_mb: int | None = None
 
 
 class ChatRetentionSettingsPatch(BaseModel):
@@ -2345,6 +2348,9 @@ async def get_storage_overview(db: AsyncSession = Depends(get_db), _: User = Dep
     quota_gb = await get_user_media_quota_gb(db)
     stats["settings"]["user_media_quota_gb"] = quota_gb
     stats["settings"]["user_media_quota_bytes"] = await get_user_media_quota_bytes(db)
+    from app.services.transfer_limits_service import get_transfer_limits, transfer_limits_public_view
+
+    stats["settings"].update(transfer_limits_public_view(await get_transfer_limits(db)))
     stats["users_over_quota"] = await count_users_over_media_quota(db)
     return stats
 
@@ -2365,6 +2371,24 @@ async def patch_storage_settings(
     if body.user_media_quota_gb is not None:
         quota_gb = await set_user_media_quota_gb(db, body.user_media_quota_gb)
         settings = {**settings, "user_media_quota_gb": quota_gb, "user_media_quota_bytes": quota_gb * 1024 * 1024 * 1024}
+    transfer_fields = (
+        body.max_upload_file_mb is not None
+        or body.max_chat_attachments_total_mb is not None
+        or body.max_media_zip_download_mb is not None
+    )
+    if transfer_fields:
+        from app.services.transfer_limits_service import set_transfer_limits, transfer_limits_public_view
+
+        try:
+            transfer = await set_transfer_limits(
+                db,
+                max_upload_file_mb=body.max_upload_file_mb,
+                max_chat_attachments_total_mb=body.max_chat_attachments_total_mb,
+                max_media_zip_download_mb=body.max_media_zip_download_mb,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        settings = {**settings, **transfer_limits_public_view(transfer)}
     await db.commit()
     await refresh_storage_cleanup_schedule()
     return {"ok": True, "settings": settings}

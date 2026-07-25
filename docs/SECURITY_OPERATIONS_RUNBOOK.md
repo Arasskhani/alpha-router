@@ -19,8 +19,17 @@ The public health response is deliberately minimal:
 ```
 
 It does not prove that every dependency is healthy. Check PostgreSQL,
-PgBouncer, Redis, MinIO, and Sandbox Broker separately with
+PgBouncer, Redis, SeaweedFS, and Sandbox Broker separately with
 `docker compose ps` and their health status.
+
+Object storage (SeaweedFS):
+
+```powershell
+docker compose ps seaweedfs
+# S3 API (localhost only): http://127.0.0.1:8333
+# Admin UI (localhost only): http://127.0.0.1:23646
+.\scripts\security-check-object-storage.ps1
+```
 
 ## Security signals
 
@@ -79,7 +88,22 @@ docker compose ps
 Invoke-WebRequest http://localhost:8080/health -UseBasicParsing
 ```
 
-Do not remove database, Redis, or MinIO volumes during an application rollback.
+Do not remove database, Redis, or SeaweedFS volumes during an application rollback.
+
+### Object storage (SeaweedFS)
+
+Alpha Router uses SeaweedFS only (`seaweedfs` Compose service).
+
+```powershell
+# Security surface check (host)
+.\scripts\security-check-object-storage.ps1
+
+# Inventory / backup current SeaweedFS bucket
+.\scripts\backup-object-storage-baseline.ps1 -EndpointUrl http://127.0.0.1:8333
+```
+
+Pin SeaweedFS image updates via `deploy/seaweedfs/VERSION` and
+`docker-compose.yml` / CI `SEAWEEDFS_IMAGE` together.
 
 ## Data-key rotation recovery
 

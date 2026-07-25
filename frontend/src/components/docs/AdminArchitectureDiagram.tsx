@@ -67,7 +67,7 @@ function IconPostgres({ className }: IconProps) {
   );
 }
 
-function IconMinIO({ className }: IconProps) {
+function IconObjectStorage({ className }: IconProps) {
   return (
     <svg className={className} viewBox="0 0 32 32" fill="none" aria-hidden>
       <path
@@ -245,7 +245,7 @@ export default function AdminArchitectureDiagram() {
                 <code>ChatCompletionPersister</code> — server-owned writes during in-app SSE
               </li>
               <li>Request logging · model catalog · Connections</li>
-              <li>Normalized chat rows in PostgreSQL · media blobs in MinIO (hash dedup)</li>
+              <li>Normalized chat rows in PostgreSQL · media blobs in SeaweedFS (hash dedup)</li>
             </ul>
           </ComponentCard>
         </section>
@@ -268,11 +268,14 @@ export default function AdminArchitectureDiagram() {
             </ComponentCard>
             <ComponentCard
               iconCentered
-              icon={<IconMinIO className="docs-arch-icon" />}
-              title="MinIO / S3"
+              icon={<IconObjectStorage className="docs-arch-icon" />}
+              title="SeaweedFS / S3"
               subtitle="Object storage"
             >
-              <p>Media blobs at cdn/u/username/hash.ext — served via authenticated API only.</p>
+              <p>
+                S3 API :8333 · Admin UI :23646 (localhost). Keys <code>cdn/u/user/hash.ext</code> — served via
+                authenticated Alpha Router API only.
+              </p>
             </ComponentCard>
             <ComponentCard
               iconCentered

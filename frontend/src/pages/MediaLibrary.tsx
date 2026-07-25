@@ -240,13 +240,13 @@ export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProp
         body: JSON.stringify({ ids: targets.map((m) => m.id) }),
       });
       if (!res.ok) {
-        let detail = `Download failed (${res.status})`;
+        const text = await res.text();
+        let detail = text || `Download failed (${res.status})`;
         try {
-          const j = (await res.json()) as { detail?: string };
+          const j = JSON.parse(text) as { detail?: string };
           if (j.detail) detail = j.detail;
         } catch {
-          const text = await res.text();
-          if (text) detail = text;
+          /* plain-text body (e.g. uvicorn 500) */
         }
         throw new Error(detail);
       }

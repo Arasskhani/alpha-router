@@ -50,7 +50,7 @@ async def purge_user_account_data(
 
     """
 
-    Delete media rows (and referenced MinIO keys), chat tables, prefs,
+    Delete media rows (and referenced object-storage keys), chat tables, prefs,
 
     then sweep orphan objects under the user's CDN prefixes.
 
@@ -98,11 +98,11 @@ async def purge_user_account_data(
 
     slug = user_storage_slug(username)
 
-    minio_deleted = await asyncio.to_thread(oss.purge_user_cdn_objects, slug, user_id)
+    object_storage_deleted = await asyncio.to_thread(oss.purge_user_cdn_objects, slug, user_id)
 
     logger.info(
 
-        "Purged account data for user_id=%s username=%s media_rows=%s chat=%s minio=%s",
+        "Purged account data for user_id=%s username=%s media_rows=%s chat=%s object_storage=%s",
 
         user_id,
 
@@ -112,7 +112,7 @@ async def purge_user_account_data(
 
         chat_deleted,
 
-        minio_deleted,
+        object_storage_deleted,
 
     )
 
@@ -124,7 +124,7 @@ async def purge_user_account_data(
 
         "media_prefs": prefs_deleted,
 
-        "minio_objects": minio_deleted,
+        "object_storage_objects": object_storage_deleted,
 
     }
 

@@ -2,6 +2,9 @@ stages:
   - verify
   - audit
 
+variables:
+  SEAWEEDFS_IMAGE: "chrislusf/seaweedfs:4.40"
+
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -76,3 +79,18 @@ backend-audit:
     expire_in: 30 days
     paths:
       - pip-audit.json
+
+# Fail on CRITICAL/HIGH findings in the pinned SeaweedFS image (deploy/seaweedfs/VERSION).
+object-storage-image-audit:
+  stage: audit
+  image:
+    name: aquasec/trivy:0.62.1
+    entrypoint: [""]
+  rules:
+    - changes:
+        - docker-compose.yml
+        - deploy/seaweedfs/**/*
+        - .gitlab-ci.yml
+  script:
+    - trivy image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed "$SEAWEEDFS_IMAGE"
+  allow_failure: false

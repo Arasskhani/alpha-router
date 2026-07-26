@@ -38,24 +38,31 @@ export function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
   return w.SpeechRecognition || w.webkitSpeechRecognition || null;
 }
 
+/** Map a stored voice-recording language code ("en"|"fa") to a BCP-47 locale. */
+export function voiceLangToLocale(lang?: string | null): string {
+  const norm = (lang || "").trim().toLowerCase();
+  if (norm === "fa") return "fa-IR";
+  return "en-US";
+}
+
 export class BrowserSpeechCapture {
   private recognition: SpeechRecognitionInstance | null = null;
   private transcript = "";
 
-  start() {
+  start(lang?: string) {
     const Ctor = getSpeechRecognitionCtor();
     if (!Ctor) return false;
     this.transcript = "";
     const rec = new Ctor();
     rec.continuous = true;
     rec.interimResults = true;
-    rec.lang = document.documentElement.lang || "fa-IR";
+    rec.lang = voiceLangToLocale(lang);
     rec.onresult = (event: SpeechRecognitionResultEvent) => {
-      let chunk = "";
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        chunk += event.results[i]?.[0]?.transcript || "";
+      let full = "";
+      for (let i = 0; i < event.results.length; i += 1) {
+        full += event.results[i]?.[0]?.transcript || "";
       }
-      if (chunk) this.transcript = chunk;
+      if (full) this.transcript = full;
     };
     rec.onerror = () => {
       /* browser STT is best-effort only */

@@ -91,6 +91,7 @@ function GeneralPanel({
   setTheme?: (theme: UserTheme) => void;
 }) {
   const [timezone, setTimezone] = useState("UTC");
+  const [voiceLang, setVoiceLang] = useState("en");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -104,6 +105,7 @@ function GeneralPanel({
         if (cancelled) return;
         const tz = prefs.timezone?.trim() || detectBrowserTimezone();
         setTimezone(tz);
+        setVoiceLang(prefs.voice_recording_language === "fa" ? "fa" : "en");
       } catch (err) {
         if (!cancelled) setError(formatApiError(err));
       } finally {
@@ -121,8 +123,13 @@ function GeneralPanel({
     setMessage("");
     setError("");
     try {
-      await saveUserPrefs({ timezone, language: "en" });
+      await saveUserPrefs({
+        timezone,
+        language: "en",
+        voice_recording_language: voiceLang,
+      });
       setMessage("Preferences saved.");
+      window.dispatchEvent(new CustomEvent("alpha_router:user-prefs-saved"));
     } catch (err) {
       setError(formatApiError(err));
     } finally {
@@ -143,7 +150,7 @@ function GeneralPanel({
   return (
     <form className="settings-section" onSubmit={onSave}>
       <h2>General</h2>
-      <p className="settings-section-desc">Time zone, language, and appearance for your account.</p>
+      <p className="settings-section-desc">Time zone, language, voice recording, and appearance for your account.</p>
 
       <label className="settings-field">
         <span className="settings-label">Time Zone</span>
@@ -162,6 +169,19 @@ function GeneralPanel({
           <option value="en">English (default)</option>
         </select>
         <span className="settings-hint">Additional languages will be available in a future release.</span>
+      </label>
+
+      <label className="settings-field">
+        <span className="settings-label">Voice Recording Language</span>
+        <select
+          value={voiceLang}
+          onChange={(e) => setVoiceLang(e.target.value)}
+          className="settings-input"
+        >
+          <option value="en">English (default)</option>
+          <option value="fa">Persian (فارسی)</option>
+        </select>
+        <span className="settings-hint">Language used when transcribing voice messages.</span>
       </label>
 
       <fieldset className="settings-field settings-theme-block">

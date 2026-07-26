@@ -90,6 +90,7 @@ def _default_prefs() -> dict[str, Any]:
         "theme": "light",
         "timezone": "UTC",
         "language": "en",
+        "voice_recording_language": "en",
     }
 
 
@@ -135,6 +136,10 @@ def _normalize_prefs(raw: dict[str, Any] | None) -> dict[str, Any]:
     # Language: English only for now
     lang = str(raw.get("language") or "en").strip().lower()
     base["language"] = "en" if lang in ("en", "english", "") else "en"
+
+    # Voice recording language: drives Web Speech API locale and Whisper `language`.
+    vrl = str(raw.get("voice_recording_language") or "en").strip().lower()
+    base["voice_recording_language"] = "fa" if vrl in ("fa", "fas", "persian", "farsi") else "en"
     return base
 
 

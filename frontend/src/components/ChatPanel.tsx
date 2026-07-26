@@ -90,6 +90,7 @@ import {
   ComposerToolsIcon,
   ComposerTranslateIcon,
 } from "./chat/ComposerControlIcons";
+import { DownloadIcon, OpenFullSizeIcon, RegenerateIcon } from "./chat/GeneratedImageIcons";
 import VirtualSidebarList from "./chat/ChatSidebarVirtual";
 import UserProfile from "./UserProfile";
 import PrivateModeLockIcon from "./chat/PrivateModeLockIcon";
@@ -425,6 +426,7 @@ export default function ChatPanel() {
   chatToolsRef.current = chatTools;
   const [translateToEngBusy, setTranslateToEngBusy] = useState(false);
   const [defaultModel, setDefaultModel] = useState("");
+  const [voiceRecordingLang, setVoiceRecordingLang] = useState("en");
   const userPrefsLoadedRef = useRef(false);
   const serverDefaultModelRef = useRef<string | null | undefined>(undefined);
   const grokDefaultMigrationDoneRef = useRef(false);
@@ -1136,17 +1138,31 @@ export default function ChatPanel() {
         userPrefsLoadedRef.current = true;
         serverDefaultModelRef.current = prefs.default_model;
         setDefaultModel(prefs.default_model || "");
+        setVoiceRecordingLang(prefs.voice_recording_language === "fa" ? "fa" : "en");
       })
       .catch(() => {
         if (cancelled) return;
         userPrefsLoadedRef.current = true;
         serverDefaultModelRef.current = null;
         setDefaultModel("");
+        setVoiceRecordingLang("en");
       });
     return () => {
       cancelled = true;
     };
   }, [readOnly, sessionUsername]);
+
+  useEffect(() => {
+    function onPrefsSaved() {
+      void hydrateUserPrefsFromServer()
+        .then((prefs) => {
+          setVoiceRecordingLang(prefs.voice_recording_language === "fa" ? "fa" : "en");
+        })
+        .catch(() => {});
+    }
+    window.addEventListener("alpha_router:user-prefs-saved", onPrefsSaved);
+    return () => window.removeEventListener("alpha_router:user-prefs-saved", onPrefsSaved);
+  }, []);
 
   useEffect(() => {
     if (!models.length || !defaultModel) return;
@@ -3363,14 +3379,17 @@ export default function ChatPanel() {
     extension: string,
     browserFallback: string,
   ): Promise<string> {
-    if (browserFallback.trim()) return browserFallback.trim();
     const sid = activeIdRef.current || ensureActiveSession();
     if (sid && sessionPrivateMode(sid)) {
       throw new Error("No speech detected in Private Mode. Try again or type your message.");
     }
+
+    // Layer 2: prefer the server (Whisper) over the browser fallback.
+    let baseTranscript = "";
     const fd = new FormData();
     fd.append("file", blob, `voice-${Date.now()}.${extension}`);
     if (sid) fd.append("chat_session_id", sid);
+    fd.append("language", voiceRecordingLang);
     try {
       const res = await authFetch("/api/chat/voice", {
         method: "POST",
@@ -3378,14 +3397,56 @@ export default function ChatPanel() {
       });
       if (!res.ok) throw new Error(parseApiError(await res.text(), res.status));
       const data = (await res.json()) as { transcript?: string };
-      const text = (data.transcript || "").trim();
-      if (text) return text;
+      baseTranscript = (data.transcript || "").trim();
     } catch (err) {
-      if (browserFallback.trim()) return browserFallback.trim();
-      throw err;
+      if (browserFallback.trim()) {
+        baseTranscript = browserFallback.trim();
+      } else {
+        throw err;
+      }
     }
-    if (browserFallback.trim()) return browserFallback.trim();
-    throw new Error("No speech detected. Try again or type your message.");
+    if (!baseTranscript && browserFallback.trim()) {
+      baseTranscript = browserFallback.trim();
+    }
+    if (!baseTranscript) {
+      throw new Error("No speech detected. Try again or type your message.");
+    }
+
+    // Layer 4: LLM refinement using conversation context (best-effort).
+    try {
+      const context = buildVoiceRefineContext();
+      const refined = await refineVoiceTranscript(baseTranscript, model || "", context);
+      if (refined && refined.trim()) return refined.trim();
+    } catch {
+      /* fall back to the base transcript */
+    }
+    return baseTranscript;
+  }
+
+  function buildVoiceRefineContext(): Array<{ role: string; content: string }> {
+    const recent = messages.slice(-6);
+    const out: Array<{ role: string; content: string }> = [];
+    for (const m of recent) {
+      const content = (m.content || "").trim();
+      if (!content) continue;
+      out.push({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: content.length > 300 ? content.slice(0, 300) + "…" : content,
+      });
+    }
+    return out;
+  }
+
+  async function refineVoiceTranscript(
+    transcript: string,
+    modelRef: string,
+    context: Array<{ role: string; content: string }>,
+  ): Promise<string> {
+    const data = await api<{ transcript?: string }>("/api/chat/voice/refine", {
+      method: "POST",
+      body: JSON.stringify({ transcript, model: modelRef || null, context }),
+    });
+    return (data.transcript || "").trim();
   }
 
   async function finishVoiceRecording(
@@ -3434,16 +3495,23 @@ export default function ChatPanel() {
 
     setChatError("");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       voiceStreamRef.current = stream;
       const { mimeType, extension } = pickVoiceRecordingMime();
-      const recorder = mimeType
-        ? new MediaRecorder(stream, { mimeType })
-        : new MediaRecorder(stream);
+      const recorderOpts: MediaRecorderOptions = mimeType
+        ? { mimeType, audioBitsPerSecond: 128000 }
+        : { audioBitsPerSecond: 128000 };
+      const recorder = new MediaRecorder(stream, recorderOpts);
       voiceChunksRef.current = [];
       const speech = new BrowserSpeechCapture();
       browserSpeechRef.current = speech;
-      speech.start();
+      speech.start(voiceRecordingLang);
 
       recorder.ondataavailable = (ev) => {
         if (ev.data.size > 0) voiceChunksRef.current.push(ev.data);
@@ -3942,24 +4010,6 @@ export default function ChatPanel() {
                           alt="Generated"
                           className="cgpt-generated-image"
                         />
-                        <div className="cgpt-generated-actions">
-                          <button type="button" onClick={() => void downloadImage(imagePayload.url)}>
-                            Download
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void openImageFullSize(imagePayload.url)}
-                          >
-                            Open full size
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isSessionStreaming}
-                            onClick={() => regenerateImage(i, imagePayload)}
-                          >
-                            Regenerate
-                          </button>
-                        </div>
                       </div>
                     );
                   }
@@ -3972,14 +4022,6 @@ export default function ChatPanel() {
                           alt="Generated"
                           className="cgpt-generated-image"
                         />
-                        <div className="cgpt-generated-actions">
-                          <button type="button" onClick={() => void downloadImage(mdImage.imageUrl || "")}>
-                            Download
-                          </button>
-                          <button type="button" onClick={() => void openImageFullSize(mdImage.imageUrl || "")}>
-                            Open full size
-                          </button>
-                        </div>
                         {mdImage.text ? (
                           <MarkdownContent content={mdImage.text} className="cgpt-markdown" />
                         ) : null}
@@ -4016,6 +4058,46 @@ export default function ChatPanel() {
               </div>
               <div className="cgpt-msg-actions">
                 <MessageInfoButton title={chatMessageInfoTitle(m, m.role, messages, i)} />
+                {(() => {
+                  const imagePayload = readImageMessage(m.content);
+                  const mdImage = extractMarkdownImage(m.content || "");
+                  const imageUrl = imagePayload?.url || mdImage.imageUrl || "";
+                  if (!imageUrl) return null;
+                  return (
+                    <>
+                      <button
+                        type="button"
+                        className="cgpt-msg-action-btn cgpt-msg-action-btn--icon"
+                        title="Download"
+                        aria-label="Download image"
+                        onClick={() => void downloadImage(imageUrl)}
+                      >
+                        <DownloadIcon />
+                      </button>
+                      <button
+                        type="button"
+                        className="cgpt-msg-action-btn cgpt-msg-action-btn--icon"
+                        title="Open full size"
+                        aria-label="Open image full size"
+                        onClick={() => void openImageFullSize(imageUrl)}
+                      >
+                        <OpenFullSizeIcon />
+                      </button>
+                      {imagePayload ? (
+                        <button
+                          type="button"
+                          className="cgpt-msg-action-btn cgpt-msg-action-btn--icon"
+                          title="Regenerate"
+                          aria-label="Regenerate image"
+                          disabled={isSessionStreaming}
+                          onClick={() => regenerateImage(i, imagePayload)}
+                        >
+                          <RegenerateIcon />
+                        </button>
+                      ) : null}
+                    </>
+                  );
+                })()}
                 {m.role === "user" && (
                   <>
                     <button

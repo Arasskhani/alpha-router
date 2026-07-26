@@ -37,6 +37,7 @@ from app.services.image_prompt_service import (
 )
 from app.services.proxy_service import STREAM_SSE_HEADERS, preflight_stream_chat, stream_chat
 from app.services.transcription_service import transcribe_audio_bytes
+from app.services.voice_refine_service import refine_voice_transcript
 from app.services.storage_service import (
     list_user_media,
     media_public_url,
@@ -226,6 +227,7 @@ async def chat_completions(
 async def voice_message(
     file: UploadFile = File(...),
     chat_session_id: str | None = Form(None),
+    language: str | None = Form(None),
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -248,7 +250,7 @@ async def voice_message(
 
     try:
         transcript = await transcribe_audio_bytes(
-            db, raw, filename=filename, mime_type=mime
+            db, raw, filename=filename, mime_type=mime, language=language
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -283,6 +285,27 @@ async def voice_message(
         "transcript": transcript,
         "mime_type": asset.mime_type,
     }
+
+
+class VoiceRefineIn(BaseModel):
+    transcript: str
+    model: str | None = None
+    context: list[dict] | None = None
+
+
+@router.post("/voice/refine")
+async def refine_voice_message(
+    body: VoiceRefineIn,
+    user: User = Depends(require_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Correct speech-to-text errors in a transcript using conversation context."""
+    transcript = (body.transcript or "").strip()
+    if not transcript:
+        return {"transcript": ""}
+    model_ref = (body.model or "").strip() or None
+    refined = await refine_voice_transcript(db, user, model_ref, transcript, body.context)
+    return {"transcript": refined}
 
 
 @router.post("/attachments/process")

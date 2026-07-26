@@ -3516,6 +3516,19 @@ table.card tbody td:last-child {
   padding: 0.16rem 0.35rem;
 }
 
+.cgpt-msg-action-btn--icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.9rem;
+  padding: 0.16rem 0.32rem;
+  line-height: 0;
+}
+
+.cgpt-msg-action-btn--icon svg {
+  display: block;
+}
+
 .auth-sync-schedule__row {
   display: flex;
   align-items: center;

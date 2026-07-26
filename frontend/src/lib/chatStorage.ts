@@ -25,6 +25,7 @@ export type UserPrefs = {
   theme: UserTheme;
   timezone: string;
   language: string;
+  voice_recording_language: string;
 };
 
 export type UserChatsPayload = {
@@ -69,11 +70,16 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
   const language = typeof raw?.language === "string" && raw.language.trim()
     ? raw.language.trim().toLowerCase()
     : "en";
+  const vrlRaw = typeof raw?.voice_recording_language === "string"
+    ? raw.voice_recording_language.trim().toLowerCase()
+    : "en";
+  const voiceRecordingLang = vrlRaw === "fa" ? "fa" : "en";
   return {
     default_model: model,
     theme,
     timezone,
     language: language === "en" ? "en" : "en",
+    voice_recording_language: voiceRecordingLang,
   };
 }
 

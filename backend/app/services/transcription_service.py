@@ -81,6 +81,7 @@ async def transcribe_audio_bytes(
     *,
     filename: str = "voice.webm",
     mime_type: str = "audio/webm",
+    language: str | None = None,
 ) -> str:
     if not audio_bytes:
         raise ValueError("Empty audio file.")
@@ -93,6 +94,12 @@ async def transcribe_audio_bytes(
     model = _transcription_model(provider_type)
     suffix = _suffix_for_file(filename, mime_type)
 
+    # Normalize the language hint for Whisper (ISO-639-1). A Persian prompt hint
+    # biases the decoder toward Persian script and reduces Latin transliteration.
+    norm_lang = (language or "").strip().lower()
+    whisper_lang = norm_lang if norm_lang in ("en", "fa") else None
+    whisper_prompt = "این یک پیام صوتی به زبان فارسی است." if whisper_lang == "fa" else None
+
     tmp_path: str | None = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -104,6 +111,10 @@ async def transcribe_audio_bytes(
             "model": model,
             "api_key": api_key,
         }
+        if whisper_lang:
+            kwargs["language"] = whisper_lang
+        if whisper_prompt:
+            kwargs["prompt"] = whisper_prompt
         if provider_type == "openai":
             kwargs["custom_llm_provider"] = "openai"
         elif provider_type == "azure":

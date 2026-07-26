@@ -46,6 +46,7 @@ from app.services.saml_sp import (
 )
 from app.services.storage_service import ensure_user_media_directory
 from app.services.user_chat_storage_service import ensure_user_chat_store
+from app.services.username_norm import find_user_by_username_ci, normalize_username
 from app.services.user_lifecycle_service import record_user_login
 from app.services.session_cookie import clear_session_cookies, new_csrf_token, set_session_cookies
 
@@ -59,13 +60,20 @@ class LoginRequest(BaseModel):
 
 
 class TokenResponse(BaseModel):
-    access_token: str
+    access_token: str = ""
     token_type: str = "bearer"
-    role: str
+    role: str = ""
     is_active: bool = True
+    requires_2fa: bool = False
+    pending_token: str | None = None
 
 
 class ExchangeRequest(BaseModel):
+    code: str
+
+
+class TwoFaLoginRequest(BaseModel):
+    pending_token: str
     code: str
 
 
@@ -83,6 +91,7 @@ async def auth_session(user: User = Depends(get_current_user), db: AsyncSession 
 
 @router.post("/logout")
 async def logout_local(
+    request: Request,
     response: Response,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -90,7 +99,7 @@ async def logout_local(
     """Revoke all previously-issued JWTs for this user."""
     user.token_version = int(user.token_version or 0) + 1
     await db.commit()
-    clear_session_cookies(response)
+    clear_session_cookies(response, request=request)
     return {"ok": True}
 
 
@@ -106,7 +115,12 @@ async def auth_methods(db: AsyncSession = Depends(get_db)):
     }
 
 
-async def _token_response(db: AsyncSession, user: User, response: Response) -> TokenResponse:
+async def _token_response(
+    db: AsyncSession,
+    user: User,
+    response: Response,
+    request: Request,
+) -> TokenResponse:
     if user.deleted_at is not None:
         raise HTTPException(status_code=401, detail="Account removed")
     await record_user_login(db, user)
@@ -114,7 +128,7 @@ async def _token_response(db: AsyncSession, user: User, response: Response) -> T
     slugs = await get_user_role_slugs(db, user.id)
     primary = primary_role_slug(slugs)
     token = create_access_token(user.username, primary, token_version=user.token_version)
-    set_session_cookies(response, access_token=token)
+    set_session_cookies(response, access_token=token, request=request)
     settings = get_settings()
     body_token = token if settings.allow_legacy_bearer_auth else ""
     return TokenResponse(
@@ -135,15 +149,31 @@ async def login_local(
     from app.services.rate_limit import check_login_rate_limit
 
     source_ip = request.client.host if request.client else None
-    await check_login_rate_limit(username, source_ip)
-    user = (await db.execute(select(User).where(User.username == username))).scalars().first()
+    await check_login_rate_limit(normalize_username(username) or username, source_ip)
+    user = await find_user_by_username_ci(db, username)
     if user and user.deleted_at is not None:
         raise HTTPException(status_code=401, detail="Account removed")
     if user and user.hashed_password:
         if verify_password(body.password, user.hashed_password):
             ensure_user_media_directory(user.username)
             await ensure_user_chat_store(db, user.id)
-            return await _token_response(db, user, response)
+            if bool(user.totp_enabled) and (user.auth_provider or "local") == "local":
+                from app.services.twofa_pending import generate_pending_token, store_pending
+
+                pending = generate_pending_token()
+                await store_pending(
+                    pending,
+                    {"user_id": user.id, "username": user.username, "purpose": "login_2fa"},
+                )
+                return TokenResponse(
+                    access_token="",
+                    token_type="2fa_pending",
+                    role="",
+                    is_active=bool(user.is_active),
+                    requires_2fa=True,
+                    pending_token=pending,
+                )
+            return await _token_response(db, user, response, request)
         if (user.auth_provider or "local") == "local":
             raise HTTPException(status_code=401, detail="Invalid username or password")
 
@@ -161,9 +191,63 @@ async def login_local(
             raise HTTPException(status_code=503, detail=str(exc) or LDAP_UNAVAILABLE_MESSAGE) from exc
         if profile:
             user = await _upsert_directory_user(db, profile, "ldap")
-            return await _token_response(db, user, response)
+            return await _token_response(db, user, response, request)
 
     raise HTTPException(status_code=401, detail="Invalid username or password")
+
+
+@router.post("/login/2fa", response_model=TokenResponse)
+async def login_2fa(
+    body: TwoFaLoginRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    """Complete local login after password when TOTP is enabled."""
+    from app.services.rate_limit import check_rate_limit
+    from app.services.totp_service import (
+        consume_backup_code,
+        decrypt_totp_secret,
+        verify_totp_code,
+    )
+    from app.services.twofa_pending import consume_pending
+
+    source_ip = request.client.host if request.client else None
+    await check_rate_limit(
+        f"login2fa:ip:{source_ip or 'unknown'}",
+        limit=30,
+        window_seconds=60,
+        fail_closed=True,
+    )
+    pending = await consume_pending(body.pending_token.strip())
+    if not pending or pending.get("purpose") != "login_2fa":
+        raise HTTPException(status_code=401, detail="Invalid or expired 2FA session")
+    user = (await db.execute(select(User).where(User.id == int(pending["user_id"])))).scalars().first()
+    if not user or user.deleted_at is not None or not user.totp_enabled:
+        raise HTTPException(status_code=401, detail="Invalid or expired 2FA session")
+    await check_rate_limit(
+        f"login2fa:user:{user.id}",
+        limit=15,
+        window_seconds=60,
+        fail_closed=True,
+    )
+
+    secret = decrypt_totp_secret(user.totp_secret_encrypted)
+    code = body.code.strip()
+    ok = bool(secret and verify_totp_code(secret, code))
+    if not ok:
+        remaining = consume_backup_code(
+            user.totp_backup_codes_hashed if isinstance(user.totp_backup_codes_hashed, list) else None,
+            code,
+        )
+        if remaining is None:
+            raise HTTPException(status_code=401, detail="Invalid authentication code")
+        user.totp_backup_codes_hashed = remaining
+        await db.commit()
+
+    ensure_user_media_directory(user.username)
+    await ensure_user_chat_store(db, user.id)
+    return await _token_response(db, user, response, request)
 
 
 def _request_public_url(request: Request) -> str:
@@ -230,12 +314,16 @@ async def saml_acs(
     return RedirectResponse(f"{frontend_url}/login?code={xchg_code}")
 
 
-async def _sso_exchange(body: ExchangeRequest, response: Response) -> TokenResponse:
+async def _sso_exchange(
+    body: ExchangeRequest,
+    response: Response,
+    request: Request,
+) -> TokenResponse:
     """Exchange a one-time SSO code for the Alpha Router session (keeps JWT out of the URL)."""
     payload = await consume_code(body.code)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired login code")
-    set_session_cookies(response, access_token=payload["token"])
+    set_session_cookies(response, access_token=payload["token"], request=request)
     settings = get_settings()
     body_token = payload["token"] if settings.allow_legacy_bearer_auth else ""
     return TokenResponse(
@@ -247,14 +335,14 @@ async def _sso_exchange(body: ExchangeRequest, response: Response) -> TokenRespo
 
 
 @router.post("/sso/exchange")
-async def sso_exchange(body: ExchangeRequest, response: Response):
-    return await _sso_exchange(body, response)
+async def sso_exchange(body: ExchangeRequest, response: Response, request: Request):
+    return await _sso_exchange(body, response, request)
 
 
 @router.post("/saml/exchange")
-async def saml_exchange(body: ExchangeRequest, response: Response):
+async def saml_exchange(body: ExchangeRequest, response: Response, request: Request):
     """Compatibility alias for shared SSO exchange."""
-    return await _sso_exchange(body, response)
+    return await _sso_exchange(body, response, request)
 
 
 @router.get("/oidc/login")
@@ -365,7 +453,7 @@ async def oidc_logout(request: Request, db: AsyncSession = Depends(get_db)):
         except Exception:
             slo = None
     response = RedirectResponse(slo or f"{frontend_url}/login")
-    clear_session_cookies(response)
+    clear_session_cookies(response, request=request)
     return response
 
 
@@ -423,7 +511,7 @@ async def saml_logout(request: Request, db: AsyncSession = Depends(get_db)):
             slo_url = None
 
     response = RedirectResponse(slo_url or f"{frontend_url}/login")
-    clear_session_cookies(response)
+    clear_session_cookies(response, request=request)
     return response
 
 
@@ -455,8 +543,12 @@ async def _upsert_directory_user(db: AsyncSession, profile: dict, provider: str)
     * OIDC: stable identity is ``sub`` (external_id).
     * LDAP: username-based binding.
     Username collision with a different provider is rejected (409).
+    Existing usernames are matched case-insensitively and not auto-renamed.
     """
-    username = profile["username"]
+    from app.services.username_norm import find_user_by_username_ci, normalize_username
+
+    raw_username = (profile.get("username") or "").strip()
+    username = normalize_username(raw_username)
     if not username:
         raise HTTPException(401, "Invalid directory profile")
 
@@ -474,9 +566,7 @@ async def _upsert_directory_user(db: AsyncSession, profile: dict, provider: str)
         ).scalars().first()
 
     if user is None:
-        by_username = (
-            await db.execute(select(User).where(User.username == username))
-        ).scalars().first()
+        by_username = await find_user_by_username_ci(db, username)
         if by_username is not None:
             existing_provider = (by_username.auth_provider or "local")
             if existing_provider != provider:

@@ -23,6 +23,8 @@ export type UserTheme = "light" | "dark";
 export type UserPrefs = {
   default_model: string | null;
   theme: UserTheme;
+  timezone: string;
+  language: string;
 };
 
 export type UserChatsPayload = {
@@ -61,9 +63,17 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
     ? raw.default_model.trim()
     : null;
   const theme: UserTheme = raw?.theme === "dark" ? "dark" : "light";
+  const timezone = typeof raw?.timezone === "string" && raw.timezone.trim()
+    ? raw.timezone.trim()
+    : "UTC";
+  const language = typeof raw?.language === "string" && raw.language.trim()
+    ? raw.language.trim().toLowerCase()
+    : "en";
   return {
     default_model: model,
     theme,
+    timezone,
+    language: language === "en" ? "en" : "en",
   };
 }
 

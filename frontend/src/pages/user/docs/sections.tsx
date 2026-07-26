@@ -30,7 +30,8 @@ export const userManualSections: DocSection[] = [
         </p>
         <p>
           The left sidebar gives quick access to <strong>Chat</strong>, <strong>Media</strong>,{" "}
-          <strong>Recommendations</strong>, <strong>My Usage &amp; Activity</strong>, and this manual. Your profile menu
+          <strong>Recommendations</strong>, <strong>My Usage &amp; Activity</strong>, <strong>Settings</strong>, and this
+          manual. Your profile menu
           (top right) shows your monthly <strong>Budget</strong>, theme toggle, and sign out. If you also hold admin
           roles, an <strong>Administration</strong> link opens your admin panel.
         </p>
@@ -753,6 +754,10 @@ export const userManualSections: DocSection[] = [
         <ul>
           <li>
             <strong>My Usage &amp; Activity</strong> — same page as the sidebar link.
+          </li>
+          <li>
+            <strong>Settings</strong> — opens a dialog on the current page for profile preferences (time zone, theme),
+            chat export/import, and for local accounts password change plus optional two-factor authentication (TOTP).
           </li>
           <li>
             <strong>Budget</strong> — live <code>used / total $</code> for the current month.

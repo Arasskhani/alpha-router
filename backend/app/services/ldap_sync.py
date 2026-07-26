@@ -11,6 +11,7 @@ from app.models.budget import PlanAssignment
 from app.models.user import User, UserGroup, user_group_members
 from app.services.ldap_auth import fetch_ldap_groups, fetch_ldap_users
 from app.services.user_lifecycle_service import prune_sync_user, restore_directory_user
+from app.services.username_norm import find_user_by_username_ci, normalize_username, username_taken_ci
 
 
 async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, int]:
@@ -38,7 +39,8 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, int]:
     synced_group_external: set[str] = set()
 
     for item in users_data:
-        username = (item.get("username") or "").strip()
+        raw_username = (item.get("username") or "").strip()
+        username = normalize_username(raw_username)
         if not username:
             continue
         external_id = item.get("external_id")
@@ -50,7 +52,7 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, int]:
                 await db.execute(select(User).where(User.external_id == external_id))
             ).scalars().first()
         if not existing:
-            existing = (await db.execute(select(User).where(User.username == username))).scalars().first()
+            existing = await find_user_by_username_ci(db, username)
 
         if existing:
             if existing.deleted_at is not None:
@@ -65,7 +67,7 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, int]:
                 role="user",
                 auth_provider="ldap",
                 email=item.get("email"),
-                display_name=item.get("display_name") or username,
+                display_name=item.get("display_name") or raw_username or username,
                 external_id=external_id,
                 job_title=item.get("job_title"),
                 department=item.get("department"),
@@ -220,18 +222,13 @@ async def _delete_ldap_group_row(db: AsyncSession, group: UserGroup) -> None:
 
 
 async def _apply_directory_profile(db: AsyncSession, user: User, item: dict[str, Any]) -> None:
-    new_username = (item.get("username") or "").strip()
+    new_username = normalize_username(item.get("username"))
     if (
         new_username
-        and new_username != user.username
+        and new_username != normalize_username(user.username)
         and not user.hashed_password
     ):
-        conflict = (
-            await db.execute(
-                select(User).where(User.username == new_username, User.id != user.id)
-            )
-        ).scalars().first()
-        if not conflict:
+        if not await username_taken_ci(db, new_username, exclude_user_id=user.id):
             user.username = new_username
     if item.get("email"):
         user.email = item["email"]

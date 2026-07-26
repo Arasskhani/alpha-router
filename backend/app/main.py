@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
-from app.api import admin, auth, authentication, chat, gateway, groups, images, logs, operations, plans, reports, smtp, user_chats, user_media, user_routes
+from app.api import admin, auth, authentication, chat, gateway, groups, images, logs, operations, plans, reports, smtp, user_chats, user_media, user_routes, user_settings
 from app.config import INSECURE_DEFAULTS, get_settings
 from app.core.security import hash_password
 from app.database import AsyncSessionLocal, Base, engine
@@ -373,14 +373,17 @@ async def lifespan(app: FastAPI):
     await apply_schema_column_patches()
 
     async with AsyncSessionLocal() as db:
-        admin_user = (await db.execute(select(User).where(User.username == settings.admin_username))).scalars().first()
+        from app.services.username_norm import find_user_by_username_ci, normalize_username
+
+        admin_username = normalize_username(settings.admin_username) or settings.admin_username.strip()
+        admin_user = await find_user_by_username_ci(db, admin_username)
         if not admin_user:
             from app.services.rbac import bootstrap_super_admin_role_slugs, primary_role_slug
 
             bootstrap_roles = bootstrap_super_admin_role_slugs()
             db.add(
                 User(
-                    username=settings.admin_username,
+                    username=admin_username,
                     email="admin@alpha-router.local",
                     display_name="Administrator",
                     hashed_password=hash_password(settings.admin_password),
@@ -389,7 +392,7 @@ async def lifespan(app: FastAPI):
                 )
             )
             await db.flush()
-            admin_user = (await db.execute(select(User).where(User.username == settings.admin_username))).scalars().first()
+            admin_user = await find_user_by_username_ci(db, admin_username)
             if admin_user:
                 from app.models.user import UserRoleAssignment
 
@@ -487,6 +490,7 @@ app.include_router(user_routes.router)
 app.include_router(user_media.router)
 app.include_router(user_chats.router)
 app.include_router(user_chats.messages_router)
+app.include_router(user_settings.router)
 app.include_router(images.router)
 app.include_router(operations.router)
 app.include_router(plans.router)

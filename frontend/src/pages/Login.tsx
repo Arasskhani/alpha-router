@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams, type NavigateFunction } from "react-router-dom";
 import AlphaRouterLogo from "../components/AlphaRouterLogo";
 import { LOGIN_TAGLINE, PAGE_TITLE } from "../lib/brand";
 import { applyThemeToDocument } from "../lib/themeCache";
@@ -112,9 +112,23 @@ const LOGIN_HIGHLIGHTS = [
   },
 ] as const;
 
+async function finishLogin(nav: NavigateFunction) {
+  const session = await bootstrapSession(true);
+  const active = session.is_active !== false;
+  markLoggedIn(active);
+  if (isAdminPanelRole(session.role)) {
+    const role = normalizeRole(session.role);
+    nav(firstAllowedAdminPath(filterAdminNav(adminNavSections, role)));
+  } else {
+    nav("/app/chat");
+  }
+}
+
 export default function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [totpCode, setTotpCode] = useState("");
+  const [pendingToken, setPendingToken] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [methods, setMethods] = useState({ ldap: false, saml: false, oidc: false });
   const nav = useNavigate();
@@ -158,15 +172,7 @@ export default function Login() {
         }
         await res.json();
         if (cancelled) return;
-        const session = await bootstrapSession(true);
-        const active = session.is_active !== false;
-        markLoggedIn(active);
-        if (isAdminPanelRole(session.role)) {
-          const role = normalizeRole(session.role);
-          nav(firstAllowedAdminPath(filterAdminNav(adminNavSections, role)));
-        } else {
-          nav("/app/chat");
-        }
+        await finishLogin(nav);
       } catch {
         if (!cancelled) setError("Cannot reach backend. Make sure backend is running on port 8080.");
       }
@@ -180,6 +186,29 @@ export default function Login() {
     e.preventDefault();
     setError("");
     try {
+      if (pendingToken) {
+        const res = await authFetch("/api/auth/login/2fa", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pending_token: pendingToken, code: totpCode.trim() }),
+        });
+        if (!res.ok) {
+          const raw = await res.text();
+          let detail = "";
+          try {
+            detail = (JSON.parse(raw) as { detail?: string }).detail || "";
+          } catch {
+            detail = raw || "";
+          }
+          throw new Error(detail || "Invalid authentication code");
+        }
+        await res.json();
+        setPendingToken(null);
+        setTotpCode("");
+        await finishLogin(nav);
+        return;
+      }
+
       const res = await authFetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -202,16 +231,16 @@ export default function Login() {
         }
         throw new Error(detail || `Login failed (${res.status})`);
       }
-      await res.json();
-      const session = await bootstrapSession(true);
-      const active = session.is_active !== false;
-      markLoggedIn(active);
-      if (isAdminPanelRole(session.role)) {
-        const role = normalizeRole(session.role);
-        nav(firstAllowedAdminPath(filterAdminNav(adminNavSections, role)));
-      } else {
-        nav("/app/chat");
+      const data = (await res.json()) as {
+        requires_2fa?: boolean;
+        pending_token?: string;
+      };
+      if (data.requires_2fa && data.pending_token) {
+        setPendingToken(data.pending_token);
+        setTotpCode("");
+        return;
       }
+      await finishLogin(nav);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg === "Failed to fetch") {
@@ -263,35 +292,67 @@ export default function Login() {
           <div className="login-panel">
             <div className="login-panel__shine" aria-hidden />
             <p className="login-panel__eyebrow">Welcome back</p>
-            <h2 className="login-panel__title">Sign in</h2>
+            <h2 className="login-panel__title">{pendingToken ? "Two-factor authentication" : "Sign in"}</h2>
 
             <form className="login-form" onSubmit={onSubmit}>
-              <label className="login-form__label" htmlFor="login-username">
-                Username
-              </label>
-              <input
-                id="login-username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                autoComplete="username"
-                className="login-form__input"
-                placeholder="your.username"
-              />
-              <label className="login-form__label" htmlFor="login-password">
-                Password
-              </label>
-              <input
-                id="login-password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-                className="login-form__input"
-                placeholder="••••••••"
-              />
+              {!pendingToken ? (
+                <>
+                  <label className="login-form__label" htmlFor="login-username">
+                    Username
+                  </label>
+                  <input
+                    id="login-username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    autoComplete="username"
+                    className="login-form__input"
+                    placeholder="your.username"
+                  />
+                  <label className="login-form__label" htmlFor="login-password">
+                    Password
+                  </label>
+                  <input
+                    id="login-password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="current-password"
+                    className="login-form__input"
+                    placeholder="••••••••"
+                  />
+                </>
+              ) : (
+                <>
+                  <p className="login-panel__hint">Enter the code from your authenticator app or a backup code.</p>
+                  <label className="login-form__label" htmlFor="login-totp">
+                    Authentication code
+                  </label>
+                  <input
+                    id="login-totp"
+                    value={totpCode}
+                    onChange={(e) => setTotpCode(e.target.value)}
+                    autoComplete="one-time-code"
+                    inputMode="numeric"
+                    className="login-form__input"
+                    placeholder="123456"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      setPendingToken(null);
+                      setTotpCode("");
+                      setError("");
+                    }}
+                  >
+                    Back
+                  </button>
+                </>
+              )}
               {error && <p className="login-form__error">{error}</p>}
               <button className="btn login-form__submit" type="submit">
-                Continue
+                {pendingToken ? "Verify" : "Continue"}
               </button>
             </form>
 

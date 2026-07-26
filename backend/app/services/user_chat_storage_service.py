@@ -88,7 +88,29 @@ def _default_prefs() -> dict[str, Any]:
     return {
         "default_model": None,
         "theme": "light",
+        "timezone": "UTC",
+        "language": "en",
     }
+
+
+def _normalize_timezone(value: Any) -> str:
+    """Validate IANA timezone; fall back to UTC when unknown."""
+    raw = str(value or "UTC").strip()[:64] or "UTC"
+    try:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(raw)
+            return raw
+        except ZoneInfoNotFoundError:
+            return "UTC"
+        except Exception:
+            return "UTC"
+    except Exception:
+        # zoneinfo unavailable — accept common-looking tokens only
+        if raw.replace("_", "").replace("/", "").replace("-", "").isalnum():
+            return raw
+        return "UTC"
 
 
 def _normalize_prefs(raw: dict[str, Any] | None) -> dict[str, Any]:
@@ -104,6 +126,15 @@ def _normalize_prefs(raw: dict[str, Any] | None) -> dict[str, Any]:
 
     theme = str(raw.get("theme") or "light").lower()
     base["theme"] = "dark" if theme == "dark" else "light"
+
+    if "timezone" in raw:
+        base["timezone"] = _normalize_timezone(raw.get("timezone"))
+    elif isinstance(raw.get("timezone"), str):
+        base["timezone"] = _normalize_timezone(raw.get("timezone"))
+
+    # Language: English only for now
+    lang = str(raw.get("language") or "en").strip().lower()
+    base["language"] = "en" if lang in ("en", "english", "") else "en"
     return base
 
 
@@ -653,6 +684,16 @@ async def _try_reconcile_inflight_assistant(
         and not content.strip()
         and meta.get("streaming")
         and age >= _STALE_TEXT_STREAMING_SEC
+    ):
+        force = True
+    # Imported / legacy rows: completed assistant text without receivedAt is treated
+    # by the UI as an in-flight generation (STOP). Finalize when not actively streaming.
+    if (
+        not force
+        and content.strip()
+        and content != IMAGE_PENDING_MARKER
+        and meta.get("receivedAt") is None
+        and meta.get("streaming") is not True
     ):
         force = True
     if not force:

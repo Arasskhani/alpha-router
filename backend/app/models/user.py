@@ -2,9 +2,13 @@
 
 import datetime
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Table, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
+from sqlalchemy.types import JSON
 
 from app.database import Base
+
+JsonDocument = JSON().with_variant(JSONB(), "postgresql")
 
 user_group_members = Table(
     "user_group_members",
@@ -67,6 +71,12 @@ class User(Base):
     budget_used_usd = Column(Float, default=0.0)
     budget_reserved_usd = Column(Float, nullable=False, server_default="0", default=0.0)
     budget_period_start = Column(DateTime, nullable=True)
+
+    # Local-account TOTP (2FA). Secret is Fernet-encrypted at rest.
+    totp_secret_encrypted = Column(Text, nullable=True)
+    totp_enabled = Column(Boolean, nullable=False, default=False)
+    # JSON list of SHA-256 hex digests of one-time backup codes
+    totp_backup_codes_hashed = Column(JsonDocument, nullable=True)
 
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     last_login_at = Column(DateTime, nullable=True)

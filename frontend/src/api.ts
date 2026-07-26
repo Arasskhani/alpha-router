@@ -27,7 +27,8 @@ function isUnsafe(method: string): boolean {
 function onUnauthorized(path: string) {
   if (
     path.startsWith("/api/auth/login")
-    ||     path.startsWith("/api/auth/saml/exchange")
+    || path.startsWith("/api/auth/login/2fa")
+    || path.startsWith("/api/auth/saml/exchange")
     || path.startsWith("/api/auth/sso/exchange")
     || path.startsWith("/api/auth/logout")
   ) return;

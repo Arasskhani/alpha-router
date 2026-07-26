@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { api } from "../../api";
+import { api, getCachedSession } from "../../api";
 import { useDebounced } from "../../hooks/useDebounced";
 import AdminPage from "../../components/AdminPage";
 import CreateLocalUserModal, { type CreateLocalUserValues } from "../../components/users/CreateLocalUserModal";
@@ -9,7 +9,7 @@ import RoleMultiSelect from "../../components/RoleMultiSelect";
 import RowActionsMenu, { RowAction } from "../../components/RowActionsMenu";
 import { useConfirm } from "../../context/ConfirmContext";
 import { USAGE_AND_ACTIVITY_LABEL } from "../../lib/usageActivityLabel";
-import { normalizeRole, roleLabel, type RoleRecord } from "../../lib/rbac";
+import { normalizeRole, roleLabel, userHasSuperAdminAccess, type RoleRecord } from "../../lib/rbac";
 
 function userPlanSelectValue(u: U): string {
   if (u.user_plan_mode === "none") return "__none__";
@@ -109,6 +109,7 @@ type U = {
   role: string;
   roles?: string[];
   is_active?: boolean;
+  totp_enabled?: boolean;
   group_names?: string[];
   department?: string;
   job_title?: string;
@@ -181,6 +182,7 @@ export default function Users() {
   const [editUser, setEditUser] = useState<U | null>(null);
   const [editForm, setEditForm] = useState<EditForm>(emptyEditForm);
   const [editSaving, setEditSaving] = useState(false);
+  const [disable2faBusy, setDisable2faBusy] = useState(false);
   const [selectedUserIds, setSelectedUserIds] = useState<number[]>([]);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkSaving, setBulkSaving] = useState(false);
@@ -436,6 +438,34 @@ export default function Users() {
       setErr(String(err));
     } finally {
       setEditSaving(false);
+    }
+  }
+
+  async function disableUser2fa() {
+    if (!editUser) return;
+    const ok = await confirm({
+      title: "Disable two-factor authentication",
+      message:
+        `Disable 2FA for "${editUser.username}"? They can sign in with password only and re-enable 2FA from Settings. `
+        + "Their current sessions will be signed out.",
+      confirmLabel: "Disable 2FA",
+      cancelLabel: "Cancel",
+      danger: true,
+    });
+    if (!ok) return;
+    setDisable2faBusy(true);
+    setErr("");
+    try {
+      await api(`/api/admin/users/${editUser.id}/disable-2fa`, { method: "POST" });
+      setEditUser({ ...editUser, totp_enabled: false });
+      setUsers((prev) =>
+        prev.map((u) => (u.id === editUser.id ? { ...u, totp_enabled: false } : u)),
+      );
+      setFlash(`2FA disabled for "${editUser.username}".`);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setDisable2faBusy(false);
     }
   }
 
@@ -911,6 +941,30 @@ export default function Users() {
                 />
               </>
             )}
+            {(() => {
+              const session = getCachedSession();
+              const canDisable2fa =
+                editUser.auth_provider === "local"
+                && !!editUser.totp_enabled
+                && userHasSuperAdminAccess(session?.roles as string[] | undefined, session?.role);
+              if (!canDisable2fa) return null;
+              return (
+                <>
+                  <h4 style={{ marginTop: "1.25rem" }}>Two-factor authentication</h4>
+                  <p className="muted-text">
+                    2FA is enabled. Super Admin can disable it if the user lost their authenticator codes.
+                  </p>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={disable2faBusy || editSaving}
+                    onClick={() => void disableUser2fa()}
+                  >
+                    {disable2faBusy ? "Disabling…" : "Disable 2FA"}
+                  </button>
+                </>
+              );
+            })()}
             <div className="dialog-actions">
               <button type="submit" className="btn" disabled={editSaving}>
                 {editSaving ? "Saving…" : "Save"}

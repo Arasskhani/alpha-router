@@ -63,6 +63,15 @@ export function isFullAdministrator(role: string | undefined | null): boolean {
   return slug === FULL_ADMIN || slug === SUPER_ADMIN;
 }
 
+/** Matches backend ``user_has_super_admin_access`` (super_admin or full/legacy admin). */
+export function userHasSuperAdminAccess(
+  roles: string[] | undefined | null,
+  fallbackRole?: string | null,
+): boolean {
+  const slugs = (roles?.length ? roles : fallbackRole ? [fallbackRole] : []).map(normalizeRole);
+  return slugs.some((s) => s === SUPER_ADMIN || s === FULL_ADMIN);
+}
+
 const MENU_PATH_PREFIXES: Record<MenuKey, string[]> = {
   dashboard: ["/admin", "/admin/my-activity"],
   chat: ["/admin/chat"],

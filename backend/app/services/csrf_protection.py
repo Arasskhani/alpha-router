@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import ipaddress
 from urllib.parse import urlsplit
 
 from fastapi import Request
@@ -16,6 +17,7 @@ UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 EXEMPT_PATHS = frozenset(
     {
         "/api/auth/login",
+        "/api/auth/login/2fa",
         "/api/auth/saml/exchange",
         "/api/auth/sso/exchange",
     }
@@ -25,6 +27,13 @@ FULL_EXEMPT_PATHS = frozenset(
     {
         "/api/auth/saml/acs",
     }
+)
+
+# RFC1918 private ranges — HTTP Origins from these hosts are allowed for LAN access.
+_PRIVATE_HTTP_NETWORKS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
 )
 
 
@@ -43,6 +52,32 @@ def allowed_origins() -> set[str]:
         "http://localhost:8080",
     }
     return {origin for origin in configured if origin}
+
+
+def _is_private_http_origin(origin: str) -> bool:
+    """True for http://<RFC1918-IP>[:port] (LAN lab / internal HTTP access)."""
+    parsed = urlsplit((origin or "").strip())
+    if (
+        parsed.scheme.lower() != "http"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        return False
+    try:
+        ip = ipaddress.ip_address(parsed.hostname)
+    except ValueError:
+        return False
+    return any(ip in network for network in _PRIVATE_HTTP_NETWORKS)
+
+
+def origin_allowed(origin: str) -> bool:
+    normalized = _normalized_origin(origin)
+    if not normalized:
+        return False
+    if normalized in allowed_origins():
+        return True
+    return _is_private_http_origin(normalized)
 
 
 class CsrfProtectionMiddleware:
@@ -73,7 +108,7 @@ class CsrfProtectionMiddleware:
             return
         if path in EXEMPT_PATHS:
             origin = request.headers.get("origin")
-            if origin and _normalized_origin(origin) not in allowed_origins():
+            if origin and not origin_allowed(origin):
                 increment("csrf_failure")
                 response = JSONResponse(
                     status_code=403,
@@ -92,7 +127,7 @@ class CsrfProtectionMiddleware:
             return
 
         origin = request.headers.get("origin")
-        if origin and _normalized_origin(origin) not in allowed_origins():
+        if origin and not origin_allowed(origin):
             increment("csrf_failure")
             response = JSONResponse(status_code=403, content={"detail": "CSRF validation failed"})
             await response(scope, receive, send)

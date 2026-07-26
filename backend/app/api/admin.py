@@ -22,6 +22,7 @@ from app.api.deps import (
     require_role_catalog,
     require_storage,
     require_storage_write,
+    require_super_admin,
     require_users,
     require_users_write,
     require_deleted_users,
@@ -72,6 +73,7 @@ from app.services.alpha_router_api_key_service import (
     maybe_reset_key_period,
 )
 from app.services.smtp_service import SmtpNotConfiguredError, SmtpSendError, send_email
+from app.services.username_norm import normalize_username, username_taken_ci
 from app.services.rbac import (
     FULL_ADMIN_SLUG,
     actor_may_assign_roles,
@@ -490,8 +492,11 @@ async def create_local_user(
     db: AsyncSession = Depends(get_db),
     actor: User = Depends(require_users_write),
 ):
-    exists = (await db.execute(select(User).where(User.username == body.username))).scalars().first()
-    if exists:
+    raw_username = (body.username or "").strip()
+    username = normalize_username(raw_username)
+    if not username:
+        raise HTTPException(400, "Username is required")
+    if await username_taken_ci(db, username):
         raise HTTPException(400, "Username already exists")
     plan_selected = sum([body.no_plan, body.inherit_group_plan, body.plan_id is not None])
     if plan_selected > 1:
@@ -504,10 +509,11 @@ async def create_local_user(
         raise HTTPException(400, detail=str(exc)) from exc
     new_slugs = [_normalize_role(body.role)]
     await _ensure_actor_may_assign_roles(db, actor, new_slugs)
+    display_name = (body.display_name or "").strip() or raw_username
     user = User(
-        username=body.username,
+        username=username,
         email=body.email,
-        display_name=body.display_name or body.username,
+        display_name=display_name,
         hashed_password=hash_password(password),
         role=new_slugs[0],
         auth_provider="local",
@@ -706,6 +712,7 @@ async def list_users(
             "reporting_to": u.reporting_to,
             "monthly_budget_usd": budgets.get(u.id, 0.0),
             "budget_used_usd": u.budget_used_usd,
+            "totp_enabled": bool(u.totp_enabled) and (u.auth_provider or "local") == "local",
             **{
                 **plan_state.get(
                     u.id,
@@ -1109,6 +1116,7 @@ def _user_admin_dict(user: User, roles: list[str], monthly_budget_usd: float | N
         "reporting_to": user.reporting_to,
         "monthly_budget_usd": monthly_budget_usd if monthly_budget_usd is not None else user.monthly_budget_usd,
         "budget_used_usd": user.budget_used_usd,
+        "totp_enabled": bool(user.totp_enabled) and (user.auth_provider or "local") == "local",
     }
 
 
@@ -1140,12 +1148,12 @@ async def patch_user(
     if not user:
         raise HTTPException(404)
     if body.username is not None:
-        clash = (
-            await db.execute(select(User).where(User.username == body.username, User.id != user_id))
-        ).scalars().first()
-        if clash:
+        username = normalize_username(body.username)
+        if not username:
+            raise HTTPException(400, "Username is required")
+        if await username_taken_ci(db, username, exclude_user_id=user_id):
             raise HTTPException(400, "Username already taken")
-        user.username = body.username.strip()
+        user.username = username
     if body.email is not None:
         email = _clean_optional_str(body.email)
         if email:
@@ -1224,6 +1232,38 @@ async def reset_local_user_password(
     user.token_version = int(user.token_version or 0) + 1
     await db.commit()
     return {"ok": True}
+
+
+@router.post("/users/{user_id}/disable-2fa")
+async def admin_disable_user_2fa(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(require_super_admin),
+):
+    """Super Admin recovery: clear TOTP so the user can sign in and re-enroll."""
+    user = await db.get(User, user_id)
+    if not user or user.deleted_at is not None:
+        raise HTTPException(404, detail="User not found")
+    if (user.auth_provider or "local") != "local":
+        raise HTTPException(400, detail="2FA disable is only available for local users")
+    if not user.totp_enabled:
+        raise HTTPException(400, detail="Two-factor authentication is not enabled for this user")
+
+    user.totp_enabled = False
+    user.totp_secret_encrypted = None
+    user.totp_backup_codes_hashed = None
+    # Force re-login after MFA recovery.
+    user.token_version = int(user.token_version or 0) + 1
+    await db.commit()
+
+    from app.services.totp_service import audit
+
+    audit(
+        "2fa_admin_disabled",
+        username=user.username,
+        detail=f"by={actor.username}",
+    )
+    return {"ok": True, "totp_enabled": False}
 
 
 class UsersBulkIn(BaseModel):

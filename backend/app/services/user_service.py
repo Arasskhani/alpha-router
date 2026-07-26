@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
+from app.services.username_norm import find_user_by_username_ci, normalize_username
 
 
 async def get_or_create_user_from_request(db: AsyncSession, identifier: str) -> User:
@@ -13,13 +14,16 @@ async def get_or_create_user_from_request(db: AsyncSession, identifier: str) -> 
     identifier may be email or username.
     """
     key = identifier.strip().lower()
-    q = select(User).where((User.email == key) | (User.username == key))
+    q = select(User).where(User.email == key)
     user = (await db.execute(q)).scalars().first()
+    if not user:
+        user = await find_user_by_username_ci(db, key)
     if user:
         return user
+    username = normalize_username(key)
     user = User(
-        username=key,
-        email=key if "@" in key else f"{key}@openwebui.local",
+        username=username,
+        email=key if "@" in key else f"{username}@openwebui.local",
         display_name=key,
         role="user",
         auth_provider="openwebui",

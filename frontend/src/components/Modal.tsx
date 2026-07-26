@@ -11,6 +11,10 @@ type Props = {
   closeOnBackdrop?: boolean;
   /** When false, Escape does not close the modal. */
   closeOnEscape?: boolean;
+  /** Extra class on `.modal-panel` (e.g. size variants). */
+  panelClassName?: string;
+  /** Extra class on `.modal-body`. */
+  bodyClassName?: string;
 };
 
 export default function Modal({
@@ -21,6 +25,8 @@ export default function Modal({
   compactHeader,
   closeOnBackdrop = true,
   closeOnEscape = true,
+  panelClassName = "",
+  bodyClassName = "",
 }: Props) {
   useEffect(() => {
     if (!open || !closeOnEscape) return;
@@ -37,12 +43,18 @@ export default function Modal({
       onClick={closeOnBackdrop ? onClose : undefined}
       role="presentation"
     >
-      <div className="modal-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+      <div
+        className={`modal-panel${panelClassName ? ` ${panelClassName}` : ""}`}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title || undefined}
+      >
         <div className={`modal-header${compactHeader ? " modal-header--compact" : ""}`}>
           {compactHeader || !title ? <span aria-hidden="true" /> : <h3>{title}</h3>}
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
-        <div className="modal-body">{children}</div>
+        <div className={`modal-body${bodyClassName ? ` ${bodyClassName}` : ""}`}>{children}</div>
       </div>
     </div>
   );

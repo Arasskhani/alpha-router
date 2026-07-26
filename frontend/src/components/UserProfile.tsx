@@ -4,6 +4,7 @@ import { api } from "../api";
 import { clearStoredImageGenerationForCurrentUser } from "../lib/chatStorage";
 import { formatSessionDuration, getMyActivityPath, getSessionUser, logout } from "../lib/session";
 import { MY_USAGE_AND_ACTIVITY_LABEL } from "../lib/usageActivityLabel";
+import SettingsModal from "./SettingsModal";
 
 type Theme = "light" | "dark";
 
@@ -49,8 +50,29 @@ function IconMoon() {
   );
 }
 
+function IconGear() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
+
+/** Three descending bars — usage / activity mark. */
+function IconUsageActivity() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+      <path d="M6 20V8" />
+      <path d="M12 20v-8" />
+      <path d="M18 20v-4" />
+    </svg>
+  );
+}
+
 export default function UserProfile({ theme, onThemeChange }: Props) {
   const [open, setOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [duration, setDuration] = useState("");
   const [budget, setBudget] = useState<UserBudget | null>(null);
   const [budgetLoading, setBudgetLoading] = useState(false);
@@ -126,8 +148,21 @@ export default function UserProfile({ theme, onThemeChange }: Props) {
             role="menuitem"
             onClick={() => setOpen(false)}
           >
-            {MY_USAGE_AND_ACTIVITY_LABEL}
+            <span className="user-profile-menu-icon"><IconUsageActivity /></span>
+            <span>{MY_USAGE_AND_ACTIVITY_LABEL}</span>
           </Link>
+          <button
+            type="button"
+            className="user-profile-menu-item"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              setSettingsOpen(true);
+            }}
+          >
+            <span className="user-profile-menu-icon"><IconGear /></span>
+            <span>Settings</span>
+          </button>
           <button
             type="button"
             className="user-profile-menu-item"
@@ -149,6 +184,13 @@ export default function UserProfile({ theme, onThemeChange }: Props) {
           </button>
         </div>
       )}
+
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        theme={theme}
+        onThemeChange={onThemeChange}
+      />
     </div>
   );
 }

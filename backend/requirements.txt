@@ -17,6 +17,8 @@ passlib[bcrypt]>=1.7.4
 bcrypt==4.0.1
 python-jose[cryptography]>=3.3.0
 cryptography>=41.0.0
+pyotp>=2.9.0
+qrcode>=8.0
 python3-saml>=1.16.0
 ldap3>=2.9.1
 pycryptodome>=3.20.0

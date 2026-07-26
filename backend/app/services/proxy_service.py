@@ -4,6 +4,7 @@ Costs are taken from provider usage objects — never adjusted by Alpha Router.
 """
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 from typing import AsyncIterator
@@ -38,6 +39,8 @@ from app.services.code_interpreter_service import (
 from app.services.chat_completion_persistence import persister_from_body
 from app.services.llm_providers import litellm_model_for_provider, resolve_litellm_provider
 from app.services.secret_crypto import decrypt_secret
+
+logger = logging.getLogger("app.services.proxy_service")
 
 # Backward-compatible aliases for internal modules that import from proxy_service.
 _litellm_model_for_provider = litellm_model_for_provider
@@ -496,6 +499,27 @@ async def stream_chat(
         workspace_files = workspace_files_from_messages(original_messages) if tools.code_interpreter else {}
         current_messages = list(messages)
         completion_kwargs["messages"] = current_messages
+
+        # Per-user MCP connectors: expose remote tools to the model and execute
+        # any tool_calls it returns. Only when the user opted in via tools.connectors.
+        mcp_tools: list[dict] = []
+        mcp_provider_map: dict[str, tuple[str, str]] = {}
+        if tools.connectors and user_id:
+            try:
+                from app.services.mcp_client_service import list_tools_for_user
+
+                raw_tools = await list_tools_for_user(db, user_id)
+                for t in raw_tools:
+                    fn_name = t["function"]["name"]
+                    mcp_provider_map[fn_name] = (t["_alpha_router_provider"], t["_alpha_router_tool"])
+                    mcp_tools.append({"type": "function", "function": t["function"]})
+                if mcp_tools:
+                    completion_kwargs["tools"] = mcp_tools
+                    completion_kwargs["tool_choice"] = "auto"
+            except Exception:
+                logger.exception("connector tool listing failed user=%s", user_id)
+        mcp_iterations = 0
+        MAX_MCP_ITERATIONS = 3
         generation_start = time.perf_counter()
         stream_end_at: float | None = None
 
@@ -546,6 +570,7 @@ async def stream_chat(
             while True:
                 response = await acompletion(**completion_kwargs)
                 iteration_content = ""
+                iteration_tool_calls: list[dict] = []
                 client_disconnected = False
                 async for chunk in response:
                     stream_end_at = time.perf_counter()
@@ -571,6 +596,20 @@ async def stream_chat(
                             except Exception:
                                 await db.rollback()
                                 persister.reset_persist_state()
+                    # Accumulate any tool_calls the model emitted (MCP connectors).
+                    if chunk.choices and getattr(chunk.choices[0].delta, "tool_calls", None):
+                        for tc in chunk.choices[0].delta.tool_calls:
+                            idx = getattr(tc, "index", 0) or 0
+                            while len(iteration_tool_calls) <= idx:
+                                iteration_tool_calls.append({"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                            slot = iteration_tool_calls[idx]
+                            if getattr(tc, "id", None):
+                                slot["id"] = tc.id
+                            fn = tc.function
+                            if getattr(fn, "name", None):
+                                slot["function"]["name"] = fn.name
+                            if getattr(fn, "arguments", None):
+                                slot["function"]["arguments"] = (slot["function"]["arguments"] or "") + fn.arguments
                     if not client_disconnected:
                         yield f"data: {_serialize_stream_chunk(chunk)}\n\n".encode()
 
@@ -582,8 +621,46 @@ async def stream_chat(
                 if client_disconnected:
                     break
 
+                # MCP connector tool calls: execute and re-prompt (before code interpreter).
+                if (
+                    mcp_tools
+                    and iteration_tool_calls
+                    and mcp_iterations < MAX_MCP_ITERATIONS
+                ):
+                    from app.services.mcp_client_service import call_tool as mcp_call_tool
+
+                    tool_messages: list[dict] = [{"role": "assistant", "content": iteration_content or None, "tool_calls": iteration_tool_calls}]
+                    for tc in iteration_tool_calls:
+                        full_name = tc["function"]["name"]
+                        provider_id, tool_name = mcp_provider_map.get(full_name, (full_name.split(".", 1)[0] if "." in full_name else full_name, ""))
+                        try:
+                            args = json.loads(tc["function"]["arguments"] or "{}")
+                        except json.JSONDecodeError:
+                            args = {}
+                        progress = f"\n\nCalling {provider_id}.{tool_name}…\n\n"
+                        collected_content += progress
+                        if persister:
+                            try:
+                                await persister.on_content(collected_content)
+                            except Exception:
+                                await db.rollback()
+                                persister.reset_persist_state()
+                        if not client_disconnected:
+                            yield _sse_delta_chunk(progress)
+                        try:
+                            result = await mcp_call_tool(db, user_id, provider_id, tool_name, args)
+                            tool_result_text = json.dumps(result, default=str)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning("connector tool call failed user=%s tool=%s: %s", user_id, full_name, exc)
+                            tool_result_text = f"Error calling {full_name}: {exc}"
+                        tool_messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result_text})
+                    current_messages = apply_prompt_cache_breakpoints(current_messages + tool_messages)
+                    completion_kwargs["messages"] = current_messages
+                    mcp_iterations += 1
+                    continue
+
                 if not tools.code_interpreter or code_iterations >= MAX_CODE_ITERATIONS:
-                    break
+                    break;
 
                 code = extract_last_python_block(iteration_content)
                 if not code:

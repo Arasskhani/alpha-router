@@ -25,6 +25,8 @@ export type ChatToolsState = {
   /** @deprecated legacy WxH — migrated to imageCustomAspectRatio on load. */
   imageCustomSize?: string;
   codeInterpreter: boolean;
+  /** Allow the model to call tools from connected third-party MCP connectors. */
+  connectors: boolean;
 };
 
 
@@ -39,6 +41,7 @@ export const FRESH_CHAT_TOOLS: ChatToolsState = {
   imageAspectRatio: DEFAULT_IMAGE_ASPECT_PRESET,
   imageCustomAspectRatio: DEFAULT_CUSTOM_ASPECT_RATIO,
   codeInterpreter: false,
+  connectors: false,
 };
 
 export function copyFreshChatTools(): ChatToolsState {
@@ -50,7 +53,8 @@ export function anyChatToolEnabled(tools: ChatToolsState): boolean {
     tools.webSearch ||
     tools.webFetch ||
     tools.imageGeneration ||
-    tools.codeInterpreter
+    tools.codeInterpreter ||
+    tools.connectors
   );
 }
 
@@ -89,6 +93,7 @@ export function normalizeChatTools(raw?: Partial<ChatToolsState> | null): ChatTo
     ),
     imageCustomAspectRatio: customAspect ?? FRESH_CHAT_TOOLS.imageCustomAspectRatio,
     codeInterpreter: raw.codeInterpreter ?? FRESH_CHAT_TOOLS.codeInterpreter,
+    connectors: raw.connectors ?? FRESH_CHAT_TOOLS.connectors,
   };
 
 }
@@ -134,6 +139,8 @@ export function toolsToApiPayload(state: ChatToolsState) {
       image_generation: state.imageGeneration,
 
       code_interpreter: state.codeInterpreter,
+
+      connectors: state.connectors,
 
     },
 

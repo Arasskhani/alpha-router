@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
-from app.api import admin, auth, authentication, chat, gateway, groups, images, logs, operations, plans, reports, smtp, user_chats, user_media, user_routes, user_settings
+from app.api import admin, auth, authentication, chat, gateway, groups, images, logs, operations, plans, reports, smtp, user_chats, user_connectors, user_media, user_routes, user_settings
 from app.config import INSECURE_DEFAULTS, get_settings
 from app.core.security import hash_password
 from app.database import AsyncSessionLocal, Base, engine
@@ -500,6 +500,7 @@ app.include_router(authentication.router)
 app.include_router(smtp.router)
 app.include_router(groups.router)
 app.include_router(chat.router)
+app.include_router(user_connectors.router)
 
 
 def health_payload() -> dict[str, str]:

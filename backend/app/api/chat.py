@@ -93,6 +93,7 @@ class ChatToolsIn(BaseModel):
     web_fetch: bool = False
     image_generation: bool = False
     code_interpreter: bool = False
+    connectors: bool = False
 
 
 class ChatRequest(BaseModel):

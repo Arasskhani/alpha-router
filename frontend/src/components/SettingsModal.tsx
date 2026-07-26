@@ -3,8 +3,9 @@ import { api, authFetch, formatApiError } from "../api";
 import { fetchUserPrefsFromServer, saveUserPrefs, type UserTheme } from "../lib/chatStorage";
 import { COMMON_TIMEZONES, detectBrowserTimezone } from "../lib/timezones";
 import Modal from "./Modal";
+import ConnectorsPanel from "./settings/ConnectorsPanel";
 
-type TabId = "general" | "data-control" | "security";
+type TabId = "general" | "data-control" | "security" | "connectors";
 
 type SecurityStatus = {
   auth_provider: string;
@@ -31,6 +32,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "general", label: "General" },
   { id: "data-control", label: "Data Control" },
   { id: "security", label: "Security" },
+  { id: "connectors", label: "Connectors" },
 ];
 
 type Props = {
@@ -74,6 +76,7 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange }: P
           {tab === "general" && <GeneralPanel theme={theme} setTheme={onThemeChange} />}
           {tab === "data-control" && <DataControlPanel />}
           {tab === "security" && <SecurityPanel />}
+          {tab === "connectors" && <ConnectorsPanel />}
         </section>
       </div>
     </Modal>

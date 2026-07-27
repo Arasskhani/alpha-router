@@ -1,5 +1,7 @@
 """In-app chat using enabled models (admin + user)."""
 
+import asyncio
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
@@ -19,7 +21,7 @@ from app.services.budget_service import (
     resolve_monthly_budget,
 )
 from app.services.bounded_io import BoundedIOError, clamp_limit, read_upload_bounded
-from app.services.model_capabilities import image_generation_capabilities
+from app.services.model_capabilities import image_generation_capabilities, supports_vision
 from app.services.media_authorization_service import MediaAccessAction, load_authorized_media_asset
 from app.services.attachment_extract import processed_attachment_payload
 from app.services.attachment_policy import (
@@ -29,6 +31,14 @@ from app.services.attachment_policy import (
     validate_attachment_size,
 )
 from app.services.chat_title_service import generate_chat_title
+from app.services.chat_export_service import (
+    ChatExportError,
+    build_download_content_disposition,
+    build_pdf_content_disposition,
+    render_chat_pdf,
+)
+from app.services.chat_docx_service import ChatExportError as DocxExportError
+from app.services.chat_docx_service import render_chat_docx
 from app.services.image_prompt_service import (
     ENHANCE_CONTEXTS,
     ENHANCE_MODES,
@@ -70,6 +80,11 @@ async def chat_models(user: User = Depends(get_current_user), db: AsyncSession =
             "name": m.display_name or m.external_id,
             "external_id": m.external_id,
             **image_generation_capabilities(
+                external_id=m.external_id or "",
+                is_image_model=bool(m.is_image_model),
+                pricing_raw=m.pricing_raw,
+            ),
+            "supports_vision": supports_vision(
                 external_id=m.external_id or "",
                 is_image_model=bool(m.is_image_model),
                 pricing_raw=m.pricing_raw,
@@ -495,3 +510,71 @@ async def delete_media(
     await db.flush()
     await unlink_storage_if_unreferenced(db, storage_path)
     return {"ok": True}
+
+
+class ChatExportPdfIn(BaseModel):
+    content: str
+    title: str | None = None
+
+
+@router.post("/export/pdf")
+async def export_chat_pdf(
+    payload: ChatExportPdfIn,
+    user: User = Depends(require_active_user),
+):
+    """Export an assistant chat message (markdown) to a PDF file.
+
+    The content is the caller's own chat content; it is HTML-escaped before
+    markdown parsing, JavaScript is disabled in the render context, and all
+    sub-resource requests are aborted (anti-SSRF). See ``chat_export_service``.
+    """
+    if not payload.content or not payload.content.strip():
+        raise HTTPException(status_code=400, detail="content must not be empty")
+    try:
+        pdf_bytes = await render_chat_pdf(
+            content=payload.content,
+            title=payload.title,
+        )
+    except ChatExportError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": build_pdf_content_disposition(payload.title),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+class ChatExportDocxIn(BaseModel):
+    content: str
+    title: str | None = None
+
+
+@router.post("/export/docx")
+async def export_chat_docx(
+    payload: ChatExportDocxIn,
+    user: User = Depends(require_active_user),
+):
+    """Export an assistant chat message (markdown) to a Word .docx file.
+
+    ``python-docx`` only constructs the OpenXML package (no code execution, no
+    network). See ``chat_docx_service``.
+    """
+    if not payload.content or not payload.content.strip():
+        raise HTTPException(status_code=400, detail="content must not be empty")
+    try:
+        docx_bytes = await asyncio.to_thread(
+            render_chat_docx, content=payload.content, title=payload.title
+        )
+    except DocxExportError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": build_download_content_disposition(payload.title, "docx"),
+            "Cache-Control": "no-store",
+        },
+    )

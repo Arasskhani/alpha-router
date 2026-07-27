@@ -29,3 +29,43 @@ export function RegenerateIcon() {
     </svg>
   );
 }
+
+export function CsvIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5" />
+      <path d="M8 13h8" />
+      <path d="M8 17h8" />
+      <path d="M8 9h2" />
+    </svg>
+  );
+}
+
+export function PdfIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5" />
+      <path d="M8.5 13.5h1a1 1 0 0 1 0 2h-1v-2z" />
+      <path d="M8.5 15.5v2" />
+      <path d="M12 13.5h2" />
+      <path d="M12 13.5v4" />
+      <path d="M15.5 13.5h1.5" />
+      <path d="M15.5 13.5v4" />
+      <path d="M15.5 15.5h1.2" />
+    </svg>
+  );
+}
+
+export function DocIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5" />
+      <path d="M8 13h8" />
+      <path d="M8 16.5h8" />
+      <path d="M8 9.5h4" />
+    </svg>
+  );
+}

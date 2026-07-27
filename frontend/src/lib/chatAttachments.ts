@@ -248,12 +248,15 @@ export async function processAttachmentFilesLocally(files: File[]): Promise<Proc
   return out;
 }
 
-type VisionModel = { id: string; name?: string; external_id?: string };
+type VisionModel = { id: string; name?: string; external_id?: string; supports_vision?: boolean };
 
 export function modelSupportsVision(m?: VisionModel): boolean {
   if (!m) return false;
+  // Prefer the backend catalog flag when available (Option B).
+  if (typeof m.supports_vision === "boolean") return m.supports_vision;
   const v = `${m.external_id || ""} ${m.name || ""} ${m.id || ""}`.toLowerCase();
   if (isImageGenerationModel(v)) return false;
+  if (v === "auto" || v === "openrouter/auto" || v.endsWith("/auto")) return true;
   return (
     v.includes("vision") ||
     v.includes("gpt-4o") ||

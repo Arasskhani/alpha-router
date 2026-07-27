@@ -18,6 +18,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install Playwright's headless Chromium + system deps for server-side PDF
+# rendering (chat export & activity PDF). Pinned to a system-wide path so the
+# non-root runtime user can read it.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN playwright install --with-deps chromium
+
 COPY backend/app ./app
 COPY --from=frontend-build /fe/dist ./frontend/dist
 RUN groupadd --system --gid 10001 alpha-router \

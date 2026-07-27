@@ -176,3 +176,49 @@ def model_kinds(
         ):
             kinds.add("text")
     return [k for k in MODEL_KINDS if k in kinds]
+
+
+_VISION_HEURISTIC_HINTS = (
+    "vision",
+    "gpt-4o",
+    "gpt-4.1",
+    "gpt-4-turbo",
+    "gpt-4",
+    "claude-3",
+    "claude-4",
+    "claude-sonnet",
+    "claude-opus",
+    "claude-haiku",
+    "gemini",
+    "llava",
+    "pixtral",
+    "qwen-vl",
+    "qwen2-vl",
+)
+
+
+def supports_vision(
+    *,
+    external_id: str,
+    is_image_model: bool = False,
+    pricing_raw: str | None = None,
+) -> bool:
+    """True when a chat model can accept an image attachment (vision input).
+
+    Image-generation models use a separate image-to-image path and are excluded.
+    Provider catalog metadata (``architecture.input_modalities``) takes precedence;
+    a name-based heuristic is used as a fallback for models without catalog metadata.
+    """
+    ext = (external_id or "").lower()
+    if is_image_model or _image_id_heuristic(ext):
+        return False
+
+    arch = _architecture_from_raw(pricing_raw)
+    inputs, _ = _modalities(arch)
+    if inputs:
+        return "image" in inputs
+
+    # Fallback heuristic when provider metadata is unavailable.
+    if ext in ("auto", "openrouter/auto") or ext.endswith("/auto"):
+        return True
+    return any(hint in ext for hint in _VISION_HEURISTIC_HINTS)

@@ -90,7 +90,7 @@ import {
   ComposerToolsIcon,
   ComposerTranslateIcon,
 } from "./chat/ComposerControlIcons";
-import { DownloadIcon, OpenFullSizeIcon, RegenerateIcon } from "./chat/GeneratedImageIcons";
+import { DownloadIcon, OpenFullSizeIcon, RegenerateIcon, CsvIcon, PdfIcon, DocIcon } from "./chat/GeneratedImageIcons";
 import VirtualSidebarList from "./chat/ChatSidebarVirtual";
 import UserProfile from "./UserProfile";
 import PrivateModeLockIcon from "./chat/PrivateModeLockIcon";
@@ -148,6 +148,7 @@ import {
   shouldMigrateDefaultToGrok43,
 } from "../lib/chatModels";
 import { copyTextToClipboard } from "../lib/clipboard";
+import { downloadCsv, exportMessagePdf, exportMessageDocx } from "../lib/chatExport";
 import { isNearScrollBottom, scrollContainerToBottom } from "../lib/chatScroll";
 import {
   clearComposerDraft,
@@ -180,6 +181,7 @@ type Model = {
   is_image_model?: boolean;
   supports_text_to_image?: boolean;
   supports_image_to_image?: boolean;
+  supports_vision?: boolean;
 };
 type AudioPayload = { url: string; transcript: string };
 type QueuedPrompt = {
@@ -4171,6 +4173,45 @@ export default function ChatPanel() {
                       onClick={() => void copyMessageContent(m.content, `${activeId}-${i}`)}
                     >
                       {copiedMessageKey === `${activeId}-${i}` ? "Copied" : "Copy"}
+                    </button>
+                    <button
+                      type="button"
+                      className="cgpt-msg-action-btn cgpt-msg-action-btn--icon"
+                      title="Download CSV"
+                      aria-label="Download CSV"
+                      onClick={() => downloadCsv(`${activeId}-${i}`, m.content || "")}
+                    >
+                      <CsvIcon />
+                    </button>
+                    <button
+                      type="button"
+                      className="cgpt-msg-action-btn cgpt-msg-action-btn--icon"
+                      title="Download PDF"
+                      aria-label="Download PDF"
+                      onClick={() => {
+                        const title = (activeSession?.title || "chat-export").slice(0, 60);
+                        void exportMessagePdf(m.content || "", title).catch((e) => {
+                          console.error("PDF export failed", e);
+                          alert(`PDF export failed: ${e?.message || e}`);
+                        });
+                      }}
+                    >
+                      <PdfIcon />
+                    </button>
+                    <button
+                      type="button"
+                      className="cgpt-msg-action-btn cgpt-msg-action-btn--icon"
+                      title="Download Word"
+                      aria-label="Download Word document"
+                      onClick={() => {
+                        const title = (activeSession?.title || "chat-export").slice(0, 60);
+                        void exportMessageDocx(m.content || "", title).catch((e) => {
+                          console.error("DOCX export failed", e);
+                          alert(`DOCX export failed: ${e?.message || e}`);
+                        });
+                      }}
+                    >
+                      <DocIcon />
                     </button>
                   </>
                 )}

@@ -3713,6 +3713,7 @@ export default function ChatPanel() {
             type="button"
             className="cgpt-icon-btn cgpt-menu-btn"
             onClick={() => shellMenu?.openAdminMenu()}
+            onMouseEnter={() => shellMenu?.openAdminMenu()}
             aria-label="Open menu"
             title="Menu"
           >

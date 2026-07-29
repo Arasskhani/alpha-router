@@ -19,7 +19,6 @@ MenuKey = Literal[
     "plans",
     "authentication",
     "smtp",
-    "recommendations",
     "storage",
     "reports",
     "api_logs",
@@ -36,7 +35,6 @@ CategoryKey = Literal[
     "people_access",
     "integrations",
     "data_reports",
-    "monitoring",
     "developer",
 ]
 
@@ -50,9 +48,18 @@ LEGACY_READ_ONLY_ADMIN_SLUG = "read_only_administrator"
 USER_SLUG = "user"
 SUPER_ADMIN_SLUG = "super_admin"
 API_KEY_ADMIN_SLUG = "api_keys_full_administrator"
+DASHBOARD_VIEW_SLUG = "dashboard_read_only_administrator"
+REPORTS_ACCESS_SLUG = "reports_full_administrator"
+
+# Explicitly re-enabled scoped roles (must stay assignable; not section-bundle generated).
+REENABLED_SCOPED_ROLE_SLUGS: frozenset[str] = frozenset(
+    {DASHBOARD_VIEW_SLUG, REPORTS_ACCESS_SLUG}
+)
 
 MENU_DEFINITIONS: tuple[tuple[MenuKey, str, CategoryKey], ...] = (
     ("dashboard", "Dashboard", "overview"),
+    ("operations", "Operations", "overview"),
+    ("database", "Database", "overview"),
     ("chat", "Chat", "overview"),
     ("media", "Media", "overview"),
     ("connections", "Connections", "models_api"),
@@ -64,13 +71,10 @@ MENU_DEFINITIONS: tuple[tuple[MenuKey, str, CategoryKey], ...] = (
     ("groups", "Groups", "people_access"),
     ("plans", "Plans", "people_access"),
     ("authentication", "Authentication", "people_access"),
-    ("recommendations", "Recommendations", "overview"),
     ("smtp", "SMTP Server", "integrations"),
     ("storage", "Storage", "data_reports"),
     ("reports", "Reports", "data_reports"),
     ("api_logs", "API Logs", "data_reports"),
-    ("operations", "Operations", "monitoring"),
-    ("database", "Database", "monitoring"),
     ("admin_guide", "Admin Guide", "developer"),
     ("user_manual", "User Manual", "developer"),
 )
@@ -88,7 +92,6 @@ USER_APP_MENUS: frozenset[MenuKey] = frozenset(
     {
         "chat",
         "media",
-        "recommendations",
         "user_manual",
     }
 )
@@ -103,8 +106,18 @@ def _all_historical_menu_role_slugs() -> frozenset[str]:
 
 # Legacy / retired slugs removed from the assignable catalog (still remapped on migration).
 REMOVED_ASSIGNABLE_ROLE_SLUGS: frozenset[str] = frozenset(
-    {FULL_ADMIN_SLUG, READ_ONLY_FULL_ADMIN_SLUG}
-    | (_all_historical_menu_role_slugs() - {API_KEY_ADMIN_SLUG})
+    {
+        FULL_ADMIN_SLUG,
+        READ_ONLY_FULL_ADMIN_SLUG,
+        # Historical role slugs for a removed menu (keep for assignment remaps).
+        "recommendations_full_administrator",
+        "recommendations_read_only_administrator",
+    }
+    | (
+        _all_historical_menu_role_slugs()
+        - {API_KEY_ADMIN_SLUG}
+        - REENABLED_SCOPED_ROLE_SLUGS
+    )
 )
 
 LEGACY_SUPER_ADMIN_SLUGS: frozenset[str] = frozenset(
@@ -123,7 +136,6 @@ CATEGORY_LABELS: dict[CategoryKey, str] = {
     "people_access": "People & access",
     "integrations": "Integrations",
     "data_reports": "Data & reports",
-    "monitoring": "Monitoring",
     "developer": "Developer",
 }
 
@@ -141,7 +153,6 @@ MENU_PATH_PREFIXES: dict[MenuKey, tuple[str, ...]] = {
     "plans": ("/admin/plans",),
     "authentication": ("/admin/authentication",),
     "smtp": ("/admin/smtp",),
-    "recommendations": ("/admin/recommendations",),
     "storage": ("/admin/storage-management", "/admin/retention-policy", "/admin/storage"),
     "reports": ("/admin/reports",),
     "api_logs": ("/admin/logs",),
@@ -238,6 +249,22 @@ def _build_role_catalog() -> tuple[RoleDefinition, ...]:
             description="Full read and write access to the API Keys admin menu.",
             category=CATEGORY_LABELS["models_api"],
             menu_key="api_keys",
+            read_only=False,
+        ),
+        RoleDefinition(
+            slug=DASHBOARD_VIEW_SLUG,
+            name="Dashboard View",
+            description="View-only access to the Dashboard admin menu.",
+            category=CATEGORY_LABELS["overview"],
+            menu_key="dashboard",
+            read_only=True,
+        ),
+        RoleDefinition(
+            slug=REPORTS_ACCESS_SLUG,
+            name="Reports Access",
+            description="Access to the Reports admin menu, including preview and export.",
+            category=CATEGORY_LABELS["data_reports"],
+            menu_key="reports",
             read_only=False,
         ),
     )

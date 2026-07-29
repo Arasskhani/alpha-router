@@ -1,3 +1,4 @@
+import ModelName from "../ModelName";
 import { MODEL_KIND_LABELS, type CatalogModel } from "../../lib/modelCatalog";
 import {
   formatContextLength,
@@ -38,7 +39,14 @@ export default function ModelsBrowseView({
                 />
               </label>
               <div className="models-browse-card__head">
-                <h3 className="models-browse-card__title">{formatModelTitle(m)}</h3>
+                <h3 className="models-browse-card__title">
+                  <ModelName
+                    modelId={m.external_id}
+                    label={formatModelTitle(m)}
+                    provider={m.provider_author}
+                    size={18}
+                  />
+                </h3>
                 {kinds.length > 0 ? (
                   <div className="models-browse-card__tags">
                     {kinds.map((k) => (

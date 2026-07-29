@@ -8,6 +8,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import ModelName from "../ModelName";
 import { formatBreakdownValue, formatMetricValue } from "./formatters";
 import type { MetricKind, SegmentMeta } from "./types";
 
@@ -135,7 +136,14 @@ export default function ActivityMetricCard({
           {breakdown.map((s) => (
             <li key={s.key}>
               <span className="activity-legend-dot" style={{ background: s.color }} aria-hidden />
-              <span className="activity-legend-label">{s.label}</span>
+              <span className="activity-legend-label">
+                <ModelName
+                  modelId={s.key}
+                  label={s.label}
+                  showIcon={s.key !== "__others__" && !s.key.startsWith("__")}
+                  size={13}
+                />
+              </span>
               <span className="activity-legend-value">{formatBreakdownValue(kind, s.value)}</span>
             </li>
           ))}

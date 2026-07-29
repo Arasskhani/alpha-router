@@ -35,12 +35,19 @@ def test_is_transient_empty_openrouter_image_response_with_images():
     assert svc.is_transient_empty_openrouter_image_response(data, collected=None) is True
 
 
-def test_is_transient_empty_openrouter_image_response_text_is_retryable():
-    """Text-only replies must keep trying other OpenRouter strategies."""
+def test_is_transient_empty_openrouter_image_response_text_is_terminal():
+    """Text-only replies should leave the strategy loop for model failover."""
     data = {
         "choices": [{"message": {"role": "assistant", "content": "I cannot draw that."}}],
     }
-    assert svc.is_transient_empty_openrouter_image_response(data, collected=None) is True
+    assert svc.is_transient_empty_openrouter_image_response(data, collected=None) is False
+
+
+def test_prepare_image_generation_prompt_makes_ambiguous_concept_explicit():
+    prompt = svc.prepare_image_generation_prompt("Hello")
+    assert "Generate an image" in prompt
+    assert "not a conversational text response" in prompt
+    assert prompt.endswith("Concept:\nHello")
 
 
 def test_is_transient_empty_openrouter_image_response_unparsed_images_retryable():
@@ -85,12 +92,6 @@ def test_post_openrouter_json_retries_after_disconnect(monkeypatch):
             return httpx.Response(200, json={"ok": True}, request=req)
 
     monkeypatch.setattr(svc, "get_openrouter_http_client", lambda: FakeClient())
-    closed = {"v": False}
-
-    async def _close():
-        closed["v"] = True
-
-    monkeypatch.setattr(svc, "close_openrouter_http_client", _close)
     monkeypatch.setattr(svc.asyncio, "sleep", AsyncMock())
 
     async def _run():
@@ -104,7 +105,6 @@ def test_post_openrouter_json_retries_after_disconnect(monkeypatch):
     resp = asyncio.run(_run())
     assert resp.status_code == 200
     assert calls["n"] == 2
-    assert closed["v"] is True
 
 
 def test_post_openrouter_json_retries_read_timeout(monkeypatch):

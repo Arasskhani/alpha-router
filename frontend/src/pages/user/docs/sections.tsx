@@ -25,12 +25,12 @@ export const userManualSections: DocSection[] = [
         <h1>User Manual</h1>
         <p className="docs-lead">
           This guide explains how to use Alpha Router as an end user: chat with enabled AI models, manage your media files,
-          review model recommendations, and track your usage and spend. Administrators configure models, budgets, roles,
+          and track your usage and spend. Administrators configure models, budgets, roles,
           and policies; this manual focuses on what you can do in the <strong>/app</strong> panel after you sign in.
         </p>
         <p>
           The left sidebar gives quick access to <strong>Chat</strong>, <strong>Media</strong>,{" "}
-          <strong>Recommendations</strong>, <strong>Usage &amp; Activity</strong>, <strong>Settings</strong>, and this
+          <strong>Usage &amp; Activity</strong>, <strong>Settings</strong>, and this
           manual. Your profile menu
           (top right) shows your monthly <strong>Budget</strong>, theme toggle, and sign out. If you also hold admin
           roles, an <strong>Administration</strong> link opens your admin panel.
@@ -43,10 +43,6 @@ export const userManualSections: DocSection[] = [
           <div className="docs-card">
             <h3>Media</h3>
             <p>Files you upload or generate in chat, with search, filters, and optional scheduled cleanup.</p>
-          </div>
-          <div className="docs-card">
-            <h3>Recommendations</h3>
-            <p>Personalized model suggestions based on how you use Alpha Router — quality fit and value picks for your workload.</p>
           </div>
           <div className="docs-card">
             <h3>Usage &amp; Activity</h3>
@@ -129,12 +125,6 @@ export const userManualSections: DocSection[] = [
                 <strong>Media</strong>
               </td>
               <td>Your file library, quota, views, download, delete, and retention schedule.</td>
-            </tr>
-            <tr>
-              <td>
-                <strong>Recommendations</strong>
-              </td>
-              <td>Usage-based model suggestions — quality fit scores and value picks for your token mix.</td>
             </tr>
             <tr>
               <td>
@@ -632,41 +622,6 @@ export const userManualSections: DocSection[] = [
     ),
   },
   {
-    id: "user-recommendations",
-    title: "Recommendations",
-    group: "Features",
-    content: (
-      <>
-        <h2>Recommendations</h2>
-        <p>
-          Open <strong>Recommendations</strong> from the sidebar (<code>/app/recommendations</code>). Alpha Router analyzes your
-          recent usage — dominant request types, token mix, and primary models — and suggests alternatives from the
-          enabled catalog.
-        </p>
-        <h3>What you see</h3>
-        <ul>
-          <li>
-            <strong>Quality</strong> — models that fit your usage pattern (tier, context length, and workload type).
-          </li>
-          <li>
-            <strong>Value</strong> — models with similar capability at lower estimated cost for your token mix.
-          </li>
-          <li>
-            <strong>Period toolbar</strong> — preset ranges (7, 30, 90 days) or a custom date range.
-          </li>
-        </ul>
-        <p>
-          Match scores are guidance based on catalog metadata and your activity — not measured output quality. If you
-          have little or no usage in the selected period, picks fall back to generally suitable enabled models.
-        </p>
-        <p>
-          Use recommendations to discover models before starting a new chat; switch models from the Chat model picker
-          when you want to try a suggestion.
-        </p>
-      </>
-    ),
-  },
-  {
     id: "user-activity",
     title: "Usage & Activity",
     group: "Features",
@@ -763,7 +718,7 @@ export const userManualSections: DocSection[] = [
             <strong>Budget</strong> — live <code>used / total $</code> for the current month.
           </li>
           <li>
-            <strong>Theme</strong> — light or dark mode (synced to your account when signed in).
+            <strong>Theme</strong> — light, dark, or system (follows OS; synced to your account when signed in).
           </li>
           <li>
             <strong>Sign out</strong> — ends your session; sign in again with the method your organization uses (local,
@@ -794,7 +749,7 @@ export const userManualSections: DocSection[] = [
           <strong>account-wide read-only</strong> mode:
         </p>
         <ul>
-          <li>You can open <strong>Chat</strong>, <strong>Media</strong>, <strong>Recommendations</strong>, and <strong>Usage &amp; Activity</strong>.</li>
+          <li>You can open <strong>Chat</strong>, <strong>Media</strong>, and <strong>Usage &amp; Activity</strong>.</li>
           <li>You can read past chats and download media.</li>
           <li>You <strong>cannot</strong> send new messages, upload files, delete media, or change settings that write data.</li>
         </ul>

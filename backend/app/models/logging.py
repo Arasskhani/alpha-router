@@ -39,3 +39,29 @@ class RequestLog(Base):
     error_message = Column(Text, nullable=True)
 
     user = relationship("User", back_populates="logs")
+
+
+class ImageGenerationAttempt(Base):
+    """Non-billing telemetry for each concrete upstream image-model attempt."""
+
+    __tablename__ = "image_generation_attempts"
+    __table_args__ = (
+        Index(
+            "ix_image_generation_attempts_model_time",
+            "model_id",
+            "started_at",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    request_id = Column(String(36), index=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+    requested_model = Column(String(512), nullable=False)
+    model_id = Column(String(512), index=True, nullable=False)
+    operation = Column(String(32), nullable=False, default="generation")
+    attempt_index = Column(Integer, nullable=False, default=0)
+    started_at = Column(DateTime, default=datetime.datetime.utcnow, index=True, nullable=False)
+    response_time_ms = Column(Float, default=0.0, nullable=False)
+    success = Column(Boolean, default=False, nullable=False)
+    outcome = Column(String(32), nullable=False)
+    error_message = Column(Text, nullable=True)

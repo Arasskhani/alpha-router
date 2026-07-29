@@ -36,9 +36,6 @@ export default function ActivityGroupByMenu({ value, onChange }: Props) {
         aria-haspopup="listbox"
       >
         <span>{groupByLabel(value)}</span>
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-          <path d="m6 9 6 6 6-6" />
-        </svg>
       </button>
       {open ? (
         <div className="activity-period-panel activity-period-panel--narrow card" role="listbox">

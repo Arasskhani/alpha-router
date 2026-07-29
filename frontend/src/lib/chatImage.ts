@@ -47,10 +47,68 @@ type ImageResponse = {
 
 /** Must exceed the backend OpenRouter read timeout (180s) so server errors win. */
 export const IMAGE_GENERATION_TIMEOUT_MS = 240_000;
+export const IMAGE_PREPARATION_TIMEOUT_MS = 15_000;
 export const IMAGE_TIMEOUT_MESSAGE = "Image generation timed out.";
+export const IMAGE_PREPARATION_TIMEOUT_MESSAGE =
+  "Preparing the image request timed out. Please retry.";
 
 const activeJobs = new Map<string, AbortController>();
 const listeners = new Set<(sessionId: string) => void>();
+
+export class ImagePreparationTimeoutError extends Error {
+  constructor() {
+    super(IMAGE_PREPARATION_TIMEOUT_MESSAGE);
+    this.name = "ImagePreparationTimeoutError";
+  }
+}
+
+function imageAbortError(): DOMException {
+  return new DOMException("The operation was aborted.", "AbortError");
+}
+
+/** Bound pre-request chat sync and release immediately when the image job stops. */
+export async function awaitImagePreparation<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  jobSignal: AbortSignal,
+  timeoutMs = IMAGE_PREPARATION_TIMEOUT_MS,
+): Promise<T> {
+  if (jobSignal.aborted) throw imageAbortError();
+
+  const syncController = new AbortController();
+  let timedOut = false;
+  const onJobAbort = () => syncController.abort();
+  jobSignal.addEventListener("abort", onJobAbort, { once: true });
+
+  let rejectOnAbort: ((reason?: unknown) => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectOnAbort = reject;
+  });
+  const onSyncAbort = () => {
+    rejectOnAbort?.(timedOut ? new ImagePreparationTimeoutError() : imageAbortError());
+  };
+  syncController.signal.addEventListener("abort", onSyncAbort, { once: true });
+
+  const timer = globalThis.setTimeout(() => {
+    timedOut = true;
+    syncController.abort();
+  }, Math.max(1, timeoutMs));
+
+  try {
+    return await Promise.race([work(syncController.signal), aborted]);
+  } finally {
+    globalThis.clearTimeout(timer);
+    jobSignal.removeEventListener("abort", onJobAbort);
+    syncController.signal.removeEventListener("abort", onSyncAbort);
+  }
+}
+
+function recordImageClientTiming(name: string, startedAt: number): void {
+  try {
+    performance.measure(name, { start: startedAt, end: performance.now() });
+  } catch {
+    // Diagnostics must never affect image generation.
+  }
+}
 
 function notify(sessionId: string) {
   listeners.forEach((fn) => {
@@ -82,6 +140,7 @@ export function stopBackgroundImageGeneration(sessionId: string) {
   if (controller) {
     controller.abort();
     activeJobs.delete(sessionId);
+    notify(sessionId);
   }
 }
 
@@ -397,6 +456,7 @@ export async function runBackgroundImageGeneration(opts: {
   stopBackgroundImageGeneration(sessionId);
   const controller = new AbortController();
   activeJobs.set(sessionId, controller);
+  const operationStartedAt = performance.now();
 
   const pendingMsgs: ChatMessage[] =
     replaceIndex !== undefined && fullMessages
@@ -406,71 +466,95 @@ export async function runBackgroundImageGeneration(opts: {
       : [...localBase, { role: "assistant", content: IMAGE_PENDING_MARKER }];
 
   let timedOut = false;
+  const deadlineTimer = globalThis.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, IMAGE_GENERATION_TIMEOUT_MS);
+  const syncForImageJob = (messages: ChatMessage[], timeoutMs = IMAGE_PREPARATION_TIMEOUT_MS) =>
+    awaitImagePreparation(
+      (signal) => syncSessionMessages(sessionId, messages, { ...syncOpts, signal }),
+      controller.signal,
+      timeoutMs,
+    );
+
   try {
-    await syncSessionMessages(sessionId, pendingMsgs, syncOpts);
+    const preparationStartedAt = performance.now();
+    await syncForImageJob(pendingMsgs);
+    recordImageClientTiming("alpha_router:image:preparation", preparationStartedAt);
     notify(sessionId);
 
-    // Longer than the backend read timeout (180s) so a real backend error
-    // surfaces first; this timer is only a last-resort client-side stop.
-    const timer = window.setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, IMAGE_GENERATION_TIMEOUT_MS);
     let generated: ImagePayload;
-    try {
-      generated = await requestImageApi(
-        resolved.prompt,
-        modelId,
-        sessionId,
-        controller.signal,
-        persist,
-        referenceImage,
-        resolved.useSourceDimensions ? undefined : resolved.aspectRatio,
-        resolved.preset,
-        undefined,
-        opts.imageSizeTier,
-        opts.routing,
-      );
-    } finally {
-      window.clearTimeout(timer);
-    }
+    generated = await requestImageApi(
+      resolved.prompt,
+      modelId,
+      sessionId,
+      controller.signal,
+      persist,
+      referenceImage,
+      resolved.useSourceDimensions ? undefined : resolved.aspectRatio,
+      resolved.preset,
+      undefined,
+      opts.imageSizeTier,
+      opts.routing,
+    );
 
     const imageMsg: ChatMessage = { role: "assistant", content: buildImageMessage(generated), receivedAt: Date.now() };
     if (replaceIndex !== undefined && fullMessages) {
       const next = [...fullMessages];
       next[replaceIndex] = imageMsg;
-      await syncSessionMessages(sessionId, next, syncOpts);
+      await syncForImageJob(next);
     } else {
       const withImage: ChatMessage[] = [...localBase, imageMsg];
-      await syncSessionMessages(sessionId, withImage, syncOpts);
+      await syncForImageJob(withImage);
     }
+    recordImageClientTiming("alpha_router:image:total", operationStartedAt);
     notify(sessionId);
   } catch (err) {
     const aborted = err instanceof DOMException && err.name === "AbortError";
-    const errorMsg = aborted
+    const preparationTimedOut = err instanceof ImagePreparationTimeoutError;
+    const errorMsg = preparationTimedOut
+      ? IMAGE_PREPARATION_TIMEOUT_MESSAGE
+      : aborted
       ? timedOut
         ? IMAGE_TIMEOUT_MESSAGE
         : "Image generation stopped."
       : `Error: ${err instanceof Error ? err.message : String(err)}`;
     if (aborted && !timedOut && persist) {
-      await cancelStreamingReplyOnServer(sessionId).catch(() => {});
+      void cancelStreamingReplyOnServer(sessionId).catch(() => {});
     } else if (replaceIndex !== undefined && fullMessages) {
       const next = [...fullMessages];
       next[replaceIndex] = { role: "assistant", content: errorMsg, receivedAt: Date.now() };
-      await syncSessionMessages(sessionId, stripOrphanImagePending(next), syncOpts);
+      const recoveryController = new AbortController();
+      await awaitImagePreparation(
+        (signal) =>
+          syncSessionMessages(sessionId, stripOrphanImagePending(next), {
+            ...syncOpts,
+            signal,
+          }),
+        recoveryController.signal,
+        5_000,
+      ).catch(() => {});
     } else {
-      await syncSessionMessages(
-        sessionId,
-        buildStoppedImageMessages(localBase, errorMsg),
-        syncOpts,
-      );
+      const recoveryController = new AbortController();
+      await awaitImagePreparation(
+        (signal) =>
+          syncSessionMessages(sessionId, buildStoppedImageMessages(localBase, errorMsg), {
+            ...syncOpts,
+            signal,
+          }),
+        recoveryController.signal,
+        5_000,
+      ).catch(() => {});
     }
     notify(sessionId);
     if (!aborted) {
       throw err;
     }
   } finally {
-    activeJobs.delete(sessionId);
+    globalThis.clearTimeout(deadlineTimer);
+    if (activeJobs.get(sessionId) === controller) {
+      activeJobs.delete(sessionId);
+    }
     notify(sessionId);
   }
 }

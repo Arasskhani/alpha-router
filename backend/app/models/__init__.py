@@ -5,7 +5,7 @@ from app.models.connection import Connection, ConnectionAuditLog
 from app.models.model_catalog import AIModel
 from app.models.api_key import AlphaRouterApiKey, AlphaRouterApiKeyAuditLog, UserApiKey
 from app.models.budget import BudgetPlan, PlanAssignment
-from app.models.logging import RequestLog
+from app.models.logging import ImageGenerationAttempt, RequestLog
 from app.models.budget_reservation import BudgetReservation
 from app.models.system import SmtpSettings, ReportSchedule, SystemMetricSnapshot, SystemSetting
 from app.models.auth_provider import AuthProviderConfig
@@ -26,6 +26,7 @@ __all__ = [
     "BudgetPlan",
     "PlanAssignment",
     "RequestLog",
+    "ImageGenerationAttempt",
     "BudgetReservation",
     "SmtpSettings",
     "ReportSchedule",

@@ -9,11 +9,23 @@ export type ChatModelRef = {
 export const AUTO_ROUTER_EXTERNAL_ID = "openrouter/auto";
 export const GROK_43_EXTERNAL_ID = "x-ai/grok-4.3";
 
+/** True for openrouter/auto, openrouter/auto-beta, and display name "Auto Router*". */
+export function isAutoRouterExternalId(externalId?: string | null): boolean {
+  const low = (externalId || "").trim().toLowerCase();
+  if (!low) return false;
+  if (low === AUTO_ROUTER_EXTERNAL_ID || low === "auto" || low === "openrouter/auto-beta") {
+    return true;
+  }
+  if (low.endsWith("/auto") || low.endsWith(":auto")) return true;
+  const tail = low.includes("/") ? low.slice(low.lastIndexOf("/") + 1) : low;
+  return tail === "auto" || tail.startsWith("auto-");
+}
+
 export function isAutoRouterModel(m?: ChatModelRef | null): boolean {
   if (!m) return false;
-  const ext = (m.external_id || "").trim().toLowerCase();
-  if (ext === AUTO_ROUTER_EXTERNAL_ID) return true;
-  return (m.name || "").trim().toLowerCase() === "auto router";
+  if (isAutoRouterExternalId(m.external_id)) return true;
+  const name = (m.name || "").trim().toLowerCase();
+  return name === "auto router" || name.startsWith("auto router ");
 }
 
 export function findAutoRouterModel(models: ChatModelRef[]): ChatModelRef | undefined {

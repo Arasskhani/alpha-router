@@ -8,6 +8,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@lobehub/icons-static-svg": "^1.94.0",
     "@tanstack/react-virtual": "^3.13.12",
     "highlight.js": "^11.11.1",
     "react": "^18.3.1",

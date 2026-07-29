@@ -2,8 +2,13 @@
 
 from app.services.rbac import (
     API_KEY_ADMIN_SLUG,
+    CATEGORY_LABELS,
+    DASHBOARD_VIEW_SLUG,
     FULL_ADMIN_SLUG,
+    MENU_GROUP_KEYS,
+    MENUS_BY_CATEGORY,
     READ_ONLY_FULL_ADMIN_SLUG,
+    REPORTS_ACCESS_SLUG,
     SUPER_ADMIN_SLUG,
     USER_SLUG,
     actor_may_assign_roles,
@@ -35,20 +40,39 @@ def test_legacy_read_only_normalizes_to_read_only_full_administrator():
     assert normalize_role_slug("read_only_administrator") == READ_ONLY_FULL_ADMIN_SLUG
 
 
-def test_role_catalog_only_keeps_three_assignable_roles():
+def test_role_catalog_keeps_existing_roles_and_adds_scoped_views():
     roles = list_roles()
-    slugs = {r["slug"] for r in roles}
-    assert slugs == {USER_SLUG, SUPER_ADMIN_SLUG, API_KEY_ADMIN_SLUG}
-    assert len(roles) == 3
-    api_key_role = next(r for r in roles if r["slug"] == API_KEY_ADMIN_SLUG)
-    assert api_key_role["name"] == "API Key Admin"
-    assert FULL_ADMIN_SLUG not in slugs
-    assert READ_ONLY_FULL_ADMIN_SLUG not in slugs
-    assert "users_full_administrator" not in slugs
-    assert "api_keys_read_only_administrator" not in slugs
-    assert "groups_full_administrator" not in slugs
-    assert "dashboard_full_administrator" not in slugs
-    assert "storage_full_administrator" not in slugs
+    by_slug = {r["slug"]: r for r in roles}
+    # Existing roles unchanged.
+    assert by_slug[USER_SLUG]["name"] == "User"
+    assert by_slug[USER_SLUG]["is_user_panel"] is True
+    assert by_slug[SUPER_ADMIN_SLUG]["name"] == "Super Admin"
+    assert by_slug[SUPER_ADMIN_SLUG]["read_only"] is False
+    assert by_slug[API_KEY_ADMIN_SLUG]["name"] == "API Key Admin"
+    assert by_slug[API_KEY_ADMIN_SLUG]["menu_key"] == "api_keys"
+    assert by_slug[API_KEY_ADMIN_SLUG]["read_only"] is False
+    # New scoped roles.
+    assert by_slug[DASHBOARD_VIEW_SLUG]["name"] == "Dashboard View"
+    assert by_slug[DASHBOARD_VIEW_SLUG]["menu_key"] == "dashboard"
+    assert by_slug[DASHBOARD_VIEW_SLUG]["read_only"] is True
+    assert by_slug[REPORTS_ACCESS_SLUG]["name"] == "Reports Access"
+    assert by_slug[REPORTS_ACCESS_SLUG]["menu_key"] == "reports"
+    assert by_slug[REPORTS_ACCESS_SLUG]["read_only"] is False
+    assert set(by_slug) == {
+        USER_SLUG,
+        SUPER_ADMIN_SLUG,
+        API_KEY_ADMIN_SLUG,
+        DASHBOARD_VIEW_SLUG,
+        REPORTS_ACCESS_SLUG,
+    }
+    assert FULL_ADMIN_SLUG not in by_slug
+    assert READ_ONLY_FULL_ADMIN_SLUG not in by_slug
+    assert "users_full_administrator" not in by_slug
+    assert "api_keys_read_only_administrator" not in by_slug
+    assert "groups_full_administrator" not in by_slug
+    assert "dashboard_full_administrator" not in by_slug
+    assert "storage_full_administrator" not in by_slug
+    assert "reports_read_only_administrator" not in by_slug
 
 
 def test_super_admin_role_has_full_access():
@@ -153,3 +177,13 @@ def test_path_to_menu():
     assert path_to_menu("/admin/retention-policy") == "storage"
     assert path_to_menu("/admin/storage-management") == "storage"
     assert path_to_menu("/admin/storage") == "storage"
+
+
+def test_operations_and_database_live_under_overview():
+    assert "monitoring" not in CATEGORY_LABELS
+    assert MENU_GROUP_KEYS["operations"] == "overview"
+    assert MENU_GROUP_KEYS["database"] == "overview"
+    overview = MENUS_BY_CATEGORY["overview"]
+    assert overview[:3] == ("dashboard", "operations", "database")
+    assert "operations" in overview
+    assert "database" in overview

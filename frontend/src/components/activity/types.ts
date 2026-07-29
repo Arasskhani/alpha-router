@@ -16,6 +16,11 @@ export type SegmentMeta = {
 
 export type FilterOption = { key: string; label: string };
 
+export type ApiKeyFilterOption = FilterOption & {
+  name?: string;
+  prefix?: string;
+};
+
 export type HeatmapDay = {
   date: string;
   requests: number;
@@ -57,6 +62,155 @@ export type ActivityInsights = {
   usage_stats: Record<HeatmapMetric, UsageMetricStats>;
 };
 
+export type ActivityTab = "overview" | "trends" | "explore";
+
+export type OverviewFocus =
+  | "users"
+  | "apps"
+  | "usage_by_model"
+  | "request_volume"
+  | "token_breakdown"
+  | "prompt_caching"
+  | "trends_models"
+  | "trends_users"
+  | "trends_api_keys"
+  | "trends_apps";
+
+export type TrendsMetric = "spend" | "requests" | "tokens";
+
+export type TrendsListItem = {
+  key: string;
+  label: string;
+  subtitle?: string;
+  initials: string;
+  color: string;
+  provider?: string;
+  value: number;
+  change_pct: number | null;
+  is_new: boolean;
+  sparkline: number[];
+};
+
+export type TrendsDimension = {
+  spend_over_time: OverviewStackedChart;
+  trending: Record<TrendsMetric, TrendsListItem[]>;
+};
+
+export type ActivityTrends = {
+  models: TrendsDimension;
+  users: TrendsDimension;
+  api_keys: TrendsDimension;
+  apps: TrendsDimension;
+};
+
+export type ExploreMetric =
+  | "request_count"
+  | "total_usage"
+  | "tokens_total"
+  | "tokens_prompt"
+  | "tokens_completion"
+  | "cached_tokens"
+  | "avg_latency"
+  | "p50_latency";
+
+export type ExploreGroup = "none" | "model" | "api_key" | "provider" | "app" | "user";
+export type ExploreRollup = "total" | "hourly" | "daily" | "weekly" | "monthly";
+export type ExploreTopMode = "top" | "bottom";
+export type ExploreRankBy = "metric" | "requests";
+export type ExploreChartType = "bar" | "line" | "area";
+
+export type ExploreSegment = {
+  key: string;
+  label: string;
+  color: string;
+};
+
+export type ExploreTableRow = {
+  key: string;
+  label: string;
+  color: string;
+  min: number;
+  max: number;
+  avg: number;
+  sum: number;
+  value: number;
+  pct: number;
+  requests: number;
+};
+
+export type ActivityExplore = {
+  metric: ExploreMetric;
+  group: ExploreGroup;
+  subgroup: ExploreGroup | null;
+  rollup: ExploreRollup;
+  top_mode: ExploreTopMode;
+  top_n: number;
+  rank_by: ExploreRankBy;
+  show_other: boolean;
+  cumulative: boolean;
+  chart_type: ExploreChartType;
+  segments: ExploreSegment[];
+  chart: Record<string, string | number>[];
+  table: ExploreTableRow[];
+  meta: { row_count: number; entity_count: number };
+};
+
+export type ExploreControls = {
+  metric: ExploreMetric;
+  group: ExploreGroup;
+  subgroup: ExploreGroup | "";
+  rollup: ExploreRollup;
+  topMode: ExploreTopMode;
+  topN: number;
+  rankBy: ExploreRankBy;
+  showOther: boolean;
+  cumulative: boolean;
+  chartType: ExploreChartType;
+};
+
+export type OverviewKpi = {
+  value: number;
+  change_pct: number | null;
+  sparkline: number[];
+};
+
+export type OverviewListItem = {
+  key: string;
+  label: string;
+  initials: string;
+  tokens: number;
+};
+
+export type OverviewChartSeries = {
+  key: string;
+  label: string;
+  color: string;
+  spend?: number;
+  requests?: number;
+  tokens?: number;
+};
+
+export type OverviewStackedChart = {
+  segments: OverviewChartSeries[];
+  chart: Record<string, string | number>[];
+};
+
+export type ActivityOverview = {
+  kpis: {
+    spend: OverviewKpi;
+    requests: OverviewKpi;
+    tokens: OverviewKpi;
+    cache_hit_rate: OverviewKpi;
+    blended_per_1m: OverviewKpi;
+  };
+  top_users: OverviewListItem[];
+  top_apps: OverviewListItem[];
+  usage_by_model: OverviewStackedChart;
+  request_volume_by_model: OverviewStackedChart;
+  token_breakdown: OverviewStackedChart;
+  prompt_caching: OverviewStackedChart;
+};
+
 export type ActivityPayload = {
   scope?: string;
   period: Period;
@@ -68,19 +222,19 @@ export type ActivityPayload = {
   chart: Record<string, string | number>[];
   prompts?: PromptsCardData;
   insights: ActivityInsights;
-  guardrails: {
-    blocked_requests: number;
-    cached_prompts: number;
-    redacted_flagged?: number;
-  };
+  overview?: ActivityOverview;
+  trends?: ActivityTrends;
+  explore?: ActivityExplore;
   available_models: FilterOption[];
   available_users?: FilterOption[];
   available_apps?: FilterOption[];
+  available_api_keys?: ApiKeyFilterOption[];
   filters?: {
     model_id?: string | null;
     username?: string | null;
     app?: string | null;
     response_status?: string | null;
+    alpha_router_api_key_id?: number | null;
   };
   model_id?: string | null;
   user?: { id: number; username: string; display_name?: string | null };

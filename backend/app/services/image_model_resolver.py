@@ -16,7 +16,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.connection import Connection
-from app.models.logging import RequestLog
+from app.models.logging import ImageGenerationAttempt, RequestLog
 from app.models.model_catalog import AIModel
 from app.services.chat_feedback_service import feedback_quality_signals
 from app.services.model_capabilities import image_generation_capabilities
@@ -30,7 +30,8 @@ _MIN_SAMPLES_FOR_HARD_THRESHOLD = 8
 _HARD_SUCCESS_FLOOR = 0.70
 # Latency score: ~5s → high, ~45s+ → low (successful requests only).
 _LATENCY_HALF_LIFE_MS = 12_000.0
-_AUTO_ROUTER_FAILOVER_LIMIT = 3
+_AUTO_ROUTER_FAILOVER_LIMIT = 2
+_AUTO_ROUTER_MAX_AVG_SUCCESS_MS = 20_000.0
 
 
 @dataclass(frozen=True)
@@ -131,9 +132,12 @@ def image_model_score_details(
         return {"total": 0, "eligible": False, "policy": "measurement-first-v2"}
 
     stable = max(0.0, min(1.0, float(stability_score)))
-    # Preview/experimental maturity soft-damps stability only (not a name-tier boost).
-    if any(x in ext for x in ("preview", "experimental", "beta")):
-        stable *= 0.9
+    is_preview = any(x in ext for x in ("preview", "experimental"))
+    # Preview builds are frequently text-only flakes on OpenRouter image routes.
+    if is_preview:
+        stable *= 0.55
+    elif "beta" in ext:
+        stable *= 0.85
     satisfaction = max(0.0, min(1.0, float(feedback_score)))
     speed = max(0.0, min(1.0, float(latency_score)))
     if avg_success_ms is not None and latency_count > 0:
@@ -155,6 +159,9 @@ def image_model_score_details(
     if below_floor:
         # Keep eligible for failover chains, but demote hard as a primary pick.
         total = max(1, int(total * 0.35))
+    if is_preview:
+        # Keep in the failover chain, but almost never pick as Auto Router primary.
+        total = max(1, int(total * 0.25))
 
     return {
         "total": total,
@@ -168,6 +175,7 @@ def image_model_score_details(
         "latency_score": round(speed, 4),
         "avg_success_ms": round(float(avg_success_ms), 1) if avg_success_ms else None,
         "below_success_floor": below_floor,
+        "is_preview": is_preview,
         "policy": "measurement-first-v2",
         "cost_considered": False,
         "name_strength_considered": False,
@@ -208,21 +216,22 @@ async def _model_runtime_signals(
     db: AsyncSession,
     model_ids: list[str],
 ) -> dict[str, dict[str, float | int | None]]:
-    """Recent success rate + avg successful latency from request_logs."""
+    """Recent per-attempt image reliability, with image request logs as bootstrap."""
     if not model_ids:
         return {}
     cutoff = datetime.utcnow() - _STABILITY_WINDOW
-    rows = (
+
+    attempt_rows = (
         await db.execute(
             select(
-                RequestLog.model_id,
-                func.count(RequestLog.id),
-                func.sum(case((RequestLog.success == True, 1), else_=0)),  # noqa: E712
+                ImageGenerationAttempt.model_id,
+                func.count(ImageGenerationAttempt.id),
+                func.sum(case((ImageGenerationAttempt.success == True, 1), else_=0)),  # noqa: E712
                 func.avg(
                     case(
                         (
-                            RequestLog.success == True,  # noqa: E712
-                            RequestLog.response_time_ms,
+                            ImageGenerationAttempt.success == True,  # noqa: E712
+                            ImageGenerationAttempt.response_time_ms,
                         ),
                         else_=None,
                     )
@@ -230,9 +239,9 @@ async def _model_runtime_signals(
                 func.sum(
                     case(
                         (
-                            (RequestLog.success == True)  # noqa: E712
-                            & (RequestLog.response_time_ms.is_not(None))
-                            & (RequestLog.response_time_ms > 0),
+                            (ImageGenerationAttempt.success == True)  # noqa: E712
+                            & (ImageGenerationAttempt.response_time_ms.is_not(None))
+                            & (ImageGenerationAttempt.response_time_ms > 0),
                             1,
                         ),
                         else_=0,
@@ -240,35 +249,84 @@ async def _model_runtime_signals(
                 ),
             )
             .where(
-                RequestLog.model_id.in_(model_ids),
-                RequestLog.request_time >= cutoff,
+                ImageGenerationAttempt.model_id.in_(model_ids),
+                ImageGenerationAttempt.started_at >= cutoff,
             )
-            .group_by(RequestLog.model_id)
+            .group_by(ImageGenerationAttempt.model_id)
         )
     ).all()
+
     out: dict[str, dict[str, float | int | None]] = {}
-    for model_id, total, successes, avg_ms, latency_n in rows:
-        count = int(total or 0)
-        success_count = int(successes or 0)
-        bayes = (success_count + _STABILITY_PRIOR_MEAN * _STABILITY_PRIOR_WEIGHT) / (
-            count + _STABILITY_PRIOR_WEIGHT
-        )
-        out[str(model_id)] = {
-            "count": count,
-            "score": bayes,
-            "avg_success_ms": float(avg_ms) if avg_ms is not None else None,
-            "latency_count": int(latency_n or 0),
-        }
+
+    def add_rows(rows) -> None:
+        for model_id, total, successes, avg_ms, latency_n in rows:
+            count = int(total or 0)
+            success_count = int(successes or 0)
+            bayes = (
+                success_count + _STABILITY_PRIOR_MEAN * _STABILITY_PRIOR_WEIGHT
+            ) / (count + _STABILITY_PRIOR_WEIGHT)
+            out[str(model_id)] = {
+                "count": count,
+                "score": bayes,
+                "avg_success_ms": float(avg_ms) if avg_ms is not None else None,
+                "latency_count": int(latency_n or 0),
+            }
+
+    add_rows(attempt_rows)
+
+    # Existing installs initially have no attempt table history. Bootstrap only
+    # missing models from actual image operations, never normal text chat.
+    missing = [model_id for model_id in model_ids if model_id not in out]
+    if missing:
+        request_rows = (
+            await db.execute(
+                select(
+                    RequestLog.model_id,
+                    func.count(RequestLog.id),
+                    func.sum(case((RequestLog.success == True, 1), else_=0)),  # noqa: E712
+                    func.avg(
+                        case(
+                            (
+                                RequestLog.success == True,  # noqa: E712
+                                RequestLog.response_time_ms,
+                            ),
+                            else_=None,
+                        )
+                    ),
+                    func.sum(
+                        case(
+                            (
+                                (RequestLog.success == True)  # noqa: E712
+                                & (RequestLog.response_time_ms.is_not(None))
+                                & (RequestLog.response_time_ms > 0),
+                                1,
+                            ),
+                            else_=0,
+                        )
+                    ),
+                )
+                .where(
+                    RequestLog.model_id.in_(missing),
+                    RequestLog.request_time >= cutoff,
+                    RequestLog.client_app.like("Alpha Router Chat (image:%"),
+                )
+                .group_by(RequestLog.model_id)
+            )
+        ).all()
+        add_rows(request_rows)
+
     return out
 
 
 def _image_model_rank(external_id: str, score: int, *, below_floor: bool = False) -> tuple:
-    """Lower tuple wins: prefer above-floor, higher score, non-lite, non-preview."""
+    """Lower tuple wins: above-floor, stable, lite fast-path, then measured score."""
     ext = (external_id or "").lower()
     floor_penalty = 1 if below_floor else 0
-    lite_penalty = 1 if "lite" in ext else 0
-    preview_penalty = 1 if "preview" in ext else 0
-    return (floor_penalty, -score, lite_penalty, preview_penalty, ext)
+    preview_penalty = 2 if "preview" in ext else (1 if "experimental" in ext else 0)
+    # Prefer flash-lite over heavier variants when scores are close — lite has been
+    # the most reliable OpenRouter image path in production.
+    non_lite_penalty = 0 if "lite" in ext else 1
+    return (floor_penalty, preview_penalty, non_lite_penalty, -score, ext)
 
 
 async def list_auto_router_image_candidates(
@@ -300,10 +358,24 @@ async def list_auto_router_image_candidates(
     )
     ranked: list[tuple[tuple, ImageModelResolution]] = []
     for model, conn in rows:
+        external_id = str(model.external_id or "")
+        external_low = external_id.lower()
+        # Auto Router is a fast image path, not a quality/slow-model selector.
+        # Slow GPT image models remain available when users choose them directly.
+        if "gemini" not in external_low:
+            continue
+        if "preview" in external_low or "experimental" in external_low:
+            continue
         signal = feedback.get(str(model.external_id), {})
         runtime_signal = runtime.get(str(model.external_id), {})
         avg_ms = runtime_signal.get("avg_success_ms")
         latency_count = int(runtime_signal.get("latency_count", 0) or 0)
+        if (
+            latency_count > 0
+            and avg_ms is not None
+            and float(avg_ms) > _AUTO_ROUTER_MAX_AVG_SUCCESS_MS
+        ):
+            continue
         details = image_model_score_details(
             model.external_id or "",
             is_image_model=bool(model.is_image_model),
@@ -391,17 +463,11 @@ def is_image_model_failover_error(exc: BaseException) -> bool:
         detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
         low = detail.lower()
         if exc.status_code in {408, 429, 500, 502, 503, 504, 422}:
+            return True
+        if exc.status_code == 400:
             return any(
                 token in low
-                for token in (
-                    "closed the connection",
-                    "disconnected",
-                    "text instead of an image",
-                    "empty response",
-                    "timed out",
-                    "timeout",
-                    "image generation failed",
-                )
+                for token in ("invalid model", "no image data", "model not found")
             )
         return False
     # Transport failures before HTTPException wrapping

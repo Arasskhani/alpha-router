@@ -50,7 +50,7 @@ export const docSections: DocSection[] = [
           <div className="docs-card">
             <h3>Built-in app</h3>
             <p>
-              User panel (<code>/app</code>) and admin panel (<code>/admin</code>) — chat, media, recommendations, and
+              User panel (<code>/app</code>) and admin panel (<code>/admin</code>) — chat, media, and
               full administration in one product.
             </p>
           </div>
@@ -407,9 +407,10 @@ export const docSections: DocSection[] = [
           Provider keys and business policy are configured in the admin UI after login (<strong>Connections</strong>,{" "}
           <strong>Models</strong>, <strong>Plans</strong>)—not via these env vars.
         </p>
-        <h3>Monitoring</h3>
+        <h3>Operations &amp; Database</h3>
         <p>
-          After deploy, use the <strong>Monitoring</strong> sidebar group (see <a href="#admin-monitoring">Monitoring</a>):
+          After deploy, open these pages under the <strong>Overview</strong> sidebar group (see{" "}
+          <a href="#admin-monitoring">Operations &amp; Database</a>):
         </p>
         <ul>
           <li>
@@ -477,7 +478,7 @@ export const docSections: DocSection[] = [
             stats, and manual purge. See <a href="#admin-storage">Retention Policy</a>.
           </li>
           <li>
-            <strong>Monitoring</strong> — Open <a href="#admin-operations">Operations</a> and click <em>Check Now</em> for
+            <strong>Overview</strong> — Open <a href="#admin-operations">Operations</a> and click <em>Check Now</em> for
             an infra snapshot; use <a href="#admin-database">Database</a> to confirm Postgres connectivity and table
             growth.
           </li>
@@ -530,7 +531,7 @@ export const docSections: DocSection[] = [
           </li>
           <li>
             Every admin account also sees the <strong>User panel</strong> group at the top of the admin sidebar (links
-            to <code>/app/chat</code>, Media, Recommendations, and so on).
+            to <code>/app/chat</code>, Media, and so on).
           </li>
         </ul>
         <Note>
@@ -550,8 +551,8 @@ export const docSections: DocSection[] = [
         <p>
           The left sidebar is grouped so related tasks sit together. The top group — <strong>User panel</strong> — links
           to the end-user app (<code>/app</code>) and is always visible to every administrator, regardless of scoped
-          roles. Configuration lives in the middle groups; health and traffic live under <strong>Monitoring</strong>.
-          Only menus your roles grant appear below User panel; Super Admin sees every group.{" "}
+          roles. Configuration lives in the middle groups; Dashboard, Operations, and Database sit under{" "}
+          <strong>Overview</strong>. Only menus your roles grant appear below User panel; Super Admin sees every group.{" "}
           <strong>API Key Admin</strong> sees API Keys under Models &amp; API.
         </p>
         <table className="docs-table">
@@ -565,12 +566,12 @@ export const docSections: DocSection[] = [
           <tbody>
             <tr>
               <td><strong>User panel</strong></td>
-              <td>Chat, Media, Recommendations, Usage &amp; Activity, User Manual (<code>/app/*</code>)</td>
+              <td>Chat, Media, Usage &amp; Activity, User Manual (<code>/app/*</code>)</td>
               <td>Always shown (not RBAC-gated)</td>
             </tr>
             <tr>
               <td><strong>Overview</strong></td>
-              <td>Dashboard, Chat, Media, Usage &amp; Activity, Recommendations</td>
+              <td>Dashboard, Operations, Database</td>
               <td>Super Admin only</td>
             </tr>
             <tr>
@@ -594,11 +595,6 @@ export const docSections: DocSection[] = [
               <td>Super Admin only</td>
             </tr>
             <tr>
-              <td><strong>Monitoring</strong></td>
-              <td>Operations (incl. model experience), Database (read-only monitor)</td>
-              <td>Super Admin only</td>
-            </tr>
-            <tr>
               <td><strong>Developer</strong></td>
               <td>Admin Guide, User Manual</td>
               <td>Super Admin only</td>
@@ -606,8 +602,8 @@ export const docSections: DocSection[] = [
           </tbody>
         </table>
         <p>
-          <strong>Dashboard</strong> vs <strong>Monitoring</strong>: Dashboard summarizes spend, top models/users, and
-          heatmaps for business review. Monitoring focuses on runtime health (CPU, DB ping, errors, latency, slow models)
+          <strong>Dashboard</strong> vs <strong>Operations</strong>: Dashboard summarizes spend, top models/users, and
+          heatmaps for business review. Operations focuses on runtime health (CPU, DB ping, errors, latency, slow models)
           and links into <a href="#admin-logs">API Logs</a> for single-request detail.
         </p>
         <p>
@@ -625,8 +621,10 @@ export const docSections: DocSection[] = [
       <>
         <h2>Dashboard</h2>
         <p>
-          The admin home is the service-wide <strong>Usage &amp; Activity</strong> view: spend, tokens, requests,
-          heatmaps, top models, guardrails, and exports. Use the period selector and timezone (local / UTC). Pair
+          The admin home is the service-wide <strong>Activity</strong> dashboard with tabs{" "}
+          <strong>Overview</strong>, <strong>Trends</strong>, and <strong>Explore</strong>. Overview shows KPIs,
+          top users/apps, and usage charts; timezone, filters, period, group-by, and CSV/PDF export stay in the
+          toolbar. Pair
           trends here with <strong>API Logs</strong> for per-request investigation and{" "}
           <a href="#admin-operations">Operations</a> for latency and infra context.
         </p>
@@ -1011,7 +1009,7 @@ export const docSections: DocSection[] = [
             <code>/admin/api-keys</code>). Does not grant Users, Roles, Connections, or other admin pages.
           </li>
           <li>
-            <strong>User</strong> — Standard end-user panel only: Chat, Media, Recommendations, Usage &amp; Activity,
+            <strong>User</strong> — Standard end-user panel only: Chat, Media, Usage &amp; Activity,
             User Manual (<code>/app</code>). No admin sidebar.
           </li>
         </ul>
@@ -1029,7 +1027,7 @@ export const docSections: DocSection[] = [
         </p>
         <h3>User panel</h3>
         <p>
-          Every administrator still sees the <strong>User panel</strong> group (Chat, Media, Recommendations on{" "}
+          Every administrator still sees the <strong>User panel</strong> group (Chat, Media on{" "}
           <code>/app</code>). Those paths are not gated by admin menu roles. Only deactivated accounts lose write access
           there — see <a href="#user-panel">User panel</a> and the User Manual.
         </p>
@@ -1141,22 +1139,6 @@ export const docSections: DocSection[] = [
             <strong>Usage &amp; Activity</strong> — Combined analytics for all members.
           </li>
         </ul>
-      </>
-    ),
-  },
-  {
-    id: "admin-recommendations",
-    title: "Recommendations",
-    group: "Admin panel",
-    content: (
-      <>
-        <h2>Recommendations</h2>
-        <p>
-          The admin <strong>Recommendations</strong> page (<code>/admin/recommendations</code>) mirrors the user panel view:
-          model suggestions based on your usage profile, quality fit scores, and estimated value. Super Admin only — there
-          is no per-menu Recommendations administrator role. End users open the same experience at{" "}
-          <code>/app/recommendations</code>.
-        </p>
       </>
     ),
   },
@@ -1486,14 +1468,15 @@ export const docSections: DocSection[] = [
   },
   {
     id: "admin-monitoring",
-    title: "Monitoring overview",
-    group: "Monitoring",
+    title: "Operations & Database",
+    group: "Overview",
     content: (
       <>
-        <h2>Monitoring overview</h2>
+        <h2>Operations &amp; Database</h2>
         <p>
-          The <strong>Monitoring</strong> sidebar group is for observing Alpha Router and traffic without changing configuration.
-          It replaced the legacy <strong>Debug</strong> latency page with richer, card-based dashboards.
+          Under the <strong>Overview</strong> sidebar group, <strong>Operations</strong> and <strong>Database</strong>{" "}
+          are for observing Alpha Router and traffic without changing configuration. They replaced the legacy{" "}
+          <strong>Debug</strong> latency page with richer, card-based dashboards.
         </p>
         <table className="docs-table">
           <thead>
@@ -1534,12 +1517,12 @@ export const docSections: DocSection[] = [
   {
     id: "admin-operations",
     title: "Operations",
-    group: "Monitoring",
+    group: "Overview",
     content: (
       <>
         <h2>Operations</h2>
         <p>
-          <strong>Monitoring → Operations</strong> (<code>/admin/operations</code>) is the operational dashboard. Nine metric
+          <strong>Overview → Operations</strong> (<code>/admin/operations</code>) is the operational dashboard. Nine metric
           cards (same visual style as the main Dashboard) in three rows: infrastructure from hourly{" "}
           <strong>system metric snapshots</strong>, API traffic from <strong>request_logs</strong>, and model experience
           for perceived slowness.
@@ -1628,12 +1611,12 @@ export const docSections: DocSection[] = [
   {
     id: "admin-database",
     title: "Database",
-    group: "Monitoring",
+    group: "Overview",
     content: (
       <>
         <h2>Database (read-only monitor)</h2>
         <p>
-          <strong>Monitoring → Database</strong> (<code>/admin/database</code>) shows live status of the application
+          <strong>Overview → Database</strong> (<code>/admin/database</code>) shows live status of the application
           database only—no query editor, no schema changes, no backup/restore buttons.
         </p>
         <h3>Supported engines</h3>
@@ -1718,7 +1701,7 @@ export const docSections: DocSection[] = [
         <h2>User panel (<code>/app</code>)</h2>
         <p>
           End users and administrators share the same user-facing app under <code>/app</code>. Standard users see a
-          focused sidebar: <strong>Chat</strong>, <strong>Media</strong>, <strong>Recommendations</strong>,{" "}
+          focused sidebar: <strong>Chat</strong>, <strong>Media</strong>,{" "}
           <strong>Usage &amp; Activity</strong>, and <strong>User Manual</strong>. Administrators additionally use the
           admin sidebar; its top group — also labeled <strong>User panel</strong> — links to the same{" "}
           <code>/app</code> routes so admins can chat and test models without leaving the admin shell.
@@ -1740,10 +1723,6 @@ export const docSections: DocSection[] = [
               <td>Personal file library from chat uploads and generated images.</td>
             </tr>
             <tr>
-              <td>Recommendations</td>
-              <td>Usage-based model suggestions (quality fit and value picks for your token mix).</td>
-            </tr>
-            <tr>
               <td>Usage &amp; Activity</td>
               <td>Personal spend, tokens, heatmap, exports (CSV/PDF).</td>
             </tr>
@@ -1759,8 +1738,8 @@ export const docSections: DocSection[] = [
           that opens their first allowed admin menu.
         </p>
         <Note>
-          Holding <strong>API Key Admin</strong> does <strong>not</strong> restrict the user panel — chat, media, and
-          recommendations stay fully writable. Only <strong>deactivated accounts</strong> enter account-wide read-only
+          Holding <strong>API Key Admin</strong> does <strong>not</strong> restrict the user panel — chat and media
+          stay fully writable. Only <strong>deactivated accounts</strong> enter account-wide read-only
           mode (see User Manual → Deactivated accounts).
         </Note>
       </>

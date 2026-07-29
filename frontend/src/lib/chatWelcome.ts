@@ -17,11 +17,12 @@ export function isReturningChatUser(sessions: ChatSession[]): boolean {
 }
 
 export function getChatWelcomeHeading(opts: {
-  username: string;
+  /** Prefer display name; username is an acceptable fallback. */
+  name: string;
   isReturning: boolean;
   now?: Date;
 }): string {
-  const name = opts.username.trim() || "there";
+  const name = opts.name.trim() || "there";
   if (opts.isReturning) {
     return `Welcome back, ${name}!`;
   }

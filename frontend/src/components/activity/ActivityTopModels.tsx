@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import ModelProviderIcon from "../ModelProviderIcon";
 import { formatBreakdownValue } from "./formatters";
-import ModelCoinIcon from "./ModelCoinIcon";
 import type { MetricKind, SegmentMeta } from "./types";
 
 type Props = {
@@ -46,7 +46,7 @@ export default function ActivityTopModels({ models, showExplore = true }: Props)
         {ranked.map((m, idx) => (
           <li key={m.key}>
             <span className="activity-top-models__rank">{idx + 1}</span>
-            <ModelCoinIcon title={m.label} />
+            <ModelProviderIcon modelId={m.key} size={18} title={m.label} />
             <span className="activity-top-models__name">{m.label}</span>
             <span className="activity-top-models__value">{formatBreakdownValue(metric, m.value)}</span>
           </li>

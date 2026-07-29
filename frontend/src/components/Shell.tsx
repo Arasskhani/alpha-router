@@ -2,10 +2,14 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import { useCallback, useEffect, useState } from "react";
 import AlphaRouterLogo from "./AlphaRouterLogo";
 import SidebarNav from "./SidebarNav";
-import UserProfile from "./UserProfile";
+import TopbarNav from "./TopbarNav";
 import { useReadOnly } from "../context/ReadOnlyContext";
 import ReadOnlyBanner from "./ReadOnlyBanner";
 import { ShellMenuContext } from "../context/ShellMenuContext";
+import {
+  ChatModelChromeProvider,
+  useChatModelChromeApi,
+} from "../context/ChatModelChromeContext";
 import { PAGE_TITLE } from "../lib/brand";
 import {
   applyThemeToDocument,
@@ -32,6 +36,11 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
   useEffect(() => {
     applyThemeToDocument(theme);
     saveCachedTheme(theme);
+    if (theme !== "system") return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => applyThemeToDocument("system");
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
   }, [theme]);
 
   useEffect(() => {
@@ -57,7 +66,8 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
     if (getSessionUser()) {
       void saveThemeToServer(next).catch(() => {});
     }
-  }, []);  useEffect(() => {
+  }, []);
+  useEffect(() => {
     document.title = PAGE_TITLE;
   }, []);
 
@@ -78,63 +88,86 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
   const readOnly = useReadOnly();
 
   const sidebarInner = (
-    <>
-      <Link to={home} className="sidebar-brand">
-        <AlphaRouterLogo size={30} className="alpha-router-logo--gradient" />
-      </Link>
-      <SidebarNav
-        nav={nav}
-        className="sidebar-nav"
-        onNavigate={() => {
-          if (isChat) setNavPeek(false);
-        }}
-      />
-    </>
+    <SidebarNav
+      nav={nav}
+      className="sidebar-nav"
+      onNavigate={() => {
+        if (isChat) setNavPeek(false);
+      }}
+    />
   );
 
   return (
-    <ShellMenuContext.Provider
-      value={{
-        openAdminMenu: () => {
-          if (isChat) setNavPeek(true);
-        },
-      }}
-    >
-      <div className={`layout${layoutClass}`}>
-        {isChat ? (
-          <div
-            className={`sidebar-flyout${navPeek ? " sidebar-flyout--open" : ""}`}
-            onMouseLeave={() => setNavPeek(false)}
-          >
-            <div
-              className="sidebar-peek-rail"
-              title="Menus"
-              aria-label="Show navigation"
-              onMouseEnter={() => setNavPeek(true)}
-            />
-            <aside
-              className={`sidebar sidebar--flyout${navPeek ? " is-open" : ""}`}
-              onMouseEnter={() => setNavPeek(true)}
-            >
-              {sidebarInner}
-            </aside>
-          </div>
-        ) : (
-          <aside className="sidebar">{sidebarInner}</aside>
-        )}
+    <ChatModelChromeProvider>
+      <ShellMenuContext.Provider
+        value={{
+          openAdminMenu: () => {
+            if (isChat) setNavPeek(true);
+          },
+        }}
+      >
+        <div className={`layout${layoutClass}`}>
+          <header className="app-topbar">
+            <Link to={home} className="topbar-brand">
+              <AlphaRouterLogo size={22} showMark className="alpha-router-logo--gradient" />
+            </Link>
+            {isChat ? <TopbarModelSearch /> : null}
+            <TopbarNav theme={theme} onThemeChange={setTheme} />
+          </header>
 
-        <div className="main-column">
-          {readOnly && !isChat && <ReadOnlyBanner />}
-          {!isChat && (
-            <header className={`app-topbar${isDocs ? " app-topbar--docs" : ""}`}>
-              <UserProfile theme={theme} onThemeChange={setTheme} />
-            </header>
-          )}
-          <main className={`content${contentClass}${readOnly && path.startsWith("/admin") ? " admin-write-locked" : ""}`}>
-            <Outlet context={{ theme, setTheme }} />
-          </main>
+          <div className="layout-body">
+            {isChat ? (
+              <div
+                className={`sidebar-flyout${navPeek ? " sidebar-flyout--open" : ""}`}
+                onMouseLeave={() => setNavPeek(false)}
+              >
+                <div
+                  className="sidebar-peek-rail"
+                  title="Menus"
+                  aria-label="Show navigation"
+                  onMouseEnter={() => setNavPeek(true)}
+                />
+                <aside
+                  className={`sidebar sidebar--flyout${navPeek ? " is-open" : ""}`}
+                  onMouseEnter={() => setNavPeek(true)}
+                >
+                  {sidebarInner}
+                </aside>
+              </div>
+            ) : (
+              <aside className="sidebar">{sidebarInner}</aside>
+            )}
+
+            <div className="main-column">
+              {readOnly && !isChat && <ReadOnlyBanner />}
+              <main className={`content${contentClass}${readOnly && path.startsWith("/admin") ? " admin-write-locked" : ""}`}>
+                <Outlet context={{ theme, setTheme }} />
+              </main>
+            </div>
+          </div>
         </div>
-      </div>
-    </ShellMenuContext.Provider>
+      </ShellMenuContext.Provider>
+    </ChatModelChromeProvider>
+  );
+}
+
+/** Model Search in the app topbar — left-aligned after Alpha Router, at the chat sidebar edge. */
+function TopbarModelSearch() {
+  const api = useChatModelChromeApi();
+  return (
+    <button
+      type="button"
+      className="topbar-model-search"
+      onClick={() => api?.openReplacePicker()}
+      disabled={!api?.modelsReady}
+      aria-label="Search models"
+      title="Search models"
+    >
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+        <circle cx="11" cy="11" r="7" />
+        <path d="M20 20l-3.5-3.5" strokeLinecap="round" />
+      </svg>
+      <span>Search</span>
+    </button>
   );
 }

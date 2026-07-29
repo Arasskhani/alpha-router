@@ -1,13 +1,15 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { useOutletContext } from "react-router-dom";
 import { api, authFetch, formatApiError, getCachedSession, isApiAuthError } from "../api";
 import { chatModelsEmptyMessage, normalizeChatModelsError } from "../lib/chatMessages";
 import AuthenticatedImage from "./AuthenticatedImage";
 import MarkdownContent from "./MarkdownContent";
+import ModelName from "./ModelName";
+import ModelProviderIcon from "./ModelProviderIcon";
 import ReadOnlyBanner from "./ReadOnlyBanner";
 import { useReadOnly } from "../context/ReadOnlyContext";
 import { useShellMenu } from "../context/ShellMenuContext";
+import { useChatModelChromeRegister } from "../context/ChatModelChromeContext";
 import { useConfirm } from "../context/ConfirmContext";
 import RowActionsMenu from "./RowActionsMenu";
 import ColorPickerModal from "./ColorPickerModal";
@@ -85,14 +87,17 @@ import { copyFreshChatTools, toolsToApiPayload, type ChatToolsState } from "../l
 import ChatAttachmentMessage from "./chat/ChatAttachmentMessage";
 import ChatAudioMessage from "./chat/ChatAudioMessage";
 import ServerToolsMenu from "./chat/ServerToolsMenu";
+import ChatModelPickerModal from "./chat/ChatModelPickerModal";
 import {
-  ComposerModelIcon,
   ComposerToolsIcon,
   ComposerTranslateIcon,
 } from "./chat/ComposerControlIcons";
+import {
+  MAX_MULTI_MODELS,
+  shortcutModKey,
+} from "../lib/chatModelPresets";
 import { DownloadIcon, OpenFullSizeIcon, RegenerateIcon, CsvIcon, PdfIcon, DocIcon } from "./chat/GeneratedImageIcons";
 import VirtualSidebarList from "./chat/ChatSidebarVirtual";
-import UserProfile from "./UserProfile";
 import PrivateModeLockIcon from "./chat/PrivateModeLockIcon";
 import { BrowserSpeechCapture, pickVoiceRecordingMime } from "../lib/voiceInput";
 import {
@@ -141,7 +146,6 @@ import {
   resolveSessionModelForTools,
 } from "../lib/chatImageModels";
 import {
-  findAutoRouterModel,
   findGrok43Model,
   isAutoRouterModel,
   resolveDefaultModelPreference,
@@ -168,11 +172,6 @@ import {
   isReturningChatUser,
   shouldShowWelcomeComposerPrompt,
 } from "../lib/chatWelcome";
-
-type ShellOutletContext = {
-  theme?: "light" | "dark";
-  setTheme?: (theme: "light" | "dark") => void;
-};
 
 type Model = {
   id: string;
@@ -351,6 +350,17 @@ function extractMarkdownImage(content: string): { imageUrl: string | null; text:
   return { imageUrl: m[1], text: cleaned };
 }
 
+/** CSV / Word / PDF actions only for real text replies (not image/audio/pending). */
+function isTextAssistantExportable(content: string): boolean {
+  if (!content?.trim()) return false;
+  if (content === IMAGE_PENDING_MARKER) return false;
+  if (readImageMessage(content)) return false;
+  if (readAudioMessage(content)) return false;
+  const md = extractMarkdownImage(content);
+  if (md.imageUrl && !md.text.trim()) return false;
+  return true;
+}
+
 function formatChatMessageTime(ts?: number): string | null {
   return formatLocalDateTimeFromMs(ts);
 }
@@ -414,15 +424,21 @@ function PrivateModeStrip() {
 export default function ChatPanel() {
   const readOnly = useReadOnly();
   const shellMenu = useShellMenu();
+  const registerModelChrome = useChatModelChromeRegister();
   const { confirm } = useConfirm();
-  const { theme = "light", setTheme = () => {} } = useOutletContext<ShellOutletContext>() ?? {};
   const [models, setModels] = useState<Model[]>([]);
   const [modelsError, setModelsError] = useState("");
   const [model, setModel] = useState("");
-  const [modelSearch, setModelSearch] = useState("");
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  /** Multi-model selection; send fans out to each id in order (primary = first). */
+  const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
+  const selectedModelIdsRef = useRef<string[]>([]);
+  selectedModelIdsRef.current = selectedModelIds;
+  const [modelPickerMode, setModelPickerMode] = useState<"replace" | "append" | null>(null);
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
-  const sessionUsername = getSessionUser()?.username ?? "";
+  const sessionUser = getSessionUser();
+  const sessionUsername = sessionUser?.username ?? "";
+  const welcomeName = sessionUser?.display_name || sessionUsername;
+  const modKey = useMemo(() => shortcutModKey(), []);
   const [chatTools, setChatTools] = useState<ChatToolsState>(() => copyFreshChatTools());
   const chatToolsRef = useRef(chatTools);
   chatToolsRef.current = chatTools;
@@ -479,7 +495,6 @@ export default function ChatPanel() {
   const pinScrollToBottomRef = useRef(true);
   const [showScrollToBottomBtn, setShowScrollToBottomBtn] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const modelMenuRef = useRef<HTMLDivElement>(null);
   const toolsMenuRef = useRef<HTMLDivElement>(null);
   const toolsTriggerRef = useRef<HTMLButtonElement>(null);
   const activeIdRef = useRef<string | null>(null);
@@ -529,7 +544,7 @@ export default function ChatPanel() {
   const activeQueue = activeId ? promptQueues[activeId] || [] : [];
   const returningChatUser = isReturningChatUser(sessions);
   const welcomeHeading = getChatWelcomeHeading({
-    username: sessionUsername,
+    name: welcomeName,
     isReturning: returningChatUser,
   });
   const showWelcomeComposerPrompt = shouldShowWelcomeComposerPrompt({
@@ -596,22 +611,23 @@ export default function ChatPanel() {
     [scrollChatToBottom],
   );
 
-  const filteredModels = useMemo(() => {
-    const q = modelSearch.trim().toLowerCase();
+  const pickerModels = useMemo((): Model[] => {
     const matched = models.filter((m) => {
-      if (chatTools.imageGeneration) {
-        if (!modelSupportsImages(m, models)) return false;
-      }
-      if (!q) return true;
-      const name = (m.name || "").toLowerCase();
-      const id = (m.id || "").toLowerCase();
-      const ext = (m.external_id || "").toLowerCase();
-      return name.includes(q) || id.includes(q) || ext.includes(q);
+      if (chatTools.imageGeneration && !modelSupportsImages(m, models)) return false;
+      return true;
     });
-    const autoRouter = findAutoRouterModel(matched);
+    const autoRouter = matched.find((m) => isAutoRouterModel(m));
     if (!autoRouter) return matched;
     return [autoRouter, ...matched.filter((m) => m.id !== autoRouter.id)];
-  }, [models, modelSearch, chatTools.imageGeneration]);
+  }, [models, chatTools.imageGeneration]);
+
+  const selectedModels = useMemo(
+    () =>
+      selectedModelIds
+        .map((id) => models.find((m) => m.id === id))
+        .filter((m): m is Model => !!m),
+    [selectedModelIds, models],
+  );
 
   const activeSession = activeId ? sessions.find((s) => s.id === activeId) : null;
   const activePrivateMode = isPrivateChat(activeSession);
@@ -1763,17 +1779,6 @@ export default function ChatPanel() {
   }, [input]);
 
   useEffect(() => {
-    if (!modelMenuOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      if (modelMenuRef.current && !modelMenuRef.current.contains(e.target as Node)) {
-        setModelMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [modelMenuOpen]);
-
-  useEffect(() => {
     if (!toolsMenuOpen) return;
     const onDoc = (e: MouseEvent) => {
       const target = e.target as Node;
@@ -1784,6 +1789,61 @@ export default function ChatPanel() {
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, [toolsMenuOpen]);
+
+  // Reset pills when switching chats. Same-session multi-select is owned by
+  // replace/append/remove helpers (Search replaces; Add Model appends).
+  const selectionSessionRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectionSessionRef.current === activeId) return;
+    selectionSessionRef.current = activeId;
+    setSelectedModelIds(model ? [model] : []);
+  }, [activeId, model]);
+
+  // If primary model is healed/changed without going through the picker, keep
+  // it in the selection (as first) without dropping other selected models.
+  useEffect(() => {
+    if (!activeId || selectionSessionRef.current !== activeId) return;
+    if (!model) {
+      setSelectedModelIds([]);
+      return;
+    }
+    setSelectedModelIds((prev) => {
+      if (prev.length === 0) return [model];
+      if (prev[0] === model) return prev;
+      if (prev.includes(model)) return [model, ...prev.filter((id) => id !== model)];
+      return [model];
+    });
+  }, [model, activeId]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      if (e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setToolsMenuOpen(false);
+        setModelPickerMode("replace");
+      } else if (e.key.toLowerCase() === "j") {
+        e.preventDefault();
+        setToolsMenuOpen(false);
+        setModelPickerMode("append");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
+    registerModelChrome({
+      openReplacePicker: () => {
+        setToolsMenuOpen(false);
+        setModelPickerMode("replace");
+      },
+      modelsReady: models.length > 0,
+      modKey,
+    });
+    return () => registerModelChrome(null);
+  }, [registerModelChrome, models.length, modKey]);
 
   async function apiMessages(
     history: ChatMessage[],
@@ -1808,12 +1868,15 @@ export default function ChatPanel() {
     tools: ChatToolsState = chatTools,
     persist?: {
       sessionId: string;
-      userMessage: ChatMessage;
+      userMessage?: ChatMessage;
       assistantClientMessageId: string;
+      /** Default true. False = append assistant only (later models in a multi-model turn). */
+      includeUserMessage?: boolean;
     },
     privateMode = false,
   ) {
     const toolsPayload = toolsToApiPayload(tools);
+    const includeUser = persist?.includeUserMessage !== false && persist?.userMessage;
     return {
       model: modelId,
       messages: await apiMessages(history, forModel, privateMode),
@@ -1823,12 +1886,16 @@ export default function ChatPanel() {
         ? {
             chat_session_id: persist.sessionId,
             persist_chat: true,
-            user_message: {
-              role: persist.userMessage.role,
-              content: persist.userMessage.content,
-              clientMessageId: persist.userMessage.clientMessageId,
-              sentAt: persist.userMessage.sentAt,
-            },
+            ...(includeUser && persist.userMessage
+              ? {
+                  user_message: {
+                    role: persist.userMessage.role,
+                    content: persist.userMessage.content,
+                    clientMessageId: persist.userMessage.clientMessageId,
+                    sentAt: persist.userMessage.sentAt,
+                  },
+                }
+              : {}),
             assistant_client_message_id: persist.assistantClientMessageId,
           }
         : {}),
@@ -2248,29 +2315,67 @@ export default function ChatPanel() {
     );
   }
 
-  function pickModel(id: string) {
-    setModel(id);
-    setModelMenuOpen(false);
-    setModelSearch("");
+  function persistSessionPrimaryModel(id: string) {
     setChatError("");
     const sid = activeIdRef.current || ensureActiveSession();
-    if (sid) {
-      persistSessions(
-        (prev) =>
-          prev.map((s) => (s.id === sid ? { ...s, model: id } : s)),
-        { debounce: false, metadataSessionIds: [sid] },
-      );
-      if (!sessionPrivateMode(sid)) {
-        void pushSessionMetadataToServer(sid).catch(() => {});
-      }
+    if (!sid) return;
+    persistSessions(
+      (prev) => prev.map((s) => (s.id === sid ? { ...s, model: id } : s)),
+      { debounce: false, metadataSessionIds: [sid] },
+    );
+    if (!sessionPrivateMode(sid)) {
+      void pushSessionMetadataToServer(sid).catch(() => {});
     }
+  }
+
+  /** Search modal: replace entire multi-selection with one model. */
+  function replaceModelSelection(id: string) {
+    setModel(id);
+    setSelectedModelIds([id]);
+    setModelPickerMode(null);
+    persistSessionPrimaryModel(id);
+  }
+
+  /** Add Model: append for multi-model UI (blocked while Image Generation is on). */
+  function appendModelSelection(id: string) {
+    if (chatToolsRef.current.imageGeneration) {
+      // Image generation is single-model only — Add Model replaces the primary.
+      replaceModelSelection(id);
+      return;
+    }
+    setSelectedModelIds((prev) => {
+      if (prev.includes(id)) return prev;
+      if (prev.length >= MAX_MULTI_MODELS) return prev;
+      const next = prev.length === 0 ? [id] : [...prev, id];
+      if (prev.length === 0) {
+        setModel(id);
+        persistSessionPrimaryModel(id);
+      }
+      return next;
+    });
+    setModelPickerMode(null);
+  }
+
+  function removeSelectedModel(id: string) {
+    setSelectedModelIds((prev) => {
+      const next = prev.filter((x) => x !== id);
+      if (id === model) {
+        const primary = next[0] || "";
+        setModel(primary);
+        if (primary) persistSessionPrimaryModel(primary);
+      }
+      return next;
+    });
+  }
+
+  function pickModel(id: string) {
+    replaceModelSelection(id);
   }
 
   function resolveImageGenerationModel(candidate: Model): Model {
     if (isAutoRouterModel(candidate)) return candidate;
-    const resolved = resolveConcreteImageModel(models, candidate);
-    if (resolved.id !== candidate.id) pickModel(resolved.id);
-    return resolved;
+    // Resolve for the request only — do not collapse multi-selection via pickModel.
+    return resolveConcreteImageModel(models, candidate);
   }
 
   function willRoutePromptToImageGeneration(
@@ -2291,9 +2396,9 @@ export default function ChatPanel() {
     );
   }
 
-  function setAsDefaultModel(id: string, e: React.MouseEvent) {
-    e.stopPropagation();
-    e.preventDefault();
+  function setAsDefaultModel(id: string, e?: { stopPropagation(): void; preventDefault(): void }) {
+    e?.stopPropagation();
+    e?.preventDefault();
     setDefaultModel(id);
     serverDefaultModelRef.current = id;
     void saveDefaultModelToServer(id)
@@ -2316,8 +2421,9 @@ export default function ChatPanel() {
     tools: ChatToolsState = chatTools,
     persist?: {
       sessionId: string;
-      userMessage: ChatMessage;
+      userMessage?: ChatMessage;
       assistantClientMessageId: string;
+      includeUserMessage?: boolean;
     },
     privateMode = false,
   ): Promise<string> {
@@ -2377,6 +2483,15 @@ export default function ChatPanel() {
   type TextTurnPersistCtx = {
     userMessage: ChatMessage;
     assistantClientMessageId: string;
+    /** When false, server appends only the assistant row (multi-model siblings). */
+    includeUserMessage?: boolean;
+  };
+
+  type RunChatTurnOptions = {
+    skipTitle?: boolean;
+    skipReconcile?: boolean;
+    /** When false, never route this turn to /api/images (multi-model text siblings). */
+    allowImageRoute?: boolean;
   };
 
   function historyForCompletionApi(history: ChatMessage[]): ChatMessage[] {
@@ -2385,6 +2500,55 @@ export default function ChatPanel() {
       return history.slice(0, -1);
     }
     return history;
+  }
+
+  /** API history for a multi-model turn: through the user message only (no sibling assistants). */
+  function historyThroughUserMessage(
+    messages: ChatMessage[],
+    userMessage: ChatMessage,
+  ): ChatMessage[] {
+    let uidx = -1;
+    if (userMessage.clientMessageId) {
+      uidx = messages.findIndex((m) => m.clientMessageId === userMessage.clientMessageId);
+    }
+    if (uidx < 0 && userMessage.sentAt != null) {
+      uidx = messages.findIndex((m) => m.role === "user" && m.sentAt === userMessage.sentAt);
+    }
+    if (uidx < 0) {
+      for (let i = messages.length - 1; i >= 0; i -= 1) {
+        if (messages[i]?.role === "user") {
+          uidx = i;
+          break;
+        }
+      }
+    }
+    if (uidx < 0) return historyForModelRequest(historyForCompletionApi(messages));
+    return historyForModelRequest(messages.slice(0, uidx + 1));
+  }
+
+  function resolveTurnModels(primary: Model): Model[] {
+    const ids = selectedModelIdsRef.current.length
+      ? selectedModelIdsRef.current
+      : [primary.id];
+    const out: Model[] = [];
+    const seen = new Set<string>();
+    for (const id of ids) {
+      const m =
+        models.find((x) => x.id === id) || models.find((x) => x.external_id === id);
+      if (!m || seen.has(m.id)) continue;
+      seen.add(m.id);
+      out.push(m);
+      if (out.length >= MAX_MULTI_MODELS) break;
+    }
+    return out.length ? out : [primary];
+  }
+
+  function friendlyTurnError(err: unknown): string {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("network") || message === "Failed to fetch") {
+      return "Cannot reach Alpha Router API. Check that Docker is running and hard-refresh (Ctrl+Shift+R).";
+    }
+    return message;
   }
 
   async function syncTextTurnToServer(
@@ -2412,6 +2576,7 @@ export default function ChatPanel() {
     controller: AbortController,
     turnBaseCount: number,
     persistCtx?: TextTurnPersistCtx,
+    options?: RunChatTurnOptions,
   ) {
     const emptyReply =
       "No response from model. Check Connections and enable the model in Admin → Models.";
@@ -2434,11 +2599,14 @@ export default function ChatPanel() {
       scopedHistory.slice(0, -1),
       usePriorImage,
     );
-    const turnModel = turnTools.imageGeneration
-      ? resolveImageGenerationModel(primaryModel)
-      : primaryModel;
+    const allowImageRoute = options?.allowImageRoute !== false;
+    const turnModel =
+      allowImageRoute && turnTools.imageGeneration
+        ? resolveImageGenerationModel(primaryModel)
+        : primaryModel;
 
     if (
+      allowImageRoute &&
       shouldRouteToImageGeneration(
         userContent,
         turnTools.imageGeneration,
@@ -2534,6 +2702,7 @@ export default function ChatPanel() {
       persistCtx?.userMessage ??
       historyForApi.filter((m) => m.role === "user").at(-1) ??
       historyWithUser.at(-1)!;
+    const includeUserMessage = persistCtx?.includeUserMessage !== false;
 
     if (!persistCtx) {
       const placeholder: ChatMessage = {
@@ -2550,26 +2719,42 @@ export default function ChatPanel() {
       }
     }
 
+    const liveForApi = getSessionMessages(sid);
+    const apiHistory = historyThroughUserMessage(
+      liveForApi.length ? liveForApi : historyWithUser,
+      userMsg,
+    );
+
+    const patchAssistantInSession = (content: string, receivedAt?: number) => {
+      const current = getSessionMessages(sid);
+      const idx = current.findIndex((m) => m.clientMessageId === assistantClientMessageId);
+      const assistantMsg: ChatMessage = {
+        role: "assistant",
+        content,
+        clientMessageId: assistantClientMessageId,
+        modelId: primaryModel.id,
+        modelName: primaryModel.name,
+        ...(receivedAt != null ? { receivedAt } : {}),
+      };
+      if (idx >= 0) {
+        const next = [...current];
+        next[idx] = { ...current[idx], ...assistantMsg };
+        return next;
+      }
+      return [...apiHistory, assistantMsg];
+    };
+
     const useServerPersist = !sessionPrivateMode(sid);
     const assistant = await streamTextCompletion(
       primaryModel.id,
-      historyForApi,
+      apiHistory,
       primaryModel,
       controller.signal,
       (content) => {
         if (turnPhasesRef.current[sid] !== "writing") {
           setTurnPhase(sid, "writing");
         }
-        applyMessagesStreaming(sid, [
-          ...historyForApi,
-          {
-            role: "assistant",
-            content,
-            clientMessageId: assistantClientMessageId,
-            modelId: primaryModel.id,
-            modelName: primaryModel.name,
-          },
-        ]);
+        applyMessagesStreaming(sid, patchAssistantInSession(content));
       },
       turnTools,
       useServerPersist
@@ -2577,25 +2762,16 @@ export default function ChatPanel() {
             sessionId: sid,
             userMessage: userMsg,
             assistantClientMessageId,
+            includeUserMessage,
           }
         : undefined,
       sessionPrivateMode(sid),
     );
     const receivedAt = Date.now();
     const finalContent = assistant.trim() ? assistant : emptyReply;
-    const finalMsgs: ChatMessage[] = [
-      ...historyForApi,
-      {
-        role: "assistant",
-        content: finalContent,
-        receivedAt,
-        clientMessageId: assistantClientMessageId,
-        modelId: primaryModel.id,
-        modelName: primaryModel.name,
-      },
-    ];
+    const finalMsgs = patchAssistantInSession(finalContent, receivedAt);
     applyMessages(sid, finalMsgs);
-    if (useServerPersist) {
+    if (useServerPersist && !options?.skipReconcile) {
       void fetchSessionWithMessages(sid).then((remote) => {
         if (!remote?.messages.length) return;
         if (activeIdRef.current !== sid && !sessionsRef.current.some((s) => s.id === sid)) return;
@@ -2609,7 +2785,9 @@ export default function ChatPanel() {
       });
     }
     patchDefaultTitleFromMessages(sid, finalMsgs);
-    void scheduleSessionTitle(sid, primaryModel.id, finalMsgs);
+    if (!options?.skipTitle) {
+      void scheduleSessionTitle(sid, primaryModel.id, finalMsgs);
+    }
   }
 
   async function togglePrivateMode(next: boolean) {
@@ -2670,7 +2848,15 @@ export default function ChatPanel() {
       const current = models.find((m) => m.id === model);
       if (!current || !modelSupportsImages(current, models)) {
         const fallback = findImageGenerationFallbackModel(models);
-        if (fallback) pickModel(fallback.id);
+        if (fallback) {
+          pickModel(fallback.id);
+          return;
+        }
+      }
+      // Image generation is single-model — collapse any multi-selection to primary.
+      const primary = current?.id || model;
+      if (primary) {
+        setSelectedModelIds((prev) => (prev.length <= 1 ? prev : [primary]));
       }
     }
   }
@@ -2872,15 +3058,22 @@ export default function ChatPanel() {
     }
 
     const localMsgs = getSessionMessages(sid);
-    const last = localMsgs.at(-1);
     if (localMsgs.some((m) => m.content === IMAGE_PENDING_MARKER)) {
       applyMessages(sid, buildStoppedImageMessages(localMsgs));
-    } else if (last?.role === "assistant" && !last.receivedAt) {
-      const content = (last.content || "").trim() ? last.content : "Generation stopped.";
-      applyMessages(sid, [
-        ...localMsgs.slice(0, -1),
-        { ...last, content, receivedAt: Date.now() },
-      ]);
+    } else {
+      let lastUserIdx = -1;
+      for (let i = 0; i < localMsgs.length; i += 1) {
+        if (localMsgs[i]?.role === "user") lastUserIdx = i;
+      }
+      let changed = false;
+      const stoppedAt = Date.now();
+      const next = localMsgs.map((m, i) => {
+        if (i <= lastUserIdx || m.role !== "assistant" || m.receivedAt != null) return m;
+        changed = true;
+        const content = (m.content || "").trim() ? m.content : "Generation stopped.";
+        return { ...m, content, receivedAt: stoppedAt };
+      });
+      if (changed) applyMessages(sid, next);
     }
 
     setSessionStreaming(sid, false);
@@ -3004,15 +3197,6 @@ export default function ChatPanel() {
       : { role: "user", content: userText.trim(), sentAt, clientMessageId: newClientMessageId() };
     const prevMsgs = getSessionMessages(sessionId);
     const turnBaseCount = prevMsgs.length;
-    const assistantClientMessageId = newClientMessageId();
-    const placeholder: ChatMessage = {
-      role: "assistant",
-      content: "",
-      clientMessageId: assistantClientMessageId,
-      modelId: validModel.id,
-      modelName: validModel.name,
-    };
-    const next = [...prevMsgs, userMsg, placeholder];
     pinScrollToBottomRef.current = true;
     const turnSession = sessionsRef.current.find((s) => s.id === sessionId);
     const toolsForTurn =
@@ -3023,23 +3207,153 @@ export default function ChatPanel() {
       validModel,
       prevMsgs,
     );
+    // Image generation is always single-model (primary only).
+    const turnModels = willRouteToImage || toolsForTurn.imageGeneration
+      ? [validModel]
+      : resolveTurnModels(validModel);
     const controller = new AbortController();
     abortControllersRef.current[sessionId] = controller;
     setSessionStreaming(sessionId, true);
     setTurnPhase(sessionId, toolsForTurn.webSearch ? "searching" : "preparing");
-    flushSync(() => {
-      if (willRouteToImage) {
-        updateSessionMessages(sessionId, next);
-      } else {
-        applyMessages(sessionId, next);
+
+    // Image generation stays primary-model only.
+    if (willRouteToImage) {
+      const assistantClientMessageId = newClientMessageId();
+      const next: ChatMessage[] = [
+        ...prevMsgs,
+        userMsg,
+        {
+          role: "assistant",
+          content: "",
+          clientMessageId: assistantClientMessageId,
+          modelId: validModel.id,
+          modelName: validModel.name,
+        },
+      ];
+      flushSync(() => updateSessionMessages(sessionId, next));
+      scrollAfterNewTurn(sessionId);
+      patchDefaultTitleFromMessages(sessionId, next);
+      try {
+        await runChatTurn(sessionId, next, validModel, controller, turnBaseCount, {
+          userMessage: userMsg,
+          assistantClientMessageId,
+        });
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          if (!sessionPrivateMode(sessionId)) {
+            void cancelStreamingReplyOnServer(sessionId).catch(() => {});
+            void fetchSessionWithMessages(sessionId).then((remote) => {
+              if (remote?.messages.length && activeIdRef.current === sessionId) {
+                applyMessages(sessionId, remote.messages);
+              }
+            });
+          }
+          return;
+        }
+        const friendly = friendlyTurnError(err);
+        const errMsgs: ChatMessage[] = [
+          ...next,
+          { role: "assistant", content: `Error: ${friendly}`, receivedAt: Date.now() },
+        ];
+        applyMessages(sessionId, errMsgs);
+        if (!sessionPrivateMode(sessionId)) {
+          const assistantOnly = errMsgs[errMsgs.length - 1];
+          void finalizeAssistantOnServer(sessionId, assistantOnly.content, {
+            receivedAt: assistantOnly.receivedAt,
+            modelId: validModel.id,
+            modelName: validModel.name,
+          }).catch((e) => reportSyncError(e, sessionId));
+        }
+        void scheduleSessionTitle(sessionId, validModel.id, errMsgs);
+      } finally {
+        delete abortControllersRef.current[sessionId];
+        setSessionStreaming(sessionId, false);
       }
-    });
+      return;
+    }
+
+    flushSync(() => applyMessages(sessionId, [...prevMsgs, userMsg]));
     scrollAfterNewTurn(sessionId);
-    patchDefaultTitleFromMessages(sessionId, next);
-    const persistCtx: TextTurnPersistCtx = { userMessage: userMsg, assistantClientMessageId };
-    // Server ChatCompletionPersister owns message writes when persist_chat is enabled.
+    patchDefaultTitleFromMessages(sessionId, [...prevMsgs, userMsg]);
+
     try {
-      await runChatTurn(sessionId, next, validModel, controller, turnBaseCount, persistCtx);
+      for (let i = 0; i < turnModels.length; i += 1) {
+        if (controller.signal.aborted) break;
+        const turnModel = turnModels[i];
+        const assistantClientMessageId = newClientMessageId();
+        const placeholder: ChatMessage = {
+          role: "assistant",
+          content: "",
+          clientMessageId: assistantClientMessageId,
+          modelId: turnModel.id,
+          modelName: turnModel.name,
+        };
+        const withPlaceholder = [...getSessionMessages(sessionId), placeholder];
+        flushSync(() => applyMessages(sessionId, withPlaceholder));
+        const isLast = i === turnModels.length - 1;
+        try {
+          await runChatTurn(
+            sessionId,
+            withPlaceholder,
+            turnModel,
+            controller,
+            turnBaseCount,
+            {
+              userMessage: userMsg,
+              assistantClientMessageId,
+              includeUserMessage: i === 0,
+            },
+            {
+              skipTitle: true,
+              skipReconcile: !isLast,
+              // Multi-model text siblings must never fan out to /api/images.
+              allowImageRoute: false,
+            },
+          );
+        } catch (err) {
+          if (err instanceof DOMException && err.name === "AbortError") throw err;
+          const friendly = friendlyTurnError(err);
+          const current = getSessionMessages(sessionId);
+          const idx = current.findIndex((m) => m.clientMessageId === assistantClientMessageId);
+          const errAssistant: ChatMessage = {
+            role: "assistant",
+            content: `Error: ${friendly}`,
+            receivedAt: Date.now(),
+            clientMessageId: assistantClientMessageId,
+            modelId: turnModel.id,
+            modelName: turnModel.name,
+          };
+          const errMsgs =
+            idx >= 0
+              ? current.map((m, j) => (j === idx ? errAssistant : m))
+              : [...current, errAssistant];
+          applyMessages(sessionId, errMsgs);
+          if (!sessionPrivateMode(sessionId)) {
+            void finalizeAssistantOnServer(sessionId, errAssistant.content, {
+              receivedAt: errAssistant.receivedAt,
+              modelId: turnModel.id,
+              modelName: turnModel.name,
+            }).catch((e) => reportSyncError(e, sessionId));
+          }
+        }
+      }
+      const finalMsgs = getSessionMessages(sessionId);
+      void scheduleSessionTitle(sessionId, turnModels[0].id, finalMsgs);
+      if (!sessionPrivateMode(sessionId)) {
+        void fetchSessionWithMessages(sessionId).then((remote) => {
+          if (!remote?.messages.length) return;
+          if (activeIdRef.current !== sessionId && !sessionsRef.current.some((s) => s.id === sessionId)) {
+            return;
+          }
+          const local = getLocalMessagesForSession(sessionId);
+          const reconciled = mergeChatMessagesPreferLocal(
+            local,
+            remote.messages,
+            isLocalWorkInFlight(sessionId),
+          );
+          applyMessages(sessionId, reconciled);
+        });
+      }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
         if (!sessionPrivateMode(sessionId)) {
@@ -3052,25 +3366,8 @@ export default function ChatPanel() {
         }
         return;
       }
-      const message = err instanceof Error ? err.message : String(err);
-      const friendly =
-        message.includes("network") || message === "Failed to fetch"
-          ? "Cannot reach Alpha Router API. Check that Docker is running and hard-refresh (Ctrl+Shift+R)."
-          : message;
-      const errMsgs: ChatMessage[] = [
-        ...next,
-        { role: "assistant", content: `Error: ${friendly}`, receivedAt: Date.now() },
-      ];
-      applyMessages(sessionId, errMsgs);
-      if (!sessionPrivateMode(sessionId)) {
-        const assistantOnly = errMsgs[errMsgs.length - 1];
-        void finalizeAssistantOnServer(sessionId, assistantOnly.content, {
-          receivedAt: assistantOnly.receivedAt,
-          modelId: validModel.id,
-          modelName: validModel.name,
-        }).catch((err) => reportSyncError(err, sessionId));
-      }
-      void scheduleSessionTitle(sessionId, validModel.id, errMsgs);
+      const friendly = friendlyTurnError(err);
+      setChatError(friendly);
     } finally {
       delete abortControllersRef.current[sessionId];
       setSessionStreaming(sessionId, false);
@@ -3315,6 +3612,20 @@ export default function ChatPanel() {
     }
     if (validModel.id !== model) pickModel(validModel.id);
 
+    const toolsForRetry =
+      sid === activeIdRef.current
+        ? chatToolsRef.current
+        : sessionTools(sessionsRef.current.find((s) => s.id === sid));
+    const willRouteToImage = willRoutePromptToImageGeneration(
+      target.content,
+      toolsForRetry,
+      validModel,
+      messages.slice(0, index),
+    );
+    const turnModels =
+      willRouteToImage || toolsForRetry.imageGeneration
+        ? [validModel]
+        : resolveTurnModels(validModel);
     const base = messages.slice(0, index);
     const turnBaseCount = base.length;
     const userMsg: ChatMessage = {
@@ -3323,47 +3634,110 @@ export default function ChatPanel() {
       sentAt: Date.now(),
       clientMessageId: newClientMessageId(),
     };
-    const assistantClientMessageId = newClientMessageId();
-    const placeholder: ChatMessage = {
-      role: "assistant",
-      content: "",
-      clientMessageId: assistantClientMessageId,
-      modelId: validModel.id,
-      modelName: validModel.name,
-    };
-    const next: ChatMessage[] = [...base, userMsg, placeholder];
     pinScrollToBottomRef.current = true;
     const controller = new AbortController();
     abortControllersRef.current[sid] = controller;
     setSessionStreaming(sid, true);
     setChatError("");
-    flushSync(() => applyMessages(sid, next));
-    scrollAfterNewTurn(sid);
-    const persistCtx: TextTurnPersistCtx = { userMessage: userMsg, assistantClientMessageId };
 
-    try {
-      await runChatTurn(sid, next, validModel, controller, turnBaseCount, persistCtx);
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") return;
-      const message = err instanceof Error ? err.message : String(err);
-      const friendly =
-        message.includes("network") || message === "Failed to fetch"
-          ? "Cannot reach Alpha Router API. Check that Docker is running and hard-refresh (Ctrl+Shift+R)."
-          : message;
-      const errMsgs: ChatMessage[] = [
-        ...next,
-        { role: "assistant", content: `Error: ${friendly}`, receivedAt: Date.now() },
-      ];
-      applyMessages(sid, errMsgs);
-      if (!sessionPrivateMode(sid)) {
-        const assistantOnly = errMsgs[errMsgs.length - 1];
-        void finalizeAssistantOnServer(sid, assistantOnly.content, {
-          receivedAt: assistantOnly.receivedAt,
+    if (willRouteToImage) {
+      const assistantClientMessageId = newClientMessageId();
+      const next: ChatMessage[] = [
+        ...base,
+        userMsg,
+        {
+          role: "assistant",
+          content: "",
+          clientMessageId: assistantClientMessageId,
           modelId: validModel.id,
           modelName: validModel.name,
-        }).catch((err) => reportSyncError(err, sid));
+        },
+      ];
+      flushSync(() => applyMessages(sid, next));
+      scrollAfterNewTurn(sid);
+      try {
+        await runChatTurn(sid, next, validModel, controller, turnBaseCount, {
+          userMessage: userMsg,
+          assistantClientMessageId,
+        });
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setChatError(friendlyTurnError(err));
+      } finally {
+        delete abortControllersRef.current[sid];
+        setSessionStreaming(sid, false);
       }
-      void scheduleSessionTitle(sid, validModel.id, errMsgs);
+      return;
+    }
+
+    flushSync(() => applyMessages(sid, [...base, userMsg]));
+    scrollAfterNewTurn(sid);
+
+    try {
+      for (let i = 0; i < turnModels.length; i += 1) {
+        if (controller.signal.aborted) break;
+        const turnModel = turnModels[i];
+        const assistantClientMessageId = newClientMessageId();
+        const placeholder: ChatMessage = {
+          role: "assistant",
+          content: "",
+          clientMessageId: assistantClientMessageId,
+          modelId: turnModel.id,
+          modelName: turnModel.name,
+        };
+        const withPlaceholder = [...getSessionMessages(sid), placeholder];
+        flushSync(() => applyMessages(sid, withPlaceholder));
+        const isLast = i === turnModels.length - 1;
+        try {
+          await runChatTurn(
+            sid,
+            withPlaceholder,
+            turnModel,
+            controller,
+            turnBaseCount,
+            {
+              userMessage: userMsg,
+              assistantClientMessageId,
+              includeUserMessage: i === 0,
+            },
+            {
+              skipTitle: true,
+              skipReconcile: !isLast,
+              allowImageRoute: false,
+            },
+          );
+        } catch (err) {
+          if (err instanceof DOMException && err.name === "AbortError") throw err;
+          const friendly = friendlyTurnError(err);
+          const current = getSessionMessages(sid);
+          const idx = current.findIndex((m) => m.clientMessageId === assistantClientMessageId);
+          const errAssistant: ChatMessage = {
+            role: "assistant",
+            content: `Error: ${friendly}`,
+            receivedAt: Date.now(),
+            clientMessageId: assistantClientMessageId,
+            modelId: turnModel.id,
+            modelName: turnModel.name,
+          };
+          const errMsgs =
+            idx >= 0
+              ? current.map((m, j) => (j === idx ? errAssistant : m))
+              : [...current, errAssistant];
+          applyMessages(sid, errMsgs);
+          if (!sessionPrivateMode(sid)) {
+            void finalizeAssistantOnServer(sid, errAssistant.content, {
+              receivedAt: errAssistant.receivedAt,
+              modelId: turnModel.id,
+              modelName: turnModel.name,
+            }).catch((e) => reportSyncError(e, sid));
+          }
+        }
+      }
+      const finalMsgs = getSessionMessages(sid);
+      void scheduleSessionTitle(sid, turnModels[0].id, finalMsgs);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      setChatError(friendlyTurnError(err));
     } finally {
       delete abortControllersRef.current[sid];
       setSessionStreaming(sid, false);
@@ -3709,6 +4083,20 @@ export default function ChatPanel() {
 
   return (
     <div className="cgpt-app">
+      <ChatModelPickerModal
+        open={modelPickerMode != null}
+        mode={modelPickerMode || "replace"}
+        models={pickerModels}
+        selectedIds={selectedModelIds}
+        defaultModelId={defaultModel}
+        onClose={() => setModelPickerMode(null)}
+        onSelect={(id) =>
+          modelPickerMode === "append" ? appendModelSelection(id) : replaceModelSelection(id)
+        }
+        onSetDefault={(id) => setAsDefaultModel(id)}
+      />
+
+      <div className="cgpt-workspace">
       <aside className="cgpt-sidebar">
         <div className="cgpt-sidebar-top">
           <button
@@ -3954,12 +4342,62 @@ export default function ChatPanel() {
         </div>
       </aside>
 
+      <div className="cgpt-main-column">
+      <div className="cgpt-model-bar">
+        <button
+          type="button"
+          className="cgpt-add-model-btn"
+          onClick={() => {
+            setToolsMenuOpen(false);
+            setModelPickerMode("append");
+          }}
+          disabled={
+            !models.length ||
+            (!chatTools.imageGeneration && selectedModelIds.length >= MAX_MULTI_MODELS)
+          }
+          aria-label={
+            chatTools.imageGeneration
+              ? "Change image model"
+              : "Add model for multi-model response"
+          }
+          title={
+            chatTools.imageGeneration
+              ? "Image Generation uses one model — picking another replaces it"
+              : selectedModelIds.length >= MAX_MULTI_MODELS
+                ? `Maximum ${MAX_MULTI_MODELS} models`
+                : "Add model"
+          }
+        >
+          <span aria-hidden>+</span>
+          <span className="cgpt-add-model-btn__label">Add Model</span>
+          <span className="cgpt-shortcut-keys" aria-hidden>
+            <kbd className="cgpt-kbd">{modKey === "⌘" ? "⌘" : "Ctrl"}</kbd>
+            <kbd className="cgpt-kbd">J</kbd>
+          </span>
+        </button>
+        <div className="cgpt-selected-models">
+          {selectedModels.map((m) => (
+            <span key={m.id} className="cgpt-model-pill">
+              <ModelProviderIcon modelId={m.external_id || m.id} size={14} />
+              <span className="cgpt-model-pill__name" title={m.name}>
+                {shortModelName(m.name, m.id)}
+              </span>
+              <button
+                type="button"
+                className="cgpt-model-pill__remove"
+                onClick={() => removeSelectedModel(m.id)}
+                aria-label={`Remove ${m.name}`}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      </div>
+
       <section className={`cgpt-main${activePrivateMode ? " cgpt-main--private" : ""}`}>
         {activePrivateMode ? <PrivateModeStrip /> : null}
         {readOnly && <ReadOnlyBanner className="readonly-account-banner--chat" />}
-        <header className="cgpt-main-topbar">
-          <UserProfile theme={theme} onThemeChange={setTheme} />
-        </header>
         {chatError && <div className="cgpt-banner">{chatError}</div>}
         {modelsError && !chatError && <div className="cgpt-banner cgpt-banner-warn">{modelsError}</div>}
 
@@ -3979,7 +4417,11 @@ export default function ChatPanel() {
             >
               {m.role === "assistant" && m.modelName ? (
                 <div className="cgpt-msg-model-label" title={m.modelId}>
-                  {shortModelName(m.modelName, m.modelId || "")}
+                  <ModelName
+                    modelId={m.modelId || m.modelName}
+                    label={shortModelName(m.modelName, m.modelId || "")}
+                    size={13}
+                  />
                 </div>
               ) : null}
               <div
@@ -4000,7 +4442,15 @@ export default function ChatPanel() {
                   if (m.content === IMAGE_PENDING_MARKER) {
                     return (
                       <div className="cgpt-generated-block cgpt-generated-block--pending">
-                        <div className="cgpt-generated-image cgpt-generated-image--loading">Generating image…</div>
+                        <div
+                          className="cgpt-generated-image cgpt-generated-image--loading"
+                          role="status"
+                          aria-live="polite"
+                          aria-label="Generating image"
+                        >
+                          <span className="cgpt-image-loading__spinner" aria-hidden />
+                          <span className="cgpt-image-loading__label">Generating image…</span>
+                        </div>
                       </div>
                     );
                   }
@@ -4174,45 +4624,49 @@ export default function ChatPanel() {
                     >
                       {copiedMessageKey === `${activeId}-${i}` ? "Copied" : "Copy"}
                     </button>
-                    <button
-                      type="button"
-                      className="cgpt-msg-action-btn cgpt-msg-action-btn--icon"
-                      title="Download CSV"
-                      aria-label="Download CSV"
-                      onClick={() => downloadCsv(`${activeId}-${i}`, m.content || "")}
-                    >
-                      <CsvIcon />
-                    </button>
-                    <button
-                      type="button"
-                      className="cgpt-msg-action-btn cgpt-msg-action-btn--icon"
-                      title="Download PDF"
-                      aria-label="Download PDF"
-                      onClick={() => {
-                        const title = (activeSession?.title || "chat-export").slice(0, 60);
-                        void exportMessagePdf(m.content || "", title).catch((e) => {
-                          console.error("PDF export failed", e);
-                          alert(`PDF export failed: ${e?.message || e}`);
-                        });
-                      }}
-                    >
-                      <PdfIcon />
-                    </button>
-                    <button
-                      type="button"
-                      className="cgpt-msg-action-btn cgpt-msg-action-btn--icon"
-                      title="Download Word"
-                      aria-label="Download Word document"
-                      onClick={() => {
-                        const title = (activeSession?.title || "chat-export").slice(0, 60);
-                        void exportMessageDocx(m.content || "", title).catch((e) => {
-                          console.error("DOCX export failed", e);
-                          alert(`DOCX export failed: ${e?.message || e}`);
-                        });
-                      }}
-                    >
-                      <DocIcon />
-                    </button>
+                    {isTextAssistantExportable(m.content || "") ? (
+                      <>
+                        <button
+                          type="button"
+                          className="cgpt-msg-action-btn cgpt-msg-action-btn--icon"
+                          title="Download CSV"
+                          aria-label="Download CSV"
+                          onClick={() => downloadCsv(`${activeId}-${i}`, m.content || "")}
+                        >
+                          <CsvIcon />
+                        </button>
+                        <button
+                          type="button"
+                          className="cgpt-msg-action-btn cgpt-msg-action-btn--icon"
+                          title="Download PDF"
+                          aria-label="Download PDF"
+                          onClick={() => {
+                            const title = (activeSession?.title || "chat-export").slice(0, 60);
+                            void exportMessagePdf(m.content || "", title).catch((e) => {
+                              console.error("PDF export failed", e);
+                              alert(`PDF export failed: ${e?.message || e}`);
+                            });
+                          }}
+                        >
+                          <PdfIcon />
+                        </button>
+                        <button
+                          type="button"
+                          className="cgpt-msg-action-btn cgpt-msg-action-btn--icon"
+                          title="Download Word"
+                          aria-label="Download Word document"
+                          onClick={() => {
+                            const title = (activeSession?.title || "chat-export").slice(0, 60);
+                            void exportMessageDocx(m.content || "", title).catch((e) => {
+                              console.error("DOCX export failed", e);
+                              alert(`DOCX export failed: ${e?.message || e}`);
+                            });
+                          }}
+                        >
+                          <DocIcon />
+                        </button>
+                      </>
+                    ) : null}
                   </>
                 )}
               </div>
@@ -4321,125 +4775,26 @@ export default function ChatPanel() {
               />
               <div className="cgpt-composer-bar">
                 <div className="cgpt-model-row">
-                  <div className="cgpt-model-picker" ref={modelMenuRef}>
-                    <button
-                      type="button"
-                      className="cgpt-composer-ctrl cgpt-model-trigger"
-                      onClick={() => {
-                        setToolsMenuOpen(false);
-                        setModelMenuOpen((o) => !o);
-                      }}
-                      disabled={!models.length}
-                      aria-expanded={modelMenuOpen}
-                      aria-haspopup="listbox"
-                    >
-                      <span className="cgpt-composer-ctrl__icon" aria-hidden>
-                        <ComposerModelIcon />
-                      </span>
-                      <span className="cgpt-composer-ctrl__label">
-                        {currentModel
-                          ? shortModelName(currentModel.name, currentModel.id)
-                          : "Select model"}
-                      </span>
-                      <span className="cgpt-chevron" aria-hidden>
-                        ▾
-                      </span>
-                    </button>
-                    {modelMenuOpen && (
-                      <div className="cgpt-model-menu" role="listbox">
-                        <input
-                          type="search"
-                          className="cgpt-model-search"
-                          placeholder="Search models…"
-                          value={modelSearch}
-                          onChange={(e) => setModelSearch(e.target.value)}
-                          autoFocus
-                        />
-                        <ul>
-                          {filteredModels.length === 0 && (
-                            <li className="cgpt-model-empty">No models match</li>
-                          )}
-                          {filteredModels.map((m) => (
-                            <li key={m.id} role="option" aria-selected={model === m.id}>
-                              <button
-                                type="button"
-                                className={model === m.id ? "active" : ""}
-                                onClick={() => pickModel(m.id)}
-                                title={m.name}
-                              >
-                                {m.name}
-                              </button>
-                              <button
-                                type="button"
-                                className={`cgpt-model-default${defaultModel === m.id ? " is-default" : ""}`}
-                                onClick={(e) => setAsDefaultModel(m.id, e)}
-                                aria-label={
-                                  defaultModel === m.id
-                                    ? `${m.name} is default model`
-                                    : `Set ${m.name} as default model`
-                                }
-                                title={defaultModel === m.id ? "Default model" : "Set as default for new chats"}
-                              >
-                                {defaultModel === m.id ? (
-                                  <svg
-                                    viewBox="0 0 24 24"
-                                    width="15"
-                                    height="15"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2.5"
-                                    aria-hidden
-                                  >
-                                    <path
-                                      d="M5 13l4 4L19 7"
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                    />
-                                  </svg>
-                                ) : (
-                                  <svg
-                                    viewBox="0 0 24 24"
-                                    width="15"
-                                    height="15"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="1.8"
-                                    opacity="0.45"
-                                    aria-hidden
-                                  >
-                                    <circle cx="12" cy="12" r="9" />
-                                  </svg>
-                                )}
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
                   <div className="cgpt-tools-picker" ref={toolsMenuRef}>
                     <button
                       ref={toolsTriggerRef}
                       type="button"
-                      className="cgpt-composer-ctrl cgpt-model-trigger"
+                      className="cgpt-composer-ctrl cgpt-model-trigger cgpt-tools-trigger--icon"
                       onClick={() => {
-                        setModelMenuOpen(false);
+                        setModelPickerMode(null);
                         setToolsMenuOpen((o) => !o);
                       }}
                       aria-expanded={toolsMenuOpen}
                       aria-haspopup="menu"
                       aria-label="Tools"
+                      title="Tools"
                     >
                       <span className="cgpt-composer-ctrl__icon" aria-hidden>
                         <ComposerToolsIcon />
                       </span>
-                      <span className="cgpt-composer-ctrl__label">Tools</span>
                       {activeToolCount > 0 ? (
                         <span className="cgpt-composer-ctrl__badge">{activeToolCount}</span>
                       ) : null}
-                      <span className="cgpt-chevron" aria-hidden>
-                        ▾
-                      </span>
                     </button>
                   <ServerToolsMenu
                     open={toolsMenuOpen}
@@ -4543,6 +4898,8 @@ export default function ChatPanel() {
           <p className="cgpt-disclaimer">Alpha Router can make mistakes. Check important info.</p>
         </footer>
       </section>
+      </div>
+      </div>
 
       <ColorPickerModal
         open={!!colorPickerFolderId}

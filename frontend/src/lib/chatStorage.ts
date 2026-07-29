@@ -18,7 +18,7 @@ import {
   type ChatToolsState,
 } from "./chatTools";
 
-export type UserTheme = "light" | "dark";
+export type UserTheme = "light" | "dark" | "system";
 
 export type UserPrefs = {
   default_model: string | null;
@@ -63,7 +63,9 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
   const model = typeof raw?.default_model === "string" && raw.default_model.trim()
     ? raw.default_model.trim()
     : null;
-  const theme: UserTheme = raw?.theme === "dark" ? "dark" : "light";
+  const themeRaw = typeof raw?.theme === "string" ? raw.theme.trim().toLowerCase() : "light";
+  const theme: UserTheme =
+    themeRaw === "dark" || themeRaw === "system" ? themeRaw : "light";
   const timezone = typeof raw?.timezone === "string" && raw.timezone.trim()
     ? raw.timezone.trim()
     : "UTC";
@@ -601,7 +603,7 @@ function mapApiSession(raw: Record<string, unknown>, messages: ChatMessage[] = [
 
 export async function fetchSessionMessagesFromServer(
   sessionId: string,
-  opts?: { limit?: number; before?: number },
+  opts?: { limit?: number; before?: number; signal?: AbortSignal },
 ): Promise<{ messages: ChatMessage[]; hasMore: boolean; revision?: number }> {
   const limit = opts?.limit ?? 50;
   const params = new URLSearchParams({ limit: String(limit) });
@@ -610,7 +612,9 @@ export async function fetchSessionMessagesFromServer(
     messages: Record<string, unknown>[];
     has_more?: boolean;
     revision?: number;
-  }>(`/api/user/chat-sessions/${encodeURIComponent(sessionId)}/messages?${params}`);
+  }>(`/api/user/chat-sessions/${encodeURIComponent(sessionId)}/messages?${params}`, {
+    signal: opts?.signal,
+  });
   const messages = (data.messages || []).map(mapApiMessage);
   return {
     messages,
@@ -670,6 +674,7 @@ async function appendSessionMessagesOnServer(
   sessionId: string,
   messages: ChatMessage[],
   revision?: number,
+  signal?: AbortSignal,
 ): Promise<{ messages: ChatMessage[]; session?: ChatSession }> {
   const payload = messages.map((m) => ({
     role: m.role,
@@ -686,6 +691,7 @@ async function appendSessionMessagesOnServer(
   }>(`/api/user/chat-sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: "POST",
     body: JSON.stringify({ messages: payload, expectedRevision: revision }),
+    signal,
   });
   return {
     messages: (data.messages || []).map(mapApiMessage),
@@ -719,7 +725,13 @@ async function replaceSessionMessagesOnServer(
 export async function patchLastSessionMessageOnServer(
   sessionId: string,
   content: string,
-  opts?: { revision?: number; receivedAt?: number; modelId?: string; modelName?: string },
+  opts?: {
+    revision?: number;
+    receivedAt?: number;
+    modelId?: string;
+    modelName?: string;
+    signal?: AbortSignal;
+  },
 ): Promise<ChatSession | null> {
   const data = await api<Record<string, unknown>>(
     `/api/user/chat-sessions/${encodeURIComponent(sessionId)}/messages/last`,
@@ -732,6 +744,7 @@ export async function patchLastSessionMessageOnServer(
         modelId: opts?.modelId,
         modelName: opts?.modelName,
       }),
+      signal: opts?.signal,
     },
   );
   return mapApiSession(data);
@@ -825,11 +838,37 @@ async function handleRevisionConflict(sessionId: string): Promise<ChatSession | 
   return merged;
 }
 
-async function createSessionOnServerIfMissing(session: ChatSession): Promise<void> {
+function abortError(): DOMException {
+  return new DOMException("The operation was aborted.", "AbortError");
+}
+
+async function awaitWithAbortSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) throw abortError();
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortError());
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+async function createSessionOnServerIfMissing(
+  session: ChatSession,
+  signal?: AbortSignal,
+): Promise<void> {
   if (serverSessionIds.has(session.id)) return;
   const inflight = createSessionInflight.get(session.id);
   if (inflight) {
-    await inflight;
+    await awaitWithAbortSignal(inflight, signal);
     return;
   }
   const task = (async () => {
@@ -860,11 +899,16 @@ async function createSessionOnServerIfMissing(session: ChatSession): Promise<voi
     broadcastChatRefresh({ at: Date.now(), sessionId: session.id });
   })();
   createSessionInflight.set(session.id, task);
-  try {
-    await task;
-  } finally {
-    createSessionInflight.delete(session.id);
-  }
+  void task
+    .finally(() => {
+      if (createSessionInflight.get(session.id) === task) {
+        createSessionInflight.delete(session.id);
+      }
+    })
+    .catch(() => {});
+  // The create request is shared with other sync callers, so cancelling one
+  // waiter must not abort the shared request itself.
+  await awaitWithAbortSignal(task, signal);
 }
 
 async function patchSessionMetadataOnServer(session: ChatSession): Promise<ChatSession | null> {
@@ -1416,6 +1460,8 @@ async function applyPrivateSessionMessages(sessionId: string, messages: ChatMess
 export type SyncSessionMessagesOpts = {
   /** Apply locally only (Private Mode) even when live.privateMode is not set yet. */
   forcePrivate?: boolean;
+  /** Cancel network synchronization when the owning operation stops. */
+  signal?: AbortSignal;
 };
 
 function applySessionMessagesLocally(sessionId: string, messages: ChatMessage[]): void {
@@ -1449,8 +1495,11 @@ export async function syncSessionMessages(
   }
   if (!live) return;
 
-  await createSessionOnServerIfMissing(live);
-  const { messages: serverMsgs } = await fetchSessionMessagesFromServer(sessionId, { limit: 200 });
+  await createSessionOnServerIfMissing(live, opts?.signal);
+  const { messages: serverMsgs } = await fetchSessionMessagesFromServer(sessionId, {
+    limit: 200,
+    signal: opts?.signal,
+  });
   const serverCount = serverMsgs.length;
   const lastLocal = messages[messages.length - 1];
   const lastServer = serverMsgs[serverMsgs.length - 1];
@@ -1460,7 +1509,10 @@ export async function syncSessionMessages(
     // mid-write; patching it to "" here would erase live content and leave an
     // orphan placeholder that keeps the UI stuck "generating".
     if (!content.trim() || content === _IMAGE_PENDING) return;
-    const updated = await patchLastSessionMessageOnServer(sessionId, content, { receivedAt });
+    const updated = await patchLastSessionMessageOnServer(sessionId, content, {
+      receivedAt,
+      signal: opts?.signal,
+    });
     if (updated) applyServerSessionToLocal(sessionId, updated);
     broadcastChatRefresh({ at: Date.now(), sessionId });
   };
@@ -1490,7 +1542,12 @@ export async function syncSessionMessages(
           ...m,
           clientMessageId: m.clientMessageId || newClientMessageId(),
         }));
-        const result = await appendSessionMessagesOnServer(sessionId, rest, undefined);
+        const result = await appendSessionMessagesOnServer(
+          sessionId,
+          rest,
+          undefined,
+          opts?.signal,
+        );
         noteServerSessionFromAppend(sessionId, result.session);
         if (result.session) applyServerSessionToLocal(sessionId, result.session);
         broadcastChatRefresh({ at: Date.now(), sessionId });
@@ -1502,7 +1559,12 @@ export async function syncSessionMessages(
       clientMessageId: m.clientMessageId || newClientMessageId(),
       receivedAt: m.content === _IMAGE_PENDING ? undefined : m.receivedAt,
     }));
-    const result = await appendSessionMessagesOnServer(sessionId, toAppend, undefined);
+    const result = await appendSessionMessagesOnServer(
+      sessionId,
+      toAppend,
+      undefined,
+      opts?.signal,
+    );
     noteServerSessionFromAppend(sessionId, result.session);
     if (result.session) applyServerSessionToLocal(sessionId, result.session);
     broadcastChatRefresh({ at: Date.now(), sessionId });

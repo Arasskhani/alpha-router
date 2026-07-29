@@ -1,4 +1,5 @@
 import { isPrivateBlobRef, resolvePrivateMediaUrlForApi } from "./privateMediaStore";
+import { isAutoRouterExternalId } from "./chatModels";
 
 export type ProcessedAttachment = {
   name: string;
@@ -254,9 +255,9 @@ export function modelSupportsVision(m?: VisionModel): boolean {
   if (!m) return false;
   // Prefer the backend catalog flag when available (Option B).
   if (typeof m.supports_vision === "boolean") return m.supports_vision;
+  if (isAutoRouterExternalId(m.external_id)) return true;
   const v = `${m.external_id || ""} ${m.name || ""} ${m.id || ""}`.toLowerCase();
   if (isImageGenerationModel(v)) return false;
-  if (v === "auto" || v === "openrouter/auto" || v.endsWith("/auto")) return true;
   return (
     v.includes("vision") ||
     v.includes("gpt-4o") ||

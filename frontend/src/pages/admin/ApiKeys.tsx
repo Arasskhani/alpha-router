@@ -250,7 +250,7 @@ export default function AdminApiKeys() {
         />
         <button
           type="button"
-          className="btn btn-ghost api-keys-bulk-btn"
+          className="btn btn-ghost"
           disabled={selectedIds.length === 0}
           onClick={() => setBulkOpen(true)}
           title={selectedIds.length ? `${selectedIds.length} selected` : "Select keys first"}

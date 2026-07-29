@@ -22,12 +22,22 @@ export function migrateLegacyStorageKeys() {
   localStorage.removeItem(STORAGE_KEYS.role);
 }
 
-export function getSessionUser(): { username: string; role: string; loginAt: number } | null {
+export function getSessionUser(): {
+  username: string;
+  display_name: string | null;
+  role: string;
+  loginAt: number;
+} | null {
   const session = getCachedSession();
   if (!session) return null;
   const loginAt = Number(localStorage.getItem(STORAGE_KEYS.loginAt));
+  const display_name =
+    typeof session.display_name === "string" && session.display_name.trim()
+      ? session.display_name.trim()
+      : null;
   return {
     username: session.username || "User",
+    display_name,
     role: session.role || "user",
     loginAt: loginAt > 0 ? loginAt : Date.now(),
   };

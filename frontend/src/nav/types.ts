@@ -1,17 +1,9 @@
 export type CategoryKey =
-
   | "overview"
-
   | "models_api"
-
   | "people_access"
-
   | "integrations"
-
   | "data_reports"
-
-  | "monitoring"
-
   | "developer";
 
 
@@ -43,8 +35,6 @@ export type MenuKey =
   | "authentication"
 
   | "smtp"
-
-  | "recommendations"
 
   | "storage"
 

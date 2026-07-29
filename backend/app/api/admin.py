@@ -1669,13 +1669,43 @@ def _activity_query_filters(
     username: str | None,
     app: str | None,
     response_status: str | None,
+    api_key_id: int | None = None,
 ) -> dict:
     return {
         "model_id": (model_id or "").strip() or None,
         "username": (username or "").strip() or None,
         "app": (app or "").strip() or None,
         "response_status": response_status if response_status in ("success", "fail") else None,
+        "alpha_router_api_key_id": api_key_id if api_key_id and api_key_id > 0 else None,
     }
+
+
+async def _period_api_key_filter_options(db: AsyncSession, rows: list) -> list[dict]:
+    """API keys that appear in the selected activity period (via request_logs.alpha_router_api_key_id)."""
+    key_ids = sorted({int(r.alpha_router_api_key_id) for r in rows if getattr(r, "alpha_router_api_key_id", None)})
+    if not key_ids:
+        return []
+    key_rows = (
+        await db.execute(
+            select(AlphaRouterApiKey.id, AlphaRouterApiKey.name, AlphaRouterApiKey.key_prefix).where(AlphaRouterApiKey.id.in_(key_ids))
+        )
+    ).all()
+    by_id = {int(kid): (name, prefix) for kid, name, prefix in key_rows}
+    out: list[dict] = []
+    for kid in key_ids:
+        name, prefix = by_id.get(kid, (f"API key #{kid}", ""))
+        name_s = (name or f"API key #{kid}").strip()
+        prefix_s = (prefix or "").strip()
+        out.append(
+            {
+                "key": str(kid),
+                "label": f"{name_s} {prefix_s}".strip(),
+                "name": name_s,
+                "prefix": prefix_s,
+            }
+        )
+    out.sort(key=lambda item: str(item.get("name") or item["key"]).lower())
+    return out
 
 
 def _period_prev_since(period: str, now: datetime) -> tuple[datetime, datetime]:
@@ -1892,6 +1922,17 @@ async def dashboard_activity(
     username: str | None = Query(None, max_length=128),
     app: str | None = Query(None, max_length=64),
     response_status: str | None = Query(None, pattern="^(success|fail)$"),
+    api_key_id: int | None = Query(None, ge=1),
+    explore_metric: str | None = Query(None, max_length=32),
+    explore_group: str | None = Query(None, max_length=32),
+    explore_subgroup: str | None = Query(None, max_length=32),
+    explore_rollup: str | None = Query(None, max_length=16),
+    explore_top_mode: str | None = Query(None, pattern="^(top|bottom)$"),
+    explore_top_n: int | None = Query(None, ge=1, le=30),
+    explore_rank_by: str | None = Query(None, pattern="^(metric|requests)$"),
+    explore_show_other: bool | None = Query(None),
+    explore_cumulative: bool | None = Query(None),
+    explore_chart_type: str | None = Query(None, pattern="^(bar|line|area)$"),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_dashboard),
 ):
@@ -1903,6 +1944,7 @@ async def dashboard_activity(
         username=username,
         app=app,
         response_status=response_status,
+        api_key_id=api_key_id,
     )
     (
         rows,
@@ -1922,7 +1964,25 @@ async def dashboard_activity(
         timezone=timezone,
         filters=filters,
     )
+    # Filter pickers follow the selected time period (same rows as the dashboard window).
     options = activity_service.filter_options(options_rows, group_by)
+    options["available_api_keys"] = await _period_api_key_filter_options(db, options_rows)
+    options["group_by"] = group_by
+    api_key_meta = {
+        str(item["key"]): item for item in options["available_api_keys"] if item.get("key") is not None
+    }
+    explore_opts = {
+        "metric": explore_metric or "total_usage",
+        "group": explore_group or "model",
+        "subgroup": explore_subgroup,
+        "rollup": explore_rollup or "daily",
+        "top_mode": explore_top_mode or "top",
+        "top_n": explore_top_n or 10,
+        "rank_by": explore_rank_by or "metric",
+        "show_other": True if explore_show_other is None else explore_show_other,
+        "cumulative": False if explore_cumulative is None else explore_cumulative,
+        "chart_type": explore_chart_type or "bar",
+    }
     payload = activity_service.build_activity_payload(
         rows,
         period=period,
@@ -1932,6 +1992,8 @@ async def dashboard_activity(
         now=now,
         prev_rows=prev_rows,
         heatmap_rows=heatmap_rows,
+        api_key_meta=api_key_meta,
+        explore=explore_opts,
     )
     prompts_card = activity_service.build_prompts_card(
         prompts_rows,
@@ -1963,6 +2025,7 @@ async def dashboard_activity_export(
     username: str | None = Query(None, max_length=128),
     app: str | None = Query(None, max_length=64),
     response_status: str | None = Query(None, pattern="^(success|fail)$"),
+    api_key_id: int | None = Query(None, ge=1),
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_dashboard),
     jwt_token: str = Depends(get_bearer_token),
@@ -1972,6 +2035,7 @@ async def dashboard_activity_export(
         username=username,
         app=app,
         response_status=response_status,
+        api_key_id=api_key_id,
     )
     return await _activity_export_response(
         db,

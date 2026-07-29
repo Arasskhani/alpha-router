@@ -65,9 +65,6 @@ export default function ActivityPeriodMenu({ value, onChange }: Props) {
       >
         <span className="activity-period-trigger__badge">{periodShortBadge(value)}</span>
         <span>{periodLabel(value)}</span>
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-          <path d="m6 9 6 6 6-6" />
-        </svg>
       </button>
       {open ? (
         <div className="activity-period-panel card" role="listbox">
@@ -91,7 +88,7 @@ export default function ActivityPeriodMenu({ value, onChange }: Props) {
               <button
                 key={item.label}
                 type="button"
-                className="activity-period-grid__btn"
+                className={`activity-period-grid__btn${value === item.value ? " activity-period-grid__btn--active" : ""}`}
                 onClick={() => pick(item.value)}
               >
                 {item.label}

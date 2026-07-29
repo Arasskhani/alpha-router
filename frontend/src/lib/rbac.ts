@@ -34,7 +34,7 @@ const USER = "user";
 const LEGACY_ADMIN = "admin";
 
 /** End-user features — not gated by scoped admin read-only roles. */
-export const USER_APP_MENUS: MenuKey[] = ["chat", "media", "recommendations", "user_manual"];
+export const USER_APP_MENUS: MenuKey[] = ["chat", "media", "user_manual"];
 
 export function isUserAppPath(pathname: string): boolean {
   const path = pathname.replace(/\/$/, "") || "/";
@@ -86,7 +86,6 @@ const MENU_PATH_PREFIXES: Record<MenuKey, string[]> = {
   plans: ["/admin/plans"],
   authentication: ["/admin/authentication"],
   smtp: ["/admin/smtp"],
-  recommendations: ["/admin/recommendations"],
   storage: ["/admin/storage-management", "/admin/retention-policy", "/admin/storage"],
   reports: ["/admin/reports"],
   api_logs: ["/admin/logs"],
@@ -99,7 +98,6 @@ const MENU_PATH_PREFIXES: Record<MenuKey, string[]> = {
 const MENU_TO_CATEGORY: Record<MenuKey, CategoryKey> = {
   dashboard: "overview",
   chat: "overview",
-  recommendations: "overview",
   media: "overview",
   connections: "models_api",
   models: "models_api",
@@ -114,8 +112,8 @@ const MENU_TO_CATEGORY: Record<MenuKey, CategoryKey> = {
   storage: "data_reports",
   reports: "data_reports",
   api_logs: "data_reports",
-  operations: "monitoring",
-  database: "monitoring",
+  operations: "overview",
+  database: "overview",
   admin_guide: "developer",
   user_manual: "developer",
 };

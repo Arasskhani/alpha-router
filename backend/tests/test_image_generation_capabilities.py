@@ -63,7 +63,7 @@ def test_build_openrouter_payload_text_to_image():
     assert payload["messages"][0]["content"] == "A red cat"
     assert payload["model"] == "google/gemini-2.5-flash-image-preview"
     assert payload["provider"]["allow_fallbacks"] is True
-    assert payload["provider"]["sort"] == "latency"
+    assert "sort" not in payload["provider"]
     assert payload["image_config"]["image_size"] == "1K"
     assert payload["max_tokens"] == 4096
 
@@ -157,6 +157,8 @@ def test_openrouter_gpt_image_routing_helpers():
     )
 
     assert is_openrouter_auto_model("openrouter/auto") is True
+    assert is_openrouter_auto_model("openrouter/auto-beta") is True
+    assert is_openrouter_auto_model("google/gemini-3.1-flash-image") is False
     assert openrouter_image_modalities("openrouter/auto") == ["image", "text"]
     assert prefer_openrouter_images_generations("openrouter/auto") is False
     assert is_openai_gpt_image_model("openai/gpt-5-image") is True

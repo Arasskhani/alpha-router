@@ -4,9 +4,9 @@ import { api } from "../api";
 import { clearStoredImageGenerationForCurrentUser } from "../lib/chatStorage";
 import { formatSessionDuration, getMyActivityPath, getSessionUser, logout } from "../lib/session";
 import { MY_USAGE_AND_ACTIVITY_LABEL } from "../lib/usageActivityLabel";
+import type { CachedTheme } from "../lib/themeCache";
 import SettingsModal from "./SettingsModal";
-
-type Theme = "light" | "dark";
+import ThemeSegmentedControl from "./ThemeSegmentedControl";
 
 type UserBudget = {
   monthly_budget_usd: number;
@@ -29,26 +29,9 @@ function formatBudgetLine(budget: UserBudget | null, loading: boolean): string {
 }
 
 type Props = {
-  theme: Theme;
-  onThemeChange: (theme: Theme) => void;
+  theme: CachedTheme;
+  onThemeChange: (theme: CachedTheme) => void;
 };
-
-function IconSun() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-      <circle cx="12" cy="12" r="4" />
-      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
-    </svg>
-  );
-}
-
-function IconMoon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-    </svg>
-  );
-}
 
 function IconGear() {
   return (
@@ -107,8 +90,8 @@ export default function UserProfile({ theme, onThemeChange }: Props) {
 
   if (!user) return null;
 
-  const initials = user.username.slice(0, 2).toUpperCase();
-  const isDark = theme === "dark";
+  // Single letter matches the faint reference topbar avatar style.
+  const initials = (user.username.trim().charAt(0) || "?").toUpperCase();
 
   return (
     <div className="user-profile" ref={wrapRef}>
@@ -165,15 +148,6 @@ export default function UserProfile({ theme, onThemeChange }: Props) {
           </button>
           <button
             type="button"
-            className="user-profile-menu-item"
-            role="menuitem"
-            onClick={() => onThemeChange(isDark ? "light" : "dark")}
-          >
-            <span className="user-profile-menu-icon">{isDark ? <IconSun /> : <IconMoon />}</span>
-            <span>{isDark ? "Light mode" : "Dark mode"}</span>
-          </button>
-          <button
-            type="button"
             className="user-profile-menu-item user-profile-menu-item-danger"
             role="menuitem"
             onClick={() => {
@@ -182,6 +156,10 @@ export default function UserProfile({ theme, onThemeChange }: Props) {
           >
             Log out
           </button>
+          <div className="user-profile-menu-divider" />
+          <div className="user-profile-theme">
+            <ThemeSegmentedControl value={theme} onChange={onThemeChange} />
+          </div>
         </div>
       )}
 

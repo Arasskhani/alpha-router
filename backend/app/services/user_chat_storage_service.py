@@ -126,7 +126,12 @@ def _normalize_prefs(raw: dict[str, Any] | None) -> dict[str, Any]:
         base["default_model"] = None
 
     theme = str(raw.get("theme") or "light").lower()
-    base["theme"] = "dark" if theme == "dark" else "light"
+    if theme == "dark":
+        base["theme"] = "dark"
+    elif theme == "system":
+        base["theme"] = "system"
+    else:
+        base["theme"] = "light"
 
     if "timezone" in raw:
         base["timezone"] = _normalize_timezone(raw.get("timezone"))

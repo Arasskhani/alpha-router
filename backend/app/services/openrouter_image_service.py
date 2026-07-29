@@ -77,6 +77,16 @@ async def close_openrouter_http_client() -> None:
     _shared_client = None
 
 
+def prepare_image_generation_prompt(prompt: str) -> str:
+    """Make image intent explicit while preserving the user's original concept."""
+    concept = (prompt or "").strip()
+    return (
+        "Generate an image that visually represents the concept below. "
+        "Return image output, not a conversational text response.\n\n"
+        f"Concept:\n{concept}"
+    )
+
+
 def _is_gemini_image_model(model_id: str) -> bool:
     low = (model_id or "").lower()
     return "gemini" in low and "image" in low
@@ -88,8 +98,16 @@ def is_openai_gpt_image_model(model_id: str) -> bool:
 
 
 def is_openrouter_auto_model(model_id: str) -> bool:
+    """True for OpenRouter Auto Router catalog ids (including auto-beta)."""
     low = (model_id or "").strip().lower()
-    return low in ("openrouter/auto", "auto") or low.endswith("/auto")
+    if not low:
+        return False
+    if low in {"openrouter/auto", "auto", "openrouter/auto-beta"}:
+        return True
+    if low.endswith("/auto") or low.endswith(":auto"):
+        return True
+    tail = low.rsplit("/", 1)[-1]
+    return tail == "auto" or tail.startswith("auto-")
 
 
 def openrouter_image_modalities(model_id: str) -> list[str]:
@@ -163,19 +181,23 @@ def optimize_openrouter_image_model(model_id: str, *, chat_completions: bool = F
 
 
 def default_openrouter_image_provider_sort(model_id: str) -> str | None:
-    """Route multimodal image models for stability; omit sort for diffusion-style ids.
+    """Use OpenRouter's default uptime-aware balancing for image endpoints."""
+    del model_id
+    return None
 
-    Gemini Pro Image is more reliable without latency-sorting (fastest hops often
-    drop long image responses). Flash-tier Gemini still prefers latency.
-    """
-    low = (model_id or "").lower()
-    if "gemini" in low and "pro" in low and "image" in low:
-        return None
-    if _is_gemini_image_model(model_id) or is_openai_gpt_image_model(model_id):
-        return "latency"
-    if any(h in low for h in ("flux", "dall-e", "dalle", "stable-diffusion", "sdxl")):
-        return None
-    return "latency"
+
+def openrouter_message_is_text_only(data: dict | None) -> bool:
+    """True when the chat completion has plain text content and no image payloads."""
+    if not isinstance(data, dict):
+        return False
+    msg = ((data.get("choices") or [{}])[0] or {}).get("message") or {}
+    if not isinstance(msg, dict):
+        return False
+    images = msg.get("images")
+    if images:
+        return False
+    content = msg.get("content")
+    return isinstance(content, str) and bool(content.strip())
 
 
 def is_transient_empty_openrouter_image_response(
@@ -186,12 +208,15 @@ def is_transient_empty_openrouter_image_response(
     """
     True when OpenRouter returned HTTP 200 but no usable image payload.
 
-    Empty shells, text-only replies, and unparseable ``images`` fields are all
-    treated as retryable — Gemini/OpenRouter often flake to a text acknowledgement
-    on one provider route and succeed on the next strategy.
+    Empty shells / unparseable ``images`` fields are retryable across strategies.
+    Clear text-only replies are NOT — grinding modality tweaks rarely helps and
+    delays Auto Router failover to a healthier image model.
     """
-    del data  # shape inspected by callers for errors; retry decision is payload-based
-    return not bool(collected)
+    if collected:
+        return False
+    if openrouter_message_is_text_only(data):
+        return False
+    return True
 
 
 def build_openrouter_headers(api_key: str, *, referer: str | None = None) -> dict[str, str]:
@@ -226,7 +251,9 @@ async def post_openrouter_json(
             if not is_retryable_openrouter_transport_error(exc):
                 raise
             last_exc = exc
-            await close_openrouter_http_client()
+            # The client is process-shared. Closing it here races with unrelated
+            # concurrent image requests; keep it alive and retry on a fresh socket
+            # (keepalive is disabled and every request uses Connection: close).
             if attempt + 1 >= attempts:
                 break
             delay_idx = min(attempt, len(OPENROUTER_DISCONNECT_BACKOFF_SEC) - 1)

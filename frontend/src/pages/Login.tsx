@@ -130,9 +130,16 @@ export default function Login() {
   const [totpCode, setTotpCode] = useState("");
   const [pendingToken, setPendingToken] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [shakeFields, setShakeFields] = useState(false);
   const [methods, setMethods] = useState({ ldap: false, saml: false, oidc: false });
   const nav = useNavigate();
   const [params] = useSearchParams();
+
+  function triggerCredentialShake() {
+    // Retrigger the animation when consecutive failures occur.
+    setShakeFields(false);
+    requestAnimationFrame(() => setShakeFields(true));
+  }
 
   useEffect(() => {
     document.title = PAGE_TITLE;
@@ -248,6 +255,7 @@ export default function Login() {
         return;
       }
       setError(msg || "Login failed");
+      triggerCredentialShake();
     }
   }
 
@@ -259,6 +267,9 @@ export default function Login() {
 
       <div className="login-page__shell">
         <section className="login-brand" aria-label="Alpha Router">
+          <div className="login-brand__watermark" aria-hidden>
+            <img src="/alpha-router-mark.svg" alt="" draggable={false} />
+          </div>
           <div className="login-brand__column">
             <div className="login-brand__head">
               <h1 className="login-brand__title login-brand__title--boost">
@@ -294,7 +305,13 @@ export default function Login() {
             <p className="login-panel__eyebrow">Welcome back</p>
             <h2 className="login-panel__title">{pendingToken ? "Two-factor authentication" : "Sign in"}</h2>
 
-            <form className="login-form" onSubmit={onSubmit}>
+            <form
+              className={`login-form${shakeFields ? " login-form--shake" : ""}`}
+              onSubmit={onSubmit}
+              onAnimationEnd={(e) => {
+                if (e.target === e.currentTarget) setShakeFields(false);
+              }}
+            >
               {!pendingToken ? (
                 <>
                   <label className="login-form__label" htmlFor="login-username">
@@ -307,6 +324,7 @@ export default function Login() {
                     autoComplete="username"
                     className="login-form__input"
                     placeholder="your.username"
+                    aria-invalid={shakeFields || !!error}
                   />
                   <label className="login-form__label" htmlFor="login-password">
                     Password
@@ -319,6 +337,7 @@ export default function Login() {
                     autoComplete="current-password"
                     className="login-form__input"
                     placeholder="••••••••"
+                    aria-invalid={shakeFields || !!error}
                   />
                 </>
               ) : (
@@ -336,6 +355,7 @@ export default function Login() {
                     className="login-form__input"
                     placeholder="123456"
                     autoFocus
+                    aria-invalid={shakeFields || !!error}
                   />
                   <button
                     type="button"
@@ -344,6 +364,7 @@ export default function Login() {
                       setPendingToken(null);
                       setTotpCode("");
                       setError("");
+                      setShakeFields(false);
                     }}
                   >
                     Back

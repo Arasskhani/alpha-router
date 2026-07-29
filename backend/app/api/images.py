@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
+import datetime
 import re
 import time
+import uuid
 from urllib.parse import urlparse
 
 import httpx
@@ -37,6 +40,7 @@ from app.services.media_authorization_service import MediaAccessAction, load_aut
 from app.services.openrouter_image_service import (
     OPENROUTER_EMPTY_IMAGE_RETRY_DELAYS_SEC,
     OPENROUTER_FALLBACK_TIMEOUT,
+    OPENROUTER_IMAGE_MAX_ATTEMPTS,
     build_fast_openrouter_payload,
     build_openrouter_headers,
     gemini_image_size_for_model,
@@ -45,6 +49,7 @@ from app.services.openrouter_image_service import (
     is_retryable_openrouter_transport_error,
     is_transient_empty_openrouter_image_response,
     openrouter_image_modalities,
+    openrouter_message_is_text_only,
     optimize_openrouter_image_model,
     post_openrouter_json,
     prefer_openrouter_images_generations,
@@ -59,10 +64,50 @@ from app.services.storage_service import (
 )
 from app.services.user_chat_storage_service import finalize_chat_session_image
 from app.services.image_billing_service import ImageBillingCapture, log_image_usage
+from app.services.image_attempt_service import image_attempt_outcome, record_image_attempt
 from app.services.llm_providers import litellm_model_for_provider, resolve_litellm_provider
+from app.services.openrouter_image_service import prepare_image_generation_prompt
 
 router = APIRouter(prefix="/api/images", tags=["images"])
 _alpha_router_MEDIA_PATH = re.compile(r"/api/chat/media/(\d+)/file/?(?:\?.*)?$")
+_AUTO_ROUTER_TOTAL_TIMEOUT_SECONDS = 45.0
+_AUTO_ROUTER_MODEL_TIMEOUT_SECONDS = 20.0
+
+
+class ImageClientDisconnected(Exception):
+    """Internal signal used to stop upstream work after the browser disconnects."""
+
+
+async def _await_image_work(
+    work,
+    *,
+    request: Request,
+    timeout_seconds: float,
+):
+    """Await upstream work with a hard deadline and client-disconnect cancellation."""
+    task = asyncio.create_task(work)
+    deadline = time.monotonic() + max(0.1, float(timeout_seconds))
+    try:
+        while not task.done():
+            if await request.is_disconnected():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+                raise ImageClientDisconnected()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+                raise asyncio.TimeoutError()
+            await asyncio.wait({task}, timeout=min(0.5, remaining))
+        return await task
+    except BaseException:
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        raise
 
 
 def parse_alpha_router_media_asset_id(reference: str) -> int | None:
@@ -728,9 +773,11 @@ async def generate_image(
     routing_reason: dict[str, object] | None = body.routing
     success = True
     error_message: str | None = None
+    image_request_id = str(uuid.uuid4())
 
     requested_model = _normalize_model_id(body.model)
     auto_router_requested = is_openrouter_auto_model(requested_model)
+    using_auto_router = False
     resolve_task = asyncio.create_task(_resolve_image_model(db, body.model))
 
     try:
@@ -741,10 +788,11 @@ async def generate_image(
 
         auto_candidates = []
         if is_openrouter_auto_model(model_id) or auto_router_requested:
+            using_auto_router = True
             auto_candidates = await list_auto_router_image_candidates(
                 db,
                 connection_id=ai_model.connection_id if ai_model else None,
-                limit=3,
+                limit=2,
             )
             if not auto_candidates:
                 raise HTTPException(
@@ -792,6 +840,7 @@ async def generate_image(
             aspect_ratio=body.aspect_ratio,
             size=body.size,
         )
+        upstream_prompt = prepare_image_generation_prompt(body.prompt)
 
         async def _attempt_one_model(
             *,
@@ -817,7 +866,7 @@ async def generate_image(
             provider_model = litellm_model_for_provider(model_id, provider_type)
             kwargs = {
                 "model": provider_model,
-                "prompt": body.prompt,
+                "prompt": upstream_prompt,
                 "n": body.n,
                 "size": body.size,
             }
@@ -846,7 +895,7 @@ async def generate_image(
                 async def _try_openrouter_images_generations() -> tuple[list[dict] | None, dict | None]:
                     img_payload = {
                         "model": optimize_openrouter_image_model(model_id),
-                        "prompt": body.prompt,
+                        "prompt": upstream_prompt,
                         "n": max(1, min(4, int(body.n or 1))),
                         "size": body.size,
                         "response_format": "b64_json",
@@ -856,6 +905,9 @@ async def generate_image(
                         headers=headers,
                         json_payload=img_payload,
                         read_timeout=OPENROUTER_FALLBACK_TIMEOUT,
+                        max_attempts=(
+                            1 if using_auto_router else OPENROUTER_IMAGE_MAX_ATTEMPTS
+                        ),
                     )
                     if img_resp.status_code >= 400:
                         return None, None
@@ -888,7 +940,7 @@ async def generate_image(
                 ) -> tuple[list[dict] | None, dict | None, httpx.Response | None]:
                     chat_payload = build_fast_openrouter_payload(
                         model_id=model_id,
-                        prompt=body.prompt,
+                        prompt=upstream_prompt,
                         size=pixel_size,
                         modalities=mods,
                         aspect_ratio=resolved_aspect,
@@ -902,6 +954,9 @@ async def generate_image(
                         f"{openrouter_base}/chat/completions",
                         headers=headers,
                         json_payload=chat_payload,
+                        max_attempts=(
+                            1 if using_auto_router else OPENROUTER_IMAGE_MAX_ATTEMPTS
+                        ),
                     )
                     if chat_resp.status_code >= 400:
                         return None, None, chat_resp
@@ -953,7 +1008,7 @@ async def generate_image(
                                 "mods": modalities,
                                 "fallbacks": allow_fallbacks,
                                 "tier": body.image_size_tier,
-                                "provider_sort": "latency",
+                                "provider_sort": None,
                                 "apply_default_provider_sort": False,
                             },
                         ]
@@ -1000,6 +1055,10 @@ async def generate_image(
                                 "apply_default_provider_sort": False,
                             },
                         ]
+                    if using_auto_router:
+                        # Fast Auto Router gets one uptime-aware request per model;
+                        # its outer loop owns failover and the total deadline.
+                        strategies = strategies[:1]
                     last_out: list[dict] | None = None
                     last_data: dict | None = None
                     last_resp: httpx.Response | None = None
@@ -1023,6 +1082,10 @@ async def generate_image(
                             return None, data, resp
                         if out:
                             return out, data, resp
+                        # Text-only: bail out of the strategy grind so Auto Router can
+                        # failover (or the outer image-only /generations path can run).
+                        if openrouter_message_is_text_only(data):
+                            return None, data, resp
                         if not is_transient_empty_openrouter_image_response(data, collected=out):
                             return None, data, resp
                     if last_transport_exc is not None and last_out is None and last_resp is None:
@@ -1064,6 +1127,11 @@ async def generate_image(
                 text_only = isinstance(msg.get("content"), str) and bool(str(msg.get("content") or "").strip())
                 if chat_image_model:
                     if text_only:
+                        if using_auto_router:
+                            raise HTTPException(
+                                status_code=422,
+                                detail="The model returned text instead of an image.",
+                            )
                         if not reference_image:
                             out_gen, usage_data = await _try_openrouter_images_generations()
                             if usage_data:
@@ -1145,6 +1213,11 @@ async def generate_image(
                 )
         model_attempts = auto_candidates if auto_candidates else [None]
         last_failover_exc: BaseException | None = None
+        auto_deadline = (
+            generation_start + _AUTO_ROUTER_TOTAL_TIMEOUT_SECONDS
+            if using_auto_router
+            else None
+        )
         for attempt_idx, candidate in enumerate(model_attempts):
             if candidate is None:
                 attempt_routing = routing_reason
@@ -1175,16 +1248,95 @@ async def generate_image(
                         else str(last_failover_exc)
                     )
                     attempt_routing["failover_from_error"] = str(prev)[:240]
+            attempt_started_at = datetime.datetime.utcnow()
+            attempt_started = time.perf_counter()
             try:
-                return await _attempt_one_model(
-                    attempt_model_id=attempt_model_id,
-                    attempt_api_key=attempt_api_key,
-                    attempt_base_url=attempt_base_url,
-                    attempt_provider_type=attempt_provider_type,
-                    attempt_ai_model=attempt_ai_model,
-                    attempt_routing=attempt_routing,
+                timeout_seconds = OPENROUTER_FALLBACK_TIMEOUT
+                if auto_deadline is not None:
+                    remaining = auto_deadline - time.perf_counter()
+                    if remaining <= 0:
+                        raise asyncio.TimeoutError()
+                    timeout_seconds = min(_AUTO_ROUTER_MODEL_TIMEOUT_SECONDS, remaining)
+                result = await _await_image_work(
+                    _attempt_one_model(
+                        attempt_model_id=attempt_model_id,
+                        attempt_api_key=attempt_api_key,
+                        attempt_base_url=attempt_base_url,
+                        attempt_provider_type=attempt_provider_type,
+                        attempt_ai_model=attempt_ai_model,
+                        attempt_routing=attempt_routing,
+                    ),
+                    request=request,
+                    timeout_seconds=timeout_seconds,
                 )
+                await record_image_attempt(
+                    request_id=image_request_id,
+                    user_id=user.id,
+                    requested_model=requested_model,
+                    model_id=attempt_model_id,
+                    operation=body.operation,
+                    attempt_index=attempt_idx,
+                    started_at=attempt_started_at,
+                    response_time_ms=(time.perf_counter() - attempt_started) * 1000,
+                    success=True,
+                    outcome="success",
+                )
+                return result
+            except ImageClientDisconnected as attempt_exc:
+                await record_image_attempt(
+                    request_id=image_request_id,
+                    user_id=user.id,
+                    requested_model=requested_model,
+                    model_id=attempt_model_id,
+                    operation=body.operation,
+                    attempt_index=attempt_idx,
+                    started_at=attempt_started_at,
+                    response_time_ms=(time.perf_counter() - attempt_started) * 1000,
+                    success=False,
+                    outcome="cancelled",
+                    error_message="Client disconnected",
+                )
+                raise HTTPException(
+                    status_code=499,
+                    detail="Image generation stopped because the client disconnected.",
+                ) from attempt_exc
+            except asyncio.TimeoutError as attempt_exc:
+                wrapped = HTTPException(
+                    status_code=504,
+                    detail="Image model attempt timed out.",
+                )
+                await record_image_attempt(
+                    request_id=image_request_id,
+                    user_id=user.id,
+                    requested_model=requested_model,
+                    model_id=attempt_model_id,
+                    operation=body.operation,
+                    attempt_index=attempt_idx,
+                    started_at=attempt_started_at,
+                    response_time_ms=(time.perf_counter() - attempt_started) * 1000,
+                    success=False,
+                    outcome="timeout",
+                    error_message=str(wrapped.detail),
+                )
+                can_failover = bool(auto_candidates) and attempt_idx + 1 < len(model_attempts)
+                if can_failover:
+                    last_failover_exc = wrapped
+                    continue
+                raise wrapped from attempt_exc
             except HTTPException as attempt_exc:
+                await record_image_attempt(
+                    request_id=image_request_id,
+                    user_id=user.id,
+                    requested_model=requested_model,
+                    model_id=attempt_model_id,
+                    operation=body.operation,
+                    attempt_index=attempt_idx,
+                    started_at=attempt_started_at,
+                    response_time_ms=(time.perf_counter() - attempt_started) * 1000,
+                    success=False,
+                    outcome=image_attempt_outcome(attempt_exc),
+                    error_message=str(attempt_exc.detail),
+                )
                 can_failover = (
                     bool(auto_candidates)
                     and attempt_idx + 1 < len(model_attempts)
@@ -1202,6 +1354,19 @@ async def generate_image(
                         "Please retry; if it persists, try another image model or check the OpenRouter connection."
                     )
                 wrapped = HTTPException(status_code=502, detail=detail[:500])
+                await record_image_attempt(
+                    request_id=image_request_id,
+                    user_id=user.id,
+                    requested_model=requested_model,
+                    model_id=attempt_model_id,
+                    operation=body.operation,
+                    attempt_index=attempt_idx,
+                    started_at=attempt_started_at,
+                    response_time_ms=(time.perf_counter() - attempt_started) * 1000,
+                    success=False,
+                    outcome=image_attempt_outcome(wrapped),
+                    error_message=detail,
+                )
                 can_failover = (
                     bool(auto_candidates)
                     and attempt_idx + 1 < len(model_attempts)

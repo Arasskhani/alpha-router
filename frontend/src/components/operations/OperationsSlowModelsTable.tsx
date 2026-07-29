@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import ModelName from "../ModelName";
 
 export type SlowModelRow = {
   model_id: string;
@@ -47,7 +48,7 @@ export default function OperationsSlowModelsTable({ rows, thresholdMs }: Props) 
               {rows.map((r) => (
                 <tr key={r.model_id}>
                   <td>
-                    <code title={r.model_id}>{r.model_id}</code>
+                    <ModelName modelId={r.model_id} label={r.model_id} size={15} />
                   </td>
                   <td className="col-num">{r.requests.toLocaleString()}</td>
                   <td className="col-num">{fmtMs(r.avg_ms)}</td>

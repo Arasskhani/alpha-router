@@ -82,6 +82,7 @@ async def auth_session(user: User = Depends(get_current_user), db: AsyncSession 
     slugs = await get_user_role_slugs(db, user.id)
     return {
         "username": user.username,
+        "display_name": user.display_name,
         "role": primary_role_slug(slugs),
         "is_active": bool(user.is_active),
         "auth_provider": user.auth_provider or "local",

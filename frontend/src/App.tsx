@@ -26,7 +26,6 @@ import GroupActivity from "./pages/admin/GroupActivity";
 import Docs from "./pages/admin/Docs";
 import RetentionPolicy from "./pages/admin/RetentionPolicy";
 import StorageManagement from "./pages/admin/StorageManagement";
-import Recommendations from "./pages/user/Recommendations";
 import MyActivity from "./pages/MyActivity";
 import MediaLibrary from "./pages/MediaLibrary";
 import UserManual from "./pages/user/UserManual";
@@ -103,7 +102,6 @@ export default function App() {
         <Route path="users/:userId/activity" element={<UserActivity />} />
         <Route path="users/:userId/media" element={<AdminUserMedia />} />
         <Route path="my-activity" element={<MyActivity />} />
-        <Route path="recommendations" element={<Recommendations />} />
         <Route path="storage-management" element={<StorageManagement />} />
         <Route path="retention-policy" element={<RetentionPolicy />} />
         <Route path="storage" element={<Navigate to="/admin/storage-management" replace />} />
@@ -125,7 +123,6 @@ export default function App() {
         <Route index element={<Navigate to="chat" replace />} />
         <Route path="chat" element={<ChatPanel />} />
         <Route path="media" element={<MediaLibrary />} />
-        <Route path="recommendations" element={<Recommendations />} />
         <Route path="my-activity" element={<MyActivity />} />
         <Route path="manual" element={<UserManual />} />
       </Route>

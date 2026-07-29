@@ -1,5 +1,6 @@
 export type SessionInfo = {
   username: string;
+  display_name?: string | null;
   role: string;
   is_active: boolean;
   auth_provider: string;

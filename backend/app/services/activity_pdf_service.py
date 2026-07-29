@@ -23,6 +23,11 @@ ACTIVITY_PDF_HIDE_CSS = """
 .activity-expand-btn,
 .activity-filters,
 .activity-menu-wrap,
+.activity-tabs,
+.explore-toolbar,
+.explore-chart-wrap__toolbar,
+.overview-explore-link,
+.trends-section__metric,
 .modal-overlay,
 .activity-export-status,
 .activity-page .error,
@@ -252,7 +257,13 @@ def _render_activity_page_pdf_sync(
 
             page.wait_for_selector("#root", timeout=60_000)
             page.wait_for_selector(".activity-page", state="attached", timeout=60_000)
-            page.wait_for_selector(".activity-metrics-grid", state="attached", timeout=60_000)
+            # Admin Dashboard tabs no longer render .activity-metrics-grid; wait for ready marker
+            # (personal scopes still use the metrics grid and also set data-activity-ready).
+            page.wait_for_selector(
+                '.activity-page[data-activity-ready="1"]',
+                state="attached",
+                timeout=60_000,
+            )
             page.wait_for_timeout(1500)
             page.add_style_tag(content=ACTIVITY_PDF_HIDE_CSS)
             page.emulate_media(media="screen")

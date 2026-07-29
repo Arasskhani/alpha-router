@@ -18,7 +18,7 @@ Three surfaces, one FastAPI process:
 
 | Surface | Path | Auth |
 |---|---|---|
-| User app (chat, media, activity, recommendations) | `/app/*` | HttpOnly session cookie + CSRF |
+| User app (chat, media, activity) | `/app/*` | HttpOnly session cookie + CSRF |
 | Admin panel | `/admin/*` | same cookie, RBAC menu gating |
 | OpenAI-compatible gateway | `/v1/*` | Alpha Router API key (`Authorization: Bearer alpha_router_…`) |
 
@@ -179,8 +179,8 @@ categories. Only three assignable roles remain in the catalog:
 Super-Admin-only. Legacy slugs are expanded by `expand_legacy_role_slug` (the
 `rbac_removed_roles_v1..v4` migrations exist to collapse the old catalog).
 `user_can_write_menu` is **least-privilege**: write requires *every* role granting
-menu access to also permit writes. `USER_APP_MENUS = {chat, media, recommendations,
-user_manual}` are always writable.
+menu access to also permit writes. `USER_APP_MENUS = {chat, media, user_manual}` are
+always writable.
 
 ### CSRF
 
@@ -294,7 +294,7 @@ a hard 0.70 success-rate floor (≥8 samples → ×0.35 demotion). Retries with
 - **Reporting** — `reports_catalog` (30 reports), `reports_service` (1363 lines,
   pandas/openpyxl/reportlab), `activity_service`, `activity_pdf_service`
   (headless-Chromium screenshot PDF), `log_export_service`, `operations_service`,
-  `operations_time_range`, `recommendations_service`.
+  `operations_time_range`.
 - **Scheduling/lifecycle** — `scheduler` (APScheduler: model sync 30 min, budget
   reset monthly, reservation expiry 5 min, storage cleanup 03:00, chat retention
   04:00, chat stats 03:30, user media hourly, metrics snapshot hourly),
@@ -409,9 +409,9 @@ Collected during the read. Nothing here has been changed.
 
 ### Frontend defects
 
-- `MyActivity.tsx:10`, `Recommendations.tsx:34`, `UserProfile.tsx:133` compare
-  `user.role === "admin"` but `normalizeRole` maps `admin → full_administrator` →
-  admins see the wrong back-link and the label "User".
+- `MyActivity.tsx:10`, `UserProfile.tsx` compare `user.role === "admin"` but
+  `normalizeRole` maps `admin → full_administrator` → admins see the wrong
+  back-link and the label "User".
 - `ChatPanel.tsx:3883,3904,3930` render `<li>` inside `<li>` (invalid DOM).
 - `chatStorage.ts:903-913,1421-1432` mutate objects held in React state in place
   with no `setState` → rendered data silently diverges.

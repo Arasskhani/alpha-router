@@ -1209,17 +1209,6 @@ def export_activity_dashboard_pdf(payload: dict, meta: dict) -> tuple[bytes, str
     summary_table.setStyle(TableStyle(_table_style_header()))
     story.append(summary_table)
 
-    guardrails = payload.get("guardrails") or {}
-    blocked = int(guardrails.get("blocked_requests") or 0)
-    flagged = int(guardrails.get("redacted_flagged") or guardrails.get("cached_prompts") or 0)
-    story.append(Spacer(1, 8))
-    story.append(
-        Paragraph(
-            f"Guardrails — blocked requests: {blocked:,}; flagged/cached prompts: {flagged:,}",
-            styles["Normal"],
-        )
-    )
-
     segments = payload.get("models") or []
     if segments:
         story.append(Paragraph("Breakdown", h2))

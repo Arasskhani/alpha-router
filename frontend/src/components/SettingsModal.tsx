@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { api, authFetch, formatApiError } from "../api";
 import { fetchUserPrefsFromServer, saveUserPrefs, type UserTheme } from "../lib/chatStorage";
+import ThemeSegmentedControl from "./ThemeSegmentedControl";
 import { COMMON_TIMEZONES, detectBrowserTimezone } from "../lib/timezones";
 import Modal from "./Modal";
 import ConnectorsPanel from "./settings/ConnectorsPanel";
@@ -191,24 +192,11 @@ function GeneralPanel({
             <strong>Alpha Router</strong>
             <span className="settings-hint">Default theme</span>
           </div>
-          <div className="settings-theme-toggle" role="group" aria-label="Color mode">
-            <button
-              type="button"
-              className={`btn${theme === "light" ? "" : " btn-ghost"}`}
-              aria-pressed={theme === "light"}
-              onClick={() => setTheme?.("light")}
-            >
-              Light
-            </button>
-            <button
-              type="button"
-              className={`btn${theme === "dark" ? "" : " btn-ghost"}`}
-              aria-pressed={theme === "dark"}
-              onClick={() => setTheme?.("dark")}
-            >
-              Dark
-            </button>
-          </div>
+          <ThemeSegmentedControl
+            value={theme}
+            onChange={(next) => setTheme?.(next)}
+            className="settings-theme-segment"
+          />
         </div>
       </fieldset>
 

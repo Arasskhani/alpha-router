@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import AdminPage from "../../components/AdminPage";
 import Modal from "../../components/Modal";
+import ModelName from "../../components/ModelName";
 import ModelsFilterBar from "../../components/models/ModelsFilterBar";
 import ModelsBrowseView from "../../components/models/ModelsBrowseView";
 import { api } from "../../api";
@@ -240,7 +241,9 @@ export default function Models() {
                         aria-label={`Select ${m.external_id}`}
                       />
                     </td>
-                    <td>{m.external_id}</td>
+                    <td>
+                      <ModelName modelId={m.external_id} label={m.external_id} size={15} />
+                    </td>
                     <td>{m.input_cost_per_1k ?? "—"}</td>
                     <td>{m.output_cost_per_1k ?? "—"}</td>
                     <td>{m.total_cost_per_1k}</td>

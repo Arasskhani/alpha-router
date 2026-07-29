@@ -61,6 +61,9 @@ def test_prefs_timezone_and_language_normalization():
             assert prefs["language"] == "en"  # only English accepted
             assert prefs["theme"] == "dark"
 
+            system_prefs = await save_user_prefs(db, user.id, {"theme": "system"})
+            assert system_prefs["theme"] == "system"
+
             bad = await save_user_prefs(db, user.id, {"timezone": "../../../etc/passwd"})
             assert bad["timezone"] == "UTC"
 

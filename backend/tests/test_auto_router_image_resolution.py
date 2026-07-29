@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.database import Base
 from app.models.connection import Connection
-from app.models.logging import RequestLog
+from app.models.logging import ImageGenerationAttempt
 from app.models.model_catalog import AIModel
 from app.services.image_model_resolver import (
     _image_model_rank,
@@ -21,6 +21,7 @@ from app.services.image_model_resolver import (
 
 def test_score_rejects_auto_and_non_image():
     assert score_image_model_candidate("openrouter/auto") < 0
+    assert score_image_model_candidate("openrouter/auto-beta") < 0
     assert score_image_model_candidate("anthropic/claude-sonnet-4.5") == 0
     gemini = score_image_model_candidate(
         "google/gemini-2.5-flash-image",
@@ -96,10 +97,12 @@ def test_failure_signal_can_hold_back_an_unstable_new_model():
     assert proven > failing_canary
 
 
-def test_image_model_rank_prefers_non_lite_at_same_score():
+def test_image_model_rank_prefers_lite_and_demotes_preview():
     lite = _image_model_rank("google/gemini-3.1-flash-lite-image", 100)
     full = _image_model_rank("google/gemini-3.1-flash-image", 100)
-    assert full < lite
+    preview = _image_model_rank("google/gemini-3.1-flash-image-preview", 100)
+    assert lite < full
+    assert full < preview
 
 
 def test_image_model_failover_error_detects_disconnect_and_text():
@@ -219,7 +222,7 @@ async def _run_text_only_returns_none() -> None:
     await engine.dispose()
 
 
-async def _run_prefers_non_lite_gemini() -> None:
+async def _run_prefers_lite_gemini() -> None:
     engine, session_factory = await _bootstrap_session()
 
     async with session_factory() as session:
@@ -256,7 +259,7 @@ async def _run_prefers_non_lite_gemini() -> None:
 
         picked = await resolve_auto_router_image_model(session, connection_id=conn.id)
         assert picked is not None
-        assert picked[0] == "google/gemini-3.1-flash-image"
+        assert picked[0] == "google/gemini-3.1-flash-lite-image"
     await engine.dispose()
 
 
@@ -294,36 +297,34 @@ async def _run_runtime_signals_prefer_reliable_model() -> None:
             ]
         )
         now = datetime.utcnow()
-        # Pro: many recent failures
+        # Pro: many recent failures and a slow successful tail.
         for i in range(12):
             session.add(
-                RequestLog(
-                    user_id=1,
-                    username="u",
+                ImageGenerationAttempt(
+                    request_id=f"pro-{i}",
+                    requested_model="openrouter/auto",
                     model_id="google/gemini-3-pro-image",
-                    prompt_tokens=1,
-                    completion_tokens=1,
-                    total_cost_usd=0.01,
+                    operation="generation",
+                    attempt_index=1,
                     response_time_ms=40_000 if i % 3 == 0 else 0,
                     success=(i % 3 == 0),
-                    request_time=now - timedelta(hours=1),
-                    source="test",
+                    outcome="success" if i % 3 == 0 else "text_only",
+                    started_at=now - timedelta(hours=1),
                 )
             )
         # Flash: all successes, faster
-        for _ in range(12):
+        for i in range(12):
             session.add(
-                RequestLog(
-                    user_id=1,
-                    username="u",
+                ImageGenerationAttempt(
+                    request_id=f"flash-{i}",
+                    requested_model="openrouter/auto",
                     model_id="google/gemini-2.5-flash-image",
-                    prompt_tokens=1,
-                    completion_tokens=1,
-                    total_cost_usd=0.01,
+                    operation="generation",
+                    attempt_index=0,
                     response_time_ms=7_000,
                     success=True,
-                    request_time=now - timedelta(hours=1),
-                    source="test",
+                    outcome="success",
+                    started_at=now - timedelta(hours=1),
                 )
             )
         await session.commit()
@@ -331,9 +332,8 @@ async def _run_runtime_signals_prefer_reliable_model() -> None:
         candidates = await list_auto_router_image_candidates(
             session, connection_id=conn.id, limit=3
         )
-        assert len(candidates) >= 2
+        assert len(candidates) == 1
         assert candidates[0].external_id == "google/gemini-2.5-flash-image"
-        assert candidates[1].external_id == "google/gemini-3-pro-image"
     await engine.dispose()
 
 
@@ -344,7 +344,7 @@ def test_resolve_auto_router_image_model():
 def test_resolve_openrouter_auto_image_model_alias():
     asyncio.run(_run_auto_resolve())
     asyncio.run(_run_text_only_returns_none())
-    asyncio.run(_run_prefers_non_lite_gemini())
+    asyncio.run(_run_prefers_lite_gemini())
 
 
 def test_list_candidates_orders_by_recent_reliability():

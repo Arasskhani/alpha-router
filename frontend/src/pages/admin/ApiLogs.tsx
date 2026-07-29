@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import AdminPage from "../../components/AdminPage";
 import LogFilterCombobox from "../../components/admin/LogFilterCombobox";
+import ModelName from "../../components/ModelName";
 import { api } from "../../api";
 import { useConfirm } from "../../context/ConfirmContext";
 import { useAdminWriteLock } from "../../lib/adminWriteLock";
@@ -282,7 +283,9 @@ export default function ApiLogs() {
                       r.username
                     )}
                   </td>
-                  <td>{r.model_id}</td>
+                  <td>
+                    <ModelName modelId={r.model_id} label={r.model_id} size={14} />
+                  </td>
                   <td>{r.provider || "-"}</td>
                   <td
                     title={

@@ -9,7 +9,6 @@ export const adminNavSections: NavSection[] = [
     items: [
       { to: "/app/chat", label: "Chat" },
       { to: "/app/media", label: "Media" },
-      { to: "/app/recommendations", label: "Recommendations" },
       { to: "/app/my-activity", label: MY_USAGE_AND_ACTIVITY_LABEL },
       { to: "/app/manual", label: "User Manual" },
     ],
@@ -19,10 +18,8 @@ export const adminNavSections: NavSection[] = [
     categoryKey: "overview",
     items: [
       { to: "/admin", label: "Dashboard", menuKey: "dashboard" },
-      { to: "/admin/chat", label: "Chat", menuKey: "chat" },
-      { to: "/admin/media", label: "Media", menuKey: "media" },
-      { to: "/admin/my-activity", label: MY_USAGE_AND_ACTIVITY_LABEL, menuKey: "dashboard" },
-      { to: "/admin/recommendations", label: "Recommendations", menuKey: "recommendations" },
+      { to: "/admin/operations", label: "Operations", menuKey: "operations" },
+      { to: "/admin/database", label: "Database", menuKey: "database" },
     ],
   },
   {
@@ -61,14 +58,6 @@ export const adminNavSections: NavSection[] = [
       { to: "/admin/retention-policy", label: "Retention Policy", menuKey: "storage" },
       { to: "/admin/reports", label: "Reports", menuKey: "reports" },
       { to: "/admin/logs", label: "API Logs", menuKey: "api_logs" },
-    ],
-  },
-  {
-    title: "Monitoring",
-    categoryKey: "monitoring",
-    items: [
-      { to: "/admin/operations", label: "Operations", menuKey: "operations" },
-      { to: "/admin/database", label: "Database", menuKey: "database" },
     ],
   },
   {

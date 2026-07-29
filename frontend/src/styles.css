@@ -4777,8 +4777,8 @@ table.card tbody td:last-child {
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
 }
 .modal-panel--settings {
-  width: min(920px, calc(100vw - 2rem));
-  height: min(720px, calc(100vh - 2rem));
+  width: min(720px, calc(100vw - 2rem));
+  height: min(640px, calc(100vh - 2rem));
   max-height: calc(100vh - 2rem);
   display: flex;
   flex-direction: column;
@@ -7975,8 +7975,8 @@ body.login-route #root {
 .settings-field {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-  margin-bottom: 1rem;
+  gap: 0.4rem;
+  margin-bottom: 1.25rem;
   border: none;
   padding: 0;
   min-width: 0;
@@ -7985,23 +7985,50 @@ body.login-route #root {
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 .settings-input {
   width: 100%;
-  max-width: 420px;
-  padding: 0.55rem 0.75rem;
-  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.7rem;
+  min-height: 38px;
+  box-sizing: border-box;
+  border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
   font: inherit;
-  font-size: 0.9rem;
+  font-size: 0.875rem;
+  line-height: 1.4;
 }
 .settings-input:disabled {
   opacity: 0.7;
   cursor: not-allowed;
+}
+/* Normalize native <select> height to match text inputs and add a custom
+   chevron so the field height is consistent across browsers. */
+select.settings-input {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 2rem;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  background-size: 14px;
+}
+select.settings-input::-ms-expand { display: none; }
+/* Keep Settings buttons aligned with field height for a consistent,
+   modern look (matches the reference sizing). Scoped so the global
+   .btn style used elsewhere is unaffected. */
+.settings-section .btn {
+  padding: 0.4rem 1.1rem;
+  min-height: 38px;
+  box-sizing: border-box;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .settings-hint {
   font-size: 0.8rem;
@@ -8058,6 +8085,23 @@ body.login-route #root {
   margin-top: 0.5rem;
   font: inherit;
   font-size: 0.85rem;
+}
+/* Visually hidden file input — the Import button (styled like Export) triggers
+   it via a click handler. Keeps the native file picker accessible. */
+.settings-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.settings-file-name {
+  margin-top: 0.5rem;
+  word-break: break-all;
 }
 .settings-error {
   color: #dc2626;

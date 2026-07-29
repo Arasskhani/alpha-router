@@ -228,6 +228,7 @@ function DataControlPanel() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -284,6 +285,7 @@ function DataControlPanel() {
       setError(formatApiError(err));
     } finally {
       setImporting(false);
+      setSelectedFile(null);
       if (fileRef.current) fileRef.current.value = "";
     }
   }
@@ -314,11 +316,28 @@ function DataControlPanel() {
           ref={fileRef}
           type="file"
           accept="application/json,.json"
-          className="settings-file"
+          className="settings-file-input"
           disabled={importing}
-          onChange={(e) => void onImportFile(e.target.files?.[0] ?? null)}
+          onChange={(e) => {
+            const f = e.target.files?.[0] ?? null;
+            setSelectedFile(f);
+            void onImportFile(f);
+          }}
         />
-        {importing && <p className="muted">Importing…</p>}
+        <button
+          type="button"
+          className="btn"
+          disabled={importing}
+          onClick={() => fileRef.current?.click()}
+        >
+          {importing ? "Importing…" : "Import JSON"}
+        </button>
+        {selectedFile && (
+          <p className="settings-hint settings-file-name">
+            {importing ? "Importing " : "Selected: "}
+            {selectedFile.name}
+          </p>
+        )}
       </div>
 
       {error && <p className="settings-error">{error}</p>}

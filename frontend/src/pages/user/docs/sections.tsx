@@ -30,7 +30,7 @@ export const userManualSections: DocSection[] = [
         </p>
         <p>
           The left sidebar gives quick access to <strong>Chat</strong>, <strong>Media</strong>,{" "}
-          <strong>Recommendations</strong>, <strong>My Usage &amp; Activity</strong>, <strong>Settings</strong>, and this
+          <strong>Recommendations</strong>, <strong>Usage &amp; Activity</strong>, <strong>Settings</strong>, and this
           manual. Your profile menu
           (top right) shows your monthly <strong>Budget</strong>, theme toggle, and sign out. If you also hold admin
           roles, an <strong>Administration</strong> link opens your admin panel.
@@ -49,7 +49,7 @@ export const userManualSections: DocSection[] = [
             <p>Personalized model suggestions based on how you use Alpha Router — quality fit and value picks for your workload.</p>
           </div>
           <div className="docs-card">
-            <h3>My Usage &amp; Activity</h3>
+            <h3>Usage &amp; Activity</h3>
             <p>Personal spend, tokens, heatmaps, top models, and export to CSV or PDF.</p>
           </div>
         </div>
@@ -138,7 +138,7 @@ export const userManualSections: DocSection[] = [
             </tr>
             <tr>
               <td>
-                <strong>My Usage &amp; Activity</strong>
+                <strong>Usage &amp; Activity</strong>
               </td>
               <td>Metrics, heatmap, period filters, exports, and how spend relates to your budget.</td>
             </tr>
@@ -668,11 +668,11 @@ export const userManualSections: DocSection[] = [
   },
   {
     id: "user-activity",
-    title: "My Usage & Activity",
+    title: "Usage & Activity",
     group: "Features",
     content: (
       <>
-        <h2>My Usage & Activity</h2>
+        <h2>Usage & Activity</h2>
         <p>
           This page is your personal analytics dashboard: how much you spent, which models you used, and how activity
           changed over time. It uses the same period and timezone controls as the admin activity views, scoped only to
@@ -753,7 +753,7 @@ export const userManualSections: DocSection[] = [
         </p>
         <ul>
           <li>
-            <strong>My Usage &amp; Activity</strong> — same page as the sidebar link.
+            <strong>Usage &amp; Activity</strong> — same page as the sidebar link.
           </li>
           <li>
             <strong>Settings</strong> — opens a dialog on the current page for profile preferences (time zone, theme),
@@ -794,7 +794,7 @@ export const userManualSections: DocSection[] = [
           <strong>account-wide read-only</strong> mode:
         </p>
         <ul>
-          <li>You can open <strong>Chat</strong>, <strong>Media</strong>, <strong>Recommendations</strong>, and <strong>My Usage &amp; Activity</strong>.</li>
+          <li>You can open <strong>Chat</strong>, <strong>Media</strong>, <strong>Recommendations</strong>, and <strong>Usage &amp; Activity</strong>.</li>
           <li>You can read past chats and download media.</li>
           <li>You <strong>cannot</strong> send new messages, upload files, delete media, or change settings that write data.</li>
         </ul>

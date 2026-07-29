@@ -565,12 +565,12 @@ export const docSections: DocSection[] = [
           <tbody>
             <tr>
               <td><strong>User panel</strong></td>
-              <td>Chat, Media, Recommendations, My Usage &amp; Activity, User Manual (<code>/app/*</code>)</td>
+              <td>Chat, Media, Recommendations, Usage &amp; Activity, User Manual (<code>/app/*</code>)</td>
               <td>Always shown (not RBAC-gated)</td>
             </tr>
             <tr>
               <td><strong>Overview</strong></td>
-              <td>Dashboard, Chat, Media, My Usage &amp; Activity, Recommendations</td>
+              <td>Dashboard, Chat, Media, Usage &amp; Activity, Recommendations</td>
               <td>Super Admin only</td>
             </tr>
             <tr>
@@ -743,7 +743,7 @@ export const docSections: DocSection[] = [
           response was received (when timestamps are recorded).
         </p>
         <Note>
-          Profile menu includes <strong>My Usage &amp; Activity</strong> (your usage only) and live{" "}
+          Profile menu includes <strong>Usage &amp; Activity</strong> (your usage only) and live{" "}
           <strong>Budget</strong> <code>used/total $</code>.
         </Note>
       </>
@@ -1011,7 +1011,7 @@ export const docSections: DocSection[] = [
             <code>/admin/api-keys</code>). Does not grant Users, Roles, Connections, or other admin pages.
           </li>
           <li>
-            <strong>User</strong> — Standard end-user panel only: Chat, Media, Recommendations, My Usage &amp; Activity,
+            <strong>User</strong> — Standard end-user panel only: Chat, Media, Recommendations, Usage &amp; Activity,
             User Manual (<code>/app</code>). No admin sidebar.
           </li>
         </ul>
@@ -1719,7 +1719,7 @@ export const docSections: DocSection[] = [
         <p>
           End users and administrators share the same user-facing app under <code>/app</code>. Standard users see a
           focused sidebar: <strong>Chat</strong>, <strong>Media</strong>, <strong>Recommendations</strong>,{" "}
-          <strong>My Usage &amp; Activity</strong>, and <strong>User Manual</strong>. Administrators additionally use the
+          <strong>Usage &amp; Activity</strong>, and <strong>User Manual</strong>. Administrators additionally use the
           admin sidebar; its top group — also labeled <strong>User panel</strong> — links to the same{" "}
           <code>/app</code> routes so admins can chat and test models without leaving the admin shell.
         </p>
@@ -1744,7 +1744,7 @@ export const docSections: DocSection[] = [
               <td>Usage-based model suggestions (quality fit and value picks for your token mix).</td>
             </tr>
             <tr>
-              <td>My Usage &amp; Activity</td>
+              <td>Usage &amp; Activity</td>
               <td>Personal spend, tokens, heatmap, exports (CSV/PDF).</td>
             </tr>
             <tr>
@@ -1754,7 +1754,7 @@ export const docSections: DocSection[] = [
           </tbody>
         </table>
         <p>
-          Profile menu: <strong>My Usage &amp; Activity</strong>, <strong>Budget</strong> (<code>used/total $</code>),
+          Profile menu: <strong>Usage &amp; Activity</strong>, <strong>Budget</strong> (<code>used/total $</code>),
           theme, sign out. On the standard user layout, administrators also see an <strong>Administration</strong> link
           that opens their first allowed admin menu.
         </p>

@@ -19,20 +19,20 @@ def _cfg() -> dict:
     }
 
 
-def test_starttls_used_when_available():
+def test_ldaps_used_when_available():
     calls: list[tuple[int, bool, bool]] = []
 
     def fake_bind(host, port, user, password, domain="", *, use_ssl=False, use_starttls=False, cfg=None):
         calls.append((port, use_ssl, use_starttls))
-        if use_starttls:
-            return object(), "LDAP + STARTTLS"
+        if use_ssl:
+            return object(), "LDAPS"
         raise RuntimeError("skip")
 
     with patch("app.services.ldap_auth._try_bind_ad", side_effect=fake_bind):
         conn = _open_connection_ldap3(_cfg())
 
     assert conn is not None
-    assert calls[0] == (389, False, True)
+    assert calls[0] == (636, True, False)
 
 
 def test_ssl_errors_are_not_unreachable():

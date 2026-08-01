@@ -1,6 +1,5 @@
 import { api } from "../api";
 import { STORAGE_KEYS } from "./brand";
-import { resolveSystemDefaultModel } from "./chatModels";
 import { compactAttachmentMessageForStorage } from "./chatAttachments";
 import {
   compactPrivateSessionsForStorage,
@@ -881,17 +880,20 @@ async function createSessionOnServerIfMissing(
   }
   const task = (async () => {
     if (serverSessionIds.has(session.id)) return;
+    // Re-read live session at POST time so a model change during an in-flight
+    // create is not persisted as the previous (e.g. default) model.
+    const live = chatSessionsProvider().find((s) => s.id === session.id) || session;
     const createPayload = {
-      id: session.id,
-      title: session.title,
-      folderId: session.folderId,
-      model: session.model,
-      tools: session.tools,
-      titleLocked: session.titleLocked,
-      titleGenerated: session.titleGenerated,
-      toolsTouched: session.toolsTouched,
-      createdAt: session.createdAt,
-      updatedAt: session.updatedAt,
+      id: live.id,
+      title: live.title,
+      folderId: live.folderId,
+      model: live.model,
+      tools: live.tools,
+      titleLocked: live.titleLocked,
+      titleGenerated: live.titleGenerated,
+      toolsTouched: live.toolsTouched,
+      createdAt: live.createdAt,
+      updatedAt: live.updatedAt,
     };
     try {
       await api("/api/user/chats/sessions", {
@@ -1782,6 +1784,10 @@ export function saveChatFolders(_folders: ChatFolder[]) {
   /* no-op */
 }
 
+/**
+ * Pick a model for a new chat. Order: user preferred default → caller fallback →
+ * first catalog entry. No specific model id/name is hardcoded.
+ */
 export function resolveNewChatModel(
   models: { id: string; name?: string; external_id?: string }[],
   fallback?: string,
@@ -1789,8 +1795,6 @@ export function resolveNewChatModel(
 ): string {
   const preferred = preferredDefault?.trim() || "";
   if (preferred && models.some((m) => m.id === preferred)) return preferred;
-  const systemDefault = resolveSystemDefaultModel(models);
-  if (systemDefault) return systemDefault.id;
   const fb = fallback?.trim() || "";
   if (fb && models.some((m) => m.id === fb)) return fb;
   return models[0]?.id || "";

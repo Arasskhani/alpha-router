@@ -115,7 +115,13 @@ function findModelByStoredId<T extends ImageCapableModelRef>(
   return models.find((m) => m.id === id) ?? models.find((m) => m.external_id === id);
 }
 
-/** Session model for UI + persistence — honors Image Generation tool state after reload. */
+/**
+ * Session model for UI + persistence — honors Image Generation tool state after reload.
+ *
+ * A non-empty per-chat `sessionModel` is never replaced by the user/global default.
+ * Fallback is only used when the session has no model yet. While the catalog is still
+ * empty, the stored session model is kept as-is so hydrate cannot wipe it.
+ */
 export function resolveSessionModelForTools<T extends ImageCapableModelRef>(
   models: T[],
   sessionModel: string | undefined,
@@ -123,7 +129,7 @@ export function resolveSessionModelForTools<T extends ImageCapableModelRef>(
   fallbackToDefault: (current?: string) => string,
 ): string {
   const stored = (sessionModel || "").trim();
-  if (imageGenerationEnabled) {
+  if (imageGenerationEnabled && models.length) {
     const current = stored ? findModelByStoredId(models, stored) : undefined;
     if (current && modelSupportsImages(current, models)) {
       return current.id;
@@ -133,10 +139,13 @@ export function resolveSessionModelForTools<T extends ImageCapableModelRef>(
     if (imageModel) return imageModel.id;
   }
   if (stored) {
+    if (!models.length) return stored;
     const match = findModelByStoredId(models, stored);
     if (match) return match.id;
+    // Catalog loaded but id unknown (stale) — keep the per-chat choice; do not force default.
+    return stored;
   }
-  return fallbackToDefault(stored || undefined);
+  return fallbackToDefault(undefined);
 }
 
 export { AUTO_ROUTER_EXTERNAL_ID, isAutoRouterModel };

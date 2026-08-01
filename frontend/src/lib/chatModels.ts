@@ -1,4 +1,4 @@
-/** Shared chat model helpers (system default, Auto Router, etc.). */
+/** Shared chat model helpers (Auto Router detection, default preference resolve). */
 
 export type ChatModelRef = {
   id: string;
@@ -7,7 +7,6 @@ export type ChatModelRef = {
 };
 
 export const AUTO_ROUTER_EXTERNAL_ID = "openrouter/auto";
-export const GROK_43_EXTERNAL_ID = "x-ai/grok-4.3";
 
 /** True for openrouter/auto, openrouter/auto-beta, and display name "Auto Router*". */
 export function isAutoRouterExternalId(externalId?: string | null): boolean {
@@ -32,22 +31,11 @@ export function findAutoRouterModel(models: ChatModelRef[]): ChatModelRef | unde
   return models.find(isAutoRouterModel);
 }
 
-export function isGrok43Model(m?: ChatModelRef | null): boolean {
-  if (!m) return false;
-  const ext = (m.external_id || "").trim().toLowerCase();
-  if (ext === GROK_43_EXTERNAL_ID) return true;
-  return (m.name || "").trim().toLowerCase() === "grok 4.3";
-}
-
-export function findGrok43Model(models: ChatModelRef[]): ChatModelRef | undefined {
-  return models.find(isGrok43Model);
-}
-
-/** System default for new chats when the user has no personal default saved. */
-export function resolveSystemDefaultModel(models: ChatModelRef[]): ChatModelRef | undefined {
-  return findGrok43Model(models);
-}
-
+/**
+ * Resolve a saved default-model preference against the live catalog.
+ * Returns "" when unset or when the saved id is no longer in the catalog.
+ * No model id is hardcoded here — only the user's saved preference is honored.
+ */
 export function resolveDefaultModelPreference(
   models: ChatModelRef[],
   saved: string | null | undefined,
@@ -58,17 +46,4 @@ export function resolveDefaultModelPreference(
   const byExternal = models.find((m) => (m.external_id || "").trim() === raw);
   if (byExternal) return byExternal.id;
   return "";
-}
-
-/** One-time migration: empty default or explicit Auto Router → Grok 4.3. */
-export function shouldMigrateDefaultToGrok43(
-  models: ChatModelRef[],
-  defaultModelId: string | null | undefined,
-): boolean {
-  if (!findGrok43Model(models)) return false;
-  const id = (defaultModelId || "").trim();
-  if (!id) return true;
-  const saved = models.find((m) => m.id === id);
-  if (!saved) return false;
-  return isAutoRouterModel(saved);
 }

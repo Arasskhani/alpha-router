@@ -28,7 +28,7 @@ def test_merge_config_prefers_rootdse_dns_domain(monkeypatch):
     assert cfg["base_dn"] == "DC=ArassTech,DC=local"
 
 
-def test_merge_config_uncheck_ldaps_normalizes_port(monkeypatch):
+def test_merge_config_legacy_plain_ldap_input_forces_ldaps(monkeypatch):
     monkeypatch.setattr(
         "app.services.ldap_config.discover_root_dse",
         lambda _host, _port: {"base_dn": "DC=corp,DC=local", "domain": "corp.local"},
@@ -41,9 +41,9 @@ def test_merge_config_uncheck_ldaps_normalizes_port(monkeypatch):
         636,
         use_ssl=False,
     )
-    assert cfg["port"] == 389
-    assert cfg["use_ssl"] is False
-    assert cfg["server"] == "ldap://dc01.corp.local:389"
+    assert cfg["port"] == 636
+    assert cfg["use_ssl"] is True
+    assert cfg["server"] == "ldaps://dc01.corp.local:636"
 
 
 def test_merge_config_ldaps_port_forces_ssl(monkeypatch):

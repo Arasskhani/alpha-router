@@ -160,7 +160,7 @@ export default function ChatModelPickerModal({
                       }
                       title={defaultModelId === m.id ? "Default model" : "Set as default for new chats"}
                     >
-                      {defaultModelId === m.id ? "✓" : "○"}
+                      ✓
                     </button>
                   ) : null}
                 </li>

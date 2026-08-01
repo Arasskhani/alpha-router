@@ -20,7 +20,7 @@ describe("markdownToCsv", () => {
 | --- | --- |
 | hello, world | "quoted" |`;
     const csv = markdownToCsv(md);
-    expect(csv.split("\r\n")[2]).toBe('"hello, world","""quoted"""');
+    expect(csv.split("\r\n")[1]).toBe('"hello, world","""quoted"""');
   });
 
   it("extracts a ```csv fenced block when no markdown table is present", () => {

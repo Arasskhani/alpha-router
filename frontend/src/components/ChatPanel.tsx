@@ -146,10 +146,8 @@ import {
   resolveSessionModelForTools,
 } from "../lib/chatImageModels";
 import {
-  findGrok43Model,
   isAutoRouterModel,
   resolveDefaultModelPreference,
-  shouldMigrateDefaultToGrok43,
 } from "../lib/chatModels";
 import { applyPersianFontToChat, normalizePersianFontId } from "../lib/persianFonts";
 import { copyTextToClipboard } from "../lib/clipboard";
@@ -447,9 +445,9 @@ export default function ChatPanel() {
   const [defaultModel, setDefaultModel] = useState("");
   const [voiceRecordingLang, setVoiceRecordingLang] = useState("en");
   const [persianFont, setPersianFont] = useState("");
-  const userPrefsLoadedRef = useRef(false);
+  /** False until user prefs hydrate (or fail) so we never stamp a catalog fallback before the saved default arrives. */
+  const [userPrefsReady, setUserPrefsReady] = useState(false);
   const serverDefaultModelRef = useRef<string | null | undefined>(undefined);
-  const grokDefaultMigrationDoneRef = useRef(false);
   const [historySearch, setHistorySearch] = useState("");
   const [serverSearchQuery, setServerSearchQuery] = useState("");
   const [messageSearchHits, setMessageSearchHits] = useState<
@@ -1105,34 +1103,77 @@ export default function ChatPanel() {
     if (readOnly) {
       setModels([]);
       setModelsError("");
+      setUserPrefsReady(true);
       return;
     }
+    let cancelled = false;
     api<Model[]>("/api/chat/models")
       .then((m) => {
+        if (cancelled) return;
         setModels(m);
         setModelsError(m.length ? "" : chatModelsEmptyMessage());
-        if (m.length && !model) {
-          setModel(resolveNewChatModel(m, undefined, defaultModel));
-        }
+        if (!m.length) return;
+        // Prefer the active session's stored model over the global default (stale
+        // closure on model must not overwrite a per-chat selection after hydrate).
+        const sid = activeIdRef.current;
+        const sessionModel = (
+          sid ? sessionsRef.current.find((s) => s.id === sid)?.model : ""
+        )?.trim() || "";
+        setModel((prev) => {
+          const prevTrim = (prev || "").trim();
+          if (prevTrim && m.some((row) => row.id === prevTrim || row.external_id === prevTrim)) {
+            const match = m.find((row) => row.id === prevTrim || row.external_id === prevTrim);
+            return match?.id || prevTrim;
+          }
+          if (sessionModel) {
+            const match = m.find(
+              (row) => row.id === sessionModel || row.external_id === sessionModel,
+            );
+            return match?.id || sessionModel;
+          }
+          if (!userPrefsReady) return prev;
+          return resolveNewChatModel(m, prevTrim || undefined, defaultModel);
+        });
       })
       .catch((e) => {
+        if (cancelled) return;
         setModels([]);
         setModelsError(normalizeChatModelsError(e));
       });
-  }, [readOnly, defaultModel]);
+    return () => {
+      cancelled = true;
+    };
+  }, [readOnly, defaultModel, userPrefsReady]);
 
   useEffect(() => {
     if (!models.length || !activeId || !chatsHydrated) return;
     const session = sessionsRef.current.find((s) => s.id === activeId);
     if (!session) return;
+    const stored = (session.model || "").trim();
+    // Per-chat model wins. Default is only for sessions that never chose a model.
     const resolved = resolveSessionModelForTools(
       models,
       session.model,
       sessionTools(session).imageGeneration,
       (current) => resolveNewChatModel(models, current, defaultModel),
     );
+    if (!resolved) return;
     setModel((prev) => (prev === resolved ? prev : resolved));
-    if (session.model !== resolved) {
+    // Persist only remaps (e.g. external_id → catalog id, image-tool swap) — never
+    // replace a stored per-chat model with the user default after refresh.
+    if (stored && stored !== resolved) {
+      persistSessions(
+        (prev) =>
+          prev.map((s) =>
+            s.id === session.id ? { ...s, model: resolved } : s,
+          ),
+        { debounce: false, metadataSessionIds: [session.id] },
+      );
+      if (!session.privateMode) {
+        void pushSessionMetadataToServer(session.id).catch(() => {});
+      }
+    } else if (!stored && userPrefsReady && resolved) {
+      // Brand-new session with empty model: stamp the resolved choice once.
       persistSessions(
         (prev) =>
           prev.map((s) =>
@@ -1144,30 +1185,32 @@ export default function ChatPanel() {
         void pushSessionMetadataToServer(session.id).catch(() => {});
       }
     }
-  }, [models, activeId, chatsHydrated, defaultModel, persistSessions]);
+  }, [userPrefsReady, models, activeId, chatsHydrated, defaultModel, persistSessions]);
 
   useEffect(() => {
-    if (readOnly || !sessionUsername) return;
-    userPrefsLoadedRef.current = false;
+    if (readOnly || !sessionUsername) {
+      setUserPrefsReady(true);
+      return;
+    }
     serverDefaultModelRef.current = undefined;
-    grokDefaultMigrationDoneRef.current = false;
+    setUserPrefsReady(false);
     let cancelled = false;
     void hydrateUserPrefsFromServer()
       .then((prefs) => {
         if (cancelled) return;
-        userPrefsLoadedRef.current = true;
         serverDefaultModelRef.current = prefs.default_model;
         setDefaultModel(prefs.default_model || "");
         setVoiceRecordingLang(prefs.voice_recording_language === "fa" ? "fa" : "en");
         setPersianFont(normalizePersianFontId(prefs.persian_font));
+        setUserPrefsReady(true);
       })
       .catch(() => {
         if (cancelled) return;
-        userPrefsLoadedRef.current = true;
         serverDefaultModelRef.current = null;
         setDefaultModel("");
         setVoiceRecordingLang("en");
         setPersianFont("");
+        setUserPrefsReady(true);
       });
     return () => {
       cancelled = true;
@@ -1180,6 +1223,10 @@ export default function ChatPanel() {
         .then((prefs) => {
           setVoiceRecordingLang(prefs.voice_recording_language === "fa" ? "fa" : "en");
           setPersianFont(normalizePersianFontId(prefs.persian_font));
+          if (prefs.default_model != null) {
+            setDefaultModel(prefs.default_model || "");
+            serverDefaultModelRef.current = prefs.default_model;
+          }
         })
         .catch(() => {});
     }
@@ -1192,7 +1239,7 @@ export default function ChatPanel() {
   }, [persianFont]);
 
   useEffect(() => {
-    if (!models.length || !defaultModel) return;
+    if (!userPrefsReady || !models.length || !defaultModel) return;
     const resolved = resolveDefaultModelPreference(models, defaultModel);
     if (!resolved) {
       if (models.some((m) => m.id === defaultModel)) return;
@@ -1205,30 +1252,7 @@ export default function ChatPanel() {
         .then((saved) => setDefaultModel(saved || resolved))
         .catch(() => {});
     }
-  }, [models, defaultModel]);
-
-  useEffect(() => {
-    if (readOnly || !models.length || grokDefaultMigrationDoneRef.current) return;
-    if (!userPrefsLoadedRef.current || serverDefaultModelRef.current === undefined) return;
-    if (serverDefaultModelRef.current) {
-      grokDefaultMigrationDoneRef.current = true;
-      return;
-    }
-    if (!shouldMigrateDefaultToGrok43(models, defaultModel)) {
-      grokDefaultMigrationDoneRef.current = true;
-      return;
-    }
-    const grok = findGrok43Model(models);
-    grokDefaultMigrationDoneRef.current = true;
-    if (!grok) return;
-    setDefaultModel(grok.id);
-    void saveDefaultModelToServer(grok.id)
-      .then((saved) => {
-        setDefaultModel(saved || grok.id);
-        serverDefaultModelRef.current = saved || grok.id;
-      })
-      .catch(() => {});
-  }, [readOnly, models, defaultModel]);
+  }, [userPrefsReady, models, defaultModel]);
 
   useEffect(() => {
     if (!models.length || !model) return;
@@ -1238,9 +1262,28 @@ export default function ChatPanel() {
       setModel(byExternal.id);
       return;
     }
-    // Stale cached model (e.g. from old dev run / reset DB) -> auto-heal to default/first available model.
+    // Prefer the active session's stored model over the global default.
+    const sid = activeIdRef.current;
+    const sessionModel = (
+      sid ? sessionsRef.current.find((s) => s.id === sid)?.model : ""
+    )?.trim() || "";
+    if (sessionModel) {
+      const match = models.find(
+        (m) => m.id === sessionModel || m.external_id === sessionModel,
+      );
+      if (match) {
+        setModel(match.id);
+        return;
+      }
+      // Keep the per-chat id even if temporarily missing from catalog.
+      if (sessionModel === model) return;
+      setModel(sessionModel);
+      return;
+    }
+    if (!userPrefsReady) return;
+    // No per-chat model — heal UI from default / catalog only.
     setModel(resolveNewChatModel(models, undefined, defaultModel));
-  }, [models, model, defaultModel]);
+  }, [userPrefsReady, models, model, defaultModel]);
 
   useEffect(() => {
     const gen = ++hydrateGenRef.current;
@@ -1646,8 +1689,9 @@ export default function ChatPanel() {
 
   useEffect(() => {
     if (hydrateOutcome !== "empty" || !chatsHydrated || activeId || readOnly) return;
-    if (!models.length) return;
+    if (!userPrefsReady || !models.length) return;
     const m = resolveNewChatModel(models, undefined, defaultModel);
+    if (!m) return;
     const freshTools = copyFreshChatTools();
     const s = createSession(m, "New chat", freshTools);
     persistSessions((prev) => [s, ...prev], { debounce: false, metadataSessionIds: [s.id] });
@@ -1656,7 +1700,16 @@ export default function ChatPanel() {
     setModel(s.model);
     setMessages([]);
     setChatTools(freshTools);
-  }, [hydrateOutcome, chatsHydrated, activeId, readOnly, models, defaultModel, persistSessions]);
+  }, [
+    hydrateOutcome,
+    chatsHydrated,
+    activeId,
+    readOnly,
+    userPrefsReady,
+    models,
+    defaultModel,
+    persistSessions,
+  ]);
 
   useEffect(() => {
     localStorage.removeItem(STORAGE_KEYS.chatTools);

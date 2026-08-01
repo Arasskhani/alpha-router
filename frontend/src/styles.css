@@ -4727,23 +4727,43 @@ table.card tbody td:last-child {
   max-width: 100%;
 }
 
+/* Default-model mark: only the check is visible; empty ○ boxes are not shown. */
 .cgpt-model-default {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.85rem;
-  height: 1.85rem;
+  width: 1.5rem;
+  height: 1.5rem;
   padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0;
   line-height: 1;
-  color: var(--muted);
-  opacity: 0.85;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--accent);
+  opacity: 0;
+  pointer-events: none;
 }
 
-.cgpt-model-default:hover,
 .cgpt-model-default.is-default {
-  color: var(--accent);
   opacity: 1;
+  pointer-events: auto;
+}
+
+.cgpt-model-modal__list > li:hover .cgpt-model-default:not(.is-default),
+.cgpt-model-menu li:hover .cgpt-model-default:not(.is-default) {
+  opacity: 0.45;
+  pointer-events: auto;
+  color: var(--muted);
+}
+
+.cgpt-model-modal__list > li:hover .cgpt-model-default:not(.is-default):hover,
+.cgpt-model-menu li:hover .cgpt-model-default:not(.is-default):hover {
+  opacity: 1;
+  color: var(--accent);
 }
 
 .cgpt-model-menu li button:hover,

@@ -29,6 +29,7 @@ from app.services.image_model_resolver import (
     is_image_model_failover_error,
     list_auto_router_image_candidates,
 )
+from app.services.model_access_service import resolve_access_subject, user_can_access_model
 from app.services.budget_reservation_service import (
     estimate_image_hold,
     release,
@@ -716,9 +717,15 @@ def _collect_litellm_image_items(response: object) -> list[dict]:
 
 
 async def _resolve_image_model(
-    db: AsyncSession, raw_model: str
+    db: AsyncSession,
+    raw_model: str,
+    *,
+    access_user_id: int | None = None,
 ) -> tuple[str, str | None, str | None, str | None, AIModel | None]:
     model_id = _normalize_model_id(raw_model)
+    subject = (
+        await resolve_access_subject(db, user_id=access_user_id) if access_user_id is not None else None
+    )
     row: AIModel | None = None
     if model_id.startswith("model::"):
         try:
@@ -734,12 +741,19 @@ async def _resolve_image_model(
         if row:
             conn = await db.get(Connection, row.connection_id)
             if conn and conn.is_active:
-                return row.external_id, decrypt_secret(conn.api_key_encrypted), conn.base_url, conn.provider_type, row
+                if subject is None or await user_can_access_model(db, row, subject):
+                    return (
+                        row.external_id,
+                        decrypt_secret(conn.api_key_encrypted),
+                        conn.base_url,
+                        conn.provider_type,
+                        row,
+                    )
             row = None
 
     if not row:
         # external_id can exist in multiple connections; prefer latest model bound to an active connection.
-        candidate = (
+        candidates = (
             await db.execute(
                 select(AIModel, Connection)
                 .join(Connection, Connection.id == AIModel.connection_id)
@@ -750,10 +764,16 @@ async def _resolve_image_model(
                 )
                 .order_by(AIModel.id.desc())
             )
-        ).first()
-        if candidate:
-            row, conn = candidate
-            return row.external_id, decrypt_secret(conn.api_key_encrypted), conn.base_url, conn.provider_type, row
+        ).all()
+        for cand_row, conn in candidates:
+            if subject is None or await user_can_access_model(db, cand_row, subject):
+                return (
+                    cand_row.external_id,
+                    decrypt_secret(conn.api_key_encrypted),
+                    conn.base_url,
+                    conn.provider_type,
+                    cand_row,
+                )
 
     if not row:
         return model_id, None, None, None, None
@@ -778,7 +798,7 @@ async def generate_image(
     requested_model = _normalize_model_id(body.model)
     auto_router_requested = is_openrouter_auto_model(requested_model)
     using_auto_router = False
-    resolve_task = asyncio.create_task(_resolve_image_model(db, body.model))
+    resolve_task = asyncio.create_task(_resolve_image_model(db, body.model, access_user_id=user.id))
 
     try:
         model_id, api_key, base_url, provider_type, ai_model = await resolve_task
@@ -793,6 +813,7 @@ async def generate_image(
                 db,
                 connection_id=ai_model.connection_id if ai_model else None,
                 limit=2,
+                access_user_id=user.id,
             )
             if not auto_candidates:
                 raise HTTPException(

@@ -277,11 +277,22 @@ async def preflight_stream_chat(
     skip_budget: bool,
     alpha_router_api_key_id: int | None = None,
     operation: str = "chat",
+    source: str | None = None,
 ) -> ResolvedStreamContext:
     """Validate budget/key/model while the request DB session is still open."""
+    from app.services.model_access_service import resolve_access_subject, user_can_access_model
+
     selected_model = body.get("model")
     ai_model, api_key, base_url, provider_type = await resolve_model_and_key(db, selected_model)
     if not ai_model or not api_key:
+        raise HTTPException(status_code=404, detail=f"Model not enabled: {selected_model}")
+    subject = await resolve_access_subject(
+        db,
+        user_id=user_id,
+        alpha_router_api_key_id=alpha_router_api_key_id,
+        source=source,
+    )
+    if not await user_can_access_model(db, ai_model, subject):
         raise HTTPException(status_code=404, detail=f"Model not enabled: {selected_model}")
     hold = None
     if alpha_router_api_key_id or (not skip_budget and user_id):
@@ -824,6 +835,7 @@ async def create_embedding(
         skip_budget=skip_budget,
         alpha_router_api_key_id=alpha_router_api_key_id,
         operation="embedding",
+        source=source,
     )
     await db.commit()
     ai_model = resolved.ai_model

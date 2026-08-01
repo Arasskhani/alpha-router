@@ -9,6 +9,8 @@ from app.services.migration_flags import (
     BRANDING_MIGRATION_KEY,
     DELETED_USERS_SCHEMA_KEY,
     MEDIA_DEDUPE_MIGRATION_KEY,
+    MODEL_ADMIN_DISABLED_BACKFILL_KEY,
+    MODEL_ACCESS_TYPE_BACKFILL_KEY,
     ALPHA_ROUTER_BRANDING_KEY,
     PRICING_SANITY_MIGRATION_KEY,
     RBAC_MIGRATION_KEY,
@@ -1227,6 +1229,57 @@ async def apply_data_key_rotation(db) -> dict:
     return {"completed": True, **counts, "skipped": False}
 
 
+async def apply_model_admin_disabled_backfill() -> None:
+    """Backfill ai_models.admin_disabled NULLs to false after schema column patch."""
+    async with engine.begin() as conn:
+
+        def migrate(connection) -> None:
+            if is_migration_completed_sync(connection, MODEL_ADMIN_DISABLED_BACKFILL_KEY):
+                return
+            insp = inspect(connection)
+            tables = set(insp.get_table_names())
+            if "ai_models" in tables:
+                cols = {c["name"] for c in insp.get_columns("ai_models")}
+                if "admin_disabled" in cols:
+                    connection.execute(
+                        text(
+                            "UPDATE ai_models SET admin_disabled = 0 "
+                            "WHERE admin_disabled IS NULL"
+                        )
+                        if connection.dialect.name == "sqlite"
+                        else text(
+                            "UPDATE ai_models SET admin_disabled = false "
+                            "WHERE admin_disabled IS NULL"
+                        )
+                    )
+            mark_migration_completed_sync(connection, MODEL_ADMIN_DISABLED_BACKFILL_KEY)
+
+        await conn.run_sync(migrate)
+
+
+async def apply_model_access_type_backfill() -> None:
+    """Backfill ai_models.access_type NULLs to 'public' after schema column patch."""
+    async with engine.begin() as conn:
+
+        def migrate(connection) -> None:
+            if is_migration_completed_sync(connection, MODEL_ACCESS_TYPE_BACKFILL_KEY):
+                return
+            insp = inspect(connection)
+            tables = set(insp.get_table_names())
+            if "ai_models" in tables:
+                cols = {c["name"] for c in insp.get_columns("ai_models")}
+                if "access_type" in cols:
+                    connection.execute(
+                        text(
+                            "UPDATE ai_models SET access_type = 'public' "
+                            "WHERE access_type IS NULL OR TRIM(access_type) = ''"
+                        )
+                    )
+            mark_migration_completed_sync(connection, MODEL_ACCESS_TYPE_BACKFILL_KEY)
+
+        await conn.run_sync(migrate)
+
+
 async def apply_keycloak_to_saml_migration(db) -> None:
     """Rename Keycloak OIDC provider rows to SAML SP; clear incompatible OIDC JSON."""
     from app.services.migration_flags import (
@@ -1290,6 +1343,8 @@ async def run_one_time_migrations(db) -> None:
     await apply_chat_normalized_storage_migrations()
     await apply_chat_performance_migrations()
     await apply_keycloak_to_saml_migration(db)
+    await apply_model_admin_disabled_backfill()
+    await apply_model_access_type_backfill()
     await apply_user_budget_plan_sync(db)
     await apply_secret_at_rest_encryption(db)
     await migrate_legacy_blob_storage(db)

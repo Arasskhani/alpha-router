@@ -1133,6 +1133,107 @@ table tr:first-child td { border-top: none; }
   background: var(--bg);
   color: var(--text);
 }
+.model-onoff-cell {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+}
+.model-admin-off-badge {
+  font-size: 0.65rem;
+  line-height: 1.2;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.model-access-btn--private {
+  color: var(--text);
+  font-weight: 600;
+}
+.model-access-form__label {
+  margin: 0 0 0.75rem;
+  word-break: break-all;
+}
+.model-access-form__type {
+  border: 0;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+.model-access-form__radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.model-access-form__hint,
+.model-access-form__section-title {
+  display: block;
+  margin: 0.75rem 0 0.35rem;
+  font-size: 0.85rem;
+}
+.model-access-form__section-title {
+  font-weight: 600;
+  color: var(--text);
+}
+.model-access-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+.model-access-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.model-access-hits {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-height: 10rem;
+  overflow: auto;
+}
+.model-access-hits button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0.45rem 0.65rem;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+.model-access-hits button:hover {
+  background: var(--bg);
+}
+.model-access-form__empty-hits {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+}
+.model-access-groups {
+  display: grid;
+  gap: 0.35rem;
+  max-height: 12rem;
+  overflow: auto;
+  margin-bottom: 0.5rem;
+}
+.model-access-group {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.9rem;
+}
 .data-table .col-actions {
   width: 6.5rem;
   white-space: nowrap;
@@ -8579,6 +8680,11 @@ body.activity-pdf-export .activity-page {
   align-items: center;
   gap: 0.5rem;
   flex-shrink: 0;
+}
+.models-status-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 .models-view-toggle {
   display: inline-flex;

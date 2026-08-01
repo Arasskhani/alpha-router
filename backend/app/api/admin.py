@@ -39,9 +39,16 @@ from app.models.model_catalog import AIModel
 from app.models.user import User, UserGroup, user_group_members
 from app.services import activity_service
 from app.services.model_capabilities import model_catalog_meta, model_kinds
+from app.services.model_access_service import (
+    bulk_set_access_type,
+    get_model_access_detail,
+    list_assignment_counts,
+    set_model_access,
+)
 from app.services.model_sync import (
     disable_models_for_connection,
     enable_models_for_connection,
+    set_model_admin_enabled,
     sync_connection_models,
     sync_connection_with_flash,
 )
@@ -298,12 +305,16 @@ async def list_admin_models(
             )
         )
     rows = (await db.execute(stmt)).scalars().all()
+    counts = await list_assignment_counts(db, [m.id for m in rows])
     return [
         {
             "id": m.id,
             "external_id": m.external_id,
             "display_name": m.display_name,
             "enabled": m.is_enabled,
+            "admin_disabled": bool(m.admin_disabled),
+            "access_type": (m.access_type or "public").strip().lower(),
+            "assignment_counts": counts.get(m.id, {"users": 0, "groups": 0}),
             "input_cost_per_1k": m.input_cost_per_1k,
             "output_cost_per_1k": m.output_cost_per_1k,
             "total_cost_per_1k": (m.input_cost_per_1k or 0) + (m.output_cost_per_1k or 0),
@@ -330,9 +341,52 @@ async def toggle_model(model_id: int, enabled: bool, db: AsyncSession = Depends(
     m = await db.get(AIModel, model_id)
     if not m:
         raise HTTPException(404)
-    m.is_enabled = enabled
+    await set_model_admin_enabled(db, m, enabled)
     await db.commit()
     return {"ok": True}
+
+
+@router.get("/models/{model_id}/access")
+async def get_model_access(
+    model_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_models),
+):
+    detail = await get_model_access_detail(db, model_id)
+    if not detail:
+        raise HTTPException(404)
+    return detail
+
+
+class ModelAccessIn(BaseModel):
+    access_type: str
+    user_ids: list[int] = []
+    group_ids: list[int] = []
+
+
+@router.put("/models/{model_id}/access")
+async def put_model_access(
+    model_id: int,
+    body: ModelAccessIn,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_models_write),
+):
+    m = await db.get(AIModel, model_id)
+    if not m:
+        raise HTTPException(404)
+    try:
+        await set_model_access(
+            db,
+            m,
+            access_type=body.access_type,
+            user_ids=body.user_ids,
+            group_ids=body.group_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await db.commit()
+    detail = await get_model_access_detail(db, model_id)
+    return {"ok": True, **(detail or {})}
 
 
 class BulkModelsIn(BaseModel):
@@ -342,7 +396,7 @@ class BulkModelsIn(BaseModel):
 @router.post("/models/bulk")
 async def bulk_models(
     body: BulkModelsIn,
-    action: str = Query(..., pattern="^(on|off|delete)$"),
+    action: str = Query(..., pattern="^(on|off|delete|public|private)$"),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_models_write),
 ):
@@ -353,10 +407,14 @@ async def bulk_models(
         result = await db.execute(delete(AIModel).where(AIModel.id.in_(ids)))
         await db.commit()
         return {"ok": True, "count": result.rowcount or 0}
+    if action in ("public", "private"):
+        count = await bulk_set_access_type(db, ids, action)
+        await db.commit()
+        return {"ok": True, "count": count}
     enabled = action == "on"
     rows = (await db.execute(select(AIModel).where(AIModel.id.in_(ids)))).scalars().all()
     for m in rows:
-        m.is_enabled = enabled
+        await set_model_admin_enabled(db, m, enabled)
     await db.commit()
     return {"ok": True, "count": len(rows)}
 

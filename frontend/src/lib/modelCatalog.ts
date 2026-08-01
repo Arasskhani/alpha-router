@@ -8,11 +8,17 @@ export type ModelKind =
   | "speech"
   | "transcription";
 
+export type ModelAccessType = "public" | "private";
+
 export type CatalogModel = {
   id: number;
   external_id: string;
   display_name?: string | null;
   enabled: boolean;
+  /** Sticky admin lock — sync / connection enable will not clear until admin turns ON. */
+  admin_disabled?: boolean;
+  access_type?: ModelAccessType;
+  assignment_counts?: { users: number; groups: number };
   input_cost_per_1k: number | null;
   output_cost_per_1k: number | null;
   total_cost_per_1k: number;
@@ -47,6 +53,9 @@ export const MODEL_KIND_LABELS: Record<ModelKind, string> = {
   transcription: "Transcription",
 };
 
+export type ModelEnabledFilter = "on" | "off";
+export type ModelAccessFilter = ModelAccessType;
+
 export function kindCounts(models: CatalogModel[]): Record<ModelKind, number> {
   const counts = Object.fromEntries(MODEL_KIND_ORDER.map((k) => [k, 0])) as Record<ModelKind, number>;
   for (const m of models) {
@@ -58,10 +67,41 @@ export function kindCounts(models: CatalogModel[]): Record<ModelKind, number> {
   return counts;
 }
 
+export function enabledCounts(models: CatalogModel[]): Record<ModelEnabledFilter, number> {
+  let on = 0;
+  let off = 0;
+  for (const m of models) {
+    if (m.enabled) on += 1;
+    else off += 1;
+  }
+  return { on, off };
+}
+
+export function accessCounts(models: CatalogModel[]): Record<ModelAccessFilter, number> {
+  let pub = 0;
+  let priv = 0;
+  for (const m of models) {
+    if ((m.access_type || "public") === "private") priv += 1;
+    else pub += 1;
+  }
+  return { public: pub, private: priv };
+}
+
+export function accessTypeLabel(m: CatalogModel): string {
+  const access = m.access_type || "public";
+  if (access !== "private") return "Public";
+  const users = m.assignment_counts?.users ?? 0;
+  const groups = m.assignment_counts?.groups ?? 0;
+  const n = users + groups;
+  return n > 0 ? `Private (${n})` : "Private";
+}
+
 export function filterCatalogModels(
   models: CatalogModel[],
   search: string,
   activeKind: ModelKind | null,
+  enabledFilter: ModelEnabledFilter | null = null,
+  accessFilter: ModelAccessFilter | null = null,
 ): CatalogModel[] {
   const q = search.trim().toLowerCase();
   return models.filter((m) => {
@@ -69,6 +109,10 @@ export function filterCatalogModels(
       const kinds = m.kinds?.length ? m.kinds : (["text"] as ModelKind[]);
       if (!kinds.includes(activeKind)) return false;
     }
+    if (enabledFilter === "on" && !m.enabled) return false;
+    if (enabledFilter === "off" && m.enabled) return false;
+    const access = m.access_type || "public";
+    if (accessFilter && access !== accessFilter) return false;
     if (!q) return true;
     const name = (m.display_name || m.title || "").toLowerCase();
     const desc = (m.description || "").toLowerCase();

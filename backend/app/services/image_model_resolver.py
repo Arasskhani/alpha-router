@@ -334,8 +334,11 @@ async def list_auto_router_image_candidates(
     *,
     connection_id: int | None = None,
     limit: int = _AUTO_ROUTER_FAILOVER_LIMIT,
+    access_user_id: int | None = None,
 ) -> list[ImageModelResolution]:
     """Ranked image models for Auto Router (primary + failover targets)."""
+    from app.services.model_access_service import filter_models_for_subject, resolve_access_subject
+
     statement = (
         select(AIModel, Connection)
         .join(Connection, Connection.id == AIModel.connection_id)
@@ -347,6 +350,15 @@ async def list_auto_router_image_candidates(
     if connection_id is not None:
         statement = statement.where(Connection.id == connection_id)
     rows = (await db.execute(statement)).all()
+    if access_user_id is not None:
+        subject = await resolve_access_subject(db, user_id=access_user_id)
+        allowed = {
+            m.id
+            for m in await filter_models_for_subject(
+                db, [model for model, _ in rows], subject
+            )
+        }
+        rows = [(model, conn) for model, conn in rows if model.id in allowed]
     feedback = await feedback_quality_signals(
         db,
         model_ids=[str(model.external_id) for model, _ in rows],

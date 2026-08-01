@@ -28,6 +28,8 @@ CHAT_PERFORMANCE_MIGRATION_KEY = "chat_performance_indexes_v1"
 SECRET_AT_REST_ENCRYPTION_KEY = "secret_at_rest_encryption_v1"
 DATA_KEY_ROTATION_V1_KEY = "data_key_rotation_v1"
 KEYCLOAK_TO_SAML_MIGRATION_KEY = "keycloak_to_saml_v1"
+MODEL_ADMIN_DISABLED_BACKFILL_KEY = "model_admin_disabled_backfill_v1"
+MODEL_ACCESS_TYPE_BACKFILL_KEY = "model_access_type_backfill_v1"
 
 
 def value_is_migration_completed(value: str | None) -> bool:

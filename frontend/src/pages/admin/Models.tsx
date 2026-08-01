@@ -5,16 +5,23 @@ import Modal from "../../components/Modal";
 import ModelName from "../../components/ModelName";
 import ModelsFilterBar from "../../components/models/ModelsFilterBar";
 import ModelsBrowseView from "../../components/models/ModelsBrowseView";
+import ModelAccessModal from "../../components/models/ModelAccessModal";
 import { api } from "../../api";
 import { useConfirm } from "../../context/ConfirmContext";
 import { useDebounced } from "../../hooks/useDebounced";
 import {
+  accessCounts,
+  accessTypeLabel,
+  enabledCounts,
   filterCatalogModels,
   type CatalogModel,
+  type ModelAccessFilter,
+  type ModelEnabledFilter,
   type ModelKind,
 } from "../../lib/modelCatalog";
 
 type ViewMode = "table" | "browse";
+type BulkAction = "on" | "off" | "delete" | "public" | "private";
 
 const VIEW_STORAGE_KEY = "alpha-router-models-view";
 
@@ -34,10 +41,13 @@ export default function Models() {
   const [allModels, setAllModels] = useState<CatalogModel[]>([]);
   const [search, setSearch] = useState("");
   const [activeKind, setActiveKind] = useState<ModelKind | null>(null);
+  const [enabledFilter, setEnabledFilter] = useState<ModelEnabledFilter | null>(null);
+  const [accessFilter, setAccessFilter] = useState<ModelAccessFilter | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>(loadViewMode);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [accessModelId, setAccessModelId] = useState<number | null>(null);
   const [msg, setMsg] = useState("");
   const debouncedSearch = useDebounced(search, 280);
 
@@ -46,9 +56,13 @@ export default function Models() {
   }
 
   const models = useMemo(
-    () => filterCatalogModels(allModels, debouncedSearch, activeKind),
-    [allModels, debouncedSearch, activeKind],
+    () =>
+      filterCatalogModels(allModels, debouncedSearch, activeKind, enabledFilter, accessFilter),
+    [allModels, debouncedSearch, activeKind, enabledFilter, accessFilter],
   );
+  const statusCounts = useMemo(() => enabledCounts(allModels), [allModels]);
+  const accessFilterCounts = useMemo(() => accessCounts(allModels), [allModels]);
+  const accessModel = allModels.find((m) => m.id === accessModelId) || null;
 
   useEffect(() => {
     loadModels().then(setAllModels).catch(() => setAllModels([]));
@@ -99,7 +113,7 @@ export default function Models() {
     setAllModels(await loadModels());
   }
 
-  async function runBulk(action: "on" | "off" | "delete") {
+  async function runBulk(action: BulkAction) {
     if (!selectedIds.length) return;
     if (action === "delete") {
       const ok = await confirm({
@@ -110,6 +124,14 @@ export default function Models() {
       });
       if (!ok) return;
     }
+    if (action === "public") {
+      const ok = await confirm({
+        title: "Set Public",
+        message: `Set ${selectedIds.length} model(s) to Public and clear private assignments?`,
+        confirmLabel: "Set Public",
+      });
+      if (!ok) return;
+    }
     setBulkBusy(true);
     setMsg("");
     try {
@@ -117,11 +139,14 @@ export default function Models() {
         method: "POST",
         body: JSON.stringify({ ids: selectedIds }),
       });
-      setMsg(
-        action === "delete"
-          ? `Deleted ${r.count} model(s).`
-          : `Turned ${action === "on" ? "on" : "off"} ${r.count} model(s).`,
-      );
+      const labels: Record<BulkAction, string> = {
+        on: `Turned on ${r.count} model(s).`,
+        off: `Turned off ${r.count} model(s).`,
+        delete: `Deleted ${r.count} model(s).`,
+        public: `Set ${r.count} model(s) to Public.`,
+        private: `Set ${r.count} model(s) to Private.`,
+      };
+      setMsg(labels[action]);
       setBulkOpen(false);
       setSelectedIds([]);
       setAllModels(await loadModels());
@@ -151,6 +176,50 @@ export default function Models() {
             />
           </div>
           <div className="models-page__actions">
+            <div className="models-status-filter" role="group" aria-label="Filter by status">
+              {(
+                [
+                  { key: "on" as const, label: "ON" },
+                  { key: "off" as const, label: "OFF" },
+                ] as const
+              ).map(({ key, label }) => {
+                const selected = enabledFilter === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`models-filter-chip${selected ? " models-filter-chip--active" : ""}`}
+                    onClick={() => setEnabledFilter(selected ? null : key)}
+                    aria-pressed={selected}
+                  >
+                    <span>{label}</span>
+                    <span className="models-filter-chip__count">{statusCounts[key]}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="models-status-filter" role="group" aria-label="Filter by access">
+              {(
+                [
+                  { key: "public" as const, label: "Public" },
+                  { key: "private" as const, label: "Private" },
+                ] as const
+              ).map(({ key, label }) => {
+                const selected = accessFilter === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`models-filter-chip${selected ? " models-filter-chip--active" : ""}`}
+                    onClick={() => setAccessFilter(selected ? null : key)}
+                    aria-pressed={selected}
+                  >
+                    <span>{label}</span>
+                    <span className="models-filter-chip__count">{accessFilterCounts[key]}</span>
+                  </button>
+                );
+              })}
+            </div>
             <button
               type="button"
               className="btn btn-ghost"
@@ -209,6 +278,7 @@ export default function Models() {
             selectedIds={selectedIds}
             onToggleSelect={toggleRowSelection}
             onToggleEnabled={toggle}
+            onEditAccess={(id) => setAccessModelId(id)}
           />
         ) : (
           <div className="table-wrap">
@@ -227,6 +297,7 @@ export default function Models() {
                   <th>Input / 1K</th>
                   <th>Output / 1K</th>
                   <th>Total / 1K</th>
+                  <th>Access Type</th>
                   <th className="col-onoff">ON/OFF</th>
                 </tr>
               </thead>
@@ -247,14 +318,32 @@ export default function Models() {
                     <td>{m.input_cost_per_1k ?? "—"}</td>
                     <td>{m.output_cost_per_1k ?? "—"}</td>
                     <td>{m.total_cost_per_1k}</td>
-                    <td className="col-onoff">
+                    <td>
                       <button
                         type="button"
-                        className={`btn btn-sm model-toggle-btn${m.enabled ? " model-toggle-btn--on" : ""}`}
-                        onClick={() => toggle(m.id, m.enabled)}
+                        className={`btn btn-sm btn-ghost model-access-btn${
+                          (m.access_type || "public") === "private" ? " model-access-btn--private" : ""
+                        }`}
+                        onClick={() => setAccessModelId(m.id)}
                       >
-                        {m.enabled ? "ON" : "OFF"}
+                        {accessTypeLabel(m)}
                       </button>
+                    </td>
+                    <td className="col-onoff">
+                      <div className="model-onoff-cell">
+                        <button
+                          type="button"
+                          className={`btn btn-sm model-toggle-btn${m.enabled ? " model-toggle-btn--on" : ""}`}
+                          onClick={() => toggle(m.id, m.enabled)}
+                        >
+                          {m.enabled ? "ON" : "OFF"}
+                        </button>
+                        {m.admin_disabled ? (
+                          <span className="model-admin-off-badge" title="Disabled by admin — sync will not re-enable">
+                            Admin off
+                          </span>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -277,6 +366,12 @@ export default function Models() {
           <button type="button" className="btn btn-ghost" disabled={bulkBusy} onClick={() => runBulk("off")}>
             OFF
           </button>
+          <button type="button" className="btn btn-ghost" disabled={bulkBusy} onClick={() => runBulk("public")}>
+            Public
+          </button>
+          <button type="button" className="btn btn-ghost" disabled={bulkBusy} onClick={() => runBulk("private")}>
+            Private
+          </button>
           <button type="button" className="btn btn-danger" disabled={bulkBusy} onClick={() => runBulk("delete")}>
             Delete
           </button>
@@ -285,6 +380,14 @@ export default function Models() {
           </button>
         </div>
       </Modal>
+
+      <ModelAccessModal
+        open={accessModelId != null}
+        modelId={accessModelId}
+        modelLabel={accessModel?.external_id || ""}
+        onClose={() => setAccessModelId(null)}
+        onSaved={async () => setAllModels(await loadModels())}
+      />
     </AdminPage>
   );
 }

@@ -53,10 +53,33 @@ async def fetch_openrouter_models(api_key: str, base_url: str | None) -> list[di
         return resp.json().get("data", [])
 
 
+async def set_model_admin_enabled(db: AsyncSession, model: AIModel, enabled: bool) -> None:
+    """Apply sticky admin enable/disable for a catalog model.
+
+    OFF locks the model (`admin_disabled`) so sync / connection enable cannot turn it on.
+    ON clears the lock and sets `is_enabled` only when the parent connection is active.
+    """
+    if not enabled:
+        model.admin_disabled = True
+        model.is_enabled = False
+        return
+
+    model.admin_disabled = False
+    conn = None
+    if model.connection_id is not None:
+        conn = await db.get(Connection, model.connection_id)
+    model.is_enabled = bool(conn.is_active) if conn is not None else False
+
+
 async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: str) -> int:
-    """Upsert models for a connection; pricing copied verbatim from provider response."""
+    """Upsert models for a connection; pricing copied verbatim from provider response.
+
+    Existing rows keep `is_enabled` / `admin_disabled`. New rows start unlocked and
+    enabled only when the connection itself is active.
+    """
     provider = conn.provider_type.lower()
     synced = 0
+    new_enabled = bool(conn.is_active)
 
     if provider == "openrouter":
         items = await fetch_openrouter_models(api_key, conn.base_url)
@@ -91,7 +114,13 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
                 for k, v in payload.items():
                     setattr(existing, k, v)
             else:
-                db.add(AIModel(**payload, is_enabled=True))
+                db.add(
+                    AIModel(
+                        **payload,
+                        is_enabled=new_enabled,
+                        admin_disabled=False,
+                    )
+                )
             synced += 1
     else:
         # OpenAI-compatible /v1/models — list only; pricing may require separate catalog
@@ -127,7 +156,13 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
                     for k, v in payload.items():
                         setattr(existing, k, v)
                 else:
-                    db.add(AIModel(**payload, is_enabled=True))
+                    db.add(
+                        AIModel(
+                            **payload,
+                            is_enabled=new_enabled,
+                            admin_disabled=False,
+                        )
+                    )
                 synced += 1
 
     conn.last_sync_at = datetime.utcnow()
@@ -138,19 +173,14 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
 async def sync_connection_with_flash(
     db: AsyncSession, conn: Connection, api_key: str
 ) -> dict[str, int]:
-    """Sync one connection after briefly disabling all models (same as manual Sync Now)."""
-    all_models = (await db.execute(select(AIModel))).scalars().all()
-    for m in all_models:
-        m.is_enabled = False
-    await db.flush()
+    """Sync one connection's catalog without flipping enable state on any models.
 
+    Historically this briefly disabled then re-enabled the entire catalog (all
+    connections), which resurrected admin-disabled models and models on other
+    connections. Flash UX is client-side only now.
+    """
     synced = await sync_connection_models(db, conn, api_key)
-
-    refreshed = (await db.execute(select(AIModel))).scalars().all()
-    for m in refreshed:
-        m.is_enabled = True
-    await db.flush()
-    return {"synced": synced, "models_refreshed": len(refreshed)}
+    return {"synced": synced, "models_refreshed": synced}
 
 
 async def disable_models_for_connection(db: AsyncSession, connection_id: int) -> int:
@@ -162,8 +192,13 @@ async def disable_models_for_connection(db: AsyncSession, connection_id: int) ->
 
 
 async def enable_models_for_connection(db: AsyncSession, connection_id: int) -> int:
-    """Turn on all catalog models tied to a connection (e.g. when connection is re-enabled)."""
+    """Turn on catalog models for a connection, skipping sticky admin-disabled rows."""
     result = await db.execute(
-        update(AIModel).where(AIModel.connection_id == connection_id).values(is_enabled=True)
+        update(AIModel)
+        .where(
+            AIModel.connection_id == connection_id,
+            AIModel.admin_disabled == False,  # noqa: E712
+        )
+        .values(is_enabled=True)
     )
     return result.rowcount or 0

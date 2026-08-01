@@ -13,6 +13,7 @@ from app.database import get_db
 from app.models.model_catalog import AIModel
 from app.models.user import User
 from app.core.security import hash_password
+from app.models.connection import Connection
 from app.services.proxy_service import (
     STREAM_SSE_HEADERS,
     configure_litellm_cache,
@@ -21,6 +22,7 @@ from app.services.proxy_service import (
     stream_chat,
 )
 from app.services.alpha_router_api_key_service import ensure_key_usable
+from app.services.model_access_service import filter_models_for_subject, resolve_access_subject
 from app.services.user_service import get_user_by_api_key
 from app.utils.app_attribution import detect_client_app
 
@@ -147,11 +149,22 @@ async def _require_valid_gateway_key(
 
 
 @router.get("/v1/models")
-async def list_models(
-    db: AsyncSession = Depends(get_db),
-    _auth: None = Depends(_require_valid_gateway_key),
-):
-    rows = (await db.execute(select(AIModel).where(AIModel.is_enabled == True))).scalars().all()  # noqa: E712
+async def list_models(request: Request, db: AsyncSession = Depends(get_db)):
+    auth_ctx = await _resolve_gateway_auth(request, db)
+    rows = (
+        await db.execute(
+            select(AIModel)
+            .join(Connection, Connection.id == AIModel.connection_id)
+            .where(AIModel.is_enabled == True, Connection.is_active == True)  # noqa: E712
+        )
+    ).scalars().all()
+    subject = await resolve_access_subject(
+        db,
+        user_id=auth_ctx.user_id,
+        alpha_router_api_key_id=auth_ctx.alpha_router_api_key_id,
+        source=auth_ctx.source,
+    )
+    rows = await filter_models_for_subject(db, list(rows), subject)
     return {
         "object": "list",
         "data": [
@@ -179,6 +192,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             user_id=auth_ctx.user_id,
             skip_budget=auth_ctx.skip_budget,
             alpha_router_api_key_id=auth_ctx.alpha_router_api_key_id,
+            source=auth_ctx.source,
         )
         await db.commit()
         gen = stream_chat(

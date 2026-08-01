@@ -45,6 +45,7 @@ from app.services.image_prompt_service import (
     enhance_image_generation_prompt,
     enhance_user_prompt,
 )
+from app.services.model_access_service import filter_models_for_subject, resolve_access_subject
 from app.services.proxy_service import STREAM_SSE_HEADERS, preflight_stream_chat, stream_chat
 from app.services.transcription_service import transcribe_audio_bytes
 from app.services.voice_refine_service import refine_voice_transcript
@@ -74,6 +75,8 @@ async def chat_models(user: User = Depends(get_current_user), db: AsyncSession =
             .where(AIModel.is_enabled == True, Connection.is_active == True)  # noqa: E712
         )
     ).scalars().all()
+    subject = await resolve_access_subject(db, user_id=user.id)
+    rows = await filter_models_for_subject(db, list(rows), subject)
     return [
         {
             "id": f"model::{m.id}",

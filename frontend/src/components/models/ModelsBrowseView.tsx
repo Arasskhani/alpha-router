@@ -1,5 +1,5 @@
 import ModelName from "../ModelName";
-import { MODEL_KIND_LABELS, type CatalogModel } from "../../lib/modelCatalog";
+import { accessTypeLabel, MODEL_KIND_LABELS, type CatalogModel } from "../../lib/modelCatalog";
 import {
   formatContextLength,
   formatModelTitle,
@@ -12,6 +12,7 @@ type Props = {
   selectedIds: number[];
   onToggleSelect: (id: number) => void;
   onToggleEnabled: (id: number, enabled: boolean) => void;
+  onEditAccess: (id: number) => void;
 };
 
 export default function ModelsBrowseView({
@@ -19,6 +20,7 @@ export default function ModelsBrowseView({
   selectedIds,
   onToggleSelect,
   onToggleEnabled,
+  onEditAccess,
 }: Props) {
   return (
     <div className="models-browse-list">
@@ -57,13 +59,29 @@ export default function ModelsBrowseView({
                   </div>
                 ) : null}
               </div>
-              <button
-                type="button"
-                className={`btn btn-sm model-toggle-btn${m.enabled ? " model-toggle-btn--on" : ""}`}
-                onClick={() => onToggleEnabled(m.id, m.enabled)}
-              >
-                {m.enabled ? "ON" : "OFF"}
-              </button>
+              <div className="model-onoff-cell">
+                <button
+                  type="button"
+                  className={`btn btn-sm btn-ghost model-access-btn${
+                    (m.access_type || "public") === "private" ? " model-access-btn--private" : ""
+                  }`}
+                  onClick={() => onEditAccess(m.id)}
+                >
+                  {accessTypeLabel(m)}
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm model-toggle-btn${m.enabled ? " model-toggle-btn--on" : ""}`}
+                  onClick={() => onToggleEnabled(m.id, m.enabled)}
+                >
+                  {m.enabled ? "ON" : "OFF"}
+                </button>
+                {m.admin_disabled ? (
+                  <span className="model-admin-off-badge" title="Disabled by admin — sync will not re-enable">
+                    Admin off
+                  </span>
+                ) : null}
+              </div>
             </div>
 
             {m.description ? (

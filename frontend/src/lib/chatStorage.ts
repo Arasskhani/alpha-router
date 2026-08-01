@@ -9,7 +9,7 @@ import {
 import { isQuotaExceededError, PrivateChatStorageError } from "./privateMediaStore";
 import { broadcastChatRefresh, isChatLeader, initChatLeader } from "./chatLeader";
 import { getSessionUser } from "./session";
-import { loadCachedTheme, saveCachedTheme } from "./themeCache";
+import { isCachedTheme, loadCachedTheme, saveCachedTheme, type CachedTheme } from "./themeCache";
 import {
   anyChatToolEnabled,
   copyFreshChatTools,
@@ -17,7 +17,7 @@ import {
   type ChatToolsState,
 } from "./chatTools";
 
-export type UserTheme = "light" | "dark" | "system";
+export type UserTheme = CachedTheme;
 
 export type UserPrefs = {
   default_model: string | null;
@@ -65,8 +65,7 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
     ? raw.default_model.trim()
     : null;
   const themeRaw = typeof raw?.theme === "string" ? raw.theme.trim().toLowerCase() : "light";
-  const theme: UserTheme =
-    themeRaw === "dark" || themeRaw === "system" ? themeRaw : "light";
+  const theme: UserTheme = isCachedTheme(themeRaw) ? themeRaw : "light";
   const timezone = typeof raw?.timezone === "string" && raw.timezone.trim()
     ? raw.timezone.trim()
     : "UTC";

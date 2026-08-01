@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
-import type { CachedTheme } from "../lib/themeCache";
+import type { ColorMode } from "../lib/themeCache";
 
 type Props = {
-  value: CachedTheme;
-  onChange: (theme: CachedTheme) => void;
+  value: ColorMode;
+  onChange: (mode: ColorMode) => void;
   className?: string;
 };
 
@@ -33,13 +33,13 @@ function IconSystem() {
   );
 }
 
-const OPTIONS: { value: CachedTheme; label: string; icon: ReactNode }[] = [
+const OPTIONS: { value: ColorMode; label: string; icon: ReactNode }[] = [
   { value: "light", label: "Light", icon: <IconSun /> },
   { value: "dark", label: "Dark", icon: <IconMoon /> },
   { value: "system", label: "System", icon: <IconSystem /> },
 ];
 
-/** OpenRouter-style light / dark / system segmented control. */
+/** Light / Dark / System segmented control. */
 export default function ThemeSegmentedControl({ value, onChange, className = "" }: Props) {
   return (
     <div className={`theme-segment${className ? ` ${className}` : ""}`} role="group" aria-label="Color mode">

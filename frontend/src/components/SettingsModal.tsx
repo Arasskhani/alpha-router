@@ -6,9 +6,10 @@ import {
   listPersianFontOptions,
   normalizePersianFontId,
 } from "../lib/persianFonts";
-import ThemeSegmentedControl from "./ThemeSegmentedControl";
+import { namedThemeLabel, namedThemeOf } from "../lib/themeCache";
 import { COMMON_TIMEZONES, detectBrowserTimezone } from "../lib/timezones";
 import Modal from "./Modal";
+import ThemePicker from "./ThemePicker";
 import ConnectorsPanel from "./settings/ConnectorsPanel";
 
 type TabId = "general" | "data-control" | "security" | "connectors";
@@ -217,16 +218,12 @@ function GeneralPanel({
 
       <fieldset className="settings-field settings-theme-block">
         <legend className="settings-label">Theme</legend>
-        <div className="settings-theme-card">
+        <div className="settings-theme-card settings-theme-card--picker">
           <div className="settings-theme-name">
-            <strong>Alpha Router</strong>
-            <span className="settings-hint">Default theme</span>
+            <strong>{namedThemeLabel(namedThemeOf(theme))}</strong>
+            <span className="settings-hint">Named theme + appearance</span>
           </div>
-          <ThemeSegmentedControl
-            value={theme}
-            onChange={(next) => setTheme?.(next)}
-            className="settings-theme-segment"
-          />
+          <ThemePicker value={theme} onChange={(next) => setTheme?.(next)} />
         </div>
       </fieldset>
 

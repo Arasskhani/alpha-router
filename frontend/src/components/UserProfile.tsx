@@ -6,7 +6,7 @@ import { formatSessionDuration, getMyActivityPath, getSessionUser, logout } from
 import { MY_USAGE_AND_ACTIVITY_LABEL } from "../lib/usageActivityLabel";
 import type { CachedTheme } from "../lib/themeCache";
 import SettingsModal from "./SettingsModal";
-import ThemeSegmentedControl from "./ThemeSegmentedControl";
+import ThemePicker from "./ThemePicker";
 
 type UserBudget = {
   monthly_budget_usd: number;
@@ -158,7 +158,7 @@ export default function UserProfile({ theme, onThemeChange }: Props) {
           </button>
           <div className="user-profile-menu-divider" />
           <div className="user-profile-theme">
-            <ThemeSegmentedControl value={theme} onChange={onThemeChange} />
+            <ThemePicker value={theme} onChange={onThemeChange} compact />
           </div>
         </div>
       )}

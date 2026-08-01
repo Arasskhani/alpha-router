@@ -13,6 +13,7 @@ import {
 import { PAGE_TITLE } from "../lib/brand";
 import {
   applyThemeToDocument,
+  followsSystemPreference,
   loadCachedTheme,
   saveCachedTheme,
   type CachedTheme,
@@ -36,9 +37,9 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
   useEffect(() => {
     applyThemeToDocument(theme);
     saveCachedTheme(theme);
-    if (theme !== "system") return;
+    if (!followsSystemPreference(theme)) return;
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = () => applyThemeToDocument("system");
+    const onChange = () => applyThemeToDocument(theme);
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, [theme]);

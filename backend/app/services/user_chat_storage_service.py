@@ -128,10 +128,8 @@ def _normalize_prefs(raw: dict[str, Any] | None) -> dict[str, Any]:
         base["default_model"] = None
 
     theme = str(raw.get("theme") or "light").lower()
-    if theme == "dark":
-        base["theme"] = "dark"
-    elif theme == "system":
-        base["theme"] = "system"
+    if theme in ("dark", "system", "mint", "dark-mint", "mint-system"):
+        base["theme"] = theme
     else:
         base["theme"] = "light"
 

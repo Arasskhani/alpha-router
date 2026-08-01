@@ -143,7 +143,7 @@
       <strong>هیچ کدی برای remediation تغییر نکرده است.</strong>
     </p>
     <p class="meta">تاریخ: ۲۰۲۶-۰۷-۲۰ · حالت: تست نفوذ فقط‌خواندنی · بدون افشای secret</p>
-    <p class="meta">هدف: alpha-router، postgres، pgbouncer، redis، seaweedfs، sandbox-broker</p>
+    <p class="meta">هدف: alpha، postgres، pgbouncer، redis، seaweedfs، sandbox-broker</p>
   </header>
 
   <main>
@@ -236,8 +236,8 @@
           <tr><td>Login با Origin بد</td><td>۴۰۳</td></tr>
           <tr><td>Admin / ops / logs بدون auth</td><td>۴۰۱</td></tr>
           <tr><td>Broker از host روی :808۱</td><td>غیرقابل دسترس (publish نشده)</td></tr>
-          <tr><td>Broker از شبکه alpha-router</td><td>Health ۲۰۰؛ execute بدون/با توکن غلط → ۴۰۱</td></tr>
-          <tr><td>کانتینر alpha-router</td><td>user=alpha-router، read-only، CapDrop=ALL، بدون docker.sock؛ پورت ۰٫۰٫۰٫۰:۸۰۸۰</td></tr>
+          <tr><td>Broker از شبکه alpha</td><td>Health ۲۰۰؛ execute بدون/با توکن غلط → ۴۰۱</td></tr>
+          <tr><td>کانتینر alpha</td><td>user=alpha، read-only، CapDrop=ALL، بدون docker.sock؛ پورت ۰٫۰٫۰٫۰:۸۰۸۰</td></tr>
           <tr><td>کانتینر sandbox-broker</td><td>mount شدن docker.sock؛ پورت ۸۰۸۱ publish نشده؛ USER خالی</td></tr>
           <tr><td>Redis بدون رمز</td><td><code>NOAUTH</code></td></tr>
           <tr><td>هدرهای امنیتی</td><td>CSP فقط Report-Only؛ بدون HSTS؛ nosniff؛ X-Frame-Options DENY</td></tr>
@@ -336,7 +336,7 @@ SECRET_KEY=CUSTOM</pre>
           می‌تواند به Docker host مسلط شود. این ریسک معماری است و با «داخلی بودن» حذف نمی‌شود.
         </p>
         <p class="label">شواهد</p>
-        <p>Inspect: mount شدن sock؛ پورت ۸۰۸۱ publish نشده؛ alpha-router بدون sock؛ توکن غلط → ۴۰۱؛ USER خالی.</p>
+        <p>Inspect: mount شدن sock؛ پورت ۸۰۸۱ publish نشده؛ alpha بدون sock؛ توکن غلط → ۴۰۱؛ USER خالی.</p>
         <div class="fix">
           <strong>راهکار فیکس</strong>
           <ul>
@@ -477,7 +477,7 @@ SECRET_KEY=CUSTOM</pre>
 
       <article class="finding" id="F-10">
         <h3><span class="sev sev-medium">Medium</span> · F-10 · broker بدون USER غیرroot</h3>
-        <p>برخلاف alpha-router، broker معمولاً به‌صورت root داخل کانتینر اجرا می‌شود و همزمان sock دارد.</p>
+        <p>برخلاف alpha، broker معمولاً به‌صورت root داخل کانتینر اجرا می‌شود و همزمان sock دارد.</p>
         <div class="fix">
           <strong>راهکار فیکس</strong>
           <ul><li>اجرای non-root در صورت امکان؛ محدود کردن دسترسی گروه به docker.sock.</li></ul>

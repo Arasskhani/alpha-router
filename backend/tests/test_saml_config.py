@@ -18,7 +18,7 @@ def test_validate_saml_requires_metadata_when_enabled():
                 "enabled": True,
                 "idp_metadata_url": "",
                 "idp_metadata_xml": "",
-                "entity_id": "https://alpha-router.example/api/auth/saml/metadata",
+                "entity_id": "https://alpha.example/api/auth/saml/metadata",
             }
         )
 
@@ -29,7 +29,7 @@ def test_validate_saml_accepts_metadata_url():
             "enabled": True,
             "idp_metadata_url": "https://idp.example.com/metadata",
             "idp_metadata_xml": "",
-            "entity_id": "https://alpha-router.example/api/auth/saml/metadata",
+            "entity_id": "https://alpha.example/api/auth/saml/metadata",
             "strict": True,
             "want_assertions_signed": True,
         }
@@ -47,13 +47,13 @@ def test_sp_metadata_xml_does_not_require_idp():
     xml = sp_metadata_xml(
         {
             "enabled": True,
-            "entity_id": "https://alpha-router.example/api/auth/saml/metadata",
+            "entity_id": "https://alpha.example/api/auth/saml/metadata",
             "strict": True,
             "want_assertions_signed": True,
         }
     )
     assert "EntityDescriptor" in xml
-    assert "https://alpha-router.example/api/auth/saml/metadata" in xml
+    assert "https://alpha.example/api/auth/saml/metadata" in xml
     assert "AssertionConsumerService" in xml
 
 
@@ -70,7 +70,7 @@ async def _metadata_xml_when_enabled() -> None:
     db = AsyncMock()
     cfg = {
         "enabled": True,
-        "entity_id": "https://alpha-router.example/api/auth/saml/metadata",
+        "entity_id": "https://alpha.example/api/auth/saml/metadata",
         "strict": True,
         "want_assertions_signed": True,
     }

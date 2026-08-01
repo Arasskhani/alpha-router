@@ -151,6 +151,7 @@ import {
   resolveDefaultModelPreference,
   shouldMigrateDefaultToGrok43,
 } from "../lib/chatModels";
+import { applyPersianFontToChat, normalizePersianFontId } from "../lib/persianFonts";
 import { copyTextToClipboard } from "../lib/clipboard";
 import { downloadCsv, exportMessagePdf, exportMessageDocx } from "../lib/chatExport";
 import { isNearScrollBottom, scrollContainerToBottom } from "../lib/chatScroll";
@@ -445,6 +446,7 @@ export default function ChatPanel() {
   const [translateToEngBusy, setTranslateToEngBusy] = useState(false);
   const [defaultModel, setDefaultModel] = useState("");
   const [voiceRecordingLang, setVoiceRecordingLang] = useState("en");
+  const [persianFont, setPersianFont] = useState("");
   const userPrefsLoadedRef = useRef(false);
   const serverDefaultModelRef = useRef<string | null | undefined>(undefined);
   const grokDefaultMigrationDoneRef = useRef(false);
@@ -1157,6 +1159,7 @@ export default function ChatPanel() {
         serverDefaultModelRef.current = prefs.default_model;
         setDefaultModel(prefs.default_model || "");
         setVoiceRecordingLang(prefs.voice_recording_language === "fa" ? "fa" : "en");
+        setPersianFont(normalizePersianFontId(prefs.persian_font));
       })
       .catch(() => {
         if (cancelled) return;
@@ -1164,6 +1167,7 @@ export default function ChatPanel() {
         serverDefaultModelRef.current = null;
         setDefaultModel("");
         setVoiceRecordingLang("en");
+        setPersianFont("");
       });
     return () => {
       cancelled = true;
@@ -1175,12 +1179,17 @@ export default function ChatPanel() {
       void hydrateUserPrefsFromServer()
         .then((prefs) => {
           setVoiceRecordingLang(prefs.voice_recording_language === "fa" ? "fa" : "en");
+          setPersianFont(normalizePersianFontId(prefs.persian_font));
         })
         .catch(() => {});
     }
     window.addEventListener("alpha_router:user-prefs-saved", onPrefsSaved);
     return () => window.removeEventListener("alpha_router:user-prefs-saved", onPrefsSaved);
   }, []);
+
+  useEffect(() => {
+    applyPersianFontToChat(persianFont);
+  }, [persianFont]);
 
   useEffect(() => {
     if (!models.length || !defaultModel) return;
@@ -4082,7 +4091,7 @@ export default function ChatPanel() {
   }
 
   return (
-    <div className="cgpt-app">
+    <div className="cgpt-app" data-persian-font={persianFont || undefined}>
       <ChatModelPickerModal
         open={modelPickerMode != null}
         mode={modelPickerMode || "replace"}

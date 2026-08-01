@@ -83,7 +83,7 @@ class FakeRedis:
 
     async def aclose(self):
         return None
-CLIENT_ID = "alpha-router-client"
+CLIENT_ID = "alpha-client"
 DISCOVERY = {
     "authorization_endpoint": "https://idp.example.com/auth",
     "token_endpoint": "https://idp.example.com/token",

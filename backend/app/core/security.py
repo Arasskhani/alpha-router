@@ -49,9 +49,9 @@ def generate_api_key() -> tuple[str, str, str]:
 
 
 def generate_api_key_for_user(email_local: str) -> tuple[str, str, str]:
-    """API key starts with alpha_router_{email_local}_ for user-specific keys."""
+    """API key starts with alpha_{email_local}_ for user-specific keys."""
     safe = "".join(c for c in email_local if c.isalnum() or c in "._-")[:32] or "user"
-    raw = f"alpha_router_{safe}_{secrets.token_urlsafe(28)}"
+    raw = f"alpha_{safe}_{secrets.token_urlsafe(28)}"
     prefix = raw[:16]
     key_hash = hashlib.sha256(raw.encode()).hexdigest()
     return raw, prefix, key_hash

@@ -1,0 +1,109 @@
+{
+  "generatedAt": "2026-08-01T10:08:02.151Z",
+  "families": [
+    {
+      "id": "vazir",
+      "label": "Vazir",
+      "cssFamily": "AlphaRouterPersian-Vazir",
+      "faces": [
+        {
+          "path": "/fonts/Vazir-Thin.woff2",
+          "format": "woff2",
+          "weight": 100,
+          "style": "normal"
+        },
+        {
+          "path": "/fonts/Vazir-Light.woff2",
+          "format": "woff2",
+          "weight": 300,
+          "style": "normal"
+        },
+        {
+          "path": "/fonts/Vazir-Regular.woff2",
+          "format": "woff2",
+          "weight": 400,
+          "style": "normal"
+        },
+        {
+          "path": "/fonts/Vazir-Medium.woff2",
+          "format": "woff2",
+          "weight": 500,
+          "style": "normal"
+        },
+        {
+          "path": "/fonts/Vazir-Bold.woff2",
+          "format": "woff2",
+          "weight": 700,
+          "style": "normal"
+        },
+        {
+          "path": "/fonts/Vazir-Black.woff2",
+          "format": "woff2",
+          "weight": 900,
+          "style": "normal"
+        }
+      ]
+    },
+    {
+      "id": "vazirmatn",
+      "label": "Vazirmatn",
+      "cssFamily": "AlphaRouterPersian-Vazirmatn",
+      "faces": [
+        {
+          "path": "/fonts/Vazirmatn-Thin.woff2",
+          "format": "woff2",
+          "weight": 100,
+          "style": "normal"
+        },
+        {
+          "path": "/fonts/Vazirmatn-ExtraLight.woff2",
+          "format": "woff2",
+          "weight": 200,
+          "style": "normal"
+        },
+        {
+          "path": "/fonts/Vazirmatn-Light.woff2",
+          "format": "woff2",
+          "weight": 300,
+          "style": "normal"
+        },
+        {
+          "path": "/fonts/Vazirmatn-Regular.woff2",
+          "format": "woff2",
+          "weight": 400,
+          "style": "normal"
+        },
+        {
+          "path": "/fonts/Vazirmatn-Medium.woff2",
+          "format": "woff2",
+          "weight": 500,
+          "style": "normal"
+        },
+        {
+          "path": "/fonts/Vazirmatn-SemiBold.woff2",
+          "format": "woff2",
+          "weight": 600,
+          "style": "normal"
+        },
+        {
+          "path": "/fonts/Vazirmatn-Bold.woff2",
+          "format": "woff2",
+          "weight": 700,
+          "style": "normal"
+        },
+        {
+          "path": "/fonts/Vazirmatn-ExtraBold.woff2",
+          "format": "woff2",
+          "weight": 800,
+          "style": "normal"
+        },
+        {
+          "path": "/fonts/Vazirmatn-Black.woff2",
+          "format": "woff2",
+          "weight": 900,
+          "style": "normal"
+        }
+      ]
+    }
+  ]
+}

@@ -2,8 +2,8 @@ import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { flattenNav, isNavGrouped, type NavItem, type NavSection } from "../nav/types";
 
-const OPEN_SECTIONS_STORAGE_KEY = "alpha-router.admin.sidebar.openSections";
-const LEGACY_COLLAPSED_STORAGE_KEY = "alpha-router.admin.sidebar.collapsed";
+const OPEN_SECTIONS_STORAGE_KEY = "alpha.admin.sidebar.openSections";
+const LEGACY_COLLAPSED_STORAGE_KEY = "alpha.admin.sidebar.collapsed";
 
 type Props = {
   nav: NavItem[] | NavSection[];

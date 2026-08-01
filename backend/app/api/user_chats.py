@@ -39,7 +39,10 @@ router = APIRouter(prefix="/api/user/chats", tags=["user-chats"])
 class UserPrefsPatchIn(BaseModel):
     default_model: str | None = None
     theme: Literal["light", "dark", "system"] | None = None
+    timezone: str | None = None
+    language: str | None = None
     voice_recording_language: str | None = None
+    persian_font: str | None = None
 
 
 class ChatSessionCreateIn(BaseModel):

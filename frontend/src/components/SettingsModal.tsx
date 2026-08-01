@@ -1,6 +1,11 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { api, authFetch, formatApiError } from "../api";
 import { fetchUserPrefsFromServer, saveUserPrefs, type UserTheme } from "../lib/chatStorage";
+import {
+  applyPersianFontToChat,
+  listPersianFontOptions,
+  normalizePersianFontId,
+} from "../lib/persianFonts";
 import ThemeSegmentedControl from "./ThemeSegmentedControl";
 import { COMMON_TIMEZONES, detectBrowserTimezone } from "../lib/timezones";
 import Modal from "./Modal";
@@ -93,10 +98,12 @@ function GeneralPanel({
 }) {
   const [timezone, setTimezone] = useState("UTC");
   const [voiceLang, setVoiceLang] = useState("en");
+  const [persianFont, setPersianFont] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const persianFontOptions = useMemo(() => listPersianFontOptions(), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -107,6 +114,7 @@ function GeneralPanel({
         const tz = prefs.timezone?.trim() || detectBrowserTimezone();
         setTimezone(tz);
         setVoiceLang(prefs.voice_recording_language === "fa" ? "fa" : "en");
+        setPersianFont(normalizePersianFontId(prefs.persian_font));
       } catch (err) {
         if (!cancelled) setError(formatApiError(err));
       } finally {
@@ -124,11 +132,14 @@ function GeneralPanel({
     setMessage("");
     setError("");
     try {
+      const fontId = normalizePersianFontId(persianFont);
       await saveUserPrefs({
         timezone,
         language: "en",
         voice_recording_language: voiceLang,
+        persian_font: fontId,
       });
+      applyPersianFontToChat(fontId);
       setMessage("Preferences saved.");
       window.dispatchEvent(new CustomEvent("alpha_router:user-prefs-saved"));
     } catch (err) {
@@ -183,6 +194,25 @@ function GeneralPanel({
           <option value="fa">Persian (فارسی)</option>
         </select>
         <span className="settings-hint">Language used when transcribing voice messages.</span>
+      </label>
+
+      <label className="settings-field">
+        <span className="settings-label">Persian Font</span>
+        <select
+          value={persianFont}
+          onChange={(e) => setPersianFont(e.target.value)}
+          className="settings-input"
+        >
+          <option value="">System default</option>
+          {persianFontOptions.map((font) => (
+            <option key={font.id} value={font.id}>
+              {font.label}
+            </option>
+          ))}
+        </select>
+        <span className="settings-hint">
+          Used for chat messages, the message composer, and captions under images in chat.
+        </span>
       </label>
 
       <fieldset className="settings-field settings-theme-block">

@@ -2,22 +2,25 @@ import { STORAGE_KEYS } from "./brand";
 import { authFetch, clearCachedSession, getCachedSession } from "../api";
 import { clearPrivateMediaStore } from "./privateMediaStore";
 
-/** Copy legacy localStorage keys once after rebrand (alpha_router_* → alpha_router_*). */
+/** Copy legacy localStorage keys once after rebrand (alpha_router_* / alpha_router_* → alpha_*). */
 export function migrateLegacyStorageKeys() {
-  const legacy: Record<string, string> = {
-    alpha_router_theme: "alpha_router_theme",
-    alpha_router_login_at: "alpha_router_login_at",
-    alpha_router_is_active: "alpha_router_is_active",
-  };
-  for (const [alphaRouterKey, alphaRouterKey] of Object.entries(legacy)) {
-    if (!localStorage.getItem(alphaRouterKey)) {
-      const v = localStorage.getItem(alphaRouterKey);
-      if (v) localStorage.setItem(alphaRouterKey, v);
+  const targets = [STORAGE_KEYS.theme, STORAGE_KEYS.loginAt, STORAGE_KEYS.isActive] as const;
+  for (const target of targets) {
+    if (localStorage.getItem(target)) continue;
+    const suffix = target.slice("alpha_".length);
+    for (const prefix of ["alpha_router_", "alpha_router_"] as const) {
+      const v = localStorage.getItem(prefix + suffix);
+      if (v) {
+        localStorage.setItem(target, v);
+        break;
+      }
     }
-    localStorage.removeItem(alphaRouterKey);
   }
-  localStorage.removeItem("alpha_router_token");
-  localStorage.removeItem("alpha_router_role");
+  for (const prefix of ["alpha_router_", "alpha_router_"] as const) {
+    for (const suffix of ["theme", "login_at", "is_active", "token", "role"]) {
+      localStorage.removeItem(prefix + suffix);
+    }
+  }
   localStorage.removeItem(STORAGE_KEYS.token);
   localStorage.removeItem(STORAGE_KEYS.role);
 }

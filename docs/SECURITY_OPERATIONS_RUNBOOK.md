@@ -9,13 +9,13 @@ Git.
 ```powershell
 docker compose ps
 Invoke-WebRequest http://localhost:8080/health -UseBasicParsing
-docker compose logs --tail=100 alpha-router
+docker compose logs --tail=100 alpha
 ```
 
 The public health response is deliberately minimal:
 
 ```json
-{"status":"ok","service":"alpha-router"}
+{"status":"ok","service":"alpha"}
 ```
 
 It does not prove that every dependency is healthy. Check PostgreSQL,
@@ -83,7 +83,7 @@ For a local Compose rollback, restore the previous image/configuration and
 recreate only the affected service:
 
 ```powershell
-docker compose up -d --force-recreate alpha-router
+docker compose up -d --force-recreate alpha
 docker compose ps
 Invoke-WebRequest http://localhost:8080/health -UseBasicParsing
 ```

@@ -10,6 +10,7 @@ from app.models.system import SystemSetting
 COMPLETED_VALUES = frozenset({"1", "true", "yes", "done"})
 
 BRANDING_MIGRATION_KEY = "branding_migration_completed"
+ALPHA_ROUTER_BRANDING_KEY = "alpha_router_to_alpha_branding_v1"
 MEDIA_DEDUPE_MIGRATION_KEY = "media_dedupe_migration_completed"
 PRICING_SANITY_MIGRATION_KEY = "pricing_sanity_migration_completed"
 LEGACY_BLOB_STORAGE_KEY = "legacy_blob_storage_completed"

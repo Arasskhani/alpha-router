@@ -170,7 +170,7 @@ export default function ExploreChartCard({ explore, controls, onChange, onDownlo
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `alpha-router-explore-${explore.metric}-${explore.group}.csv`;
+    a.download = `alpha-explore-${explore.metric}-${explore.group}.csv`;
     a.click();
     URL.revokeObjectURL(url);
     setMenuOpen(false);

@@ -2,7 +2,7 @@
 
 **Engagement:** Zero-assumption, read-only Static + Dynamic assessment  
 **Date:** 2026-07-20  
-**Target:** Local Docker Compose (`alpha-router`, `postgres`, `pgbouncer`, `redis`, `seaweedfs`, `sandbox-broker`)  
+**Target:** Local Docker Compose (`alpha`, `postgres`, `pgbouncer`, `redis`, `seaweedfs`, `sandbox-broker`)  
 **Rules:** No remediation · No secret values · No weaponized exploits · No credential rotation  
 
 ---
@@ -26,7 +26,7 @@ This engagement treated Alpha Router as never previously audited. Controls were 
 4. **App published on `0.0.0.0:8080` without HSTS / enforced CSP** — LAN exposure and weaker browser defense-in-depth.
 5. **Redis rate-limit fail-open** — Redis outage weakens login brute-force protection across workers.
 
-**Also confirmed working:** no anonymous `/v1`; broker rejects missing/wrong tokens and is not host-published; docs locked for anonymous callers; alpha-router has no docker.sock; Redis requires auth; no confirmed cross-user IDOR for normal users on chat/media.
+**Also confirmed working:** no anonymous `/v1`; broker rejects missing/wrong tokens and is not host-published; docs locked for anonymous callers; alpha has no docker.sock; Redis requires auth; no confirmed cross-user IDOR for normal users on chat/media.
 
 ---
 
@@ -52,18 +52,18 @@ Critical · High · Medium · Low · Informational
 
 | Check | Result |
 |-------|--------|
-| `GET /health` | 200 · `{"status":"ok","service":"alpha-router"}` (minimal) |
+| `GET /health` | 200 · `{"status":"ok","service":"alpha"}` (minimal) |
 | Docs/OpenAPI unauthenticated | `/docs`, `/redoc`, `/openapi.json`, `/api/docs`, `/api/openapi.json`, `/api/redoc` → **404** |
 | `/v1/models` no key | **401** |
 | `/v1/models` bad key | **401** |
 | Login with `Origin: https://evil.example` | **403** |
 | Admin unauthenticated | **401** |
 | Broker from host `127.0.0.1:8081` | Not reachable (unpublished) |
-| Broker from alpha-router network `/health` | **200** |
+| Broker from alpha network `/health` | **200** |
 | Broker `/v1/execute` no/bad token | **401 / 401** |
-| alpha-router container | user=`alpha-router`, ReadonlyRootfs=true, CapDrop=ALL, no-new-privileges, **no** docker.sock |
+| alpha container | user=`alpha`, ReadonlyRootfs=true, CapDrop=ALL, no-new-privileges, **no** docker.sock |
 | sandbox-broker container | docker.sock mounted RW; published ports null; CapDrop ALL; read_only; **Config.User empty** |
-| alpha-router published ports | `0.0.0.0:8080` and `:::8080` |
+| alpha published ports | `0.0.0.0:8080` and `:::8080` |
 | Redis unauthenticated ping | `NOAUTH Authentication required` |
 | Security headers on `/` | CSP **Report-Only** present; enforcing CSP absent; HSTS absent; `X-Content-Type-Options: nosniff`; `X-Frame-Options: DENY` |
 
@@ -95,7 +95,7 @@ SECRET_KEY=CUSTOM (not default change-me-in-production)
 
 - **Location:** `docker-compose.yml` (sandbox-broker volume), `backend/app/sandbox_broker.py`
 - **Finding:** Broker mounts host `/var/run/docker.sock` and runs Docker CLI with a hardcoded policy. Shared bearer token auth. Broker/token compromise ⇒ host Docker control.
-- **Evidence:** Live inspect sock RW; host 8081 unpublished; alpha-router has no sock; execute rejects bad/missing token with 401.
+- **Evidence:** Live inspect sock RW; host 8081 unpublished; alpha has no sock; execute rejects bad/missing token with 401.
 - **Impact:** Host compromise class — highest privilege surface.
 - **Advisory:** Isolate broker host/VM; rotate token; never publish broker; consider rootless/alternative isolation.
 
@@ -117,7 +117,7 @@ SECRET_KEY=CUSTOM (not default change-me-in-production)
 
 ### F-04 · High · App bound to all interfaces on :8080
 
-- **Location:** `docker-compose.yml` alpha-router ports; live inspect
+- **Location:** `docker-compose.yml` alpha ports; live inspect
 - **Finding:** App on `0.0.0.0:8080` / `:::8080`; DB/Redis/SeaweedFS are localhost-bound; HSTS off; no TLS terminator verified.
 - **Evidence:** Inspect ports; `enable_hsts=False`; no HSTS header.
 - **Impact:** LAN/WAN cleartext reachability if host firewall open.
@@ -161,7 +161,7 @@ SECRET_KEY=CUSTOM (not default change-me-in-production)
 ### F-10 · Medium · Broker without explicit non-root USER
 
 - **Location:** live inspect sandbox-broker `Config.User` empty
-- **Finding:** Unlike alpha-router (`user=alpha-router`), broker user empty (typically root) while holding docker.sock.
+- **Finding:** Unlike alpha (`user=alpha`), broker user empty (typically root) while holding docker.sock.
 - **Impact:** Increases blast radius with F-01.
 - **Advisory:** Non-root broker where possible; tighten socket access.
 

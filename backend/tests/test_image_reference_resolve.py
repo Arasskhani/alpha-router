@@ -25,7 +25,7 @@ def test_parse_alpha_router_media_asset_id_rejects_other_urls():
     assert parse_alpha_router_media_asset_id("data:image/png;base64,abc") is None
 
 
-def test_remote_reference_is_fetched_by_alpha_router_not_forwarded_to_provider():
+def test_remote_reference_is_fetched_by_alpha_not_forwarded_to_provider():
     async def run():
         with (
             patch.object(

@@ -56,7 +56,7 @@ async def _setup_db():
     return engine, session_factory
 
 
-async def _seed_user_key(session_factory, raw_key="alpha_router_userkey_test123"):
+async def _seed_user_key(session_factory, raw_key="alpha_userkey_test123"):
     async with session_factory() as db:
         user = User(
             username="alice",
@@ -81,7 +81,7 @@ async def _seed_user_key(session_factory, raw_key="alpha_router_userkey_test123"
         return user.id, raw_key
 
 
-async def _seed_alpha_router_key(session_factory, *, raw_key="alpha_router_key_test456",
+async def _seed_alpha_router_key(session_factory, *, raw_key="alpha_alphakey_test456",
                           credit_limit_usd=0.0, period_used_usd=0.0):
     async with session_factory() as db:
         key = AlphaRouterApiKey(

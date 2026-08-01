@@ -91,6 +91,8 @@ def _default_prefs() -> dict[str, Any]:
         "timezone": "UTC",
         "language": "en",
         "voice_recording_language": "en",
+        # Catalog id from frontend build (public/fonts); empty = system UI font.
+        "persian_font": "",
     }
 
 
@@ -145,6 +147,20 @@ def _normalize_prefs(raw: dict[str, Any] | None) -> dict[str, Any]:
     # Voice recording language: drives Web Speech API locale and Whisper `language`.
     vrl = str(raw.get("voice_recording_language") or "en").strip().lower()
     base["voice_recording_language"] = "fa" if vrl in ("fa", "fas", "persian", "farsi") else "en"
+
+    # Persian chat font preference (frontend validates against build-time catalog).
+    if "persian_font" in raw:
+        pf = raw.get("persian_font")
+        if pf is None:
+            base["persian_font"] = ""
+        else:
+            token = str(pf).strip()[:64]
+            if not token or token.lower() in ("system", "default", "none"):
+                base["persian_font"] = ""
+            else:
+                # Allow only safe slug characters matching generated font ids.
+                cleaned = "".join(ch for ch in token.lower().replace("_", "-") if ch.isalnum() or ch == "-")
+                base["persian_font"] = cleaned[:64]
     return base
 
 

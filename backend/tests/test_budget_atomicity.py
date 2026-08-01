@@ -4,7 +4,7 @@ The previous ORM read-modify-write pattern (`obj.col = obj.col + cost`) loses
 updates when two concurrent transactions both read the old value. The fix uses
 a single SQL `UPDATE ... SET col = col + :cost` which is atomic at the row
 level. These tests verify the atomic increment path for both user budget and
-alpha-router API key usage counters, including NULL handling and concurrent runs.
+alpha API key usage counters, including NULL handling and concurrent runs.
 """
 
 import asyncio

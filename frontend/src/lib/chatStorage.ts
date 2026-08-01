@@ -26,6 +26,8 @@ export type UserPrefs = {
   timezone: string;
   language: string;
   voice_recording_language: string;
+  /** Build-time font catalog id from public/fonts; empty = system UI font. */
+  persian_font: string;
 };
 
 export type UserChatsPayload = {
@@ -76,12 +78,18 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
     ? raw.voice_recording_language.trim().toLowerCase()
     : "en";
   const voiceRecordingLang = vrlRaw === "fa" ? "fa" : "en";
+  const persianRaw = typeof raw?.persian_font === "string" ? raw.persian_font.trim() : "";
+  const persianFont =
+    !persianRaw || persianRaw.toLowerCase() === "system" || persianRaw.toLowerCase() === "default"
+      ? ""
+      : persianRaw.slice(0, 64);
   return {
     default_model: model,
     theme,
     timezone,
     language: language === "en" ? "en" : "en",
     voice_recording_language: voiceRecordingLang,
+    persian_font: persianFont,
   };
 }
 

@@ -188,14 +188,18 @@ export default function AdminArchitectureDiagram() {
                   <code>GET /v1/models</code>
                 </li>
                 <li>
-                  <code>POST /v1/chat/completions (stream)</code>
+                  <code>POST /v1/chat/completions</code>
+                  <span className="docs-arch-muted"> · stream</span>
+                </li>
+                <li>
+                  <code>POST /v1/embeddings</code>
                 </li>
               </ul>
             </ComponentCard>
             <ComponentCard
               icon={<IconBrowser className="docs-arch-icon" />}
               title="Alpha Router web UI"
-              subtitle="HTTPS · JWT after /api/auth/login"
+              subtitle="HTTPS · session cookie after /api/auth/login"
             >
               <ul className="docs-arch-route-list">
                 <li>
@@ -237,7 +241,7 @@ export default function AdminArchitectureDiagram() {
               </span>
             </div>
             <ul className="docs-arch-core-list">
-              <li>Auth &amp; RBAC · monthly budget engine</li>
+              <li>Auth &amp; RBAC · budget reserve / settle</li>
               <li>
                 Shared <code>stream_chat</code> pipeline → LiteLLM
               </li>
@@ -245,7 +249,7 @@ export default function AdminArchitectureDiagram() {
                 <code>ChatCompletionPersister</code> — server-owned writes during in-app SSE
               </li>
               <li>Request logging · model catalog · Connections</li>
-              <li>Normalized chat rows in PostgreSQL · media blobs in SeaweedFS (hash dedup)</li>
+              <li>Chat rows in PostgreSQL · media in SeaweedFS · code via sandbox-broker</li>
             </ul>
           </ComponentCard>
         </section>
@@ -258,12 +262,12 @@ export default function AdminArchitectureDiagram() {
             <ComponentCard
               iconCentered
               icon={<IconPostgres className="docs-arch-icon" />}
-              title="PostgreSQL"
-              subtitle="Production metadata"
+              title="PostgreSQL + PgBouncer"
+              subtitle="Primary data store"
             >
               <p>
-                <code>chat_sessions</code>, <code>chat_messages</code>, <code>chat_folders</code>,{" "}
-                <code>user_chat_prefs</code>, <code>media_assets</code>, logs, Connections.
+                Users, Connections, catalog, chat rows, budgets, reservations, request logs. App uses transaction
+                pooling via PgBouncer.
               </p>
             </ComponentCard>
             <ComponentCard
@@ -273,25 +277,27 @@ export default function AdminArchitectureDiagram() {
               subtitle="Object storage"
             >
               <p>
-                S3 API :8333 · Admin UI :23646 (localhost). Keys <code>cdn/u/user/hash.ext</code> — served via
-                authenticated Alpha Router API only.
+                S3 API for media blobs (hash dedup per user). Served only through authenticated Alpha Router media APIs.
               </p>
             </ComponentCard>
             <ComponentCard
               iconCentered
               icon={<IconRedis className="docs-arch-icon" />}
               title="Redis"
-              subtitle="Optional"
+              subtitle="Cache &amp; state"
             >
-              <p>LiteLLM prompt cache in production; in-memory fallback when unavailable.</p>
+              <p>Rate limits, SSO/2FA pending state, LiteLLM cache; in-memory fallback when Redis is down.</p>
             </ComponentCard>
             <ComponentCard
               iconCentered
               icon={<IconLiteLLM className="docs-arch-icon" />}
-              title="LiteLLM"
-              subtitle="LLM router"
+              title="LiteLLM + sandbox"
+              subtitle="LLM router · code broker"
             >
-              <p>Calls provider APIs using keys &amp; base URLs from Connections (DB).</p>
+              <p>
+                LiteLLM calls upstream providers from Connections. Code interpreter runs via internal sandbox-broker
+                (no public port).
+              </p>
             </ComponentCard>
           </div>
         </section>

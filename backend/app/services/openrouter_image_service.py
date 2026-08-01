@@ -223,7 +223,7 @@ def build_openrouter_headers(api_key: str, *, referer: str | None = None) -> dic
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     if referer:
         headers["HTTP-Referer"] = referer
-        headers["X-Title"] = "nitro"
+        headers["X-Title"] = "Alpha Router"
     return headers
 
 

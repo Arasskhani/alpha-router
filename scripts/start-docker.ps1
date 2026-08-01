@@ -31,5 +31,5 @@ Write-Host "SeaweedFS Admin UI: http://localhost:23646  (SEAWEEDFS_ADMIN_PASSWOR
 Write-Host "SeaweedFS S3 API:   http://127.0.0.1:8333  (localhost only)" -ForegroundColor DarkGray
 Write-Host "PostgreSQL:         localhost:5432" -ForegroundColor DarkGray
 Write-Host ""
-Write-Host "Following alpha-router container logs (Ctrl+C to stop watching; containers keep running)..." -ForegroundColor Cyan
-docker compose logs -f alpha-router
+Write-Host "Following alpha container logs (Ctrl+C to stop watching; containers keep running)..." -ForegroundColor Cyan
+docker compose logs -f alpha

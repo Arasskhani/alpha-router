@@ -136,7 +136,7 @@
       with evidence and concrete fix guidance. <strong>No application code was changed.</strong>
     </p>
     <p class="meta">Date: 2026-07-20 · Mode: Read-only pentest · Secrets omitted by design</p>
-    <p class="meta">Target: alpha-router, postgres, pgbouncer, redis, seaweedfs, sandbox-broker (localhost)</p>
+    <p class="meta">Target: alpha, postgres, pgbouncer, redis, seaweedfs, sandbox-broker (localhost)</p>
   </header>
 
   <main>
@@ -203,14 +203,14 @@
       <table>
         <thead><tr><th>Probe</th><th>Result</th></tr></thead>
         <tbody>
-          <tr><td><code>GET /health</code></td><td>200 · minimal JSON <code>{"status":"ok","service":"alpha-router"}</code></td></tr>
+          <tr><td><code>GET /health</code></td><td>200 · minimal JSON <code>{"status":"ok","service":"alpha"}</code></td></tr>
           <tr><td>Docs / OpenAPI (unauth)</td><td>All of <code>/docs</code>, <code>/redoc</code>, <code>/openapi.json</code>, <code>/api/docs</code>, <code>/api/openapi.json</code>, <code>/api/redoc</code> → 404</td></tr>
           <tr><td><code>/v1</code> no/bad key</td><td>401 / 401</td></tr>
           <tr><td>Login <code>Origin: https://evil.example</code></td><td>403</td></tr>
           <tr><td>Admin / ops / logs unauth</td><td>401</td></tr>
           <tr><td>Broker host <code>:8081</code></td><td>Not reachable (unpublished)</td></tr>
-          <tr><td>Broker from alpha-router net</td><td>Health 200; execute no/bad token → 401</td></tr>
-          <tr><td>alpha-router runtime</td><td>user=alpha-router, read-only rootfs, CapDrop=ALL, no-new-privileges, no docker.sock; ports 0.0.0.0:8080</td></tr>
+          <tr><td>Broker from alpha net</td><td>Health 200; execute no/bad token → 401</td></tr>
+          <tr><td>alpha runtime</td><td>user=alpha, read-only rootfs, CapDrop=ALL, no-new-privileges, no docker.sock; ports 0.0.0.0:8080</td></tr>
           <tr><td>sandbox-broker runtime</td><td>docker.sock RW mount; CapDrop=ALL; read_only; Config.User empty; 8081 unpublished</td></tr>
           <tr><td>Redis ping without auth</td><td><code>NOAUTH Authentication required</code></td></tr>
           <tr><td>Headers on <code>/</code></td><td>CSP Report-Only present; enforcing CSP absent; HSTS absent; nosniff; X-Frame-Options DENY</td></tr>
@@ -287,7 +287,7 @@ SECRET_KEY=CUSTOM</pre>
           (privileged containers, host FS mounts, etc.).
         </p>
         <p class="label">Evidence</p>
-        <p>Live inspect: sock RW mount; 8081 unpublished; alpha-router has no sock; execute missing/wrong token → 401. Broker <code>Config.User</code> empty.</p>
+        <p>Live inspect: sock RW mount; 8081 unpublished; alpha has no sock; execute missing/wrong token → 401. Broker <code>Config.User</code> empty.</p>
         <p class="label">Impact</p>
         <p>Full host compromise class — highest privilege surface in the stack.</p>
         <div class="fix">
@@ -364,7 +364,7 @@ SECRET_KEY=CUSTOM</pre>
       <article class="finding" id="F-04">
         <h3><span class="sev sev-high">High</span> · F-04 · App bound to all interfaces on :8080</h3>
         <p class="label">Location</p>
-        <p><code>docker-compose.yml</code> alpha-router ports; live inspect <code>0.0.0.0:8080</code> / <code>:::8080</code></p>
+        <p><code>docker-compose.yml</code> alpha ports; live inspect <code>0.0.0.0:8080</code> / <code>:::8080</code></p>
         <p class="label">Finding</p>
         <p>Data planes bind to localhost, but the HTTP app is published on all interfaces. HSTS disabled; no TLS terminator verified.</p>
         <div class="fix">

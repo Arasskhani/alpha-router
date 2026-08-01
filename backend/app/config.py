@@ -13,7 +13,7 @@ INSECURE_DEFAULTS: frozenset[str] = frozenset(
         "change-me-in-production",  # SECRET_KEY
         "admin",  # ADMIN_PASSWORD
         "changeme",  # SERVICE_ADMIN_PASSWORD and template credentials
-        "alpha-router",  # bundled database/S3 development identity
+        "alpha",  # bundled database/S3 development identity
         "rustfsadmin",  # common S3-compatible placeholder
         "change-me-seaweed-admin",  # SEAWEEDFS_ADMIN_PASSWORD example
         "sk-alpha-router-master",  # GATEWAY_MASTER_KEY
@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     admin_password: str = "admin"
     service_admin_password: str = "changeme"
 
-    database_url: str = "postgresql+asyncpg://alpha_router:alpha_router@postgres:5432/alpha-router"  # env: DATABASE_URL
+    database_url: str = "postgresql+asyncpg://alpha_router:changeme@postgres:5432/alpha_router"  # env: DATABASE_URL
     database_read_url: str = ""  # env: DATABASE_READ_URL — optional read replica for GET chat routes
     db_pool_size: int = 12  # env: DB_POOL_SIZE — per worker behind PgBouncer (5k concurrent profile)
     db_max_overflow: int = 20  # env: DB_MAX_OVERFLOW
@@ -161,7 +161,7 @@ class Settings(BaseSettings):
 
     # Object storage (SeaweedFS / S3-compatible) — all media blobs
     s3_endpoint_url: str = "http://127.0.0.1:8333"
-    s3_access_key: str = "alpha-router"
+    s3_access_key: str = "alpha"
     s3_secret_key: str = "changeme"
     s3_bucket: str = "alpha-router-media"
     s3_region: str = "us-east-1"

@@ -25,6 +25,7 @@ from app.services.ldap_auth import (
 from app.services.auth_exchange import consume_code, generate_code, store_token
 from app.services.auth_urls import validate_frontend_url
 from app.services.oidc_client import (
+    STATE_COOKIE_NAME,
     build_authorize_url,
     build_profile_from_claims,
     clear_state_cookie_params,
@@ -376,7 +377,7 @@ async def oidc_callback(
     cfg = await get_provider_config(db, "oidc")
     if not cfg.get("enabled"):
         raise HTTPException(status_code=400, detail="OIDC is disabled")
-    cookie_value = request.cookies.get("alpha_router_oidc_state")
+    cookie_value = request.cookies.get(STATE_COOKIE_NAME)
     flow = verify_state_cookie(cookie_value, state or "")
     if flow is None or not code:
         raise HTTPException(status_code=400, detail="Invalid or expired OIDC state")

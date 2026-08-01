@@ -20,7 +20,7 @@ Three surfaces, one FastAPI process:
 |---|---|---|
 | User app (chat, media, activity) | `/app/*` | HttpOnly session cookie + CSRF |
 | Admin panel | `/admin/*` | same cookie, RBAC menu gating |
-| OpenAI-compatible gateway | `/v1/*` | Alpha Router API key (`Authorization: Bearer alpha_router_…`) |
+| OpenAI-compatible gateway | `/v1/*` | Alpha Router API key (`Authorization: Bearer alpha_…`) |
 
 The React SPA is compiled into `frontend/dist` and served by the same FastAPI app
 (`main.py:568-596`, SPA fallback with path-traversal containment).
@@ -51,7 +51,7 @@ Alpha Router/
 ├── deploy/seaweedfs/            entrypoint.sh + pinned VERSION (4.40)
 ├── scripts/                     PowerShell ops scripts (Windows host)
 ├── docs/                        security audit + operations runbook
-├── docker-compose.yml           postgres, pgbouncer, redis, seaweedfs, sandbox-broker, alpha-router
+├── docker-compose.yml           postgres, pgbouncer, redis, seaweedfs, sandbox-broker, alpha
 ├── Dockerfile                   multi-stage: node build → python 3.12-slim + playwright chromium
 └── .gitlab-ci.yml               backend tests, frontend test+build, pip-audit, npm audit, trivy
 ```
@@ -276,7 +276,7 @@ a hard 0.70 success-rate floor (≥8 samples → ×0.35 demotion). Retries with
   `user_chat_storage_service` (1097 lines; revisions, 512 KB message cap, PG FTS
   search with SQLite LIKE fallback), `chat_title_service`, `voice_refine_service`,
   `image_prompt_service`, `chat_tools_service`, `code_interpreter_service`,
-  `chat_feedback_service`, `chat_import_export` (alpha-router / ChatGPT / Open WebUI
+  `chat_feedback_service`, `chat_import_export` (alpha / ChatGPT / Open WebUI
   formats), `chat_export_service` (Playwright PDF), `chat_docx_service`,
   `transcription_service`, `attachment_policy`, `attachment_extract`.
 - **Media/storage** — `storage_service`, `object_storage_service` (boto3),
@@ -498,7 +498,7 @@ real, non-placeholder values. `ENVIRONMENT` is set, `PRODUCTION_GUARD_MODE=hard-
 Two issues: the file contains ~20 stray keys that look pasted from container images
 (`GOSU_VERSION`, `PG_SHA256`, `PYTHON_VERSION`, `MC_CONFIG_DIR`, `PGDATA`, …), and
 `POSTGRES_USER` / `POSTGRES_DB` are empty while `docker-compose.yml` expects them
-(Compose defaults them to `alpha-router`, so it works, but it is fragile).
+(Compose defaults them to `alpha`, so it works, but it is fragile).
 
 ---
 

@@ -17,7 +17,11 @@ from app.api import admin, auth, authentication, chat, gateway, groups, images, 
 from app.config import INSECURE_DEFAULTS, get_settings
 from app.core.security import hash_password
 from app.database import AsyncSessionLocal, Base, engine
-from app.db_migrate import apply_schema_column_patches, run_one_time_migrations
+from app.db_migrate import (
+    apply_alpha_router_branding_migration,
+    apply_schema_column_patches,
+    run_one_time_migrations,
+)
 from app.models.user import User
 from app.services.auth_sync_scheduler import refresh_auth_sync_schedules
 from app.services.bounded_io import RequestBodyLimitMiddleware
@@ -223,8 +227,8 @@ def _collect_production_insecurities(
     if not openapi_admin_only:
         insecure.append("OPENAPI_DOCS")
     if database_url in {
-        "postgresql+asyncpg://alpha_router:alpha_router@postgres:5432/alpha-router",
-        "postgresql+asyncpg://alpha_router:changeme@pgbouncer:6432/alpha-router",
+        "postgresql+asyncpg://alpha_router:changeme@postgres:5432/alpha_router",
+        "postgresql+asyncpg://alpha_router:changeme@pgbouncer:6432/alpha_router",
     } or (database_url.strip() and not _url_has_secure_password(database_url)):
         insecure.append("DATABASE_URL")
     # SAML ACS/metadata are derived from api_public_url; require HTTPS when enabled.
@@ -363,6 +367,9 @@ _PRODUCTION_GUARD_LOG = logging.getLogger("alpha_router.production_guard")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _assert_production_safe()
+    # Rename alpha_router_* → alpha_* before create_all so ORM does not create empty
+    # alpha_* shells beside populated alpha_router_* tables on upgraded databases.
+    await apply_alpha_router_branding_migration()
     async with engine.begin() as conn:
         # Multiple uvicorn workers enter lifespan concurrently. Serialize DDL
         # discovery/creation so a newly introduced table cannot race in
@@ -511,7 +518,7 @@ def health_payload() -> dict[str, str]:
     fingerprint the application. Dependency readiness is checked separately by
     the deployment layer rather than turning this endpoint into a data probe.
     """
-    return {"status": "ok", "service": "alpha-router"}
+    return {"status": "ok", "service": "alpha"}
 
 
 @app.get("/health", include_in_schema=False)

@@ -25,6 +25,7 @@ function Warn({ children }: { children: ReactNode }) {
 }
 
 export const docSections: DocSection[] = [
+  // ── Get started ───────────────────────────────────────────────────────────
   {
     id: "introduction",
     title: "Introduction",
@@ -33,38 +34,68 @@ export const docSections: DocSection[] = [
       <>
         <h1>Admin Guide</h1>
         <p className="docs-lead">
-          Alpha Router is an organizational AI platform: a built-in web app for chat, media, and administration, plus an
-          optional OpenAI-compatible <code>/v1</code> API for external tools. It connects teams to upstream LLM providers
-          (OpenRouter, OpenAI, Anthropic, Google, and others) while enforcing budgets, roles, plans, and audit logging.
+          Alpha Router is an organizational AI control plane. It sits between your employees (and optional external tools) and
+          upstream LLM providers, enforcing budgets, roles, quotas, audit logging, and retention — while serving a
+          built-in chat app and an OpenAI-compatible gateway.
         </p>
         <p>
-          This guide is for administrators and integrators. It reflects current product behaviour: grouped admin
-          navigation with a dedicated <strong>User panel</strong> section, scoped RBAC with a single{" "}
-          <strong>Super Admin</strong> role, LDAP directory sync, SAML/OIDC SSO, chat with attachments and tools, connection
-          sync schedules, object storage for media, per-user budgets and deactivation, Usage &amp; Activity views,
-          Operations and Database monitoring (for Super Admin), and optional gateway access via <code>/v1</code>. End-user
-          help lives in the in-app <strong>User Manual</strong> (<code>/app/manual</code>). This guide does not contain
-          secrets—configure keys only in your deployment.
+          This guide is for operators and administrators. End-user help lives in the in-app{" "}
+          <strong>User Manual</strong> (<code>/app/manual</code> or <code>/admin/manual</code>). Do not paste secrets
+          into documentation; configure them only in your deployment environment and the admin UI.
         </p>
         <div className="docs-cards">
           <div className="docs-card">
-            <h3>Built-in app</h3>
+            <h3>Three surfaces</h3>
             <p>
-              User panel (<code>/app</code>) and admin panel (<code>/admin</code>) — chat, media, and
-              full administration in one product.
+              User app <code>/app/*</code>, admin panel <code>/admin/*</code>, and gateway <code>/v1/*</code> — one
+              FastAPI process.
             </p>
           </div>
           <div className="docs-card">
-            <h3>Budget control</h3>
-            <p>Monthly USD pools per user, enforced before traffic reaches providers.</p>
+            <h3>Policy &amp; spend</h3>
+            <p>Plans, monthly budgets, API-key credits, and per-request reservation before provider traffic.</p>
           </div>
           <div className="docs-card">
             <h3>Visibility</h3>
-            <p>
-              Dashboards, <a href="#admin-operations">Operations</a>, API logs, reports, and optional scheduled exports.
-            </p>
+            <p>Dashboard analytics, Operations, API logs, reports, and activity exports.</p>
           </div>
         </div>
+        <table className="docs-table">
+          <thead>
+            <tr>
+              <th>Section group</th>
+              <th>What you will find</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <a href="#architecture">Get started</a>
+              </td>
+              <td>Architecture, services, deployment overview, first-time setup</td>
+            </tr>
+            <tr>
+              <td>
+                <a href="#security-overview">Security</a>
+              </td>
+              <td>Auth, sessions/CSRF, RBAC, encryption, hardening checklist</td>
+            </tr>
+            <tr>
+              <td>
+                <a href="#admin-dashboard">Overview / Models / People / …</a>
+              </td>
+              <td>Every admin menu: purpose, UI actions, and operational notes</td>
+            </tr>
+            <tr>
+              <td>
+                <a href="#platform-api">Platform API &amp; Billing</a>
+              </td>
+              <td>
+                <code>/v1</code> gateway, budgets, and pricing rules
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </>
     ),
   },
@@ -77,32 +108,29 @@ export const docSections: DocSection[] = [
         <h2>Why Alpha Router exists</h2>
         <p>Teams adopting LLMs across chat, IDEs, and automation usually hit the same problems:</p>
         <ul>
-          <li>Provider keys are shared or scattered, with no central policy.</li>
+          <li>Provider API keys are shared or scattered, with no central policy.</li>
           <li>Spend is hard to attribute to people, teams, or departments.</li>
           <li>Model catalogs and pricing change often.</li>
           <li>Compliance needs a durable request history.</li>
         </ul>
         <p>Alpha Router addresses this by:</p>
         <ol>
-          <li>Terminating client traffic at the organizational AI platform you operate.</li>
-          <li>Syncing models and <strong>provider-native pricing</strong> from connections (no markup).</li>
+          <li>Terminating client traffic at a platform you operate.</li>
           <li>
-            Applying <strong>Super Admin</strong> (full platform access), <strong>API Key Admin</strong> (API Keys menu
-            only), <strong>plans</strong>, <strong>monthly budgets</strong>, and optional{" "}
-            <strong>deactivation</strong> (account read-only — users can still browse chat history but cannot send new
-            messages).
+            Syncing models and <strong>provider-native pricing</strong> from Connections (Alpha Router does not rewrite
+            catalog prices).
           </li>
           <li>
-            Supporting <strong>local, LDAP/Active Directory, SAML 2.0, and generic OIDC</strong> sign-in, with scheduled
-            LDAP directory sync for users and groups.
+            Enforcing <strong>RBAC</strong>, <strong>plans</strong>, <strong>monthly budgets</strong>, and optional
+            account deactivation (read-only history; no new spend).
           </li>
           <li>
-            Offering in-app chat, per-user media libraries, Usage &amp; Activity analytics (CSV/PDF export), and
-            scheduled cost reports.
+            Supporting <strong>local</strong>, <strong>LDAP/Active Directory</strong>, <strong>SAML 2.0</strong>, and{" "}
+            <strong>OIDC</strong> sign-in.
           </li>
           <li>
-            Exposing an optional OpenAI-compatible <code>/v1</code> API so external tools (IDE extensions, scripts,
-            automation) can share the same models and budgets when administrators issue Alpha Router API keys.
+            Offering in-app chat, media libraries, Usage &amp; Activity, and an optional OpenAI-compatible{" "}
+            <code>/v1</code> API for external tools.
           </li>
         </ol>
       </>
@@ -110,1406 +138,565 @@ export const docSections: DocSection[] = [
   },
   {
     id: "architecture",
-    title: "Architecture",
+    title: "Architecture &amp; services",
     group: "Get started",
     content: (
       <>
-        <h2>Architecture</h2>
+        <h2>Architecture &amp; services</h2>
         <p>
-          Alpha Router is one FastAPI app plus a React SPA. External tools use the OpenAI-compatible <code>/v1</code> surface;
-          the built-in chat UI uses separate <code>/api/*</code> routes with JWT session auth. Both paths share the same{" "}
-          <code>stream_chat</code> pipeline (budget, model resolution, LiteLLM, logging).
+          Alpha Router is one application container that serves the React SPA and the API. Supporting services run beside it in
+          Docker Compose.
         </p>
         <AdminArchitectureDiagram />
-        <p className="docs-muted" style={{ fontSize: "0.84rem", marginTop: "-0.25rem" }}>
-          Diagram uses simplified monochrome icons for each component. Arrows show the main request and data flow; provider
-          API keys never leave the <strong>Connections</strong> table in PostgreSQL.
-        </p>
-        <h3>Request path — external clients (<code>/v1</code>)</h3>
+        <h3>Surfaces</h3>
+        <table className="docs-table">
+          <thead>
+            <tr>
+              <th>Surface</th>
+              <th>Path</th>
+              <th>Auth</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>User app</td>
+              <td>
+                <code>/app/*</code>
+              </td>
+              <td>HttpOnly session cookie + CSRF on unsafe <code>/api/*</code> methods</td>
+            </tr>
+            <tr>
+              <td>Admin panel</td>
+              <td>
+                <code>/admin/*</code>
+              </td>
+              <td>Same cookie; menus gated by RBAC</td>
+            </tr>
+            <tr>
+              <td>OpenAI-compatible gateway</td>
+              <td>
+                <code>/v1/*</code>
+              </td>
+              <td>
+                <code>Authorization: Bearer</code> — Alpha Router API key, user API key, or gateway master key
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <h3>Runtime services</h3>
+        <table className="docs-table">
+          <thead>
+            <tr>
+              <th>Service</th>
+              <th>Role</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <strong>alpha</strong> (uvicorn)
+              </td>
+              <td>FastAPI app, SPA static files, LiteLLM proxy, schedulers, billing</td>
+            </tr>
+            <tr>
+              <td>
+                <strong>PostgreSQL</strong> + <strong>PgBouncer</strong>
+              </td>
+              <td>
+                Primary data store (users, catalog, chat rows, logs, reservations). App connects through PgBouncer in
+                transaction pooling mode.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <strong>Redis</strong>
+              </td>
+              <td>Rate limits, SSO/2FA pending state, LiteLLM cache (in-memory fallback if Redis is unavailable)</td>
+            </tr>
+            <tr>
+              <td>
+                <strong>SeaweedFS</strong>
+              </td>
+              <td>S3-compatible object storage for media blobs (authenticated access via Alpha Router APIs only)</td>
+            </tr>
+            <tr>
+              <td>
+                <strong>sandbox-broker</strong>
+              </td>
+              <td>
+                Internal HTTP service that spawns disposable code-interpreter containers. Listens on an internal Docker
+                network; the Docker socket is a residual host trust boundary — never publish the broker port.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <h3>LLM request path (summary)</h3>
         <ol>
           <li>
-            Client calls <code>POST /v1/chat/completions</code> with <code>Authorization: Bearer &lt;Alpha Router key&gt;</code>{" "}
-            and <code>stream: true</code> (non-streaming is rejected on this route).
+            Client calls <code>POST /api/chat/completions</code> or <code>POST /v1/chat/completions</code>.
           </li>
           <li>
-            Alpha Router resolves the key (shared gateway key or per-user API key), provisions or maps the{" "}
-            <code>user</code> field when needed, checks monthly budget, and loads an enabled model plus its{" "}
-            <strong>Connection</strong> from the database.
+            Alpha Router resolves an enabled model and Connection key, then <strong>reserves</strong> budget (or API-key
+            credit).
           </li>
           <li>
-            <code>stream_chat</code> invokes LiteLLM with the connection&apos;s provider credentials; tokens, USD cost, and
-            latency are written to API logs (<code>source</code> e.g. gateway key, user key, alpha_router_chat).
+            Streaming goes through LiteLLM to the upstream provider. Optional tools: web search/fetch, MCP connectors,
+            code interpreter (via sandbox-broker).
+          </li>
+          <li>
+            Usage is logged and the reservation is <strong>settled</strong> to the actual cost. In-app chat also
+            persists messages server-side during the stream.
           </li>
         </ol>
-        <h3>Request path — Alpha Router Chat (<code>/api/chat</code>)</h3>
-        <ol>
-          <li>
-            Browser sends the session JWT to <code>POST /api/chat/completions</code> (see <code>ChatPanel</code> in the
-            frontend—not <code>/v1</code>). Optional <code>persist_chat: true</code> enables{" "}
-            <strong>server-owned persistence</strong> during the SSE stream via <code>ChatCompletionPersister</code>.
-          </li>
-          <li>
-            Optional <code>POST /api/chat/enhance-prompt</code> — the composer <strong>To ENG</strong> button calls a lightweight
-            non-streaming model pass to <strong>translate</strong> the draft in the text box to English. Body fields:{" "}
-            <code>model</code>, <code>prompt</code>, <code>mode</code> (
-            <code>translate</code> from the UI; server also supports <code>improve</code> and{" "}
-            <code>translate_improve</code> for API clients), and <code>context</code> (<code>image</code> |{" "}
-            <code>chat</code>). Implemented in <code>image_prompt_service.py</code>; skips translation when the prompt is
-            already English; falls back to the original text on error or when output diverges too much. Legacy alias:{" "}
-            <code>POST /api/chat/enhance-image-prompt</code> (image context only). Counts toward user budget like other
-            chat calls.
-          </li>
-          <li>
-            <code>get_current_user</code> identifies the signed-in user; budget is checked the same way as for external
-            keys.
-          </li>
-          <li>
-            The same <code>stream_chat</code> helper runs with <code>source=alpha_router_chat</code>; optional tools (web search,
-            attachments, image generation, composer translation via To ENG) are handled in this API layer before or alongside the LLM call.
-          </li>
-          <li>
-            In parallel, the React client syncs session metadata and message appends through{" "}
-            <code>/api/user/chats</code> and <code>/api/user/chat-sessions/…/messages</code> (append-only,{" "}
-            <code>clientMessageId</code> dedupe, <code>revision</code> on sessions).
-          </li>
-        </ol>
-        <h3>Chat data flow (web UI → database)</h3>
-        <p>
-          The built-in chat uses a <strong>hybrid local-first + server-authoritative</strong> model. The diagram below
-          summarizes layers; a detailed HTML reference lives in the repository at{" "}
-          <code>docs/chat-storage-diagram.html</code>.
-        </p>
-        <ol>
-          <li>
-            <strong>UI</strong> — <code>ChatPanel.tsx</code> holds in-memory sessions, a per-tab <strong>prompt
-            queue</strong>, scroll pinning, and streaming state. <code>chatStorage.ts</code> debounces sync to the server;{" "}
-            <code>composerDrafts.ts</code> keeps per-session composer text/attachments in tab memory (cleared on refresh).{" "}
-            The composer bar includes a <strong>To ENG</strong> button (globe icon; translate draft to English via{" "}
-            <code>enhance-prompt</code>) and a <strong>scroll-to-bottom</strong> control when the user scrolls up in a
-            long thread. Code interpreter blocks render via <code>ChatCodeBlock.tsx</code> with Copy and Expand/Collapse
-            toolbars at the top and bottom.
-          </li>
-          <li>
-            <strong>Text turn</strong> — client appends user + assistant placeholder, then opens{" "}
-            <code>POST /api/chat/completions</code>. The persister writes throttled partial content to{" "}
-            <code>chat_messages</code> during SSE and sets <code>receivedAt</code> on finalize.
-          </li>
-          <li>
-            <strong>Image turn</strong> — client syncs placeholders, calls <code>POST /api/images/generate</code> with an{" "}
-            <code>aspect_ratio</code> (text-to-image) or source dimensions (image-to-image). The server finalizes the
-            assistant row when the image is ready. With <strong>Private Mode</strong>, the client sends{" "}
-            <code>persist: false</code> — the image is returned to the browser only and is not written to object storage or{" "}
-            <code>media_assets</code>.
-          </li>
-          <li>
-            <strong>Multi-tab</strong> — <code>BroadcastChannel</code> + <code>since=</code> incremental refresh merge
-            remote sessions. Leader election (<code>navigator.locks</code>) applies to <strong>folder</strong> sync only;
-            any tab may append messages and patch session metadata.
-          </li>
-          <li>
-            <strong>PostgreSQL</strong> — normalized <code>chat_sessions</code> + <code>chat_messages</code> (not JSON
-            blobs). Message <code>meta</code> JSON holds <code>streaming</code>, <code>receivedAt</code>,{" "}
-            <code>modelId</code>, and <code>cancelRequested</code> when relevant.
-          </li>
-        </ol>
-        <h3>Data and caching</h3>
-        <ul>
-          <li>
-            <strong>PostgreSQL</strong> via <code>DATABASE_URL</code>. In the default Docker stack the app connects through{" "}
-            <strong>PgBouncer</strong> (transaction pooling) to the <code>postgres</code> service — see{" "}
-            <a href="#deployment">Deployment &amp; database</a>.
-          </li>
-          <li>
-            <strong>Chat history</strong> — normalized PostgreSQL tables:{" "}
-            <code>chat_sessions</code> (includes <code>revision</code> for sync conflicts), <code>chat_messages</code>,{" "}
-            <code>chat_folders</code>, and <code>user_chat_prefs</code>. No chat JSON blobs. Chat is <strong>not</strong>{" "}
-            stored in Redis.
-          </li>
-          <li>
-            <strong>Chat sync</strong> — append-only message writes (<code>POST …/messages</code> with{" "}
-            <code>clientMessageId</code>), session metadata via <code>PATCH</code>, idempotent{" "}
-            <code>POST …/sessions</code> (duplicate create returns existing row). Paginated reads: session list (
-            <code>limit</code>/<code>offset</code>/<code>since</code>), messages (<code>limit</code>/<code>before</code>
-            ). <code>POST …/cancel-stream</code> marks the in-flight assistant message for early finalize. Optional{" "}
-            <code>DATABASE_READ_URL</code> routes chat GET traffic to a read replica when configured.
-          </li>
-          <li>
-            <strong>Media</strong> — file bytes in <strong>SeaweedFS</strong> (S3 API via <code>S3_*</code> env vars);
-            metadata in <code>media_assets</code> (display name, hash, path, prompt, retention). Object keys use{" "}
-            <code>cdn/u/&lt;username&gt;/&lt;content_hash&gt;&lt;ext&gt;</code> (content-addressed; the Media UI{" "}
-            <code>file_name</code> is separate). Identical content per user is deduplicated by SHA-256.
-          </li>
-          <li>
-            <strong>SeaweedFS</strong> — required object storage (Docker Compose <code>seaweedfs</code> service: S3 on{" "}
-            <code>8333</code>, Admin UI on <code>23646</code>, both localhost-bound). End users never talk to SeaweedFS
-            directly; the app serves files through authenticated <code>/api/chat/media/…</code> routes.
-          </li>
-          <li>
-            <strong>Redis</strong> is used for LiteLLM prompt caching when Redis is reachable; otherwise caching falls
-            back to in-memory.
-          </li>
-          <li>
-            Provider secrets never leave <strong>Connections</strong>; clients only ever see Alpha Router-issued keys or the web
-            login session.
-          </li>
-        </ul>
         <Note>
-          Upstream <strong>provider API keys</strong> live only in <strong>Connections</strong> (stored in the database).
-          LiteLLM is called directly from the app after reading connection settings—not as a separate tier below the
-          database. See <a href="#deployment">Deployment & database</a> for Docker and PostgreSQL.
+          Image generation uses <code>POST /api/images/generate</code> with its own model selection, retries, and the
+          same reservation/settle billing pattern.
         </Note>
       </>
     ),
   },
   {
     id: "deployment",
-    title: "Deployment & database",
+    title: "Deployment overview",
     group: "Get started",
     content: (
       <>
-        <h2>Deployment & database</h2>
+        <h2>Deployment overview</h2>
         <p>
-          The Alpha Router Docker image contains only the application (FastAPI + built React UI). PostgreSQL, PgBouncer, and
-          Redis are separate services—you do not install them on the host when using the provided{" "}
-          <code>docker-compose.yml</code>. Copy <code>.env.example</code> to <code>.env</code>; Compose loads it via{" "}
-          <code>env_file</code>.
+          Production deployments typically use the repository <code>docker-compose.yml</code>: Postgres, PgBouncer,
+          Redis, SeaweedFS, sandbox-broker, and the <code>alpha</code> app (port <code>8080</code>). Build the sandbox
+          image separately when you need the code interpreter (<code>docker compose build sandbox</code>).
         </p>
-        <h3>Which database runs?</h3>
-        <table className="docs-table">
-          <thead>
-            <tr>
-              <th>Environment</th>
-              <th>Database</th>
-              <th>Notes</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>
-                <code>docker compose up</code> (production-style stack)
-              </td>
-              <td>
-                <strong>PostgreSQL</strong> + <strong>PgBouncer</strong>
-              </td>
-              <td>
-                <code>DATABASE_URL</code> points at <code>pgbouncer:6432</code>; PgBouncer pools to{" "}
-                <code>postgres</code>. <code>seaweedfs</code> stores media blobs; Redis supplies optional LiteLLM prompt
-                cache. Default stack targets ~5k concurrent users (see scale env vars below).
-              </td>
-            </tr>
-            <tr>
-              <td>Custom deploy (K8s, VM)</td>
-              <td>Your choice</td>
-              <td>
-                Set <code>DATABASE_URL</code> to Postgres or PgBouncer. Redis is recommended but optional (in-memory
-                cache fallback). Use <code>DATABASE_READ_URL</code> when you have a read replica.
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <h3>Scale &amp; database tuning (.env)</h3>
+        <h3>Configuration</h3>
         <p>
-          The shipped <code>.env.example</code> profile assumes <strong>~5,000 concurrent signed-in users</strong>,{" "}
-          <strong>~25,000 active chat sessions</strong> fleet-wide, and users with <strong>10+ browser tabs</strong>{" "}
-          (incremental <code>since=</code> refresh + <code>BroadcastChannel</code>; leader tab writes folder changes
-          only — message/session sync may run from any tab).
-        </p>
-        <table className="docs-table">
-          <thead>
-            <tr>
-              <th>Variable</th>
-              <th>Default (Compose)</th>
-              <th>Purpose</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><code>DATABASE_URL</code></td>
-              <td><code>…@pgbouncer:6432/alpha-router</code></td>
-              <td>Primary DB (through PgBouncer in Docker)</td>
-            </tr>
-            <tr>
-              <td><code>DATABASE_READ_URL</code></td>
-              <td><em>(optional)</em></td>
-              <td>Read replica for chat GET routes (list, search, messages). Falls back to primary when unset.</td>
-            </tr>
-            <tr>
-              <td><code>DB_POOL_SIZE</code></td>
-              <td>12</td>
-              <td>SQLAlchemy pool per uvicorn worker (keep moderate behind PgBouncer)</td>
-            </tr>
-            <tr>
-              <td><code>DB_MAX_OVERFLOW</code></td>
-              <td>20</td>
-              <td>Extra connections per worker at peak (4 workers → up to ~128 client conns to PgBouncer)</td>
-            </tr>
-            <tr>
-              <td><code>DB_POOL_TIMEOUT</code></td>
-              <td>45</td>
-              <td>Seconds to wait for a free pool connection before error</td>
-            </tr>
-            <tr>
-              <td><code>UVICORN_WORKERS</code></td>
-              <td>4</td>
-              <td>Process count for the <code>alpha-router</code> container</td>
-            </tr>
-            <tr>
-              <td><code>CHAT_EMPTY_SESSION_HIDE_DAYS</code></td>
-              <td>30</td>
-              <td>Hide empty sessions older than N days from the default session list</td>
-            </tr>
-            <tr>
-              <td><code>CHAT_LIST_RATE_LIMIT_PER_MIN</code></td>
-              <td>200</td>
-              <td>Per-user limit for session list / <code>since=</code> refresh (shared across tabs)</td>
-            </tr>
-            <tr>
-              <td><code>CHAT_SEARCH_RATE_LIMIT_PER_MIN</code></td>
-              <td>45</td>
-              <td>Per-user title search limit</td>
-            </tr>
-            <tr>
-              <td><code>CHAT_MESSAGE_SEARCH_RATE_LIMIT_PER_MIN</code></td>
-              <td>45</td>
-              <td>Per-user full-text message search limit</td>
-            </tr>
-          </tbody>
-        </table>
-        <Note>
-          PgBouncer in Compose uses transaction pooling (<code>MAX_CLIENT_CONN=4000</code>,{" "}
-          <code>DEFAULT_POOL_SIZE=90</code> to Postgres). Postgres is tuned with <code>max_connections=200</code>. Adjust
-          workers and pool sizes together—do not raise per-worker pools without PgBouncer or you may exhaust Postgres
-          connections.
-        </Note>
-        <h3>Environment variables (production)</h3>
-        <p>
-          Compose wires Postgres, SeaweedFS, and Redis automatically. Before exposing Alpha Router to real users, change at least:
+          All settings load from environment / <code>.env</code> (see <code>.env.example</code>). Important groups:
         </p>
         <ul>
           <li>
-            <code>SECRET_KEY</code> — JWT signing
+            <strong>Environment gate</strong> — <code>ENVIRONMENT=production</code> enables the startup production
+            guard; <code>PRODUCTION_GUARD_MODE</code> is <code>hard-fail</code> (default) or <code>warning</code>.
           </li>
           <li>
-            <code>ADMIN_PASSWORD</code>, <code>SERVICE_ADMIN_PASSWORD</code>
+            <strong>Secrets</strong> — <code>SECRET_KEY</code>, <code>DATA_ENCRYPTION_KEY</code>, database/Redis/S3
+            credentials, <code>SANDBOX_BROKER_TOKEN</code> (≥32 characters), <code>GATEWAY_MASTER_KEY</code>.
           </li>
           <li>
-            <code>GATEWAY_MASTER_KEY</code> — shared <code>/v1</code> clients
+            <strong>URLs</strong> — <code>FRONTEND_URL</code>, <code>API_PUBLIC_URL</code> (used for SAML/OIDC
+            callbacks and CORS/CSRF origin checks).
           </li>
           <li>
-            <code>API_PUBLIC_URL</code> and <code>FRONTEND_URL</code> — public HTTPS URLs (shown in API key modals)
-          </li>
-          <li>
-            <code>S3_ACCESS_KEY</code>, <code>S3_SECRET_KEY</code>, <code>SEAWEEDFS_ADMIN_PASSWORD</code> — object
-            storage credentials (defaults are for local dev only)
+            <strong>Object storage</strong> — <code>S3_*</code> pointing at SeaweedFS (or another S3-compatible
+            endpoint).
           </li>
         </ul>
+        <Warn>
+          Never commit real <code>.env</code> values. The production guard refuses to boot when known insecure defaults
+          remain (placeholder secrets, missing broker token, unauthenticated Redis, cleartext public URLs, legacy Bearer
+          auth, and related checks). Loopback and Compose-internal hostnames are deliberately allowed for single-box
+          installs.
+        </Warn>
+        <h3>Health</h3>
         <p>
-          Provider keys and business policy are configured in the admin UI after login (<strong>Connections</strong>,{" "}
-          <strong>Models</strong>, <strong>Plans</strong>)—not via these env vars.
+          <code>GET /health</code> returns a minimal liveness payload. Dependency readiness is owned by your
+          orchestration layer (Compose healthchecks), not by expanding this endpoint into a data probe.
         </p>
-        <h3>Operations &amp; Database</h3>
+        <h3>Schema &amp; migrations</h3>
         <p>
-          After deploy, open these pages under the <strong>Overview</strong> sidebar group (see{" "}
-          <a href="#admin-monitoring">Operations &amp; Database</a>):
+          On startup Alpha Router creates ORM tables under a PostgreSQL advisory lock, applies nullable column patches for new
+          fields, then runs flagged one-time data migrations stored in <code>system_settings</code>. There is no
+          separate Alembic revision history for operators to apply by hand.
         </p>
-        <ul>
-          <li>
-            <a href="#admin-operations">Operations</a> — hourly infra snapshots, 24h API traffic charts, and model
-            experience (slow requests, P95, slowest models).
-          </li>
-          <li>
-            <a href="#admin-database">Database</a> — read-only health: connection, engine, size, ping, host/process CPU
-            and RAM, row counts per Alpha Router table. No SQL editor or schema changes.
-          </li>
-        </ul>
-        <Note>
-          Backups and managed Postgres consoles (RDS, etc.) remain outside Alpha Router. Use your infrastructure tooling for
-          backup/restore; use the in-app pages for day-to-day visibility.
-        </Note>
       </>
     ),
   },
   {
     id: "quickstart",
-    title: "Quickstart",
+    title: "First-time setup",
     group: "Get started",
     content: (
       <>
-        <h2>Quickstart (administrator)</h2>
-        <ol className="docs-steps">
+        <h2>First-time setup</h2>
+        <ol>
           <li>
-            <strong>Deploy Alpha Router</strong> with HTTPS in production. Copy <code>.env.example</code> to <code>.env</code> and
-            set <code>API_PUBLIC_URL</code> to the URL clients will use (shown when you create API keys). Review database
-            pool and worker settings for your expected concurrent load (see{" "}
-            <a href="#deployment">Deployment &amp; database</a>).
+            Deploy Compose (or your equivalent) with a filled <code>.env</code>. Confirm <code>/health</code> and that
+            you can open the UI.
           </li>
           <li>
-            <strong>Sign in as Super Admin</strong> — the default local account (<code>admin</code>) receives the{" "}
-            <strong>Super Admin</strong> role automatically (full read/write on every admin menu). SSO users need roles
-            assigned in <strong>Users</strong> after directory sync.
+            Sign in with the bootstrap local admin (<code>ADMIN_USERNAME</code> / <code>ADMIN_PASSWORD</code>). Change
+            that password immediately after first login.
           </li>
           <li>
-            <strong>Connections</strong> — Add each provider account and API key. Use <em>Sync Now</em> to import models
-            (see <a href="#admin-connections">Connections</a>).
+            Open <strong>Connections</strong> → create a provider connection → <strong>Sync now</strong>.
           </li>
           <li>
-            <strong>Models</strong> — Enable only models you want exposed. Use search and bulk <em>ON/OFF</em> for large
-            catalogs.
+            Open <strong>Models</strong> and enable only the models you want employees to use.
           </li>
           <li>
-            <strong>Plans & Users</strong> — Assign monthly budgets. The Users table shows <strong>Budget</strong> as{" "}
-            <code>used/total $</code>.
+            Create a <strong>Plan</strong> with a monthly USD budget and assign it to users, groups, or departments.
           </li>
           <li>
-            <strong>API Keys</strong> — Create a gateway key for external integrations, or per-user keys from Users.
+            Configure <strong>Authentication</strong> (LDAP / SAML / OIDC) if you are not staying on local accounts
+            only.
           </li>
           <li>
-            <strong>Integrate clients</strong> — Base URL <code>https://&lt;your-host&gt;/v1</code> + Alpha Router key (not the
-            provider key). See <a href="#platform-api">Platform API</a> and <a href="#kilo-code">Kilo Code</a>.
+            Optionally create <strong>API Keys</strong> for external OpenAI-compatible clients, and configure{" "}
+            <strong>SMTP</strong> if you will email reports.
           </li>
           <li>
-            <strong>Storage Management</strong> (Super Admin) — Platform media usage, per-user quota, global transfer
-            limits (upload / chat attachments total / ZIP download), and <strong>DELETE ALL MEDIA</strong>. Object
-            storage is <strong>SeaweedFS</strong> (S3-compatible). See{" "}
-            <a href="#admin-storage-management">Storage Management</a>.
-          </li>
-          <li>
-            <strong>Retention Policy</strong> (Super Admin) — Media and chat retention days, scheduled cleanup, overview
-            stats, and manual purge. See <a href="#admin-storage">Retention Policy</a>.
-          </li>
-          <li>
-            <strong>Overview</strong> — Open <a href="#admin-operations">Operations</a> and click <em>Check Now</em> for
-            an infra snapshot; use <a href="#admin-database">Database</a> to confirm Postgres connectivity and table
-            growth.
+            Review <strong>Storage Management</strong> and <strong>Retention Policy</strong> before production traffic
+            grows.
           </li>
         </ol>
-        <Warn>Rotate and revoke keys if they are copied into tickets, chat, or public repos.</Warn>
+        <Note>
+          Users without an assigned (or inherited) budget plan receive HTTP 402 when they try to spend. Assign plans
+          before inviting people to chat.
+        </Note>
+      </>
+    ),
+  },
+
+  // ── Security ──────────────────────────────────────────────────────────────
+  {
+    id: "security-overview",
+    title: "Security overview",
+    group: "Security",
+    content: (
+      <>
+        <h2>Security overview</h2>
+        <p>
+          Alpha Router hardens the browser surface with cookie sessions and CSRF, encrypts secrets at rest, gates admin menus
+          with RBAC, and isolates code execution in disposable containers. Upstream provider keys never leave the
+          Connections table as plaintext in the API responses.
+        </p>
+        <ul>
+          <li>
+            <a href="#sign-in">Sign-in &amp; identity</a>
+          </li>
+          <li>
+            <a href="#sessions-csrf">Sessions, cookies &amp; CSRF</a>
+          </li>
+          <li>
+            <a href="#rbac-model">RBAC model</a>
+          </li>
+          <li>
+            <a href="#secrets-encryption">Secrets &amp; encryption</a>
+          </li>
+          <li>
+            <a href="#hardening">Production hardening checklist</a>
+          </li>
+        </ul>
       </>
     ),
   },
   {
     id: "sign-in",
-    title: "Sign in",
-    group: "Get started",
+    title: "Sign-in &amp; identity",
+    group: "Security",
     content: (
       <>
-        <h2>Sign in</h2>
+        <h2>Sign-in &amp; identity</h2>
         <p>
-          The login page summarizes what Alpha Router offers today — not only an API gateway, but a full organizational AI
-          platform with six feature highlights:
+          Configure providers under <strong>Authentication</strong> (<code>/admin/authentication</code>). Env vars are
+          only a fallback; database rows written from the admin UI take precedence.
         </p>
-        <ul>
-          <li>
-            <strong>Many models, one platform</strong> — unified provider connections, sync, and model catalog.
-          </li>
-          <li>
-            <strong>Chat &amp; media built in</strong> — team chat, image generation, folders, and a shared media library.
-          </li>
-          <li>
-            <strong>Full admin control plane</strong> — users, groups, roles, plans, connections, retention policy,
-            reports, and operations in <code>/admin</code>.
-          </li>
-          <li>
-            <strong>Budgets &amp; visibility</strong> — plan-based limits, dashboards, and API logs.
-          </li>
-          <li>
-            <strong>Enterprise access</strong> — LDAP, SAML/OIDC SSO, local accounts, and scoped RBAC with Super Admin.
-          </li>
-          <li>
-            <strong>Optional /v1 API</strong> — OpenAI-compatible gateway for external tools when you need it.
-          </li>
-        </ul>
-        <h3>After sign-in</h3>
-        <ul>
-          <li>
-            <strong>End users</strong> (role <strong>User</strong> only) land on <code>/app/chat</code>.
-          </li>
-          <li>
-            <strong>Administrators</strong> are redirected to their <strong>first allowed admin menu</strong> — for
-            example <code>/admin/api-keys</code> for <strong>API Key Admin</strong>, or the Dashboard for Super Admin.
-            They do not need Dashboard access to use the admin panel.
-          </li>
-          <li>
-            Every admin account also sees the <strong>User panel</strong> group at the top of the admin sidebar (links
-            to <code>/app/chat</code>, Media, and so on).
-          </li>
-        </ul>
+        <h3>Local</h3>
+        <p>
+          Username/password with bcrypt. Optional TOTP 2FA for local accounts (user Settings → Security). Super Admins
+          can disable another user’s 2FA from the Users edit modal when needed.
+        </p>
+        <h3>LDAP / Active Directory</h3>
+        <p>
+          LDAPS bind with a service account, Sync OUs, optional prune of users/groups outside those OUs, and a daily
+          sync schedule. Use <strong>Test</strong> before enabling for production, then <strong>Sync AD</strong>.
+        </p>
+        <h3>SAML 2.0</h3>
+        <p>
+          IdP metadata URL or uploaded XML, SP entity ID, ACS URL (shown read-only), attribute mapping, and signature
+          options. Login uses a one-time exchange code (Redis, short TTL) so JWTs are never placed in redirect URLs.
+        </p>
+        <h3>OIDC</h3>
+        <p>
+          Issuer, client ID/secret, scopes, claim mapping, PKCE authorize/callback flow, and the same one-time exchange
+          pattern as SAML.
+        </p>
+        <h3>Logout &amp; revocation</h3>
+        <p>
+          Logout increments the user’s <code>token_version</code>. Previously issued JWTs with a lower{" "}
+          <code>ver</code> claim are rejected. Password reset and related admin actions also bump the version where
+          applicable.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: "sessions-csrf",
+    title: "Sessions, cookies &amp; CSRF",
+    group: "Security",
+    content: (
+      <>
+        <h2>Sessions, cookies &amp; CSRF</h2>
+        <table className="docs-table">
+          <thead>
+            <tr>
+              <th>Cookie</th>
+              <th>Properties</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <code>alpha_router_session</code>
+              </td>
+              <td>HttpOnly, <code>path=/api</code>, SameSite=Lax — carries the JWT</td>
+            </tr>
+            <tr>
+              <td>
+                <code>alpha_router_csrf</code>
+              </td>
+              <td>
+                Readable, <code>path=/</code> — double-submit token; SPA sends <code>X-CSRF-Token</code> on unsafe
+                methods
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          CSRF is enforced for unsafe methods under <code>/api/</code> when a session cookie is present. Login, 2FA, and
+          SSO exchange paths keep Origin checks with defined exemptions; SAML ACS is fully exempt (IdP form POST). The{" "}
+          <code>/v1</code> gateway is outside CSRF (API-key auth only).
+        </p>
+        <p>
+          Allowed Origins include <code>FRONTEND_URL</code>, loopback <code>:8080</code>, and HTTP Origins on RFC1918
+          addresses (single-box LAN). <code>Secure</code> cookies are set in production, with a carve-out for same-origin
+          HTTP on private LAN installs.
+        </p>
+        <Warn>
+          Legacy browser Bearer JWT auth (<code>ALLOW_LEGACY_BEARER_AUTH</code>) is off by default. Enabling it bypasses
+          the CSRF cookie path for API calls that send only <code>Authorization</code> — keep it disabled in production.
+        </Warn>
+        <h3>Inactive users</h3>
+        <p>
+          Disabled accounts can still authenticate for read-only access to their own chat history and media, but cannot
+          send new messages or create spend. Soft-deleted accounts (<code>deleted_at</code> set) cannot authenticate.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: "rbac-model",
+    title: "RBAC model",
+    group: "Security",
+    content: (
+      <>
+        <h2>RBAC model</h2>
+        <p>
+          Permissions are role slugs assigned per user (many roles supported). Admin menus are defined in seven
+          categories matching the sidebar. Write access is least-privilege: if any of a user’s roles for a menu is
+          read-only, writes are denied.
+        </p>
+        <h3>Primary assignable roles</h3>
+        <table className="docs-table">
+          <thead>
+            <tr>
+              <th>Role</th>
+              <th>Access</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <strong>User</strong>
+              </td>
+              <td>
+                <code>/app</code> only (chat, media, activity, manual)
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <strong>Super Admin</strong>
+              </td>
+              <td>Full admin panel and destructive operations (for example data-key rotation API)</td>
+            </tr>
+            <tr>
+              <td>
+                <strong>API Key Admin</strong>
+              </td>
+              <td>API Keys menu (full admin for that menu)</td>
+            </tr>
+            <tr>
+              <td>
+                <strong>Dashboard (read-only)</strong> / <strong>Reports Admin</strong>
+              </td>
+              <td>Scoped access re-enabled for those menus</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          Most other historical per-menu roles were removed from the assignable catalog; Super Admin covers those
+          menus. Assign roles from <strong>Roles</strong> (bulk assign) or inline on the <strong>Users</strong> table.
+        </p>
         <Note>
-          Local, LDAP, SAML, and OIDC sign-in methods appear based on <strong>Authentication</strong> configuration. LDAP
-          users sign in with directory credentials; SAML/OIDC use the SSO links when enabled.
+          End-user menus (chat, media, user manual) are always writable for active accounts — they are not gated by
+          admin RBAC write locks.
         </Note>
       </>
     ),
   },
   {
-    id: "admin-menu",
-    title: "Admin menu",
-    group: "Admin panel",
+    id: "secrets-encryption",
+    title: "Secrets &amp; encryption",
+    group: "Security",
     content: (
       <>
-        <h2>Admin menu (grouped sidebar)</h2>
+        <h2>Secrets &amp; encryption</h2>
         <p>
-          The left sidebar is grouped so related tasks sit together. The top group — <strong>User panel</strong> — links
-          to the end-user app (<code>/app</code>) and is always visible to every administrator, regardless of scoped
-          roles. Configuration lives in the middle groups; Dashboard, Operations, and Database sit under{" "}
-          <strong>Overview</strong>. Only menus your roles grant appear below User panel; Super Admin sees every group.{" "}
-          <strong>API Key Admin</strong> sees API Keys under Models &amp; API.
+          Provider API keys, SMTP passwords, LDAP/OIDC client secrets, connector tokens, and TOTP secrets are stored
+          with Fernet encryption. The primary key is derived from <code>DATA_ENCRYPTION_KEY</code> (PBKDF2). When that
+          variable is empty, Alpha Router falls back to a key derived from <code>SECRET_KEY</code> for compatibility.
+        </p>
+        <p>
+          Data-key rotation is available to Super Admins via the Operations API endpoint{" "}
+          <code>POST /api/admin/operations/data-key-rotation</code> (not a button on the Operations page). Follow your
+          operations runbook when rotating keys so existing ciphertext is re-encrypted.
+        </p>
+        <h3>Sandbox trust boundary</h3>
+        <p>
+          Code interpreter workloads are sent to <code>sandbox-broker</code>, which authenticates with a long Bearer
+          token and starts containers with <code>--network none</code>, read-only root, dropped capabilities, and
+          resource limits. The broker’s Docker socket mount remains the residual host trust boundary — keep the broker
+          on an internal network only.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: "hardening",
+    title: "Production hardening",
+    group: "Security",
+    content: (
+      <>
+        <h2>Production hardening checklist</h2>
+        <ul>
+          <li>
+            Set <code>ENVIRONMENT=production</code> and keep <code>PRODUCTION_GUARD_MODE=hard-fail</code> until every
+            flagged item is fixed.
+          </li>
+          <li>
+            Replace all placeholder secrets; set a dedicated <code>DATA_ENCRYPTION_KEY</code>.
+          </li>
+          <li>
+            Require Redis authentication; wire <code>REDIS_PASSWORD</code> (or an authenticated URL).
+          </li>
+          <li>
+            Set <code>CODE_SANDBOX_BROKER_URL</code> and a ≥32-character <code>SANDBOX_BROKER_TOKEN</code>. Keep{" "}
+            <code>ALLOW_INSECURE_CODE_SUBPROCESS=false</code>.
+          </li>
+          <li>
+            Lock OpenAPI docs to Super Admin (<code>OPENAPI_ADMIN_ONLY=true</code>).
+          </li>
+          <li>
+            Use HTTPS for public <code>FRONTEND_URL</code> / <code>API_PUBLIC_URL</code>; enable HSTS when the public
+            surface is TLS-terminated.
+          </li>
+          <li>
+            Keep <code>ALLOW_LEGACY_BEARER_AUTH=false</code> and <code>ALLOW_SSRF_PRIVATE_RANGES=false</code> unless you
+            have a documented internal exception.
+          </li>
+          <li>
+            Rotate the gateway master key away from any default; treat it as a full-power service credential.
+          </li>
+          <li>Never publish sandbox-broker ports to the host or public network.</li>
+        </ul>
+        <p>
+          Browser hardening: CSP starts in Report-Only mode; enforced CSP is opt-in via{" "}
+          <code>CONTENT_SECURITY_POLICY</code>. Review reports before enforcing.
+        </p>
+      </>
+    ),
+  },
+
+  // ── Overview ──────────────────────────────────────────────────────────────
+  {
+    id: "admin-menu",
+    title: "Admin menu map",
+    group: "Overview",
+    content: (
+      <>
+        <h2>Admin menu map</h2>
+        <p>
+          The admin sidebar groups match RBAC categories. Items you cannot access are hidden. A read-only role can open
+          menus but cannot save destructive changes (writes show as locked).
         </p>
         <table className="docs-table">
           <thead>
             <tr>
               <th>Group</th>
-              <th>Items</th>
-              <th>Assignable roles</th>
+              <th>Menus</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td><strong>User panel</strong></td>
-              <td>Chat, Media, Usage &amp; Activity, User Manual (<code>/app/*</code>)</td>
-              <td>Always shown (not RBAC-gated)</td>
+              <td>User panel</td>
+              <td>Shortcuts into <code>/app</code> (Chat, Media, Usage &amp; Activity, User Manual)</td>
             </tr>
             <tr>
-              <td><strong>Overview</strong></td>
+              <td>Overview</td>
               <td>Dashboard, Operations, Database</td>
-              <td>Super Admin only</td>
             </tr>
             <tr>
-              <td><strong>Models &amp; API</strong></td>
+              <td>Models &amp; API</td>
               <td>Connections, Models, API Keys</td>
-              <td>API Keys: <strong>API Key Admin</strong>; Connections &amp; Models: Super Admin only</td>
             </tr>
             <tr>
-              <td><strong>People &amp; access</strong></td>
+              <td>People &amp; access</td>
               <td>Roles, Users, Deleted Users, Groups, Plans, Authentication</td>
-              <td>Super Admin only</td>
             </tr>
             <tr>
-              <td><strong>Integrations</strong></td>
+              <td>Integrations</td>
               <td>SMTP Server</td>
-              <td>Super Admin only</td>
             </tr>
             <tr>
-              <td><strong>Data &amp; reports</strong></td>
+              <td>Data &amp; reports</td>
               <td>Storage Management, Retention Policy, Reports, API Logs</td>
-              <td>Super Admin only</td>
             </tr>
             <tr>
-              <td><strong>Developer</strong></td>
+              <td>Developer</td>
               <td>Admin Guide, User Manual</td>
-              <td>Super Admin only</td>
             </tr>
           </tbody>
         </table>
-        <p>
-          <strong>Dashboard</strong> vs <strong>Operations</strong>: Dashboard summarizes spend, top models/users, and
-          heatmaps for business review. Operations focuses on runtime health (CPU, DB ping, errors, latency, slow models)
-          and links into <a href="#admin-logs">API Logs</a> for single-request detail.
-        </p>
-        <p>
-          If you open a URL outside your allowed menus, Alpha Router redirects you to your <strong>first allowed admin path</strong>{" "}
-          (for example <code>/admin/api-keys</code> for API Key Admin), not to the user chat page.
-        </p>
       </>
     ),
   },
   {
     id: "admin-dashboard",
     title: "Dashboard",
-    group: "Admin panel",
+    group: "Overview",
     content: (
       <>
         <h2>Dashboard</h2>
         <p>
-          The admin home is the service-wide <strong>Activity</strong> dashboard with tabs{" "}
-          <strong>Overview</strong>, <strong>Trends</strong>, and <strong>Explore</strong>. Overview shows KPIs,
-          top users/apps, and usage charts; timezone, filters, period, group-by, and CSV/PDF export stay in the
-          toolbar. Pair
-          trends here with <strong>API Logs</strong> for per-request investigation and{" "}
-          <a href="#admin-operations">Operations</a> for latency and infra context.
-        </p>
-      </>
-    ),
-  },
-  {
-    id: "admin-chat",
-    title: "Chat",
-    group: "Admin panel",
-    content: (
-      <>
-        <h2>Chat</h2>
-        <p>
-          Full-screen chat for testing enabled models. The left column is the <strong>chat sidebar</strong> (full height);
-          profile and theme controls sit above the message area only.
-        </p>
-        <h3>Sidebar tabs</h3>
-        <ul>
-          <li>
-            <strong>Chats</strong> — Virtualized history list (loads more as you scroll), hybrid search (local filter +
-            server title search after 2+ characters), folders (create, rename, delete). Deleting a folder can keep chats
-            or remove them.
-          </li>
-          <li>
-            <strong>Media</strong> — Files from attachments and generated images. Re-uploading the same file reuses
-            storage (hash dedup) and bumps the item to the top of the list.
-          </li>
-        </ul>
-        <h3>Composer</h3>
-        <ul>
-          <li>
-            <strong>Model picker</strong> — Choose among enabled models. The <strong>checkmark</strong> control sets the
-            user&apos;s default model for new chats; it is persisted in <code>user_chat_prefs.default_model</code> (and
-            cached in browser localStorage) so it survives refresh.
-          </li>
-          <li>
-            <strong>Tools</strong> — Web search, web fetch, image generation (with aspect-ratio presets), code
-            interpreter (only when enabled in Chat Tools). New chats start with all tools off. Session tool state is
-            persisted per chat. <strong>Chat Memory</strong> is not a product feature (removed). The composer bar also has{" "}
-            <strong>To ENG</strong> (globe icon; translate; not a Tools toggle).
-          </li>
-          <li>
-            <strong>Composer drafts</strong> — <code>composerDrafts.ts</code> stores draft text and pending attachments
-            per session while switching chats in the same tab; lost on full page reload.
-          </li>
-          <li>
-            <strong>Scroll to bottom</strong> — when the message list is scrolled away from the bottom, a floating
-            down-arrow above the composer jumps back to the latest messages (<code>chatScroll.ts</code> pin threshold).
-          </li>
-          <li>
-            <strong>Attachments</strong> — PDF and documents: text is extracted server-side; images use vision when the
-            model supports it.
-          </li>
-          <li>
-            <strong>Voice</strong> — Record audio; transcript is sent as the message.
-          </li>
-          <li>
-            <strong>Prompt queue</strong> — while the assistant is still generating (text stream or background image),
-            new prompts are queued above the composer (numbered list). Queued items appear immediately in the UI. When the
-            current turn finishes, queued prompts are sent <strong>one after another</strong> automatically. Edit (✎)
-            moves a queued item back into the composer; × removes it.
-          </li>
-          <li>
-            <strong>Stop (■)</strong> — aborts the active stream in this tab. Queued prompts still run afterward unless
-            you remove them from the queue.
-          </li>
-          <li>
-            <strong>Code blocks</strong> — Python and interpreter output use <code>ChatCodeBlock.tsx</code> with Copy and
-            Expand/Collapse actions on toolbars at the <strong>top and bottom</strong> of each block.
-          </li>
-        </ul>
-        <p>
-          Your message appears immediately when you send; the assistant streams in place. Switching chats does not mix
-          streams from another session. Sending a follow-up in the same thread scrolls the view to the latest messages
-          after your prompt is painted. If you refresh the page mid-stream, live token display stops (normal web
-          behaviour); the server may continue persisting the reply — reopening the chat polls until the assistant row is
-          finalized.
-        </p>
-        <h3>Chat persistence (same as end users)</h3>
-        <ul>
-          <li>
-            Non-private chats sync to PostgreSQL: the sidebar loads the session list in pages (metadata only); opening a
-            chat loads the <strong>latest ~50 messages</strong>; scroll up in the thread for older messages.
-          </li>
-          <li>
-            New messages are appended incrementally (<code>POST</code> with idempotency keys), not as full-thread
-            rewrites. Each session has a <code>revision</code>; conflicting writes from multiple tabs return{" "}
-            <strong>409</strong> and the client merges.
-          </li>
-          <li>
-            <strong>Multiple browser tabs</strong> — tabs stay in sync via in-browser broadcast and lightweight{" "}
-            <code>since=</code> refresh. Any tab may create sessions, append messages, and update titles; only the{" "}
-            <strong>leader tab</strong> syncs folder tree changes to the server. The <strong>prompt queue</strong> is
-            per-tab (not shared across tabs).
-          </li>
-          <li>
-            <strong>Private Mode</strong> — keeps the current chat on the client only; it is never written to PostgreSQL
-            or server media storage. Chat metadata lives in browser <strong>localStorage</strong> (
-            <code>alpha_router_private_chats:&lt;username&gt;</code>); image blobs and private image attachments live in{" "}
-            <strong>IndexedDB</strong> (<code>alpha_router_private_media</code>). Image generation (text-to-image and
-            image-to-image) works locally with <code>persist: false</code>. Turning Private Mode off triggers client-side
-            migration that uploads local media to the server when possible.
-          </li>
-          <li>
-            Global chat retention (message age limits and scheduled purge) is configured under{" "}
-            <a href="#admin-storage">Retention Policy</a> (Super Admin only). Platform media usage, quotas, and{" "}
-            <strong>DELETE ALL MEDIA</strong> live under{" "}
-            <a href="#admin-storage-management">Storage Management</a>.
-          </li>
-        </ul>
-        <p>
-          Each message has an <strong>info</strong> icon: hover to see when a user prompt was sent and when the assistant
-          response was received (when timestamps are recorded).
-        </p>
-        <Note>
-          Profile menu includes <strong>Usage &amp; Activity</strong> (your usage only) and live{" "}
-          <strong>Budget</strong> <code>used/total $</code>.
-        </Note>
-      </>
-    ),
-  },
-  {
-    id: "admin-media",
-    title: "Media",
-    group: "Admin panel",
-    content: (
-      <>
-        <h2>Media</h2>
-        <p>
-          Standalone view of <strong>your</strong> admin account media library—the same component users see at{" "}
-          <code>/app/media</code>, useful for testing uploads and retention. Files are stored in SeaweedFS/S3 with metadata in{" "}
-          <code>media_assets</code>. To manage another user&apos;s files, open{" "}
-          <strong>Users → row menu → Media</strong> (<code>/admin/users/:id/media</code>).
-        </p>
-        <p>
-          See also <a href="#admin-storage-management">Storage Management</a> for quotas and platform media usage,{" "}
-          <a href="#admin-storage">Retention Policy</a> for global retention settings, and{" "}
-          <a href="#admin-chat">Chat</a> for
-          how files enter the library from attachments and image generation.
-        </p>
-      </>
-    ),
-  },
-  {
-    id: "admin-authentication",
-    title: "Authentication",
-    group: "Admin panel",
-    content: (
-      <>
-        <h2>Authentication</h2>
-        <p>Controls sign-in to the Alpha Router web UI (not gateway API keys):</p>
-        <ul>
-          <li>
-            <strong>Local</strong> — Accounts created under Users.
-          </li>
-          <li>
-            <strong>LDAP / Active Directory</strong> — Direct <strong>LDAPS on port 636</strong> only (no plaintext LDAP,
-            no Windows bridge). Enter the domain controller host and a service account, optionally enable{" "}
-            <em>Support Untrusted Certificate</em> for self-signed DC certs, then <em>Test</em> and <em>Save</em>.{" "}
-            <em>Sync AD</em> imports users and groups; optional <strong>Sync OUs</strong> limits both user and group
-            search to those OUs; optional <strong>sync schedule</strong> (daily time) runs automatically. Prune only
-            removes out-of-scope directory objects from Alpha Router after sync. Users sync with{" "}
-            <strong>sAMAccountName</strong> as username; display name is stored separately.
-          </li>
-          <li>
-            <strong>SAML 2.0</strong> — Alpha Router acts as a SAML Service Provider. Configure IdP metadata (URL or XML),
-            register the fixed ACS URL and SP metadata with your Identity Provider, then use <em>Sign in with SAML</em>.
-            Users are created or updated on first successful SSO login (no directory sync).
-          </li>
-          <li>
-            <strong>OIDC</strong> — Generic OpenID Connect (Authorization Code + PKCE). Configure Issuer, Client ID, and
-            Client Secret, register the fixed redirect URI on your IdP, then use <em>Sign in with OIDC</em>. JIT
-            provisioning only (no directory sync).
-          </li>
-        </ul>
-        <h3>SAML Service Provider</h3>
-        <p>
-          On the Authentication → SAML tab: enable SAML, provide an IdP metadata URL and/or upload an IdP metadata XML
-          file (URL wins if both are set), set the SP Entity ID, and adjust attribute mapping if needed. ACS is fixed at{" "}
-          <code>/api/auth/saml/acs</code>. When SAML is enabled,
-          SP metadata is available at <code>/api/auth/saml/metadata</code> for your IdP (standard unauthenticated
-          SAML practice); when disabled the URL returns 404. Require signed assertions in production.{" "}
-          <code>API_PUBLIC_URL</code> must be reachable by the IdP (HTTPS in production).
-        </p>
-        <h3>OIDC (OpenID Connect)</h3>
-        <p>
-          On the Authentication → OIDC tab: enable OIDC, set the Issuer URL (discovery at{" "}
-          <code>{"{issuer}/.well-known/openid-configuration"}</code>), Client ID, and Client Secret (encrypted at rest;
-          admin GET shows <code>********</code>). Redirect URI is server-pinned to{" "}
-          <code>/api/auth/oidc/callback</code> and cannot be changed in the UI — register that exact URI on the IdP.
-          Login uses Authorization Code + mandatory PKCE S256, signed state/nonce cookies, and JWKS validation of the ID
-          token (<code>RS256</code>/<code>ES256</code> only). Session delivery uses a one-time exchange code (JWT never
-          appears in the redirect URL). In production the Issuer and non-loopback <code>API_PUBLIC_URL</code> must be
-          HTTPS. Default JIT role is <code>user</code>; usernames already bound to another provider are rejected (no
-          takeover).
-        </p>
-        <h3>LDAPS certificate on the domain controller</h3>
-        <p>
-          Alpha Router connects with LDAPS only. On the DC, create a certificate for the server FQDN, then trust it locally so
-          Active Directory can present it on port 636. The Alpha Router container must reach the DC on TCP{" "}
-          <strong>636</strong>.
-        </p>
-        <ol>
-          <li>
-            Open an elevated PowerShell on the domain controller and run, for example:
-            <pre>
-              New-SelfSignedCertificate -DnsName dc01.alpha-router.local -CertStoreLocation cert:\localmachine\my
-            </pre>
-            Replace <code>dc01.alpha-router.local</code> with your domain controller FQDN.
-          </li>
-          <li>
-            The certificate is created under <strong>Local Computer → Personal</strong> (
-            <code>Cert:\\LocalMachine\\My</code>).
-          </li>
-          <li>
-            Copy that certificate to <strong>Local Computer → Trusted Root Certification Authorities</strong> (
-            <code>Cert:\\LocalMachine\\Root</code>).
-          </li>
-          <li>Confirm LDAPS with ldp.exe (or equivalent) on port 636, then use <em>Test</em> in Alpha Router.</li>
-        </ol>
-      </>
-    ),
-  },
-  {
-    id: "admin-smtp",
-    title: "SMTP Server",
-    group: "Integrations",
-    content: (
-      <>
-        <h2>SMTP Server</h2>
-        <p>
-          Outbound mail for scheduled reports and notifications. Configure host, port, TLS, and sender. Use{" "}
-          <em>Test</em> before enabling schedules in Reports.
-        </p>
-      </>
-    ),
-  },
-  {
-    id: "admin-connections",
-    title: "Connections",
-    group: "Models & API",
-    content: (
-      <>
-        <h2>Connections</h2>
-        <p>Each connection is one upstream provider account (OpenRouter, OpenAI, Anthropic, Google, …).</p>
-        <ol>
-          <li>
-            <strong>Add Connection</strong> — Name, provider type, API key, optional base URL.
-          </li>
-          <li>
-            <strong>Sync schedule</strong> — Hours between automatic syncs (<code>sync_interval_hours</code>). A
-            background job checks every 30 minutes and syncs connections that are due.
-          </li>
-          <li>
-            <strong>Sync Now</strong> — Immediate sync for one connection.
-          </li>
-          <li>
-            <strong>Models page flash</strong> — Both manual <em>Sync Now</em> and scheduled sync briefly disable all
-            catalog models, refresh from the provider, then re-enable them so the Models list stays consistent (you may
-            see a quick off/on flash on the Models page if it is open).
-          </li>
-        </ol>
-        <p>
-          The table shows provider, logged <strong>Usage (USD)</strong>, <strong>Last sync</strong>, and schedule label
-          (e.g. every 6h).
-        </p>
-      </>
-    ),
-  },
-  {
-    id: "admin-models",
-    title: "Models",
-    group: "Models & API",
-    content: (
-      <>
-        <h2>Models</h2>
-        <p>
-          Models appear after a connection sync. Only <strong>enabled</strong> models are returned by{" "}
-          <code>GET /v1/models</code> and appear in chat and external clients.
+          Path: <code>/admin</code>. Service-wide Usage &amp; Activity for administrators — spend, requests, tokens, and
+          exploration tools.
         </p>
         <ul>
           <li>
-            <strong>Search</strong> — Filters the table as you type.
+            <strong>Toolbar</strong> — period, group-by (model / app / user), timezone, filters (model, user, app,
+            status, API key), CSV/PDF export.
           </li>
           <li>
-            <strong>ON/OFF</strong> column — Toggle one model, or select many rows and use <strong>Bulk Edit</strong> →
-            ON, OFF, or Delete.
+            <strong>Overview</strong> — KPIs with sparklines, top users/apps, usage and token charts.
           </li>
           <li>
-            <strong>Pricing</strong> — Input/output per 1K tokens from the provider at sync time; used for cost
-            attribution in logs and budgets.
-          </li>
-        </ul>
-      </>
-    ),
-  },
-  {
-    id: "admin-api-keys",
-    title: "API Keys",
-    group: "Models & API",
-    content: (
-      <>
-        <h2>API Keys</h2>
-        <p>
-          Admin <strong>API Keys</strong> lists gateway keys only (product/service integrations). Per-user keys are not
-          shown here—create them from <strong>Users</strong> or the user panel.
-        </p>
-        <h3>Create / edit (popup)</h3>
-        <ul>
-          <li>
-            <strong>Owner</strong> — searchable user from the Users directory (organizational owner)
+            <strong>Trends</strong> — models, users, API keys, apps over time.
           </li>
           <li>
-            <strong>Name</strong> — label for the key (any characters)
-          </li>
-          <li>
-            <strong>Credit limit</strong> — USD cap per reset period (0 = unlimited)
-          </li>
-          <li>
-            <strong>Reset limit every</strong> — Daily, Weekly, or Monthly (resets period usage only)
-          </li>
-          <li>
-            <strong>Expiration</strong> — active for N days, or Never
-          </li>
-        </ul>
-        <p>
-          Table columns: <strong>Name</strong>, <strong>Expire</strong>, <strong>Last used</strong>,{" "}
-          <strong>Usage</strong> (lifetime USD, never reset), <strong>Limit</strong> (period cap). Row menu: Edit,
-          Activity, Disable, Delete. Disabled keys appear faded.
-        </p>
-        <p>
-          After create, copy the secret and <code>API_PUBLIC_URL/v1</code> immediately—they are shown once.
-        </p>
-        <Note>
-          Gateway keys are <em>not</em> provider keys. Never paste OpenRouter/OpenAI keys into clients when Alpha Router is your
-          platform.
-        </Note>
-      </>
-    ),
-  },
-  {
-    id: "admin-roles",
-    title: "Roles (RBAC)",
-    group: "People & access",
-    content: (
-      <>
-        <h2>Roles (RBAC)</h2>
-        <p>
-          Alpha Router uses role-based access control (RBAC) for the admin panel. Open <strong>People &amp; access → Roles</strong>{" "}
-          (<code>/admin/roles</code>) — visible only to <strong>Super Admin</strong> — to review every built-in role in a
-          flat table with columns <strong>Name</strong>, <strong>Description</strong>, and <strong>Category</strong>.
-          Use the search box to filter by name, description, or category.
-        </p>
-        <h3>Roles page workflow</h3>
-        <ol>
-          <li>
-            Each row has a <strong>checkbox</strong>. The header checkbox selects or clears all roles currently visible
-            after search.
-          </li>
-          <li>
-            When one or more roles are selected, <strong>Assign Roles</strong> appears in the page header.
-          </li>
-          <li>
-            In the modal, choose <strong>one role</strong> from your selection, then tick one or more users and confirm.
-            This bulk action <strong>sets that single role</strong> on each chosen user (replacing their previous role
-            list). To give a user <strong>multiple roles at once</strong>, use the Users table instead (see below).
-          </li>
-        </ol>
-        <p>
-          <strong>Super Admin</strong> uses category <strong>All sections</strong> (not a sidebar group name).{" "}
-          <strong>API Key Admin</strong> is listed under <strong>Models &amp; API</strong>.
-        </p>
-        <h3>Assignable roles</h3>
-        <ul>
-          <li>
-            <strong>Super Admin</strong> — Full read/write on every admin menu and the entire platform. Legacy{" "}
-            <code>admin</code> / <strong>Full Administrator</strong> accounts migrate to this role on startup.
-          </li>
-          <li>
-            <strong>API Key Admin</strong> — Full read/write on the API Keys admin menu only (
-            <code>/admin/api-keys</code>). Does not grant Users, Roles, Connections, or other admin pages.
-          </li>
-          <li>
-            <strong>User</strong> — Standard end-user panel only: Chat, Media, Usage &amp; Activity,
-            User Manual (<code>/app</code>). No admin sidebar.
+            <strong>Explore</strong> — custom metric, grouping, rollup, ranking, chart type, and table; PDF download.
           </li>
         </ul>
         <Note>
-          Former per-menu roles (Users Full Administrator, Groups Full Administrator, API Keys Read Only, and so on) were
-          removed from the catalog. Existing assignments for those retired roles are cleared on migration; former platform
-          Full / Read Only Full admins remap to <strong>Super Admin</strong>. Keep or re-assign{" "}
-          <strong>API Key Admin</strong> only where API Keys management is needed.
-        </Note>
-        <h3>Everything else is Super Admin only</h3>
-        <p>
-          Connections, Models, Users, Groups, Plans, Authentication, SMTP, Reports, API Logs, Operations, Dashboard,
-          Database, Storage, Roles, Deleted Users, and Developer docs have <strong>no</strong> dedicated assignable role.
-          Only <strong>Super Admin</strong> can open them.
-        </p>
-        <h3>User panel</h3>
-        <p>
-          Every administrator still sees the <strong>User panel</strong> group (Chat, Media on{" "}
-          <code>/app</code>). Those paths are not gated by admin menu roles. Only deactivated accounts lose write access
-          there — see <a href="#user-panel">User panel</a> and the User Manual.
-        </p>
-        <h3>Assigning roles</h3>
-        <p>A user can hold more than one role. Assign roles in two places:</p>
-        <ul>
-          <li>
-            <strong>Roles → Assign Roles</strong> — Super Admin only. Bulk-apply <strong>one</strong> role to many users
-            (replaces each user&apos;s role list with that role).
-          </li>
-          <li>
-            <strong>Users → Role column</strong> — Open the role dropdown, tick <strong>checkboxes</strong> for every
-            role the user should keep (for example <strong>User</strong> plus <strong>API Key Admin</strong>), then click{" "}
-            <strong>Apply</strong>. Only Super Admin may grant or revoke Super Admin.
-          </li>
-        </ul>
-        <p>
-          The sidebar and API enforce the same boundaries. On menus where the user cannot write, a banner appears and
-          create/edit/delete controls are grayed out.
-        </p>
-        <Warn>
-          Keep at least one active <strong>Super Admin</strong>. Alpha Router prevents demoting, disabling, or deleting the last
-          account with full platform access.
-        </Warn>
-      </>
-    ),
-  },
-  {
-    id: "admin-plans",
-    title: "Plans",
-    group: "People & access",
-    content: (
-      <>
-        <h2>Plans</h2>
-        <p>
-          Define monthly USD budgets and optional model allow-lists. Assign plans on the Users table (
-          <strong>Assign Budget</strong>) or via Groups. Users without an assignment use the default plan.
-        </p>
-        <p>Budget resets on the first day of each calendar month.</p>
-      </>
-    ),
-  },
-  {
-    id: "admin-users",
-    title: "Users",
-    group: "People & access",
-    content: (
-      <>
-        <h2>Users</h2>
-        <p>
-          Search and filter users by username, email, department, job title, or group. Open{" "}
-          <code>/admin/users?group_id=&lt;id&gt;</code> from <strong>Groups → Show members</strong> to see one group&apos;s
-          members.
-        </p>
-        <ul>
-          <li>
-            <strong>Role</strong> — Multi-select dropdown with a checkbox beside each built-in role (see{" "}
-            <a href="#admin-roles">Roles</a>). Choose one or more roles and click <strong>Apply</strong>; permissions
-            combine across all selected roles using the lowest access rule per menu (see{" "}
-            <a href="#admin-roles">Roles</a>). Legacy <code>admin</code> accounts were migrated to{" "}
-            <strong>Super Admin</strong>. After role changes, users may need to sign out and back in; scoped admins land
-            on their first allowed admin menu after login.
-          </li>
-          <li>
-            <strong>Budget</strong> column — <code>used/total $</code> for the current month.
-          </li>
-          <li>
-            <strong>Activate / Deactivate</strong> — Deactivated users sign in in <strong>read-only</strong> mode: they
-            can browse chat history and media but cannot send new messages or write data.
-          </li>
-          <li>
-            <strong>Bulk Edit</strong> — Select rows; update plan, department, or office in one step.
-          </li>
-          <li>
-            <strong>Get API Key</strong> — Issue a user-scoped key for external clients.
-          </li>
-          <li>
-            <strong>Usage &amp; Activity</strong> — Per-user analytics and export (row menu).
-          </li>
-          <li>
-            <strong>Media</strong> — Admin view of a user&apos;s media library (row menu).
-          </li>
-          <li>
-            <strong>Budget reset</strong> — Admin override to zero consumed budget this month.
-          </li>
-        </ul>
-      </>
-    ),
-  },
-  {
-    id: "admin-groups",
-    title: "Groups",
-    group: "People & access",
-    content: (
-      <>
-        <h2>Groups</h2>
-        <p>
-          Sync LDAP groups, attach plans at group level, and keep membership aligned with your directory.
-        </p>
-        <ul>
-          <li>
-            <strong>Show members</strong> — Opens Users filtered to that group.
-          </li>
-          <li>
-            <strong>Deactive all members</strong> — Deactivates every user in the group (read-only mode; reversible per
-            user).
-          </li>
-          <li>
-            <strong>Usage &amp; Activity</strong> — Combined analytics for all members.
-          </li>
-        </ul>
-      </>
-    ),
-  },
-  {
-    id: "admin-storage-management",
-    title: "Storage Management",
-    group: "Data & reports",
-    content: (
-      <>
-        <h2>Storage Management</h2>
-        <p>
-          Admin menu <strong>Storage Management</strong> (<code>/admin/storage-management</code>; legacy{" "}
-          <code>/admin/storage</code> redirects here) shows platform-wide media usage, sets the global per-user storage
-          quota, configures global transfer size limits, and provides destructive maintenance actions. Super Admin only —
-          there are no per-menu Storage administrator roles.
-        </p>
-        <p>
-          Media blobs are stored in <strong>SeaweedFS</strong> (S3-compatible). Alpha Router talks to it with the standard S3
-          client (<code>S3_*</code> env vars). Operators may optionally open the SeaweedFS Admin UI for browsing buckets;
-          day-to-day media QA for users should use the Alpha Router <strong>Media</strong> page.
-        </p>
-        <h3>Media &amp; files — usage</h3>
-        <ul>
-          <li>
-            <strong>Overview</strong> — total file count, total size, breakdown by type, and how many files are past the
-            media retention window (same counts inform the overview on <a href="#admin-storage">Retention Policy</a>).
-          </li>
-          <li>
-            <strong>Refresh</strong> — reload usage stats from the database and object storage metadata.
-          </li>
-        </ul>
-        <h3>Per-user storage quota</h3>
-        <p>
-          Set how much media storage each user may consume (1–100 GB). The default is 1 GB until changed. Users see their
-          quota and usage on the <strong>Media</strong> page in the user panel; uploads and generated images count toward
-          the limit.
-        </p>
-        <h3>Transfer size limits</h3>
-        <p>
-          Global limits in <strong>megabytes</strong>, applied to every user. Saved from this page into system settings
-          (not only env defaults).
-        </p>
-        <ul>
-          <li>
-            <strong>Maximum upload size (MB)</strong> — max size of a <em>single</em> file for Media library uploads and
-            chat attachments (unified).
-          </li>
-          <li>
-            <strong>Maximum chat attachments total per message (MB)</strong> — max combined size of all files attached in
-            one chat message. Must be greater than or equal to the single-file upload limit.
-          </li>
-          <li>
-            <strong>Maximum ZIP download size (MB)</strong> — max combined size of files selected for{" "}
-            <strong>Download selected</strong> / <strong>Download all</strong> on the user Media page. If the selection
-            exceeds this limit, the API returns a clear error (select fewer files or raise this limit).
-          </li>
-        </ul>
-        <Note>
-          ZIP packing uses temporary space inside the <code>alpha-router</code> container (<code>/tmp</code>). Compose defaults
-          give a large tmpfs so ZIP downloads can succeed up to the admin-configured ZIP limit. Single-file downloads are
-          not limited by the ZIP setting.
-        </Note>
-        <h3>Maintenance — DELETE ALL MEDIA</h3>
-        <ul>
-          <li>
-            Permanently deletes <strong>all</strong> media blobs for <strong>all users</strong> from SeaweedFS and clears{" "}
-            <code>media_assets</code> metadata.
-          </li>
-          <li>
-            Does <strong>not</strong> delete chat message text in PostgreSQL, but image and attachment links inside old
-            chats may break until users re-upload files.
-          </li>
-          <li>
-            Requires <strong>three sequential confirmation dialogs</strong> (step 1 of 3 → step 2 of 3 → final
-            confirmation) before anything is removed. The button sits next to <strong>Refresh</strong> on this page.
-          </li>
-        </ul>
-        <Warn>
-          Use DELETE ALL MEDIA only for emergencies or test resets. For routine cleanup, configure retention on{" "}
-          <a href="#admin-storage">Retention Policy</a> and run <strong>Purge expired media now</strong> when needed.
-        </Warn>
-        <Note>
-          Object storage env (<code>S3_*</code>, <code>SEAWEEDFS_ADMIN_PASSWORD</code>) is documented under{" "}
-          <a href="#admin-storage">Retention Policy → Environment (object storage)</a>.
-        </Note>
-      </>
-    ),
-  },
-  {
-    id: "admin-storage",
-    title: "Retention Policy",
-    group: "Data & reports",
-    content: (
-      <>
-        <h2>Retention Policy</h2>
-        <p>
-          Admin menu <strong>Retention Policy</strong> (<code>/admin/retention-policy</code>) configures how long{" "}
-          <strong>media files</strong> and <strong>chat messages</strong> are kept, plus overview stats and manual purge
-          actions. Super Admin only. Platform usage, quotas, transfer limits, and <strong>DELETE ALL MEDIA</strong> are
-          on <a href="#admin-storage-management">Storage Management</a>. Blobs themselves live in SeaweedFS; this page
-          controls retention policy, not the object-store product.
-        </p>
-        <p>
-          At the top of the page, a note shows the <strong>server timezone</strong> (from the <code>TZ</code> environment
-          variable when set, otherwise the host OS zone). Scheduled cleanup hour and minute fields on this page use that
-          zone — for example set <code>TZ=America/New_York</code> in Docker Compose so daily jobs run in Eastern Time.
-        </p>
-        <h3>Chat storage (architecture)</h3>
-        <ul>
-          <li>
-            Tables <code>chat_sessions</code> (with <code>revision</code>, <code>message_count</code>,{" "}
-            <code>last_message_at</code>), <code>chat_messages</code>, <code>chat_folders</code>, and{" "}
-            <code>user_chat_prefs</code> — normalized rows in PostgreSQL (per-user <code>default_model</code>,{" "}
-            <code>theme</code>).
-          </li>
-          <li>
-            <strong>Reads</strong> — paginated <code>GET /api/user/chats</code> (optional <code>q</code>,{" "}
-            <code>since</code>, <code>offset</code>), <code>GET …/messages</code> (tail + <code>before</code> cursor),{" "}
-            <code>GET /api/user/chats/search-messages</code> for message-body search. Routed to{" "}
-            <code>DATABASE_READ_URL</code> when set.
-          </li>
-          <li>
-            <strong>Writes</strong> — <code>POST …/sessions</code> (idempotent create), <code>POST …/messages</code>{" "}
-            append (primary), <code>PATCH</code> session metadata (title, model, tools, <code>private_mode</code>),{" "}
-            throttled <code>PATCH …/messages/last</code> during streaming (also used by{" "}
-            <code>ChatCompletionPersister</code>), <code>POST …/cancel-stream</code> for client stop after refresh.
-            Full <code>PUT</code> replace is reserved for repair/migration only.
-          </li>
-          <li>
-            <strong>Message meta</strong> — JSON column on <code>chat_messages</code>: <code>streaming</code>,{" "}
-            <code>receivedAt</code>, <code>modelId</code>/<code>modelName</code>, <code>sentAt</code>,{" "}
-            <code>cancelRequested</code>. Used for stream recovery and multi-tab merge.
-          </li>
-          <li>
-            PostgreSQL indexes: trigram title search (<code>pg_trgm</code>), full-text on message content,{" "}
-            <code>created_at</code> for batched retention purge.
-          </li>
-          <li>
-            Inline image bytes are not kept in chat rows; persisted images reference{" "}
-            <code>/api/chat/media/&lt;id&gt;/file</code> URLs. <strong>Private Mode</strong> sessions skip server
-            persistence entirely — images stay in the user&apos;s browser (IndexedDB) until Private Mode is turned off
-            and migration uploads them.
-          </li>
-        </ul>
-        <h3>Media files</h3>
-        <ul>
-          <li>
-            Blobs live in <strong>SeaweedFS</strong> (<code>S3_BUCKET</code>, default <code>alpha-router-media</code>). Object
-            keys: <code>cdn/u/&lt;username&gt;/&lt;content_hash&gt;&lt;ext&gt;</code> (username sanitized, not numeric
-            id). The Media library <code>file_name</code> is a display label and may differ from the object key basename.
-          </li>
-          <li>
-            In the SeaweedFS Admin file browser, the same objects appear under{" "}
-            <code>/buckets/alpha-router-media/cdn/u/&lt;username&gt;/</code>. The browser is often paginated by name (not
-            newest-first), so new hash-named files may not be on the first page.
-          </li>
-          <li>
-            Table <code>media_assets</code> — per-user metadata (filename, MIME, prompt, model, chat session, expiry,{" "}
-            <code>storage_path</code>).
-          </li>
-          <li>
-            <strong>Deduplication</strong> — identical file content (SHA-256) is stored once per user in object storage;
-            the Media UI shows one entry per unique hash. Re-uploading the same file refreshes metadata and moves it up
-            the list.
-          </li>
-          <li>
-            Files are served only through authenticated API routes (<code>/api/chat/media/…/file</code>), not as public
-            bucket URLs. Do not expose SeaweedFS ports to the internet.
-          </li>
-        </ul>
-        <h3>Admin Retention Policy page</h3>
-        <p>
-          The page has overview cards and retention settings for media and chat. All settings require Super Admin. Manual
-          purge buttons ask for confirmation before running.
-        </p>
-        <h4>Media &amp; files — overview</h4>
-        <ul>
-          <li>
-            Summary of total file count, size, breakdown by type, and files past the media retention window (same data as
-            on <a href="#admin-storage-management">Storage Management</a>).
-          </li>
-        </ul>
-        <h4>Media &amp; files — retention</h4>
-        <ul>
-          <li>
-            <strong>Retention days</strong> — default lifetime for new <code>media_assets</code> rows (also drives user
-            expiry timestamps).
-          </li>
-          <li>
-            <strong>Scheduled cleanup</strong> — optional daily job at a chosen hour/minute in the{" "}
-            <strong>server&apos;s local timezone</strong> to purge expired media.
-          </li>
-          <li>
-            <strong>Purge expired media now</strong> — immediately removes media rows (and blobs) older than the configured
-            media retention days. A confirmation dialog runs before deletion starts.
-          </li>
-        </ul>
-        <h4>Chat history — overview</h4>
-        <ul>
-          <li>
-            Total sessions and messages in PostgreSQL, plus count of messages older than the chat retention window when
-            policy is enabled.
-          </li>
-        </ul>
-        <h4>Chat history — retention</h4>
-        <ul>
-          <li>
-            <strong>Enable chat retention policy</strong> — master switch; when off, scheduled and manual chat purges do
-            nothing.
-          </li>
-          <li>
-            <strong>Keep chat messages for (days)</strong> — messages with <code>created_at</code> older than this age are
-            eligible for removal.
-          </li>
-          <li>
-            <strong>Scheduled cleanup</strong> — daily job at a chosen hour/minute in the <strong>server&apos;s local timezone</strong>{" "}
-            (<code>TZ</code> env when set) deletes eligible messages when both retention policy and schedule are enabled.
-          </li>
-          <li>
-            <strong>Purge expired messages now</strong> — manual run of the same chat purge logic without waiting for the
-            schedule. A confirmation dialog runs before deletion starts.
-          </li>
-        </ul>
-        <Warn>
-          Chat purge runs in batches and removes message rows. Sessions that become empty during a purge are
-          deleted immediately so they no longer appear in the sidebar. Sessions that still have newer messages are kept.
-          Media referenced from deleted messages is not automatically deleted from object storage unless media retention
-          also applies.
-        </Warn>
-        <h3>Environment (object storage — SeaweedFS)</h3>
-        <p>
-          Alpha Router uses <strong>SeaweedFS</strong> as the S3-compatible object store (Compose service{" "}
-          <code>seaweedfs</code>). Configure:
-        </p>
-        <ul>
-          <li>
-            <code>S3_ENDPOINT_URL</code> — for the app container Compose forces{" "}
-            <code>http://seaweedfs:8333</code>. From the host, operators use <code>http://127.0.0.1:8333</code>.
-          </li>
-          <li>
-            <code>S3_ACCESS_KEY</code> / <code>S3_SECRET_KEY</code> — mapped to SeaweedFS{" "}
-            <code>AWS_ACCESS_KEY_ID</code> / <code>AWS_SECRET_ACCESS_KEY</code> so S3 auth is enabled (never anonymous).
-          </li>
-          <li>
-            <code>S3_BUCKET</code> — default <code>alpha-router-media</code>; created on SeaweedFS startup when configured.
-          </li>
-          <li>
-            Optional <code>S3_REGION</code> / <code>S3_USE_SSL</code> — for non-Compose or TLS fronted deployments.
-          </li>
-          <li>
-            <code>SEAWEEDFS_ADMIN_PASSWORD</code> — password for the SeaweedFS Admin UI (username{" "}
-            <code>admin</code>). If the password contains <code>$</code>, escape it as <code>$$</code> in{" "}
-            <code>.env</code> so Docker Compose does not treat it as variable interpolation. After changing the password,
-            recreate the service: <code>docker compose up -d --force-recreate seaweedfs</code>.
-          </li>
-        </ul>
-        <p>
-          Ports (localhost-bound only): S3 API <code>127.0.0.1:8333</code>, Admin UI{" "}
-          <code>127.0.0.1:23646</code>. Opening the S3 URL in a browser without credentials returns{" "}
-          <code>AccessDenied</code> by design. Use the Admin UI (or Alpha Router Media) to inspect objects — not a bare browser
-          GET to port 8333.
-        </p>
-        <Note>
-          Back up PostgreSQL (normalized chat tables + <code>media_assets</code> metadata) and the SeaweedFS Docker
-          volume (<code>*_alpha_router_seaweedfs</code>) together for a full restore. The in-app{" "}
-          <a href="#admin-database">Database</a> page shows row counts only—it does not browse object storage. Host-side
-          inventory helper: <code>scripts/backup-object-storage-baseline.ps1</code>.
-        </Note>
-      </>
-    ),
-  },
-  {
-    id: "admin-reports",
-    title: "Reports",
-    group: "Data & reports",
-    content: (
-      <>
-        <h2>Reports</h2>
-        <p>Export usage and cost (CSV, Excel, PDF). Configure scheduled delivery when SMTP is set up.</p>
-      </>
-    ),
-  },
-  {
-    id: "admin-logs",
-    title: "API Logs",
-    group: "Data & reports",
-    content: (
-      <>
-        <h2>API Logs</h2>
-        <p>
-          Every platform API and in-app request: user, model, tokens, USD cost, latency, success, prompt cache hits,
-          and client source (gateway key, user key, in-app chat, etc.). Use filters to debug errors, cache behaviour,
-          or budget spikes.
-        </p>
-        <h3>Columns</h3>
-        <ul>
-          <li>
-            <strong>Prompt Cache</strong> — rounded badge with a check (cache hit) or cross (no cached prompt tokens).
-            Hover for cached token count and share of input tokens.
-          </li>
-          <li>
-            <strong>Cost $</strong> — provider-reported USD for the request (unchanged when cache hits reduce billable
-            input).
-          </li>
-        </ul>
-        <h3>Filters</h3>
-        <ul>
-          <li>
-            <strong>User / API key</strong> and <strong>Model</strong> — click the field to load values that appear in
-            logs; type to narrow the list, then choose a value or press <strong>Filter</strong>. Partial text matches
-            substring on the server.
-          </li>
-          <li>
-            <strong>Prompt Cache</strong> — <em>Cache hit</em> (<code>cached_tokens &gt; 0</code>) or{" "}
-            <em>No cache</em>.
-          </li>
-          <li>
-            <strong>Response Status</strong>, date range, and refresh as before.
-          </li>
-        </ul>
-        <p>
-          The <strong>model</strong> filter accepts a substring of <code>model_id</code>. The slowest-models table on{" "}
-          <a href="#admin-operations">Operations</a> opens this page with <code>?model_id=…</code> pre-filled.
-        </p>
-      </>
-    ),
-  },
-  {
-    id: "admin-monitoring",
-    title: "Operations & Database",
-    group: "Overview",
-    content: (
-      <>
-        <h2>Operations &amp; Database</h2>
-        <p>
-          Under the <strong>Overview</strong> sidebar group, <strong>Operations</strong> and <strong>Database</strong>{" "}
-          are for observing Alpha Router and traffic without changing configuration. They replaced the legacy{" "}
-          <strong>Debug</strong> latency page with richer, card-based dashboards.
-        </p>
-        <table className="docs-table">
-          <thead>
-            <tr>
-              <th>Page</th>
-              <th>Route</th>
-              <th>Use when</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong>Operations</strong></td>
-              <td><code>/admin/operations</code></td>
-              <td>
-                Hourly trends: host CPU/RAM, DB ping, API errors, latency P95, throughput, and per-model slowness.
-              </td>
-            </tr>
-            <tr>
-              <td><strong>Database</strong></td>
-              <td><code>/admin/database</code></td>
-              <td>
-                Point-in-time DB connection, engine, size, ping, masked URL, CPU/RAM snapshot, and per-table row counts.
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <p>
-          Typical flow when users report slow models: check <a href="#admin-operations">Operations → Model experience</a>,
-          open a model from the slowest-models table into <a href="#admin-logs">API Logs</a>, then confirm DB and disk
-          health on <a href="#admin-database">Database</a>.
-        </p>
-        <Note>
-          <code>/admin/debug</code> redirects to Operations for old bookmarks.
+          Personal usage for any signed-in user (including admins) is under <strong>Usage &amp; Activity</strong> in the
+          user panel (<code>/app/my-activity</code> or <code>/admin/my-activity</code>).
         </Note>
       </>
     ),
@@ -1522,89 +709,28 @@ export const docSections: DocSection[] = [
       <>
         <h2>Operations</h2>
         <p>
-          <strong>Overview → Operations</strong> (<code>/admin/operations</code>) is the operational dashboard. Nine metric
-          cards (same visual style as the main Dashboard) in three rows: infrastructure from hourly{" "}
-          <strong>system metric snapshots</strong>, API traffic from <strong>request_logs</strong>, and model experience
-          for perceived slowness.
-        </p>
-        <h3>Infrastructure (snapshots)</h3>
-        <ul>
-          <li>
-            <strong>CPU</strong> — host vs Alpha Router process CPU %
-          </li>
-          <li>
-            <strong>Memory</strong> — host RAM %; footer shows Alpha Router process RSS
-          </li>
-          <li>
-            <strong>Database</strong> — DB ping (ms); footer shows database size
-          </li>
-        </ul>
-        <h3>API traffic (request logs, 24h)</h3>
-        <ul>
-          <li>
-            <strong>Errors</strong> — failed requests, stacked by client source; footer shows error rate %
-          </li>
-          <li>
-            <strong>Latency</strong> — headline P95 (ms); chart avg vs P95 per hour; footer shows period average
-          </li>
-          <li>
-            <strong>Throughput</strong> — total requests, stacked by source; footer shows successful count
-          </li>
-        </ul>
-        <h3>P95 latency (95th percentile)</h3>
-        <p>
-          Alpha Router reads <code>response_time_ms</code> from <code>request_logs</code> and sorts those values from fastest to
-          slowest. <strong>P95</strong> is the latency at rank 95%: about 95% of requests finished in that time or less,
-          and about 5% were slower. It highlights tail slowness better than a simple average—a few very long calls do not
-          dominate the headline as much as they would with a mean.
-        </p>
-        <p>
-          On this page, P95 is computed over the <strong>last 24 hours</strong> (UTC hourly buckets on charts). Per-model
-          P95 needs at least <strong>3 requests</strong> in the window. The model-experience card compares current 24h P95
-          to the <strong>previous 24h</strong> as a percentage change.
-        </p>
-        <h3>Time range</h3>
-        <p>
-          Use the dropdown in the page header (same pattern as the main Dashboard activity picker).{" "}
-          <strong>Relative</strong> presets (15 minutes through 1 year) and <strong>Periods</strong> (Today, Yesterday,
-          This Week, Prev Week) filter both <code>request_logs</code> charts and infra snapshots. Default is{" "}
-          <strong>Past 1 Day</strong> (<code>past_1d</code>). The API accepts <code>?range=</code> on{" "}
-          <code>GET /api/admin/operations/dashboard</code> and <code>POST …/check-now</code>.
+          Path: <code>/admin/operations</code> (alias <code>/admin/debug</code>). Infrastructure and API health — not
+          billing analytics.
         </p>
         <ul>
           <li>
-            <strong>Check Now</strong> — records an infrastructure snapshot and refreshes all charts (
-            <code>POST /api/admin/operations/check-now</code>).
+            Time range selector and <strong>Check Now</strong> (records a metrics snapshot; the page also refreshes on
+            an hourly cadence).
           </li>
           <li>
-            <strong>Auto-refresh</strong> — UI reloads every 1 hour; production also records infra snapshots hourly via the
-            scheduler.
+            <strong>Infrastructure</strong> — host CPU/memory, database size.
           </li>
           <li>
-            Point-in-time DB tables and connection: <a href="#admin-database">Database</a>. Spend and models:{" "}
-            <a href="#admin-dashboard">Dashboard</a>.
+            <strong>API traffic</strong> — errors, latency, throughput.
+          </li>
+          <li>
+            <strong>Model experience</strong> — slow requests, P95, slowest models table (links into API Logs).
           </li>
         </ul>
-        <h3>Model experience</h3>
-        <ul>
-          <li>
-            <strong>Slow requests</strong> — calls ≥ 10s (<code>SLOW_REQUEST_MS</code>), hourly chart by client source
-          </li>
-          <li>
-            <strong>P95 latency</strong> — current 24h P95 with % change vs the previous 24h
-          </li>
-          <li>
-            <strong>Model P95 (top traffic)</strong> — hourly P95 for the three busiest models
-          </li>
-          <li>
-            <strong>Slowest models table</strong> — P95 ranking (min. 3 requests); link to filtered{" "}
-            <a href="#admin-logs">API Logs</a>
-          </li>
-        </ul>
-        <p>
-          Chart bucket size adapts to the selected range (minutes for short windows, hours for days, days/weeks for
-          longer spans). Infra snapshots older than 14 days are pruned automatically.
-        </p>
+        <Note>
+          Observability counters are also available via <code>GET /api/admin/operations/observability</code>. Data-key
+          rotation is a Super Admin API operation, not a button on this page — use your security runbook.
+        </Note>
       </>
     ),
   },
@@ -1614,357 +740,511 @@ export const docSections: DocSection[] = [
     group: "Overview",
     content: (
       <>
-        <h2>Database (read-only monitor)</h2>
+        <h2>Database</h2>
         <p>
-          <strong>Overview → Database</strong> (<code>/admin/database</code>) shows live status of the application
-          database only—no query editor, no schema changes, no backup/restore buttons.
+          Path: <code>/admin/database</code>. Read-only monitor: connection status, engine, host CPU/RAM, DB size, ping,
+          Alpha Router process RSS/CPU, and table row counts. Use <strong>Refresh</strong> to reload.
         </p>
-        <h3>Supported engines</h3>
+      </>
+    ),
+  },
+
+  // ── Models & API ──────────────────────────────────────────────────────────
+  {
+    id: "admin-connections",
+    title: "Connections",
+    group: "Models & API",
+    content: (
+      <>
+        <h2>Connections</h2>
+        <p>
+          Path: <code>/admin/connections</code>. Each connection stores a provider type, encrypted API key, optional base
+          URL, and sync schedule.
+        </p>
+        <h3>Create / edit</h3>
+        <ul>
+          <li>Name, provider (for example <code>openrouter</code>, <code>openai</code>, <code>custom</code>)</li>
+          <li>Base URL (optional; provider defaults apply when empty)</li>
+          <li>API key (required on create; leave blank on edit to keep the existing key)</li>
+          <li>Sync interval in hours (<code>0</code> = manual sync only)</li>
+        </ul>
+        <h3>Actions</h3>
         <ul>
           <li>
-            <strong>PostgreSQL</strong> — production via <code>docker compose</code>. Displays database size and count of
-            other active sessions on the same database.
+            <strong>Sync now</strong> — fetch models/pricing from the provider (UI “flash” briefly disables catalog
+            rows during refresh).
+          </li>
+          <li>
+            <strong>Enable / Disable</strong> — toggles the connection and its models.
+          </li>
+          <li>
+            <strong>Usage &amp; Activity</strong> / changelog — audit of connection changes and traffic.
           </li>
         </ul>
-        <h3>Overview panel</h3>
-        <ul>
-          <li>
-            <strong>Connected / Unreachable</strong> — result of a lightweight <code>SELECT 1</code> ping
-          </li>
-          <li>
-            <strong>Engine badge</strong> — PostgreSQL
-          </li>
-          <li>
-            <strong>Version</strong> — <code>sqlite_version()</code> or PostgreSQL <code>version()</code>
-          </li>
-          <li>
-            <strong>Size</strong> — file size (SQLite) or <code>pg_database_size</code> (PostgreSQL)
-          </li>
-          <li>
-            <strong>Ping</strong> — round-trip time in milliseconds
-          </li>
-          <li>
-            <strong>Connection (masked)</strong> — <code>DATABASE_URL</code> with credentials hidden
-          </li>
-        </ul>
-        <h3>CPU & memory panel</h3>
-        <ul>
-          <li>
-            <strong>Host</strong> — CPU % and RAM used/total for the machine or Docker container running the Alpha Router API
-            (via <code>psutil</code>)
-          </li>
-          <li>
-            <strong>Alpha Router process</strong> — PID, process name, CPU %, and RSS memory for the current API worker
-          </li>
-        </ul>
-        <p>
-          These metrics are a snapshot when you click <strong>Refresh</strong>. They do not include separate Postgres or
-          Redis containers unless those services run inside the same container as Alpha Router.
-        </p>
-        <h3>Tables panel</h3>
-        <p>Row counts for Alpha Router tables, for example:</p>
-        <ul>
-          <li>
-            <code>users</code>, <code>chat_sessions</code>, <code>chat_messages</code>, <code>request_logs</code>,{" "}
-            <code>ai_models</code>,{" "}
-            <code>connections</code>
-          </li>
-          <li>
-            <code>media_assets</code>, <code>alpha_router_api_keys</code>, <code>user_api_keys</code>, <code>budget_plans</code>
-          </li>
-          <li>
-            and other application tables (groups, assignments, SMTP, schedules, auth providers)
-          </li>
-        </ul>
-        <p>
-          Use <strong>Refresh</strong> to reload stats. Large <code>request_logs</code> counts are normal on busy
-          instances; retention is not managed from this page (see <a href="#admin-storage">Retention Policy</a> for files
-          and chat retention, and <a href="#admin-storage-management">Storage Management</a> for quotas and usage).
-        </p>
-        <h3>API</h3>
-        <p>
-          Admins only: <code>GET /api/admin/database/monitor</code> returns the same JSON payload the UI uses.
-        </p>
         <Warn>
-          This is not a replacement for pgAdmin, DBeaver, or cloud database consoles. Do not expose Postgres port 5432 to
-          the public internet without network controls.
+          Creating a connection does not sync automatically — run <strong>Sync now</strong> before enabling models for
+          users.
         </Warn>
       </>
     ),
   },
+  {
+    id: "admin-models",
+    title: "Models",
+    group: "Models & API",
+    content: (
+      <>
+        <h2>Models</h2>
+        <p>
+          Path: <code>/admin/models</code>. Catalog entries synced from Connections. Input/output cost per 1K tokens is
+          displayed read-only from the provider.
+        </p>
+        <ul>
+          <li>Search and kind filters (chat, image, …).</li>
+          <li>Browse (tiles) or table view; per-model enable toggle.</li>
+          <li>
+            Bulk edit: turn ON, OFF, or delete selected models.
+          </li>
+        </ul>
+        <Note>
+          Only enabled models on active connections appear in the chat model picker and <code>/v1/models</code>.
+        </Note>
+      </>
+    ),
+  },
+  {
+    id: "admin-api-keys",
+    title: "API Keys",
+    group: "Models & API",
+    content: (
+      <>
+        <h2>API Keys</h2>
+        <p>
+          Path: <code>/admin/api-keys</code>. Admin-issued <strong>gateway keys</strong> for OpenAI-compatible clients
+          (separate from per-user keys created on the Users page).
+        </p>
+        <h3>Key settings</h3>
+        <ul>
+          <li>Owner (optional user association for attribution)</li>
+          <li>Name</li>
+          <li>Credit limit (USD) and reset period: daily / weekly / monthly (empty or 0 = no cap)</li>
+          <li>Expiration: never, or auto-deactivate after N days</li>
+        </ul>
+        <p>
+          The plaintext key is shown once at creation. Clients call <code>/v1/*</code> with{" "}
+          <code>Authorization: Bearer &lt;key&gt;</code>. Usage debits the key’s credit pool (not a personal monthly
+          budget) when the key is a Alpha Router gateway key.
+        </p>
+        <p>Row actions include edit, usage, enable/disable, delete, bulk actions, and changelog.</p>
+      </>
+    ),
+  },
+
+  // ── People & access ───────────────────────────────────────────────────────
+  {
+    id: "admin-roles",
+    title: "Roles",
+    group: "People & access",
+    content: (
+      <>
+        <h2>Roles</h2>
+        <p>
+          Path: <code>/admin/roles</code>. Lists the built-in RBAC catalog (name, description, category, read-only
+          flag). You do not create custom role definitions here — you <strong>assign</strong> existing roles to users
+          (bulk assign from selected roles).
+        </p>
+        <p>
+          See <a href="#rbac-model">RBAC model</a> for the intended role set.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: "admin-users",
+    title: "Users",
+    group: "People & access",
+    content: (
+      <>
+        <h2>Users</h2>
+        <p>
+          Path: <code>/admin/users</code>. Directory of accounts with filters (status, email, department, job title,
+          role, group).
+        </p>
+        <h3>Capabilities</h3>
+        <ul>
+          <li>
+            Create local users (username, password, profile fields, role, optional group/plan).
+          </li>
+          <li>
+            Inline edit of profile fields, multi-role assignment, and plan (direct / inherit from group / none).
+          </li>
+          <li>
+            Activate / deactivate, reset budget period usage, generate a <strong>per-user API key</strong> (debits the
+            user’s monthly budget).
+          </li>
+          <li>
+            Soft-delete local users (moves to Deleted Users). Directory-synced users follow LDAP/SSO lifecycle rules.
+          </li>
+          <li>
+            Per-user Usage &amp; Activity and User Storage (admin view of that user’s media).
+          </li>
+          <li>Super Admin: disable TOTP for a local user from the edit modal.</li>
+        </ul>
+        <Note>
+          Deactivated users can still sign in to browse history but cannot send chat or create new spend.
+        </Note>
+      </>
+    ),
+  },
+  {
+    id: "admin-deleted-users",
+    title: "Deleted Users",
+    group: "People & access",
+    content: (
+      <>
+        <h2>Deleted Users</h2>
+        <p>
+          Path: <code>/admin/deleted-users</code>. Soft-deleted accounts that can no longer sign in. You can open
+          historical Usage &amp; Activity / media, or permanently delete (single or bulk) with confirmation. Permanent
+          delete removes residual account data according to cleanup services — use carefully.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: "admin-groups",
+    title: "Groups",
+    group: "People & access",
+    content: (
+      <>
+        <h2>Groups</h2>
+        <p>
+          Path: <code>/admin/groups</code>. Local groups plus directory-synced groups (<code>ldap</code> /{" "}
+          <code>saml</code> source).
+        </p>
+        <ul>
+          <li>Create/edit local groups; assign a budget plan to the group.</li>
+          <li>
+            <strong>Sync LDAP</strong> when AD sync is configured.
+          </li>
+          <li>Show members (opens Users filtered), group activity, deactivate all members, delete group.</li>
+          <li>Bulk assign plans or deactivate members.</li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    id: "admin-plans",
+    title: "Plans",
+    group: "People & access",
+    content: (
+      <>
+        <h2>Plans</h2>
+        <p>
+          Path: <code>/admin/plans</code>. A plan is a named monthly USD budget. Assign plans to a user, a group, or a
+          department string. Users inherit the resolved monthly limit into their budget cache.
+        </p>
+        <ul>
+          <li>Create/edit: name + monthly budget USD.</li>
+          <li>Assign plan modal: choose target type and entity.</li>
+          <li>Show members: who currently resolves to this plan.</li>
+        </ul>
+        <p>
+          See also <a href="#budget-pricing">Budget &amp; pricing</a>.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: "admin-authentication",
+    title: "Authentication",
+    group: "People & access",
+    content: (
+      <>
+        <h2>Authentication</h2>
+        <p>
+          Path: <code>/admin/authentication</code>. Tabs for Active Directory (LDAP), SAML, and OIDC. Details of each
+          protocol are under <a href="#sign-in">Sign-in &amp; identity</a>.
+        </p>
+        <ul>
+          <li>
+            <strong>LDAP</strong> — enable, DC host, service account, Sync OUs, prune option, daily schedule, Test /
+            Sync.
+          </li>
+          <li>
+            <strong>SAML</strong> — enable, metadata, entity ID, ACS (read-only), attribute mapping, signature options.
+          </li>
+          <li>
+            <strong>OIDC</strong> — enable, issuer, client credentials, redirect URI (read-only), scopes, claim mapping.
+          </li>
+        </ul>
+        <Warn>Store IdP credentials carefully; they are encrypted at rest. Prefer HTTPS IdP endpoints in production.</Warn>
+      </>
+    ),
+  },
+
+  // ── Integrations ──────────────────────────────────────────────────────────
+  {
+    id: "admin-smtp",
+    title: "SMTP Server",
+    group: "Integrations",
+    content: (
+      <>
+        <h2>SMTP Server</h2>
+        <p>
+          Path: <code>/admin/smtp</code>. Outbound mail settings used when emailing reports or credentials.
+        </p>
+        <ul>
+          <li>Host, port, username, password, from address, Use TLS</li>
+          <li>
+            <strong>Save</strong> and <strong>Test connection</strong>
+          </li>
+        </ul>
+        <Note>Test uses the values you enter; point it only at trusted SMTP servers.</Note>
+      </>
+    ),
+  },
+
+  // ── Data & reports ────────────────────────────────────────────────────────
+  {
+    id: "admin-storage-management",
+    title: "Storage Management",
+    group: "Data & reports",
+    content: (
+      <>
+        <h2>Storage Management</h2>
+        <p>
+          Path: <code>/admin/storage-management</code>. Object-storage usage for user media.
+        </p>
+        <ul>
+          <li>Total size/files, expired count, breakdown by kind; refresh.</li>
+          <li>
+            <strong>DELETE ALL MEDIA</strong> — destructive, multi-step confirm.
+          </li>
+          <li>Per-user quota (GB).</li>
+          <li>
+            Global transfer limits (MB): max upload, max chat attachments total per message, max ZIP download.
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    id: "admin-retention",
+    title: "Retention Policy",
+    group: "Data & reports",
+    content: (
+      <>
+        <h2>Retention Policy</h2>
+        <p>
+          Path: <code>/admin/retention-policy</code>. Scheduled cleanup for media and chat messages (server timezone).
+        </p>
+        <ul>
+          <li>
+            <strong>Media</strong> — retention days, daily cleanup hour/minute, purge expired now.
+          </li>
+          <li>
+            <strong>Chat</strong> — enable policy, retention days, daily schedule, purge expired messages now.
+          </li>
+        </ul>
+        <Note>
+          Users can also schedule personal media cleanup from the Media library; that schedule is separate from the
+          global media retention settings here.
+        </Note>
+      </>
+    ),
+  },
+  {
+    id: "admin-reports",
+    title: "Reports",
+    group: "Data & reports",
+    content: (
+      <>
+        <h2>Reports</h2>
+        <p>
+          Path: <code>/admin/reports</code>. Catalog of operational and cost reports with preview (table) and download
+          (CSV / Excel / PDF). Parameters depend on the report (dates, user, plan, department, model, thresholds, …).
+        </p>
+        <Note>
+          Report generation is interactive from this page. Ensure SMTP is configured if you rely on email delivery
+          elsewhere in your process.
+        </Note>
+      </>
+    ),
+  },
+  {
+    id: "admin-logs",
+    title: "API Logs",
+    group: "Data & reports",
+    content: (
+      <>
+        <h2>API Logs</h2>
+        <p>
+          Path: <code>/admin/logs</code>. Request-level billing/telemetry rows: time, user or API key, model, provider,
+          app, tokens, cache hit, cost, duration, success/failure.
+        </p>
+        <ul>
+          <li>Filters: user/key, model, status, prompt cache, date range.</li>
+          <li>
+            <strong>Clear All Logs</strong> — write-gated, multi-step confirm.
+          </li>
+        </ul>
+        <p>Deep links from Operations (for example filtered by model) are supported via query parameters.</p>
+      </>
+    ),
+  },
+
+  // ── End users ─────────────────────────────────────────────────────────────
   {
     id: "user-panel",
     title: "User panel",
     group: "End users",
     content: (
       <>
-        <h2>User panel (<code>/app</code>)</h2>
+        <h2>User panel</h2>
         <p>
-          End users and administrators share the same user-facing app under <code>/app</code>. Standard users see a
-          focused sidebar: <strong>Chat</strong>, <strong>Media</strong>,{" "}
-          <strong>Usage &amp; Activity</strong>, and <strong>User Manual</strong>. Administrators additionally use the
-          admin sidebar; its top group — also labeled <strong>User panel</strong> — links to the same{" "}
-          <code>/app</code> routes so admins can chat and test models without leaving the admin shell.
+          Employees use <code>/app</code>: Chat, Media, Usage &amp; Activity, and the User Manual. Admins with panel
+          access can open the same Chat/Media experiences from the admin sidebar shortcuts, plus the full admin menus.
+        </p>
+        <p>
+          Document every end-user capability in the <strong>User Manual</strong> — do not duplicate the full chat guide
+          here. Link: <code>/app/manual</code>.
+        </p>
+        <ul>
+          <li>Chat with enabled models, tools, voice, images, private mode, export.</li>
+          <li>Media library with quota and optional personal cleanup schedule.</li>
+          <li>Personal Usage &amp; Activity with CSV/PDF export.</li>
+          <li>Settings: theme, voice language, chat import/export, password/2FA, MCP connectors.</li>
+        </ul>
+      </>
+    ),
+  },
+
+  // ── Platform API & Billing ────────────────────────────────────────────────
+  {
+    id: "platform-api",
+    title: "Platform API (/v1)",
+    group: "Platform API",
+    content: (
+      <>
+        <h2>Platform API (/v1)</h2>
+        <p>
+          OpenAI-compatible gateway for external tools (IDEs, scripts, Open WebUI, automation). No CSRF — authenticate
+          with a Bearer key only.
         </p>
         <table className="docs-table">
           <thead>
             <tr>
-              <th>Area</th>
-              <th>Purpose</th>
+              <th>Endpoint</th>
+              <th>Notes</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td>Chat</td>
-              <td>Same chat experience as admin chat, within budget and enabled models.</td>
+              <td>
+                <code>GET /v1/models</code>
+              </td>
+              <td>Enabled catalog models</td>
             </tr>
             <tr>
-              <td>Media</td>
-              <td>Personal file library from chat uploads and generated images.</td>
+              <td>
+                <code>POST /v1/chat/completions</code>
+              </td>
+              <td>Streaming SSE (stream required)</td>
             </tr>
             <tr>
-              <td>Usage &amp; Activity</td>
-              <td>Personal spend, tokens, heatmap, exports (CSV/PDF).</td>
-            </tr>
-            <tr>
-              <td>User Manual</td>
-              <td>In-app help for all user-facing features.</td>
+              <td>
+                <code>POST /v1/embeddings</code>
+              </td>
+              <td>Embeddings proxy</td>
             </tr>
           </tbody>
         </table>
-        <p>
-          Profile menu: <strong>Usage &amp; Activity</strong>, <strong>Budget</strong> (<code>used/total $</code>),
-          theme, sign out. On the standard user layout, administrators also see an <strong>Administration</strong> link
-          that opens their first allowed admin menu.
-        </p>
-        <Note>
-          Holding <strong>API Key Admin</strong> does <strong>not</strong> restrict the user panel — chat and media
-          stay fully writable. Only <strong>deactivated accounts</strong> enter account-wide read-only
-          mode (see User Manual → Deactivated accounts).
-        </Note>
-      </>
-    ),
-  },
-  {
-    id: "platform-api",
-    title: "Platform API",
-    group: "Integration",
-    content: (
-      <>
-        <h2>Platform API</h2>
-        <p>
-          OpenAI-compatible HTTPS. Base path: <code>https://&lt;your-alpha-router-host&gt;/v1</code>. Use Alpha Router-issued keys
-          only—never upstream provider keys in clients.
-        </p>
-        <Note>
-          Alpha Router can act as an organizational <strong>AI gateway</strong> for OpenAI-compatible apps (for example{" "}
-          <strong>Open WebUI</strong>): point the client&apos;s API base URL to <code>/v1</code> and paste a Alpha Router
-          gateway or per-user key from <strong>API Keys</strong> or <strong>Users → Get API Key</strong>. Enable models
-          in Alpha Router first; budgets and logs stay centralized.
-        </Note>
-        <h3 id="using-api-keys">Using API keys in clients</h3>
-        <p>
-          After you create a gateway or user key, copy the <strong>URL</strong> and <strong>API Key</strong> from the
-          one-time modal. Paste into any OpenAI-compatible client (IDE extensions, automation scripts, compatible chat
-          front-ends). The URL must end with <code>/v1</code>.
-        </p>
-        <h3>List models</h3>
-        <Code>{`GET https://<your-alpha-router-host>/v1/models
-Authorization: Bearer <ALPHA_ROUTER_KEY>`}</Code>
-        <h3>Chat completions (streaming required)</h3>
-        <Code>{`POST https://<your-alpha-router-host>/v1/chat/completions
-Authorization: Bearer <ALPHA_ROUTER_KEY>
-Content-Type: application/json
-
-{
-  "model": "<enabled-model-id-from-models-page>",
-  "messages": [{ "role": "user", "content": "Hello" }],
-  "stream": true,
-  "user": "person@company.com"
-}`}</Code>
-        <p>
-          The optional <code>user</code> field helps attribute usage when using a shared gateway key (pass a stable email
-          or username). Per-user API keys already bind requests to that user&apos;s budget.
-        </p>
-        <h3>Python (OpenAI SDK)</h3>
-        <Code>{`from openai import OpenAI
-
-client = OpenAI(
-    base_url="https://<your-alpha-router-host>/v1",
-    api_key="<ALPHA_ROUTER_KEY>",
-)
-
-client.chat.completions.create(
-    model="<enabled-model-id>",
-    messages=[{"role": "user", "content": "Hello"}],
-    stream=True,
-)`}</Code>
-      </>
-    ),
-  },
-  {
-    id: "kilo-code",
-    title: "Kilo Code",
-    group: "Integration",
-    content: (
-      <>
-        <h2 id="kilo-code">Kilo Code + Alpha Router</h2>
-        <p>
-          <a href="https://kilo.ai">Kilo Code</a> (VS Code extension) supports OpenAI-compatible providers. Use Alpha Router as
-          that provider so IDE usage respects the same models and budgets as the rest of your organization.
-        </p>
-
-        <h3>Part A — Get a Alpha Router API key</h3>
-        <ol className="docs-steps">
-          <li>
-            In Alpha Router, enable the models you need (<strong>Models</strong>).
-          </li>
-          <li>
-            Create a key using one of:
-            <ul>
-              <li>
-                <strong>API Keys</strong> → gateway key (shared), or
-              </li>
-              <li>
-                <strong>Users → Get API Key</strong> / user <strong>API Key</strong> page (per developer).
-              </li>
-            </ul>
-          </li>
-          <li>
-            Copy <strong>URL</strong> and <strong>API Key</strong> from the creation modal.
-          </li>
-          <li>
-            Note the exact <strong>model id</strong> string from Alpha Router (Models table, <code>external_id</code> column)—you
-            will need it in Kilo Code.
-          </li>
-        </ol>
-
-        <h3>Part B — VS Code UI (Kilo Code settings)</h3>
-        <ol className="docs-steps">
-          <li>
-            Install / open <strong>Kilo Code</strong> in VS Code.
-          </li>
-          <li>
-            Open <strong>Settings</strong> (gear icon in Kilo) → <strong>Providers</strong>.
-          </li>
-          <li>
-            Add or select <strong>OpenAI Compatible</strong> (not the official OpenAI provider unless you are truly using
-            OpenAI directly).
-          </li>
-          <li>
-            <strong>Base URL:</strong> Alpha Router URL, e.g. <code>https://alpha-router.company.com/v1</code>
-          </li>
-          <li>
-            <strong>API Key:</strong> paste the Alpha Router key from the modal.
-          </li>
-          <li>
-            <strong>Model:</strong> pick from auto-detected list (fetched from <code>/v1/models</code>) or enter the model
-            id manually, e.g. <code>anthropic/claude-sonnet-4</code> (must match an enabled model in Alpha Router).
-          </li>
-          <li>
-            Save and run a short prompt in the Kilo sidebar to confirm streaming works.
-          </li>
-        </ol>
-
-        <h3>Part C — Optional <code>kilo.jsonc</code> config</h3>
-        <p>
-          Kilo can store the same settings in config (global <code>~/.config/kilo/kilo.jsonc</code> or project{" "}
-          <code>kilo.jsonc</code>). Example:
-        </p>
-        <Code>{`{
-  "provider": {
-    "openai-compatible": {
-      "options": {
-        "apiKey": "{env:ALPHA_ROUTER_API_KEY}",
-        "baseURL": "https://<your-alpha-router-host>/v1"
-      }
-    }
-  },
-  "model": "openai-compatible/<enabled-model-id>"
-}`}</Code>
-        <p>
-          Prefer <code>{`{env:VAR}`}</code> for the key instead of hard-coding secrets. See{" "}
-          <a href="https://kilo.ai/docs/ai-providers/openai-compatible" target="_blank" rel="noreferrer">
-            Kilo: OpenAI-compatible providers
-          </a>
-          .
-        </p>
-
-        <h3>Troubleshooting</h3>
+        <h3>Authentication modes</h3>
         <ul>
           <li>
-            <strong>Model not found</strong> — Model must be enabled in Alpha Router and id must match exactly (case-sensitive).
+            <strong>Alpha Router gateway API key</strong> — credits the key’s period limit; optional owner for attribution.
           </li>
           <li>
-            <strong>Connection errors</strong> — Verify TLS, VPN, and that <code>API_PUBLIC_URL</code> matches what you
-            entered in Base URL.
+            <strong>User API key</strong> — debits that user’s monthly budget; user must be active.
           </li>
           <li>
-            <strong>Budget exceeded</strong> — Check the user&apos;s <strong>Budget</strong> in Alpha Router; per-user keys use
-            that user&apos;s pool.
-          </li>
-          <li>
-            <strong>Azure GPT-5 / special providers</strong> — Use native provider support in Kilo when required; generic
-            OpenAI-compatible mode targets Alpha Router&apos;s OpenAI-style <code>/v1/chat/completions</code>.
+            <strong>Gateway master key</strong> — maps to a fixed <code>gateway-service</code> account (no{" "}
+            <code>body.user</code> impersonation). Treat as a high-privilege secret; assign that account a budget plan
+            or requests receive 402.
           </li>
         </ul>
+        <Code>{`curl -sS "$ALPHA_ROUTER_BASE/v1/models" \\
+  -H "Authorization: Bearer $ALPHA_ROUTER_API_KEY"`}</Code>
+        <p>
+          Point OpenAI-compatible clients at your Alpha Router base URL (for example <code>https://alpha-router.example.com/v1</code>
+          ) and use a Alpha Router-issued key as the API key.
+        </p>
       </>
     ),
   },
   {
     id: "budget-pricing",
-    title: "Budget & pricing",
-    group: "Integration",
+    title: "Budget &amp; pricing",
+    group: "Billing",
     content: (
       <>
-        <h2>Budget & pricing</h2>
+        <h2>Budget &amp; pricing</h2>
+        <h3>Pricing</h3>
+        <p>
+          Model prices come from provider sync (normalized to USD per 1K tokens where possible). Alpha Router does not apply a
+          markup in the catalog. Billing math prefers catalog rates, then LiteLLM cost helpers, then zero if unknown.
+          Negative provider prices are treated as unset.
+        </p>
+        <h3>Monthly user budgets</h3>
+        <p>
+          Resolved from plan assignment (user → group → department). Before a paid request, Alpha Router places a{" "}
+          <strong>reservation</strong> (hold) against <code>budget_reserved_usd</code>. After completion it{" "}
+          <strong>settles</strong> the actual cost into <code>budget_used_usd</code> and releases the hold. Stale holds
+          expire via a background sweeper.
+        </p>
+        <h3>What counts</h3>
         <ul>
-          <li>Monthly USD budget from plan or per-user override.</li>
-          <li>Each request deducts provider-reported cost from <code>budget_used_usd</code>.</li>
-          <li>Resets on the first day of each calendar month.</li>
-          <li>When exhausted, new requests are rejected until reset or admin adjustment.</li>
+          <li>In-app chat completions and image generation</li>
+          <li>User API key traffic on <code>/v1</code></li>
+          <li>Gateway key traffic against the key’s credit limit</li>
         </ul>
-        <p>Alpha Router does not markup provider prices.</p>
+        <Warn>
+          Some lightweight helper calls (for example automatic chat titles or prompt enhancement) may invoke models
+          without a full reservation path — keep an eye on Operations/logs if you rely on those features heavily, and
+          prefer enabling only necessary models.
+        </Warn>
+        <h3>Resets</h3>
+        <p>
+          Monthly user budgets reset on a schedule (first of month). Gateway key credits reset according to each key’s
+          daily/weekly/monthly setting. Admins can force a per-user budget reset from the Users page.
+        </p>
       </>
     ),
   },
   {
-    id: "security",
-    title: "Security & operations",
-    group: "Integration",
+    id: "schedulers",
+    title: "Background jobs",
+    group: "Billing",
     content: (
       <>
-        <h2>Security & operations</h2>
+        <h2>Background jobs</h2>
+        <p>APScheduler jobs inside the Alpha Router process include (among others):</p>
         <ul>
-          <li>Rotate provider and Alpha Router keys regularly; disable unused keys.</li>
-          <li>TLS in production; restrict admin access by network or SSO.</li>
-          <li>
-            Use <strong>least-privilege RBAC</strong>: assign <strong>API Key Admin</strong> instead of Super Admin when
-            a colleague only needs API Keys. Super Admin remains for platform owners.
-          </li>
-          <li>
-            Back up PostgreSQL and the SeaweedFS media volume/bucket outside Alpha Router; use{" "}
-            <a href="#admin-database">Database</a> only to inspect size and row counts. See{" "}
-            <a href="#admin-storage">Retention Policy → Environment (object storage)</a>.
-          </li>
-          <li>
-            Do not expose SeaweedFS ports 8333/23646 or Postgres 5432 to the public internet without network controls.
-            Keep strong <code>S3_*</code> keys and <code>SEAWEEDFS_ADMIN_PASSWORD</code>; escape <code>$</code> as{" "}
-            <code>$$</code> in <code>.env</code> when needed.
-          </li>
-          <li>Use least-privilege upstream keys where vendors allow scopes.</li>
-          <li>
-            Monitor <a href="#admin-operations">Operations</a>, <a href="#admin-database">Database</a>, Dashboard, and API
-            Logs for anomalies.
-          </li>
-          <li>
-            Change default compose passwords and <code>SECRET_KEY</code> before production (
-            <a href="#deployment">Deployment & database</a>).
-          </li>
+          <li>Model sync due-check (interval)</li>
+          <li>Monthly budget reset</li>
+          <li>Budget reservation expiry</li>
+          <li>Media and chat retention cleanup (cron from Retention Policy)</li>
+          <li>Per-user media cleanup schedules</li>
+          <li>System metrics snapshots</li>
+          <li>Chat session stats reconcile</li>
+          <li>Auth directory sync schedules (when configured)</li>
         </ul>
       </>
     ),
   },
+
+  // ── Legal ─────────────────────────────────────────────────────────────────
   {
     id: "copyright",
     title: "Copyright",

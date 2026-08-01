@@ -147,7 +147,7 @@ async def my_activity_export(
     return await _activity_export_response(
         db,
         format=format,
-        filename_stem=f"alpha-router-my-activity-{user.id}-{period}",
+        filename_stem=f"alpha-my-activity-{user.id}-{period}",
         scope="mine",
         jwt_token=jwt_token,
         user_role=user.role,

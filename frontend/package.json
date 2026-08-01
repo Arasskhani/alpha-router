@@ -4,8 +4,10 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "prebuild": "node scripts/generate-persian-fonts.mjs",
     "build": "tsc -b && vite build",
-    "test": "vitest run"
+    "test": "vitest run",
+    "fonts:generate": "node scripts/generate-persian-fonts.mjs"
   },
   "dependencies": {
     "@lobehub/icons-static-svg": "^1.94.0",

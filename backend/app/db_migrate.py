@@ -9,6 +9,7 @@ from app.services.migration_flags import (
     BRANDING_MIGRATION_KEY,
     DELETED_USERS_SCHEMA_KEY,
     MEDIA_DEDUPE_MIGRATION_KEY,
+    ALPHA_ROUTER_BRANDING_KEY,
     PRICING_SANITY_MIGRATION_KEY,
     RBAC_MIGRATION_KEY,
     SECRET_AT_REST_ENCRYPTION_KEY,
@@ -99,6 +100,100 @@ async def apply_deleted_users_schema_migrations() -> None:
                 connection.execute(text(f"ALTER TABLE users ADD COLUMN deleted_at {ddl}"))
             if not is_migration_completed_sync(connection, DELETED_USERS_SCHEMA_KEY):
                 mark_migration_completed_sync(connection, DELETED_USERS_SCHEMA_KEY)
+
+        await conn.run_sync(migrate)
+
+
+def _table_row_count(connection, table: str) -> int:
+    row = connection.execute(text(f"SELECT COUNT(*) FROM {table}")).first()
+    return int(row[0] if row else 0)
+
+
+def _rename_table_prefer_legacy(connection, legacy: str, modern: str) -> None:
+    """Rename legacy→modern, or drop an empty modern shell created by create_all."""
+    tables = set(inspect(connection).get_table_names())
+    if legacy not in tables:
+        return
+    if modern not in tables:
+        connection.execute(text(f"ALTER TABLE {legacy} RENAME TO {modern}"))
+        return
+    if _table_row_count(connection, modern) == 0 and _table_row_count(connection, legacy) > 0:
+        connection.execute(text(f"DROP TABLE {modern}"))
+        connection.execute(text(f"ALTER TABLE {legacy} RENAME TO {modern}"))
+    elif _table_row_count(connection, legacy) == 0:
+        connection.execute(text(f"DROP TABLE {legacy}"))
+
+
+def _rename_or_merge_column(connection, table: str, legacy: str, modern: str) -> None:
+    """Rename legacy column, or copy into modern then drop legacy when both exist."""
+    insp = inspect(connection)
+    if table not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns(table)}
+    if legacy not in cols:
+        return
+    dialect = connection.dialect.name
+    if modern not in cols:
+        connection.execute(text(f"ALTER TABLE {table} RENAME COLUMN {legacy} TO {modern}"))
+        return
+    connection.execute(
+        text(
+            f"UPDATE {table} SET {modern} = {legacy} "
+            f"WHERE {modern} IS NULL AND {legacy} IS NOT NULL"
+        )
+    )
+    if dialect == "postgresql":
+        connection.execute(text(f"ALTER TABLE {table} DROP COLUMN {legacy}"))
+    elif dialect == "sqlite":
+        # SQLite 3.35+ supports DROP COLUMN; ignore if unavailable.
+        try:
+            connection.execute(text(f"ALTER TABLE {table} DROP COLUMN {legacy}"))
+        except Exception:
+            pass
+
+
+async def apply_alpha_router_branding_migration() -> None:
+    """Rename alpha-router-era tables/columns/sources to Alpha Router (once).
+
+    Safe to call before or after create_all: handles empty modern tables that
+    create_all may have added alongside populated alpha_router_* tables.
+    """
+    async with engine.begin() as conn:
+        if conn.dialect.name == "postgresql":
+            await conn.execute(text("SELECT pg_advisory_xact_lock(56023114)"))
+
+        def migrate(connection) -> None:
+            if is_migration_completed_sync(connection, ALPHA_ROUTER_BRANDING_KEY):
+                return
+            # Rename audit table before keys so FK names stay coherent on PG.
+            _rename_table_prefer_legacy(
+                connection, "alpha_router_api_key_audit_logs", "alpha_router_api_key_audit_logs"
+            )
+            _rename_table_prefer_legacy(connection, "alpha_router_api_keys", "alpha_router_api_keys")
+            _rename_or_merge_column(
+                connection, "alpha_router_api_key_audit_logs", "alpha_router_api_key_id", "alpha_router_api_key_id"
+            )
+            _rename_or_merge_column(
+                connection, "request_logs", "alpha_router_api_key_id", "alpha_router_api_key_id"
+            )
+            tables = set(inspect(connection).get_table_names())
+            if "request_logs" in tables:
+                connection.execute(
+                    text("UPDATE request_logs SET source = 'alpha_router_key' WHERE source = 'alpha_router_key'")
+                )
+                connection.execute(
+                    text("UPDATE request_logs SET source = 'alpha_router_chat' WHERE source = 'alpha_router_chat'")
+                )
+            if "budget_reservations" in tables:
+                connection.execute(
+                    text(
+                        "UPDATE budget_reservations SET subject_type = 'alpha_router_key' "
+                        "WHERE subject_type = 'alpha_router_key'"
+                    )
+                )
+            # Fresh DBs may not have system_settings yet (this can run before create_all).
+            if "system_settings" in tables:
+                mark_migration_completed_sync(connection, ALPHA_ROUTER_BRANDING_KEY)
 
         await conn.run_sync(migrate)
 
@@ -1181,6 +1276,7 @@ async def run_one_time_migrations(db) -> None:
     from app.services.storage_service import migrate_legacy_blob_storage
 
     await apply_deleted_users_schema_migrations()
+    await apply_alpha_router_branding_migration()
     await apply_branding_migrations()
     await apply_rbac_migrations()
     await apply_user_roles_migrations()

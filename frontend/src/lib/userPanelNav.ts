@@ -9,10 +9,10 @@ import { MY_USAGE_AND_ACTIVITY_LABEL } from "./usageActivityLabel";
 
 /** User panel left sidebar (non-admin accounts). */
 export const USER_SIDEBAR_NAV: NavItem[] = [
-  { to: "/app/chat", label: "Chat" },
-  { to: "/app/media", label: "Media" },
-  { to: "/app/my-activity", label: MY_USAGE_AND_ACTIVITY_LABEL },
-  { to: "/app/manual", label: "User Manual" },
+  { to: "/app/chat", label: "Chat", icon: "chat" },
+  { to: "/app/media", label: "Media", icon: "media" },
+  { to: "/app/my-activity", label: MY_USAGE_AND_ACTIVITY_LABEL, icon: "activity" },
+  { to: "/app/manual", label: "User Manual", icon: "manual" },
 ];
 
 /** Topbar shortcuts, with the caller's first permitted admin page as the final item. */
@@ -24,7 +24,7 @@ export function topbarShortcutsForSession(session: SessionRbac | null): NavItem[
   const adminHome = firstAllowedAdminPath(adminNav);
   if (!adminHome.startsWith("/admin")) return items;
 
-  items.push({ to: adminHome, label: "Administration" });
+  items.push({ to: adminHome, label: "Administration", icon: "admin" });
   return items;
 }
 

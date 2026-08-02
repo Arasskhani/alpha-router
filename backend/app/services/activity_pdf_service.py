@@ -1,4 +1,4 @@
-"""Render Usage & Activity pages to PDF via headless Chromium (Playwright)."""
+"""Render Activity pages to PDF via headless Chromium (Playwright)."""
 
 from __future__ import annotations
 

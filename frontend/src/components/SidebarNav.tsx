@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { NavIcon } from "./icons/navIcons";
 import { flattenNav, isNavGrouped, type NavItem, type NavSection } from "../nav/types";
 
 const OPEN_SECTIONS_STORAGE_KEY = "alpha.admin.sidebar.openSections";
@@ -29,7 +30,8 @@ function NavLink({
       className={active ? `active ${className ?? ""}`.trim() : className}
       onClick={onNavigate}
     >
-      {item.label}
+      {item.icon ? <NavIcon name={item.icon} /> : null}
+      <span className="sidebar-nav-label">{item.label}</span>
     </Link>
   );
 }

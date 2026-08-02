@@ -232,8 +232,7 @@ export default function ConnectorsPanel() {
     <div className="settings-section">
       <h2>Connectors</h2>
       <p className="settings-section-desc">
-        Connect your own accounts so the assistant can read and act on your data through official MCP servers.
-        You provide your own OAuth Client ID/Secret; credentials and tokens are encrypted at rest.
+        Link your accounts via official MCP servers. You supply OAuth credentials or an API key; secrets are encrypted at rest.
       </p>
 
       <div className="connectors-list" role="table" aria-label="Available connectors">
@@ -343,12 +342,12 @@ export default function ConnectorsPanel() {
               />
             </label>
             <div className="settings-actions">
-              <button type="submit" className="btn" disabled={credSaving}>
+              <button type="submit" className="btn btn-sm" disabled={credSaving}>
                 {credSaving ? "Saving…" : "Save credentials"}
               </button>
               <button
                 type="button"
-                className="btn btn-ghost"
+                className="btn btn-sm btn-ghost"
                 onClick={() => setEditingProvider(null)}
                 disabled={credSaving}
               >
@@ -378,12 +377,12 @@ export default function ConnectorsPanel() {
               />
             </label>
             <div className="settings-actions">
-              <button type="submit" className="btn" disabled={apiKeySaving}>
+              <button type="submit" className="btn btn-sm" disabled={apiKeySaving}>
                 {apiKeySaving ? "Connecting…" : "Connect"}
               </button>
               <button
                 type="button"
-                className="btn btn-ghost"
+                className="btn btn-sm btn-ghost"
                 onClick={() => setApiKeyProvider(null)}
                 disabled={apiKeySaving}
               >

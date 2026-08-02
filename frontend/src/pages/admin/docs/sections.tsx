@@ -129,7 +129,7 @@ export const docSections: DocSection[] = [
             <strong>OIDC</strong> sign-in.
           </li>
           <li>
-            Offering in-app chat, media libraries, Usage &amp; Activity, and an optional OpenAI-compatible{" "}
+            Offering in-app chat, media libraries, Activity, and an optional OpenAI-compatible{" "}
             <code>/v1</code> API for external tools.
           </li>
         </ol>
@@ -637,7 +637,7 @@ export const docSections: DocSection[] = [
           <tbody>
             <tr>
               <td>User panel</td>
-              <td>Shortcuts into <code>/app</code> (Chat, Media, Usage &amp; Activity, User Manual)</td>
+              <td>Shortcuts into <code>/app</code> (Chat, Media, Activity, User Manual)</td>
             </tr>
             <tr>
               <td>Overview</td>
@@ -676,7 +676,7 @@ export const docSections: DocSection[] = [
       <>
         <h2>Dashboard</h2>
         <p>
-          Path: <code>/admin</code>. Service-wide Usage &amp; Activity for administrators — spend, requests, tokens, and
+          Path: <code>/admin</code>. Service-wide Activity for administrators — spend, requests, tokens, and
           exploration tools.
         </p>
         <ul>
@@ -695,7 +695,7 @@ export const docSections: DocSection[] = [
           </li>
         </ul>
         <Note>
-          Personal usage for any signed-in user (including admins) is under <strong>Usage &amp; Activity</strong> in the
+          Personal usage for any signed-in user (including admins) is under <strong>Activity</strong> in the
           user panel (<code>/app/my-activity</code> or <code>/admin/my-activity</code>).
         </Note>
       </>
@@ -778,7 +778,7 @@ export const docSections: DocSection[] = [
             <strong>Enable / Disable</strong> — toggles the connection and its models.
           </li>
           <li>
-            <strong>Usage &amp; Activity</strong> / changelog — audit of connection changes and traffic.
+            <strong>Activity</strong> / changelog — audit of connection changes and traffic.
           </li>
         </ul>
         <Warn>
@@ -886,7 +886,7 @@ export const docSections: DocSection[] = [
             Soft-delete local users (moves to Deleted Users). Directory-synced users follow LDAP/SSO lifecycle rules.
           </li>
           <li>
-            Per-user Usage &amp; Activity and User Storage (admin view of that user’s media).
+            Per-user Activity and User Storage (admin view of that user’s media).
           </li>
           <li>Super Admin: disable TOTP for a local user from the edit modal.</li>
         </ul>
@@ -905,7 +905,7 @@ export const docSections: DocSection[] = [
         <h2>Deleted Users</h2>
         <p>
           Path: <code>/admin/deleted-users</code>. Soft-deleted accounts that can no longer sign in. You can open
-          historical Usage &amp; Activity / media, or permanently delete (single or bulk) with confirmation. Permanent
+          historical Activity / media, or permanently delete (single or bulk) with confirmation. Permanent
           delete removes residual account data according to cleanup services — use carefully.
         </p>
       </>
@@ -1103,7 +1103,7 @@ export const docSections: DocSection[] = [
       <>
         <h2>User panel</h2>
         <p>
-          Employees use <code>/app</code>: Chat, Media, Usage &amp; Activity, and the User Manual. Admins with panel
+          Employees use <code>/app</code>: Chat, Media, Activity, and the User Manual. Admins with panel
           access can open the same Chat/Media experiences from the admin sidebar shortcuts, plus the full admin menus.
         </p>
         <p>
@@ -1113,7 +1113,7 @@ export const docSections: DocSection[] = [
         <ul>
           <li>Chat with enabled models, tools, voice, images, private mode, export.</li>
           <li>Media library with quota and optional personal cleanup schedule.</li>
-          <li>Personal Usage &amp; Activity with CSV/PDF export.</li>
+          <li>Personal Activity with CSV/PDF export.</li>
           <li>Settings: theme, voice language, chat import/export, password/2FA, MCP connectors.</li>
         </ul>
       </>

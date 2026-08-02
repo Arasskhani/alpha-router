@@ -229,7 +229,7 @@ def _build_role_catalog() -> tuple[RoleDefinition, ...]:
         RoleDefinition(
             slug=USER_SLUG,
             name="User",
-            description="Standard end-user access to Chat, Media, My Usage & Activity, and the User Manual.",
+            description="Standard end-user access to Chat, Media, Activity, and the User Manual.",
             category=USER_CATEGORY,
             menu_key=None,
             read_only=False,

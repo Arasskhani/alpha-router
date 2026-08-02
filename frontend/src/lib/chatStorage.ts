@@ -963,6 +963,7 @@ function applyServerSessionToLocal(sessionId: string, remote: Partial<ChatSessio
   if (remote.lastMessageAt === null) row.lastMessageAt = null;
   if (typeof remote.title === "string") row.title = remote.title;
   if (typeof remote.titleGenerated === "boolean") row.titleGenerated = remote.titleGenerated;
+  if (remote.folderId !== undefined) row.folderId = remote.folderId ?? null;
 }
 
 /** @deprecated Use createSessionOnServerIfMissing + patchSessionMetadataOnServer */
@@ -1901,20 +1902,24 @@ export function normalizeMessageForTitle(content: string): string {
 function _clipTitle(text: string): string {
   const t = text.trim().replace(/\s+/g, " ");
   if (!t) return DEFAULT_CHAT_TITLE;
-  const limit = 42;
-  if (t.length <= limit) return t;
+  // Keep local fallback titles short; LLM titles are clipped server-side (~40 chars).
+  const limit = 28;
+  const maxWords = 4;
+  const byWords = t.split(/\s+/).slice(0, maxWords).join(" ");
+  const source = byWords.length < t.length ? byWords : t;
+  if (source.length <= limit) return source;
   if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
     const seg = new Intl.Segmenter(undefined, { granularity: "grapheme" });
     let out = "";
     let count = 0;
-    for (const part of seg.segment(t)) {
+    for (const part of seg.segment(source)) {
       if (count >= limit - 1) break;
       out += part.segment;
       count += 1;
     }
     return out ? `${out}…` : DEFAULT_CHAT_TITLE;
   }
-  return `${t.slice(0, limit - 1)}…`;
+  return `${source.slice(0, limit - 1)}…`;
 }
 
 export function sessionTitleFromMessages(messages: ChatMessage[]): string {

@@ -1166,7 +1166,7 @@ def _filter_lines(filters: dict | None) -> list[str]:
 
 
 def export_activity_dashboard_pdf(payload: dict, meta: dict) -> tuple[bytes, str, str]:
-    """Render Usage & Activity dashboard content (matches on-screen summary)."""
+    """Render Activity dashboard content (matches on-screen summary)."""
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -1181,7 +1181,7 @@ def export_activity_dashboard_pdf(payload: dict, meta: dict) -> tuple[bytes, str
     h2 = ParagraphStyle("ActivityH2", parent=styles["Heading2"], fontSize=12, spaceBefore=12, spaceAfter=6)
     story: list = []
 
-    title = meta.get("title") or "Usage & Activity"
+    title = meta.get("title") or "Activity"
     story.append(Paragraph(title, title_style))
     subtitle_parts = [
         _period_label(payload.get("period") or "day"),

@@ -7,10 +7,10 @@ export const adminNavSections: NavSection[] = [
     title: "User panel",
     categoryKey: "overview",
     items: [
-      { to: "/app/chat", label: "Chat" },
-      { to: "/app/media", label: "Media" },
-      { to: "/app/my-activity", label: MY_USAGE_AND_ACTIVITY_LABEL },
-      { to: "/app/manual", label: "User Manual" },
+      { to: "/app/chat", label: "Chat", icon: "chat" },
+      { to: "/app/media", label: "Media", icon: "media" },
+      { to: "/app/my-activity", label: MY_USAGE_AND_ACTIVITY_LABEL, icon: "activity" },
+      { to: "/app/manual", label: "User Manual", icon: "manual" },
     ],
   },
   {

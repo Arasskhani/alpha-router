@@ -26,7 +26,7 @@ export const userManualSections: DocSection[] = [
         <h1>User Manual</h1>
         <p className="docs-lead">
           Welcome to Alpha Router — your organization’s AI workspace. Use approved models in Chat, keep generated files in
-          Media, and track your own spend under Usage &amp; Activity. Administrators configure models, budgets, and
+          Media, and track your own spend under Activity. Administrators configure models, budgets, and
           sign-in; this manual covers what you can do in the <strong>/app</strong> panel after you sign in.
         </p>
         <div className="docs-cards">
@@ -39,7 +39,7 @@ export const userManualSections: DocSection[] = [
             <p>Files you upload or generate, with search, filters, and optional cleanup.</p>
           </div>
           <div className="docs-card">
-            <h3>Usage &amp; Activity</h3>
+            <h3>Activity</h3>
             <p>Your spend, tokens, models, and CSV/PDF export.</p>
           </div>
         </div>
@@ -65,7 +65,7 @@ export const userManualSections: DocSection[] = [
             </tr>
             <tr>
               <td>
-                <a href="#user-media">Media</a> · <a href="#user-activity">Usage</a> ·{" "}
+                <a href="#user-media">Media</a> · <a href="#user-activity">Activity</a> ·{" "}
                 <a href="#user-settings">Settings</a>
               </td>
               <td>Library, activity, account preferences and security</td>
@@ -141,7 +141,7 @@ export const userManualSections: DocSection[] = [
             </tr>
             <tr>
               <td>
-                <strong>Usage &amp; Activity</strong>
+                <strong>Activity</strong>
               </td>
               <td>
                 <code>/app/my-activity</code> — personal spend and usage
@@ -514,11 +514,11 @@ export const userManualSections: DocSection[] = [
   // ── Usage ─────────────────────────────────────────────────────────────────
   {
     id: "user-activity",
-    title: "Usage &amp; Activity",
-    group: "Usage & Activity",
+    title: "Activity",
+    group: "Activity",
     content: (
       <>
-        <h2>Usage &amp; Activity</h2>
+        <h2>Activity</h2>
         <p>
           Path: <code>/app/my-activity</code>. Personal analytics for your account only (not the whole organization).
         </p>

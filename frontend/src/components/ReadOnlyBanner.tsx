@@ -8,7 +8,7 @@ export default function ReadOnlyBanner({ className = "" }: { className?: string 
     <div className={`readonly-account-banner alert alert-warning${className ? ` ${className}` : ""}`}>
       {adminReadOnly
         ? "Read-only administrator: you can browse admin pages and dashboards, but cannot create, edit, or delete anything."
-        : "Your account is disabled (read-only). Browse your chat history here; use the profile menu for Usage & Activity. You cannot send messages or use models."}
+        : "Your account is disabled (read-only). Browse your chat history here; use the profile menu for Activity. You cannot send messages or use models."}
     </div>
   );
 }

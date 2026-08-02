@@ -52,7 +52,15 @@ export type MenuKey =
 
 
 
-export type NavItem = { to: string; label: string; menuKey?: MenuKey };
+export type NavIconKey = "chat" | "media" | "activity" | "manual" | "admin" | "folder";
+
+export type NavItem = {
+  to: string;
+  label: string;
+  menuKey?: MenuKey;
+  /** Optional leading outline icon (user panel / topbar). */
+  icon?: NavIconKey;
+};
 
 
 

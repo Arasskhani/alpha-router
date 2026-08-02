@@ -22,7 +22,7 @@ describe("topbar admin shortcut", () => {
     expect(shortcuts.map((item) => item.label)).toEqual([
       "Chat",
       "Media",
-      "Usage & Activity",
+      "Activity",
       "User Manual",
     ]);
   });
@@ -41,7 +41,7 @@ describe("topbar admin shortcut", () => {
     expect(shortcuts.map((item) => item.label)).toEqual([
       "Chat",
       "Media",
-      "Usage & Activity",
+      "Activity",
       "User Manual",
       "Administration",
     ]);

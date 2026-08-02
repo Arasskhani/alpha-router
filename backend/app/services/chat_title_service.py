@@ -16,9 +16,14 @@ from app.services.proxy_service import (
 
 _TITLE_SYSTEM = (
     "You create short chat titles for a sidebar. Given the start of a conversation, "
-    "write ONE concise title (3–7 words) that captures the overall topic or intent. "
-    "Use the same language as the user. No quotes, no trailing punctuation, no colons."
+    "write ONE concise title (2–4 words) that captures the overall topic or intent. "
+    "Prefer the shortest clear phrase. Use the same language as the user. "
+    "No quotes, no trailing punctuation, no colons."
 )
+
+_TITLE_MAX_CHARS = 40
+_FALLBACK_TITLE_MAX_CHARS = 28
+_FALLBACK_TITLE_MAX_WORDS = 4
 
 _IMAGE_PREFIX = "__ALPHA_ROUTER_IMAGE_JSON__:"
 _IMAGE_PENDING = "__ALPHA_ROUTER_IMAGE_PENDING__"
@@ -94,7 +99,9 @@ def _sanitize_title(raw: str) -> str:
         return "New chat"
     if '{"url":' in t and "/api/chat/media/" in t:
         return "New chat"
-    return t if len(t) <= 80 else f"{t[:79]}…"
+    if len(t) <= _TITLE_MAX_CHARS:
+        return t
+    return f"{t[: _TITLE_MAX_CHARS - 1]}…"
 
 
 async def generate_chat_title(
@@ -145,6 +152,18 @@ async def generate_chat_title(
         return _sanitize_title(_fallback_title(messages))
 
 
+def _clip_fallback(text: str) -> str:
+    t = re.sub(r"\s+", " ", (text or "").replace("\n", " ")).strip()
+    if not t:
+        return "New chat"
+    words = t.split()
+    if len(words) > _FALLBACK_TITLE_MAX_WORDS:
+        t = " ".join(words[:_FALLBACK_TITLE_MAX_WORDS])
+    if len(t) <= _FALLBACK_TITLE_MAX_CHARS:
+        return t
+    return f"{t[: _FALLBACK_TITLE_MAX_CHARS - 1]}…"
+
+
 def _fallback_title(messages: list[dict]) -> str:
     for m in messages:
         if m.get("role") != "user":
@@ -152,8 +171,7 @@ def _fallback_title(messages: list[dict]) -> str:
         c = _normalize_content_for_title(str(m.get("content", "")))
         if not c:
             continue
-        t = c.replace("\n", " ")
-        return t if len(t) <= 42 else f"{t[:41]}…"
+        return _clip_fallback(c)
 
     for m in messages:
         if m.get("role") != "assistant":
@@ -163,7 +181,6 @@ def _fallback_title(messages: list[dict]) -> str:
             continue
         words = c.split()
         if len(words) >= 2:
-            snippet = " ".join(words[:7])
-            return snippet if len(snippet) <= 42 else f"{snippet[:41]}…"
+            return _clip_fallback(" ".join(words[:_FALLBACK_TITLE_MAX_WORDS]))
 
     return "New chat"

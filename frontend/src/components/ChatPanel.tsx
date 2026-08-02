@@ -13,6 +13,8 @@ import { useChatModelChromeRegister } from "../context/ChatModelChromeContext";
 import { useConfirm } from "../context/ConfirmContext";
 import RowActionsMenu from "./RowActionsMenu";
 import ColorPickerModal from "./ColorPickerModal";
+import MoveToFolderModal from "./MoveToFolderModal";
+import { IconFolder } from "./icons/navIcons";
 import {
   fetchAuthenticatedMediaBlob,
   fetchAuthenticatedMediaObjectUrl,
@@ -476,6 +478,7 @@ export default function ChatPanel() {
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
   const [colorPickerFolderId, setColorPickerFolderId] = useState<string | null>(null);
+  const [movingSessionId, setMovingSessionId] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -2107,14 +2110,14 @@ export default function ChatPanel() {
     }
   }
 
-  async function deleteSession(id: string, e: React.MouseEvent) {
-    e.stopPropagation();
+  async function deleteSession(id: string, e?: React.MouseEvent) {
+    e?.stopPropagation();
     if (readOnly) return;
     await removeChatSession(id);
   }
 
-  function startRenameSession(session: ChatSession, e: React.MouseEvent) {
-    e.stopPropagation();
+  function startRenameSession(session: ChatSession, e?: React.MouseEvent) {
+    e?.stopPropagation();
     if (readOnly) return;
     setRenamingSessionId(session.id);
     setRenamingTitle(session.title || "");
@@ -2201,10 +2204,19 @@ export default function ChatPanel() {
   }
 
   function deleteFolderKeepChats(folderId: string) {
+    const affectedIds = sessionsRef.current
+      .filter((s) => s.folderId === folderId)
+      .map((s) => s.id);
     removeFolderRecord(folderId);
-    persistSessions((prev) =>
-      prev.map((s) => (s.folderId === folderId ? { ...s, folderId: null } : s)),
+    persistSessions(
+      (prev) => prev.map((s) => (s.folderId === folderId ? { ...s, folderId: null } : s)),
+      { debounce: false, metadataSessionIds: affectedIds },
     );
+    for (const id of affectedIds) {
+      if (!sessionPrivateMode(id)) {
+        void pushSessionMetadataToServer(id).catch(() => {});
+      }
+    }
   }
 
   function deleteFolderAndChats(folderId: string, chatsInFolder: ChatSession[]) {
@@ -2281,9 +2293,13 @@ export default function ChatPanel() {
   }
 
   function moveSessionToFolder(sessionId: string, folderId: string | null) {
-    persistSessions((prev) =>
-      prev.map((s) => (s.id === sessionId ? { ...s, folderId } : s)),
+    persistSessions(
+      (prev) => prev.map((s) => (s.id === sessionId ? { ...s, folderId } : s)),
+      { debounce: false, metadataSessionIds: [sessionId] },
     );
+    if (!sessionPrivateMode(sessionId)) {
+      void pushSessionMetadataToServer(sessionId).catch(() => {});
+    }
     setDropFolderId(null);
   }
 
@@ -2329,27 +2345,27 @@ export default function ChatPanel() {
             {sessionDisplayTitle(s)}
           </button>
         )}
-        {!readOnly && (
-          <>
-            <button
-              type="button"
-              className="cgpt-history-rename-btn"
-              onClick={(e) => startRenameSession(s, e)}
-              aria-label="Rename chat"
-              title="Rename"
-            >
-              ✎
-            </button>
-            <button
-              type="button"
-              className="cgpt-history-delete"
-              onClick={(e) => deleteSession(s.id, e)}
-              aria-label="Delete chat"
-            >
-              ×
-            </button>
-          </>
-        )}
+        {!readOnly && !isRenaming ? (
+          <div
+            className="cgpt-history-item-actions"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <RowActionsMenu
+              label="⋯"
+              menuClassName="row-actions-menu--sidebar"
+              actions={[
+                { label: "Rename", onClick: () => startRenameSession(s) },
+                { label: "Move", onClick: () => setMovingSessionId(s.id) },
+                {
+                  label: "Delete",
+                  onClick: () => void deleteSession(s.id),
+                  danger: true,
+                },
+              ]}
+            />
+          </div>
+        ) : null}
       </>
     );
     const dragProps = {
@@ -4235,6 +4251,9 @@ export default function ChatPanel() {
                     >
                       {collapsedFolders[f.id] ? "▸" : "▾"}
                     </button>
+                    <span className="cgpt-folder-icon" aria-hidden>
+                      <IconFolder />
+                    </span>
                     {renamingFolderId === f.id ? (
                       <form
                         className="cgpt-folder-rename"
@@ -4261,6 +4280,7 @@ export default function ChatPanel() {
                       >
                         <RowActionsMenu
                           label="Actions"
+                          menuClassName="row-actions-menu--sidebar"
                           actions={[
                             { label: "Rename", onClick: () => startRenameFolder(f) },
                             { label: "Change color", onClick: () => setColorPickerFolderId(f.id) },
@@ -4970,6 +4990,20 @@ export default function ChatPanel() {
         onClose={() => setColorPickerFolderId(null)}
         onChange={(color) => {
           if (colorPickerFolderId) setFolderColor(colorPickerFolderId, color);
+        }}
+      />
+
+      <MoveToFolderModal
+        open={!!movingSessionId}
+        folders={folders}
+        currentFolderId={
+          movingSessionId
+            ? sessions.find((s) => s.id === movingSessionId)?.folderId ?? null
+            : null
+        }
+        onClose={() => setMovingSessionId(null)}
+        onMove={(folderId) => {
+          if (movingSessionId) moveSessionToFolder(movingSessionId, folderId);
         }}
       />
 

@@ -46,9 +46,8 @@ export default function ThemePicker({ value, onChange, className = "", compact =
   return (
     <div className={`theme-picker${compact ? " theme-picker--compact" : ""}${className ? ` ${className}` : ""}`}>
       <label className="theme-picker__named">
-        {!compact && <span className="theme-picker__label">Theme</span>}
         <select
-          className="theme-picker__select"
+          className="theme-picker__select settings-input"
           value={named}
           aria-label="Theme"
           onChange={(e) => setNamed(e.target.value as NamedTheme)}

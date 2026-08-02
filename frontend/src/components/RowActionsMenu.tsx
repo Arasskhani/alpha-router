@@ -15,13 +15,15 @@ export type RowAction = {
 type Props = {
   actions: RowAction[];
   label?: string;
+  /** Extra class on the portaled menu panel (e.g. size variants). */
+  menuClassName?: string;
 };
 
 const MENU_MIN_WIDTH = 168;
 const MENU_MAX_HEIGHT = 260;
 const VIEWPORT_PAD = 8;
 
-export default function RowActionsMenu({ actions, label = "Actions" }: Props) {
+export default function RowActionsMenu({ actions, label = "Actions", menuClassName = "" }: Props) {
   const readOnly = useReadOnly();
   const [open, setOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
@@ -89,7 +91,7 @@ export default function RowActionsMenu({ actions, label = "Actions" }: Props) {
       ? createPortal(
           <div
             ref={menuRef}
-            className="row-actions-menu row-actions-menu--portal"
+            className={`row-actions-menu row-actions-menu--portal${menuClassName ? ` ${menuClassName}` : ""}`}
             role="menu"
             style={{
               position: "fixed",

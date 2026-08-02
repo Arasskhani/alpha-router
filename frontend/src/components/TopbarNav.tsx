@@ -3,8 +3,9 @@ import { getCachedSession } from "../api";
 import type { SessionRbac } from "../lib/rbac";
 import { getSessionUser } from "../lib/session";
 import { topbarShortcutsForSession } from "../lib/userPanelNav";
-import UserProfile from "./UserProfile";
 import type { CachedTheme } from "../lib/themeCache";
+import { NavIcon } from "./icons/navIcons";
+import UserProfile from "./UserProfile";
 
 type Theme = CachedTheme;
 
@@ -31,7 +32,8 @@ export default function TopbarNav({ theme, onThemeChange }: Props) {
               `topbar-shortcut${isActive ? " topbar-shortcut--active" : ""}`
             }
           >
-            {item.label}
+            {item.icon ? <NavIcon name={item.icon} /> : null}
+            <span>{item.label}</span>
           </NavLink>
         ))}
       </nav>

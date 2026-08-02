@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { api, authFetch, formatApiError } from "../api";
 import { fetchUserPrefsFromServer, saveUserPrefs, type UserTheme } from "../lib/chatStorage";
 import {
@@ -6,10 +6,17 @@ import {
   listPersianFontOptions,
   normalizePersianFontId,
 } from "../lib/persianFonts";
-import { namedThemeLabel, namedThemeOf } from "../lib/themeCache";
+import {
+  colorModeOf,
+  composeTheme,
+  namedThemeLabel,
+  namedThemeOf,
+  type ColorMode,
+  type NamedTheme,
+} from "../lib/themeCache";
 import { COMMON_TIMEZONES, detectBrowserTimezone } from "../lib/timezones";
 import Modal from "./Modal";
-import ThemePicker from "./ThemePicker";
+import ThemeSegmentedControl from "./ThemeSegmentedControl";
 import ConnectorsPanel from "./settings/ConnectorsPanel";
 
 type TabId = "general" | "data-control" | "security" | "connectors";
@@ -41,6 +48,8 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "security", label: "Security" },
   { id: "connectors", label: "Connectors" },
 ];
+
+const NAMED_THEME_OPTIONS: NamedTheme[] = ["default", "mint", "dark-mint"];
 
 type Props = {
   open: boolean;
@@ -80,7 +89,9 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange }: P
         </aside>
 
         <section className="settings-panel" aria-live="polite">
-          {tab === "general" && <GeneralPanel theme={theme} setTheme={onThemeChange} />}
+          {tab === "general" && (
+            <GeneralPanel theme={theme} setTheme={onThemeChange} onSaved={onClose} />
+          )}
           {tab === "data-control" && <DataControlPanel />}
           {tab === "security" && <SecurityPanel />}
           {tab === "connectors" && <ConnectorsPanel />}
@@ -90,12 +101,39 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange }: P
   );
 }
 
+function SettingsRow({
+  title,
+  hint,
+  children,
+  detail,
+}: {
+  title: string;
+  hint?: string;
+  children: ReactNode;
+  detail?: ReactNode;
+}) {
+  return (
+    <div className={`settings-row-block${detail ? " settings-row-block--open" : ""}`}>
+      <div className="settings-row">
+        <div className="settings-row__meta">
+          <span className="settings-row__title">{title}</span>
+          {hint ? <span className="settings-row__hint">{hint}</span> : null}
+        </div>
+        <div className="settings-row__trail">{children}</div>
+      </div>
+      {detail ? <div className="settings-row__detail">{detail}</div> : null}
+    </div>
+  );
+}
+
 function GeneralPanel({
   theme,
   setTheme,
+  onSaved,
 }: {
   theme: UserTheme;
   setTheme?: (theme: UserTheme) => void;
+  onSaved?: () => void;
 }) {
   const [timezone, setTimezone] = useState("UTC");
   const [voiceLang, setVoiceLang] = useState("en");
@@ -105,6 +143,9 @@ function GeneralPanel({
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const persianFontOptions = useMemo(() => listPersianFontOptions(), []);
+
+  const named = namedThemeOf(theme);
+  const mode = colorModeOf(theme);
 
   useEffect(() => {
     let cancelled = false;
@@ -143,6 +184,7 @@ function GeneralPanel({
       applyPersianFontToChat(fontId);
       setMessage("Preferences saved.");
       window.dispatchEvent(new CustomEvent("alpha_router:user-prefs-saved"));
+      onSaved?.();
     } catch (err) {
       setError(formatApiError(err));
     } finally {
@@ -158,80 +200,107 @@ function GeneralPanel({
     return COMMON_TIMEZONES;
   }, [timezone]);
 
+  const setNamed = (next: NamedTheme) => {
+    if (!setTheme) return;
+    if (next === "dark-mint") {
+      setTheme("dark-mint");
+      return;
+    }
+    if (next === "mint") {
+      setTheme(mode === "system" ? "mint-system" : "mint");
+      return;
+    }
+    setTheme(mode);
+  };
+
+  const setMode = (next: ColorMode) => {
+    if (!setTheme) return;
+    if (named === "default") {
+      setTheme(composeTheme("default", next));
+      return;
+    }
+    setTheme(composeTheme("mint", next));
+  };
+
   if (loading) return <p className="muted">Loading preferences…</p>;
 
   return (
     <form className="settings-section" onSubmit={onSave}>
       <h2>General</h2>
-      <p className="settings-section-desc">Time zone, language, voice recording, and appearance for your account.</p>
+      <p className="settings-section-desc">Account preferences and appearance.</p>
 
-      <label className="settings-field">
-        <span className="settings-label">Time Zone</span>
-        <select value={timezone} onChange={(e) => setTimezone(e.target.value)} className="settings-input">
-          {zoneOptions.map((z) => (
-            <option key={z.value} value={z.value}>
-              {z.label}
-            </option>
-          ))}
-        </select>
-      </label>
+      <div className="settings-list">
+        <SettingsRow title="Time zone">
+          <select
+            value={timezone}
+            onChange={(e) => setTimezone(e.target.value)}
+            className="settings-row__control"
+          >
+            {zoneOptions.map((z) => (
+              <option key={z.value} value={z.value}>
+                {z.label}
+              </option>
+            ))}
+          </select>
+        </SettingsRow>
 
-      <label className="settings-field">
-        <span className="settings-label">Language</span>
-        <select value="en" disabled className="settings-input" aria-disabled="true">
-          <option value="en">English (default)</option>
-        </select>
-        <span className="settings-hint">Additional languages will be available in a future release.</span>
-      </label>
+        <SettingsRow title="Language" hint="More languages coming later">
+          <select value="en" disabled className="settings-row__control" aria-disabled="true">
+            <option value="en">English</option>
+          </select>
+        </SettingsRow>
 
-      <label className="settings-field">
-        <span className="settings-label">Voice Recording Language</span>
-        <select
-          value={voiceLang}
-          onChange={(e) => setVoiceLang(e.target.value)}
-          className="settings-input"
-        >
-          <option value="en">English (default)</option>
-          <option value="fa">Persian (فارسی)</option>
-        </select>
-        <span className="settings-hint">Language used when transcribing voice messages.</span>
-      </label>
+        <SettingsRow title="Voice language" hint="Used for voice transcription">
+          <select
+            value={voiceLang}
+            onChange={(e) => setVoiceLang(e.target.value)}
+            className="settings-row__control"
+          >
+            <option value="en">English</option>
+            <option value="fa">Persian</option>
+          </select>
+        </SettingsRow>
 
-      <label className="settings-field">
-        <span className="settings-label">Persian Font</span>
-        <select
-          value={persianFont}
-          onChange={(e) => setPersianFont(e.target.value)}
-          className="settings-input"
-        >
-          <option value="">System default</option>
-          {persianFontOptions.map((font) => (
-            <option key={font.id} value={font.id}>
-              {font.label}
-            </option>
-          ))}
-        </select>
-        <span className="settings-hint">
-          Used for chat messages, the message composer, and captions under images in chat.
-        </span>
-      </label>
+        <SettingsRow title="Persian font" hint="Chat messages and composer">
+          <select
+            value={persianFont}
+            onChange={(e) => setPersianFont(e.target.value)}
+            className="settings-row__control"
+          >
+            <option value="">System default</option>
+            {persianFontOptions.map((font) => (
+              <option key={font.id} value={font.id}>
+                {font.label}
+              </option>
+            ))}
+          </select>
+        </SettingsRow>
 
-      <fieldset className="settings-field settings-theme-block">
-        <legend className="settings-label">Theme</legend>
-        <div className="settings-theme-card settings-theme-card--picker">
-          <div className="settings-theme-name">
-            <strong>{namedThemeLabel(namedThemeOf(theme))}</strong>
-            <span className="settings-hint">Named theme + appearance</span>
-          </div>
-          <ThemePicker value={theme} onChange={(next) => setTheme?.(next)} />
-        </div>
-      </fieldset>
+        <SettingsRow title="Theme">
+          <select
+            value={named}
+            aria-label="Theme"
+            className="settings-row__control"
+            onChange={(e) => setNamed(e.target.value as NamedTheme)}
+          >
+            {NAMED_THEME_OPTIONS.map((opt) => (
+              <option key={opt} value={opt}>
+                {namedThemeLabel(opt)}
+              </option>
+            ))}
+          </select>
+        </SettingsRow>
+
+        <SettingsRow title="Appearance">
+          <ThemeSegmentedControl value={mode} onChange={setMode} className="settings-row__segment" />
+        </SettingsRow>
+      </div>
 
       {error && <p className="settings-error">{error}</p>}
       {message && <p className="settings-success">{message}</p>}
 
       <div className="settings-actions">
-        <button type="submit" className="btn" disabled={saving}>
+        <button type="submit" className="btn btn-sm btn-ghost" disabled={saving}>
           {saving ? "Saving…" : "Save"}
         </button>
       </div>
@@ -265,7 +334,7 @@ function DataControlPanel() {
       a.download = `alpha-router-chats-${stamp}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      setMessage("Export downloaded. Private-mode chats stored only on this device are not included.");
+      setMessage("Export downloaded. Private-mode chats on this device are not included.");
     } catch (err) {
       setError(formatApiError(err));
     } finally {
@@ -309,50 +378,46 @@ function DataControlPanel() {
     <div className="settings-section">
       <h2>Data Control</h2>
       <p className="settings-section-desc">
-        Export your chats as standard JSON, or import from ChatGPT, Open WebUI, or a prior Alpha Router export.
+        Export or import chats (Alpha Router, ChatGPT, or Open WebUI JSON).
       </p>
 
-      <div className="settings-card">
-        <h3>Export chats</h3>
-        <p className="settings-hint">
-          Downloads a <code>alpha-router-chats</code> JSON file of chats stored on the server for your account.
-        </p>
-        <button type="button" className="btn" disabled={exporting} onClick={() => void onExport()}>
-          {exporting ? "Exporting…" : "Export JSON"}
-        </button>
-      </div>
+      <div className="settings-list">
+        <SettingsRow title="Export chats" hint="Server-stored chats as alpha-router-chats JSON">
+          <button
+            type="button"
+            className="settings-row__action"
+            disabled={exporting}
+            onClick={() => void onExport()}
+          >
+            {exporting ? "Exporting…" : "Export"}
+          </button>
+        </SettingsRow>
 
-      <div className="settings-card">
-        <h3>Import chats</h3>
-        <p className="settings-hint">
-          Accepts Alpha Router, ChatGPT, or Open WebUI JSON exports. Imported chats are created as new sessions.
-        </p>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="application/json,.json"
-          className="settings-file-input"
-          disabled={importing}
-          onChange={(e) => {
-            const f = e.target.files?.[0] ?? null;
-            setSelectedFile(f);
-            void onImportFile(f);
-          }}
-        />
-        <button
-          type="button"
-          className="btn"
-          disabled={importing}
-          onClick={() => fileRef.current?.click()}
+        <SettingsRow
+          title="Import chats"
+          hint={selectedFile ? selectedFile.name : "Alpha Router, ChatGPT, or Open WebUI JSON"}
         >
-          {importing ? "Importing…" : "Import JSON"}
-        </button>
-        {selectedFile && (
-          <p className="settings-hint settings-file-name">
-            {importing ? "Importing " : "Selected: "}
-            {selectedFile.name}
-          </p>
-        )}
+          <input
+            ref={fileRef}
+            type="file"
+            accept="application/json,.json"
+            className="settings-file-input"
+            disabled={importing}
+            onChange={(e) => {
+              const f = e.target.files?.[0] ?? null;
+              setSelectedFile(f);
+              void onImportFile(f);
+            }}
+          />
+          <button
+            type="button"
+            className="settings-row__action"
+            disabled={importing}
+            onClick={() => fileRef.current?.click()}
+          >
+            {importing ? "Importing…" : "Import"}
+          </button>
+        </SettingsRow>
       </div>
 
       {error && <p className="settings-error">{error}</p>}
@@ -367,6 +432,7 @@ function SecurityPanel() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
+  const [pwdOpen, setPwdOpen] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -375,6 +441,7 @@ function SecurityPanel() {
   const [setup, setSetup] = useState<TwoFaSetup | null>(null);
   const [totpCode, setTotpCode] = useState("");
   const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
+  const [disableOpen, setDisableOpen] = useState(false);
   const [disablePassword, setDisablePassword] = useState("");
   const [disableCode, setDisableCode] = useState("");
   const [busy2fa, setBusy2fa] = useState(false);
@@ -417,6 +484,7 @@ function SecurityPanel() {
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
+      setPwdOpen(false);
       setMessage("Password updated. Other sessions have been signed out.");
     } catch (err) {
       setError(formatApiError(err));
@@ -430,6 +498,7 @@ function SecurityPanel() {
     setError("");
     setMessage("");
     setBackupCodes(null);
+    setDisableOpen(false);
     try {
       const data = await api<TwoFaSetup>("/api/user/settings/2fa/setup", { method: "POST" });
       setSetup(data);
@@ -477,6 +546,7 @@ function SecurityPanel() {
       });
       setDisablePassword("");
       setDisableCode("");
+      setDisableOpen(false);
       setBackupCodes(null);
       await refreshStatus();
       setMessage("Two-factor authentication disabled.");
@@ -490,7 +560,7 @@ function SecurityPanel() {
   if (loading) return <p className="muted">Loading security settings…</p>;
   if (!status) return <p className="settings-error">{error || "Unable to load security settings."}</p>;
 
-  const localOnlyHint = "Managed by your identity provider. Change this in LDAP/SAML/OIDC, not in Alpha Router.";
+  const localOnlyHint = "Managed by your identity provider.";
 
   return (
     <div className="settings-section">
@@ -502,51 +572,45 @@ function SecurityPanel() {
         )}
       </p>
 
-      <div className={`settings-card${status.two_factor_available ? "" : " settings-card--disabled"}`}>
-        <h3>Two-factor authentication</h3>
-        {!status.two_factor_available ? (
-          <p className="settings-hint">{localOnlyHint}</p>
-        ) : status.totp_enabled ? (
-          <>
-            <p className="settings-success">Enabled (authenticator app).</p>
-            <form className="settings-stack" onSubmit={disable2fa}>
-              <label className="settings-field">
-                <span className="settings-label">Current password</span>
+      <div className="settings-list">
+        <SettingsRow
+          title="Two-factor authentication"
+          hint={
+            !status.two_factor_available
+              ? localOnlyHint
+              : status.totp_enabled
+                ? "Enabled · authenticator app"
+                : "Protect your account with TOTP"
+          }
+          detail={
+            (status.two_factor_available && status.totp_enabled && disableOpen && (
+              <form className="settings-inline-form" onSubmit={disable2fa}>
                 <input
                   type="password"
-                  className="settings-input"
+                  className="settings-row__control"
+                  placeholder="Current password"
                   autoComplete="current-password"
                   value={disablePassword}
                   onChange={(e) => setDisablePassword(e.target.value)}
                   required
                 />
-              </label>
-              <label className="settings-field">
-                <span className="settings-label">Authenticator or backup code</span>
                 <input
                   type="text"
-                  className="settings-input"
+                  className="settings-row__control"
+                  placeholder="Authenticator or backup code"
                   inputMode="numeric"
                   autoComplete="one-time-code"
                   value={disableCode}
                   onChange={(e) => setDisableCode(e.target.value)}
                   required
                 />
-              </label>
-              <button type="submit" className="btn btn-ghost" disabled={busy2fa}>
-                {busy2fa ? "Working…" : "Disable 2FA"}
-              </button>
-            </form>
-          </>
-        ) : (
-          <>
-            <p className="settings-hint">Protect your local account with an authenticator app (TOTP).</p>
-            {!setup ? (
-              <button type="button" className="btn" disabled={busy2fa} onClick={() => void start2faSetup()}>
-                {busy2fa ? "Preparing…" : "Enable 2FA"}
-              </button>
-            ) : (
-              <form className="settings-stack" onSubmit={enable2fa}>
+                <button type="submit" className="btn btn-sm btn-ghost" disabled={busy2fa}>
+                  {busy2fa ? "Working…" : "Confirm disable"}
+                </button>
+              </form>
+            ))
+            || (status.two_factor_available && !status.totp_enabled && setup && (
+              <form className="settings-inline-form" onSubmit={enable2fa}>
                 {setup.qr_png_base64 && (
                   <img
                     className="settings-qr"
@@ -554,89 +618,126 @@ function SecurityPanel() {
                     alt="QR code for authenticator setup"
                   />
                 )}
-                <p className="settings-hint">
-                  Scan the QR code, or enter this secret manually: <code>{setup.secret}</code>
+                <p className="settings-row__hint">
+                  Scan the QR, or enter secret <code>{setup.secret}</code>
                 </p>
-                <label className="settings-field">
-                  <span className="settings-label">Verification code</span>
-                  <input
-                    type="text"
-                    className="settings-input"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    value={totpCode}
-                    onChange={(e) => setTotpCode(e.target.value)}
-                    required
-                  />
-                </label>
-                <button type="submit" className="btn" disabled={busy2fa}>
-                  {busy2fa ? "Verifying…" : "Confirm and enable"}
+                <input
+                  type="text"
+                  className="settings-row__control"
+                  placeholder="Verification code"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value)}
+                  required
+                />
+                <button type="submit" className="btn btn-sm btn-ghost" disabled={busy2fa}>
+                  {busy2fa ? "Verifying…" : "Confirm"}
                 </button>
               </form>
-            )}
-          </>
-        )}
-        {backupCodes && backupCodes.length > 0 && (
-          <div className="settings-backup-codes">
-            <h4>Backup codes (save now — shown once)</h4>
-            <ul>
-              {backupCodes.map((code) => (
-                <li key={code}>
-                  <code>{code}</code>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </div>
-
-      <div className={`settings-card${status.password_change_available ? "" : " settings-card--disabled"}`}>
-        <h3>Change password</h3>
-        {!status.password_change_available ? (
-          <p className="settings-hint">{localOnlyHint}</p>
-        ) : (
-          <form className="settings-stack" onSubmit={onChangePassword}>
-            <label className="settings-field">
-              <span className="settings-label">Current password</span>
-              <input
-                type="password"
-                className="settings-input"
-                autoComplete="current-password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                required
-                disabled={!status.password_change_available}
-              />
-            </label>
-            <label className="settings-field">
-              <span className="settings-label">New password</span>
-              <input
-                type="password"
-                className="settings-input"
-                autoComplete="new-password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                required
-                disabled={!status.password_change_available}
-              />
-            </label>
-            <label className="settings-field">
-              <span className="settings-label">Confirm new password</span>
-              <input
-                type="password"
-                className="settings-input"
-                autoComplete="new-password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                required
-                disabled={!status.password_change_available}
-              />
-            </label>
-            <button type="submit" className="btn" disabled={pwdSaving || !status.password_change_available}>
-              {pwdSaving ? "Updating…" : "Update password"}
+            ))
+            || (backupCodes && backupCodes.length > 0 && (
+              <div className="settings-backup-codes">
+                <h4>Backup codes (save now — shown once)</h4>
+                <ul>
+                  {backupCodes.map((code) => (
+                    <li key={code}>
+                      <code>{code}</code>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))
+            || null
+          }
+        >
+          {!status.two_factor_available ? (
+            <span className="settings-row__value">Unavailable</span>
+          ) : status.totp_enabled ? (
+            <button
+              type="button"
+              className="settings-row__action settings-row__action--danger"
+              disabled={busy2fa}
+              onClick={() => {
+                setDisableOpen((v) => !v);
+                setSetup(null);
+              }}
+            >
+              {disableOpen ? "Cancel" : "Disable"}
             </button>
-          </form>
-        )}
+          ) : setup ? (
+            <button
+              type="button"
+              className="settings-row__action"
+              disabled={busy2fa}
+              onClick={() => setSetup(null)}
+            >
+              Cancel
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="settings-row__action"
+              disabled={busy2fa}
+              onClick={() => void start2faSetup()}
+            >
+              {busy2fa ? "Preparing…" : "Enable"}
+            </button>
+          )}
+        </SettingsRow>
+
+        <SettingsRow
+          title="Password"
+          hint={!status.password_change_available ? localOnlyHint : "Change your local password"}
+          detail={
+            status.password_change_available && pwdOpen ? (
+              <form className="settings-inline-form" onSubmit={onChangePassword}>
+                <input
+                  type="password"
+                  className="settings-row__control"
+                  placeholder="Current password"
+                  autoComplete="current-password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  required
+                />
+                <input
+                  type="password"
+                  className="settings-row__control"
+                  placeholder="New password"
+                  autoComplete="new-password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  required
+                />
+                <input
+                  type="password"
+                  className="settings-row__control"
+                  placeholder="Confirm new password"
+                  autoComplete="new-password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                />
+                <button type="submit" className="btn btn-sm btn-ghost" disabled={pwdSaving}>
+                  {pwdSaving ? "Updating…" : "Update"}
+                </button>
+              </form>
+            ) : null
+          }
+        >
+          {!status.password_change_available ? (
+            <span className="settings-row__value">Unavailable</span>
+          ) : (
+            <button
+              type="button"
+              className="settings-row__action"
+              onClick={() => setPwdOpen((v) => !v)}
+            >
+              {pwdOpen ? "Cancel" : "Change"}
+            </button>
+          )}
+        </SettingsRow>
       </div>
 
       {error && <p className="settings-error">{error}</p>}

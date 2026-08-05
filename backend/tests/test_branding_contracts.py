@@ -66,7 +66,7 @@ def test_auth_and_api_key_naming_contracts():
     assert _default("gateway_master_key") == "sk-alpha-router-master"
     assert OIDC_STATE_COOKIE_NAME == "alpha_router_oidc_state"
     assert CONNECTOR_STATE_COOKIE_NAME == "alpha_router_connector_state"
-    assert REPLACE_MESSAGES_HEADER == "X-Alpha Router-Router-Replace-Messages"
+    assert REPLACE_MESSAGES_HEADER == "X-Alpha-Router-Replace-Messages"
 
     raw, prefix, _ = generate_api_key_for_user("branding.test")
     assert API_KEY_PREFIX == "alpha_router_"

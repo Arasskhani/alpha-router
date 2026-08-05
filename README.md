@@ -13,7 +13,7 @@ The platform includes:
 Start **Docker Desktop**, then:
 
 ```powershell
-cd path\to\Alpha Router
+cd path\to\alpha-router
 Copy-Item .env.example .env
 .\scripts\start-docker.ps1
 ```
@@ -31,7 +31,7 @@ docker compose up --build -d
 | UI + API | http://localhost:8080 |
 | Health | http://localhost:8080/health |
 | MinIO console | http://localhost:9001 (credentials in `.env`) |
-| PostgreSQL | localhost:5432 (`alpha-router` / `alpha-router`) |
+| PostgreSQL | localhost:5432 (`alpha_router` / `alpha_router`) |
 
 Default **admin panel** login: `admin` / `admin`
 
@@ -48,7 +48,7 @@ Stops Docker Compose services (app, PostgreSQL, Redis, MinIO) and the optional W
 ## Project structure
 
 ```
-Alpha Router/
+alpha-router/
 ├── backend/          FastAPI app (API, gateway, LDAP/Keycloak sync, migrations)
 ├── frontend/         React SPA (admin panel + user app)
 ├── scripts/          start-docker.ps1, stop-all.ps1, start-ldap-bridge.ps1
@@ -82,7 +82,7 @@ The app container expects `LDAP_BRIDGE_URL=http://host.docker.internal:8765` (al
 Alpha Router exposes `/v1` for tools that speak the OpenAI API. Configure the client with:
 
 - **Base URL:** `http://<alpha-router-host>:8080/v1`
-- **API key:** a Alpha Router API key from Admin → API Keys (admin gateway key or per-user key)
+- **API key:** an Alpha Router API key from Admin → API Keys (admin gateway key or per-user key)
 
 Pass the end-user identity in the `user` field when the client supports it so budgets and logs attribute usage correctly.
 

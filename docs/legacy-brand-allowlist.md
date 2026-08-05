@@ -11,13 +11,13 @@ The following literals occur only in
 by the production startup guard; they are not accepted aliases, migration
 inputs, generated identifiers, or current product names.
 
-- `alpha_router_session` — stale session-cookie configuration.
-- `alpha_router_csrf` — stale CSRF-cookie configuration.
-- `sk-alpha-router-master` — stale gateway master-key default.
+- `alpha_session` — stale session-cookie configuration.
+- `alpha_csrf` — stale CSRF-cookie configuration.
+- `sk-alpha-master` — stale gateway master-key default.
 - `alpha` — stale database/object-storage development identity.
-- `postgresql+asyncpg://alpha_router:changeme@postgres:5432/alpha` — stale direct
+- `postgresql+asyncpg://alpha:changeme@postgres:5432/alpha` — stale direct
   database URL.
-- `postgresql+asyncpg://alpha_router:changeme@pgbouncer:6432/alpha` — stale pooled
+- `postgresql+asyncpg://alpha:changeme@pgbouncer:6432/alpha` — stale pooled
   database URL.
 
 The denylist behavior is covered by
@@ -26,7 +26,7 @@ into the test.
 
 ## External provider syntax
 
-- `:alpha-router` in `backend/app/services/openrouter_image_service.py` and
+- `:nitro` in `backend/app/services/openrouter_image_service.py` and
   `backend/tests/test_image_generation_capabilities.py` is an OpenRouter routing
   suffix. It is provider-owned syntax and is not product branding.
 

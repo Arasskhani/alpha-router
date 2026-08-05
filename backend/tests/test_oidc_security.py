@@ -21,6 +21,7 @@ from app.core.security import create_access_token, decode_access_token
 from app.services import auth_exchange
 from app.services.auth_urls import validate_frontend_url
 from app.services.oidc_client import (
+    STATE_COOKIE_NAME,
     build_authorize_url,
     build_profile_from_claims,
     clear_caches,
@@ -29,6 +30,7 @@ from app.services.oidc_client import (
     pinned_redirect_uri,
     public_view,
     sign_state_cookie,
+    state_cookie_params,
     validate_id_token,
     validate_issuer_url,
     validate_oidc_config,
@@ -83,7 +85,7 @@ class FakeRedis:
 
     async def aclose(self):
         return None
-CLIENT_ID = "alpha-client"
+CLIENT_ID = "alpha-router-client"
 DISCOVERY = {
     "authorization_endpoint": "https://idp.example.com/auth",
     "token_endpoint": "https://idp.example.com/token",
@@ -171,6 +173,8 @@ def test_s01_authorize_includes_pkce_s256():
 def test_s02_state_mismatch_rejected():
     params = generate_flow_params()
     cookie = sign_state_cookie(params)
+    assert STATE_COOKIE_NAME == "alpha_router_oidc_state"
+    assert state_cookie_params()["key"] == "alpha_router_oidc_state"
     assert verify_state_cookie(cookie, "wrong-state") is None
     assert verify_state_cookie(None, params.state) is None
     assert verify_state_cookie(cookie, params.state) is not None

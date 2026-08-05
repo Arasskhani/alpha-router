@@ -26,7 +26,10 @@ def _period_delta(reset_period: str) -> datetime.timedelta:
     return datetime.timedelta(days=30)
 
 
-def compute_expires_at(created_at: datetime.datetime | None, expiration_days: int | None) -> datetime.datetime | None:
+def compute_expires_at(
+    created_at: datetime.datetime | None,
+    expiration_days: int | None,
+) -> datetime.datetime | None:
     if not expiration_days or expiration_days <= 0:
         return None
     base = created_at or _utc_now()
@@ -79,10 +82,8 @@ async def record_key_usage(db: AsyncSession, key: AlphaRouterApiKey, cost_usd: f
         return
     await maybe_reset_key_period(db, key)
     # Atomic increment via SQL UPDATE — concurrent gateway requests using the
-    # same alpha key would otherwise race on period_used_usd/total_used_usd and
-    # lose updates (read-modify-write on the ORM object is not atomic). The
-    # single UPDATE keeps the on-row counters consistent with the RequestLog
-    # ledger that is committed in the same transaction.
+    # same Alpha Router key would otherwise race on period_used_usd/total_used_usd
+    # and lose updates (read-modify-write on the ORM object is not atomic).
     await db.execute(
         text(
             "UPDATE alpha_router_api_keys SET "
@@ -92,10 +93,10 @@ async def record_key_usage(db: AsyncSession, key: AlphaRouterApiKey, cost_usd: f
         ),
         {"cost": float(cost_usd), "now": _utc_now(), "kid": key.id},
     )
-    # Refresh the in-memory ORM object so callers reading key.period_used_usd
-    # right after (e.g. admin UI, reports) see the post-increment value without
-    # waiting for the session to expire.
-    await db.refresh(key, attribute_names=["period_used_usd", "total_used_usd", "last_used_at"])
+    await db.refresh(
+        key,
+        attribute_names=["period_used_usd", "total_used_usd", "last_used_at"],
+    )
 
 
 def key_to_dict(key: AlphaRouterApiKey, owner: dict | None = None) -> dict:

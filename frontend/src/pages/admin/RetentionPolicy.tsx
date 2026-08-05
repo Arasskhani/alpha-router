@@ -246,15 +246,15 @@ export default function RetentionPolicy() {
           onChange={(e) => setRetentionDays(Number(e.target.value || 1))}
         />
         <h3 style={{ marginTop: "1rem" }}>Scheduled cleanup</h3>
-        <label className="cgpt-tool-row" style={{ marginBottom: "0.65rem" }}>
+        <label className="alpha-router-tool-row" style={{ marginBottom: "0.65rem" }}>
           <span>Enable daily cleanup job</span>
           <button
             type="button"
-            className={`cgpt-toggle${scheduleEnabled ? " on" : ""}`}
+            className={`alpha-router-toggle${scheduleEnabled ? " on" : ""}`}
             onClick={() => setScheduleEnabled((v) => !v)}
             aria-pressed={scheduleEnabled}
           >
-            <span className="cgpt-toggle-knob" />
+            <span className="alpha-router-toggle-knob" />
           </button>
         </label>
         <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
@@ -310,15 +310,15 @@ export default function RetentionPolicy() {
 
       <form className="card" onSubmit={saveChatSettings}>
         <h3>Chat history — retention</h3>
-        <label className="cgpt-tool-row" style={{ marginBottom: "0.65rem" }}>
+        <label className="alpha-router-tool-row" style={{ marginBottom: "0.65rem" }}>
           <span>Enable chat retention policy</span>
           <button
             type="button"
-            className={`cgpt-toggle${chatRetentionEnabled ? " on" : ""}`}
+            className={`alpha-router-toggle${chatRetentionEnabled ? " on" : ""}`}
             onClick={() => setChatRetentionEnabled((v) => !v)}
             aria-pressed={chatRetentionEnabled}
           >
-            <span className="cgpt-toggle-knob" />
+            <span className="alpha-router-toggle-knob" />
           </button>
         </label>
         <label>Keep chat messages for (days)</label>
@@ -331,16 +331,16 @@ export default function RetentionPolicy() {
           disabled={!chatRetentionEnabled}
         />
         <h3 style={{ marginTop: "1rem" }}>Scheduled cleanup</h3>
-        <label className="cgpt-tool-row" style={{ marginBottom: "0.65rem" }}>
+        <label className="alpha-router-tool-row" style={{ marginBottom: "0.65rem" }}>
           <span>Enable daily message cleanup job</span>
           <button
             type="button"
-            className={`cgpt-toggle${chatScheduleEnabled ? " on" : ""}`}
+            className={`alpha-router-toggle${chatScheduleEnabled ? " on" : ""}`}
             onClick={() => setChatScheduleEnabled((v) => !v)}
             aria-pressed={chatScheduleEnabled}
             disabled={!chatRetentionEnabled}
           >
-            <span className="cgpt-toggle-knob" />
+            <span className="alpha-router-toggle-knob" />
           </button>
         </label>
         <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>

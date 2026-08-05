@@ -168,7 +168,11 @@ def apply_activity_filters(
     if app_filter:
         out = [r for r in out if (r.source or "unknown").strip() == app_filter]
     if alpha_router_api_key_id is not None:
-        out = [r for r in out if r.alpha_router_api_key_id == alpha_router_api_key_id]
+        out = [
+            r
+            for r in out
+            if r.alpha_router_api_key_id == alpha_router_api_key_id
+        ]
     if response_status == "success":
         out = [r for r in out if r.success]
     elif response_status == "fail":

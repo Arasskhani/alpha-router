@@ -59,7 +59,7 @@ def test_score_does_not_prefer_pro_name_over_stable_flash():
 
 def test_bayesian_feedback_can_change_close_model_ranking():
     liked = score_image_model_candidate(
-        "vendor/image-alpha",
+        "vendor/image-beta",
         is_image_model=True,
         feedback_score=0.95,
         feedback_count=30,

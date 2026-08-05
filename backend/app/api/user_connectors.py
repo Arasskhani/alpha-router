@@ -29,6 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_active_user
+from app.branding import CONNECTOR_STATE_COOKIE_NAME, LOGGER_NAMESPACE
 from app.config import get_settings
 from app.database import get_db
 from app.models.user import User
@@ -38,10 +39,9 @@ from app.services.connector_state import consume_state, new_state_nonce, store_s
 from app.services.secret_crypto import decrypt_secret, encrypt_secret
 
 router = APIRouter(prefix="/api/user/connectors", tags=["user-connectors"])
-logger = logging.getLogger("alpha_router.connectors")
+logger = logging.getLogger(f"{LOGGER_NAMESPACE}.connectors")
 
 _STATE_TTL_SECONDS = 600
-_STATE_COOKIE = "alpha_router_connector_state"
 
 
 class ConnectorCredentialsIn(BaseModel):
@@ -188,7 +188,7 @@ async def begin_connect(
     auth_url = f"{spec.auth_endpoint}?{urlencode(params)}"
     response = JSONResponse({"auth_url": auth_url})
     response.set_cookie(
-        key=_STATE_COOKIE,
+        key=CONNECTOR_STATE_COOKIE_NAME,
         value=nonce,
         httponly=True,
         secure=get_settings().environment.lower() == "production",
@@ -226,7 +226,7 @@ async def oauth_callback(
 
     # Single-use nonce: cookie must match the signed state, and the nonce must
     # be consumable from the store. This blocks replay and cross-user state.
-    cookie_nonce = request.cookies.get(_STATE_COOKIE) or ""
+    cookie_nonce = request.cookies.get(CONNECTOR_STATE_COOKIE_NAME) or ""
     if not cookie_nonce or cookie_nonce != nonce:
         return RedirectResponse(f"{frontend_url}/app?connectors=error&reason=state_cookie_mismatch")
     stored = await consume_state(nonce)
@@ -274,7 +274,7 @@ async def oauth_callback(
     await db.commit()
 
     response = RedirectResponse(f"{frontend_url}/app?connectors=connected&provider={provider_id}")
-    response.delete_cookie(key=_STATE_COOKIE, path="/api")
+    response.delete_cookie(key=CONNECTOR_STATE_COOKIE_NAME, path="/api")
     return response
 
 

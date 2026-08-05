@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.branding import CHAT_CLIENT_APP
 from app.core.language_detect import detect_prompt_language
 from app.models.model_catalog import AIModel
 from app.models.user import User
@@ -97,7 +98,7 @@ async def log_image_usage(
         completion_tokens=completion_tokens,
     )
     op = (operation or "generation").strip().lower()
-    client_app = f"Alpha Router Chat (image:{op})"
+    client_app = f"{CHAT_CLIENT_APP} (image:{op})"
     await log_usage(
         db,
         user_id=user.id,

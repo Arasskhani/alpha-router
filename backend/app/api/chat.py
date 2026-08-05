@@ -9,6 +9,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_active_user
+from app.branding import CHAT_CLIENT_APP
 from app.config import get_settings
 from app.database import get_db
 from app.models.connection import Connection
@@ -230,7 +231,7 @@ async def chat_completions(
         user_id=user.id,
         username=user.username,
         source="alpha_router_chat",
-        client_app="Alpha Router Chat",
+        client_app=CHAT_CLIENT_APP,
         skip_budget=False,
         resolved=resolved,
     )

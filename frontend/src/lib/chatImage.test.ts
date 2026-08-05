@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as chatStorage from "./chatStorage";
 import {
   awaitImagePreparation,
+  buildImageMessage,
   buildImageRequestBody,
   ImagePreparationTimeoutError,
   isBackgroundImageRunning,
+  parseImageMessage,
   runBackgroundImageGeneration,
   sessionHasIncompleteTextReply,
   stopBackgroundImageGeneration,
@@ -16,6 +18,23 @@ afterEach(() => {
 });
 
 describe("image retry request identity", () => {
+  it("round-trips the Alpha Router image wire marker", () => {
+    const payload = {
+      url: "/api/chat/media/42/file",
+      prompt: "A red cat",
+      model: "image-model",
+    };
+    const encoded = buildImageMessage(payload);
+
+    expect(encoded.startsWith("__ALPHA_ROUTER_IMAGE_JSON__:")).toBe(true);
+    expect(parseImageMessage(encoded)).toEqual(payload);
+  });
+
+  it("does not parse historical branded image markers", () => {
+    expect(parseImageMessage('__UNSUPPORTED_IMAGE_JSON__:{"url":"old"}')).toBeNull();
+    expect(parseImageMessage('__UNSUPPORTED_VENDOR_IMAGE_JSON__:{"url":"old"}')).toBeNull();
+  });
+
   it("keeps the concrete model, tier, reference state, and routing metadata", () => {
     const initial = buildImageRequestBody({
       prompt: "A red cat",

@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
+from app.branding import API_KEY_PREFIX
 from app.config import get_settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -49,9 +50,9 @@ def generate_api_key() -> tuple[str, str, str]:
 
 
 def generate_api_key_for_user(email_local: str) -> tuple[str, str, str]:
-    """API key starts with alpha_{email_local}_ for user-specific keys."""
+    """Return an Alpha Router API key scoped to the supplied identity label."""
     safe = "".join(c for c in email_local if c.isalnum() or c in "._-")[:32] or "user"
-    raw = f"alpha_{safe}_{secrets.token_urlsafe(28)}"
+    raw = f"{API_KEY_PREFIX}{safe}_{secrets.token_urlsafe(28)}"
     prefix = raw[:16]
     key_hash = hashlib.sha256(raw.encode()).hexdigest()
     return raw, prefix, key_hash

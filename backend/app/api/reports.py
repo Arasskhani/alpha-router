@@ -160,7 +160,11 @@ async def report_options(db: AsyncSession = Depends(get_db), _: User = Depends(r
         )
     ).all()
     keys = (
-        await db.execute(select(AlphaRouterApiKey.id, AlphaRouterApiKey.name).order_by(AlphaRouterApiKey.name))
+        await db.execute(
+            select(AlphaRouterApiKey.id, AlphaRouterApiKey.name).order_by(
+                AlphaRouterApiKey.name
+            )
+        )
     ).all()
 
     return {

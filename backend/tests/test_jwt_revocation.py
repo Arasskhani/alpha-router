@@ -29,10 +29,14 @@ def _enable_legacy_bearer_for_test() -> None:
     get_settings.cache_clear()
 
 
-def _request(cookie: str | None = None) -> Request:
+def _request(
+    cookie: str | None = None,
+    *,
+    cookie_name: str = "alpha_router_session",
+) -> Request:
     headers = []
     if cookie:
-        headers.append((b"cookie", f"alpha_router_session={cookie}".encode()))
+        headers.append((b"cookie", f"{cookie_name}={cookie}".encode()))
     return Request({"type": "http", "method": "GET", "path": "/", "headers": headers})
 
 

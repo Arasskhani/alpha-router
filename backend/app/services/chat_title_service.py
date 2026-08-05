@@ -8,6 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
 from app.services.budget_service import budget_request_blocked, get_user_budget_state
+from app.services.chat_markers import (
+    ATTACHMENT_MESSAGE_PREFIX,
+    AUDIO_MESSAGE_PREFIX,
+    IMAGE_MESSAGE_PREFIX,
+    IMAGE_PENDING_MARKER,
+)
 from app.services.proxy_service import (
     _apply_litellm_provider_kwargs,
     _litellm_model_for_provider,
@@ -25,15 +31,12 @@ _TITLE_MAX_CHARS = 40
 _FALLBACK_TITLE_MAX_CHARS = 28
 _FALLBACK_TITLE_MAX_WORDS = 4
 
-_IMAGE_PREFIX = "__ALPHA_ROUTER_IMAGE_JSON__:"
-_IMAGE_PENDING = "__ALPHA_ROUTER_IMAGE_PENDING__"
+_IMAGE_PREFIX = IMAGE_MESSAGE_PREFIX
+_IMAGE_PENDING = IMAGE_PENDING_MARKER
 _INTERNAL_TITLE_PREFIXES = (
     _IMAGE_PREFIX,
-    "__ALPHA_ROUTER_IMAGE_JSON__:",
-    "__ALPHA_ROUTER_IMAGE__:",
-    "__ALPHA_ROUTER_IMAGE__:",
-    "__ALPHA_ROUTER_ATTACH_JSON__:",
-    "__ALPHA_ROUTER_AUDIO_JSON__:",
+    ATTACHMENT_MESSAGE_PREFIX,
+    AUDIO_MESSAGE_PREFIX,
 )
 
 
@@ -66,14 +69,10 @@ def _normalize_content_for_title(content: str) -> str:
         return ""
     if t.startswith(_IMAGE_PREFIX):
         return _parse_json_prompt(t, _IMAGE_PREFIX, "Generated image")
-    if t.startswith("__ALPHA_ROUTER_IMAGE_JSON__:"):
-        return _parse_json_prompt(t, "__ALPHA_ROUTER_IMAGE_JSON__:", "Generated image")
-    if t.startswith("__ALPHA_ROUTER_IMAGE__:") or t.startswith("__ALPHA_ROUTER_IMAGE__:"):
-        return "Generated image"
-    if t.startswith("__ALPHA_ROUTER_ATTACH_JSON__:"):
-        return _parse_json_prompt(t, "__ALPHA_ROUTER_ATTACH_JSON__:", "")
-    if t.startswith("__ALPHA_ROUTER_AUDIO_JSON__:"):
-        return _parse_json_prompt(t, "__ALPHA_ROUTER_AUDIO_JSON__:", "")
+    if t.startswith(ATTACHMENT_MESSAGE_PREFIX):
+        return _parse_json_prompt(t, ATTACHMENT_MESSAGE_PREFIX, "")
+    if t.startswith(AUDIO_MESSAGE_PREFIX):
+        return _parse_json_prompt(t, AUDIO_MESSAGE_PREFIX, "")
     return t
 
 

@@ -14,6 +14,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.branding import PRODUCT_NAME
+
 SANDBOX_IMAGE = "alpha-router-sandbox:latest"
 MAX_REQUEST_BYTES = 3 * 1024 * 1024
 MAX_CODE_CHARS = 100_000
@@ -29,7 +31,7 @@ _SAFE_FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,127}$")
 _semaphore = asyncio.Semaphore(MAX_CONCURRENT_SANDBOXES)
 
 app = FastAPI(
-    title="Alpha Router Sandbox Broker",
+    title=f"{PRODUCT_NAME} Sandbox Broker",
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
@@ -223,7 +225,7 @@ async def _run_container(body: ExecuteRequest) -> dict[str, str | int]:
         "--name",
         container_name,
         "--label",
-        "alpha_router.sandbox=true",
+        "com.alpha-router.sandbox=true",
         "--network",
         "none",
         "--read-only",

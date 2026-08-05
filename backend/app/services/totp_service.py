@@ -9,12 +9,13 @@ import logging
 import secrets
 from typing import Any
 
+from app.branding import LOGGER_NAMESPACE, PRODUCT_NAME
 from app.core.security import verify_password
 from app.services.secret_crypto import decrypt_secret, encrypt_secret
 
-logger = logging.getLogger("alpha_router.security.settings")
+logger = logging.getLogger(f"{LOGGER_NAMESPACE}.security.settings")
 
-_ISSUER = "Alpha Router"
+_ISSUER = PRODUCT_NAME
 _BACKUP_COUNT = 8
 
 

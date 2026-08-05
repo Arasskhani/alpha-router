@@ -10,9 +10,8 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chat import ChatMessage, ChatMessageFeedback, ChatSession
+from app.services.chat_markers import IMAGE_MESSAGE_PREFIX, IMAGE_PENDING_MARKER
 
-IMAGE_MESSAGE_PREFIX = "__ALPHA_ROUTER_IMAGE_JSON__:"
-IMAGE_PENDING_MARKER = "__ALPHA_ROUTER_IMAGE_PENDING__"
 VALID_FEEDBACK_REASONS = frozenset(
     {
         "incorrect",

@@ -70,7 +70,7 @@ from app.services.llm_providers import litellm_model_for_provider, resolve_litel
 from app.services.openrouter_image_service import prepare_image_generation_prompt
 
 router = APIRouter(prefix="/api/images", tags=["images"])
-_alpha_router_MEDIA_PATH = re.compile(r"/api/chat/media/(\d+)/file/?(?:\?.*)?$")
+_ALPHA_ROUTER_MEDIA_PATH = re.compile(r"/api/chat/media/(\d+)/file/?(?:\?.*)?$")
 _AUTO_ROUTER_TOTAL_TIMEOUT_SECONDS = 45.0
 _AUTO_ROUTER_MODEL_TIMEOUT_SECONDS = 20.0
 
@@ -112,12 +112,12 @@ async def _await_image_work(
 
 
 def parse_alpha_router_media_asset_id(reference: str) -> int | None:
-    """Extract media asset id from Alpha Router /api/chat/media/{id}/file URLs."""
+    """Extract a media asset id from Alpha Router /api/chat/media/{id}/file URLs."""
     ref = (reference or "").strip()
     if not ref:
         return None
     path = urlparse(ref).path if ref.startswith(("http://", "https://")) else ref.split("?")[0]
-    match = _alpha_router_MEDIA_PATH.search(path)
+    match = _ALPHA_ROUTER_MEDIA_PATH.search(path)
     if not match:
         return None
     try:
@@ -131,7 +131,7 @@ async def resolve_reference_image_for_upstream(
     user: User,
     reference_image: str | None,
 ) -> str | None:
-    """Turn Alpha Router media paths into data URLs OpenRouter and other providers can consume."""
+    """Turn Alpha Router media paths into data URLs external providers can consume."""
     ref = (reference_image or "").strip()
     if not ref:
         return None

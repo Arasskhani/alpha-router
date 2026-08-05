@@ -56,7 +56,10 @@ async def _setup_db():
     return engine, session_factory
 
 
-async def _seed_user_key(session_factory, raw_key="alpha_userkey_test123"):
+async def _seed_user_key(
+    session_factory,
+    raw_key="alpha_router_userkey_test123",
+):
     async with session_factory() as db:
         user = User(
             username="alice",
@@ -81,8 +84,13 @@ async def _seed_user_key(session_factory, raw_key="alpha_userkey_test123"):
         return user.id, raw_key
 
 
-async def _seed_alpha_router_key(session_factory, *, raw_key="alpha_alphakey_test456",
-                          credit_limit_usd=0.0, period_used_usd=0.0):
+async def _seed_alpha_router_key(
+    session_factory,
+    *,
+    raw_key="alpha_router_gatewaykey_test456",
+    credit_limit_usd=0.0,
+    period_used_usd=0.0,
+):
     async with session_factory() as db:
         key = AlphaRouterApiKey(
             name="svc-key",
@@ -187,7 +195,11 @@ async def _test_alpha_router_api_key_skips_user_budget():
 
 async def _test_alpha_router_api_key_over_credit_limit_raises_402():
     _, sf = await _setup_db()
-    _, raw = await _seed_alpha_router_key(sf, credit_limit_usd=1.0, period_used_usd=1.0)
+    _, raw = await _seed_alpha_router_key(
+        sf,
+        credit_limit_usd=1.0,
+        period_used_usd=1.0,
+    )
     async with sf() as db:
         with pytest.raises(HTTPException) as exc:
             await gateway._resolve_gateway_auth(_FakeRequest(f"Bearer {raw}"), db)

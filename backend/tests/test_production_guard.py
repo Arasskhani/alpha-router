@@ -78,7 +78,9 @@ def test_production_refuses_when_only_admin_password_is_default():
 
 def test_production_refuses_when_only_gateway_master_key_is_default():
     with pytest.raises(RuntimeError) as exc:
-        _check_production_safe(**_prod_kwargs(gateway_master_key="sk-alpha-router-master"))
+        _check_production_safe(
+            **_prod_kwargs(gateway_master_key="sk-alpha-router-master")
+        )
     assert "GATEWAY_MASTER_KEY" in str(exc.value)
 
 
@@ -117,7 +119,7 @@ def test_insecure_defaults_set_contents():
     assert "change-me-in-production" in INSECURE_DEFAULTS
     assert "admin" in INSECURE_DEFAULTS
     assert "sk-alpha-router-master" in INSECURE_DEFAULTS
-    assert "alpha-router-ldap-bridge" not in INSECURE_DEFAULTS
+    assert "alpha_router" in INSECURE_DEFAULTS
 
 
 def test_default_environment_is_development(monkeypatch):
@@ -207,7 +209,7 @@ def test_production_warning_mode_clean_when_secure(caplog):
         ({"oidc_enabled": True, "oidc_issuer": "https://idp.example.com", "api_public_url": "http://api.example.com"}, "OIDC_TLS"),
         ({"smtp_host": "smtp.internal", "smtp_tls": False}, "SMTP_TLS"),
         ({"s3_endpoint_url": "http://objects.example.com", "s3_use_ssl": False}, "S3_TLS"),
-        ({"s3_access_key": "alpha", "s3_secret_key": "changeme"}, "S3_CREDENTIALS"),
+        ({"s3_access_key": "alpha_router", "s3_secret_key": "changeme"}, "S3_CREDENTIALS"),
         ({"frontend_url": "http://app", "api_public_url": "https://api"}, "FRONTEND_TLS"),
         ({"api_public_url": "http://api", "frontend_url": "https://app"}, "API_PUBLIC_TLS"),
         ({"enable_hsts": False, "frontend_url": "https://app.example"}, "HSTS"),

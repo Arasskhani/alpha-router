@@ -75,14 +75,20 @@ def test_prefs_timezone_and_language_normalization():
 
 
 def test_import_format_detection_and_reject_garbage():
-    assert detect_import_format({"format": "alpha-router-chats", "version": 1, "sessions": []}) == "alpha-router-chats"
+    assert (
+        detect_import_format(
+            {"format": "alpha-router-chats", "version": 1, "sessions": []}
+        )
+        == "alpha-router-chats"
+    )
     assert detect_import_format([{"mapping": {}, "title": "t"}]) == "chatgpt"
     assert detect_import_format({"chats": []}) == "openwebui"
-    try:
-        detect_import_format({"foo": 1})
-        raise AssertionError("expected ChatImportError")
-    except ChatImportError:
-        pass
+    for invalid in ({"format": "unknown", "version": 1, "sessions": []}, {"foo": 1}):
+        try:
+            detect_import_format(invalid)
+            raise AssertionError("expected ChatImportError")
+        except ChatImportError:
+            pass
 
 
 def test_chatgpt_import_mapping_linearization():

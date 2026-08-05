@@ -1,5 +1,5 @@
 # Alpha Router - Stop entire stack (Docker Compose)
-# Stops: alpha app, PostgreSQL, Redis, SeaweedFS, and related compose services.
+# Stops: Alpha Router, PostgreSQL, Redis, SeaweedFS, and related Compose services.
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
@@ -30,7 +30,7 @@ function Stop-DockerStack {
         return
     }
 
-    Write-Step "Stopping Docker Compose stack: alpha, postgres, redis, seaweedfs"
+    Write-Step "Stopping Docker Compose stack: alpha-router, postgres, redis, seaweedfs"
     docker compose down --remove-orphans
     if ($LASTEXITCODE -ne 0) {
         Write-Host ("docker compose down failed with exit code " + $LASTEXITCODE + ".") -ForegroundColor Red
@@ -86,7 +86,7 @@ foreach ($port in $AlphaRouterPorts) {
 if ($issues.Count -eq 0) {
     Write-Host ""
     Write-Host "All Alpha Router services appear stopped." -ForegroundColor Green
-    Write-Host "  Docker stack: down - postgres, redis, seaweedfs, alpha" -ForegroundColor DarkGray
+    Write-Host "  Docker stack: down - postgres, redis, seaweedfs, alpha-router" -ForegroundColor DarkGray
     Write-Host ("  Ports checked: " + ($AlphaRouterPorts -join ", ")) -ForegroundColor DarkGray
     Write-Host ""
     Write-Host "Data volumes were kept. To remove them too, run: docker compose down -v" -ForegroundColor DarkGray

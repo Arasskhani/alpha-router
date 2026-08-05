@@ -45,7 +45,6 @@ from app.services.saml_sp import (
     process_acs,
     sp_metadata_xml,
 )
-from app.services.storage_service import ensure_user_media_directory
 from app.services.user_chat_storage_service import ensure_user_chat_store
 from app.services.username_norm import find_user_by_username_ci, normalize_username
 from app.services.user_lifecycle_service import record_user_login
@@ -157,7 +156,6 @@ async def login_local(
         raise HTTPException(status_code=401, detail="Account removed")
     if user and user.hashed_password:
         if verify_password(body.password, user.hashed_password):
-            ensure_user_media_directory(user.username)
             await ensure_user_chat_store(db, user.id)
             if bool(user.totp_enabled) and (user.auth_provider or "local") == "local":
                 from app.services.twofa_pending import generate_pending_token, store_pending
@@ -247,7 +245,6 @@ async def login_2fa(
         user.totp_backup_codes_hashed = remaining
         await db.commit()
 
-    ensure_user_media_directory(user.username)
     await ensure_user_chat_store(db, user.id)
     return await _token_response(db, user, response, request)
 
@@ -480,7 +477,7 @@ async def saml_metadata(db: AsyncSession = Depends(get_db)):
 
 @router.get("/saml/logout")
 async def saml_logout(request: Request, db: AsyncSession = Depends(get_db)):
-    """Terminate Alpha Router session and optionally redirect to IdP SLO."""
+    """Terminate the Alpha Router session and optionally redirect to IdP SLO."""
     token = request.cookies.get(settings.session_cookie_name)
     name_id: str | None = None
     if token:
@@ -599,6 +596,5 @@ async def _upsert_directory_user(db: AsyncSession, profile: dict, provider: str)
     user.auth_provider = provider
     await db.commit()
     await db.refresh(user)
-    ensure_user_media_directory(user.username)
     await ensure_user_chat_store(db, user.id)
     return user

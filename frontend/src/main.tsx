@@ -5,11 +5,9 @@ import App from "./App";
 import { ConfirmProvider } from "./context/ConfirmContext";
 import "./styles.css";
 import "./generated/persianFonts.css";
-import { migrateLegacyStorageKeys } from "./lib/session";
 import { applyThemeToDocument } from "./lib/themeCache";
 import { applyBlankFavicon } from "./lib/favicon";
 
-migrateLegacyStorageKeys();
 applyThemeToDocument();
 applyBlankFavicon();
 

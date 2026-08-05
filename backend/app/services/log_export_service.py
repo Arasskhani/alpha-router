@@ -31,19 +31,19 @@ ACTIVITY_LOG_COLUMNS = [
 ]
 
 
-def _format_user(r: RequestLog, alpha_router_key: AlphaRouterApiKey | None) -> str:
+def _format_user(r: RequestLog, router_key: AlphaRouterApiKey | None) -> str:
     source_code = (r.source or "").strip().lower()
     if r.alpha_router_api_key_id:
-        name = (alpha_router_key.name if alpha_router_key else None) or r.username or "API key"
+        name = (router_key.name if router_key else None) or r.username or "API key"
         return f"{name} (API Key)"
-    if source_code in ("alpha_router_chat", "alpha_router_chat"):
+    if source_code == "alpha_router_chat":
         return f"{r.username or 'unknown'} (Chat)"
     return (r.username or "unknown").strip() or "unknown"
 
 
 def _format_app(r: RequestLog) -> str:
     source_code = (r.source or "").strip().lower()
-    if source_code in ("alpha_router_chat", "alpha_router_chat"):
+    if source_code == "alpha_router_chat":
         return format_app_source(r.source)
     return (r.client_app or "").strip() or format_app_source(r.source)
 
@@ -53,13 +53,13 @@ def log_row_to_export(
     *,
     tz_mode: str,
     provider: str | None = None,
-    alpha_router_key: AlphaRouterApiKey | None = None,
+    router_key: AlphaRouterApiKey | None = None,
 ) -> dict[str, Any]:
     dt = r.request_time
     time_str = _display_dt(dt, tz_mode).strftime("%Y-%m-%dT%H:%M:%S") if dt else ""
     return {
         "Time": time_str,
-        "User": _format_user(r, alpha_router_key),
+        "User": _format_user(r, router_key),
         "Model": r.model_id or "",
         "Provider": provider or "",
         "App": _format_app(r),
@@ -92,10 +92,18 @@ async def resolve_log_export_maps(
             if external_id and external_id not in provider_map:
                 provider_map[str(external_id)] = str(provider or "")
 
-    key_ids = {r.alpha_router_api_key_id for r in rows if r.alpha_router_api_key_id}
+    key_ids = {
+        r.alpha_router_api_key_id
+        for r in rows
+        if r.alpha_router_api_key_id
+    }
     key_map: dict[int, AlphaRouterApiKey] = {}
     if key_ids:
-        keys = (await db.execute(select(AlphaRouterApiKey).where(AlphaRouterApiKey.id.in_(key_ids)))).scalars().all()
+        keys = (
+            await db.execute(
+                select(AlphaRouterApiKey).where(AlphaRouterApiKey.id.in_(key_ids))
+            )
+        ).scalars().all()
         key_map = {k.id: k for k in keys}
     return provider_map, key_map
 
@@ -115,7 +123,11 @@ def request_logs_to_export_dataframe(
             r,
             tz_mode=tz_mode,
             provider=provider_map.get((r.model_id or "").strip()),
-            alpha_router_key=key_map.get(r.alpha_router_api_key_id) if r.alpha_router_api_key_id else None,
+            router_key=(
+                key_map.get(r.alpha_router_api_key_id)
+                if r.alpha_router_api_key_id
+                else None
+            ),
         )
         for r in sorted_rows
     ]

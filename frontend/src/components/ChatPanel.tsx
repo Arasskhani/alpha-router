@@ -81,9 +81,13 @@ import {
   sidebarOlderThan3DaysCutoffMs,
   sidebarHydrateMinActivityMs,
 } from "../lib/chatStorage";
-import { isChatLeader, onChatLeaderChange } from "../lib/chatLeader";
+import {
+  CHAT_REFRESH_EVENT_NAME,
+  isChatLeader,
+  onChatLeaderChange,
+} from "../lib/chatLeader";
 import { formatLocalDateTimeFromMs } from "../lib/dateTime";
-import { STORAGE_KEYS } from "../lib/brand";
+import { BROWSER_EVENT_NAMES, PRODUCT_NAME, STORAGE_KEYS } from "../lib/brand";
 import { getSessionUser, isSessionActive, logout } from "../lib/session";
 import { copyFreshChatTools, toolsToApiPayload, type ChatToolsState } from "../lib/chatTools";
 import ChatAttachmentMessage from "./chat/ChatAttachmentMessage";
@@ -104,6 +108,7 @@ import PrivateModeLockIcon from "./chat/PrivateModeLockIcon";
 import { BrowserSpeechCapture, pickVoiceRecordingMime } from "../lib/voiceInput";
 import {
   ATTACHMENT_ACCEPT,
+  AUDIO_MESSAGE_PREFIX,
   attachmentDisplayText,
   attachmentMessage,
   buildApiMessageContent,
@@ -124,6 +129,7 @@ import {
   buildImageMessage,
   buildStoppedImageMessages,
   mergeChatMessagesPreferLocal,
+  IMAGE_MESSAGE_PREFIX,
   IMAGE_PENDING_MARKER,
   isBackgroundImageRunning,
   getBackgroundImageSessionIds,
@@ -202,9 +208,6 @@ function turnPhaseLabel(phase: TurnPhase): string {
       return "Thinking…";
   }
 }
-const IMAGE_MESSAGE_PREFIX = "__ALPHA_ROUTER_IMAGE_JSON__:";
-const AUDIO_MESSAGE_PREFIX = "__ALPHA_ROUTER_AUDIO_JSON__:";
-
 function shortModelName(name: string, id: string) {
   const n = name || id;
   return n.length > 28 ? `${n.slice(0, 26)}…` : n;
@@ -312,21 +315,6 @@ function readImageMessage(content: string): ImagePayload | null {
       return null;
     }
   }
-  if (content.startsWith("__ALPHA_ROUTER_IMAGE__:")) {
-    const legacyUrl = content.slice("__ALPHA_ROUTER_IMAGE__:".length);
-    return { url: legacyUrl, prompt: "", model: "" };
-  }
-  if (content.startsWith("__ALPHA_ROUTER_IMAGE_JSON__:")) {
-    try {
-      return JSON.parse(content.slice("__ALPHA_ROUTER_IMAGE_JSON__:".length)) as ImagePayload;
-    } catch {
-      return null;
-    }
-  }
-  if (content.startsWith("__ALPHA_ROUTER_IMAGE__:")) {
-    const legacyUrl = content.slice("__ALPHA_ROUTER_IMAGE__:".length);
-    return { url: legacyUrl, prompt: "", model: "" };
-  }
   return null;
 }
 
@@ -389,7 +377,7 @@ function MessageInfoButton({ title }: { title: string }) {
   return (
     <button
       type="button"
-      className="cgpt-msg-action-btn cgpt-msg-action-btn--info"
+      className="alpha-router-msg-action-btn alpha-router-msg-action-btn--info"
       title={title}
       aria-label={title}
     >
@@ -404,17 +392,17 @@ function MessageInfoButton({ title }: { title: string }) {
 
 function PrivateModeStrip() {
   return (
-    <div className="cgpt-private-strip" role="status">
-      <PrivateModeLockIcon className="cgpt-private-strip__icon" size={18} />
-      <p className="cgpt-private-strip__text">
-        <span className="cgpt-private-strip__title">Private Mode is ON</span>
-        <span className="cgpt-private-strip__sep" aria-hidden>
+    <div className="alpha-router-private-strip" role="status">
+      <PrivateModeLockIcon className="alpha-router-private-strip__icon" size={18} />
+      <p className="alpha-router-private-strip__text">
+        <span className="alpha-router-private-strip__title">Private Mode is ON</span>
+        <span className="alpha-router-private-strip__sep" aria-hidden>
           {" "}
           :{" "}
         </span>
-        <span className="cgpt-private-strip__body">
+        <span className="alpha-router-private-strip__body">
           Private Mode is permanent for this chat. Messages and media are stored only in this browser and
-          will be <strong className="cgpt-private-strip__danger">deleted</strong> when you log out or clear
+          will be <strong className="alpha-router-private-strip__danger">deleted</strong> when you log out or clear
           browser data.
         </span>
       </p>
@@ -1233,8 +1221,8 @@ export default function ChatPanel() {
         })
         .catch(() => {});
     }
-    window.addEventListener("alpha_router:user-prefs-saved", onPrefsSaved);
-    return () => window.removeEventListener("alpha_router:user-prefs-saved", onPrefsSaved);
+    window.addEventListener(BROWSER_EVENT_NAMES.userPrefsSaved, onPrefsSaved);
+    return () => window.removeEventListener(BROWSER_EVENT_NAMES.userPrefsSaved, onPrefsSaved);
   }, []);
 
   useEffect(() => {
@@ -1414,10 +1402,10 @@ export default function ChatPanel() {
           .catch(() => {});
       }, 400);
     };
-    window.addEventListener("alpha-router-chat-refresh", onRefresh);
+    window.addEventListener(CHAT_REFRESH_EVENT_NAME, onRefresh);
     return () => {
       if (debounceTimer) window.clearTimeout(debounceTimer);
-      window.removeEventListener("alpha-router-chat-refresh", onRefresh);
+      window.removeEventListener(CHAT_REFRESH_EVENT_NAME, onRefresh);
     };
   }, []);
 
@@ -1848,7 +1836,7 @@ export default function ChatPanel() {
     const onDoc = (e: MouseEvent) => {
       const target = e.target as Node;
       if (toolsMenuRef.current?.contains(target)) return;
-      if (target instanceof Element && target.closest(".cgpt-server-tools-menu")) return;
+      if (target instanceof Element && target.closest(".alpha-router-server-tools-menu")) return;
       setToolsMenuOpen(false);
     };
     document.addEventListener("mousedown", onDoc);
@@ -2315,7 +2303,7 @@ export default function ChatPanel() {
       <>
         {isRenaming ? (
           <form
-            className="cgpt-history-rename"
+            className="alpha-router-history-rename"
             onSubmit={(e) => {
               e.preventDefault();
               commitRenameSession();
@@ -2331,23 +2319,23 @@ export default function ChatPanel() {
         ) : (
           <button
             type="button"
-            className={`cgpt-history-item${s.id === activeId ? " active" : ""}${streamingSessions[s.id] || isBackgroundImageRunning(s.id) ? " is-streaming" : ""}`}
+            className={`alpha-router-history-item${s.id === activeId ? " active" : ""}${streamingSessions[s.id] || isBackgroundImageRunning(s.id) ? " is-streaming" : ""}`}
             onClick={() => selectSession(s.id)}
           >
             {s.privateMode ? (
-              <span className="cgpt-history-item__lock" title="Private Mode" aria-hidden>
-                <PrivateModeLockIcon className="cgpt-history-item__lock-icon" size={14} />
+              <span className="alpha-router-history-item__lock" title="Private Mode" aria-hidden>
+                <PrivateModeLockIcon className="alpha-router-history-item__lock-icon" size={14} />
               </span>
             ) : null}
             {streamingSessions[s.id] || isBackgroundImageRunning(s.id) ? (
-              <span className="cgpt-history-item__busy" title="Generating…" aria-hidden />
+              <span className="alpha-router-history-item__busy" title="Generating…" aria-hidden />
             ) : null}
             {sessionDisplayTitle(s)}
           </button>
         )}
         {!readOnly && !isRenaming ? (
           <div
-            className="cgpt-history-item-actions"
+            className="alpha-router-history-item-actions"
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
@@ -2381,7 +2369,7 @@ export default function ChatPanel() {
     };
     if (wrap === "div") {
       return (
-        <div key={s.id} className="cgpt-history-row" {...dragProps}>
+        <div key={s.id} className="alpha-router-history-row" {...dragProps}>
           {inner}
         </div>
       );
@@ -2624,7 +2612,7 @@ export default function ChatPanel() {
   function friendlyTurnError(err: unknown): string {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes("network") || message === "Failed to fetch") {
-      return "Cannot reach Alpha Router API. Check that Docker is running and hard-refresh (Ctrl+Shift+R).";
+      return `Cannot reach ${PRODUCT_NAME} API. Check that Docker is running and hard-refresh (Ctrl+Shift+R).`;
     }
     return message;
   }
@@ -4160,7 +4148,7 @@ export default function ChatPanel() {
   }
 
   return (
-    <div className="cgpt-app" data-persian-font={persianFont || undefined}>
+    <div className="alpha-router-app" data-persian-font={persianFont || undefined}>
       <ChatModelPickerModal
         open={modelPickerMode != null}
         mode={modelPickerMode || "replace"}
@@ -4174,12 +4162,12 @@ export default function ChatPanel() {
         onSetDefault={(id) => setAsDefaultModel(id)}
       />
 
-      <div className="cgpt-workspace">
-      <aside className="cgpt-sidebar">
-        <div className="cgpt-sidebar-top">
+      <div className="alpha-router-workspace">
+      <aside className="alpha-router-sidebar">
+        <div className="alpha-router-sidebar-top">
           <button
             type="button"
-            className="cgpt-icon-btn cgpt-menu-btn"
+            className="alpha-router-icon-btn alpha-router-menu-btn"
             onClick={() => shellMenu?.openAdminMenu()}
             onMouseEnter={() => shellMenu?.openAdminMenu()}
             aria-label="Open menu"
@@ -4187,22 +4175,22 @@ export default function ChatPanel() {
           >
             ☰
           </button>
-          <button type="button" className="cgpt-new-chat" onClick={startNewChat} disabled={readOnly} title={readOnly ? "Read-only account" : undefined}>
-            <span className="cgpt-new-chat-icon">+</span>
+          <button type="button" className="alpha-router-new-chat" onClick={startNewChat} disabled={readOnly} title={readOnly ? "Read-only account" : undefined}>
+            <span className="alpha-router-new-chat-icon">+</span>
             New chat
           </button>
         </div>
-        <div className="cgpt-sidebar-body">
+        <div className="alpha-router-sidebar-body">
           <>
             <input
               type="search"
-              className="cgpt-history-search"
+              className="alpha-router-history-search"
               placeholder="Search chats…"
               value={historySearch}
               onChange={(e) => setHistorySearch(e.target.value)}
             />
             {!readOnly && (
-            <div className="cgpt-folder-create">
+            <div className="alpha-router-folder-create">
               <input
                 type="text"
                 placeholder="New folder…"
@@ -4221,11 +4209,11 @@ export default function ChatPanel() {
             </div>
             )}
 
-            <div className="cgpt-folder-group">
+            <div className="alpha-router-folder-group">
               {folders.map((f) => (
                 <div
                   key={f.id}
-                  className={`cgpt-folder-row${dropFolderId === f.id ? " is-drop-target" : ""}${f.color ? " has-color" : ""}`}
+                  className={`alpha-router-folder-row${dropFolderId === f.id ? " is-drop-target" : ""}${f.color ? " has-color" : ""}`}
                   style={
                     f.color
                       ? ({ "--folder-accent": f.color } as React.CSSProperties)
@@ -4241,22 +4229,22 @@ export default function ChatPanel() {
                     if (draggingSessionId) moveSessionToFolder(draggingSessionId, f.id);
                   }}
                 >
-                  <div className="cgpt-folder-title">
+                  <div className="alpha-router-folder-title">
                     <button
                       type="button"
-                      className="cgpt-folder-toggle"
+                      className="alpha-router-folder-toggle"
                       onClick={() => toggleFolderCollapse(f.id)}
                       aria-label={collapsedFolders[f.id] ? "Expand folder" : "Collapse folder"}
                       title={collapsedFolders[f.id] ? "Expand" : "Collapse"}
                     >
                       {collapsedFolders[f.id] ? "▸" : "▾"}
                     </button>
-                    <span className="cgpt-folder-icon" aria-hidden>
+                    <span className="alpha-router-folder-icon" aria-hidden>
                       <IconFolder />
                     </span>
                     {renamingFolderId === f.id ? (
                       <form
-                        className="cgpt-folder-rename"
+                        className="alpha-router-folder-rename"
                         onSubmit={(e) => {
                           e.preventDefault();
                           commitRenameFolder();
@@ -4274,7 +4262,7 @@ export default function ChatPanel() {
                     )}
                     {renamingFolderId !== f.id && !readOnly ? (
                       <div
-                        className="cgpt-folder-title-actions"
+                        className="alpha-router-folder-title-actions"
                         onMouseDown={(e) => e.stopPropagation()}
                         onClick={(e) => e.stopPropagation()}
                       >
@@ -4295,10 +4283,10 @@ export default function ChatPanel() {
                     ) : null}
                   </div>
                   {!collapsedFolders[f.id] ? (
-                    <ul className="cgpt-history cgpt-history-in-folder">
+                    <ul className="alpha-router-history alpha-router-history-in-folder">
                       {(sessionsByFolder[f.id] || []).map((s) => renderSessionRow(s))}
                       {(sessionsByFolder[f.id] || []).length === 0 && (
-                        <li className="cgpt-history-empty">Drop chats here</li>
+                        <li className="alpha-router-history-empty">Drop chats here</li>
                       )}
                     </ul>
                   ) : null}
@@ -4306,28 +4294,28 @@ export default function ChatPanel() {
               ))}
             </div>
             {messageSearchHits.length > 0 && historySearch.trim().length >= 2 ? (
-              <ul className="cgpt-history cgpt-history-search-hits">
+              <ul className="alpha-router-history alpha-router-history-search-hits">
                 {messageSearchHits.map((hit) => (
                   <li key={`${hit.sessionId}-${hit.content.slice(0, 24)}`}>
                     <button
                       type="button"
-                      className="cgpt-history-item"
+                      className="alpha-router-history-item"
                       onClick={() => selectSession(hit.sessionId)}
                     >
-                      <span className="cgpt-history-item__subtitle">{hit.sessionTitle}</span>
+                      <span className="alpha-router-history-item__subtitle">{hit.sessionTitle}</span>
                       {hit.content.slice(0, 80)}
                     </button>
                   </li>
                 ))}
               </ul>
             ) : null}
-            <div className="cgpt-uncategorized-group">
+            <div className="alpha-router-uncategorized-group">
               {inSearchMode ? (
                 filteredSessions.length === 0 ? (
-                  <p className="cgpt-history-empty">No conversations</p>
+                  <p className="alpha-router-history-empty">No conversations</p>
                 ) : (
                   <VirtualSidebarList
-                    className="cgpt-history-scroll"
+                    className="alpha-router-history-scroll"
                     items={rootSessions.map((s) => ({
                       id: s.id,
                       node: renderSessionRow(s),
@@ -4342,13 +4330,13 @@ export default function ChatPanel() {
                   {todayRootSessions.length === 0 &&
                   pastDaysRootSessions.length === 0 &&
                   displayOlderCount === 0 ? (
-                    <p className="cgpt-history-empty">No conversations</p>
+                    <p className="alpha-router-history-empty">No conversations</p>
                   ) : (
                     <>
                       {todayRootSessions.length > 0 ? (
                         <>
-                          <div className="cgpt-history-section-label">Today</div>
-                          <ul className="cgpt-history cgpt-history-scroll">
+                          <div className="alpha-router-history-section-label">Today</div>
+                          <ul className="alpha-router-history alpha-router-history-scroll">
                             {todayRootSessions.map((s) => (
                               <li key={s.id}>{renderSessionRow(s)}</li>
                             ))}
@@ -4356,20 +4344,20 @@ export default function ChatPanel() {
                         </>
                       ) : null}
                       {pastDaysRootSessions.length > 0 ? (
-                        <div className="cgpt-history-older">
+                        <div className="alpha-router-history-older">
                           <button
                             type="button"
-                            className="cgpt-history-older-toggle"
+                            className="alpha-router-history-older-toggle"
                             onClick={() => togglePastDaysSection()}
                             aria-expanded={pastDaysExpanded}
                           >
-                            <span className="cgpt-history-older-chevron">
+                            <span className="alpha-router-history-older-chevron">
                               {pastDaysExpanded ? "▾" : "▸"}
                             </span>
                             1–3 days ago ({pastDaysRootSessions.length})
                           </button>
                           {pastDaysExpanded ? (
-                            <ul className="cgpt-history cgpt-history-scroll cgpt-history-older-list">
+                            <ul className="alpha-router-history alpha-router-history-scroll alpha-router-history-older-list">
                               {pastDaysRootSessions.map((s) => (
                                 <li key={s.id}>{renderSessionRow(s)}</li>
                               ))}
@@ -4378,24 +4366,24 @@ export default function ChatPanel() {
                         </div>
                       ) : null}
                       {displayOlderCount > 0 ? (
-                        <div className="cgpt-history-older">
+                        <div className="alpha-router-history-older">
                           <button
                             type="button"
-                            className="cgpt-history-older-toggle"
+                            className="alpha-router-history-older-toggle"
                             onClick={() => toggleOlderSection()}
                             aria-expanded={olderExpanded}
                           >
-                            <span className="cgpt-history-older-chevron">
+                            <span className="alpha-router-history-older-chevron">
                               {olderExpanded ? "▾" : "▸"}
                             </span>
                             Older than 3 days ({displayOlderCount})
                           </button>
                           {olderExpanded ? (
                             olderLoading && olderRootSessions.length === 0 ? (
-                              <p className="cgpt-history-empty">Loading…</p>
+                              <p className="alpha-router-history-empty">Loading…</p>
                             ) : (
                               <>
-                                <ul className="cgpt-history cgpt-history-scroll cgpt-history-older-list">
+                                <ul className="alpha-router-history alpha-router-history-scroll alpha-router-history-older-list">
                                   {olderRootSessions.map((s) => (
                                     <li key={s.id}>{renderSessionRow(s)}</li>
                                   ))}
@@ -4403,7 +4391,7 @@ export default function ChatPanel() {
                                 {olderLoadedCount < olderTotal ? (
                                   <button
                                     type="button"
-                                    className="cgpt-history-older-more"
+                                    className="alpha-router-history-older-more"
                                     disabled={olderLoadingMore}
                                     onClick={() => void loadOlderChats({ append: true })}
                                   >
@@ -4424,11 +4412,11 @@ export default function ChatPanel() {
         </div>
       </aside>
 
-      <div className="cgpt-main-column">
-      <div className="cgpt-model-bar">
+      <div className="alpha-router-main-column">
+      <div className="alpha-router-model-bar">
         <button
           type="button"
-          className="cgpt-add-model-btn"
+          className="alpha-router-add-model-btn"
           onClick={() => {
             setToolsMenuOpen(false);
             setModelPickerMode("append");
@@ -4451,22 +4439,22 @@ export default function ChatPanel() {
           }
         >
           <span aria-hidden>+</span>
-          <span className="cgpt-add-model-btn__label">Add Model</span>
-          <span className="cgpt-shortcut-keys" aria-hidden>
-            <kbd className="cgpt-kbd">{modKey === "⌘" ? "⌘" : "Ctrl"}</kbd>
-            <kbd className="cgpt-kbd">J</kbd>
+          <span className="alpha-router-add-model-btn__label">Add Model</span>
+          <span className="alpha-router-shortcut-keys" aria-hidden>
+            <kbd className="alpha-router-kbd">{modKey === "⌘" ? "⌘" : "Ctrl"}</kbd>
+            <kbd className="alpha-router-kbd">J</kbd>
           </span>
         </button>
-        <div className="cgpt-selected-models">
+        <div className="alpha-router-selected-models">
           {selectedModels.map((m) => (
-            <span key={m.id} className="cgpt-model-pill">
+            <span key={m.id} className="alpha-router-model-pill">
               <ModelProviderIcon modelId={m.external_id || m.id} size={14} />
-              <span className="cgpt-model-pill__name" title={m.name}>
+              <span className="alpha-router-model-pill__name" title={m.name}>
                 {shortModelName(m.name, m.id)}
               </span>
               <button
                 type="button"
-                className="cgpt-model-pill__remove"
+                className="alpha-router-model-pill__remove"
                 onClick={() => removeSelectedModel(m.id)}
                 aria-label={`Remove ${m.name}`}
               >
@@ -4477,28 +4465,28 @@ export default function ChatPanel() {
         </div>
       </div>
 
-      <section className={`cgpt-main${activePrivateMode ? " cgpt-main--private" : ""}`}>
+      <section className={`alpha-router-main${activePrivateMode ? " alpha-router-main--private" : ""}`}>
         {activePrivateMode ? <PrivateModeStrip /> : null}
         {readOnly && <ReadOnlyBanner className="readonly-account-banner--chat" />}
-        {chatError && <div className="cgpt-banner">{chatError}</div>}
-        {modelsError && !chatError && <div className="cgpt-banner cgpt-banner-warn">{modelsError}</div>}
+        {chatError && <div className="alpha-router-banner">{chatError}</div>}
+        {modelsError && !chatError && <div className="alpha-router-banner alpha-router-banner-warn">{modelsError}</div>}
 
-        <div className="cgpt-messages" ref={messagesScrollRef}>
+        <div className="alpha-router-messages" ref={messagesScrollRef}>
           {messagesLoadingOlder ? (
-            <div className="cgpt-banner cgpt-banner-warn">Loading older messages…</div>
+            <div className="alpha-router-banner alpha-router-banner-warn">Loading older messages…</div>
           ) : null}
           {messages.length === 0 && (
-            <div className="cgpt-welcome">
+            <div className="alpha-router-welcome">
               <h2>{welcomeHeading}</h2>
             </div>
           )}
           {messages.map((m, i) => (
             <article
               key={`${activeId}-${i}`}
-              className={`cgpt-msg cgpt-msg-${m.role}${m.modelId ? " cgpt-msg-multi" : ""}`}
+              className={`alpha-router-msg alpha-router-msg-${m.role}${m.modelId ? " alpha-router-msg-multi" : ""}`}
             >
               {m.role === "assistant" && m.modelName ? (
-                <div className="cgpt-msg-model-label" title={m.modelId}>
+                <div className="alpha-router-msg-model-label" title={m.modelId}>
                   <ModelName
                     modelId={m.modelId || m.modelName}
                     label={shortModelName(m.modelName, m.modelId || "")}
@@ -4507,7 +4495,7 @@ export default function ChatPanel() {
                 </div>
               ) : null}
               <div
-                className="cgpt-msg-inner"
+                className="alpha-router-msg-inner"
                 dir={messageDirectionForContent(m.content)}
               >
                 {(() => {
@@ -4523,15 +4511,15 @@ export default function ChatPanel() {
                   }
                   if (m.content === IMAGE_PENDING_MARKER) {
                     return (
-                      <div className="cgpt-generated-block cgpt-generated-block--pending">
+                      <div className="alpha-router-generated-block alpha-router-generated-block--pending">
                         <div
-                          className="cgpt-generated-image cgpt-generated-image--loading"
+                          className="alpha-router-generated-image alpha-router-generated-image--loading"
                           role="status"
                           aria-live="polite"
                           aria-label="Generating image"
                         >
-                          <span className="cgpt-image-loading__spinner" aria-hidden />
-                          <span className="cgpt-image-loading__label">Generating image…</span>
+                          <span className="alpha-router-image-loading__spinner" aria-hidden />
+                          <span className="alpha-router-image-loading__label">Generating image…</span>
                         </div>
                       </div>
                     );
@@ -4539,11 +4527,11 @@ export default function ChatPanel() {
                   const imagePayload = readImageMessage(m.content);
                   if (imagePayload) {
                     return (
-                      <div className="cgpt-generated-block">
+                      <div className="alpha-router-generated-block">
                         <AuthenticatedImage
                           url={imagePayload.url}
                           alt="Generated"
-                          className="cgpt-generated-image"
+                          className="alpha-router-generated-image"
                         />
                       </div>
                     );
@@ -4551,14 +4539,14 @@ export default function ChatPanel() {
                   const mdImage = extractMarkdownImage(m.content || "");
                   if (mdImage.imageUrl) {
                     return (
-                      <div className="cgpt-generated-block">
+                      <div className="alpha-router-generated-block">
                         <img
                           src={safeBrowserUrl(mdImage.imageUrl, "image") ?? ""}
                           alt="Generated"
-                          className="cgpt-generated-image"
+                          className="alpha-router-generated-image"
                         />
                         {mdImage.text ? (
-                          <MarkdownContent content={mdImage.text} className="cgpt-markdown" />
+                          <MarkdownContent content={mdImage.text} className="alpha-router-markdown" />
                         ) : null}
                       </div>
                     );
@@ -4572,15 +4560,15 @@ export default function ChatPanel() {
                     return (
                       <>
                         {showTurnStatus ? (
-                          <p className="cgpt-turn-status" aria-live="polite">
-                            <span className="cgpt-turn-status__pulse" aria-hidden />
+                          <p className="alpha-router-turn-status" aria-live="polite">
+                            <span className="alpha-router-turn-status__pulse" aria-hidden />
                             {turnPhaseLabel(activeTurnPhase)}
                           </p>
                         ) : null}
                         {m.content?.trim() || !showTurnStatus ? (
                           <MarkdownContent
                             content={fallback}
-                            className={`cgpt-markdown${streamingThisMessage ? " cgpt-markdown--streaming" : ""}`}
+                            className={`alpha-router-markdown${streamingThisMessage ? " alpha-router-markdown--streaming" : ""}`}
                             streaming={streamingThisMessage}
                           />
                         ) : null}
@@ -4591,7 +4579,7 @@ export default function ChatPanel() {
                   return plain;
                 })()}
               </div>
-              <div className="cgpt-msg-actions">
+              <div className="alpha-router-msg-actions">
                 <MessageInfoButton title={chatMessageInfoTitle(m, m.role, messages, i)} />
                 {(() => {
                   const imagePayload = readImageMessage(m.content);
@@ -4602,7 +4590,7 @@ export default function ChatPanel() {
                     <>
                       <button
                         type="button"
-                        className="cgpt-msg-action-btn cgpt-msg-action-btn--icon"
+                        className="alpha-router-msg-action-btn alpha-router-msg-action-btn--icon"
                         title="Download"
                         aria-label="Download image"
                         onClick={() => void downloadImage(imageUrl)}
@@ -4611,7 +4599,7 @@ export default function ChatPanel() {
                       </button>
                       <button
                         type="button"
-                        className="cgpt-msg-action-btn cgpt-msg-action-btn--icon"
+                        className="alpha-router-msg-action-btn alpha-router-msg-action-btn--icon"
                         title="Open full size"
                         aria-label="Open image full size"
                         onClick={() => void openImageFullSize(imageUrl)}
@@ -4621,7 +4609,7 @@ export default function ChatPanel() {
                       {imagePayload ? (
                         <button
                           type="button"
-                          className="cgpt-msg-action-btn cgpt-msg-action-btn--icon"
+                          className="alpha-router-msg-action-btn alpha-router-msg-action-btn--icon"
                           title="Regenerate"
                           aria-label="Regenerate image"
                           disabled={isSessionStreaming}
@@ -4637,7 +4625,7 @@ export default function ChatPanel() {
                   <>
                     <button
                       type="button"
-                      className="cgpt-msg-action-btn"
+                      className="alpha-router-msg-action-btn"
                       onClick={() => void retryUserPromptAt(i)}
                       title="Retry"
                       aria-label="Retry prompt"
@@ -4646,21 +4634,21 @@ export default function ChatPanel() {
                     </button>
                     <button
                       type="button"
-                      className="cgpt-msg-action-btn"
+                      className="alpha-router-msg-action-btn"
                       onClick={() => void copyMessageContent(m.content, `${activeId}-${i}`)}
                     >
                       {copiedMessageKey === `${activeId}-${i}` ? "Copied" : "Copy"}
                     </button>
                     <button
                       type="button"
-                      className="cgpt-msg-action-btn"
+                      className="alpha-router-msg-action-btn"
                       onClick={() => editUserPrompt(m.content)}
                     >
                       Edit
                     </button>
                     <button
                       type="button"
-                      className="cgpt-msg-action-btn"
+                      className="alpha-router-msg-action-btn"
                       onClick={() => deleteUserPromptAt(i)}
                     >
                       Delete
@@ -4677,7 +4665,7 @@ export default function ChatPanel() {
                       <>
                         <button
                           type="button"
-                          className={`cgpt-msg-action-btn cgpt-msg-feedback-btn${m.feedback?.rating === 1 ? " is-active" : ""}`}
+                          className={`alpha-router-msg-action-btn alpha-router-msg-feedback-btn${m.feedback?.rating === 1 ? " is-active" : ""}`}
                           disabled={readOnly}
                           onClick={() => void rateAssistantMessage(i, 1)}
                           title="Helpful"
@@ -4688,7 +4676,7 @@ export default function ChatPanel() {
                         </button>
                         <button
                           type="button"
-                          className={`cgpt-msg-action-btn cgpt-msg-feedback-btn${m.feedback?.rating === -1 ? " is-active" : ""}`}
+                          className={`alpha-router-msg-action-btn alpha-router-msg-feedback-btn${m.feedback?.rating === -1 ? " is-active" : ""}`}
                           disabled={readOnly}
                           onClick={() => void rateAssistantMessage(i, -1)}
                           title="Not helpful"
@@ -4701,7 +4689,7 @@ export default function ChatPanel() {
                     ) : null}
                     <button
                       type="button"
-                      className="cgpt-msg-action-btn"
+                      className="alpha-router-msg-action-btn"
                       onClick={() => void copyMessageContent(m.content, `${activeId}-${i}`)}
                     >
                       {copiedMessageKey === `${activeId}-${i}` ? "Copied" : "Copy"}
@@ -4710,7 +4698,7 @@ export default function ChatPanel() {
                       <>
                         <button
                           type="button"
-                          className="cgpt-msg-action-btn cgpt-msg-action-btn--icon"
+                          className="alpha-router-msg-action-btn alpha-router-msg-action-btn--icon"
                           title="Download CSV"
                           aria-label="Download CSV"
                           onClick={() => downloadCsv(`${activeId}-${i}`, m.content || "")}
@@ -4719,7 +4707,7 @@ export default function ChatPanel() {
                         </button>
                         <button
                           type="button"
-                          className="cgpt-msg-action-btn cgpt-msg-action-btn--icon"
+                          className="alpha-router-msg-action-btn alpha-router-msg-action-btn--icon"
                           title="Download PDF"
                           aria-label="Download PDF"
                           onClick={() => {
@@ -4734,7 +4722,7 @@ export default function ChatPanel() {
                         </button>
                         <button
                           type="button"
-                          className="cgpt-msg-action-btn cgpt-msg-action-btn--icon"
+                          className="alpha-router-msg-action-btn alpha-router-msg-action-btn--icon"
                           title="Download Word"
                           aria-label="Download Word document"
                           onClick={() => {
@@ -4757,19 +4745,19 @@ export default function ChatPanel() {
           <div ref={endRef} />
         </div>
 
-        <footer className="cgpt-footer">
+        <footer className="alpha-router-footer">
           {readOnly ? (
-            <div className="cgpt-composer cgpt-composer--readonly card">
+            <div className="alpha-router-composer alpha-router-composer--readonly card">
               <p className="muted-text" style={{ margin: 0 }}>
                 Read-only mode — browse your chat history above. Sending messages and using models is disabled.
               </p>
             </div>
           ) : (
-          <form className="cgpt-composer" onSubmit={send}>
+          <form className="alpha-router-composer" onSubmit={send}>
             {showScrollToBottomBtn && messages.length > 0 ? (
               <button
                 type="button"
-                className="cgpt-scroll-to-bottom"
+                className="alpha-router-scroll-to-bottom"
                 onClick={jumpToChatBottom}
                 aria-label="Scroll to latest messages"
                 title="Jump to bottom"
@@ -4779,11 +4767,11 @@ export default function ChatPanel() {
                 </svg>
               </button>
             ) : null}
-            <div className="cgpt-composer-box">
+            <div className="alpha-router-composer-box">
               <input
                 ref={fileInputRef}
                 type="file"
-                className="cgpt-file-input"
+                className="alpha-router-file-input"
                 accept={ATTACHMENT_ACCEPT}
                 multiple
                 onChange={(e) => void onAttachmentFilesSelected(e.target.files)}
@@ -4791,15 +4779,15 @@ export default function ChatPanel() {
                 aria-hidden
               />
               {pendingAttachments.length > 0 ? (
-                <div className="cgpt-pending-attachments">
+                <div className="alpha-router-pending-attachments">
                   {pendingAttachments.map((a, idx) => (
-                    <span key={`${a.url}-${idx}`} className="cgpt-pending-attachment">
-                      <span className="cgpt-pending-attachment__name" title={a.name}>
+                    <span key={`${a.url}-${idx}`} className="alpha-router-pending-attachment">
+                      <span className="alpha-router-pending-attachment__name" title={a.name}>
                         {a.kind === "image" ? "🖼" : "📄"} {a.name}
                       </span>
                       <button
                         type="button"
-                        className="cgpt-pending-attachment__remove"
+                        className="alpha-router-pending-attachment__remove"
                         onClick={() => removePendingAttachment(idx)}
                         aria-label={`Remove ${a.name}`}
                       >
@@ -4810,19 +4798,19 @@ export default function ChatPanel() {
                 </div>
               ) : null}
               {activeQueue.length > 0 ? (
-                <div className="cgpt-prompt-queue" aria-label="Queued messages">
+                <div className="alpha-router-prompt-queue" aria-label="Queued messages">
                   {activeQueue.map((item, idx) => (
-                    <div key={item.id} className="cgpt-prompt-queue__item">
-                      <span className="cgpt-prompt-queue__index" aria-hidden>
+                    <div key={item.id} className="alpha-router-prompt-queue__item">
+                      <span className="alpha-router-prompt-queue__index" aria-hidden>
                         {idx + 1}
                       </span>
-                      <span className="cgpt-prompt-queue__text" title={queueItemPreview(item)}>
+                      <span className="alpha-router-prompt-queue__text" title={queueItemPreview(item)}>
                         {queueItemPreview(item)}
                       </span>
-                      <div className="cgpt-prompt-queue__actions">
+                      <div className="alpha-router-prompt-queue__actions">
                         <button
                           type="button"
-                          className="cgpt-prompt-queue__btn"
+                          className="alpha-router-prompt-queue__btn"
                           onClick={() => editQueuedPrompt(item)}
                           aria-label="Edit queued message"
                           title="Edit"
@@ -4831,7 +4819,7 @@ export default function ChatPanel() {
                         </button>
                         <button
                           type="button"
-                          className="cgpt-prompt-queue__btn cgpt-prompt-queue__btn--remove"
+                          className="alpha-router-prompt-queue__btn alpha-router-prompt-queue__btn--remove"
                           onClick={() => activeId && removeQueuedPrompt(activeId, item.id)}
                           aria-label="Remove from queue"
                           title="Remove"
@@ -4845,7 +4833,7 @@ export default function ChatPanel() {
               ) : null}
               <textarea
                 ref={textareaRef}
-                className={`cgpt-composer-input cgpt-composer-input--${inputDirection}${showWelcomeComposerPrompt ? " cgpt-composer-input--welcome-prompt" : ""}`}
+                className={`alpha-router-composer-input alpha-router-composer-input--${inputDirection}${showWelcomeComposerPrompt ? " alpha-router-composer-input--welcome-prompt" : ""}`}
                 value={input}
                 dir={inputDirection}
                 onChange={onComposerInput}
@@ -4855,13 +4843,13 @@ export default function ChatPanel() {
                 placeholder={composerPlaceholder}
                 rows={1}
               />
-              <div className="cgpt-composer-bar">
-                <div className="cgpt-model-row">
-                  <div className="cgpt-tools-picker" ref={toolsMenuRef}>
+              <div className="alpha-router-composer-bar">
+                <div className="alpha-router-model-row">
+                  <div className="alpha-router-tools-picker" ref={toolsMenuRef}>
                     <button
                       ref={toolsTriggerRef}
                       type="button"
-                      className="cgpt-composer-ctrl cgpt-model-trigger cgpt-tools-trigger--icon"
+                      className="alpha-router-composer-ctrl alpha-router-model-trigger alpha-router-tools-trigger--icon"
                       onClick={() => {
                         setModelPickerMode(null);
                         setToolsMenuOpen((o) => !o);
@@ -4871,11 +4859,11 @@ export default function ChatPanel() {
                       aria-label="Tools"
                       title="Tools"
                     >
-                      <span className="cgpt-composer-ctrl__icon" aria-hidden>
+                      <span className="alpha-router-composer-ctrl__icon" aria-hidden>
                         <ComposerToolsIcon />
                       </span>
                       {activeToolCount > 0 ? (
-                        <span className="cgpt-composer-ctrl__badge">{activeToolCount}</span>
+                        <span className="alpha-router-composer-ctrl__badge">{activeToolCount}</span>
                       ) : null}
                     </button>
                   <ServerToolsMenu
@@ -4890,7 +4878,7 @@ export default function ChatPanel() {
                   </div>
                   <button
                     type="button"
-                    className={`cgpt-composer-ctrl cgpt-translate-eng-btn${translateToEngBusy ? " is-busy" : ""}`}
+                    className={`alpha-router-composer-ctrl alpha-router-translate-eng-btn${translateToEngBusy ? " is-busy" : ""}`}
                     onClick={() => void handleTranslateToEng()}
                     disabled={
                       !input.trim() ||
@@ -4909,20 +4897,20 @@ export default function ChatPanel() {
                     }
                   >
                     {translateToEngBusy ? (
-                      <span className="cgpt-composer-ctrl__spinner" aria-hidden />
+                      <span className="alpha-router-composer-ctrl__spinner" aria-hidden />
                     ) : (
-                      <span className="cgpt-composer-ctrl__icon" aria-hidden>
+                      <span className="alpha-router-composer-ctrl__icon" aria-hidden>
                         <ComposerTranslateIcon />
                       </span>
                     )}
-                    <span className="cgpt-composer-ctrl__label">To ENG</span>
+                    <span className="alpha-router-composer-ctrl__label">To ENG</span>
                   </button>
                 </div>
-                <div className="cgpt-send-group">
+                <div className="alpha-router-send-group">
                   {isStopVisible ? (
                     <button
                       type="button"
-                      className="cgpt-stop"
+                      className="alpha-router-stop"
                       onClick={() => stopGenerating(activeId)}
                       aria-label="Stop generating"
                       title="Stop generating"
@@ -4932,7 +4920,7 @@ export default function ChatPanel() {
                   ) : null}
                   <button
                     type="button"
-                    className="cgpt-attach-btn"
+                    className="alpha-router-attach-btn"
                     onClick={openAttachmentPicker}
                     disabled={attachUploading || !model}
                     aria-label="Attach file"
@@ -4944,7 +4932,7 @@ export default function ChatPanel() {
                   </button>
                   <button
                     type="button"
-                    className={voiceRecording ? "cgpt-stop cgpt-voice-btn--recording" : "cgpt-voice-btn"}
+                    className={voiceRecording ? "alpha-router-stop alpha-router-voice-btn--recording" : "alpha-router-voice-btn"}
                     onClick={() => void toggleVoiceRecording()}
                     disabled={voiceBusy || !model}
                     aria-label={voiceRecording ? "Stop recording" : "Record voice message"}
@@ -4960,7 +4948,7 @@ export default function ChatPanel() {
                   </button>
                   <button
                     type="submit"
-                    className="cgpt-send"
+                    className="alpha-router-send"
                     disabled={
                       (!input.trim() && !pendingAttachments.length) ||
                       !model ||
@@ -4977,7 +4965,7 @@ export default function ChatPanel() {
             </div>
           </form>
           )}
-          <p className="cgpt-disclaimer">Alpha Router can make mistakes. Check important info.</p>
+          <p className="alpha-router-disclaimer">{PRODUCT_NAME} can make mistakes. Check important info.</p>
         </footer>
       </section>
       </div>

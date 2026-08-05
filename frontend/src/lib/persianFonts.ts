@@ -32,12 +32,12 @@ export function normalizePersianFontId(id: string | null | undefined): string {
 }
 
 /**
- * Apply the selected Persian font to chat surfaces via data-persian-font on .cgpt-app.
+ * Apply the selected Persian font to chat surfaces via data-persian-font on .alpha-router-app.
  * Empty id clears the attribute (system UI font).
  */
 export function applyPersianFontToChat(fontId: string | null | undefined): void {
   const id = normalizePersianFontId(fontId);
-  const roots = document.querySelectorAll<HTMLElement>(".cgpt-app");
+  const roots = document.querySelectorAll<HTMLElement>(".alpha-router-app");
   roots.forEach((el) => {
     if (id) el.setAttribute("data-persian-font", id);
     else el.removeAttribute("data-persian-font");

@@ -10,6 +10,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.branding import OUTBOUND_USER_AGENT
+
 URL_RE = re.compile(r"https?://[^\s<>\[\]()\"']+", re.IGNORECASE)
 
 
@@ -113,7 +115,7 @@ async def fetch_url_text(url: str, max_chars: int = 14_000) -> str:
     from app.services.ssrf_guard import safe_client
 
     async with safe_client(
-        headers={"User-Agent": "Alpha Router/1.0 (+https://alpha-router.local)"},
+        headers={"User-Agent": OUTBOUND_USER_AGENT},
     ) as client:
         byte_limit = clamp_limit(
             get_settings().max_web_fetch_bytes,

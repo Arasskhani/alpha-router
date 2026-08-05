@@ -7,7 +7,7 @@ type Props = {
   showMark?: boolean;
 };
 
-/** Inline wordmark; optional raster mark from /alpha-router-mark.png. */
+/** Inline wordmark with the optional Alpha Router SVG mark. */
 export default function AlphaRouterLogo({ size = 32, className = "", showMark = false }: Props) {
   const wordSize = Math.round(size * 0.86);
   /* Intrinsic attrs; topbar CSS overrides to ~28px inside the fixed 40px bar. */

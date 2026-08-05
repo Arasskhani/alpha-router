@@ -8,6 +8,8 @@ import re
 import httpcore
 import httpx
 
+from app.branding import PRODUCT_NAME
+
 OPENROUTER_CONNECT_TIMEOUT = 15.0
 # GPT-5.4 Image and similar OpenRouter image models often need 130–150s; keep headroom.
 OPENROUTER_READ_TIMEOUT = 180.0
@@ -223,7 +225,7 @@ def build_openrouter_headers(api_key: str, *, referer: str | None = None) -> dic
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     if referer:
         headers["HTTP-Referer"] = referer
-        headers["X-Title"] = "Alpha Router"
+        headers["X-Title"] = PRODUCT_NAME
     return headers
 
 

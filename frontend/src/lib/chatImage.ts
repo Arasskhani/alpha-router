@@ -16,9 +16,12 @@ import {
   resolveRegenerateImageGeneration,
   type ImageAspectPresetId,
 } from "./imageSize";
+import {
+  IMAGE_MESSAGE_PREFIX,
+  IMAGE_PENDING_MARKER,
+} from "./chatMarkers";
 
-export const IMAGE_PENDING_MARKER = "__ALPHA_ROUTER_IMAGE_PENDING__";
-export const IMAGE_MESSAGE_PREFIX = "__ALPHA_ROUTER_IMAGE_JSON__:";
+export { IMAGE_MESSAGE_PREFIX, IMAGE_PENDING_MARKER } from "./chatMarkers";
 
 export type ImagePayload = {
   url: string;
@@ -480,7 +483,7 @@ export async function runBackgroundImageGeneration(opts: {
   try {
     const preparationStartedAt = performance.now();
     await syncForImageJob(pendingMsgs);
-    recordImageClientTiming("alpha_router:image:preparation", preparationStartedAt);
+    recordImageClientTiming("alpha-router:image:preparation", preparationStartedAt);
     notify(sessionId);
 
     let generated: ImagePayload;
@@ -507,7 +510,7 @@ export async function runBackgroundImageGeneration(opts: {
       const withImage: ChatMessage[] = [...localBase, imageMsg];
       await syncForImageJob(withImage);
     }
-    recordImageClientTiming("alpha_router:image:total", operationStartedAt);
+    recordImageClientTiming("alpha-router:image:total", operationStartedAt);
     notify(sessionId);
   } catch (err) {
     const aborted = err instanceof DOMException && err.name === "AbortError";

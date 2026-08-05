@@ -17,7 +17,6 @@ _KNOWN_EVENTS = frozenset(
         "csrf_failure",
         "repeated_401",
         "budget_hold_leak",
-        "migration_failure",
         "docs_denied",
         "production_guard_warning",
     }

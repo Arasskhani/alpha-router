@@ -947,7 +947,10 @@ async def report_plan_assignments(db: AsyncSession, plan_id: int | None) -> pd.D
 
 
 async def report_alpha_router_api_key_usage(
-    db: AsyncSession, start: datetime, end: datetime, alpha_router_api_key_id: int | None
+    db: AsyncSession,
+    start: datetime,
+    end: datetime,
+    alpha_router_api_key_id: int | None,
 ) -> pd.DataFrame:
     q = (
         select(
@@ -964,7 +967,9 @@ async def report_alpha_router_api_key_usage(
         .order_by(func.sum(RequestLog.total_cost_usd).desc())
     )
     if alpha_router_api_key_id:
-        q = q.where(RequestLog.alpha_router_api_key_id == alpha_router_api_key_id)
+        q = q.where(
+            RequestLog.alpha_router_api_key_id == alpha_router_api_key_id
+        )
     rows = (await db.execute(q)).all()
     data = []
     for key_id, cost, count in rows:
@@ -980,8 +985,15 @@ async def report_alpha_router_api_key_usage(
     return pd.DataFrame(data)
 
 
-async def report_alpha_router_api_keys_near_credit_limit(db: AsyncSession, threshold_pct: float) -> pd.DataFrame:
-    keys = (await db.execute(select(AlphaRouterApiKey).where(AlphaRouterApiKey.is_active == True))).scalars().all()  # noqa: E712
+async def report_alpha_router_api_keys_near_credit_limit(
+    db: AsyncSession,
+    threshold_pct: float,
+) -> pd.DataFrame:
+    keys = (
+        await db.execute(
+            select(AlphaRouterApiKey).where(AlphaRouterApiKey.is_active == True)  # noqa: E712
+        )
+    ).scalars().all()
     rows = []
     for k in keys:
         limit = float(k.credit_limit_usd or 0)
@@ -1077,9 +1089,17 @@ async def build_report(db: AsyncSession, report_type: str, params: dict[str, Any
     if report_type == "plan_assignments":
         return await report_plan_assignments(db, params.get("plan_id"))
     if report_type == "alpha_router_api_key_usage":
-        return await report_alpha_router_api_key_usage(db, start, end, params.get("alpha_router_api_key_id"))
+        return await report_alpha_router_api_key_usage(
+            db,
+            start,
+            end,
+            params.get("alpha_router_api_key_id"),
+        )
     if report_type == "alpha_router_api_keys_near_credit_limit":
-        return await report_alpha_router_api_keys_near_credit_limit(db, float(params.get("threshold_pct") or 80))
+        return await report_alpha_router_api_keys_near_credit_limit(
+            db,
+            float(params.get("threshold_pct") or 80),
+        )
 
     raise HTTPException(400, f"Unknown report_type: {report_type}")
 

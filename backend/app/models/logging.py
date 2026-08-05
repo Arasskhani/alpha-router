@@ -25,7 +25,12 @@ class RequestLog(Base):
     source_ip = Column(String(64), nullable=True)
     source = Column(String(32), default="gateway")  # openwebui | alpha_router_key | user_key
     client_app = Column(String(128), nullable=True)  # Kilo Code, Open WebUI, etc.
-    alpha_router_api_key_id = Column(Integer, ForeignKey("alpha_router_api_keys.id", ondelete="SET NULL"), index=True, nullable=True)
+    alpha_router_api_key_id = Column(
+        Integer,
+        ForeignKey("alpha_router_api_keys.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
     budget_reservation_id = Column(String(36), index=True, unique=True, nullable=True)
 
     prompt_tokens = Column(Integer, default=0)

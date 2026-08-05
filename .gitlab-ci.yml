@@ -23,6 +23,32 @@ backend-tests:
     - python -m pip check
     - PYTHONPATH=backend python -m pytest backend/tests -q
 
+deployment-config:
+  stage: verify
+  image: docker:27-cli
+  variables:
+    COMPOSE_PROJECT_NAME: "alpha-router"
+    POSTGRES_USER: "alpha_router"
+    POSTGRES_DB: "alpha_router"
+    POSTGRES_PASSWORD: "ci-compose-placeholder"
+    S3_ACCESS_KEY: "alpha_router"
+    S3_SECRET_KEY: "ci-compose-placeholder"
+    S3_BUCKET: "alpha-router-media"
+    SEAWEEDFS_ADMIN_PASSWORD: "ci-compose-placeholder"
+    SANDBOX_BROKER_TOKEN: "ci-compose-placeholder-at-least-32-characters"
+  rules:
+    - changes:
+        - docker-compose.yml
+        - Dockerfile
+        - sandbox/**/*
+        - sandbox-broker/**/*
+        - deploy/**/*
+        - .env.example
+        - .gitlab-ci.yml
+  script:
+    - cp .env.example .env
+    - docker compose config --quiet
+
 frontend-tests-and-build:
   stage: verify
   image: node:20

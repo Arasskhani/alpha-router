@@ -29,8 +29,6 @@ __pycache__
 
 # Local databases
 *.db
-alpha-router.db
-alpha-router.db
 
 # Docs and scripts not needed in the production image
 docs

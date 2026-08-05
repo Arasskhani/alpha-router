@@ -9,6 +9,7 @@ import ModelAccessModal from "../../components/models/ModelAccessModal";
 import { api } from "../../api";
 import { useConfirm } from "../../context/ConfirmContext";
 import { useDebounced } from "../../hooks/useDebounced";
+import { BROWSER_EVENT_NAMES, STORAGE_KEYS } from "../../lib/brand";
 import {
   accessCounts,
   accessTypeLabel,
@@ -23,11 +24,9 @@ import {
 type ViewMode = "table" | "browse";
 type BulkAction = "on" | "off" | "delete" | "public" | "private";
 
-const VIEW_STORAGE_KEY = "alpha-router-models-view";
-
 function loadViewMode(): ViewMode {
   try {
-    const v = localStorage.getItem(VIEW_STORAGE_KEY);
+    const v = localStorage.getItem(STORAGE_KEYS.modelsView);
     if (v === "browse" || v === "tile") return "browse";
     if (v === "table" || v === "list") return "table";
     return "browse";
@@ -80,13 +79,13 @@ export default function Models() {
       }
       setSelectedIds([]);
     };
-    window.addEventListener("alpha-router-models-sync-flash", onSyncFlash);
-    return () => window.removeEventListener("alpha-router-models-sync-flash", onSyncFlash);
+    window.addEventListener(BROWSER_EVENT_NAMES.modelsSyncFlash, onSyncFlash);
+    return () => window.removeEventListener(BROWSER_EVENT_NAMES.modelsSyncFlash, onSyncFlash);
   }, []);
 
   useEffect(() => {
     try {
-      localStorage.setItem(VIEW_STORAGE_KEY, viewMode);
+      localStorage.setItem(STORAGE_KEYS.modelsView, viewMode);
     } catch {
       /* ignore */
     }

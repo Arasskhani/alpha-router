@@ -29,7 +29,7 @@ _COMMON_PASSWORDS = frozenset(
         "welcome123",
         "changeme",
         "changeme123",
-        "alpha",
+        "alpha-router",
         "alpha-router123",
         "iloveyou",
         "abc123",

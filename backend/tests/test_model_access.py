@@ -172,14 +172,14 @@ async def _test_master_and_alpha_router_key_subjects() -> None:
         await set_model_access(db, priv, access_type=ACCESS_PRIVATE, user_ids=[owner.id])
         key = AlphaRouterApiKey(
             name="k1",
-            key_prefix="alpha_",
+            key_prefix="alpha_router_",
             key_hash="hash",
             owner_user_id=owner.id,
             is_active=True,
         )
         orphan = AlphaRouterApiKey(
             name="k2",
-            key_prefix="alpha_",
+            key_prefix="alpha_router_",
             key_hash="hash2",
             owner_user_id=None,
             is_active=True,
@@ -193,10 +193,16 @@ async def _test_master_and_alpha_router_key_subjects() -> None:
         assert await user_can_access_model(db, pub, master)
         assert not await user_can_access_model(db, priv, master)
 
-        owned = await resolve_access_subject(db, alpha_router_api_key_id=key.id)
+        owned = await resolve_access_subject(
+            db,
+            alpha_router_api_key_id=key.id,
+        )
         assert await user_can_access_model(db, priv, owned)
 
-        orphan_subj = await resolve_access_subject(db, alpha_router_api_key_id=orphan.id)
+        orphan_subj = await resolve_access_subject(
+            db,
+            alpha_router_api_key_id=orphan.id,
+        )
         assert orphan_subj.public_only
         assert not await user_can_access_model(db, priv, orphan_subj)
     await engine.dispose()

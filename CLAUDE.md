@@ -20,7 +20,7 @@ Three surfaces, one FastAPI process:
 |---|---|---|
 | User app (chat, media, activity) | `/app/*` | HttpOnly session cookie + CSRF |
 | Admin panel | `/admin/*` | same cookie, RBAC menu gating |
-| OpenAI-compatible gateway | `/v1/*` | Alpha Router API key (`Authorization: Bearer alpha_…`) |
+| OpenAI-compatible gateway | `/v1/*` | Alpha Router API key (`Authorization: Bearer alpha_router_…`) |
 
 The React SPA is compiled into `frontend/dist` and served by the same FastAPI app
 (`main.py:568-596`, SPA fallback with path-traversal containment).
@@ -30,13 +30,13 @@ The React SPA is compiled into `frontend/dist` and served by the same FastAPI ap
 ## 2. Repository layout
 
 ```
-Alpha Router/
+alpha-router/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py              app factory, lifespan, production guard, SPA serving
 │   │   ├── config.py            pydantic-settings Settings + INSECURE_DEFAULTS
 │   │   ├── database.py          async engine (+ optional read replica), get_db/get_read_db
-│   │   ├── db_migrate.py        1201 lines — schema patcher + 21 flagged one-time migrations
+│   │   ├── db_migrate.py        current-schema column/index patcher
 │   │   ├── sandbox_broker.py    STANDALONE FastAPI app (runs in its own container)
 │   │   ├── api/                 19 routers (~7k LOC)
 │   │   ├── models/              13 ORM modules
@@ -51,7 +51,7 @@ Alpha Router/
 ├── deploy/seaweedfs/            entrypoint.sh + pinned VERSION (4.40)
 ├── scripts/                     PowerShell ops scripts (Windows host)
 ├── docs/                        security audit + operations runbook
-├── docker-compose.yml           postgres, pgbouncer, redis, seaweedfs, sandbox-broker, alpha
+├── docker-compose.yml           postgres, pgbouncer, redis, seaweedfs, alpha-router-sandbox-broker, alpha-router
 ├── Dockerfile                   multi-stage: node build → python 3.12-slim + playwright chromium
 └── .gitlab-ci.yml               backend tests, frontend test+build, pip-audit, npm audit, trivy
 ```
@@ -59,15 +59,15 @@ Alpha Router/
 ### Runtime topology (Compose)
 
 ```
-browser ──► alpha_router:8080 (uvicorn, 4 workers, read_only rootfs, cap_drop ALL)
+browser ──► alpha-router:8080 (uvicorn, 4 workers, read_only rootfs, cap_drop ALL)
               ├─► pgbouncer:6432 (transaction pooling) ──► postgres:16
               ├─► redis:7 (rate limits, OIDC/2FA/SSO state, litellm cache)
               ├─► seaweedfs:8333 (S3 API, all media blobs)
-              └─► sandbox-broker:8081  [network: sandbox_control, internal]
+              └─► alpha-router-sandbox-broker:8081  [network: alpha_router_sandbox_control, internal]
                         └─► docker.sock ──► spawns alpha-router-sandbox:latest per execution
 ```
 
-`sandbox_control` is an internal Docker network; the broker port is never published.
+`alpha_router_sandbox_control` is the internal Docker network; the broker port is never published.
 The **Docker socket mount on the broker is the residual host trust boundary**
 (audit finding F-01).
 
@@ -76,7 +76,7 @@ The **Docker socket mount on the broker is the residual host trust boundary**
 ## 3. Configuration
 
 Single source: `backend/app/config.py` → `Settings` (env-prefixed, `.env` file).
-`.env.example` (199 lines) is the documented template; `.env` is git-ignored.
+`.env.example` is the documented template; `.env` is git-ignored.
 
 Key knobs by group:
 
@@ -137,8 +137,8 @@ Compose hostnames are deliberately accepted so single-box installs still boot.
 Schema is created with `Base.metadata.create_all` under a PG advisory lock, then
 `apply_schema_column_patches()` adds any missing ORM columns/indexes (always
 nullable, no defaults — see §9 drift note). There is **no Alembic version history**
-despite alembic being installed; migrations are the flag-driven functions in
-`db_migrate.py`.
+despite alembic being installed. Historical data and storage migrations were
+removed for the approved Greenfield reset.
 
 ---
 
@@ -167,7 +167,7 @@ on RFC1918 addresses (single-box LAN installs).
 - `require_active_user` — adds the `is_active` check.
 - `require_rbac_menu(menu, write=)` → 21 generated `require_<menu>` /
   `require_<menu>_write` pairs.
-- `require_super_admin` — used only by data-key rotation and admin 2FA disable.
+- `require_super_admin` — used by destructive Super-Admin-only operations.
 - `get_bearer_token` — returns the raw JWT unvalidated, for the headless-PDF
   renderer to re-authenticate as the caller.
 
@@ -276,12 +276,12 @@ a hard 0.70 success-rate floor (≥8 samples → ×0.35 demotion). Retries with
   `user_chat_storage_service` (1097 lines; revisions, 512 KB message cap, PG FTS
   search with SQLite LIKE fallback), `chat_title_service`, `voice_refine_service`,
   `image_prompt_service`, `chat_tools_service`, `code_interpreter_service`,
-  `chat_feedback_service`, `chat_import_export` (alpha / ChatGPT / Open WebUI
+  `chat_feedback_service`, `chat_import_export` (Alpha Router / ChatGPT / Open WebUI
   formats), `chat_export_service` (Playwright PDF), `chat_docx_service`,
   `transcription_service`, `attachment_policy`, `attachment_extract`.
 - **Media/storage** — `storage_service`, `object_storage_service` (boto3),
   `user_media_service`, `media_authorization_service` (404-not-403 existence hiding),
-  `image_decode_policy` (fail-closed Pillow), `storage_migration_service`.
+  `image_decode_policy` (fail-closed Pillow).
 - **Catalog** — `model_sync`, `model_capabilities`, `llm_providers`,
   `prompt_cache_service`.
 - **Connectors/MCP** — `connector_registry` (frozen 11-provider allowlist,
@@ -298,7 +298,7 @@ a hard 0.70 success-rate floor (≥8 samples → ×0.35 demotion). Retries with
 - **Scheduling/lifecycle** — `scheduler` (APScheduler: model sync 30 min, budget
   reset monthly, reservation expiry 5 min, storage cleanup 03:00, chat retention
   04:00, chat stats 03:30, user media hourly, metrics snapshot hourly),
-  `schedule_timezone`, `retention_policy_service`, `migration_flags`, `smtp_service`.
+  `schedule_timezone`, `retention_policy_service`, `smtp_service`.
 
 ---
 
@@ -326,7 +326,7 @@ contexts + module singletons in `lib/`.
 - **Private mode** is per-session and irreversible: nothing is persisted server-side,
   media goes to IndexedDB (`alpha_router_private_media`), attachments are processed in the
   browser, and everything is wiped on logout unless `alpha_router_private_persist === "1"`.
-- Cross-tab: `BroadcastChannel("alpha-router-chat-sync")` + Web Locks leader election
+- Cross-tab: `BroadcastChannel("alpha_router_chat_sync")` + Web Locks leader election
   (`lib/chatLeader.ts`).
 - `lib/chatStorage.ts` (1918 lines) is the client-side sync engine: dirty sets,
   pending-append queue, revision conflicts (409) with retry/reconcile, incremental
@@ -388,8 +388,6 @@ Collected during the read. Nothing here has been changed.
   `RequestLog` in the window into Python and aggregate there — O(buckets × sources × N).
 - `user_media_service.py:111-138,272-277` loads all matching `MediaAsset` rows and
   paginates in Python.
-- `storage_migration_service.py:308-334` holds every media blob in memory before
-  writing.
 - N+1 patterns: `user_role_service.py:90-107`, `plan_assignment_service.py:93-115`,
   `reports_service.py:229,918,928,971`.
 
@@ -397,10 +395,6 @@ Collected during the read. Nothing here has been changed.
 
 - `db_migrate.py:61-63` — patched columns are always added **nullable with no
   default**, so upgraded databases drift from ORM `nullable=False`.
-- `db_migrate.py:525-841` — the four `rbac_removed_roles_v1..v4` migrations are
-  byte-identical logic; all four rewrite `user_role_assignments` on every fresh boot.
-- ~15 bare `except Exception: pass` blocks around DDL and `SELECT`s coerce real DB
-  errors into "table absent" (`db_migrate.py:886,980,993,1073,1088,1103`).
 - `retention_policy_service.py:229` and `user_account_cleanup_service.py:63-67`
   delete `ChatMessage` without touching `ChatMessageFeedback` — correctness depends
   entirely on a DB cascade.
@@ -427,8 +421,8 @@ Collected during the read. Nothing here has been changed.
   `ChatPanel`, `Authentication.tsx`, `Groups.tsx`, `Connections.tsx`, `Users.tsx`.
 - `@tanstack/react-virtual` is a dependency but imported nowhere;
   `ChatSidebarVirtual.tsx` is an unvirtualized `<ul>`.
-- ~35 dead exports in `lib/` (all of `privateModeMigration.ts`, 12 `@deprecated`
-  symbols in `chatStorage.ts`). `ToolCallCard.tsx` is imported nowhere.
+- ~12 `@deprecated` exports in `chatStorage.ts` remain dead.
+  `ToolCallCard.tsx` is imported nowhere.
 - `styles.css:6553,6574` use `var(--card)`, which is **never defined**.
 - Accessibility: `Modal.tsx` has no focus trap or focus restore; `MessageInfoButton`
   is a focusable button with no `onClick`; messages keyed by array index;
@@ -480,8 +474,8 @@ Collected during the read. Nothing here has been changed.
 Findings on record: **F-01 Critical** — Docker socket on `sandbox-broker`.
 **High** — F-02 production guard soft-fail, F-03 legacy Bearer bypasses CSRF,
 F-04 app bound to all interfaces on `:8080`. **Medium** — F-05 rate-limit
-fail-open, F-06 CSP Report-Only only, F-07 SSRF kill-switches exist, F-08 legacy
-plaintext decrypt fallback, F-09 private-mode client-side confidentiality, F-10
+fail-open, F-06 CSP Report-Only only, F-07 SSRF kill-switches exist, F-09
+private-mode client-side confidentiality, F-10
 broker without explicit non-root `USER`. **Low** — F-11 master key compared with
 `==`, F-12 masked secrets reveal last 4 chars, F-13 `dangerouslySetInnerHTML` in
 `ChatCodeBlock`. **Informational** — F-14 users-menu admins can read any media
@@ -489,16 +483,13 @@ broker without explicit non-root `USER`. **Low** — F-11 master key compared wi
 
 `docs/SECURITY_OPERATIONS_RUNBOOK.md` is the operational counterpart: health
 checks, the `/api/admin/operations/observability` counter list, the production
-configuration gate checklist, rollback procedure, data-key-rotation recovery, and
+configuration gate checklist, rollback procedure, data-key recovery, and
 sandbox recovery.
 
-**Current `.env` state:** all application secrets (SECRET_KEY 64,
-DATA_ENCRYPTION_KEY 64, POSTGRES/REDIS/S3/SEAWEED/SANDBOX tokens 32–64 chars) are
-real, non-placeholder values. `ENVIRONMENT` is set, `PRODUCTION_GUARD_MODE=hard-fail`.
-Two issues: the file contains ~20 stray keys that look pasted from container images
-(`GOSU_VERSION`, `PG_SHA256`, `PYTHON_VERSION`, `MC_CONFIG_DIR`, `PGDATA`, …), and
-`POSTGRES_USER` / `POSTGRES_DB` are empty while `docker-compose.yml` expects them
-(Compose defaults them to `alpha`, so it works, but it is fragile).
+**Current `.env` state:** application secret values were preserved during Stage 8.
+The pasted container-image keys were removed, `POSTGRES_USER` / `POSTGRES_DB` are
+both `alpha_router`, the bucket is `alpha-router-media`, and the Compose project is
+`alpha-router`. `PRODUCTION_GUARD_MODE=hard-fail` remains configured.
 
 ---
 
@@ -510,8 +501,8 @@ Two issues: the file contains ~20 stray keys that look pasted from container ima
   (`admin.py:1536,1560,2574`, `user_media.py:87`). Don't add more; commit in the
   handler.
 - **Never write DDL by hand for a new column.** Add it to the ORM model;
-  `apply_schema_column_patches` picks it up. For data changes, add a flagged
-  migration in `db_migrate.py` + a key in `migration_flags.py`.
+  `apply_schema_column_patches` picks it up. Data-shape changes require an
+  explicit reviewed migration strategy; no historical migration registry remains.
 - **All outbound user-influenced HTTP goes through `ssrf_guard.safe_client` +
   `bounded_io.bounded_get_bytes`.** There are existing violations (§9 #20, #21);
   don't add more.

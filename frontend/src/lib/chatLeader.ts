@@ -1,7 +1,8 @@
 /** Multi-tab leader election: leader tab syncs chat folders; all tabs may sync sessions/messages. */
 
-const CHANNEL_NAME = "alpha-router-chat-sync";
-const LOCK_NAME = "alpha-router-chat-leader";
+export const CHAT_SYNC_CHANNEL_NAME = "alpha_router_chat_sync";
+export const CHAT_LEADER_LOCK_NAME = "alpha_router_chat_leader";
+export const CHAT_REFRESH_EVENT_NAME = "alpha_router_chat_refresh";
 
 const tabId =
   typeof crypto !== "undefined" && crypto.randomUUID
@@ -32,7 +33,7 @@ function holdLeaderLock(): void {
   }
   void navigator.locks
     .request(
-      LOCK_NAME,
+      CHAT_LEADER_LOCK_NAME,
       { ifAvailable: true },
       (lock) => {
         if (!lock) {
@@ -56,7 +57,7 @@ function holdLeaderLock(): void {
 export function initChatLeader(): void {
   if (typeof window === "undefined") return;
   if (supportsBroadcast()) {
-    channel = new BroadcastChannel(CHANNEL_NAME);
+    channel = new BroadcastChannel(CHAT_SYNC_CHANNEL_NAME);
     channel.onmessage = (ev) => {
       const data = ev.data as { type?: string; tabId?: string };
       if (data?.type === "leader" && data.tabId !== tabId) {
@@ -64,7 +65,7 @@ export function initChatLeader(): void {
         notify();
       }
       if (data?.type === "refresh") {
-        window.dispatchEvent(new CustomEvent("alpha-router-chat-refresh", { detail: data }));
+        window.dispatchEvent(new CustomEvent(CHAT_REFRESH_EVENT_NAME, { detail: data }));
       }
     };
   }
@@ -90,6 +91,8 @@ export function onChatLeaderChange(fn: (isLeader: boolean) => void): () => void 
 export function broadcastChatRefresh(detail?: Record<string, unknown>): void {
   channel?.postMessage({ type: "refresh", ...detail });
   if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent("alpha-router-chat-refresh", { detail: { type: "refresh", ...detail } }));
+    window.dispatchEvent(
+      new CustomEvent(CHAT_REFRESH_EVENT_NAME, { detail: { type: "refresh", ...detail } }),
+    );
   }
 }

@@ -4,7 +4,7 @@ The previous ORM read-modify-write pattern (`obj.col = obj.col + cost`) loses
 updates when two concurrent transactions both read the old value. The fix uses
 a single SQL `UPDATE ... SET col = col + :cost` which is atomic at the row
 level. These tests verify the atomic increment path for both user budget and
-alpha API key usage counters, including NULL handling and concurrent runs.
+Alpha Router API key usage counters, including NULL handling and concurrent runs.
 """
 
 import asyncio
@@ -113,7 +113,9 @@ async def _test_atomic_key_increment_handles_null() -> None:
     async with factory() as db:
         await db.execute(
             __import__("sqlalchemy").text(
-                "UPDATE alpha_router_api_keys SET period_used_usd = NULL, total_used_usd = NULL WHERE id = :kid"
+                "UPDATE alpha_router_api_keys "
+                "SET period_used_usd = NULL, total_used_usd = NULL "
+                "WHERE id = :kid"
             ),
             {"kid": kid},
         )

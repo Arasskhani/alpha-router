@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_active_user
+from app.branding import LOGGER_NAMESPACE
 from app.core.security import create_access_token, hash_password, verify_password
 from app.database import get_db
 from app.models.user import User
@@ -39,7 +40,7 @@ from app.services.totp_service import (
 from app.services.user_role_service import get_user_role_slugs
 
 router = APIRouter(prefix="/api/user/settings", tags=["user-settings"])
-logger = logging.getLogger("alpha_router.security.settings")
+logger = logging.getLogger(f"{LOGGER_NAMESPACE}.security.settings")
 
 
 def _require_local(user: User) -> None:

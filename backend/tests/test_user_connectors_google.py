@@ -144,7 +144,7 @@ def test_full_google_connect_flow(monkeypatch, factory_and_user):
     assert "client_id=cid" in auth_url
     assert "gmail.readonly" in auth_url
 
-    # The begin route set a alpha_router_connector_state cookie; capture it.
+    # The begin route set an Alpha Router connector-state cookie; capture it.
     nonce_cookie = client.cookies.get("alpha_router_connector_state")
     assert nonce_cookie
 

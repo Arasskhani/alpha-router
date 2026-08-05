@@ -22,7 +22,7 @@ class AIModel(Base):
     """
     Catalog entry for a provider model.
     Costs are stored exactly as returned by the provider (per 1M or 1K tokens as noted).
-    Alpha Router never modifies pricing — only displays and uses for billing math.
+    Alpha Router never modifies pricing — only displays and uses it for billing math.
     """
 
     __tablename__ = "ai_models"

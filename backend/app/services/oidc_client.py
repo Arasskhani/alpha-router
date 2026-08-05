@@ -16,10 +16,11 @@ from urllib.parse import urlencode, urlsplit
 import httpx
 from jose import JWTError, jwk, jwt
 
+from app.branding import OIDC_STATE_COOKIE_NAME
 from app.config import get_settings
 from app.services.auth_urls import public_api_base, validate_frontend_url
 
-STATE_COOKIE_NAME = "alpha_router_oidc_state"
+STATE_COOKIE_NAME = OIDC_STATE_COOKIE_NAME
 STATE_TTL_SECONDS = 600
 CLOCK_SKEW_SECONDS = 60
 ALLOWED_ALGS = ("RS256", "ES256")

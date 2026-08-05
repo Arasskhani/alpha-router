@@ -9,7 +9,6 @@ import hashlib
 import json
 import logging
 import time
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy import delete, func, select
@@ -23,7 +22,6 @@ from app.services import object_storage_service as oss
 
 logger = logging.getLogger(__name__)
 
-_LEGACY_MEDIA_ROOT = Path(__file__).resolve().parents[2] / "storage" / "media"
 _KEY_RETENTION_DAYS = "storage_retention_days"
 _KEY_CLEAR_SCHEDULE_ENABLED = "storage_clear_schedule_enabled"
 _KEY_CLEAR_SCHEDULE_HOUR = "storage_clear_schedule_hour"
@@ -45,10 +43,6 @@ def media_input_limit() -> int:
         minimum=1024 * 1024,
         maximum=MAX_UPLOAD_FILE_MB * 1024 * 1024,
     )
-
-
-def _legacy_media_root() -> Path:
-    return _LEGACY_MEDIA_ROOT
 
 
 def _ext_from_mime(mime: str) -> str:
@@ -189,10 +183,6 @@ def sha256_hex(blob: bytes) -> str:
     return hashlib.sha256(blob).hexdigest()
 
 
-def _sha256_hex(blob: bytes) -> str:
-    return sha256_hex(blob)
-
-
 def user_storage_slug(username: str | None) -> str:
     return _sanitize_username_dir(username or "unknown")
 
@@ -228,32 +218,6 @@ def _sanitize_username_dir(username: str) -> str:
     return safe or "unknown"
 
 
-def user_media_rel_dir(username: str) -> str:
-    return f"users/{_sanitize_username_dir(username)}".replace("\\", "/")
-
-
-def user_media_abs_dir(username: str) -> Path:
-    return _legacy_media_root() / user_media_rel_dir(username)
-
-
-def ensure_user_media_directory(username: str) -> Path:
-    """Legacy helper retained for callers; object storage needs no per-user folder."""
-    return user_media_abs_dir(username)
-
-
-def _user_storage_path(username: str | None, content_hash: str, ext: str) -> str:
-    return object_key_for_user_media(username, content_hash, ext)
-
-
-def _is_legacy_blob_path(storage_path: str) -> bool:
-    normalized = (storage_path or "").replace("\\", "/").lstrip("/")
-    return normalized.startswith("blobs/") or normalized.startswith("users/")
-
-
-def _legacy_local_path(storage_path: str) -> Path:
-    return _legacy_media_root() / storage_path.replace("\\", "/")
-
-
 async def _put_object_once(key: str, blob: bytes, mime: str) -> bool:
     if oss.object_exists(key):
         return False
@@ -277,13 +241,6 @@ async def unlink_storage_if_unreferenced(db: AsyncSession, storage_path: str) ->
         return
     if oss.is_cdn_object_key(storage_path):
         await asyncio.to_thread(oss.delete_object, storage_path)
-        return
-    p = _legacy_local_path(storage_path)
-    try:
-        if p.exists():
-            p.unlink()
-    except Exception:
-        pass
 
 
 async def _find_user_asset_by_hash(
@@ -487,24 +444,16 @@ async def store_generated_blob(
 
 def read_media_bytes_sync(asset: MediaAsset) -> bytes:
     path = (asset.storage_path or "").replace("\\", "/")
-    if oss.is_cdn_object_key(path):
-        try:
-            return oss.get_object_bytes(path)
-        except oss.ObjectNotFoundError:
-            raise FileNotFoundError(path) from None
-    local = _legacy_local_path(path)
-    if local.is_file():
-        return local.read_bytes()
-    raise FileNotFoundError(path)
+    if not oss.is_cdn_object_key(path):
+        raise FileNotFoundError(path)
+    try:
+        return oss.get_object_bytes(path)
+    except oss.ObjectNotFoundError:
+        raise FileNotFoundError(path) from None
 
 
 async def read_media_bytes(asset: MediaAsset) -> bytes:
     return await asyncio.to_thread(read_media_bytes_sync, asset)
-
-
-def media_file_path(asset: MediaAsset) -> Path:
-    """Legacy local path helper; prefer read_media_bytes for object storage."""
-    return _legacy_local_path(asset.storage_path)
 
 
 async def list_user_media(db: AsyncSession, user_id: int, limit: int = 200) -> list[MediaAsset]:
@@ -552,13 +501,6 @@ async def clear_all_media(db: AsyncSession) -> dict[str, int]:
     for path in paths:
         if oss.is_cdn_object_key(path):
             await asyncio.to_thread(oss.delete_object, path)
-            continue
-        p = _legacy_local_path(path)
-        try:
-            if p.exists():
-                p.unlink()
-        except Exception:
-            pass
     return {"removed_files": removed}
 
 
@@ -590,70 +532,3 @@ def format_size(size_bytes: int) -> str:
             return f"{size:.1f} {unit}"
         size /= 1024.0
     return f"{size_bytes} B"
-
-
-async def ensure_all_user_media_directories(db: AsyncSession) -> int:
-    users = (await db.execute(select(User))).scalars().all()
-    return len(users)
-
-
-async def migrate_legacy_blob_storage(db: AsyncSession) -> dict[str, int | bool]:
-    """Move legacy shared/local blobs into object storage (once)."""
-    from app.services.migration_flags import LEGACY_BLOB_STORAGE_KEY, is_migration_completed, mark_migration_completed
-
-    if await is_migration_completed(db, LEGACY_BLOB_STORAGE_KEY):
-        return {"skipped": True}
-
-    users = (await db.execute(select(User))).scalars().all()
-    username_by_id = {u.id: u.username for u in users}
-
-    rows = (await db.execute(select(MediaAsset))).scalars().all()
-    migrated = 0
-    skipped = 0
-    missing = 0
-    legacy_paths_to_cleanup: set[str] = set()
-
-    for row in rows:
-        if oss.is_cdn_object_key(row.storage_path):
-            skipped += 1
-            continue
-        if not _is_legacy_blob_path(row.storage_path):
-            skipped += 1
-            continue
-
-        if not username_by_id.get(row.user_id):
-            missing += 1
-            continue
-
-        ext = Path(row.storage_path).suffix or _ext_from_mime(row.mime_type)
-        content_hash = (row.content_hash or "").strip() or f"asset-{row.id}"
-        old_rel = row.storage_path
-        old_abs = _legacy_local_path(old_rel)
-
-        if not old_abs.is_file():
-            logger.warning("Missing media blob for asset %s at %s", row.id, old_abs)
-            missing += 1
-            continue
-
-        blob = old_abs.read_bytes()
-        blob, mime, content_hash = media_content_hash(blob, row.mime_type, row.kind)
-        username = username_by_id.get(row.user_id) or "unknown"
-        object_key = object_key_for_user_media(username, content_hash, ext)
-        await _put_object_once(object_key, blob, mime)
-        row.storage_path = object_key
-        row.content_hash = content_hash
-        row.mime_type = mime
-        row.size_bytes = len(blob)
-        legacy_paths_to_cleanup.add(old_rel)
-        migrated += 1
-
-    await db.flush()
-
-    for legacy_path in legacy_paths_to_cleanup:
-        await unlink_storage_if_unreferenced(db, legacy_path)
-
-    if migrated:
-        logger.info("Migrated %s media file(s) into object storage", migrated)
-
-    await mark_migration_completed(db, LEGACY_BLOB_STORAGE_KEY)
-    return {"users": len(users), "migrated": migrated, "skipped": skipped, "missing": missing}

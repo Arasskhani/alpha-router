@@ -9,13 +9,13 @@ Git.
 ```powershell
 docker compose ps
 Invoke-WebRequest http://localhost:8080/health -UseBasicParsing
-docker compose logs --tail=100 alpha
+docker compose logs --tail=100 alpha-router
 ```
 
 The public health response is deliberately minimal:
 
 ```json
-{"status":"ok","service":"alpha"}
+{"status":"ok","service":"alpha-router"}
 ```
 
 It does not prove that every dependency is healthy. Check PostgreSQL,
@@ -42,7 +42,7 @@ GET /api/admin/operations/observability
 
 Counters include Redis fallback, SSRF blocks, CSRF failures, denied OpenAPI
 requests, production-guard warnings, broker failures, repeated 401 responses,
-budget-hold leaks, and migration failures. Counters are per worker/process and
+and budget-hold leaks. Counters are per worker/process and
 reset on restart; they are diagnostic signals, not fleet-wide billing or audit
 records.
 
@@ -83,7 +83,7 @@ For a local Compose rollback, restore the previous image/configuration and
 recreate only the affected service:
 
 ```powershell
-docker compose up -d --force-recreate alpha
+docker compose up -d --force-recreate alpha-router
 docker compose ps
 Invoke-WebRequest http://localhost:8080/health -UseBasicParsing
 ```
@@ -92,7 +92,8 @@ Do not remove database, Redis, or SeaweedFS volumes during an application rollba
 
 ### Object storage (SeaweedFS)
 
-Alpha Router uses SeaweedFS only (`seaweedfs` Compose service).
+Alpha Router uses SeaweedFS only (`seaweedfs` Compose service) and the intended
+Stage 8 bucket name `alpha-router-media`.
 
 ```powershell
 # Security surface check (host)
@@ -105,14 +106,13 @@ Alpha Router uses SeaweedFS only (`seaweedfs` Compose service).
 Pin SeaweedFS image updates via `deploy/seaweedfs/VERSION` and
 `docker-compose.yml` / CI `SEAWEEDFS_IMAGE` together.
 
-## Data-key rotation recovery
+## Data-encryption-key recovery
 
-1. Stop and preserve the failing application image/log context.
-2. Keep the old key available through the approved secret-management process.
-3. Restore the database backup in an isolated environment first.
-4. Verify decrypt/read behavior without printing plaintext.
-5. Re-run migration only after the cause is understood.
-6. Rotate the old credential after recovery if it was exposed.
+Alpha Router has one fail-closed encryption key and no historical-key reader.
+If `DATA_ENCRYPTION_KEY` is lost or changed, stop the application and restore
+the correct value through the approved secret-management process. Never print
+stored ciphertext or plaintext while diagnosing the mismatch. A deliberate key
+change requires a fresh deployment and data reset.
 
 ## Sandbox recovery
 

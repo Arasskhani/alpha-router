@@ -261,7 +261,7 @@ export default function Authentication() {
         <label className="auth-sync-schedule__row">
           <button
             type="button"
-            className={`cgpt-toggle${enabled ? " on" : ""}`}
+            className={`alpha-router-toggle${enabled ? " on" : ""}`}
             aria-pressed={enabled}
             onClick={() => onChange({ enabled: !enabled })}
           />

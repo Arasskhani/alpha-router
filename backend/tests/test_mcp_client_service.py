@@ -113,6 +113,7 @@ async def _run_list_tools_isolation(engine, factory):
     # Only Alice's connector (gmail) should have been queried.
     assert len(tools) == 1
     assert tools[0]["_alpha_router_provider"] == "gmail"
+    assert tools[0]["_alpha_router_tool"] == "search"
     assert tools[0]["function"]["name"].startswith("gmail.")
     # The bearer used must be Alice's, never Bob's.
     assert any("ALICE-TOK" in t for t in seen_tokens)

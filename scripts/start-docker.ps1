@@ -1,5 +1,5 @@
 # Alpha Router - Docker production stack
-# Starts all services via docker-compose: PostgreSQL, Redis, SeaweedFS, Alpha Router app container
+# Starts all services via Docker Compose: PostgreSQL, Redis, SeaweedFS, and Alpha Router.
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
@@ -26,10 +26,10 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host ""
-Write-Host "Alpha Router:              http://localhost:8080  (wait ~30s on first build)" -ForegroundColor Green
+Write-Host "Alpha Router:       http://localhost:8080  (wait ~30s on first build)" -ForegroundColor Green
 Write-Host "SeaweedFS Admin UI: http://localhost:23646  (SEAWEEDFS_ADMIN_PASSWORD in .env)" -ForegroundColor Yellow
 Write-Host "SeaweedFS S3 API:   http://127.0.0.1:8333  (localhost only)" -ForegroundColor DarkGray
 Write-Host "PostgreSQL:         localhost:5432" -ForegroundColor DarkGray
 Write-Host ""
-Write-Host "Following alpha container logs (Ctrl+C to stop watching; containers keep running)..." -ForegroundColor Cyan
-docker compose logs -f alpha
+Write-Host "Following Alpha Router container logs (Ctrl+C to stop watching; containers keep running)..." -ForegroundColor Cyan
+docker compose logs -f alpha-router

@@ -23,11 +23,12 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.branding import LOGGER_NAMESPACE
 from app.models.user_connector import UserConnector
 from app.services.connector_registry import get_connector, is_allowed_mcp_url
 from app.services.secret_crypto import decrypt_secret, encrypt_secret
 
-logger = logging.getLogger("alpha_router.mcp")
+logger = logging.getLogger(f"{LOGGER_NAMESPACE}.mcp")
 
 _JSONRPC_HEADERS = {
     "content-type": "application/json",

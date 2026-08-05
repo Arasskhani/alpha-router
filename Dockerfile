@@ -22,15 +22,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 # rendering (chat export & activity PDF). Pinned to a system-wide path so the
 # non-root runtime user can read it.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN playwright install --with-deps chromium
+RUN PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=120000 playwright install --with-deps chromium
 
 COPY backend/app ./app
 COPY --from=frontend-build /fe/dist ./frontend/dist
-RUN groupadd --system --gid 10001 alpha \
-    && useradd --system --uid 10001 --gid 10001 --create-home --home-dir /home/alpha_router alpha \
-    && chown -R alpha_router:alpha /app /home/alpha_router
+RUN groupadd --system --gid 10001 alpha_router \
+    && useradd --system --uid 10001 --gid 10001 --create-home --home-dir /home/alpha_router alpha_router \
+    && chown -R alpha_router:alpha_router /app /home/alpha_router
 
-USER alpha
+USER alpha_router
 
 EXPOSE 8080
 ENV DATABASE_URL=postgresql+asyncpg://alpha_router:changeme@postgres:5432/alpha_router

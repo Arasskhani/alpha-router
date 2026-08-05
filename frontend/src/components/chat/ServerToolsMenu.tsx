@@ -36,7 +36,7 @@ function Toggle({
   return (
     <button
       type="button"
-      className={`cgpt-toggle${on ? " on" : ""}`}
+      className={`alpha-router-toggle${on ? " on" : ""}`}
       disabled={disabled}
       title={disabled ? disabledTitle : undefined}
       onClick={(e) => {
@@ -46,7 +46,7 @@ function Toggle({
       aria-label={label}
       aria-pressed={on}
     >
-      <span className="cgpt-toggle-knob" />
+      <span className="alpha-router-toggle-knob" />
     </button>
   );
 }
@@ -70,16 +70,16 @@ function ToolRow({
 }) {
   return (
     <div
-      className={`cgpt-server-tool${disabled ? " is-disabled" : ""}`}
+      className={`alpha-router-server-tool${disabled ? " is-disabled" : ""}`}
       onMouseDown={(e) => e.stopPropagation()}
       title={disabled ? disabledTitle : undefined}
     >
-      <span className="cgpt-server-tool__icon" aria-hidden>
+      <span className="alpha-router-server-tool__icon" aria-hidden>
         {icon}
       </span>
-      <div className="cgpt-server-tool__text">
+      <div className="alpha-router-server-tool__text">
         <strong>{title}</strong>
-        <span className="cgpt-server-tool__desc">{description}</span>
+        <span className="alpha-router-server-tool__desc">{description}</span>
       </div>
       <Toggle
         on={on}
@@ -176,14 +176,14 @@ export default function ServerToolsMenu({
 
   return createPortal(
     <div
-      className="cgpt-server-tools-menu"
+      className="alpha-router-server-tools-menu"
       role="menu"
       aria-label="Chat Tools"
       style={{ left: pos.left, bottom: pos.bottom, width: Math.min(MENU_WIDTH, window.innerWidth - 16) }}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
-      <header className="cgpt-server-tools-menu__head">Chat Tools</header>
+      <header className="alpha-router-server-tools-menu__head">Chat Tools</header>
 
       <ToolRow
         icon={
@@ -226,16 +226,16 @@ export default function ServerToolsMenu({
       />
 
       {tools.imageGeneration ? (
-        <div className="cgpt-image-aspect-picker" onMouseDown={(e) => e.stopPropagation()}>
-          <span className="cgpt-image-aspect-picker__label">Aspect ratio</span>
-          <div className="cgpt-image-aspect-picker__options" role="group" aria-label="Image aspect ratio">
+        <div className="alpha-router-image-aspect-picker" onMouseDown={(e) => e.stopPropagation()}>
+          <span className="alpha-router-image-aspect-picker__label">Aspect ratio</span>
+          <div className="alpha-router-image-aspect-picker__options" role="group" aria-label="Image aspect ratio">
             {IMAGE_ASPECT_PRESETS.map((preset) => {
               const active = activePreset === preset.id;
               return (
                 <button
                   key={preset.id}
                   type="button"
-                  className={`cgpt-image-aspect-picker__chip${active ? " active" : ""}`}
+                  className={`alpha-router-image-aspect-picker__chip${active ? " active" : ""}`}
                   aria-pressed={active}
                   title={`${preset.label} (${preset.aspectRatio})`}
                   onClick={() => selectPreset(preset.id as ImageAspectPresetId)}
@@ -246,7 +246,7 @@ export default function ServerToolsMenu({
             })}
             <button
               type="button"
-              className={`cgpt-image-aspect-picker__chip${activePreset === "custom" ? " active" : ""}`}
+              className={`alpha-router-image-aspect-picker__chip${activePreset === "custom" ? " active" : ""}`}
               aria-pressed={activePreset === "custom"}
               title="Custom aspect ratio (W:H)"
               onClick={selectCustom}
@@ -255,10 +255,10 @@ export default function ServerToolsMenu({
             </button>
           </div>
           {activePreset === "custom" ? (
-            <div className="cgpt-image-aspect-picker__custom">
+            <div className="alpha-router-image-aspect-picker__custom">
               <input
                 type="text"
-                className="cgpt-image-aspect-picker__custom-input"
+                className="alpha-router-image-aspect-picker__custom-input"
                 value={customAspectDraft}
                 placeholder={DEFAULT_CUSTOM_ASPECT_RATIO}
                 aria-label="Custom aspect ratio (width:height)"
@@ -278,14 +278,14 @@ export default function ServerToolsMenu({
                   }
                 }}
               />
-              <span className="cgpt-image-aspect-picker__custom-hint">
+              <span className="alpha-router-image-aspect-picker__custom-hint">
                 {customAspectValid
                   ? `${customAspectValid} (supported: ${SUPPORTED_ASPECT_RATIOS.join(", ")})`
                   : `W:H e.g. 21:9 or 16:9`}
               </span>
             </div>
           ) : null}
-          <span className="cgpt-image-aspect-picker__hint">
+          <span className="alpha-router-image-aspect-picker__hint">
             Text-to-image uses this aspect ratio. With a source attachment (image-to-image), output size matches the
             source image. Override in prompt: <code>--ar 16:9</code>
           </span>
@@ -338,7 +338,7 @@ export default function ServerToolsMenu({
         disabledTitle="Private Mode cannot be turned off for this chat. Start a new chat to use normal mode."
       />
 
-      <footer className="cgpt-server-tools-menu__foot">
+      <footer className="alpha-router-server-tools-menu__foot">
         <button
           type="button"
           className="btn btn-ghost btn-sm"

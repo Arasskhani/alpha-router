@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.branding import INTERNAL_DOMAIN
 from app.config import get_settings
 from app.database import get_db
 from app.models.model_catalog import AIModel
@@ -47,7 +48,7 @@ async def _get_or_create_gateway_service_user(db: AsyncSession) -> User:
         return user
     user = User(
         username=GATEWAY_SERVICE_USERNAME,
-        email="gateway-service@alpha-router.local",
+        email=f"gateway-service@{INTERNAL_DOMAIN}",
         display_name="Gateway Service",
         hashed_password=hash_password(secrets.token_urlsafe(32)),
         role="user",
@@ -97,13 +98,13 @@ async def _resolve_gateway_auth(
         username = user.username
         source = "master"
     else:
-        user, source, alpha_router_key = await get_user_by_api_key(db, raw_key)
-        if source == "alpha_router_key" and alpha_router_key:
-            await ensure_key_usable(db, alpha_router_key)
+        user, source, router_key = await get_user_by_api_key(db, raw_key)
+        if source == "alpha_router_key" and router_key:
+            await ensure_key_usable(db, router_key)
             skip_budget = True
-            alpha_router_api_key_id = alpha_router_key.id
+            alpha_router_api_key_id = router_key.id
             user_id = None
-            username = alpha_router_key.name
+            username = router_key.name
         elif user:
             if not user.is_active:
                 raise HTTPException(status_code=403, detail="Account disabled")
@@ -137,9 +138,9 @@ async def _require_valid_gateway_key(
         raise HTTPException(status_code=401, detail="Missing API key")
     if raw_key == settings.gateway_master_key:
         return
-    user, source, alpha_router_key = await get_user_by_api_key(db, raw_key)
-    if source == "alpha_router_key" and alpha_router_key:
-        await ensure_key_usable(db, alpha_router_key)
+    user, source, router_key = await get_user_by_api_key(db, raw_key)
+    if source == "alpha_router_key" and router_key:
+        await ensure_key_usable(db, router_key)
         return
     if user:
         if not user.is_active:

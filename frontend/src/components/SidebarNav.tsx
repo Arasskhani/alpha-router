@@ -2,9 +2,7 @@ import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { NavIcon } from "./icons/navIcons";
 import { flattenNav, isNavGrouped, type NavItem, type NavSection } from "../nav/types";
-
-const OPEN_SECTIONS_STORAGE_KEY = "alpha.admin.sidebar.openSections";
-const LEGACY_COLLAPSED_STORAGE_KEY = "alpha.admin.sidebar.collapsed";
+import { STORAGE_KEYS } from "../lib/brand";
 
 type Props = {
   nav: NavItem[] | NavSection[];
@@ -39,21 +37,12 @@ function NavLink({
 /** true = expanded; missing key = expanded (default open). */
 function loadOpenSections(): Record<string, boolean> {
   try {
-    const raw = localStorage.getItem(OPEN_SECTIONS_STORAGE_KEY);
+    const raw = localStorage.getItem(STORAGE_KEYS.adminSidebarOpenSections);
     if (raw) {
       const parsed = JSON.parse(raw) as unknown;
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         return parsed as Record<string, boolean>;
       }
-    }
-    const legacy = localStorage.getItem(LEGACY_COLLAPSED_STORAGE_KEY);
-    if (legacy) {
-      const collapsed = JSON.parse(legacy) as Record<string, unknown>;
-      const open: Record<string, boolean> = {};
-      for (const [title, value] of Object.entries(collapsed)) {
-        if (value === true) open[title] = false;
-      }
-      return open;
     }
   } catch {
     /* ignore */
@@ -79,7 +68,7 @@ export default function SidebarNav({ nav, className = "", linkClassName, onNavig
   const grouped = isNavGrouped(nav);
 
   useEffect(() => {
-    localStorage.setItem(OPEN_SECTIONS_STORAGE_KEY, JSON.stringify(openSections));
+    localStorage.setItem(STORAGE_KEYS.adminSidebarOpenSections, JSON.stringify(openSections));
   }, [openSections]);
 
   useEffect(() => {

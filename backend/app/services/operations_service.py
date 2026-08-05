@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.branding import PRODUCT_NAME
 from app.config import get_settings
 from app.models.logging import RequestLog
 from app.models.system import SystemMetricSnapshot
@@ -542,7 +543,7 @@ async def get_operations_dashboard(
         tr=tr,
         fields=(
             ("host_cpu_percent", "Host CPU"),
-            ("process_cpu_percent", "Alpha Router process"),
+            ("process_cpu_percent", f"{PRODUCT_NAME} process"),
         ),
     )
     mem_chart, mem_segments = _build_snapshot_chart(
@@ -588,7 +589,7 @@ async def get_operations_dashboard(
                 "unit": "%",
                 "segments": mem_segments,
                 "chart": mem_chart,
-                "footer": {"label": "Alpha Router RSS", "value": process_rss},
+                "footer": {"label": f"{PRODUCT_NAME} RSS", "value": process_rss},
             },
             "database": {
                 "title": "Database",

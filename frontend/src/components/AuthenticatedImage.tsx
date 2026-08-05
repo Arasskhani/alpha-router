@@ -55,10 +55,10 @@ export default function AuthenticatedImage({ url, alt, className }: Props) {
   }, [url]);
 
   if (failed) {
-    return <div className="cgpt-generated-image cgpt-generated-image--error">Image unavailable</div>;
+    return <div className="alpha-router-generated-image alpha-router-generated-image--error">Image unavailable</div>;
   }
   if (!src) {
-    return <div className="cgpt-generated-image cgpt-generated-image--loading">Loading image…</div>;
+    return <div className="alpha-router-generated-image alpha-router-generated-image--loading">Loading image…</div>;
   }
   return <img src={src} alt={alt} className={className} />;
 }

@@ -2,6 +2,12 @@ import { api } from "../api";
 import { STORAGE_KEYS } from "./brand";
 import { compactAttachmentMessageForStorage } from "./chatAttachments";
 import {
+  ATTACHMENT_MESSAGE_PREFIX,
+  AUDIO_MESSAGE_PREFIX,
+  IMAGE_MESSAGE_PREFIX,
+  IMAGE_PENDING_MARKER,
+} from "./chatMarkers";
+import {
   compactPrivateSessionsForStorage,
   hydratePrivateSessionsFromStorage,
   privateSessionsNeedStorageMigration,
@@ -353,12 +359,12 @@ export function markSessionMetadataDirty(sessionId: string) {
   markSessionDirty(sessionId, true);
 }
 
-function legacyStorageKey(): string {
+function chatStorageKey(): string {
   const sub = getSessionUser()?.username || "anon";
   return `alpha_router_chats_${sub}`;
 }
 
-function legacyFoldersStorageKey(): string {
+function chatFoldersStorageKey(): string {
   const sub = getSessionUser()?.username || "anon";
   return `alpha_router_chat_folders_${sub}`;
 }
@@ -1130,10 +1136,10 @@ function normalizeChatFolders(parsed: ChatFolder[]): ChatFolder[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Legacy browser-only storage (migration source). */
+/** Browser-only chat storage fallback and migration source. */
 export function loadChatSessionsLocal(): ChatSession[] {
   try {
-    const raw = localStorage.getItem(legacyStorageKey());
+    const raw = localStorage.getItem(chatStorageKey());
     if (!raw) return [];
     return normalizeChatSessions(JSON.parse(raw) as ChatSession[]);
   } catch {
@@ -1143,7 +1149,7 @@ export function loadChatSessionsLocal(): ChatSession[] {
 
 export function loadChatFoldersLocal(): ChatFolder[] {
   try {
-    const raw = localStorage.getItem(legacyFoldersStorageKey());
+    const raw = localStorage.getItem(chatFoldersStorageKey());
     if (!raw) return [];
     return normalizeChatFolders(JSON.parse(raw) as ChatFolder[]);
   } catch {
@@ -1152,8 +1158,8 @@ export function loadChatFoldersLocal(): ChatFolder[] {
 }
 
 export function clearLocalChatStorage() {
-  localStorage.removeItem(legacyStorageKey());
-  localStorage.removeItem(legacyFoldersStorageKey());
+  localStorage.removeItem(chatStorageKey());
+  localStorage.removeItem(chatFoldersStorageKey());
 }
 
 export type FetchChatsOptions = {
@@ -1770,7 +1776,7 @@ export async function clearStoredImageGenerationForCurrentUser() {
       changed = true;
       return { ...s, tools: { ...tools, imageGeneration: false } };
     });
-    if (changed) localStorage.setItem(legacyStorageKey(), JSON.stringify(next));
+    if (changed) localStorage.setItem(chatStorageKey(), JSON.stringify(next));
   }
 }
 
@@ -1849,8 +1855,8 @@ export function isDefaultChatTitle(title: string | undefined): boolean {
   return !t || t === "new chat";
 }
 
-const _IMAGE_PREFIX = "__ALPHA_ROUTER_IMAGE_JSON__:";
-const _IMAGE_PENDING = "__ALPHA_ROUTER_IMAGE_PENDING__";
+const _IMAGE_PREFIX = IMAGE_MESSAGE_PREFIX;
+const _IMAGE_PENDING = IMAGE_PENDING_MARKER;
 
 function _parseImagePrompt(raw: string, prefix: string): string {
   try {
@@ -1866,7 +1872,7 @@ export function normalizeMessageForTitle(content: string): string {
   const raw = (content || "").trim();
   if (!raw || raw === _IMAGE_PENDING) return "";
 
-  const attachPrefix = "__ALPHA_ROUTER_ATTACH_JSON__:";
+  const attachPrefix = ATTACHMENT_MESSAGE_PREFIX;
   if (raw.startsWith(attachPrefix)) {
     try {
       const payload = JSON.parse(raw.slice(attachPrefix.length)) as {
@@ -1882,7 +1888,7 @@ export function normalizeMessageForTitle(content: string): string {
     }
   }
 
-  const audioPrefix = "__ALPHA_ROUTER_AUDIO_JSON__:";
+  const audioPrefix = AUDIO_MESSAGE_PREFIX;
   if (raw.startsWith(audioPrefix)) {
     try {
       const payload = JSON.parse(raw.slice(audioPrefix.length)) as { transcript?: string };
@@ -1893,8 +1899,6 @@ export function normalizeMessageForTitle(content: string): string {
   }
 
   if (raw.startsWith(_IMAGE_PREFIX)) return _parseImagePrompt(raw, _IMAGE_PREFIX);
-  if (raw.startsWith("__ALPHA_ROUTER_IMAGE_JSON__:")) return _parseImagePrompt(raw, "__ALPHA_ROUTER_IMAGE_JSON__:");
-  if (raw.startsWith("__ALPHA_ROUTER_IMAGE__:") || raw.startsWith("__ALPHA_ROUTER_IMAGE__:")) return "Generated image";
 
   return raw;
 }

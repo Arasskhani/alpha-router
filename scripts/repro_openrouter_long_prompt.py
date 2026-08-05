@@ -29,7 +29,7 @@ LONG_PROMPT = (
     "LED strips along walkways, soft rim light from an off-screen drone spotlight. Atmosphere: volumetric fog, "
     "fine rain streaks, subtle lens flare, anamorphic bokeh on distant headlights. Color grade: teal shadows, "
     "orange highlights, crushed blacks with retained micro-contrast. Materials: wet concrete textures, brushed "
-    "metal, frosted glass, iridescent puddles reflecting neon signs reading OPEN, Alpha Router, and stylized arrows. "
+    "metal, frosted glass, iridescent puddles reflecting neon signs reading OPEN, ALPHA ROUTER, and stylized arrows. "
     "Composition: rule of thirds, leading lines from maglev tracks toward a central spire crowned with a rotating "
     "ring structure. Style: photorealistic concept art, 35mm film grain, shallow depth of field, high dynamic range, "
     "Unreal Engine cinematic quality, art direction by Denis Villeneuve meets Syd Mead. "

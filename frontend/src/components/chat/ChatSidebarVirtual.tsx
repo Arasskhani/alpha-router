@@ -8,7 +8,7 @@ type VirtualSidebarListProps = {
   loadingMore?: boolean;
 };
 
-/** Sidebar session list — plain list; parent `.cgpt-sidebar-body` handles scrolling. */
+/** Sidebar session list — plain list; parent `.alpha-router-sidebar-body` handles scrolling. */
 export default function VirtualSidebarList({
   items,
   className,
@@ -21,7 +21,7 @@ export default function VirtualSidebarList({
   useEffect(() => {
     const sentinel = sentinelRef.current;
     if (!sentinel || !onLoadMore || !hasMore || loadingMore) return;
-    const root = sentinel.closest(".cgpt-sidebar-body");
+    const root = sentinel.closest(".alpha-router-sidebar-body");
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries[0]?.isIntersecting) onLoadMore();
@@ -33,10 +33,10 @@ export default function VirtualSidebarList({
   }, [onLoadMore, hasMore, loadingMore, items.length]);
 
   return (
-    <ul className={`cgpt-history${className ? ` ${className}` : ""}`}>
+    <ul className={`alpha-router-history${className ? ` ${className}` : ""}`}>
       {items.map((item) => item.node)}
       {hasMore ? (
-        <li ref={sentinelRef} className="cgpt-history-empty" aria-hidden="true">
+        <li ref={sentinelRef} className="alpha-router-history-empty" aria-hidden="true">
           {loadingMore ? "Loading…" : ""}
         </li>
       ) : null}

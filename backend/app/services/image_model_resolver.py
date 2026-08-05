@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.branding import CHAT_CLIENT_APP
 from app.models.connection import Connection
 from app.models.logging import ImageGenerationAttempt, RequestLog
 from app.models.model_catalog import AIModel
@@ -308,7 +309,7 @@ async def _model_runtime_signals(
                 .where(
                     RequestLog.model_id.in_(missing),
                     RequestLog.request_time >= cutoff,
-                    RequestLog.client_app.like("Alpha Router Chat (image:%"),
+                    RequestLog.client_app.like(f"{CHAT_CLIENT_APP} (image:%"),
                 )
                 .group_by(RequestLog.model_id)
             )

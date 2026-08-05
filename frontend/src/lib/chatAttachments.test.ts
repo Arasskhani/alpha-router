@@ -1,5 +1,39 @@
 import { describe, expect, it } from "vitest";
-import { modelSupportsVision } from "./chatAttachments";
+import {
+  ATTACHMENT_MESSAGE_PREFIX,
+  AUDIO_MESSAGE_PREFIX,
+  attachmentMessage,
+  buildApiMessageContent,
+  modelSupportsVision,
+  readAttachmentMessage,
+} from "./chatAttachments";
+
+describe("chat attachment and audio wire markers", () => {
+  it("round-trips the Alpha Router attachment marker", () => {
+    const payload = {
+      userText: "Review this",
+      attachments: [
+        {
+          name: "notes.txt",
+          kind: "document" as const,
+          mime_type: "text/plain",
+          url: "",
+          text: "hello",
+        },
+      ],
+    };
+    const encoded = attachmentMessage(payload);
+
+    expect(encoded.startsWith(ATTACHMENT_MESSAGE_PREFIX)).toBe(true);
+    expect(readAttachmentMessage(encoded)).toEqual(payload);
+  });
+
+  it("extracts transcripts from the Alpha Router audio marker", () => {
+    const encoded = `${AUDIO_MESSAGE_PREFIX}${JSON.stringify({ transcript: "hello" })}`;
+
+    expect(buildApiMessageContent(encoded)).toBe("hello");
+  });
+});
 
 describe("modelSupportsVision", () => {
   it("returns false when no model is provided", () => {

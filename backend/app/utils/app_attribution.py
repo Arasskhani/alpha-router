@@ -4,6 +4,8 @@ from urllib.parse import urlparse
 
 from starlette.requests import Request
 
+from app.branding import CHAT_CLIENT_APP
+
 _REFERRER_HOST_APPS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("kilocode.ai", "kilo.ai"), "Kilo Code"),
     (("openwebui.com", "open-webui", "openwebui"), "Open WebUI"),
@@ -40,7 +42,7 @@ def detect_client_app(request: Request) -> str | None:
             return mapped
         lower = referer.lower()
         if "/admin/chat" in lower or (lower.rstrip("/").endswith("/chat") and "localhost" in lower):
-            return "Alpha Router Chat"
+            return CHAT_CLIENT_APP
         if "localhost" in lower or "127.0.0.1" in lower:
             return referer[:128]
         try:

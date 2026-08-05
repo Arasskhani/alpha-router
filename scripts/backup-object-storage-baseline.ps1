@@ -49,7 +49,7 @@ function Resolve-SeaweedVolumeName {
     } catch {
         $names = @()
     }
-    $match = $names | Where-Object { $_ -match "alpha_router_seaweedfs$" } | Select-Object -First 1
+    $match = $names | Where-Object { $_ -eq "alpha_router_seaweedfs" } | Select-Object -First 1
     if ($match) { return $match }
     return "alpha_router_seaweedfs"
 }
@@ -129,7 +129,7 @@ if ($IncludeVolumeTar) {
         tar -czf $tarPath -C /data .
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Volume tar failed. Check volume name with: docker volume ls" -ForegroundColor Yellow
-        Write-Host "Common name: <project>_alpha_router_seaweedfs (e.g. alpha_router_seaweedfs)" -ForegroundColor Yellow
+        Write-Host "Canonical name: alpha_router_seaweedfs" -ForegroundColor Yellow
         exit 1
     }
     $found = Get-ChildItem $outDir -Filter "seaweedfs-volume-*.tar.gz" | Select-Object -First 1

@@ -4,6 +4,7 @@ from fastapi import Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.branding import API_KEY_PREFIX
 from app.models.user import User
 from app.services.username_norm import find_user_by_username_ci, normalize_username
 
@@ -34,14 +35,21 @@ async def get_or_create_user_from_request(db: AsyncSession, identifier: str) -> 
 
 
 async def get_user_by_api_key(db: AsyncSession, raw_key: str):
-    """Resolve Alpha Router or user API key. Returns (user, source, alpha_router_key row)."""
+    """Resolve an Alpha Router or user API key."""
     from app.core.security import hash_api_key
     from app.models.api_key import AlphaRouterApiKey, UserApiKey
 
+    if not raw_key.startswith(API_KEY_PREFIX):
+        return None, "unknown", None
+
     h = hash_api_key(raw_key)
-    bk = (await db.execute(select(AlphaRouterApiKey).where(AlphaRouterApiKey.key_hash == h))).scalars().first()
-    if bk:
-        return None, "alpha_router_key", bk
+    router_key = (
+        await db.execute(
+            select(AlphaRouterApiKey).where(AlphaRouterApiKey.key_hash == h)
+        )
+    ).scalars().first()
+    if router_key:
+        return None, "alpha_router_key", router_key
     uk = (await db.execute(select(UserApiKey).where(UserApiKey.key_hash == h, UserApiKey.is_active == True))).scalars().first()  # noqa: E712
     if uk:
         user = await db.get(User, uk.user_id)

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from app.branding import PRODUCT_NAME
+
 ParamKind = Literal[
     "user",
     "plan",
@@ -117,7 +119,7 @@ REPORT_CATALOG: list[dict[str, Any]] = [
         "id": "usage_by_api_source",
         "category": "usage",
         "title": "Usage by API source",
-        "description": "Spend grouped by gateway, Alpha Router key, or user key.",
+        "description": f"Spend grouped by gateway, {PRODUCT_NAME} key, or user key.",
         "needs_date": True,
         "params": [],
     },
@@ -255,7 +257,7 @@ REPORT_CATALOG: list[dict[str, Any]] = [
     {
         "id": "alpha_router_api_key_usage",
         "category": "api_keys",
-        "title": "Alpha Router API key usage",
+        "title": f"{PRODUCT_NAME} API key usage",
         "description": "Spend and requests per gateway API key.",
         "needs_date": True,
         "params": ["alpha_router_api_key"],
@@ -264,7 +266,7 @@ REPORT_CATALOG: list[dict[str, Any]] = [
         "id": "alpha_router_api_keys_near_credit_limit",
         "category": "api_keys",
         "title": "API keys near credit limit",
-        "description": "Alpha Router keys at or above 80% of their credit limit (current period).",
+        "description": f"{PRODUCT_NAME} keys at or above 80% of their credit limit (current period).",
         "needs_date": False,
         "params": ["threshold_pct"],
     },

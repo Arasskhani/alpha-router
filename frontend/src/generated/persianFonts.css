@@ -49,11 +49,11 @@
   font-display: swap;
 }
 
-.cgpt-app[data-persian-font="vazir"] .cgpt-msg-inner,
-.cgpt-app[data-persian-font="vazir"] .cgpt-composer-input,
-.cgpt-app[data-persian-font="vazir"] .cgpt-attach-msg__image figcaption,
-.cgpt-app[data-persian-font="vazir"] .cgpt-image-loading__label,
-.cgpt-app[data-persian-font="vazir"] .cgpt-msg-model-label {
+.alpha-router-app[data-persian-font="vazir"] .alpha-router-msg-inner,
+.alpha-router-app[data-persian-font="vazir"] .alpha-router-composer-input,
+.alpha-router-app[data-persian-font="vazir"] .alpha-router-attach-msg__image figcaption,
+.alpha-router-app[data-persian-font="vazir"] .alpha-router-image-loading__label,
+.alpha-router-app[data-persian-font="vazir"] .alpha-router-msg-model-label {
   font-family: "AlphaRouterPersian-Vazir", Tahoma, "Segoe UI", sans-serif;
 }
 
@@ -129,17 +129,17 @@
   font-display: swap;
 }
 
-.cgpt-app[data-persian-font="vazirmatn"] .cgpt-msg-inner,
-.cgpt-app[data-persian-font="vazirmatn"] .cgpt-composer-input,
-.cgpt-app[data-persian-font="vazirmatn"] .cgpt-attach-msg__image figcaption,
-.cgpt-app[data-persian-font="vazirmatn"] .cgpt-image-loading__label,
-.cgpt-app[data-persian-font="vazirmatn"] .cgpt-msg-model-label {
+.alpha-router-app[data-persian-font="vazirmatn"] .alpha-router-msg-inner,
+.alpha-router-app[data-persian-font="vazirmatn"] .alpha-router-composer-input,
+.alpha-router-app[data-persian-font="vazirmatn"] .alpha-router-attach-msg__image figcaption,
+.alpha-router-app[data-persian-font="vazirmatn"] .alpha-router-image-loading__label,
+.alpha-router-app[data-persian-font="vazirmatn"] .alpha-router-msg-model-label {
   font-family: "AlphaRouterPersian-Vazirmatn", Tahoma, "Segoe UI", sans-serif;
 }
 
-.cgpt-app[data-persian-font] .cgpt-msg-inner code,
-.cgpt-app[data-persian-font] .cgpt-msg-inner pre,
-.cgpt-app[data-persian-font] .cgpt-msg-inner .alpha-router-code-block,
-.cgpt-app[data-persian-font] .cgpt-msg-inner .alpha-router-code-block__code {
+.alpha-router-app[data-persian-font] .alpha-router-msg-inner code,
+.alpha-router-app[data-persian-font] .alpha-router-msg-inner pre,
+.alpha-router-app[data-persian-font] .alpha-router-msg-inner .alpha-router-code-block,
+.alpha-router-app[data-persian-font] .alpha-router-msg-inner .alpha-router-code-block__code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }

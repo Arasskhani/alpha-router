@@ -15,6 +15,7 @@ import {
   type NamedTheme,
 } from "../lib/themeCache";
 import { COMMON_TIMEZONES, detectBrowserTimezone } from "../lib/timezones";
+import { BROWSER_EVENT_NAMES } from "../lib/brand";
 import Modal from "./Modal";
 import ThemeSegmentedControl from "./ThemeSegmentedControl";
 import ConnectorsPanel from "./settings/ConnectorsPanel";
@@ -183,7 +184,7 @@ function GeneralPanel({
       });
       applyPersianFontToChat(fontId);
       setMessage("Preferences saved.");
-      window.dispatchEvent(new CustomEvent("alpha_router:user-prefs-saved"));
+      window.dispatchEvent(new CustomEvent(BROWSER_EVENT_NAMES.userPrefsSaved));
       onSaved?.();
     } catch (err) {
       setError(formatApiError(err));

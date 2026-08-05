@@ -1,4 +1,5 @@
 import { formatLocalDateTime } from "./dateTime";
+import { STORAGE_KEYS } from "./brand";
 
 export type MediaItem = {
   id: number;
@@ -50,11 +51,9 @@ export const MEDIA_VIEW_OPTIONS: { id: MediaViewMode; label: string }[] = [
   { id: "title", label: "Title" },
 ];
 
-const VIEW_KEY = "alpha_router_media_view";
-
 export function loadMediaViewMode(): MediaViewMode {
   try {
-    const raw = localStorage.getItem(VIEW_KEY) as MediaViewMode | null;
+    const raw = localStorage.getItem(STORAGE_KEYS.mediaView) as MediaViewMode | null;
     if (raw && MEDIA_VIEW_OPTIONS.some((o) => o.id === raw)) return raw;
   } catch {
     /* ignore */
@@ -63,7 +62,7 @@ export function loadMediaViewMode(): MediaViewMode {
 }
 
 export function saveMediaViewMode(mode: MediaViewMode) {
-  localStorage.setItem(VIEW_KEY, mode);
+  localStorage.setItem(STORAGE_KEYS.mediaView, mode);
 }
 
 export function formatMediaBytes(bytes: number): string {

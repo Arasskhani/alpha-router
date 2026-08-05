@@ -26,7 +26,11 @@ def _utc_now() -> datetime.datetime:
     return datetime.datetime.utcnow()
 
 
-def _serialize_value(field: str, value: Any, owner_labels: dict[int, str] | None = None) -> Any:
+def _serialize_value(
+    field: str,
+    value: Any,
+    owner_labels: dict[int, str] | None = None,
+) -> Any:
     if field == "owner_user_id" and value is not None and owner_labels:
         return owner_labels.get(int(value), str(value))
     if field == "expires_at" and value is not None:
@@ -47,8 +51,8 @@ async def _owner_label_map(db: AsyncSession, ids: set[int]) -> dict[int, str]:
         return {}
     rows = (await db.execute(select(User).where(User.id.in_(ids)))).scalars().all()
     out: dict[int, str] = {}
-    for u in rows:
-        out[u.id] = u.email or u.username or str(u.id)
+    for user in rows:
+        out[user.id] = user.email or user.username or str(user.id)
     return out
 
 
@@ -73,17 +77,31 @@ async def log_api_key_audit(
     )
 
 
-async def log_api_key_created(db: AsyncSession, *, key: AlphaRouterApiKey, actor: User, owner: User) -> None:
+async def log_api_key_created(
+    db: AsyncSession,
+    *,
+    key: AlphaRouterApiKey,
+    actor: User,
+    owner: User,
+) -> None:
     owner_label = owner.email or owner.username
     changes = [
         {"field": "name", "label": FIELD_LABELS["name"], "new": key.name},
-        {"field": "owner_user_id", "label": FIELD_LABELS["owner_user_id"], "new": owner_label},
+        {
+            "field": "owner_user_id",
+            "label": FIELD_LABELS["owner_user_id"],
+            "new": owner_label,
+        },
         {
             "field": "credit_limit_usd",
             "label": FIELD_LABELS["credit_limit_usd"],
             "new": _serialize_value("credit_limit_usd", key.credit_limit_usd),
         },
-        {"field": "reset_period", "label": FIELD_LABELS["reset_period"], "new": key.reset_period},
+        {
+            "field": "reset_period",
+            "label": FIELD_LABELS["reset_period"],
+            "new": key.reset_period,
+        },
         {
             "field": "expires_at",
             "label": FIELD_LABELS["expires_at"],
@@ -111,16 +129,35 @@ async def log_api_key_updated(
     changes: list[dict[str, Any]] = []
     for field, new_val in after_patches.items():
         old_val = before.get(field)
-        old_s = _serialize_value(field, old_val, owner_labels)
-        new_s = _serialize_value(field, new_val, owner_labels)
-        if old_s != new_s:
+        old_serialized = _serialize_value(field, old_val, owner_labels)
+        new_serialized = _serialize_value(field, new_val, owner_labels)
+        if old_serialized != new_serialized:
             label = FIELD_LABELS.get(field, field)
-            changes.append({"field": field, "label": label, "old": old_s, "new": new_s})
+            changes.append(
+                {
+                    "field": field,
+                    "label": label,
+                    "old": old_serialized,
+                    "new": new_serialized,
+                }
+            )
 
-    await log_api_key_audit(db, key=key, actor=actor, action="updated", changes=changes)
+    await log_api_key_audit(
+        db,
+        key=key,
+        actor=actor,
+        action="updated",
+        changes=changes,
+    )
 
 
-async def log_api_key_status(db: AsyncSession, *, key: AlphaRouterApiKey, actor: User, enabled: bool) -> None:
+async def log_api_key_status(
+    db: AsyncSession,
+    *,
+    key: AlphaRouterApiKey,
+    actor: User,
+    enabled: bool,
+) -> None:
     action = "enabled" if enabled else "disabled"
     changes = [
         {
@@ -149,27 +186,32 @@ async def fetch_api_key_changelog(
         start = datetime.datetime.combine(from_date, datetime.time.min)
         stmt = stmt.where(AlphaRouterApiKeyAuditLog.created_at >= start)
     if to_date is not None:
-        end = datetime.datetime.combine(to_date + datetime.timedelta(days=1), datetime.time.min)
+        end = datetime.datetime.combine(
+            to_date + datetime.timedelta(days=1),
+            datetime.time.min,
+        )
         stmt = stmt.where(AlphaRouterApiKeyAuditLog.created_at < end)
     rows = (await db.execute(stmt)).scalars().all()
-    actor_ids = {r.actor_user_id for r in rows if r.actor_user_id}
+    actor_ids = {row.actor_user_id for row in rows if row.actor_user_id}
     actors: dict[int, User] = {}
     if actor_ids:
-        actor_rows = (await db.execute(select(User).where(User.id.in_(actor_ids)))).scalars().all()
-        actors = {u.id: u for u in actor_rows}
+        actor_rows = (
+            await db.execute(select(User).where(User.id.in_(actor_ids)))
+        ).scalars().all()
+        actors = {user.id: user for user in actor_rows}
 
     out: list[dict[str, Any]] = []
-    for r in rows:
-        actor = actors.get(r.actor_user_id) if r.actor_user_id else None
+    for row in rows:
+        actor = actors.get(row.actor_user_id) if row.actor_user_id else None
         try:
-            changes = json.loads(r.changes_json or "[]")
+            changes = json.loads(row.changes_json or "[]")
         except json.JSONDecodeError:
             changes = []
         out.append(
             {
-                "id": r.id,
-                "action": r.action,
-                "created_at": r.created_at.isoformat() + "Z" if r.created_at else None,
+                "id": row.id,
+                "action": row.action,
+                "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
                 "actor": (
                     {
                         "id": actor.id,

@@ -1,5 +1,11 @@
 import { isPrivateBlobRef, resolvePrivateMediaUrlForApi } from "./privateMediaStore";
 import { isAutoRouterExternalId } from "./chatModels";
+import {
+  ATTACHMENT_MESSAGE_PREFIX,
+  AUDIO_MESSAGE_PREFIX,
+} from "./chatMarkers";
+
+export { ATTACHMENT_MESSAGE_PREFIX, AUDIO_MESSAGE_PREFIX } from "./chatMarkers";
 
 export type ProcessedAttachment = {
   name: string;
@@ -15,7 +21,6 @@ export type AttachmentMessagePayload = {
   attachments: ProcessedAttachment[];
 };
 
-export const ATTACHMENT_MESSAGE_PREFIX = "__ALPHA_ROUTER_ATTACH_JSON__:";
 export const MAX_ATTACHMENTS = 5;
 
 const BLOCKED_EXTENSIONS = new Set([
@@ -296,10 +301,10 @@ export async function buildApiMessageContentAsync(
   content: string,
   visionModel?: VisionModel,
 ): Promise<string | ApiContentPart[]> {
-  const audio = content.startsWith("__ALPHA_ROUTER_AUDIO_JSON__:");
+  const audio = content.startsWith(AUDIO_MESSAGE_PREFIX);
   if (audio) {
     try {
-      const parsed = JSON.parse(content.slice("__ALPHA_ROUTER_AUDIO_JSON__:".length)) as { transcript?: string };
+      const parsed = JSON.parse(content.slice(AUDIO_MESSAGE_PREFIX.length)) as { transcript?: string };
       if (parsed.transcript?.trim()) return parsed.transcript.trim();
     } catch {
       /* fall through */
@@ -346,10 +351,10 @@ export function buildApiMessageContent(
   content: string,
   visionModel?: VisionModel,
 ): string | ApiContentPart[] {
-  const audio = content.startsWith("__ALPHA_ROUTER_AUDIO_JSON__:");
+  const audio = content.startsWith(AUDIO_MESSAGE_PREFIX);
   if (audio) {
     try {
-      const parsed = JSON.parse(content.slice("__ALPHA_ROUTER_AUDIO_JSON__:".length)) as { transcript?: string };
+      const parsed = JSON.parse(content.slice(AUDIO_MESSAGE_PREFIX.length)) as { transcript?: string };
       if (parsed.transcript?.trim()) return parsed.transcript.trim();
     } catch {
       /* fall through */

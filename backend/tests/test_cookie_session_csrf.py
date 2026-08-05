@@ -147,8 +147,12 @@ def test_session_cookie_attributes_and_clear(monkeypatch) -> None:
     response = Response()
     csrf = set_session_cookies(response, access_token="jwt")
     headers = response.headers.getlist("set-cookie")
-    session = next(value for value in headers if value.startswith("alpha_router_session="))
-    csrf_header = next(value for value in headers if value.startswith("alpha_router_csrf="))
+    session = next(
+        value for value in headers if value.startswith("alpha_router_session=")
+    )
+    csrf_header = next(
+        value for value in headers if value.startswith("alpha_router_csrf=")
+    )
     assert csrf
     assert "HttpOnly" in session
     assert "Secure" in session

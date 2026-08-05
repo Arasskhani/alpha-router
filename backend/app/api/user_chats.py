@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_active_user
+from app.branding import REPLACE_MESSAGES_HEADER
 from app.config import get_settings
 from app.database import get_db, get_read_db
 from app.models.user import User
@@ -354,7 +355,7 @@ async def put_session_messages(
 ):
     """Admin/repair only — clients should use POST append for normal sync."""
     response.headers["Deprecation"] = "true"
-    response.headers["X-Alpha Router-Router-Replace-Messages"] = "admin-repair-only"
+    response.headers[REPLACE_MESSAGES_HEADER] = "admin-repair-only"
     try:
         messages = await replace_session_messages(
             db,

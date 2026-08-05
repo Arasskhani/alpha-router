@@ -2,7 +2,7 @@
 
 export const PRIVATE_BLOB_REF_PREFIX = "private-blob://";
 
-const DB_NAME = "alpha_router_private_media";
+export const PRIVATE_MEDIA_DB_NAME = "alpha_router_private_media";
 const DB_VERSION = 1;
 const STORE_NAME = "blobs";
 
@@ -36,7 +36,7 @@ function newBlobId(): string {
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    const req = indexedDB.open(PRIVATE_MEDIA_DB_NAME, DB_VERSION);
     req.onerror = () => reject(req.error ?? new Error("Could not open private media storage."));
     req.onsuccess = () => resolve(req.result);
     req.onupgradeneeded = () => {
@@ -135,7 +135,7 @@ export async function clearPrivateMediaStore(): Promise<void> {
   for (const blobUrl of blobUrlToRef.keys()) URL.revokeObjectURL(blobUrl);
   blobUrlToRef.clear();
   await new Promise<void>((resolve, reject) => {
-    const req = indexedDB.deleteDatabase(DB_NAME);
+    const req = indexedDB.deleteDatabase(PRIVATE_MEDIA_DB_NAME);
     req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error ?? new Error("Could not clear private media storage."));
     req.onblocked = () => resolve();

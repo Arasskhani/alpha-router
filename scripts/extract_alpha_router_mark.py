@@ -9,12 +9,7 @@ from pathlib import Path
 
 from PIL import Image
 
-DEFAULT_SRC = Path(
-    r"C:\Users\M.Arasskhani\.cursor\projects\c-APPS-Alpha Router\assets"
-    r"\c__Users_M.Arasskhani_AppData_Roaming_Cursor_User_workspaceStorage"
-    r"_empty-window_images_alpha-router-generated-image__44_-3a8f5ee8-0348-490e-9675-3e333f52e8b4.png"
-)
-PUBLIC = Path(r"C:\APPS\Alpha Router\frontend\public")
+PUBLIC = Path(__file__).resolve().parents[1] / "frontend" / "public"
 
 # Soft shadow / paper / mid-gray above this; solid ink is well below.
 INK_MAX = 70
@@ -98,7 +93,7 @@ def extract(src: Path, out_png: Path, out_svg: Path) -> None:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--src", type=Path, default=DEFAULT_SRC)
+    p.add_argument("--src", type=Path, required=True)
     p.add_argument("--stem", default="alpha-router-mark", help="Output basename under frontend/public")
     args = p.parse_args()
     extract(args.src, PUBLIC / f"{args.stem}.png", PUBLIC / f"{args.stem}.svg")

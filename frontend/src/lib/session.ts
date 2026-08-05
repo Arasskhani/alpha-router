@@ -2,29 +2,6 @@ import { STORAGE_KEYS } from "./brand";
 import { authFetch, clearCachedSession, getCachedSession } from "../api";
 import { clearPrivateMediaStore } from "./privateMediaStore";
 
-/** Copy legacy localStorage keys once after rebrand (alpha_router_* / alpha_router_* → alpha_*). */
-export function migrateLegacyStorageKeys() {
-  const targets = [STORAGE_KEYS.theme, STORAGE_KEYS.loginAt, STORAGE_KEYS.isActive] as const;
-  for (const target of targets) {
-    if (localStorage.getItem(target)) continue;
-    const suffix = target.slice("alpha_".length);
-    for (const prefix of ["alpha_router_", "alpha_router_"] as const) {
-      const v = localStorage.getItem(prefix + suffix);
-      if (v) {
-        localStorage.setItem(target, v);
-        break;
-      }
-    }
-  }
-  for (const prefix of ["alpha_router_", "alpha_router_"] as const) {
-    for (const suffix of ["theme", "login_at", "is_active", "token", "role"]) {
-      localStorage.removeItem(prefix + suffix);
-    }
-  }
-  localStorage.removeItem(STORAGE_KEYS.token);
-  localStorage.removeItem(STORAGE_KEYS.role);
-}
-
 export function getSessionUser(): {
   username: string;
   display_name: string | null;
@@ -89,7 +66,7 @@ export async function logout() {
   } catch {
     /* network error — proceed to clear local state anyway */
   }
-  if (localStorage.getItem("alpha_router_private_persist") !== "1") {
+  if (localStorage.getItem(STORAGE_KEYS.privatePersist) !== "1") {
     for (const key of Object.keys(localStorage)) {
       if (key.startsWith(`${STORAGE_KEYS.privateChats}:`)) localStorage.removeItem(key);
     }

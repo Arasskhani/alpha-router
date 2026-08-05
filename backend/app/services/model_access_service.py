@@ -25,7 +25,7 @@ class ModelAccessSubject:
 
     user_id: int | None = None
     unrestricted: bool = False  # super admin
-    public_only: bool = False  # master key / alpha key without owner
+    public_only: bool = False  # master key / Alpha Router key without owner
 
 
 async def resolve_access_subject(

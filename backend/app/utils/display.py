@@ -1,12 +1,12 @@
 """Human-readable labels for stored enum-like codes."""
 
+from app.branding import CHAT_CLIENT_APP, PRODUCT_NAME
+
 APP_SOURCE_LABELS: dict[str, str] = {
     "openwebui": "Open WebUI",
-    "alpha_router_key": "Alpha Router API Key",
-    "alpha_router_key": "Alpha Router API Key",  # legacy log rows
+    "alpha_router_key": f"{PRODUCT_NAME} API Key",
     "user_key": "User API Key",
-    "alpha_router_chat": "Alpha Router Chat",
-    "alpha_router_chat": "Alpha Router Chat",  # legacy log rows
+    "alpha_router_chat": CHAT_CLIENT_APP,
     "gateway": "Platform API",
 }
 

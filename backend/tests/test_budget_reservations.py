@@ -190,7 +190,7 @@ def test_alpha_router_key_reservation_and_log_settlement_are_atomic() -> None:
             await log_usage(
                 db,
                 user_id=None,
-                username="alpha-router-key",
+                username="router-key",
                 model_id="embed/model",
                 prompt_tokens=10,
                 completion_tokens=0,

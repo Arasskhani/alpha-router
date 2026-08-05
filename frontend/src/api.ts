@@ -1,3 +1,5 @@
+import { COOKIE_NAMES, STORAGE_KEYS } from "./lib/brand";
+
 export type SessionInfo = {
   username: string;
   display_name?: string | null;
@@ -34,8 +36,8 @@ function onUnauthorized(path: string) {
     || path.startsWith("/api/auth/logout")
   ) return;
   cachedSession = null;
-  localStorage.removeItem("alpha_router_token");
-  localStorage.removeItem("alpha_router_role");
+  localStorage.removeItem(STORAGE_KEYS.token);
+  localStorage.removeItem(STORAGE_KEYS.role);
   if (handlingUnauthorized || window.location.pathname === "/login") return;
   handlingUnauthorized = true;
   window.location.assign("/login");
@@ -54,7 +56,7 @@ export async function authFetch(path: string, init: RequestInit = {}): Promise<R
   const headers = new Headers(init.headers);
   const method = (init.method || "GET").toUpperCase();
   if (isUnsafe(method)) {
-    const csrf = cookieValue("alpha_router_csrf");
+    const csrf = cookieValue(COOKIE_NAMES.csrf);
     if (csrf && !headers.has("X-CSRF-Token")) headers.set("X-CSRF-Token", csrf);
   }
   const response = await fetch(path, {
@@ -75,7 +77,7 @@ export function bootstrapSession(force = false): Promise<SessionInfo> {
       const session = (await response.json()) as SessionInfo;
       cachedSession = session;
       if (session.auth_provider) {
-        localStorage.setItem("alpha_router_auth_provider", session.auth_provider);
+        localStorage.setItem(STORAGE_KEYS.authProvider, session.auth_provider);
       }
       handlingUnauthorized = false;
       return session;

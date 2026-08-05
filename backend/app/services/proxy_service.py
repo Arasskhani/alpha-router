@@ -522,7 +522,10 @@ async def stream_chat(
                 raw_tools = await list_tools_for_user(db, user_id)
                 for t in raw_tools:
                     fn_name = t["function"]["name"]
-                    mcp_provider_map[fn_name] = (t["_alpha_router_provider"], t["_alpha_router_tool"])
+                    mcp_provider_map[fn_name] = (
+                        t["_alpha_router_provider"],
+                        t["_alpha_router_tool"],
+                    )
                     mcp_tools.append({"type": "function", "function": t["function"]})
                 if mcp_tools:
                     completion_kwargs["tools"] = mcp_tools

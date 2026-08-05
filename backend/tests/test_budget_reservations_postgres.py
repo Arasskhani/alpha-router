@@ -263,7 +263,7 @@ def test_postgres_concurrent_user_and_key_reservations() -> None:
                     await log_usage(
                         db,
                         user_id=None,
-                        username="alpha-router-key-canary",
+                        username="router-key-canary",
                         model_id="canary/embed",
                         prompt_tokens=1,
                         completion_tokens=0,
@@ -323,9 +323,15 @@ def test_postgres_concurrent_user_and_key_reservations() -> None:
                         await db.execute(delete(User).where(User.id == user_id))
                     if key_id is not None:
                         await db.execute(
-                            delete(RequestLog).where(RequestLog.alpha_router_api_key_id == key_id)
+                            delete(RequestLog).where(
+                                RequestLog.alpha_router_api_key_id == key_id
+                            )
                         )
-                        await db.execute(delete(AlphaRouterApiKey).where(AlphaRouterApiKey.id == key_id))
+                        await db.execute(
+                            delete(AlphaRouterApiKey).where(
+                                AlphaRouterApiKey.id == key_id
+                            )
+                        )
                     if plan_id is not None:
                         await db.execute(delete(BudgetPlan).where(BudgetPlan.id == plan_id))
                     await db.commit()

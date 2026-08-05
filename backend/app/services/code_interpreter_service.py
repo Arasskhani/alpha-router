@@ -13,8 +13,11 @@ from pathlib import Path
 
 import httpx
 
+from app.branding import PRODUCT_NAME
+from app.services.chat_markers import ATTACHMENT_MESSAGE_PREFIX
+
 PYTHON_BLOCK_RE = re.compile(r"```(?:python|py)\s*\n([\s\S]*?)```", re.IGNORECASE)
-ATTACH_PREFIX = "__ALPHA_ROUTER_ATTACH_JSON__:"
+ATTACH_PREFIX = ATTACHMENT_MESSAGE_PREFIX
 FILE_SECTION_RE = re.compile(r"---\s+([^\n]+?)\s+---\n", re.MULTILINE)
 MAX_CODE_OUTPUT_CHARS = 50_000
 MAX_WORKSPACE_FILE_BYTES = 512_000
@@ -48,9 +51,10 @@ BLOCKED_ROOT_MODULES = frozenset(
 )
 
 CODE_INTERPRETER_SYSTEM = (
-    "You have access to a Python code interpreter in Alpha Router (pandas, json, math, statistics, re, csv, datetime). "
+    f"You have access to a Python code interpreter in {PRODUCT_NAME} "
+    "(pandas, json, math, statistics, re, csv, datetime). "
     "When calculations, data analysis, or parsing would help, write Python in a ```python fenced block. "
-    "Alpha Router runs the last ```python block automatically and returns stdout/stderr. "
+    f"{PRODUCT_NAME} runs the last ```python block automatically and returns stdout/stderr. "
     "Write self-contained code; attachment files from the user are placed in the working directory under their filenames. "
     "Use English-only comments in Python code unless the user explicitly asks for Persian/Farsi comments. "
     "Keep all code LTR (standard Python layout) even when using Persian comments. "

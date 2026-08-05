@@ -204,11 +204,11 @@ function emitCss(families) {
     }
 
     const sel = [
-      `.cgpt-app[data-persian-font="${fam.id}"] .cgpt-msg-inner`,
-      `.cgpt-app[data-persian-font="${fam.id}"] .cgpt-composer-input`,
-      `.cgpt-app[data-persian-font="${fam.id}"] .cgpt-attach-msg__image figcaption`,
-      `.cgpt-app[data-persian-font="${fam.id}"] .cgpt-image-loading__label`,
-      `.cgpt-app[data-persian-font="${fam.id}"] .cgpt-msg-model-label`,
+      `.alpha-router-app[data-persian-font="${fam.id}"] .alpha-router-msg-inner`,
+      `.alpha-router-app[data-persian-font="${fam.id}"] .alpha-router-composer-input`,
+      `.alpha-router-app[data-persian-font="${fam.id}"] .alpha-router-attach-msg__image figcaption`,
+      `.alpha-router-app[data-persian-font="${fam.id}"] .alpha-router-image-loading__label`,
+      `.alpha-router-app[data-persian-font="${fam.id}"] .alpha-router-msg-model-label`,
     ].join(",\n");
     lines.push(`${sel} {`);
     lines.push(`  font-family: "${fam.cssFamily}", Tahoma, "Segoe UI", sans-serif;`);
@@ -219,10 +219,10 @@ function emitCss(families) {
   // Keep code blocks on monospace even when a Persian font is active.
   lines.push(
     [
-      `.cgpt-app[data-persian-font] .cgpt-msg-inner code`,
-      `.cgpt-app[data-persian-font] .cgpt-msg-inner pre`,
-      `.cgpt-app[data-persian-font] .cgpt-msg-inner .alpha-router-code-block`,
-      `.cgpt-app[data-persian-font] .cgpt-msg-inner .alpha-router-code-block__code`,
+      `.alpha-router-app[data-persian-font] .alpha-router-msg-inner code`,
+      `.alpha-router-app[data-persian-font] .alpha-router-msg-inner pre`,
+      `.alpha-router-app[data-persian-font] .alpha-router-msg-inner .alpha-router-code-block`,
+      `.alpha-router-app[data-persian-font] .alpha-router-msg-inner .alpha-router-code-block__code`,
     ].join(",\n") + " {",
   );
   lines.push('  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;');

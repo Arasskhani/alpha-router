@@ -162,7 +162,9 @@ export default function Reports() {
     if (params.department) body.department = params.department;
     if (params.office) body.office = params.office;
     if (params.group_id) body.group_id = Number(params.group_id);
-    if (params.alpha_router_api_key_id) body.alpha_router_api_key_id = Number(params.alpha_router_api_key_id);
+    if (params.alpha_router_api_key_id) {
+      body.alpha_router_api_key_id = Number(params.alpha_router_api_key_id);
+    }
     if (params.app) body.app = params.app;
     if (params.model_id) body.model_id = params.model_id;
     if (params.provider) body.provider = params.provider;
@@ -307,7 +309,11 @@ export default function Reports() {
         return (
           <div key={name}>
             <label>API key (optional)</label>
-            <select className="input-block" value={params.alpha_router_api_key_id} onChange={(e) => setParams((p) => ({ ...p, alpha_router_api_key_id: e.target.value }))}>
+            <select
+              className="input-block"
+              value={params.alpha_router_api_key_id}
+              onChange={(e) => setParams((p) => ({ ...p, alpha_router_api_key_id: e.target.value }))}
+            >
               <option value="">All keys</option>
               {options.alpha_router_api_keys.map((k) => (
                 <option key={k.id} value={String(k.id)}>{k.name}</option>

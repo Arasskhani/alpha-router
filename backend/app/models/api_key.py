@@ -31,7 +31,11 @@ class AlphaRouterApiKey(Base):
     period_started_at = Column(DateTime, nullable=True)
 
     owner = relationship("User", foreign_keys=[owner_user_id])
-    audit_logs = relationship("AlphaRouterApiKeyAuditLog", back_populates="api_key", cascade="all, delete-orphan")
+    audit_logs = relationship(
+        "AlphaRouterApiKeyAuditLog",
+        back_populates="api_key",
+        cascade="all, delete-orphan",
+    )
 
 
 class AlphaRouterApiKeyAuditLog(Base):
@@ -40,7 +44,11 @@ class AlphaRouterApiKeyAuditLog(Base):
     __tablename__ = "alpha_router_api_key_audit_logs"
 
     id = Column(Integer, primary_key=True)
-    alpha_router_api_key_id = Column(Integer, ForeignKey("alpha_router_api_keys.id", ondelete="CASCADE"), index=True)
+    alpha_router_api_key_id = Column(
+        Integer,
+        ForeignKey("alpha_router_api_keys.id", ondelete="CASCADE"),
+        index=True,
+    )
     actor_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     action = Column(String(32), nullable=False)
     changes_json = Column(Text, nullable=False, default="[]")

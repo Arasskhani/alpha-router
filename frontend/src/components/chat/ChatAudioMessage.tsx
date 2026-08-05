@@ -43,16 +43,16 @@ export default function ChatAudioMessage({ url, transcript }: Props) {
   }, [url]);
 
   return (
-    <div className="cgpt-audio-msg">
-      {error ? <p className="cgpt-audio-msg__error">{error}</p> : null}
+    <div className="alpha-router-audio-msg">
+      {error ? <p className="alpha-router-audio-msg__error">{error}</p> : null}
       {src ? (
-        <audio className="cgpt-audio-msg__player" controls preload="metadata" src={src}>
+        <audio className="alpha-router-audio-msg__player" controls preload="metadata" src={src}>
           <track kind="captions" />
         </audio>
       ) : !error ? (
-        <span className="cgpt-audio-msg__loading">Loading audio…</span>
+        <span className="alpha-router-audio-msg__loading">Loading audio…</span>
       ) : null}
-      {transcript ? <p className="cgpt-audio-msg__transcript">{transcript}</p> : null}
+      {transcript ? <p className="alpha-router-audio-msg__transcript">{transcript}</p> : null}
     </div>
   );
 }

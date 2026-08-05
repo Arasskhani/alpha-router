@@ -6,6 +6,7 @@ import ConnectionFormModal, { type ConnectionFormValues } from "../../components
 import RowActionsMenu from "../../components/RowActionsMenu";
 import { formatLocalDateTime } from "../../lib/dateTime";
 import { useConfirm } from "../../context/ConfirmContext";
+import { BROWSER_EVENT_NAMES } from "../../lib/brand";
 import { USAGE_AND_ACTIVITY_LABEL } from "../../lib/usageActivityLabel";
 
 type Conn = {
@@ -111,7 +112,7 @@ export default function Connections() {
     try {
       const r = await api<{ synced: number }>(`/api/admin/connections/${id}/sync`, { method: "POST" });
       setMsg(`Synced ${r.synced} models.`);
-      window.dispatchEvent(new CustomEvent("alpha-router-models-sync-flash"));
+      window.dispatchEvent(new CustomEvent(BROWSER_EVENT_NAMES.modelsSyncFlash));
       await load();
     } catch (e) {
       setErr(String(e));

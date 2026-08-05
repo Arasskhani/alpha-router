@@ -14,13 +14,23 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
 from app.api import admin, auth, authentication, chat, gateway, groups, images, logs, operations, plans, reports, smtp, user_chats, user_connectors, user_media, user_routes, user_settings
+from app.branding import (
+    APPLICATION_TITLE,
+    CSRF_COOKIE_NAME,
+    INTERNAL_DOMAIN,
+    LOGGER_NAMESPACE,
+    PRODUCT_NAME,
+    PRODUCT_SLUG,
+    SESSION_COOKIE_NAME,
+)
 from app.config import INSECURE_DEFAULTS, get_settings
 from app.core.security import hash_password
 from app.database import AsyncSessionLocal, Base, engine
-from app.db_migrate import (
-    apply_alpha_router_branding_migration,
-    apply_schema_column_patches,
-    run_one_time_migrations,
+from app.db_migrate import apply_schema_column_patches
+from app.legacy_brand_denylist import (
+    LEGACY_CSRF_COOKIE_NAMES,
+    LEGACY_DATABASE_URLS,
+    LEGACY_SESSION_COOKIE_NAMES,
 )
 from app.models.user import User
 from app.services.auth_sync_scheduler import refresh_auth_sync_schedules
@@ -99,6 +109,8 @@ def _assert_production_safe() -> None:
         s3_access_key=settings.s3_access_key,
         s3_secret_key=settings.s3_secret_key,
         allow_legacy_bearer_auth=settings.allow_legacy_bearer_auth,
+        session_cookie_name=settings.session_cookie_name,
+        csrf_cookie_name=settings.csrf_cookie_name,
         guard_mode=settings.production_guard_mode,
     )
 
@@ -193,6 +205,8 @@ def _collect_production_insecurities(
     s3_access_key: str = "",
     s3_secret_key: str = "",
     allow_legacy_bearer_auth: bool = False,
+    session_cookie_name: str = SESSION_COOKIE_NAME,
+    csrf_cookie_name: str = CSRF_COOKIE_NAME,
 ) -> list[str]:
     """Pure collector used by the startup guard and by tests.
 
@@ -229,7 +243,9 @@ def _collect_production_insecurities(
     if database_url in {
         "postgresql+asyncpg://alpha_router:changeme@postgres:5432/alpha_router",
         "postgresql+asyncpg://alpha_router:changeme@pgbouncer:6432/alpha_router",
-    } or (database_url.strip() and not _url_has_secure_password(database_url)):
+    } | LEGACY_DATABASE_URLS or (
+        database_url.strip() and not _url_has_secure_password(database_url)
+    ):
         insecure.append("DATABASE_URL")
     # SAML ACS/metadata are derived from api_public_url; require HTTPS when enabled.
     if saml_enabled and api_public_url.strip() and (
@@ -277,6 +293,10 @@ def _collect_production_insecurities(
         insecure.append("INSECURE_CODE_SUBPROCESS")
     if allow_legacy_bearer_auth:
         insecure.append("LEGACY_BEARER_AUTH")
+    if session_cookie_name in LEGACY_SESSION_COOKIE_NAMES:
+        insecure.append("SESSION_COOKIE_NAME")
+    if csrf_cookie_name in LEGACY_CSRF_COOKIE_NAMES:
+        insecure.append("CSRF_COOKIE_NAME")
     return insecure
 
 
@@ -308,6 +328,8 @@ def _check_production_safe(
     s3_access_key: str = "",
     s3_secret_key: str = "",
     allow_legacy_bearer_auth: bool = False,
+    session_cookie_name: str = SESSION_COOKIE_NAME,
+    csrf_cookie_name: str = CSRF_COOKIE_NAME,
     guard_mode: str = "hard-fail",
 ) -> None:
     """Pure check used by the startup guard and by tests.
@@ -344,6 +366,8 @@ def _check_production_safe(
         s3_access_key=s3_access_key,
         s3_secret_key=s3_secret_key,
         allow_legacy_bearer_auth=allow_legacy_bearer_auth,
+        session_cookie_name=session_cookie_name,
+        csrf_cookie_name=csrf_cookie_name,
     )
     if not insecure:
         return
@@ -361,15 +385,12 @@ def _check_production_safe(
     raise RuntimeError(message)
 
 
-_PRODUCTION_GUARD_LOG = logging.getLogger("alpha_router.production_guard")
+_PRODUCTION_GUARD_LOG = logging.getLogger(f"{LOGGER_NAMESPACE}.production_guard")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _assert_production_safe()
-    # Rename alpha_router_* → alpha_* before create_all so ORM does not create empty
-    # alpha_* shells beside populated alpha_router_* tables on upgraded databases.
-    await apply_alpha_router_branding_migration()
     async with engine.begin() as conn:
         # Multiple uvicorn workers enter lifespan concurrently. Serialize DDL
         # discovery/creation so a newly introduced table cannot race in
@@ -382,6 +403,11 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as db:
         from app.services.username_norm import find_user_by_username_ci, normalize_username
 
+        # Every Uvicorn worker enters lifespan concurrently. Serialize the
+        # check-and-create bootstrap transaction so a fresh database cannot
+        # race on the unique username/email indexes.
+        if db.get_bind().dialect.name == "postgresql":
+            await db.execute(text("SELECT pg_advisory_xact_lock(56023114)"))
         admin_username = normalize_username(settings.admin_username) or settings.admin_username.strip()
         admin_user = await find_user_by_username_ci(db, admin_username)
         if not admin_user:
@@ -391,7 +417,7 @@ async def lifespan(app: FastAPI):
             db.add(
                 User(
                     username=admin_username,
-                    email="admin@alpha-router.local",
+                    email=f"admin@{INTERNAL_DOMAIN}",
                     display_name="Administrator",
                     hashed_password=hash_password(settings.admin_password),
                     role=primary_role_slug(bootstrap_roles),
@@ -409,7 +435,6 @@ async def lifespan(app: FastAPI):
 
     async with AsyncSessionLocal() as db:
         await asyncio.to_thread(oss.ensure_bucket)
-        await run_one_time_migrations(db)
         from app.services.user_role_service import ensure_super_admin_roles
 
         for row in (await db.execute(select(User))).scalars().all():
@@ -436,7 +461,7 @@ async def lifespan(app: FastAPI):
 _DOCS_LOCKED = bool(settings.openapi_admin_only)
 
 app = FastAPI(
-    title="Alpha Router Organizational AI Platform",
+    title=APPLICATION_TITLE,
     version="1.0.0",
     lifespan=lifespan,
     # When docs are admin-locked, disable the public default endpoints and serve
@@ -459,14 +484,14 @@ if _DOCS_LOCKED:
     async def _protected_swagger_ui_html():
         return get_swagger_ui_html(
             openapi_url="/api/openapi.json",
-            title="Alpha Router Organizational AI Platform — API",
+            title=f"{APPLICATION_TITLE} — API",
         )
 
     @app.get("/api/redoc", include_in_schema=False)
     async def _protected_redoc_html():
         return get_redoc_html(
             openapi_url="/api/openapi.json",
-            title="Alpha Router Organizational AI Platform — ReDoc",
+            title=f"{APPLICATION_TITLE} — ReDoc",
         )
 
 
@@ -518,7 +543,7 @@ def health_payload() -> dict[str, str]:
     fingerprint the application. Dependency readiness is checked separately by
     the deployment layer rather than turning this endpoint into a data probe.
     """
-    return {"status": "ok", "service": "alpha"}
+    return {"status": "ok", "service": PRODUCT_SLUG}
 
 
 @app.get("/health", include_in_schema=False)
@@ -527,10 +552,10 @@ async def health():
 
 
 def _fallback_html() -> str:
-    return """<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"/><title>Alpha Router</title></head>
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><title>{PRODUCT_NAME}</title></head>
 <body style="font-family:system-ui;max-width:640px;margin:3rem auto;padding:1rem">
-  <h1>Alpha Router UI not built yet</h1>
+  <h1>{PRODUCT_NAME} UI not built yet</h1>
   <p>Run from the project folder:</p>
   <pre>cd frontend\nnpm install\nnpm run build</pre>
   <p>Rebuild the Docker image so the frontend is compiled into the container:</p>

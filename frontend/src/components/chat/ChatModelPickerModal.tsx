@@ -97,15 +97,15 @@ export default function ChatModelPickerModal({
   const title = mode === "append" ? "Add model" : "Select model";
 
   return (
-    <div className="cgpt-model-modal-backdrop" onMouseDown={onClose} role="presentation">
+    <div className="alpha-router-model-modal-backdrop" onMouseDown={onClose} role="presentation">
       <div
-        className="cgpt-model-modal"
+        className="alpha-router-model-modal"
         role="dialog"
         aria-modal="true"
         aria-label={title}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="cgpt-model-modal__search">
+        <div className="alpha-router-model-modal__search">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
             <circle cx="11" cy="11" r="7" />
             <path d="M20 20l-3.5-3.5" strokeLinecap="round" />
@@ -118,14 +118,14 @@ export default function ChatModelPickerModal({
             onChange={(e) => setQuery(e.target.value)}
             aria-label="Search models"
           />
-          <kbd className="cgpt-kbd">esc</kbd>
+          <kbd className="alpha-router-kbd">esc</kbd>
         </div>
 
-        <div className="cgpt-model-modal__month">{month}</div>
+        <div className="alpha-router-model-modal__month">{month}</div>
 
-        <ul className="cgpt-model-modal__list" ref={listRef} role="listbox">
+        <ul className="alpha-router-model-modal__list" ref={listRef} role="listbox">
           {filtered.length === 0 ? (
-            <li className="cgpt-model-modal__empty">No models match</li>
+            <li className="alpha-router-model-modal__empty">No models match</li>
           ) : (
             filtered.map((m, idx) => {
               const selected = selectedIds.includes(m.id);
@@ -134,7 +134,7 @@ export default function ChatModelPickerModal({
                 <li key={m.id} data-idx={idx} role="option" aria-selected={selected || active}>
                   <button
                     type="button"
-                    className={`cgpt-model-modal__item${active ? " is-active" : ""}${selected ? " is-selected" : ""}`}
+                    className={`alpha-router-model-modal__item${active ? " is-active" : ""}${selected ? " is-selected" : ""}`}
                     onMouseEnter={() => setHighlight(idx)}
                     onClick={() => onSelect(m.id)}
                     title={m.name || m.external_id || m.id}
@@ -148,7 +148,7 @@ export default function ChatModelPickerModal({
                   {onSetDefault && mode === "replace" ? (
                     <button
                       type="button"
-                      className={`cgpt-model-default${defaultModelId === m.id ? " is-default" : ""}`}
+                      className={`alpha-router-model-default${defaultModelId === m.id ? " is-default" : ""}`}
                       onClick={(e) => {
                         e.stopPropagation();
                         onSetDefault(m.id);
@@ -169,10 +169,10 @@ export default function ChatModelPickerModal({
           )}
         </ul>
 
-        <footer className="cgpt-model-modal__footer">
+        <footer className="alpha-router-model-modal__footer">
           <span>↑ ↓ Navigate</span>
           <span>↵ Select</span>
-          <span className="cgpt-model-modal__count">{filtered.length} models</span>
+          <span className="alpha-router-model-modal__count">{filtered.length} models</span>
         </footer>
       </div>
     </div>

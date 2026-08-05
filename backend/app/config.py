@@ -5,6 +5,14 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.branding import (
+    CSRF_COOKIE_NAME,
+    GATEWAY_MASTER_KEY_DEFAULT,
+    PRODUCT_NAME,
+    SESSION_COOKIE_NAME,
+)
+from app.legacy_brand_denylist import LEGACY_INSECURE_DEFAULTS
+
 # Known placeholder values that must never reach a production deployment.
 # Used by the startup guard (_assert_production_safe) to refuse boot when an
 # operator forgot to override the bundled dev defaults.
@@ -13,11 +21,12 @@ INSECURE_DEFAULTS: frozenset[str] = frozenset(
         "change-me-in-production",  # SECRET_KEY
         "admin",  # ADMIN_PASSWORD
         "changeme",  # SERVICE_ADMIN_PASSWORD and template credentials
-        "alpha",  # bundled database/S3 development identity
+        "alpha_router",  # bundled database/S3 development identity
         "rustfsadmin",  # common S3-compatible placeholder
         "change-me-seaweed-admin",  # SEAWEEDFS_ADMIN_PASSWORD example
-        "sk-alpha-router-master",  # GATEWAY_MASTER_KEY
+        GATEWAY_MASTER_KEY_DEFAULT,
     }
+    | LEGACY_INSECURE_DEFAULTS
 )
 
 DEFAULT_CSP_REPORT_ONLY = (
@@ -41,7 +50,7 @@ DEFAULT_CSP_REPORT_ONLY = (
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    app_name: str = "Alpha Router"
+    app_name: str = PRODUCT_NAME
     debug: bool = False
     # "development" (default) keeps all hardening opt-in so existing single-box
     # deployments boot unchanged. "production" enables the startup guard that
@@ -60,8 +69,8 @@ class Settings(BaseSettings):
     enable_cookie_auth: bool = True
     allow_legacy_bearer_auth: bool = False  # env: ALLOW_LEGACY_BEARER_AUTH
     enable_csrf: bool = True
-    session_cookie_name: str = "alpha_router_session"
-    csrf_cookie_name: str = "alpha_router_csrf"
+    session_cookie_name: str = SESSION_COOKIE_NAME
+    csrf_cookie_name: str = CSRF_COOKIE_NAME
     csrf_header_name: str = "X-CSRF-Token"
 
     # Default admin (local auth panel)
@@ -84,10 +93,9 @@ class Settings(BaseSettings):
     # Phase 9: Redis auth. When set, the connection URL is rebuilt with this
     # password so rate-limit and OIDC state caches authenticate to Redis.
     redis_password: str = ""  # env: REDIS_PASSWORD
-    # Phase 9: data-at-rest encryption key, split from SECRET_KEY. Empty falls
-    # back to the legacy SECRET_KEY-derived key in secret_crypto. The production
-    # guard flags an empty value in production (warning by default).
-    data_encryption_key: str = ""  # env: DATA_ENCRYPTION_KEY
+    # Dedicated data-at-rest encryption key. Production rejects this bundled
+    # development placeholder; no alternate key or historical salt is tried.
+    data_encryption_key: str = "change-me-in-production"  # env: DATA_ENCRYPTION_KEY
     # Phase 9: lock OpenAPI docs/redoc/openapi.json to Super Admin in production.
     # The guard flags a False value in production. Development leaves docs open.
     openapi_admin_only: bool = False  # env: OPENAPI_ADMIN_ONLY
@@ -96,7 +104,7 @@ class Settings(BaseSettings):
     production_guard_mode: str = "hard-fail"  # env: PRODUCTION_GUARD_MODE
 
     # OpenAI-compatible gateway master key (Open WebUI → Alpha Router)
-    gateway_master_key: str = "sk-alpha-router-master"
+    gateway_master_key: str = GATEWAY_MASTER_KEY_DEFAULT
 
     # Code interpreter sandbox. Alpha Router sends bounded payloads to an internal broker;
     # only that broker has access to the Docker socket and fixed sandbox policy.
@@ -156,12 +164,12 @@ class Settings(BaseSettings):
     smtp_port: int = 587
     smtp_user: str = ""
     smtp_password: str = ""
-    smtp_from: str = "alpha_router@localhost"
+    smtp_from: str = "alpha-router@localhost"
     smtp_tls: bool = True
 
     # Object storage (SeaweedFS / S3-compatible) — all media blobs
     s3_endpoint_url: str = "http://127.0.0.1:8333"
-    s3_access_key: str = "alpha"
+    s3_access_key: str = "alpha_router"
     s3_secret_key: str = "changeme"
     s3_bucket: str = "alpha-router-media"
     s3_region: str = "us-east-1"

@@ -1073,7 +1073,11 @@ async def patch_alpha_router_key(
 
 
 @router.delete("/api-keys/{key_id}")
-async def delete_alpha_router_key(key_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(require_api_keys_write)):
+async def delete_alpha_router_key(
+    key_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_api_keys_write),
+):
     k = await db.get(AlphaRouterApiKey, key_id)
     if not k:
         raise HTTPException(404)
@@ -1093,11 +1097,17 @@ async def bulk_alpha_router_keys(
         raise HTTPException(status_code=400, detail="No API keys selected")
     ids = list(dict.fromkeys(body.ids))
     if action == "delete":
-        result = await db.execute(delete(AlphaRouterApiKey).where(AlphaRouterApiKey.id.in_(ids)))
+        result = await db.execute(
+            delete(AlphaRouterApiKey).where(AlphaRouterApiKey.id.in_(ids))
+        )
         await db.commit()
         return {"ok": True, "count": result.rowcount or 0}
     enabled = action == "on"
-    rows = (await db.execute(select(AlphaRouterApiKey).where(AlphaRouterApiKey.id.in_(ids)))).scalars().all()
+    rows = (
+        await db.execute(
+            select(AlphaRouterApiKey).where(AlphaRouterApiKey.id.in_(ids))
+        )
+    ).scalars().all()
     changed = 0
     for k in rows:
         if k.is_active == enabled:
@@ -1710,7 +1720,9 @@ async def _fetch_logs_since(
             return []
         q = q.where(RequestLog.user_id.in_(user_ids))
     if alpha_router_api_key_id is not None:
-        q = q.where(RequestLog.alpha_router_api_key_id == alpha_router_api_key_id)
+        q = q.where(
+            RequestLog.alpha_router_api_key_id == alpha_router_api_key_id
+        )
     if connection_id is not None:
         model_ids = (
             await db.execute(select(AIModel.external_id).where(AIModel.connection_id == connection_id))
@@ -1734,18 +1746,30 @@ def _activity_query_filters(
         "username": (username or "").strip() or None,
         "app": (app or "").strip() or None,
         "response_status": response_status if response_status in ("success", "fail") else None,
-        "alpha_router_api_key_id": api_key_id if api_key_id and api_key_id > 0 else None,
+        "alpha_router_api_key_id": (
+            api_key_id if api_key_id and api_key_id > 0 else None
+        ),
     }
 
 
 async def _period_api_key_filter_options(db: AsyncSession, rows: list) -> list[dict]:
-    """API keys that appear in the selected activity period (via request_logs.alpha_router_api_key_id)."""
-    key_ids = sorted({int(r.alpha_router_api_key_id) for r in rows if getattr(r, "alpha_router_api_key_id", None)})
+    """API keys that appear in the selected activity period."""
+    key_ids = sorted(
+        {
+            int(row.alpha_router_api_key_id)
+            for row in rows
+            if getattr(row, "alpha_router_api_key_id", None)
+        }
+    )
     if not key_ids:
         return []
     key_rows = (
         await db.execute(
-            select(AlphaRouterApiKey.id, AlphaRouterApiKey.name, AlphaRouterApiKey.key_prefix).where(AlphaRouterApiKey.id.in_(key_ids))
+            select(
+                AlphaRouterApiKey.id,
+                AlphaRouterApiKey.name,
+                AlphaRouterApiKey.key_prefix,
+            ).where(AlphaRouterApiKey.id.in_(key_ids))
         )
     ).all()
     by_id = {int(kid): (name, prefix) for kid, name, prefix in key_rows}

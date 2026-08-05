@@ -10,15 +10,17 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.branding import LOGGER_NAMESPACE, PRODUCT_NAME
 from app.services import user_chat_storage_service as chat_store
 
-logger = logging.getLogger("alpha_router.security.settings")
+logger = logging.getLogger(f"{LOGGER_NAMESPACE}.security.settings")
 
 MAX_EXPORT_SESSIONS = 500
 MAX_IMPORT_SESSIONS = 200
 MAX_MESSAGES_PER_SESSION = 2000
 MAX_MESSAGE_CHARS = 200_000
 MAX_IMPORT_BYTES = 20 * 1024 * 1024
+CHAT_EXPORT_FORMAT = "alpha-router-chats"
 
 
 class ChatImportError(ValueError):
@@ -154,7 +156,7 @@ async def export_user_chats(db: AsyncSession, user_id: int) -> dict[str, Any]:
         )
 
     return {
-        "format": "alpha-router-chats",
+        "format": CHAT_EXPORT_FORMAT,
         "version": 1,
         "exported_at": dt.datetime.utcnow().isoformat() + "Z",
         "sessions": exported,
@@ -164,9 +166,8 @@ async def export_user_chats(db: AsyncSession, user_id: int) -> dict[str, Any]:
 def detect_import_format(payload: Any) -> str:
     if isinstance(payload, dict):
         fmt = str(payload.get("format") or "").lower()
-        if fmt == "alpha-router-chats" or (payload.get("version") and "sessions" in payload):
-            if fmt == "alpha-router-chats" or isinstance(payload.get("sessions"), list):
-                return "alpha-router-chats"
+        if fmt == CHAT_EXPORT_FORMAT and isinstance(payload.get("sessions"), list):
+            return CHAT_EXPORT_FORMAT
         # Open WebUI: often { "chats": [...] } or list of chat objects with "chat"/"messages"
         if isinstance(payload.get("chats"), list):
             return "openwebui"
@@ -181,8 +182,6 @@ def detect_import_format(payload: Any) -> str:
                 return "chatgpt"
             if "chat" in first or "messages" in first or "history" in first:
                 return "openwebui"
-            if "sessions" in first:
-                return "alpha-router-chats"
             if isinstance(first.get("messages"), list) and ("title" in first or "id" in first):
                 return "openwebui"
     raise ChatImportError("Unrecognized chat export format")
@@ -191,7 +190,7 @@ def detect_import_format(payload: Any) -> str:
 def _normalize_alpha_router_sessions(payload: dict[str, Any]) -> list[dict[str, Any]]:
     sessions = payload.get("sessions")
     if not isinstance(sessions, list):
-        raise ChatImportError("Invalid Alpha Router export: missing sessions array")
+        raise ChatImportError(f"Invalid {PRODUCT_NAME} export: missing sessions array")
     return sessions
 
 
@@ -345,9 +344,9 @@ def _parse_openwebui(payload: Any) -> list[dict[str, Any]]:
 
 def parse_import_sessions(payload: Any) -> tuple[str, list[dict[str, Any]]]:
     fmt = detect_import_format(payload)
-    if fmt == "alpha-router-chats":
+    if fmt == CHAT_EXPORT_FORMAT:
         if not isinstance(payload, dict):
-            raise ChatImportError("Invalid Alpha Router export")
+            raise ChatImportError(f"Invalid {PRODUCT_NAME} export")
         raw = _normalize_alpha_router_sessions(payload)
         sessions: list[dict[str, Any]] = []
         for item in raw:

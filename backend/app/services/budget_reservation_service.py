@@ -131,8 +131,14 @@ async def reserve(
 ) -> BudgetReservation | None:
     if user_id is None and alpha_router_api_key_id is None:
         return None
-    subject_type = SUBJECT_ALPHA_ROUTER_KEY if alpha_router_api_key_id is not None else SUBJECT_USER
-    subject_id = int(alpha_router_api_key_id if alpha_router_api_key_id is not None else user_id)
+    subject_type = (
+        SUBJECT_ALPHA_ROUTER_KEY
+        if alpha_router_api_key_id is not None
+        else SUBJECT_USER
+    )
+    subject_id = int(
+        alpha_router_api_key_id if alpha_router_api_key_id is not None else user_id
+    )
     scoped_key = f"{subject_type}:{subject_id}:{idempotency_key}"[:160]
     amount = _clamp_hold(amount_usd, 0.01)
     if alpha_router_api_key_id is not None:

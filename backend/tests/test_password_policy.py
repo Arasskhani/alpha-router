@@ -30,7 +30,16 @@ def test_validate_password_rejects_empty():
 def test_validate_password_rejects_common():
     # All entries here are >= PASSWORD_MIN_LENGTH so the length check passes
     # and the common-password check is what actually fires.
-    for bad in ("password", "Password123", "password123", "qwerty123", "admin123", "changeme", "alpha-router123", "00000000"):
+    for bad in (
+        "password",
+        "Password123",
+        "password123",
+        "qwerty123",
+        "admin123",
+        "changeme",
+        "alpha-router123",
+        "00000000",
+    ):
         with pytest.raises(PasswordPolicyError) as exc:
             validate_password(bad)
         assert "too common" in str(exc.value), f"{bad!r} did not trigger common-password rejection"

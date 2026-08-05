@@ -33,7 +33,7 @@ function persianFontsPlugin(): Plugin {
   };
 
   return {
-    name: "alpha-persian-fonts",
+    name: "alpha-router-persian-fonts",
     buildStart() {
       run();
     },

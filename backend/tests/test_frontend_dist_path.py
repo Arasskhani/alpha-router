@@ -6,7 +6,7 @@ from app.main import resolve_frontend_dist
 
 
 def test_resolve_frontend_dist_local_repo_layout(tmp_path):
-    repo = tmp_path / "Alpha Router"
+    repo = tmp_path / "workspace"
     dist = repo / "frontend" / "dist"
     dist.mkdir(parents=True)
     (dist / "index.html").write_text("<html></html>", encoding="utf-8")

@@ -194,7 +194,7 @@ export const docSections: DocSection[] = [
           <tbody>
             <tr>
               <td>
-                <strong>alpha</strong> (uvicorn)
+                <strong>alpha-router</strong> (uvicorn; intended Stage 8 Compose name)
               </td>
               <td>FastAPI app, SPA static files, LiteLLM proxy, schedulers, billing</td>
             </tr>
@@ -264,7 +264,8 @@ export const docSections: DocSection[] = [
         <h2>Deployment overview</h2>
         <p>
           Production deployments typically use the repository <code>docker-compose.yml</code>: Postgres, PgBouncer,
-          Redis, SeaweedFS, sandbox-broker, and the <code>alpha</code> app (port <code>8080</code>). Build the sandbox
+          Redis, SeaweedFS, sandbox-broker, and the intended Stage 8 <code>alpha-router</code> app service (port{" "}
+          <code>8080</code>). Build the sandbox
           image separately when you need the code interpreter (<code>docker compose build sandbox</code>).
         </p>
         <h3>Configuration</h3>
@@ -303,8 +304,8 @@ export const docSections: DocSection[] = [
         <h3>Schema &amp; migrations</h3>
         <p>
           On startup Alpha Router creates ORM tables under a PostgreSQL advisory lock, applies nullable column patches for new
-          fields, then runs flagged one-time data migrations stored in <code>system_settings</code>. There is no
-          separate Alembic revision history for operators to apply by hand.
+          fields, and creates any missing current-schema indexes. Greenfield deployments do not run historical data or storage
+          migrations. There is no separate Alembic revision history for operators to apply by hand.
         </p>
       </>
     ),
@@ -515,7 +516,7 @@ export const docSections: DocSection[] = [
               <td>
                 <strong>Super Admin</strong>
               </td>
-              <td>Full admin panel and destructive operations (for example data-key rotation API)</td>
+              <td>Full admin panel and destructive operations</td>
             </tr>
             <tr>
               <td>
@@ -551,13 +552,8 @@ export const docSections: DocSection[] = [
         <h2>Secrets &amp; encryption</h2>
         <p>
           Provider API keys, SMTP passwords, LDAP/OIDC client secrets, connector tokens, and TOTP secrets are stored
-          with Fernet encryption. The primary key is derived from <code>DATA_ENCRYPTION_KEY</code> (PBKDF2). When that
-          variable is empty, Alpha Router falls back to a key derived from <code>SECRET_KEY</code> for compatibility.
-        </p>
-        <p>
-          Data-key rotation is available to Super Admins via the Operations API endpoint{" "}
-          <code>POST /api/admin/operations/data-key-rotation</code> (not a button on the Operations page). Follow your
-          operations runbook when rotating keys so existing ciphertext is re-encrypted.
+          with Fernet encryption. The only encryption key is derived from <code>DATA_ENCRYPTION_KEY</code> (PBKDF2).
+          Plaintext, malformed ciphertext, and ciphertext from another key are rejected instead of being forwarded upstream.
         </p>
         <h3>Sandbox trust boundary</h3>
         <p>
@@ -728,8 +724,7 @@ export const docSections: DocSection[] = [
           </li>
         </ul>
         <Note>
-          Observability counters are also available via <code>GET /api/admin/operations/observability</code>. Data-key
-          rotation is a Super Admin API operation, not a button on this page — use your security runbook.
+          Observability counters are also available via <code>GET /api/admin/operations/observability</code>.
         </Note>
       </>
     ),
@@ -833,7 +828,7 @@ export const docSections: DocSection[] = [
         <p>
           The plaintext key is shown once at creation. Clients call <code>/v1/*</code> with{" "}
           <code>Authorization: Bearer &lt;key&gt;</code>. Usage debits the key’s credit pool (not a personal monthly
-          budget) when the key is a Alpha Router gateway key.
+          budget) when the key is an Alpha Router gateway key.
         </p>
         <p>Row actions include edit, usage, enable/disable, delete, bulk actions, and changelog.</p>
       </>
@@ -1177,8 +1172,8 @@ export const docSections: DocSection[] = [
         <Code>{`curl -sS "$ALPHA_ROUTER_BASE/v1/models" \\
   -H "Authorization: Bearer $ALPHA_ROUTER_API_KEY"`}</Code>
         <p>
-          Point OpenAI-compatible clients at your Alpha Router base URL (for example <code>https://alpha-router.example.com/v1</code>
-          ) and use a Alpha Router-issued key as the API key.
+          Point OpenAI-compatible clients at your Alpha Router base URL (for example{" "}
+          <code>https://alpha-router.example.com/v1</code>) and use an Alpha Router-issued key as the API key.
         </p>
       </>
     ),

@@ -22,6 +22,11 @@ from app.models.chat import (
     ChatSession,
     UserChatPrefs,
 )
+from app.services.chat_markers import (
+    ATTACHMENT_MESSAGE_PREFIX,
+    IMAGE_MESSAGE_PREFIX,
+    IMAGE_PENDING_MARKER,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -32,10 +37,6 @@ _MAX_SESSIONS_PAGE = 200
 _MAX_MESSAGES_PAGE = 500
 _MAX_SEARCH_RESULTS = 20
 _PURGE_BATCH_SIZE = 5000
-
-IMAGE_PENDING_MARKER = "__ALPHA_ROUTER_IMAGE_PENDING__"
-IMAGE_MESSAGE_PREFIX = "__ALPHA_ROUTER_IMAGE_JSON__:"
-ATTACHMENT_MESSAGE_PREFIX = "__ALPHA_ROUTER_ATTACH_JSON__:"
 
 # Orphan placeholders (container restart / dead stream) — reconcile on read after this age.
 # Must exceed the OpenRouter read timeout (180s) plus the frontend client timeout (240s)

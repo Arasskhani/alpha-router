@@ -21,16 +21,16 @@ def _log_row(
     r: RequestLog,
     provider: str | None = None,
     *,
-    alpha_router_key: AlphaRouterApiKey | None = None,
+    router_key: AlphaRouterApiKey | None = None,
 ) -> dict:
     source_code = (r.source or "").strip().lower()
-    if source_code in ("alpha_router_chat", "alpha_router_chat"):
+    if source_code == "alpha_router_chat":
         app = format_app_source(r.source)
     else:
         app = (r.client_app or "").strip() or format_app_source(r.source)
     if r.alpha_router_api_key_id:
         identity_type = "api_key"
-    elif source_code in ("alpha_router_chat", "alpha_router_chat"):
+    elif source_code == "alpha_router_chat":
         identity_type = "chat"
     else:
         identity_type = "user"
@@ -55,10 +55,10 @@ def _log_row(
         "success": r.success,
         "error_message": r.error_message,
     }
-    if alpha_router_key:
-        row["api_key_name"] = alpha_router_key.name
-        row["api_key_prefix"] = alpha_router_key.key_prefix
-        row["alpha_router_api_key_id"] = alpha_router_key.id
+    if router_key:
+        row["api_key_name"] = router_key.name
+        row["api_key_prefix"] = router_key.key_prefix
+        row["alpha_router_api_key_id"] = router_key.id
     return row
 
 
@@ -74,7 +74,9 @@ def _apply_log_filters(
 ):
     if username:
         term = username.strip()
-        key_match = select(AlphaRouterApiKey.id).where(AlphaRouterApiKey.name.contains(term))
+        key_match = select(AlphaRouterApiKey.id).where(
+            AlphaRouterApiKey.name.contains(term)
+        )
         q = q.where(
             or_(
                 RequestLog.username.contains(term),
@@ -123,8 +125,14 @@ async def admin_logs_filter_options(
     api_keys = (
         await db.execute(
             select(AlphaRouterApiKey.name)
-            .join(RequestLog, RequestLog.alpha_router_api_key_id == AlphaRouterApiKey.id)
-            .where(AlphaRouterApiKey.name.isnot(None), AlphaRouterApiKey.name != "")
+            .join(
+                RequestLog,
+                RequestLog.alpha_router_api_key_id == AlphaRouterApiKey.id,
+            )
+            .where(
+                AlphaRouterApiKey.name.isnot(None),
+                AlphaRouterApiKey.name != "",
+            )
             .distinct()
             .order_by(AlphaRouterApiKey.name)
         )
@@ -183,15 +191,29 @@ async def admin_logs(
             if external_id and external_id not in provider_map:
                 provider_map[str(external_id)] = str(provider or "")
 
-    key_ids = {r.alpha_router_api_key_id for r in rows if r.alpha_router_api_key_id}
+    key_ids = {
+        r.alpha_router_api_key_id
+        for r in rows
+        if r.alpha_router_api_key_id
+    }
     key_map: dict[int, AlphaRouterApiKey] = {}
     if key_ids:
-        keys = (await db.execute(select(AlphaRouterApiKey).where(AlphaRouterApiKey.id.in_(key_ids)))).scalars().all()
+        keys = (
+            await db.execute(
+                select(AlphaRouterApiKey).where(
+                    AlphaRouterApiKey.id.in_(key_ids)
+                )
+            )
+        ).scalars().all()
         key_map = {k.id: k for k in keys}
 
     return {
         "items": [
-            _log_row(r, provider_map.get((r.model_id or "").strip()), alpha_router_key=key_map.get(r.alpha_router_api_key_id))
+            _log_row(
+                r,
+                provider_map.get((r.model_id or "").strip()),
+                router_key=key_map.get(r.alpha_router_api_key_id),
+            )
             for r in rows
         ],
         "offset": offset,

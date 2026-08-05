@@ -1,16 +1,21 @@
-# Alpha Router — Organizational AI Platform
+# Alpha Router — Organizational AI Control Plane
 
-Alpha Router is an organizational AI control plane with a built-in web UI. It connects teams to upstream LLM providers (OpenRouter, OpenAI, Anthropic, Google, and others) while enforcing budgets, roles, plans, and audit logging.
+Alpha Router is an organizational AI control plane with a built-in web UI. It
+connects teams to upstream LLM providers such as OpenRouter, OpenAI, Anthropic,
+Google, and xAI while enforcing budgets, RBAC, quotas, retention, and audit
+logging.
 
-The platform includes:
+The platform provides:
 
-- **User app** (`/app`) — chat, media library, usage & activity, recommendations
-- **Admin panel** (`/admin`) — users, groups, roles, plans, connections, models, API keys, reports, operations, storage
-- **OpenAI-compatible API** (`/v1`) — optional gateway for external tools (IDE extensions, scripts, automation) using the same models and budgets
+- **User app** (`/app`) — chat, media library, and activity
+- **Admin panel** (`/admin`) — identity, access, budgets, providers, models,
+  reports, operations, and storage
+- **OpenAI-compatible gateway** (`/v1`) — API-key access for external tools,
+  scripts, and automation
 
-## Quick start (Docker)
+## Quick start with Docker
 
-Start **Docker Desktop**, then:
+Start Docker Desktop, then:
 
 ```powershell
 cd path\to\alpha-router
@@ -18,24 +23,29 @@ Copy-Item .env.example .env
 .\scripts\start-docker.ps1
 ```
 
-Or manually:
+Or start Compose directly:
 
 ```powershell
 docker compose up --build -d
 ```
 
-### Endpoints
+### Local endpoints
 
 | Service | URL |
-|--------|-----|
-| UI + API | http://localhost:8080 |
+|---|---|
+| UI and API | http://localhost:8080 |
 | Health | http://localhost:8080/health |
-| MinIO console | http://localhost:9001 (credentials in `.env`) |
 | PostgreSQL | localhost:5432 (`alpha_router` / `alpha_router`) |
+| PgBouncer | localhost:6432 |
+| Redis | localhost:6379 |
+| SeaweedFS S3 API | http://localhost:8333 |
+| SeaweedFS admin UI | http://localhost:23646 |
 
-Default **admin panel** login: `admin` / `admin`
-
-Before production use, change `SECRET_KEY`, admin passwords, `GATEWAY_MASTER_KEY`, and MinIO/S3 credentials in `.env` (see `.env.example`).
+Bootstrap administrator credentials come from `ADMIN_USERNAME` and
+`ADMIN_PASSWORD` in `.env`. Replace every example secret before production use,
+including `SECRET_KEY`, `DATA_ENCRYPTION_KEY`, `GATEWAY_MASTER_KEY`,
+`SANDBOX_BROKER_TOKEN`, database and Redis passwords, and S3/SeaweedFS
+credentials.
 
 ### Stop the stack
 
@@ -43,15 +53,18 @@ Before production use, change `SECRET_KEY`, admin passwords, `GATEWAY_MASTER_KEY
 .\scripts\stop-all.ps1
 ```
 
-Stops Docker Compose services (app, PostgreSQL, Redis, MinIO) and the optional Windows LDAP bridge on port 8765.
+This stops the Compose services and the optional Windows LDAP bridge.
 
 ## Project structure
 
-```
+```text
 alpha-router/
-├── backend/          FastAPI app (API, gateway, LDAP/Keycloak sync, migrations)
-├── frontend/         React SPA (admin panel + user app)
-├── scripts/          start-docker.ps1, stop-all.ps1, start-ldap-bridge.ps1
+├── backend/          FastAPI application, gateway, schedulers, and services
+├── frontend/         React and Vite single-page application
+├── sandbox/          Isolated code-interpreter image
+├── sandbox-broker/   Internal Docker sandbox controller
+├── deploy/           SeaweedFS support files
+├── scripts/          Windows host operations scripts
 ├── docker-compose.yml
 ├── Dockerfile
 └── .env.example
@@ -59,36 +72,32 @@ alpha-router/
 
 ## Configuration
 
-Copy `.env.example` to `.env`. Key settings:
+Copy `.env.example` to `.env`. Important groups include:
 
-- **Database / cache** — `DATABASE_URL` (via PgBouncer in Docker Compose), optional `DATABASE_READ_URL`, `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` / `DB_POOL_TIMEOUT`, `UVICORN_WORKERS`, chat rate limits (`CHAT_*_RATE_LIMIT_PER_MIN`), `REDIS_URL`
-- **Auth** — local admin account; optional LDAP and Keycloak (see Admin → Authentication)
-- **Storage** — MinIO/S3 for media (`S3_*`, `MEDIA_CDN_PREFIX`)
-- **Gateway** — `GATEWAY_MASTER_KEY` for OpenAI-compatible `/v1` access
-- **Public URLs** — `API_PUBLIC_URL`, `FRONTEND_URL`
+- **Database and cache** — `DATABASE_URL`, optional `DATABASE_READ_URL`, pool
+  limits, worker count, rate limits, and `REDIS_URL`
+- **Authentication** — local accounts plus optional LDAP, SAML, OIDC, and TOTP
+- **Storage** — SeaweedFS through its S3-compatible API using `S3_*` settings
+- **Gateway** — `GATEWAY_MASTER_KEY` and administrator-issued
+  `alpha_router_...` API keys
+- **Public URLs** — `API_PUBLIC_URL` and `FRONTEND_URL`
+- **Sandbox** — broker URL, token, timeout, and resource limits
 
-### LDAP on Windows (optional)
+For production, set `ENVIRONMENT=production` and keep
+`PRODUCTION_GUARD_MODE=hard-fail`.
 
-For signed Active Directory from Docker, run the host LDAP bridge on Windows:
+## External clients
 
-```powershell
-.\scripts\start-ldap-bridge.ps1
-```
-
-The app container expects `LDAP_BRIDGE_URL=http://host.docker.internal:8765` (already set in `docker-compose.yml`).
-
-## External clients (OpenAI-compatible API)
-
-Alpha Router exposes `/v1` for tools that speak the OpenAI API. Configure the client with:
+Alpha Router exposes `/v1` for clients that use the OpenAI API contract:
 
 - **Base URL:** `http://<alpha-router-host>:8080/v1`
-- **API key:** an Alpha Router API key from Admin → API Keys (admin gateway key or per-user key)
+- **API key:** an `alpha_router_...` key created under Admin → API Keys
 
-Pass the end-user identity in the `user` field when the client supports it so budgets and logs attribute usage correctly.
-
-The built-in chat UI uses JWT session auth on `/api/*` and does not require this setup.
+Standard routes `/api` and `/v1` remain unchanged.
 
 ## Local development
+
+Python 3.12 or newer is required.
 
 **Backend:**
 
@@ -100,35 +109,43 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8080
 ```
 
-**Frontend** (separate terminal):
+**Frontend in a separate terminal:**
 
 ```powershell
 cd frontend
 npm install
-npm run dev
+npx vite
 ```
 
-Run PostgreSQL, Redis, and MinIO via Docker Compose or point `.env` at existing services. The production Docker image builds the frontend into `frontend/dist` and serves it from FastAPI.
+The Vite development server proxies `/api` to `localhost:8080`.
 
-**Tests:**
+## Tests
 
 ```powershell
 cd backend
 pytest
 ```
 
+```powershell
+cd frontend
+npm test
+npm run build
+```
+
 ## Documentation
 
-In-app guides (after login):
+After login, documentation is available at:
 
-- **Admin Guide** — `/admin/docs`
-- **User Manual** — `/app/manual` or `/admin/manual`
+- **Admin Guide:** `/admin/docs`
+- **User Manual:** `/app/manual` or `/admin/manual`
 
-## GitLab CI
+Operational and security documentation is also available under `docs/`.
 
-`.gitlab-ci.yml` runs a backend import check and builds the Docker image on branch pushes.
+## CI
+
+`.gitlab-ci.yml` runs backend tests, frontend tests and production builds,
+dependency audits, and container-image scanning.
 
 ## License
 
-Internal IT project — adjust license as required by your organization.
-# Alpha Router
+Internal IT project; apply the license required by your organization.

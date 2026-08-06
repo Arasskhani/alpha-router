@@ -1753,6 +1753,8 @@ table.card tbody td:last-child {
 
 .table-wrap--users {
   margin-bottom: 1rem;
+  overflow-x: clip;
+  container-type: inline-size;
 }
 
 .users-table {
@@ -1764,46 +1766,57 @@ table.card tbody td:last-child {
 .users-table td {
   word-break: normal;
   overflow-wrap: normal;
+  padding-inline: clamp(0.3rem, 0.7vw, 0.55rem);
 }
 
-.users-table .col-sm {
-  min-width: 3.25rem;
+.users-table__select {
+  width: 4%;
+  text-align: center;
 }
 
 .users-table .col-user {
-  min-width: 8.5rem;
-  max-width: none;
+  width: 11%;
 }
 
-.users-table .col-md {
-  min-width: 7rem;
-  max-width: 11rem;
+.users-table__email {
+  width: 11%;
 }
 
-.users-table .col-lg {
-  min-width: 6.25rem;
-  max-width: 9.5rem;
+.users-table__group {
+  width: 8%;
+}
+
+.users-table__department,
+.users-table__job-title {
+  width: 7%;
+}
+
+.users-table__office {
+  width: 5%;
+}
+
+.users-table__auth {
+  width: 6%;
 }
 
 .users-table .col-budget {
-  min-width: 5.75rem;
+  width: 7%;
+  min-width: 0;
 }
 
 .users-table .col-actions {
-  min-width: 6.75rem;
-  width: auto;
+  width: 12%;
+  min-width: 0;
 }
 
-.users-table td.col-md,
-.users-table td.col-lg {
+.users-table__email,
+.users-table__group,
+.users-table__department,
+.users-table__office,
+.users-table__job-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.users-table td.col-md,
-.users-table td.col-lg {
-  max-width: 11rem;
 }
 
 .users-table .badge {
@@ -1812,8 +1825,8 @@ table.card tbody td:last-child {
 }
 
 .users-table .col-role {
-  width: 8.5rem;
-  max-width: 8.5rem;
+  width: 11%;
+  max-width: none;
 }
 
 .users-table .role-select,
@@ -1836,15 +1849,22 @@ table.card tbody td:last-child {
 
 .users-table .user-plan-select-wrap {
   position: relative;
-  display: inline-block;
+  display: block;
   width: 100%;
   max-width: 100%;
 }
 
+.users-table__plan {
+  width: 11%;
+}
+
 .users-table .user-plan-select {
   width: 100%;
-  min-width: 5.5rem;
+  min-width: 0;
   max-width: 100%;
+  padding-left: 0.35rem;
+  padding-right: 1.35rem;
+  font-size: 0.74rem;
 }
 
 .users-table .user-plan-select--overlay:not(:focus) {
@@ -1880,7 +1900,7 @@ table.card tbody td:last-child {
   margin-inline-end: 0.2rem;
 }
 
-.users-table td.col-sm:has(.user-plan-select-wrap) {
+.users-table td.users-table__plan:has(.user-plan-select-wrap) {
   white-space: normal;
 }
 
@@ -1889,28 +1909,87 @@ table.card tbody td:last-child {
   white-space: nowrap;
 }
 
-.users-table td.col-sm:has(.role-select),
 .users-table td.col-role:has(.role-select),
 .users-table td.col-role:has(.role-multi-select__trigger),
-.users-table td.col-sm:has(.badge) {
+.users-table td.users-table__auth:has(.badge) {
   white-space: nowrap;
 }
 
-@media (max-width: 1200px) {
-  .users-table .col-lg {
+@container (max-width: 1120px) {
+  .users-table__department,
+  .users-table__office,
+  .users-table__job-title {
     display: none;
   }
+
+  .users-table__select { width: 5%; }
+  .users-table .col-user { width: 18%; }
+  .users-table__email { width: 16%; }
+  .users-table__group { width: 12%; }
+  .users-table__auth { width: 8%; }
+  .users-table .col-role { width: 13%; }
+  .users-table__plan { width: 13%; }
+  .users-table .col-budget { width: 7%; }
+  .users-table .col-actions { width: 8%; }
 }
 
-@media (max-width: 960px) {
-  .users-table .col-md {
+@container (max-width: 820px) {
+  .users-table__email,
+  .users-table__group {
     display: none;
   }
+
+  .users-table__select { width: 6%; }
+  .users-table .col-user { width: 25%; }
+  .users-table__auth { width: 12%; }
+  .users-table .col-role { width: 22%; }
+  .users-table__plan { width: 20%; }
+  .users-table .col-budget { width: 8%; }
+  .users-table .col-actions { width: 7%; }
+}
+
+@container (max-width: 620px) {
+  .users-table__auth,
+  .users-table .col-budget {
+    display: none;
+  }
+
+  .users-table__select { width: 7%; }
+  .users-table .col-user { width: 34%; }
+  .users-table .col-role { width: 25%; }
+  .users-table__plan { width: 23%; }
+  .users-table .col-actions { width: 11%; }
+}
+
+@container (max-width: 470px) {
+  .users-table__plan {
+    display: none;
+  }
+
+  .users-table__select { width: 8%; }
+  .users-table .col-user { width: 45%; }
+  .users-table .col-role { width: 31%; }
+  .users-table .col-actions { width: 16%; }
 }
 
 @media (max-width: 720px) {
-  .users-table .col-budget {
-    display: none;
+  .users-filter-panel {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+    padding: 0.75rem;
+  }
+
+  .users-actions > .btn {
+    flex: 1 1 auto;
+  }
+}
+
+@media (max-width: 480px) {
+  .users-status-filters > .muted-text {
+    flex-basis: 100%;
+  }
+
+  .users-status-filters > .btn {
+    flex: 1 1 auto;
   }
 }
 
@@ -2711,6 +2790,74 @@ table.card tbody td:last-child {
   margin-top: 0.25rem;
   font-weight: 400;
   line-height: 1.45;
+}
+
+.connection-provider-combobox {
+  position: relative;
+}
+
+.connection-provider-combobox__panel {
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  max-height: 16rem;
+  overflow: auto;
+  padding: 0.35rem;
+  margin-bottom: 0;
+}
+
+.connection-provider-combobox__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.connection-provider-combobox__item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.45rem 0.55rem;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.connection-provider-combobox__item:hover,
+.connection-provider-combobox__item--active {
+  background: color-mix(in srgb, var(--accent, #2563eb) 12%, transparent);
+}
+
+.connection-provider-combobox__label {
+  font-weight: 500;
+  font-size: 0.88rem;
+}
+
+.connection-provider-combobox__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.connection-provider-combobox__meta code {
+  font-size: 0.72rem;
+}
+
+.connection-provider-combobox__meta .muted-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .connection-activity-actions {

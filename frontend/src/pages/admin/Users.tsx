@@ -770,7 +770,7 @@ export default function Users() {
         </div>
       </div>
 
-      <div className="search-bar">
+      <div className="search-bar users-actions">
         <button type="button" className="btn btn-ghost" onClick={clearFilters}>
           Clear filters
         </button>
@@ -792,7 +792,7 @@ export default function Users() {
         <table className="card data-table users-table">
           <thead>
             <tr>
-              <th className="col-sm">
+              <th className="users-table__select">
                 <input
                   type="checkbox"
                   checked={allVisibleSelected}
@@ -801,14 +801,14 @@ export default function Users() {
                 />
               </th>
               <th className="col-user">User</th>
-              <th className="col-md">Email</th>
-              <th className="col-md">Group</th>
-              <th className="col-lg">Department</th>
-              <th className="col-lg">Office</th>
-              <th className="col-lg">Job title</th>
-              <th className="col-sm">Auth</th>
+              <th className="users-table__email">Email</th>
+              <th className="users-table__group">Group</th>
+              <th className="users-table__department">Department</th>
+              <th className="users-table__office">Office</th>
+              <th className="users-table__job-title">Job title</th>
+              <th className="users-table__auth">Auth</th>
               <th className="col-role">Role</th>
-              <th className="col-sm">User Plan</th>
+              <th className="users-table__plan">User Plan</th>
               <th className="col-budget">Budget</th>
               <th className="col-actions">Actions</th>
             </tr>
@@ -816,7 +816,7 @@ export default function Users() {
           <tbody>
             {users.map((u) => (
               <tr key={u.id} className={u.is_active === false ? "row-disabled" : ""}>
-                <td className="col-sm">
+                <td className="users-table__select">
                   <input
                     type="checkbox"
                     checked={selectedUserIds.includes(u.id)}
@@ -834,12 +834,14 @@ export default function Users() {
                     </span>
                   </div>
                 </td>
-                <td className="col-md">{u.email || "—"}</td>
-                <td className="col-md">{(u.group_names ?? []).length ? (u.group_names ?? []).join(", ") : "—"}</td>
-                <td className="col-lg">{u.department || "—"}</td>
-                <td className="col-lg">{u.office || "—"}</td>
-                <td className="col-lg">{u.job_title || "—"}</td>
-                <td className="col-sm"><span className={prov(u.auth_provider)}>{u.auth_provider}</span></td>
+                <td className="users-table__email" title={u.email || undefined}>{u.email || "—"}</td>
+                <td className="users-table__group" title={(u.group_names ?? []).join(", ") || undefined}>
+                  {(u.group_names ?? []).length ? (u.group_names ?? []).join(", ") : "—"}
+                </td>
+                <td className="users-table__department" title={u.department || undefined}>{u.department || "—"}</td>
+                <td className="users-table__office" title={u.office || undefined}>{u.office || "—"}</td>
+                <td className="users-table__job-title" title={u.job_title || undefined}>{u.job_title || "—"}</td>
+                <td className="users-table__auth"><span className={prov(u.auth_provider)}>{u.auth_provider}</span></td>
                 <td className="col-role">
                   <RoleMultiSelect
                     value={u.roles?.length ? u.roles : [u.role]}
@@ -847,7 +849,7 @@ export default function Users() {
                     onChange={(roles) => void changeRoles(u.id, roles)}
                   />
                 </td>
-                <td className="col-sm">
+                <td className="users-table__plan">
                   <UserPlanSelect user={u} plans={plans} onAssign={assignPlan} />
                 </td>
                 <td className="col-budget">{formatBudgetRatio(u.budget_used_usd || 0, u.monthly_budget_usd || 0)}</td>

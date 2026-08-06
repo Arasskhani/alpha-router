@@ -1,5 +1,11 @@
-import { FormEvent, useEffect, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import Modal from "../Modal";
+import {
+  knownConnectionBaseUrls,
+  resolveConnectionProvider,
+  suggestConnectionProviders,
+  type ConnectionProviderPreset,
+} from "../../lib/connectionProviders";
 
 export type ConnectionFormValues = {
   name: string;
@@ -17,13 +23,6 @@ type Props = {
   onSubmit: (values: ConnectionFormValues) => Promise<void>;
 };
 
-const BASE_URL_HINTS: Record<string, string> = {
-  openrouter: "https://openrouter.ai/api/v1",
-  openai: "https://api.openai.com/v1",
-  anthropic: "https://api.anthropic.com/v1",
-  google: "https://generativelanguage.googleapis.com/v1beta",
-};
-
 const defaultValues: ConnectionFormValues = {
   name: "",
   provider_type: "",
@@ -32,26 +31,125 @@ const defaultValues: ConnectionFormValues = {
   sync_interval_hours: 6,
 };
 
+const KNOWN_BASE_URLS = knownConnectionBaseUrls();
+
 export default function ConnectionFormModal({ open, title, initial, onClose, onSubmit }: Props) {
   const [form, setForm] = useState<ConnectionFormValues>(defaultValues);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+  const [providerOpen, setProviderOpen] = useState(false);
+  const [activeSuggestion, setActiveSuggestion] = useState(0);
+  const providerWrapRef = useRef<HTMLDivElement>(null);
+  const lastAutoBaseUrlRef = useRef("");
 
   useEffect(() => {
     if (!open) return;
     setErr("");
-    setForm({
+    setProviderOpen(false);
+    setActiveSuggestion(0);
+    const next = {
       name: initial?.name ?? "",
       provider_type: initial?.provider_type ?? "",
       api_key: "",
       base_url: initial?.base_url ?? "",
       sync_interval_hours: initial?.sync_interval_hours ?? 6,
-    });
+    };
+    setForm(next);
+    lastAutoBaseUrlRef.current = next.base_url && KNOWN_BASE_URLS.has(next.base_url) ? next.base_url : "";
   }, [open, initial]);
 
+  useEffect(() => {
+    if (!providerOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (providerWrapRef.current && !providerWrapRef.current.contains(e.target as Node)) {
+        setProviderOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [providerOpen]);
+
+  const suggestions = useMemo(
+    () => suggestConnectionProviders(form.provider_type, 8),
+    [form.provider_type],
+  );
+
+  const matchedPreset = useMemo(
+    () => resolveConnectionProvider(form.provider_type),
+    [form.provider_type],
+  );
+
   const baseHint =
-    BASE_URL_HINTS[form.provider_type.trim().toLowerCase()] ||
+    matchedPreset?.baseUrl ||
+    suggestions[0]?.baseUrl ||
     "e.g. https://api.example.com/v1";
+
+  function canAutofillBaseUrl(current: string): boolean {
+    const trimmed = current.trim();
+    if (!trimmed) return true;
+    if (trimmed === lastAutoBaseUrlRef.current) return true;
+    if (KNOWN_BASE_URLS.has(trimmed)) return true;
+    return false;
+  }
+
+  function applyPreset(preset: ConnectionProviderPreset) {
+    setForm((f) => {
+      const nextBase = canAutofillBaseUrl(f.base_url) ? preset.baseUrl : f.base_url;
+      if (canAutofillBaseUrl(f.base_url)) {
+        lastAutoBaseUrlRef.current = preset.baseUrl;
+      }
+      return {
+        ...f,
+        provider_type: preset.id,
+        base_url: nextBase,
+        name: f.name.trim() ? f.name : preset.label,
+      };
+    });
+    setProviderOpen(false);
+    setActiveSuggestion(0);
+  }
+
+  function onProviderChange(raw: string) {
+    const preset = resolveConnectionProvider(raw);
+    setForm((f) => {
+      if (!preset) {
+        return { ...f, provider_type: raw };
+      }
+      const nextBase = canAutofillBaseUrl(f.base_url) ? preset.baseUrl : f.base_url;
+      if (canAutofillBaseUrl(f.base_url)) {
+        lastAutoBaseUrlRef.current = preset.baseUrl;
+      }
+      return {
+        ...f,
+        provider_type: raw,
+        base_url: nextBase,
+      };
+    });
+    setProviderOpen(true);
+    setActiveSuggestion(0);
+  }
+
+  function onProviderKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (!providerOpen || suggestions.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveSuggestion((i) => (i + 1) % suggestions.length);
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveSuggestion((i) => (i - 1 + suggestions.length) % suggestions.length);
+      return;
+    }
+    if (e.key === "Enter" && providerOpen) {
+      e.preventDefault();
+      applyPreset(suggestions[activeSuggestion] ?? suggestions[0]);
+      return;
+    }
+    if (e.key === "Escape") {
+      setProviderOpen(false);
+    }
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -67,13 +165,14 @@ export default function ConnectionFormModal({ open, title, initial, onClose, onS
       setErr("API key is required.");
       return;
     }
+    const resolved = resolveConnectionProvider(form.provider_type);
     setSaving(true);
     setErr("");
     try {
       await onSubmit({
         ...form,
         name: form.name.trim(),
-        provider_type: form.provider_type.trim().toLowerCase(),
+        provider_type: (resolved?.id || form.provider_type).trim().toLowerCase(),
         base_url: form.base_url.trim(),
         api_key: form.api_key.trim(),
       });
@@ -99,25 +198,70 @@ export default function ConnectionFormModal({ open, title, initial, onClose, onS
         </label>
         <label className="connection-form__label">
           Provider
-          <input
-            className="input-block"
-            value={form.provider_type}
-            onChange={(e) => setForm((f) => ({ ...f, provider_type: e.target.value }))}
-            placeholder="Type provider (e.g. openrouter, openai, custom)"
-            required
-          />
+          <div className="connection-provider-combobox" ref={providerWrapRef}>
+            <input
+              className="input-block"
+              value={form.provider_type}
+              onChange={(e) => onProviderChange(e.target.value)}
+              onFocus={() => setProviderOpen(true)}
+              onKeyDown={onProviderKeyDown}
+              placeholder="Type or pick a provider (e.g. openrouter, openai)"
+              autoComplete="off"
+              aria-autocomplete="list"
+              aria-expanded={providerOpen}
+              role="combobox"
+              required
+            />
+            {providerOpen && suggestions.length > 0 ? (
+              <div className="connection-provider-combobox__panel card" role="listbox">
+                <ul className="connection-provider-combobox__list">
+                  {suggestions.map((preset, index) => (
+                    <li key={preset.id}>
+                      <button
+                        type="button"
+                        className={`connection-provider-combobox__item${
+                          index === activeSuggestion ? " connection-provider-combobox__item--active" : ""
+                        }`}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => applyPreset(preset)}
+                      >
+                        <span className="connection-provider-combobox__label">{preset.label}</span>
+                        <span className="connection-provider-combobox__meta">
+                          <code>{preset.id}</code>
+                          {preset.baseUrl ? (
+                            <span className="muted-text">{preset.baseUrl}</span>
+                          ) : (
+                            <span className="muted-text">custom base URL</span>
+                          )}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+          <span className="muted-text connection-form__hint">
+            Suggestions autofill the provider id and default Base URL. Custom providers are still allowed.
+          </span>
         </label>
         <label className="connection-form__label">
           Base URL
           <input
             className="input-block mono"
             value={form.base_url}
-            onChange={(e) => setForm((f) => ({ ...f, base_url: e.target.value }))}
+            onChange={(e) => {
+              const value = e.target.value;
+              setForm((f) => ({ ...f, base_url: value }));
+              if (value.trim() !== lastAutoBaseUrlRef.current) {
+                lastAutoBaseUrlRef.current = "";
+              }
+            }}
             placeholder={baseHint}
           />
           <span className="muted-text connection-form__hint">
             Enter the API root for this use case (chat, embeddings, video, etc.). Sync uses this URL for model
-            discovery. Leave empty to use the provider default.
+            discovery. Leave empty to use the provider default when supported.
           </span>
         </label>
         <label className="connection-form__label">

@@ -1,5 +1,4 @@
-# Prevent host node_modules/dist from overwriting clean npm install in the image
-# (fixes "tsc: Permission denied" when building on Linux after copy from Windows).
+# Prevent host node_modules/dist from overwriting a clean npm install in the image.
 frontend/node_modules
 frontend/dist
 frontend/tsconfig.tsbuildinfo
@@ -29,7 +28,3 @@ __pycache__
 
 # Local databases
 *.db
-
-# Docs and scripts not needed in the production image
-docs
-scripts

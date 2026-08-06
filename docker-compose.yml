@@ -116,9 +116,10 @@ services:
       dockerfile: sandbox-broker/Dockerfile
     image: alpha-router-sandbox-broker:latest
     restart: unless-stopped
-    # Runs as uid 10001. docker.sock on Docker Desktop is root:root mode 660, so
-    # the supplementary root group is required for API access without process uid 0.
-    # The socket remains a residual host trust boundary; never publish port 8081.
+    # Runs as uid 10001. On many Docker hosts docker.sock is root:root mode 660,
+    # so the supplementary root group is required for API access without process
+    # uid 0. The socket remains a residual host trust boundary; never publish
+    # port 8081.
     user: "10001:10001"
     group_add:
       - "0"

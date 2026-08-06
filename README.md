@@ -10,22 +10,17 @@ The platform provides:
 - **User app** (`/app`) — chat, media library, and activity
 - **Admin panel** (`/admin`) — identity, access, budgets, providers, models,
   reports, operations, and storage
-- **OpenAI-compatible gateway** (`/v1`) — API-key access for external tools,
-  scripts, and automation
+- **OpenAI-compatible gateway** (`/v1`) — API-key access for external tools
+  and automation
+
+Alpha Router is OS-independent. Develop on any host with Docker available, and
+run the same Compose stack on Linux or any other Docker-capable environment.
 
 ## Quick start with Docker
 
-Start Docker Desktop, then:
-
-```powershell
-cd path\to\alpha-router
-Copy-Item .env.example .env
-.\scripts\start-docker.ps1
-```
-
-Or start Compose directly:
-
-```powershell
+```bash
+cd alpha-router
+cp .env.example .env
 docker compose up --build -d
 ```
 
@@ -49,11 +44,21 @@ credentials.
 
 ### Stop the stack
 
-```powershell
-.\scripts\stop-all.ps1
+```bash
+docker compose down
 ```
 
-This stops the Compose services and the optional Windows LDAP bridge.
+Data volumes are kept by default. To remove them as well:
+
+```bash
+docker compose down -v
+```
+
+### Follow app logs
+
+```bash
+docker compose logs -f alpha-router
+```
 
 ## Project structure
 
@@ -64,7 +69,6 @@ alpha-router/
 ├── sandbox/          Isolated code-interpreter image
 ├── sandbox-broker/   Internal Docker sandbox controller
 ├── deploy/           SeaweedFS support files
-├── scripts/          Windows host operations scripts
 ├── docker-compose.yml
 ├── Dockerfile
 └── .env.example
@@ -97,21 +101,22 @@ Standard routes `/api` and `/v1` remain unchanged.
 
 ## Local development
 
-Python 3.12 or newer is required.
+Python 3.12 or newer is required. Prefer the Compose stack above for a full
+environment. For a host-side backend/frontend loop:
 
 **Backend:**
 
-```powershell
+```bash
 cd backend
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8080
 ```
 
 **Frontend in a separate terminal:**
 
-```powershell
+```bash
 cd frontend
 npm install
 npx vite
@@ -121,25 +126,23 @@ The Vite development server proxies `/api` to `localhost:8080`.
 
 ## Tests
 
-```powershell
+```bash
 cd backend
 pytest
 ```
 
-```powershell
+```bash
 cd frontend
 npm test
 npm run build
 ```
 
-## Documentation
+## In-app documentation
 
 After login, documentation is available at:
 
 - **Admin Guide:** `/admin/docs`
 - **User Manual:** `/app/manual` or `/admin/manual`
-
-Operational and security documentation is also available under `docs/`.
 
 ## CI
 

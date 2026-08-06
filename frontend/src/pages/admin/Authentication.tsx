@@ -3,13 +3,9 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import AdminPage from "../../components/AdminPage";
 import { api } from "../../api";
 import { useConfirm } from "../../context/ConfirmContext";
-import { copyTextToClipboard } from "../../lib/clipboard";
 
 const LDAPS_PORT = 636;
 const SAML_METADATA_MAX_BYTES = 1024 * 1024;
-
-const LDAPS_CERT_EXAMPLE =
-  "New-SelfSignedCertificate -DnsName dc01.alpha-router.local -CertStoreLocation cert:\\localmachine\\my";
 
 type LdapSimple = {
   enabled: boolean;
@@ -120,16 +116,8 @@ export default function Authentication() {
   const [syncing, setSyncing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [certCmdCopied, setCertCmdCopied] = useState(false);
   const [idpXmlFileName, setIdpXmlFileName] = useState("");
   const idpXmlInputRef = useRef<HTMLInputElement>(null);
-
-  async function copyLdapsCertCommand() {
-    const ok = await copyTextToClipboard(LDAPS_CERT_EXAMPLE);
-    if (!ok) return;
-    setCertCmdCopied(true);
-    window.setTimeout(() => setCertCmdCopied(false), 2000);
-  }
 
   useEffect(() => {
     api<LdapSimple>("/api/admin/authentication/ldap").then((r) => setLdap(normalizeLdap(r)));
@@ -438,66 +426,29 @@ export default function Authentication() {
               <span className="muted-text">Support Untrusted Certificate</span>
               <br />
               <span className="muted-text" style={{ fontSize: "0.85rem" }}>
-                Accept self-signed or non-CA LDAPS certificates (hostname should still match the DC).
+                Accept self-signed or non-CA LDAPS certificates (hostname should still match the directory server).
               </span>
             </span>
           </label>
 
           <div className="card" style={{ marginTop: 12, background: "var(--surface-2, transparent)" }}>
-            <h3 style={{ marginTop: 0 }}>LDAPS certificate on the domain controller</h3>
+            <h3 style={{ marginTop: 0 }}>LDAPS certificate on the directory server</h3>
             <p className="muted-text" style={{ marginTop: 0 }}>
-              Alpha Router connects with LDAPS only. On the DC, create a certificate for the server FQDN, then trust it locally
-              so Active Directory can present it on port 636.
+              Alpha Router connects with LDAPS only. Issue a TLS certificate whose subject or SAN matches the
+              directory server FQDN, install it so the directory service can present it on port 636, and ensure
+              Alpha Router trusts that certificate (or enable trust for untrusted certificates only for lab use).
             </p>
             <ol className="muted-text" style={{ paddingLeft: "1.25rem", marginBottom: 0 }}>
               <li>
-                Open an elevated PowerShell on the domain controller and run, for example:
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.5rem",
-                    margin: "0.5rem 0",
-                    padding: "0.5rem 0.75rem",
-                    borderRadius: "var(--radius-sm, 6px)",
-                    border: "1px solid var(--border)",
-                    background: "var(--surface)",
-                  }}
-                >
-                  <pre
-                    style={{
-                      margin: 0,
-                      flex: 1,
-                      overflowX: "auto",
-                      fontSize: "0.8rem",
-                      whiteSpace: "pre-wrap",
-                      wordBreak: "break-all",
-                    }}
-                  >
-                    {LDAPS_CERT_EXAMPLE}
-                  </pre>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => void copyLdapsCertCommand()}
-                    title="Copy command"
-                    aria-label="Copy command"
-                    style={{ flexShrink: 0, padding: "0.35rem 0.65rem", fontSize: "0.8rem" }}
-                  >
-                    {certCmdCopied ? "Copied" : "Copy"}
-                  </button>
-                </div>
-                Replace <code>dc01.alpha-router.local</code> with your domain controller FQDN.
+                Create or obtain a certificate for the directory server FQDN using your organization&apos;s CA
+                process.
               </li>
+              <li>Install the certificate where the directory service expects TLS credentials for LDAPS.</li>
               <li>
-                The certificate is created under <strong>Local Computer → Personal</strong> (
-                <code>Cert:\\LocalMachine\\My</code>).
+                Ensure Alpha Router can validate the certificate chain, or use the untrusted-certificate option
+                only in non-production environments.
               </li>
-              <li>
-                Copy that certificate to <strong>Local Computer → Trusted Root Certification Authorities</strong> (
-                <code>Cert:\\LocalMachine\\Root</code>).
-              </li>
-              <li>Confirm LDAPS with ldp.exe (or equivalent) on port 636, then use Test in Alpha Router.</li>
+              <li>Confirm LDAPS connectivity on port 636, then use Test in Alpha Router.</li>
             </ol>
           </div>
 

@@ -3,8 +3,7 @@
 These values are not supported identities or migration aliases.  They remain
 centralized here because silently accepting an old cookie, master key, database
 URL, or infrastructure username can make a renamed deployment authenticate
-against the wrong boundary.  Keep this module in sync with
-``docs/legacy-brand-allowlist.md``.
+against the wrong boundary.
 """
 
 LEGACY_SESSION_COOKIE_NAMES = frozenset({"alpha_session"})

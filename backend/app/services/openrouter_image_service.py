@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import re
+from collections.abc import Callable
 
 import httpcore
 import httpx
@@ -236,6 +238,7 @@ async def post_openrouter_json(
     json_payload: dict,
     read_timeout: float | None = None,
     max_attempts: int = OPENROUTER_IMAGE_MAX_ATTEMPTS,
+    on_attempt_error: Callable[[int, datetime.datetime, Exception], None] | None = None,
 ) -> httpx.Response:
     """POST JSON to OpenRouter with retries on transient disconnects."""
     last_exc: Exception | None = None
@@ -247,9 +250,19 @@ async def post_openrouter_json(
 
     for attempt in range(attempts):
         client = get_openrouter_http_client()
+        attempt_started_at = datetime.datetime.utcnow()
         try:
-            return await client.post(url, headers=req_headers, json=json_payload, timeout=timeout)
+            response = await client.post(
+                url,
+                headers=req_headers,
+                json=json_payload,
+                timeout=timeout,
+            )
+            response.extensions["alpha_router_started_at"] = attempt_started_at
+            return response
         except Exception as exc:
+            if on_attempt_error is not None:
+                on_attempt_error(attempt, attempt_started_at, exc)
             if not is_retryable_openrouter_transport_error(exc):
                 raise
             last_exc = exc

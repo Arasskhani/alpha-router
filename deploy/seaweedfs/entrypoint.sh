@@ -1,5 +1,5 @@
 #!/bin/sh
-# SeaweedFS single-node entrypoint for Alpha Router (weed mini).
+# SeaweedFS single-node entrypoint for Alpharouter (weed mini).
 # Requires AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (mapped from S3_* in Compose)
 # so S3 auth is enabled (never "Allow All").
 set -eu

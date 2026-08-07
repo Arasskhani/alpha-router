@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     csrf_header_name: str = "X-CSRF-Token"
 
     # Default admin (local auth panel)
-    admin_username: str = "admin"
+    admin_username: str = "alpharouter"
     admin_password: str = "admin"
     service_admin_password: str = "changeme"
 
@@ -103,10 +103,10 @@ class Settings(BaseSettings):
     # Development is unaffected because the guard is environment-gated.
     production_guard_mode: str = "hard-fail"  # env: PRODUCTION_GUARD_MODE
 
-    # OpenAI-compatible gateway master key (Open WebUI → Alpha Router)
+    # OpenAI-compatible gateway master key (Open WebUI → Alpharouter)
     gateway_master_key: str = GATEWAY_MASTER_KEY_DEFAULT
 
-    # Code interpreter sandbox. Alpha Router sends bounded payloads to an internal broker;
+    # Code interpreter sandbox. Alpharouter sends bounded payloads to an internal broker;
     # only that broker has access to the Docker socket and fixed sandbox policy.
     code_sandbox_broker_url: str = ""
     code_sandbox_broker_token: str = ""
@@ -133,8 +133,13 @@ class Settings(BaseSettings):
     budget_chat_fallback_hold_usd: float = 0.05
     budget_embedding_fallback_hold_usd: float = 0.01
     budget_image_fallback_hold_usd: float = 0.25
+    budget_audio_fallback_hold_usd: float = 0.10
+    budget_tool_fallback_hold_usd: float = 0.05
     budget_max_hold_usd: float = 5.0
     budget_reservation_ttl_seconds: int = 7200
+    cost_reconciliation_enabled: bool = True
+    cost_reconciliation_interval_minutes: int = 30
+    cost_reconciliation_batch_size: int = 50
 
     # Model sync default interval (hours)
     model_sync_interval_hours: int = 6

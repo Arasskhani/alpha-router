@@ -57,7 +57,11 @@ async def _run_stream_timing_test() -> None:
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
-        patch.object(proxy_service, "augment_messages_with_tools", AsyncMock(side_effect=lambda db, m, t: m)),
+        patch.object(
+            proxy_service,
+            "augment_messages_with_tools",
+            AsyncMock(side_effect=lambda db, m, t, **_kwargs: m),
+        ),
         patch.object(proxy_service, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
         patch.object(proxy_service, "acompletion", side_effect=fake_acompletion),
         patch.object(proxy_service, "_usage_from_chunk", return_value=(10, 2, 0)),

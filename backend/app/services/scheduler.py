@@ -1,11 +1,13 @@
 """Background jobs: model sync, monthly budget reset, scheduled reports."""
 
+import logging
 from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 
 from app.database import AsyncSessionLocal
+from app.config import get_settings
 from app.models.connection import Connection
 from app.services.budget_service import reset_all_monthly_budgets
 from app.services.model_sync import sync_connection_with_flash
@@ -17,6 +19,7 @@ from app.services.user_media_service import purge_user_media_older_than
 from app.models.user_media_prefs import UserMediaPreferences
 
 scheduler = AsyncIOScheduler()
+logger = logging.getLogger("app.services.scheduler")
 
 
 async def job_sync_all_models():
@@ -47,6 +50,49 @@ async def job_expire_budget_reservations():
     async with AsyncSessionLocal() as db:
         await expire_stale_reservations(db)
         await db.commit()
+
+
+async def job_reconcile_provider_costs():
+    from app.services.provider_reconciliation_service import (
+        automatic_reconciliation_providers,
+        reconcile_connection_costs,
+    )
+
+    settings = get_settings()
+    if not settings.cost_reconciliation_enabled:
+        return
+    providers = automatic_reconciliation_providers()
+    if not providers:
+        return
+    async with AsyncSessionLocal() as db:
+        connection_ids = (
+            await db.execute(
+                select(Connection.id).where(
+                    Connection.is_active.is_(True),
+                    Connection.provider_type.in_(providers),
+                )
+            )
+        ).scalars().all()
+    for connection_id in connection_ids:
+        async with AsyncSessionLocal() as db:
+            connection = await db.get(Connection, connection_id)
+            if connection is None:
+                continue
+            provider = connection.provider_type
+            try:
+                await reconcile_connection_costs(
+                    db,
+                    connection,
+                    limit=settings.cost_reconciliation_batch_size,
+                )
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                logger.exception(
+                    "Cost reconciliation failed connection_id=%s provider=%s",
+                    connection_id,
+                    provider,
+                )
 
 
 async def job_storage_cleanup():
@@ -153,6 +199,17 @@ def start_scheduler():
         minutes=5,
         id="budget_reservation_expiry",
     )
+    settings = get_settings()
+    if settings.cost_reconciliation_enabled:
+        scheduler.add_job(
+            job_reconcile_provider_costs,
+            "interval",
+            minutes=max(
+                5,
+                int(settings.cost_reconciliation_interval_minutes or 30),
+            ),
+            id="cost_reconciliation",
+        )
     scheduler.add_job(
         job_storage_cleanup,
         "cron",

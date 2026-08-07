@@ -192,6 +192,9 @@ export default function Users() {
   const [bulkGroupId, setBulkGroupId] = useState("");
   const [bulkGroupAction, setBulkGroupAction] = useState<BulkGroupAction>("");
   const [bulkStatusAction, setBulkStatusAction] = useState<BulkStatusAction>("");
+  const [addToGroupUser, setAddToGroupUser] = useState<U | null>(null);
+  const [addToGroupId, setAddToGroupId] = useState("");
+  const [addToGroupSaving, setAddToGroupSaving] = useState(false);
   const [roleCatalog, setRoleCatalog] = useState<RoleRecord[]>([]);
   const usersLoadSeq = useRef(0);
 
@@ -553,6 +556,13 @@ export default function Users() {
       },
       { label: "Edit user", onClick: () => openEditUser(u) },
       {
+        label: "Add user to group",
+        onClick: () => {
+          setAddToGroupId("");
+          setAddToGroupUser(u);
+        },
+      },
+      {
         label: u.is_active === false ? "Active" : "Deactive",
         onClick: () => void setUserActive(u, u.is_active === false),
         danger: u.is_active !== false,
@@ -566,6 +576,46 @@ export default function Users() {
       { label: "Get API key", onClick: () => getApiKey(u.id, u.email) },
     );
     return items;
+  }
+
+  const addToGroupChoices = useMemo(() => {
+    if (!addToGroupUser) return groups;
+    const current = new Set((addToGroupUser.group_names ?? []).map((name) => name.toLowerCase()));
+    return groups.filter((g) => !current.has(g.name.toLowerCase()));
+  }, [addToGroupUser, groups]);
+
+  async function saveAddUserToGroup(e: FormEvent) {
+    e.preventDefault();
+    if (!addToGroupUser) return;
+    if (!addToGroupId) {
+      setErr("Select a group.");
+      return;
+    }
+    setAddToGroupSaving(true);
+    setErr("");
+    try {
+      const group = groups.find((g) => String(g.id) === addToGroupId);
+      await api("/api/admin/users/bulk", {
+        method: "POST",
+        body: JSON.stringify({
+          user_ids: [addToGroupUser.id],
+          group_id: Number(addToGroupId),
+          group_action: "add",
+        }),
+      });
+      setFlash(
+        group
+          ? `Added ${addToGroupUser.username} to group "${group.name}".`
+          : `Added ${addToGroupUser.username} to the selected group.`,
+      );
+      setAddToGroupUser(null);
+      setAddToGroupId("");
+      await loadUsers();
+    } catch (e2) {
+      setErr(String(e2));
+    } finally {
+      setAddToGroupSaving(false);
+    }
   }
 
   const allVisibleSelected = useMemo(
@@ -1007,6 +1057,60 @@ export default function Users() {
             Close
           </button>
         </div>
+      </Modal>
+
+      <Modal
+        open={!!addToGroupUser}
+        title={addToGroupUser ? `Add ${addToGroupUser.username} to group` : "Add user to group"}
+        onClose={() => {
+          if (addToGroupSaving) return;
+          setAddToGroupUser(null);
+          setAddToGroupId("");
+        }}
+      >
+        <form onSubmit={(e) => void saveAddUserToGroup(e)}>
+          <p className="muted-text">
+            Choose a group to add this user to. Groups they already belong to are hidden.
+          </p>
+          <label>Group</label>
+          <select
+            className="input-block"
+            value={addToGroupId}
+            onChange={(e) => setAddToGroupId(e.target.value)}
+            required
+            disabled={addToGroupSaving || addToGroupChoices.length === 0}
+          >
+            <option value="">Select a group…</option>
+            {addToGroupChoices.map((g) => (
+              <option key={g.id} value={String(g.id)}>
+                {g.name}
+              </option>
+            ))}
+          </select>
+          {addToGroupChoices.length === 0 ? (
+            <p className="muted-text">This user is already a member of every available group.</p>
+          ) : null}
+          <div className="dialog-actions">
+            <button
+              type="submit"
+              className="btn"
+              disabled={addToGroupSaving || !addToGroupId || addToGroupChoices.length === 0}
+            >
+              {addToGroupSaving ? "Adding…" : "Add to group"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost dialog-actions-cancel"
+              disabled={addToGroupSaving}
+              onClick={() => {
+                setAddToGroupUser(null);
+                setAddToGroupId("");
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
       </Modal>
 
       <Modal open={bulkOpen} title={`Bulk Edit (${selectedUserIds.length} users)`} onClose={() => setBulkOpen(false)}>

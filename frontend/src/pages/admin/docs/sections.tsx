@@ -34,7 +34,7 @@ export const docSections: DocSection[] = [
       <>
         <h1>Admin Guide</h1>
         <p className="docs-lead">
-          Alpha Router is an organizational AI control plane. It sits between your employees (and optional external tools) and
+          alpharouter is an organizational AI control plane. It sits between your employees (and optional external tools) and
           upstream LLM providers, enforcing budgets, roles, quotas, audit logging, and retention — while serving a
           built-in chat app and an OpenAI-compatible gateway.
         </p>
@@ -101,11 +101,11 @@ export const docSections: DocSection[] = [
   },
   {
     id: "why-alpha-router",
-    title: "Why Alpha Router exists",
+    title: "Why alpharouter exists",
     group: "Get started",
     content: (
       <>
-        <h2>Why Alpha Router exists</h2>
+        <h2>Why alpharouter exists</h2>
         <p>Teams adopting LLMs across chat, IDEs, and automation usually hit the same problems:</p>
         <ul>
           <li>Provider API keys are shared or scattered, with no central policy.</li>
@@ -113,11 +113,11 @@ export const docSections: DocSection[] = [
           <li>Model catalogs and pricing change often.</li>
           <li>Compliance needs a durable request history.</li>
         </ul>
-        <p>Alpha Router addresses this by:</p>
+        <p>alpharouter addresses this by:</p>
         <ol>
           <li>Terminating client traffic at a platform you operate.</li>
           <li>
-            Syncing models and <strong>provider-native pricing</strong> from Connections (Alpha Router does not rewrite
+            Syncing models and <strong>provider-native pricing</strong> from Connections (alpharouter does not rewrite
             catalog prices).
           </li>
           <li>
@@ -144,7 +144,7 @@ export const docSections: DocSection[] = [
       <>
         <h2>Architecture &amp; services</h2>
         <p>
-          Alpha Router is one application container that serves the React SPA and the API. Supporting services run beside it in
+          alpharouter is one application container that serves the React SPA and the API. Supporting services run beside it in
           Docker Compose.
         </p>
         <AdminArchitectureDiagram />
@@ -178,7 +178,7 @@ export const docSections: DocSection[] = [
                 <code>/v1/*</code>
               </td>
               <td>
-                <code>Authorization: Bearer</code> — Alpha Router API key, user API key, or gateway master key
+                <code>Authorization: Bearer</code> — alpharouter API key, user API key, or gateway master key
               </td>
             </tr>
           </tbody>
@@ -217,7 +217,7 @@ export const docSections: DocSection[] = [
               <td>
                 <strong>SeaweedFS</strong>
               </td>
-              <td>S3-compatible object storage for media blobs (authenticated access via Alpha Router APIs only)</td>
+              <td>S3-compatible object storage for media blobs (authenticated access via alpharouter APIs only)</td>
             </tr>
             <tr>
               <td>
@@ -236,7 +236,7 @@ export const docSections: DocSection[] = [
             Client calls <code>POST /api/chat/completions</code> or <code>POST /v1/chat/completions</code>.
           </li>
           <li>
-            Alpha Router resolves an enabled model and Connection key, then <strong>reserves</strong> budget (or API-key
+            alpharouter resolves an enabled model and Connection key, then <strong>reserves</strong> budget (or API-key
             credit).
           </li>
           <li>
@@ -244,8 +244,9 @@ export const docSections: DocSection[] = [
             code interpreter (via sandbox-broker).
           </li>
           <li>
-            Usage is logged and the reservation is <strong>settled</strong> to the actual cost. In-app chat also
-            persists messages server-side during the stream.
+            Every upstream attempt is normalized into usage events and immutable ledger entries. The reservation is{" "}
+            <strong>settled</strong> from the highest-confidence available cost; in-app chat also persists messages
+            server-side during the stream.
           </li>
         </ol>
         <Note>
@@ -303,7 +304,7 @@ export const docSections: DocSection[] = [
         </p>
         <h3>Schema &amp; migrations</h3>
         <p>
-          On startup Alpha Router creates ORM tables under a PostgreSQL advisory lock, applies nullable column patches for new
+          On startup alpharouter creates ORM tables under a PostgreSQL advisory lock, applies nullable column patches for new
           fields, and creates any missing current-schema indexes. Greenfield deployments do not run historical data or storage
           migrations. There is no separate Alembic revision history for operators to apply by hand.
         </p>
@@ -355,7 +356,6 @@ export const docSections: DocSection[] = [
       </>
     ),
   },
-
   // ── Security ──────────────────────────────────────────────────────────────
   {
     id: "security-overview",
@@ -365,7 +365,7 @@ export const docSections: DocSection[] = [
       <>
         <h2>Security overview</h2>
         <p>
-          Alpha Router hardens the browser surface with cookie sessions and CSRF, encrypts secrets at rest, gates admin menus
+          alpharouter hardens the browser surface with cookie sessions and CSRF, encrypts secrets at rest, gates admin menus
           with RBAC, and isolates code execution in disposable containers. Upstream provider keys never leave the
           Connections table as plaintext in the API responses.
         </p>
@@ -738,7 +738,7 @@ export const docSections: DocSection[] = [
         <h2>Database</h2>
         <p>
           Path: <code>/admin/database</code>. Read-only monitor: connection status, engine, host CPU/RAM, DB size, ping,
-          Alpha Router process RSS/CPU, and table row counts. Use <strong>Refresh</strong> to reload.
+          alpharouter process RSS/CPU, and table row counts. Use <strong>Refresh</strong> to reload.
         </p>
       </>
     ),
@@ -828,7 +828,7 @@ export const docSections: DocSection[] = [
         <p>
           The plaintext key is shown once at creation. Clients call <code>/v1/*</code> with{" "}
           <code>Authorization: Bearer &lt;key&gt;</code>. Usage debits the key’s credit pool (not a personal monthly
-          budget) when the key is an Alpha Router gateway key.
+          budget) when the key is an alpharouter gateway key.
         </p>
         <p>Row actions include edit, usage, enable/disable, delete, bulk actions, and changelog.</p>
       </>
@@ -1081,9 +1081,23 @@ export const docSections: DocSection[] = [
         <ul>
           <li>Filters: user/key, model, status, prompt cache, date range.</li>
           <li>
+            The badge next to Cost identifies its quality: <strong>Provider</strong>, <strong>Reconciled</strong>,{" "}
+            <strong>Catalog</strong>, <strong>Estimated</strong>, or <strong>Unpriced</strong>. Hover it to compare the
+            provider and calculated amounts.
+          </li>
+          <li>
+            Click a row to open <strong>Cost details</strong>: operation totals, each upstream attempt (tokens, sources,
+            provider IDs), and line items from{" "}
+            <code>GET /api/admin/logs/&lt;id&gt;/cost-details</code>. Pre-ledger rows show only the legacy summary.
+          </li>
+          <li>
             <strong>Clear All Logs</strong> — write-gated, multi-step confirm.
           </li>
         </ul>
+        <Note>
+          Clearing request logs does not erase the cost ledger. Accounting entries are retained so budget totals and
+          reconciliation adjustments remain auditable.
+        </Note>
         <p>Deep links from Operations (for example filtered by model) are supported via query parameters.</p>
       </>
     ),
@@ -1109,7 +1123,7 @@ export const docSections: DocSection[] = [
           <li>Chat with enabled models, tools, voice, images, private mode, export.</li>
           <li>Media library with quota and optional personal cleanup schedule.</li>
           <li>Personal Activity with CSV/PDF export.</li>
-          <li>Settings: theme, voice language, chat import/export, password/2FA, MCP connectors.</li>
+          <li>Settings: theme, font, voice language, chat import/export, password/2FA, MCP connectors.</li>
         </ul>
       </>
     ),
@@ -1124,8 +1138,9 @@ export const docSections: DocSection[] = [
       <>
         <h2>Platform API (/v1)</h2>
         <p>
-          OpenAI-compatible gateway for external tools (IDEs, scripts, Open WebUI, automation). No CSRF — authenticate
-          with a Bearer key only.
+          Streaming-first OpenAI-style gateway for external tools (IDEs, scripts, Open WebUI, automation). No CSRF —
+          authenticate with a Bearer key only. Chat completions require <code>stream=true</code>; non-stream chat is
+          rejected.
         </p>
         <table className="docs-table">
           <thead>
@@ -1158,7 +1173,7 @@ export const docSections: DocSection[] = [
         <h3>Authentication modes</h3>
         <ul>
           <li>
-            <strong>Alpha Router gateway API key</strong> — credits the key’s period limit; optional owner for attribution.
+            <strong>alpharouter gateway API key</strong> — credits the key’s period limit; optional owner for attribution.
           </li>
           <li>
             <strong>User API key</strong> — debits that user’s monthly budget; user must be active.
@@ -1172,8 +1187,8 @@ export const docSections: DocSection[] = [
         <Code>{`curl -sS "$ALPHA_ROUTER_BASE/v1/models" \\
   -H "Authorization: Bearer $ALPHA_ROUTER_API_KEY"`}</Code>
         <p>
-          Point OpenAI-compatible clients at your Alpha Router base URL (for example{" "}
-          <code>https://alpha-router.example.com/v1</code>) and use an Alpha Router-issued key as the API key.
+          Point OpenAI-compatible clients at your alpharouter base URL (for example{" "}
+          <code>https://alpha-router.example.com/v1</code>) and use an alpharouter-issued key as the API key.
         </p>
       </>
     ),
@@ -1187,33 +1202,154 @@ export const docSections: DocSection[] = [
         <h2>Budget &amp; pricing</h2>
         <h3>Pricing</h3>
         <p>
-          Model prices come from provider sync (normalized to USD per 1K tokens where possible). Alpha Router does not apply a
-          markup in the catalog. Billing math prefers catalog rates, then LiteLLM cost helpers, then zero if unknown.
-          Negative provider prices are treated as unset.
+          Model prices come from provider sync (normalized to USD per 1K tokens where possible). alpharouter does not
+          apply a markup in the catalog. Billing prefers a provider-reported request charge, then provider
+          catalog/configured contract pricing, and finally a LiteLLM estimate. A request that cannot be priced is marked{" "}
+          <strong>Unpriced</strong>; missing cost data is never presented as a confirmed zero.
         </p>
         <h3>Monthly user budgets</h3>
         <p>
-          Resolved from plan assignment (user → group → department). Before a paid request, Alpha Router places a{" "}
+          Resolved from plan assignment (user → group → department). Before a paid request, alpharouter places a{" "}
           <strong>reservation</strong> (hold) against <code>budget_reserved_usd</code>. After completion it{" "}
           <strong>settles</strong> the actual cost into <code>budget_used_usd</code> and releases the hold. Stale holds
           expire via a background sweeper.
         </p>
         <h3>What counts</h3>
         <ul>
-          <li>In-app chat completions and image generation</li>
-          <li>User API key traffic on <code>/v1</code></li>
-          <li>Gateway key traffic against the key’s credit limit</li>
+          <li>Every chat/embedding/image provider attempt, including retry, fallback, tool loop, and code loop iterations</li>
+          <li>Automatic title generation, prompt enhancement/translation, voice refinement, and transcription</li>
+          <li>
+            Web search/fetch requests, MCP <code>tools/list</code> discovery, and MCP tool calls; metered units such as
+            request, credit, second, character, or image are supported
+          </li>
+          <li>User API key traffic on <code>/v1</code> and gateway key traffic against the key’s credit limit</li>
         </ul>
-        <Warn>
-          Some lightweight helper calls (for example automatic chat titles or prompt enhancement) may invoke models
-          without a full reservation path — keep an eye on Operations/logs if you rely on those features heavily, and
-          prefer enabling only necessary models.
-        </Warn>
+        <Note>
+          Provider errors can still be billable. Failed attempts are retained as events; when the provider exposes no
+          charge, the event remains Unpriced instead of silently assuming it was free.
+        </Note>
         <h3>Resets</h3>
         <p>
           Monthly user budgets reset on a schedule (first of month). Gateway key credits reset according to each key’s
           daily/weekly/monthly setting. Admins can force a per-user budget reset from the Users page.
         </p>
+      </>
+    ),
+  },
+  {
+    id: "cost-accounting",
+    title: "Cost accounting & reconciliation",
+    group: "Billing",
+    content: (
+      <>
+        <h2>Cost accounting &amp; reconciliation</h2>
+        <p>
+          alpharouter uses a provider-agnostic usage ledger. A user action is a <code>UsageOperation</code>; every real
+          upstream attempt is a <code>UsageEvent</code>; normalized quantities and unit prices are{" "}
+          <code>CostLineItem</code> records; and the amount applied to a user budget or gateway key is an immutable{" "}
+          <code>LedgerEntry</code>. Provider corrections create adjustment entries instead of rewriting history.
+        </p>
+        <p>
+          Ledger entries themselves are immutable. Reconciliation may append an adjustment and update the event/request
+          summary fields so the latest authoritative total is visible in API Logs. Original line items remain as they
+          were calculated at capture time.
+        </p>
+        <h3>Cost-source precedence</h3>
+        <ol>
+          <li>
+            <strong>Provider / Reconciled</strong> — a per-request charge returned by the provider or fetched later from
+            its usage API.
+          </li>
+          <li>
+            <strong>Catalog / Configured</strong> — the provider model catalog or an explicit contract rate for metered
+            services.
+          </li>
+          <li>
+            <strong>Estimated</strong> — LiteLLM model pricing when neither source above is available.
+          </li>
+          <li>
+            <strong>Unpriced</strong> — usage is retained but no confirmed amount is added to the displayed total.
+          </li>
+        </ol>
+        <p>
+          LiteLLM remains the transport, usage normalizer, token counter, and final estimation fallback. It is not the
+          accounting ledger and its estimates are not labelled as provider-confirmed charges.
+        </p>
+        <h3>Configured rates for credit/request-based providers</h3>
+        <p>
+          For services such as web search, audio, or external tools that do not return USD cost, create a versioned rate
+          through <code>POST /api/admin/cost-accounting/pricing</code>. Supported units include{" "}
+          <code>request</code>, <code>credit</code>, <code>second</code>, <code>minute</code>,{" "}
+          <code>character</code>, and <code>image</code>. New rates expire the previous active rate; past events keep
+          their original <code>PricingSnapshot</code>.
+        </p>
+        <p>
+          Built-in web search emits <code>provider_type=duckduckgo</code> and <code>service_type=web_search</code>;
+          direct URL fetch emits <code>provider_type=direct_http</code> and <code>service_type=web_fetch</code>. MCP
+          discovery uses the connector provider ID with <code>service_type=mcp</code>, while an invoked MCP tool uses{" "}
+          <code>service_type=tool</code>. All four use the <code>request</code> unit unless the provider response exposes
+          a more specific metered unit.
+        </p>
+        <Code>{`curl -X POST "$ALPHA_ROUTER_BASE/api/admin/cost-accounting/pricing" \\
+  -H "Content-Type: application/json" \\
+  -H "Cookie: $SESSION_COOKIE=$SESSION_VALUE; $CSRF_COOKIE=$CSRF_TOKEN" \\
+  -H "X-CSRF-Token: $CSRF_TOKEN" \\
+  -d '{
+    "provider_type": "duckduckgo",
+    "service_type": "web_search",
+    "model_id": "duckduckgo-search",
+    "unit": "request",
+    "unit_price_usd": 0.008,
+    "source": "contract"
+  }'`}</Code>
+        <h3>Reconciliation</h3>
+        <p>
+          Registered provider adapters periodically fetch final request charges and post signed ledger adjustments.
+          Built-in adapters:
+        </p>
+        <ul>
+          <li>
+            <strong>OpenRouter</strong> — <code>GET /generation?id=…</code> returns the per-request{" "}
+            <code>total_cost</code>.
+          </li>
+          <li>
+            <strong>OpenAI</strong> — for Responses IDs (<code>resp_*</code>), alpharouter retrieves{" "}
+            <code>/v1/responses/&lt;id&gt;</code>. If the payload includes a USD charge it is used; otherwise the
+            provider&apos;s authoritative token usage is re-quoted against the local model catalog. Chat Completions IDs
+            (<code>chatcmpl-*</code>) cannot be retrieved from OpenAI, so they stay unmatched until you post a manual
+            reconciliation. OpenAI&apos;s organization Costs API is aggregate-only and is not used for per-event
+            matching.
+          </li>
+        </ul>
+        <p>
+          Configure automatic runs with <code>COST_RECONCILIATION_ENABLED</code>,{" "}
+          <code>COST_RECONCILIATION_INTERVAL_MINUTES</code>, and <code>COST_RECONCILIATION_BATCH_SIZE</code>. An admin
+          can also trigger one connection with <code>POST /api/admin/cost-accounting/reconcile/provider</code>.
+        </p>
+        <p>
+          Providers without an automatic adapter can submit authoritative event costs to{" "}
+          <code>POST /api/admin/cost-accounting/reconcile</code>. Each item contains a usage-event ID and the actual USD
+          charge. The operation, request log, user/key counter, and reconciliation run are updated in one transaction.
+        </p>
+        <h3>Audit and diagnostics</h3>
+        <ul>
+          <li>
+            <code>GET /api/admin/cost-accounting/summary</code> — ledger totals by source/confidence, unpriced count,
+            legacy pre-ledger spend, ledger start timestamp, and recent reconciliation runs.
+          </li>
+          <li>
+            <code>GET /api/admin/logs/&lt;id&gt;/cost-details</code> — attempts, tokens, provider IDs, line items, and
+            pricing sources for one request.
+          </li>
+          <li>
+            <code>GET /api/admin/cost-accounting/pricing</code> — configured-rate history and effective windows.
+          </li>
+        </ul>
+        <Warn>
+          No library can guarantee exact USD cost when a provider supplies neither a request charge, a billable usage
+          unit, nor invoice/usage reconciliation data. Treat Unpriced events as an operational alert and add a provider
+          adapter or configured contract rate.
+        </Warn>
       </>
     ),
   },
@@ -1224,11 +1360,12 @@ export const docSections: DocSection[] = [
     content: (
       <>
         <h2>Background jobs</h2>
-        <p>APScheduler jobs inside the Alpha Router process include (among others):</p>
+        <p>APScheduler jobs inside the alpharouter process include (among others):</p>
         <ul>
           <li>Model sync due-check (interval)</li>
           <li>Monthly budget reset</li>
           <li>Budget reservation expiry</li>
+          <li>Provider cost reconciliation for registered adapters</li>
           <li>Media and chat retention cleanup (cron from Retention Policy)</li>
           <li>Per-user media cleanup schedules</li>
           <li>System metrics snapshots</li>
@@ -1247,17 +1384,11 @@ export const docSections: DocSection[] = [
     content: (
       <>
         <h2>Copyright</h2>
-        <p>
-          Alpha Router was designed by <strong>Majid Arasskhani</strong> and developed by <strong>Cursor AI</strong> within
-          the <strong>BitPin IT Department</strong>.
-        </p>
-        <p>
-          <strong>About BitPin Exchange</strong> — Iranian digital asset platform focused on reliability, security, and
-          transparent operations.
-        </p>
+        <p>© 2026 Majid Arasskhani. All rights reserved.</p>
+        <p>alpharouter is designed and developed by Majid Arasskhani.</p>
+        <p>Unauthorized reproduction, distribution, or modification is prohibited.</p>
         <div style={{ marginTop: "1rem" }}>
-          <p style={{ margin: 0 }}>Copyright: BitPin IT Department</p>
-          <p style={{ margin: "0.2rem 0 0" }}>Contact: IT@BitPin.co</p>
+          <p style={{ margin: 0 }}>Contact: Majid.Arasskhani@Gmail.com</p>
         </div>
       </>
     ),

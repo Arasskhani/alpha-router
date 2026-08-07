@@ -16,9 +16,9 @@ import {
 } from "../lib/themeCache";
 import { COMMON_TIMEZONES, detectBrowserTimezone } from "../lib/timezones";
 import { BROWSER_EVENT_NAMES } from "../lib/brand";
+import { broadcastChatRefresh } from "../lib/chatLeader";
 import Modal from "./Modal";
 import ThemeSegmentedControl from "./ThemeSegmentedControl";
-import ConnectorsPanel from "./settings/ConnectorsPanel";
 
 type TabId = "general" | "data-control" | "security" | "connectors";
 
@@ -80,11 +80,16 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange }: P
             <button
               key={item.id}
               type="button"
-              className={`settings-nav-item${tab === item.id ? " active" : ""}`}
+              className={`settings-nav-item${tab === item.id ? " active" : ""}${
+                item.id === "connectors" ? " settings-nav-item--soon" : ""
+              }`}
               onClick={() => setTab(item.id)}
               aria-current={tab === item.id ? "page" : undefined}
             >
-              {item.label}
+              <span>{item.label}</span>
+              {item.id === "connectors" ? (
+                <span className="settings-nav-item__badge">Soon</span>
+              ) : null}
             </button>
           ))}
         </aside>
@@ -95,10 +100,27 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange }: P
           )}
           {tab === "data-control" && <DataControlPanel />}
           {tab === "security" && <SecurityPanel />}
-          {tab === "connectors" && <ConnectorsPanel />}
+          {tab === "connectors" && <ConnectorsComingSoon />}
         </section>
       </div>
     </Modal>
+  );
+}
+
+function ConnectorsComingSoon() {
+  return (
+    <div className="settings-section">
+      <h2>Connectors</h2>
+      <p className="settings-section-desc">
+        Link third-party tools such as Gmail, Drive, GitHub, and Notion for use in chat.
+      </p>
+      <div className="settings-coming-soon" role="status">
+        <p className="settings-coming-soon__title">Coming soon</p>
+        <p className="muted-text">
+          Connectors are temporarily unavailable. This section will open when the feature is ready.
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -360,11 +382,19 @@ function DataControlPanel() {
         method: "POST",
         body: JSON.stringify({ data: payload }),
       });
+      const added = result.imported ?? 0;
       setMessage(
         result.message
-          || `Imported ${result.imported} chat(s)`
+          || `Added ${added} chat(s)`
             + (result.skipped ? `, skipped ${result.skipped}` : "")
-            + ` (${result.format}).`,
+            + ` (${result.format}). Existing chats were kept.`,
+      );
+      // Import is additive on the server — refresh the sidebar without wiping locals.
+      broadcastChatRefresh({ at: Date.now(), imported: added });
+      window.dispatchEvent(
+        new CustomEvent(BROWSER_EVENT_NAMES.chatsImported, {
+          detail: { imported: added, skipped: result.skipped ?? 0, format: result.format },
+        }),
       );
     } catch (err) {
       setError(formatApiError(err));
@@ -379,7 +409,8 @@ function DataControlPanel() {
     <div className="settings-section">
       <h2>Data Control</h2>
       <p className="settings-section-desc">
-        Export or import chats (Alpha Router, ChatGPT, or Open WebUI JSON).
+        Export or import chats (Alpharouter, ChatGPT, or Open WebUI JSON).
+        Import adds chats; it does not replace your existing history.
       </p>
 
       <div className="settings-list">
@@ -396,7 +427,7 @@ function DataControlPanel() {
 
         <SettingsRow
           title="Import chats"
-          hint={selectedFile ? selectedFile.name : "Alpha Router, ChatGPT, or Open WebUI JSON"}
+          hint={selectedFile ? selectedFile.name : "Alpharouter, ChatGPT, or Open WebUI JSON"}
         >
           <input
             ref={fileRef}

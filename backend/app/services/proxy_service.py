@@ -1,11 +1,13 @@
 """
 OpenAI-compatible proxy with async streaming, cancellation, and prompt caching.
-Costs are taken from provider usage objects — never adjusted by Alpha Router.
+Costs are taken from provider usage objects — never adjusted by Alpharouter.
 """
 
+import asyncio
 import json
 import logging
 import time
+import datetime
 from dataclasses import dataclass
 from typing import AsyncIterator
 
@@ -23,6 +25,7 @@ from app.models.model_catalog import AIModel
 from app.services.budget_reservation_service import (
     estimate_chat_hold,
     estimate_embedding_hold,
+    release,
     reservation_key,
     reserve,
     settle,
@@ -39,6 +42,14 @@ from app.services.code_interpreter_service import (
 from app.services.chat_completion_persistence import persister_from_body
 from app.services.llm_providers import litellm_model_for_provider, resolve_litellm_provider
 from app.services.secret_crypto import decrypt_secret
+from app.services.usage_accounting_service import (
+    PendingUsageEvent,
+    capture_usage_event,
+    legacy_usage_event,
+    persist_usage_operation,
+    quote_usage,
+    NormalizedUsage,
+)
 
 logger = logging.getLogger("app.services.proxy_service")
 
@@ -370,25 +381,20 @@ def _compute_token_cost_usd(
     completion_text: str,
     provider_type: str | None = None,
 ) -> float:
-    in_rate = _usable_cost_per_1k(ai_model.input_cost_per_1k)
-    out_rate = _usable_cost_per_1k(ai_model.output_cost_per_1k)
-    if in_rate is not None and out_rate is not None:
-        return _sanitize_cost_usd(
-            (prompt_tokens / 1000) * in_rate + (completion_tokens / 1000) * out_rate
-        )
-    try:
-        litellm_model = litellm_model_for_provider(model_id, provider_type or ai_model.provider_type)
-        cost_kwargs: dict = {
-            "model": litellm_model,
-            "prompt": str(messages),
-            "completion": completion_text,
-        }
-        llm_provider = resolve_litellm_provider(provider_type or ai_model.provider_type)
-        if llm_provider:
-            cost_kwargs["custom_llm_provider"] = llm_provider
-        return _sanitize_cost_usd(litellm.completion_cost(**cost_kwargs))
-    except Exception:
-        return 0.0
+    usage = NormalizedUsage(
+        prompt_tokens=max(0, int(prompt_tokens or 0)),
+        completion_tokens=max(0, int(completion_tokens or 0)),
+    )
+    quote = quote_usage(
+        usage,
+        ai_model=ai_model,
+        provider_type=provider_type or getattr(ai_model, "provider_type", None),
+        service_type="llm",
+        model_id=model_id,
+        prompt=messages,
+        completion=completion_text,
+    )
+    return _sanitize_cost_usd(quote.final_cost_usd)
 
 
 async def log_usage(
@@ -410,28 +416,73 @@ async def log_usage(
     alpha_router_api_key_id: int | None = None,
     client_app: str | None = None,
     budget_reservation_id: str | None = None,
+    usage_events: list[PendingUsageEvent] | None = None,
+    operation_type: str = "chat",
+    operation_idempotency_key: str | None = None,
 ) -> None:
-    total_cost_usd = _sanitize_cost_usd(total_cost_usd)
+    events = list(usage_events or [])
+    if not events:
+        events = [
+            legacy_usage_event(
+                model_id=model_id,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cached_tokens=cached_tokens,
+                total_cost_usd=total_cost_usd,
+                operation_name=operation_type,
+            )
+        ]
     log_row = RequestLog(
-            user_id=user_id,
-            username=username,
-            model_id=model_id,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            cached_tokens=cached_tokens,
-            total_cost_usd=total_cost_usd,
-            response_time_ms=response_time_ms,
-            prompt_language=prompt_language,
-            source_ip=source_ip,
-            source=source,
-            client_app=client_app,
-            success=success,
-            error_message=error_message,
-            alpha_router_api_key_id=alpha_router_api_key_id,
-            budget_reservation_id=budget_reservation_id,
-        )
+        user_id=user_id,
+        username=username,
+        model_id=model_id,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        cached_tokens=cached_tokens,
+        total_cost_usd=_sanitize_cost_usd(total_cost_usd),
+        response_time_ms=response_time_ms,
+        prompt_language=prompt_language,
+        source_ip=source_ip,
+        source=source,
+        client_app=client_app,
+        success=success,
+        error_message=error_message,
+        alpha_router_api_key_id=alpha_router_api_key_id,
+        budget_reservation_id=budget_reservation_id,
+    )
     db.add(log_row)
     await db.flush()
+    accounting = await persist_usage_operation(
+        db,
+        events=events,
+        user_id=user_id,
+        alpha_router_api_key_id=alpha_router_api_key_id,
+        budget_reservation_id=budget_reservation_id,
+        request_log_id=log_row.id,
+        operation_type=operation_type,
+        source=source,
+        client_app=client_app,
+        success=success,
+        idempotency_key=operation_idempotency_key,
+        metadata={"model_id": model_id},
+    )
+    if not accounting.created:
+        await db.delete(log_row)
+        if budget_reservation_id:
+            await release(db, budget_reservation_id)
+        await db.flush()
+        return
+    total_cost_usd = _sanitize_cost_usd(accounting.total_cost_usd)
+    log_row.prompt_tokens = accounting.prompt_tokens
+    log_row.completion_tokens = accounting.completion_tokens
+    log_row.cached_tokens = accounting.cached_tokens
+    log_row.total_cost_usd = total_cost_usd
+    log_row.provider_cost_usd = accounting.provider_cost_usd
+    log_row.calculated_cost_usd = accounting.calculated_cost_usd
+    log_row.cost_source = accounting.cost_source
+    log_row.cost_confidence = accounting.cost_confidence
+    log_row.has_unpriced_usage = accounting.unpriced_event_count > 0
+    log_row.usage_operation_id = accounting.operation_id
     settled = False
     if budget_reservation_id:
         settled = await settle(
@@ -450,6 +501,121 @@ async def log_usage(
     elif not settled and user_id and total_cost_usd > 0:
         await _apply_cost_to_user(db, user_id, total_cost_usd)
     await db.flush()
+
+
+async def reserve_auxiliary_llm_usage(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    ai_model: AIModel,
+    operation_name: str,
+    messages: list[dict],
+    max_tokens: int,
+) -> str | None:
+    """Atomically reserve a helper LLM call and release its row lock."""
+
+    body = {
+        "model": ai_model.external_id,
+        "messages": messages,
+        "max_tokens": max_tokens,
+    }
+    hold = await reserve(
+        db,
+        user_id=user_id,
+        alpha_router_api_key_id=None,
+        amount_usd=estimate_chat_hold(ai_model, body),
+        operation=operation_name[:32],
+        model_id=ai_model.external_id,
+        idempotency_key=reservation_key(body, operation=operation_name[:32]),
+    )
+    await db.commit()
+    return hold.id if hold else None
+
+
+async def settle_auxiliary_usage(
+    *,
+    user_id: int,
+    username: str,
+    ai_model: AIModel | None,
+    provider_type: str | None,
+    model_id: str,
+    response,
+    prompt,
+    completion: str,
+    operation_name: str,
+    client_app: str,
+    budget_reservation_id: str | None,
+    success: bool,
+    error_message: str | None = None,
+    service_type: str = "llm",
+    quantity: float | None = None,
+    unit: str | None = None,
+    started_at: datetime.datetime | None = None,
+) -> None:
+    """Persist one non-stream helper call without coupling it to route state."""
+
+    event = capture_usage_event(
+        response,
+        ai_model=ai_model,
+        provider_type=provider_type,
+        service_type=service_type,
+        operation_name=operation_name,
+        model_id=model_id,
+        status="succeeded" if success else "failed",
+        started_at=started_at,
+        completed_at=datetime.datetime.utcnow(),
+        prompt=prompt,
+        completion=completion,
+        error_message=error_message,
+        quantity=quantity,
+        unit=unit,
+    )
+    for attempt in range(3):
+        try:
+            async with AsyncSessionLocal() as log_db:
+                await log_usage(
+                    log_db,
+                    user_id=user_id,
+                    username=username,
+                    model_id=model_id,
+                    prompt_tokens=event.usage.prompt_tokens,
+                    completion_tokens=event.usage.completion_tokens,
+                    cached_tokens=event.usage.cached_tokens,
+                    total_cost_usd=float(event.quote.final_cost_usd or 0),
+                    response_time_ms=max(
+                        0.0,
+                        (event.completed_at - event.started_at).total_seconds() * 1000,
+                    ),
+                    prompt_language=detect_prompt_language(
+                        _extract_prompt_text(prompt)
+                        if isinstance(prompt, list)
+                        else str(prompt or "")
+                    ),
+                    source_ip=None,
+                    source="alpha_router_chat",
+                    success=success,
+                    error_message=error_message,
+                    client_app=client_app,
+                    budget_reservation_id=budget_reservation_id,
+                    usage_events=[event],
+                    operation_type=operation_name,
+                    operation_idempotency_key=(
+                        f"aux:{budget_reservation_id}"
+                        if budget_reservation_id
+                        else f"aux:{event.idempotency_key}"
+                    ),
+                )
+                await log_db.commit()
+            return
+        except Exception:
+            if attempt < 2:
+                await asyncio.sleep(0.1 * (attempt + 1))
+                continue
+            logger.exception(
+                "Auxiliary usage settlement failed after retries operation=%s; "
+                "reservation remains held for recovery",
+                operation_name,
+            )
 
 
 async def stream_chat(
@@ -491,6 +657,15 @@ async def stream_chat(
         prompt_tokens = completion_tokens = cached_tokens = 0
         total_cost = 0.0
         collected_content = ""
+        usage_events: list[PendingUsageEvent] = []
+        stream_reservation_id = getattr(resolved, "budget_reservation_id", None)
+
+        async def _release_stream_reservation() -> None:
+            if not stream_reservation_id:
+                return
+            async with AsyncSessionLocal() as release_db:
+                await release(release_db, stream_reservation_id)
+                await release_db.commit()
 
         completion_kwargs: dict = {
             "messages": messages,
@@ -504,7 +679,22 @@ async def stream_chat(
         if provider in ("openai", "azure", "openrouter", "anthropic", "xai"):
             completion_kwargs["stream_options"] = {"include_usage": True}
 
-        messages = await augment_messages_with_tools(db, messages, tools)
+        try:
+            messages = await augment_messages_with_tools(
+                db,
+                messages,
+                tools,
+                user_id=user_id,
+                alpha_router_api_key_id=alpha_router_api_key_id,
+                username=username,
+                reserve_budget=not skip_budget,
+            )
+        except BaseException:
+            try:
+                await asyncio.shield(_release_stream_reservation())
+            except Exception:
+                logger.exception("Failed to release chat reservation after tool setup error")
+            raise
         messages = apply_prompt_cache_breakpoints(messages)
         original_messages = list(body.get("messages", []))
         workspace_files = workspace_files_from_messages(original_messages) if tools.code_interpreter else {}
@@ -519,7 +709,13 @@ async def stream_chat(
             try:
                 from app.services.mcp_client_service import list_tools_for_user
 
-                raw_tools = await list_tools_for_user(db, user_id)
+                raw_tools = await list_tools_for_user(
+                    db,
+                    user_id,
+                    username=username,
+                    account_usage=True,
+                    reserve_budget=not skip_budget,
+                )
                 for t in raw_tools:
                     fn_name = t["function"]["name"]
                     mcp_provider_map[fn_name] = (
@@ -536,6 +732,13 @@ async def stream_chat(
         MAX_MCP_ITERATIONS = 3
         generation_start = time.perf_counter()
         stream_end_at: float | None = None
+        active_response = None
+        active_last_chunk = None
+        active_started_at: datetime.datetime | None = None
+        active_messages = None
+        active_prompt_tokens = 0
+        active_completion_tokens = 0
+        active_cached_tokens = 0
 
         persister = None
         if source == "alpha_router_chat" and user_id:
@@ -555,6 +758,13 @@ async def stream_chat(
 
         async def _compute_cost() -> None:
             nonlocal total_cost, prompt_tokens, completion_tokens
+            if usage_events:
+                total_cost = sum(
+                    float(event.quote.final_cost_usd)
+                    for event in usage_events
+                    if event.quote.final_cost_usd is not None
+                )
+                return
             msgs_for_count = completion_kwargs.get("messages", messages)
             if prompt_tokens == 0 and collected_content:
                 try:
@@ -579,10 +789,18 @@ async def stream_chat(
                 provider_type=provider_type,
             )
 
+        was_cancelled = False
         try:
             code_iterations = 0
             while True:
+                active_started_at = datetime.datetime.utcnow()
+                active_messages = list(completion_kwargs.get("messages", messages))
+                active_prompt_tokens = 0
+                active_completion_tokens = 0
+                active_cached_tokens = 0
+                active_last_chunk = None
                 response = await acompletion(**completion_kwargs)
+                active_response = response
                 iteration_content = ""
                 iteration_tool_calls: list[dict] = []
                 client_disconnected = False
@@ -597,8 +815,20 @@ async def stream_chat(
                     ):
                         client_disconnected = True
                     pt, ct, cache = _usage_from_chunk(chunk)
-                    prompt_tokens, completion_tokens, cached_tokens = _merge_stream_usage(
-                        prompt_tokens, completion_tokens, cached_tokens, pt, ct, cache
+                    chunk_usage = (
+                        chunk.get("usage")
+                        if isinstance(chunk, dict)
+                        else getattr(chunk, "usage", None)
+                    )
+                    if pt or ct or cache or chunk_usage is not None:
+                        active_last_chunk = chunk
+                    active_prompt_tokens, active_completion_tokens, active_cached_tokens = _merge_stream_usage(
+                        active_prompt_tokens,
+                        active_completion_tokens,
+                        active_cached_tokens,
+                        pt,
+                        ct,
+                        cache,
                     )
                     if chunk.choices and chunk.choices[0].delta.content:
                         delta = chunk.choices[0].delta.content
@@ -628,9 +858,72 @@ async def stream_chat(
                         yield f"data: {_serialize_stream_chunk(chunk)}\n\n".encode()
 
                 pt, ct, cache = _usage_from_stream_wrapper(response)
-                prompt_tokens, completion_tokens, cached_tokens = _merge_stream_usage(
-                    prompt_tokens, completion_tokens, cached_tokens, pt, ct, cache
+                active_prompt_tokens, active_completion_tokens, active_cached_tokens = _merge_stream_usage(
+                    active_prompt_tokens,
+                    active_completion_tokens,
+                    active_cached_tokens,
+                    pt,
+                    ct,
+                    cache,
                 )
+                if active_prompt_tokens == 0 and iteration_content:
+                    try:
+                        token_kwargs: dict = {"messages": active_messages}
+                        _apply_litellm_provider_kwargs(
+                            token_kwargs,
+                            provider_type,
+                            model,
+                        )
+                        active_prompt_tokens = int(
+                            litellm.token_counter(**token_kwargs) or 0
+                        )
+                        completion_kwargs_for_count: dict = {
+                            "model": model,
+                            "text": iteration_content,
+                        }
+                        llm_provider = resolve_litellm_provider(provider_type)
+                        if llm_provider:
+                            completion_kwargs_for_count[
+                                "custom_llm_provider"
+                            ] = llm_provider
+                        active_completion_tokens = int(
+                            litellm.token_counter(
+                                **completion_kwargs_for_count
+                            )
+                            or 0
+                        )
+                    except Exception:
+                        pass
+                usage_events.append(
+                    capture_usage_event(
+                        response,
+                        fallback_response=active_last_chunk,
+                        ai_model=ai_model,
+                        provider_type=provider_type,
+                        service_type="llm",
+                        operation_name="chat_completion",
+                        model_id=model,
+                        attempt_index=len(usage_events),
+                        status="succeeded",
+                        started_at=active_started_at,
+                        completed_at=datetime.datetime.utcnow(),
+                        prompt_tokens=active_prompt_tokens,
+                        completion_tokens=active_completion_tokens,
+                        cached_tokens=active_cached_tokens,
+                        prompt=active_messages,
+                        completion=iteration_content,
+                    )
+                )
+                prompt_tokens += active_prompt_tokens
+                completion_tokens += active_completion_tokens
+                cached_tokens += active_cached_tokens
+                active_response = None
+                active_last_chunk = None
+                active_started_at = None
+                active_messages = None
+                active_prompt_tokens = 0
+                active_completion_tokens = 0
+                active_cached_tokens = 0
 
                 if client_disconnected:
                     break
@@ -662,7 +955,16 @@ async def stream_chat(
                         if not client_disconnected:
                             yield _sse_delta_chunk(progress)
                         try:
-                            result = await mcp_call_tool(db, user_id, provider_id, tool_name, args)
+                            result = await mcp_call_tool(
+                                db,
+                                user_id,
+                                provider_id,
+                                tool_name,
+                                args,
+                                username=username,
+                                account_usage=True,
+                                reserve_budget=not skip_budget,
+                            )
                             tool_result_text = json.dumps(result, default=str)
                         except Exception as exc:  # noqa: BLE001
                             logger.warning("connector tool call failed user=%s tool=%s: %s", user_id, full_name, exc)
@@ -714,8 +1016,70 @@ async def stream_chat(
                 code_iterations += 1
 
             await _compute_cost()
+        except asyncio.CancelledError as exc:
+            was_cancelled = True
+            success = False
+            error_message = "Request cancelled"
+            if active_started_at is not None:
+                usage_events.append(
+                    capture_usage_event(
+                        active_response,
+                        fallback_response=active_last_chunk,
+                        ai_model=ai_model,
+                        provider_type=provider_type,
+                        service_type="llm",
+                        operation_name="chat_completion",
+                        model_id=model,
+                        attempt_index=len(usage_events),
+                        status="cancelled",
+                        started_at=active_started_at,
+                        completed_at=datetime.datetime.utcnow(),
+                        prompt_tokens=active_prompt_tokens,
+                        completion_tokens=active_completion_tokens,
+                        cached_tokens=active_cached_tokens,
+                        prompt=active_messages,
+                        completion="",
+                        error_message=str(exc) or error_message,
+                    )
+                )
+                prompt_tokens += active_prompt_tokens
+                completion_tokens += active_completion_tokens
+                cached_tokens += active_cached_tokens
+            raise
         except Exception as exc:
+            if active_started_at is not None:
+                failed_event = capture_usage_event(
+                    active_response,
+                    fallback_response=active_last_chunk,
+                    ai_model=ai_model,
+                    provider_type=provider_type,
+                    service_type="llm",
+                    operation_name="chat_completion",
+                    model_id=model,
+                    attempt_index=len(usage_events),
+                    status="failed",
+                    started_at=active_started_at,
+                    completed_at=datetime.datetime.utcnow(),
+                    prompt_tokens=active_prompt_tokens,
+                    completion_tokens=active_completion_tokens,
+                    cached_tokens=active_cached_tokens,
+                    prompt=active_messages,
+                    completion="",
+                    error_message=str(exc),
+                )
+                usage_events.append(failed_event)
+                prompt_tokens += active_prompt_tokens
+                completion_tokens += active_completion_tokens
+                cached_tokens += active_cached_tokens
+            active_response = None
+            active_last_chunk = None
+            active_started_at = None
+            active_messages = None
+            active_prompt_tokens = 0
+            active_completion_tokens = 0
+            active_cached_tokens = 0
             if _should_retry_non_stream(provider, exc):
+                retry_started_at = datetime.datetime.utcnow()
                 try:
                     retry_kwargs = dict(completion_kwargs)
                     retry_kwargs["stream"] = False
@@ -724,9 +1088,54 @@ async def stream_chat(
                     stream_end_at = time.perf_counter()
                     content, (pt, ct, cache) = _extract_non_stream_content(retry_response)
                     collected_content = content
-                    prompt_tokens, completion_tokens, cached_tokens = _merge_stream_usage(
-                        prompt_tokens, completion_tokens, cached_tokens, pt, ct, cache
+                    if pt == 0 and content:
+                        try:
+                            prompt_count_kwargs: dict = {
+                                "messages": retry_kwargs.get("messages", messages)
+                            }
+                            _apply_litellm_provider_kwargs(
+                                prompt_count_kwargs,
+                                provider_type,
+                                model,
+                            )
+                            pt = int(litellm.token_counter(**prompt_count_kwargs) or 0)
+                            completion_count_kwargs: dict = {
+                                "model": model,
+                                "text": content,
+                            }
+                            llm_provider = resolve_litellm_provider(provider_type)
+                            if llm_provider:
+                                completion_count_kwargs[
+                                    "custom_llm_provider"
+                                ] = llm_provider
+                            ct = int(
+                                litellm.token_counter(**completion_count_kwargs)
+                                or 0
+                            )
+                        except Exception:
+                            pass
+                    usage_events.append(
+                        capture_usage_event(
+                            retry_response,
+                            ai_model=ai_model,
+                            provider_type=provider_type,
+                            service_type="llm",
+                            operation_name="chat_completion_retry",
+                            model_id=model,
+                            attempt_index=len(usage_events),
+                            status="succeeded",
+                            started_at=retry_started_at,
+                            completed_at=datetime.datetime.utcnow(),
+                            prompt_tokens=pt,
+                            completion_tokens=ct,
+                            cached_tokens=cache,
+                            prompt=retry_kwargs.get("messages", messages),
+                            completion=content,
+                        )
                     )
+                    prompt_tokens += pt
+                    completion_tokens += ct
+                    cached_tokens += cache
                     if content:
                         yield _sse_delta_chunk(content)
                     if persister and content:
@@ -737,6 +1146,23 @@ async def stream_chat(
                             persister.reset_persist_state()
                     await _compute_cost()
                 except Exception as retry_exc:
+                    usage_events.append(
+                        capture_usage_event(
+                            None,
+                            ai_model=ai_model,
+                            provider_type=provider_type,
+                            service_type="llm",
+                            operation_name="chat_completion_retry",
+                            model_id=model,
+                            attempt_index=len(usage_events),
+                            status="failed",
+                            started_at=retry_started_at,
+                            completed_at=datetime.datetime.utcnow(),
+                            prompt=retry_kwargs.get("messages", messages),
+                            completion="",
+                            error_message=str(retry_exc),
+                        )
+                    )
                     success = False
                     error_message = _format_provider_error(retry_exc, provider)[:500]
                     yield f"data: {json.dumps({'error': error_message})}\n\n".encode()
@@ -747,7 +1173,12 @@ async def stream_chat(
         finally:
             if persister:
                 try:
-                    await persister.finalize(success=success, error_message=error_message)
+                    await asyncio.shield(
+                        persister.finalize(
+                            success=success,
+                            error_message=error_message,
+                        )
+                    )
                 except Exception:
                     await db.rollback()
             if stream_end_at is not None:
@@ -760,39 +1191,57 @@ async def stream_chat(
             # user could be charged for a response whose stored message was
             # lost, or conversely get a response for free. This decouples the
             # two concerns (message persistence vs cost accounting).
-            try:
-                async with AsyncSessionLocal() as log_db:
-                    await log_usage(
-                        log_db,
-                        user_id=user_id,
-                        username=username,
-                        model_id=model,
-                        prompt_tokens=prompt_tokens,
-                        completion_tokens=completion_tokens,
-                        cached_tokens=cached_tokens,
-                        total_cost_usd=total_cost,
-                        response_time_ms=elapsed_ms,
-                        prompt_language=prompt_lang,
-                        source_ip=request.client.host if request.client else None,
-                        source=source,
-                        success=success,
-                        error_message=error_message,
-                        alpha_router_api_key_id=alpha_router_api_key_id,
-                        client_app=client_app,
-                        budget_reservation_id=getattr(
-                            resolved,
-                            "budget_reservation_id",
-                            None,
-                        ),
-                    )
-                    await log_db.commit()
-            except Exception:
-                import logging
-
-                logging.getLogger("app.services.proxy_service").exception(
-                    "Chat usage settlement failed; reservation will expire safely"
+            accounting_key = (
+                f"chat:{stream_reservation_id}"
+                if stream_reservation_id
+                else (
+                    f"chat:{usage_events[0].idempotency_key}"
+                    if usage_events
+                    else None
                 )
-            yield b"data: [DONE]\n\n"
+            )
+
+            async def _persist_stream_usage() -> bool:
+                for attempt in range(3):
+                    try:
+                        async with AsyncSessionLocal() as log_db:
+                            await log_usage(
+                                log_db,
+                                user_id=user_id,
+                                username=username,
+                                model_id=model,
+                                prompt_tokens=prompt_tokens,
+                                completion_tokens=completion_tokens,
+                                cached_tokens=cached_tokens,
+                                total_cost_usd=total_cost,
+                                response_time_ms=elapsed_ms,
+                                prompt_language=prompt_lang,
+                                source_ip=request.client.host if request.client else None,
+                                source=source,
+                                success=success,
+                                error_message=error_message,
+                                alpha_router_api_key_id=alpha_router_api_key_id,
+                                client_app=client_app,
+                                budget_reservation_id=stream_reservation_id,
+                                usage_events=usage_events,
+                                operation_type="chat",
+                                operation_idempotency_key=accounting_key,
+                            )
+                            await log_db.commit()
+                        return True
+                    except Exception:
+                        if attempt < 2:
+                            await asyncio.sleep(0.1 * (attempt + 1))
+                            continue
+                        logger.exception(
+                            "Chat usage settlement failed after retries; "
+                            "reservation remains held for recovery"
+                        )
+                return False
+
+            await asyncio.shield(_persist_stream_usage())
+            if not was_cancelled:
+                yield b"data: [DONE]\n\n"
 
 
 def _embedding_input_text(input_value) -> str:
@@ -850,6 +1299,9 @@ async def create_embedding(
     total_cost = 0.0
     success = True
     error_message = None
+    usage_events: list[PendingUsageEvent] = []
+    attempt_started_at = datetime.datetime.utcnow()
+    response = None
 
     embed_kwargs: dict = {
         "input": body.get("input"),
@@ -869,8 +1321,41 @@ async def create_embedding(
         prompt_tokens = pt
         if prompt_tokens == 0 and getattr(response, "usage", None):
             prompt_tokens = int(getattr(response.usage, "total_tokens", 0) or 0)
+        if prompt_tokens == 0:
+            try:
+                count_kwargs: dict = {
+                    "model": model,
+                    "text": _embedding_input_text(body.get("input")),
+                }
+                llm_provider = resolve_litellm_provider(provider)
+                if llm_provider:
+                    count_kwargs["custom_llm_provider"] = llm_provider
+                prompt_tokens = int(litellm.token_counter(**count_kwargs) or 0)
+            except Exception:
+                pass
         cached_tokens = cache
-        total_cost = _embedding_cost_usd(ai_model, prompt_tokens)
+        usage_events.append(
+            capture_usage_event(
+                response,
+                ai_model=ai_model,
+                provider_type=provider,
+                service_type="embedding",
+                operation_name="embedding",
+                model_id=model,
+                status="succeeded",
+                started_at=attempt_started_at,
+                completed_at=datetime.datetime.utcnow(),
+                prompt_tokens=prompt_tokens,
+                completion_tokens=0,
+                cached_tokens=cached_tokens,
+                prompt=body.get("input"),
+            )
+        )
+        total_cost = sum(
+            float(event.quote.final_cost_usd)
+            for event in usage_events
+            if event.quote.final_cost_usd is not None
+        )
         if hasattr(response, "model_dump"):
             payload = response.model_dump()
         else:
@@ -878,6 +1363,24 @@ async def create_embedding(
     except Exception as exc:
         success = False
         error_message = _format_provider_error(exc, provider)[:500]
+        usage_events.append(
+            capture_usage_event(
+                response,
+                ai_model=ai_model,
+                provider_type=provider,
+                service_type="embedding",
+                operation_name="embedding",
+                model_id=model,
+                status="failed",
+                started_at=attempt_started_at,
+                completed_at=datetime.datetime.utcnow(),
+                prompt_tokens=prompt_tokens,
+                completion_tokens=0,
+                cached_tokens=cached_tokens,
+                prompt=body.get("input"),
+                error_message=str(exc),
+            )
+        )
         raise HTTPException(status_code=502, detail=error_message) from exc
     finally:
         elapsed_ms = (time.perf_counter() - start) * 1000
@@ -905,6 +1408,8 @@ async def create_embedding(
                         "budget_reservation_id",
                         None,
                     ),
+                    usage_events=usage_events,
+                    operation_type="embedding",
                 )
                 await log_db.commit()
         except Exception:

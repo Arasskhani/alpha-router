@@ -1,4 +1,4 @@
-"""Alpha Router gateway keys (admin) and per-user keys."""
+"""Alpharouter gateway keys (admin) and per-user keys."""
 
 import datetime
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text

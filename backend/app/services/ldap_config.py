@@ -194,7 +194,7 @@ def simple_public_view(cfg: dict) -> dict:
         host = cfg.get("dc_host") or ""
     else:
         host, _, _ = _parse_legacy_server(cfg.get("server", ""))
-    # Alpha Router supports LDAPS only — always present fixed transport to the admin UI.
+    # Alpharouter supports LDAPS only — always present fixed transport to the admin UI.
     return {
         "enabled": bool(cfg.get("enabled")),
         "dc_host": host,

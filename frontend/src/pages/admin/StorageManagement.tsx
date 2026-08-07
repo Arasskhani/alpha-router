@@ -171,7 +171,7 @@ export default function StorageManagement() {
       title: "Clear all media — final confirmation",
       message:
         `Final step: delete all ${fileCount.toLocaleString()} files (${sizeLabel}) from storage now. ` +
-        "There is no backup step inside Alpha Router. Confirm only if you are certain.",
+        "There is no backup step inside Alpharouter. Confirm only if you are certain.",
       confirmLabel: "Delete all media now",
       cancelLabel: "Cancel",
       danger: true,

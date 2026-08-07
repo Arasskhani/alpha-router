@@ -1,4 +1,4 @@
-"""In-sandbox executor for the Alpha Router code interpreter.
+"""In-sandbox executor for the Alpharouter code interpreter.
 
 Runs inside a disposable, network-less, read-only container. Reads a JSON payload
 from stdin, materializes workspace files into /tmp/work, executes the user code

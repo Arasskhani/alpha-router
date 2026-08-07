@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
+from app.models.cost_accounting import UsageEvent
 from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel
 from app.models.user import User
@@ -106,7 +107,7 @@ async def _test_log_image_usage_writes_request_log_and_budget() -> None:
         assert row.user_id == user.id
         assert row.model_id == "google/gemini-2.5-flash-image-preview"
         assert row.source == "alpha_router_chat"
-        assert row.client_app == "Alpha Router Chat (image:generation)"
+        assert row.client_app == "Alpharouter Chat (image:generation)"
         assert row.prompt_tokens == 1000
         assert row.completion_tokens == 500
         assert row.success is True
@@ -153,9 +154,79 @@ async def _test_log_image_usage_failure_row() -> None:
         row = (await db.execute(select(RequestLog))).scalar_one()
         assert row.success is False
         assert row.error_message == "provider timeout"
-        assert row.client_app == "Alpha Router Chat (image:img2img)"
+        assert row.client_app == "Alpharouter Chat (image:img2img)"
         assert row.total_cost_usd == 0.0
 
 
 def test_log_image_usage_failure_row():
     asyncio.run(_test_log_image_usage_failure_row())
+
+
+async def _test_image_attempts_keep_individual_outcomes_and_quantities() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with session_factory() as db:
+        user = User(
+            username="img-attempts",
+            email="img-attempts@test",
+            hashed_password="x",
+            role="user",
+            auth_provider="local",
+            monthly_budget_usd=10.0,
+        )
+        db.add(user)
+        await db.flush()
+        capture = ImageBillingCapture(
+            model_id="provider/image-model",
+            ai_model=SimpleNamespace(
+                external_id="provider/image-model",
+                provider_type="openrouter",
+                connection_id=None,
+                input_cost_per_1k=None,
+                output_cost_per_1k=None,
+                pricing_raw=None,
+            ),
+            provider_type="openrouter",
+        )
+        capture.add_usage(
+            {"id": "failed-attempt", "usage": {}},
+            success=False,
+            error_message="empty image response",
+        )
+        capture.add_usage(
+            {"id": "successful-attempt", "usage": {"cost": 0.2}},
+            success=True,
+            quantity=2,
+        )
+
+        await log_image_usage(
+            db,
+            user=user,
+            capture=capture,
+            prompt="two images",
+            response_time_ms=100,
+            success=True,
+            quantity=4,
+        )
+        await db.commit()
+
+        events = (
+            await db.execute(select(UsageEvent).order_by(UsageEvent.attempt_index))
+        ).scalars().all()
+        log_row = (await db.execute(select(RequestLog))).scalar_one()
+        assert [(event.status, event.quantity) for event in events] == [
+            ("failed", None),
+            ("succeeded", 2.0),
+        ]
+        assert events[0].error_message == "empty image response"
+        assert float(events[1].final_cost_usd) == pytest.approx(0.2)
+        assert log_row.total_cost_usd == pytest.approx(0.2)
+        assert log_row.has_unpriced_usage is True
+
+    await engine.dispose()
+
+
+def test_image_attempts_keep_individual_outcomes_and_quantities():
+    asyncio.run(_test_image_attempts_keep_individual_outcomes_and_quantities())

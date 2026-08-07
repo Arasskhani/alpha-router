@@ -11,6 +11,10 @@ from urllib.parse import urlparse
 import httpx
 
 from app.branding import OUTBOUND_USER_AGENT
+from app.services.metered_usage_service import (
+    finish_metered_usage,
+    start_metered_usage,
+)
 
 URL_RE = re.compile(r"https?://[^\s<>\[\]()\"']+", re.IGNORECASE)
 
@@ -54,20 +58,68 @@ def _search_result_limit(depth: str) -> int:
 
 
 def _run_duckduckgo_search(query: str, max_results: int) -> list[dict[str, str]]:
-    try:
-        from duckduckgo_search import DDGS
+    from duckduckgo_search import DDGS
 
-        with DDGS() as ddgs:
-            return list(ddgs.text(query, max_results=max_results))
-    except Exception:
-        return []
+    with DDGS() as ddgs:
+        return list(ddgs.text(query, max_results=max_results))
 
 
-async def web_search_context(query: str, depth: str) -> str:
+async def web_search_context(
+    query: str,
+    depth: str,
+    *,
+    user_id: int | None = None,
+    alpha_router_api_key_id: int | None = None,
+    username: str | None = None,
+    reserve_budget: bool = True,
+) -> str:
     if not query.strip():
         return ""
     limit = _search_result_limit(depth)
-    rows = await asyncio.to_thread(_run_duckduckgo_search, query, limit)
+    metered = (
+        await start_metered_usage(
+            user_id=user_id,
+            alpha_router_api_key_id=alpha_router_api_key_id,
+            username=username,
+            provider_type="duckduckgo",
+            service_type="web_search",
+            operation_name="web_search",
+            model_id="duckduckgo-search",
+            metadata={"depth": depth, "max_results": limit},
+            reserve_budget=reserve_budget,
+        )
+        if user_id is not None or alpha_router_api_key_id is not None
+        else None
+    )
+    try:
+        rows = await asyncio.to_thread(_run_duckduckgo_search, query, limit)
+    except asyncio.CancelledError as exc:
+        if metered is not None:
+            await finish_metered_usage(
+                metered,
+                success=False,
+                quantity=None,
+                unit=None,
+                error_message=str(exc) or "Search cancelled",
+            )
+        raise
+    except Exception as exc:
+        if metered is not None:
+            await finish_metered_usage(
+                metered,
+                success=False,
+                quantity=None,
+                unit=None,
+                error_message=str(exc),
+            )
+        return ""
+    if metered is not None:
+        await finish_metered_usage(
+            metered,
+            success=True,
+            quantity=1,
+            unit="request",
+        )
     if not rows:
         return ""
     lines = ["Web search results (use for up-to-date facts; cite sources when relevant):"]
@@ -102,7 +154,15 @@ def _html_to_text(html: str) -> str:
     return re.sub(r"\s+", " ", parser.get_text()).strip()
 
 
-async def fetch_url_text(url: str, max_chars: int = 14_000) -> str:
+async def fetch_url_text(
+    url: str,
+    max_chars: int = 14_000,
+    *,
+    user_id: int | None = None,
+    alpha_router_api_key_id: int | None = None,
+    username: str | None = None,
+    reserve_budget: bool = True,
+) -> str:
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise ValueError("Invalid URL")
@@ -114,22 +174,62 @@ async def fetch_url_text(url: str, max_chars: int = 14_000) -> str:
     from app.services.bounded_io import bounded_get_bytes, clamp_limit
     from app.services.ssrf_guard import safe_client
 
-    async with safe_client(
-        headers={"User-Agent": OUTBOUND_USER_AGENT},
-    ) as client:
-        byte_limit = clamp_limit(
-            get_settings().max_web_fetch_bytes,
-            minimum=256 * 1024,
-            maximum=5 * 1024 * 1024,
+    metered = (
+        await start_metered_usage(
+            user_id=user_id,
+            alpha_router_api_key_id=alpha_router_api_key_id,
+            username=username,
+            provider_type="direct_http",
+            service_type="web_fetch",
+            operation_name="web_fetch",
+            model_id="direct-http-fetch",
+            metadata={"host": parsed.hostname or ""},
+            reserve_budget=reserve_budget,
         )
-        raw, ctype = await bounded_get_bytes(client, url, max_bytes=byte_limit)
-        text = raw.decode("utf-8", errors="replace")
-        if "html" in ctype.lower() or "<html" in text[:200].lower():
-            text = _html_to_text(text)
+        if user_id is not None or alpha_router_api_key_id is not None
+        else None
+    )
+    try:
+        async with safe_client(
+            headers={"User-Agent": OUTBOUND_USER_AGENT},
+        ) as client:
+            byte_limit = clamp_limit(
+                get_settings().max_web_fetch_bytes,
+                minimum=256 * 1024,
+                maximum=5 * 1024 * 1024,
+            )
+            raw, ctype = await bounded_get_bytes(client, url, max_bytes=byte_limit)
+            text = raw.decode("utf-8", errors="replace")
+            if "html" in ctype.lower() or "<html" in text[:200].lower():
+                text = _html_to_text(text)
+    except BaseException as exc:
+        if metered is not None:
+            await finish_metered_usage(
+                metered,
+                success=False,
+                quantity=None,
+                unit=None,
+                error_message=str(exc),
+            )
+        raise
+    if metered is not None:
+        await finish_metered_usage(
+            metered,
+            success=True,
+            quantity=1,
+            unit="request",
+        )
     return text[:max_chars]
 
 
-async def web_fetch_context(messages: list[dict]) -> str:
+async def web_fetch_context(
+    messages: list[dict],
+    *,
+    user_id: int | None = None,
+    alpha_router_api_key_id: int | None = None,
+    username: str | None = None,
+    reserve_budget: bool = True,
+) -> str:
     text = _last_user_text(messages)
     urls = list(dict.fromkeys(URL_RE.findall(text)))[:3]
     if not urls:
@@ -137,7 +237,13 @@ async def web_fetch_context(messages: list[dict]) -> str:
     blocks: list[str] = ["Fetched page content for URLs in the user message:"]
     for url in urls:
         try:
-            content = await fetch_url_text(url)
+            content = await fetch_url_text(
+                url,
+                user_id=user_id,
+                alpha_router_api_key_id=alpha_router_api_key_id,
+                username=username,
+                reserve_budget=reserve_budget,
+            )
             blocks.append(f"--- {url} ---\n{content[:8000]}")
         except Exception as exc:
             blocks.append(f"--- {url} ---\n(fetch failed: {exc})")
@@ -148,6 +254,11 @@ async def augment_messages_with_tools(
     db,
     messages: list[dict],
     tools: ChatToolsConfig,
+    *,
+    user_id: int | None = None,
+    alpha_router_api_key_id: int | None = None,
+    username: str | None = None,
+    reserve_budget: bool = True,
 ) -> list[dict]:
     """Prepend tool context as system messages; return new message list."""
     if not messages:
@@ -156,12 +267,25 @@ async def augment_messages_with_tools(
     user_query = _last_user_text(messages)
 
     if tools.web_search and user_query:
-        ctx = await web_search_context(user_query, tools.web_search_depth)
+        ctx = await web_search_context(
+            user_query,
+            tools.web_search_depth,
+            user_id=user_id,
+            alpha_router_api_key_id=alpha_router_api_key_id,
+            username=username,
+            reserve_budget=reserve_budget,
+        )
         if ctx:
             system_blocks.append(ctx)
 
     if tools.web_fetch:
-        ctx = await web_fetch_context(messages)
+        ctx = await web_fetch_context(
+            messages,
+            user_id=user_id,
+            alpha_router_api_key_id=alpha_router_api_key_id,
+            username=username,
+            reserve_budget=reserve_budget,
+        )
         if ctx:
             system_blocks.append(ctx)
 

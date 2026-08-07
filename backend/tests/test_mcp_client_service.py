@@ -10,7 +10,7 @@ import asyncio
 import datetime
 import io
 import logging
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -224,4 +224,49 @@ async def _run_no_log_leak(engine, factory):
     log_text = log_buf.getvalue()
     assert "SECRET-TOK-XYZ" not in log_text
     assert "SECRET-RTOK" not in log_text
+    await engine.dispose()
+
+
+def test_tools_list_emits_metered_usage_when_enabled():
+    engine, factory = _engine_factory()
+    asyncio.run(_run_tools_list_metering(engine, factory))
+
+
+async def _run_tools_list_metering(engine, factory):
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    alice_id, _ = await _seed(factory)
+    await _add_connector(factory, alice_id, "gmail", access="ALICE-TOK")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"jsonrpc": "2.0", "id": 1, "result": {"tools": []}},
+        )
+
+    metered_call = object()
+    start = AsyncMock(return_value=metered_call)
+    finish = AsyncMock()
+    with (
+        _patch_client(_make_transport(handler)),
+        patch.object(mcs, "start_metered_usage", start),
+        patch.object(mcs, "finish_metered_usage", finish),
+    ):
+        async with factory() as db:
+            await mcs.list_tools_for_user(
+                db,
+                alice_id,
+                username="alice",
+                account_usage=True,
+                reserve_budget=False,
+            )
+
+    start.assert_awaited_once()
+    assert start.await_args.kwargs["provider_type"] == "gmail"
+    assert start.await_args.kwargs["service_type"] == "mcp"
+    assert start.await_args.kwargs["operation_name"] == "mcp_tools_list"
+    finish.assert_awaited_once()
+    assert finish.await_args.kwargs["success"] is True
+    assert finish.await_args.kwargs["quantity"] == 1
+    assert finish.await_args.kwargs["unit"] == "request"
     await engine.dispose()

@@ -9,7 +9,7 @@ import {
 } from "./chatAttachments";
 
 describe("chat attachment and audio wire markers", () => {
-  it("round-trips the Alpha Router attachment marker", () => {
+  it("round-trips the Alpharouter attachment marker", () => {
     const payload = {
       userText: "Review this",
       attachments: [
@@ -28,7 +28,7 @@ describe("chat attachment and audio wire markers", () => {
     expect(readAttachmentMessage(encoded)).toEqual(payload);
   });
 
-  it("extracts transcripts from the Alpha Router audio marker", () => {
+  it("extracts transcripts from the Alpharouter audio marker", () => {
     const encoded = `${AUDIO_MESSAGE_PREFIX}${JSON.stringify({ transcript: "hello" })}`;
 
     expect(buildApiMessageContent(encoded)).toBe("hello");

@@ -1,6 +1,6 @@
 """Per-user third-party Connectors: connect/disconnect via OAuth.
 
-Each user supplies their own OAuth Client ID/Secret (decision ب=2). Alpha Router
+Each user supplies their own OAuth Client ID/Secret (decision ب=2). Alpharouter
 stores them encrypted, runs the Authorization Code dance on the user's
 behalf, and persists the access/refresh tokens encrypted.
 

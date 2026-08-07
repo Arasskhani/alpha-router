@@ -1,20 +1,69 @@
 """API request logs (admin + user)."""
 
+import json
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import delete, or_, select
+from pydantic import BaseModel, Field
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_active_user, require_api_logs, require_api_logs_write
 from app.database import get_db
 from app.models.api_key import AlphaRouterApiKey
+from app.models.connection import Connection
+from app.models.cost_accounting import (
+    CostLineItem,
+    LedgerEntry,
+    PricingSnapshot,
+    ReconciliationRun,
+    UsageEvent,
+    UsageOperation,
+)
 from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel
 from app.models.user import User
 from app.utils.display import format_app_source
+from app.services.usage_accounting_service import (
+    create_configured_pricing_snapshot,
+    create_reconciliation_run,
+    finish_reconciliation_run,
+    reconcile_usage_event,
+)
 
 router = APIRouter(prefix="/api", tags=["logs"])
+
+
+class ReconciliationItemIn(BaseModel):
+    event_id: str
+    actual_cost_usd: float = Field(ge=0)
+
+
+class ReconciliationIn(BaseModel):
+    provider_type: str
+    connection_id: int | None = None
+    source: str = "manual"
+    period_start: datetime | None = None
+    period_end: datetime | None = None
+    items: list[ReconciliationItemIn] = Field(min_length=1, max_length=500)
+
+
+class ConfiguredPricingIn(BaseModel):
+    provider_type: str
+    service_type: str
+    model_id: str | None = None
+    connection_id: int | None = None
+    unit: str
+    unit_price_usd: float = Field(ge=0)
+    source: str = Field(default="admin", pattern="^(admin|contract)$")
+    effective_at: datetime | None = None
+    expires_at: datetime | None = None
+    metadata: dict = Field(default_factory=dict)
+
+
+class ProviderReconciliationIn(BaseModel):
+    connection_id: int
+    limit: int = Field(default=50, ge=1, le=500)
 
 
 def _log_row(
@@ -48,6 +97,13 @@ def _log_row(
         "cached_tokens": r.cached_tokens,
         "total_tokens": (r.prompt_tokens or 0) + (r.completion_tokens or 0),
         "total_cost_usd": r.total_cost_usd,
+        "provider_cost_usd": r.provider_cost_usd,
+        "calculated_cost_usd": r.calculated_cost_usd,
+        "cost_source": r.cost_source or "unknown",
+        "cost_confidence": r.cost_confidence or "unknown",
+        "has_unpriced_usage": bool(r.has_unpriced_usage),
+        "usage_operation_id": r.usage_operation_id,
+        "reconciled_at": r.reconciled_at.isoformat() if r.reconciled_at else None,
         "response_time_ms": r.response_time_ms,
         "source_ip": r.source_ip,
         "source": r.source,
@@ -177,6 +233,25 @@ async def admin_logs(
         end_date=end_date,
     )
     rows = (await db.execute(q.offset(offset).limit(limit))).scalars().all()
+    operation_ids = {
+        r.usage_operation_id
+        for r in rows
+        if r.usage_operation_id
+    }
+    operation_providers: dict[str, set[str]] = {}
+    if operation_ids:
+        provider_rows = (
+            await db.execute(
+                select(UsageEvent.operation_id, UsageEvent.provider_type)
+                .where(UsageEvent.operation_id.in_(operation_ids))
+                .distinct()
+            )
+        ).all()
+        for operation_id, provider in provider_rows:
+            if provider:
+                operation_providers.setdefault(str(operation_id), set()).add(
+                    str(provider)
+                )
     model_ids = list({(r.model_id or "").strip() for r in rows if (r.model_id or "").strip()})
     provider_map: dict[str, str] = {}
     if model_ids:
@@ -211,13 +286,416 @@ async def admin_logs(
         "items": [
             _log_row(
                 r,
-                provider_map.get((r.model_id or "").strip()),
+                (
+                    next(iter(operation_providers[r.usage_operation_id]))
+                    if r.usage_operation_id
+                    and len(operation_providers.get(r.usage_operation_id, set())) == 1
+                    else (
+                        "mixed"
+                        if r.usage_operation_id
+                        and operation_providers.get(r.usage_operation_id)
+                        else provider_map.get((r.model_id or "").strip())
+                    )
+                ),
                 router_key=key_map.get(r.alpha_router_api_key_id),
             )
             for r in rows
         ],
         "offset": offset,
         "limit": limit,
+    }
+
+
+@router.get("/admin/cost-accounting/pricing")
+async def configured_cost_pricing(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_api_logs),
+):
+    rows = (
+        await db.execute(
+            select(PricingSnapshot)
+            .where(PricingSnapshot.source.in_(("admin", "contract")))
+            .order_by(PricingSnapshot.effective_at.desc(), PricingSnapshot.id.desc())
+            .limit(500)
+        )
+    ).scalars().all()
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "connection_id": row.connection_id,
+                "provider_type": row.provider_type,
+                "service_type": row.service_type,
+                "model_id": row.model_id,
+                "currency": row.currency,
+                "source": row.source,
+                "pricing": json.loads(row.pricing_json),
+                "effective_at": (
+                    row.effective_at.isoformat() if row.effective_at else None
+                ),
+                "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+            }
+            for row in rows
+        ]
+    }
+
+
+@router.post("/admin/cost-accounting/pricing")
+async def create_cost_pricing(
+    body: ConfiguredPricingIn,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_api_logs_write),
+):
+    if body.connection_id is not None:
+        connection = await db.get(Connection, body.connection_id)
+        if connection is None:
+            raise HTTPException(status_code=404, detail="Connection not found")
+        if (
+            (connection.provider_type or "").strip().lower()
+            != body.provider_type.strip().lower()
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="connection_id does not belong to provider_type",
+            )
+    try:
+        row = await create_configured_pricing_snapshot(
+            db,
+            provider_type=body.provider_type,
+            service_type=body.service_type,
+            model_id=body.model_id,
+            connection_id=body.connection_id,
+            unit=body.unit,
+            unit_price_usd=body.unit_price_usd,
+            source=body.source,
+            effective_at=body.effective_at,
+            expires_at=body.expires_at,
+            metadata=body.metadata,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await db.commit()
+    return {
+        "id": row.id,
+        "provider_type": row.provider_type,
+        "service_type": row.service_type,
+        "model_id": row.model_id,
+        "source": row.source,
+        "pricing": json.loads(row.pricing_json),
+        "effective_at": row.effective_at.isoformat(),
+        "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+    }
+
+
+@router.get("/admin/cost-accounting/summary")
+async def cost_accounting_summary(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_api_logs),
+):
+    grouped = (
+        await db.execute(
+            select(
+                UsageEvent.cost_source,
+                UsageEvent.cost_confidence,
+                func.count(UsageEvent.id),
+                func.coalesce(func.sum(UsageEvent.final_cost_usd), 0),
+            )
+            .group_by(UsageEvent.cost_source, UsageEvent.cost_confidence)
+            .order_by(UsageEvent.cost_source, UsageEvent.cost_confidence)
+        )
+    ).all()
+    unpriced = (
+        await db.execute(
+            select(func.count(UsageEvent.id)).where(
+                UsageEvent.final_cost_usd.is_(None)
+            )
+        )
+    ).scalar_one()
+    ledger_total = (
+        await db.execute(
+            select(func.coalesce(func.sum(LedgerEntry.amount_usd), 0))
+        )
+    ).scalar_one()
+    legacy_total = (
+        await db.execute(
+            select(func.coalesce(func.sum(RequestLog.total_cost_usd), 0)).where(
+                RequestLog.usage_operation_id.is_(None)
+            )
+        )
+    ).scalar_one()
+    ledger_started_at = (
+        await db.execute(select(func.min(UsageOperation.started_at)))
+    ).scalar_one()
+    recent_runs = (
+        await db.execute(
+            select(ReconciliationRun)
+            .order_by(ReconciliationRun.started_at.desc())
+            .limit(10)
+        )
+    ).scalars().all()
+    return {
+        "ledger_total_usd": float(ledger_total or 0),
+        "legacy_total_usd": float(legacy_total or 0),
+        "combined_total_usd": float(ledger_total or 0)
+        + float(legacy_total or 0),
+        "ledger_started_at": (
+            ledger_started_at.isoformat() if ledger_started_at else None
+        ),
+        "unpriced_event_count": int(unpriced or 0),
+        "by_source": [
+            {
+                "cost_source": source or "unknown",
+                "cost_confidence": confidence or "unknown",
+                "event_count": int(count or 0),
+                "total_cost_usd": float(total or 0),
+            }
+            for source, confidence, count, total in grouped
+        ],
+        "recent_reconciliation_runs": [
+            {
+                "id": run.id,
+                "provider_type": run.provider_type,
+                "source": run.source,
+                "status": run.status,
+                "expected_cost_usd": float(run.expected_cost_usd or 0),
+                "reported_cost_usd": float(run.reported_cost_usd or 0),
+                "adjustment_usd": float(run.adjustment_usd or 0),
+                "matched_event_count": int(run.matched_event_count or 0),
+                "unmatched_event_count": int(run.unmatched_event_count or 0),
+                "started_at": run.started_at.isoformat() if run.started_at else None,
+                "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+            }
+            for run in recent_runs
+        ],
+    }
+
+
+@router.get("/admin/logs/{log_id}/cost-details")
+async def admin_log_cost_details(
+    log_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_api_logs),
+):
+    log_row = await db.get(RequestLog, log_id)
+    if log_row is None:
+        raise HTTPException(status_code=404, detail="Request log not found")
+    if not log_row.usage_operation_id:
+        return {
+            "operation": None,
+            "events": [],
+            "legacy": True,
+            "total_cost_usd": float(log_row.total_cost_usd or 0),
+        }
+    operation = await db.get(UsageOperation, log_row.usage_operation_id)
+    if operation is None:
+        raise HTTPException(status_code=404, detail="Usage operation not found")
+    events = (
+        await db.execute(
+            select(UsageEvent)
+            .where(UsageEvent.operation_id == operation.id)
+            .order_by(UsageEvent.attempt_index, UsageEvent.started_at)
+        )
+    ).scalars().all()
+    event_ids = [event.id for event in events]
+    line_rows = (
+        (
+            await db.execute(
+                select(CostLineItem)
+                .where(CostLineItem.usage_event_id.in_(event_ids))
+                .order_by(CostLineItem.id)
+            )
+        ).scalars().all()
+        if event_ids
+        else []
+    )
+    lines_by_event: dict[str, list[CostLineItem]] = {}
+    for line in line_rows:
+        lines_by_event.setdefault(line.usage_event_id, []).append(line)
+    return {
+        "operation": {
+            "id": operation.id,
+            "operation_type": operation.operation_type,
+            "status": operation.status,
+            "total_cost_usd": float(operation.total_cost_usd or 0),
+            "provider_cost_usd": (
+                float(operation.provider_cost_usd)
+                if operation.provider_cost_usd is not None
+                else None
+            ),
+            "calculated_cost_usd": (
+                float(operation.calculated_cost_usd)
+                if operation.calculated_cost_usd is not None
+                else None
+            ),
+            "unpriced_event_count": int(operation.unpriced_event_count or 0),
+            "reconciled_at": (
+                operation.reconciled_at.isoformat()
+                if operation.reconciled_at
+                else None
+            ),
+        },
+        "events": [
+            {
+                "id": event.id,
+                "provider_type": event.provider_type,
+                "service_type": event.service_type,
+                "operation_name": event.operation_name,
+                "model_id": event.model_id,
+                "attempt_index": event.attempt_index,
+                "upstream_request_id": event.upstream_request_id,
+                "status": event.status,
+                "prompt_tokens": event.prompt_tokens,
+                "completion_tokens": event.completion_tokens,
+                "cached_tokens": event.cached_tokens,
+                "cache_write_tokens": event.cache_write_tokens,
+                "reasoning_tokens": event.reasoning_tokens,
+                "provider_cost_usd": (
+                    float(event.provider_cost_usd)
+                    if event.provider_cost_usd is not None
+                    else None
+                ),
+                "calculated_cost_usd": (
+                    float(event.calculated_cost_usd)
+                    if event.calculated_cost_usd is not None
+                    else None
+                ),
+                "final_cost_usd": (
+                    float(event.final_cost_usd)
+                    if event.final_cost_usd is not None
+                    else None
+                ),
+                "cost_source": event.cost_source,
+                "cost_confidence": event.cost_confidence,
+                "reconciliation_attempts": int(
+                    event.reconciliation_attempts or 0
+                ),
+                "last_reconciliation_attempt_at": (
+                    event.last_reconciliation_attempt_at.isoformat()
+                    if event.last_reconciliation_attempt_at
+                    else None
+                ),
+                "error_message": event.error_message,
+                "line_items": [
+                    {
+                        "category": line.category,
+                        "quantity": line.quantity,
+                        "unit": line.unit,
+                        "unit_price_usd": (
+                            float(line.unit_price_usd)
+                            if line.unit_price_usd is not None
+                            else None
+                        ),
+                        "cost_usd": (
+                            float(line.cost_usd)
+                            if line.cost_usd is not None
+                            else None
+                        ),
+                        "pricing_source": line.pricing_source,
+                    }
+                    for line in lines_by_event.get(event.id, [])
+                ],
+            }
+            for event in events
+        ],
+        "legacy": False,
+    }
+
+
+@router.post("/admin/cost-accounting/reconcile/provider")
+async def reconcile_provider_costs(
+    body: ProviderReconciliationIn,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_api_logs_write),
+):
+    from app.services.provider_reconciliation_service import (
+        reconcile_connection_costs,
+    )
+
+    connection = await db.get(Connection, body.connection_id)
+    if connection is None:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    try:
+        run = await reconcile_connection_costs(
+            db,
+            connection,
+            limit=body.limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await db.commit()
+    if run is None:
+        return {
+            "run_id": None,
+            "status": "no_candidates",
+            "matched_event_count": 0,
+            "unmatched_event_count": 0,
+            "adjustment_usd": 0.0,
+        }
+    return {
+        "run_id": run.id,
+        "status": run.status,
+        "matched_event_count": int(run.matched_event_count or 0),
+        "unmatched_event_count": int(run.unmatched_event_count or 0),
+        "adjustment_usd": float(run.adjustment_usd or 0),
+    }
+
+
+@router.post("/admin/cost-accounting/reconcile")
+async def reconcile_costs(
+    body: ReconciliationIn,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_api_logs_write),
+):
+    provider = body.provider_type.strip().lower()
+    if not provider:
+        raise HTTPException(status_code=400, detail="provider_type is required")
+    run = await create_reconciliation_run(
+        db,
+        provider_type=provider,
+        source=body.source,
+        connection_id=body.connection_id,
+        period_start=body.period_start,
+        period_end=body.period_end,
+        raw_summary={"submitted_items": len(body.items)},
+    )
+    matched = 0
+    unmatched = 0
+    adjustments = 0.0
+    seen_event_ids: set[str] = set()
+    for item in body.items:
+        if item.event_id in seen_event_ids:
+            continue
+        seen_event_ids.add(item.event_id)
+        event = await db.get(UsageEvent, item.event_id)
+        if (
+            event is None
+            or (event.provider_type or "").lower() != provider
+            or (
+                body.connection_id is not None
+                and event.connection_id != body.connection_id
+            )
+        ):
+            unmatched += 1
+            continue
+        adjustments += await reconcile_usage_event(
+            db,
+            event_id=event.id,
+            actual_cost_usd=item.actual_cost_usd,
+            reconciliation_run_id=run.id,
+        )
+        matched += 1
+    await finish_reconciliation_run(
+        db,
+        run,
+        unmatched_event_count=unmatched,
+    )
+    await db.commit()
+    return {
+        "run_id": run.id,
+        "status": run.status,
+        "matched_event_count": matched,
+        "unmatched_event_count": unmatched,
+        "adjustment_usd": round(adjustments, 12),
     }
 
 

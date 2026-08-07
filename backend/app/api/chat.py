@@ -269,8 +269,16 @@ async def voice_message(
 
     try:
         transcript = await transcribe_audio_bytes(
-            db, raw, filename=filename, mime_type=mime, language=language
+            db,
+            raw,
+            filename=filename,
+            mime_type=mime,
+            language=language,
+            user_id=user.id,
+            username=user.username,
         )
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:

@@ -1,6 +1,6 @@
 """SSRF guard for user-supplied outbound HTTP(S) fetches.
 
-Several user-reachable features cause the Alpha Router backend to fetch arbitrary
+Several user-reachable features cause the Alpharouter backend to fetch arbitrary
 URLs supplied by an authenticated user (web-fetch chat tool, image-generation
 reference image, media import via ``source_url``). Without validation, an
 attacker can make the server fetch internal resources — cloud metadata

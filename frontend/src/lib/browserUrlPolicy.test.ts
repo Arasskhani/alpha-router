@@ -54,7 +54,7 @@ describe("safeBrowserUrl", () => {
 });
 
 describe("authenticated media URL scope", () => {
-  it("only recognizes the same-origin Alpha Router media route", () => {
+  it("only recognizes the same-origin Alpharouter media route", () => {
     expect(isAlphaRouterMediaFileUrl("/api/chat/media/42/file?download=1")).toBe(true);
     expect(isAlphaRouterMediaFileUrl("https://evil.example/api/chat/media/42/file")).toBe(false);
     expect(isAlphaRouterMediaFileUrl("/api/chat/media/not-an-id/file")).toBe(false);

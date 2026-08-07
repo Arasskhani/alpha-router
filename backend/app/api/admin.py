@@ -33,6 +33,7 @@ from app.database import get_db
 from app.models.api_key import AlphaRouterApiKey
 from app.models.budget import BudgetPlan, PlanAssignment
 from app.models.connection import Connection
+from app.models.cost_accounting import UsageEvent
 from app.models.media import MediaAsset
 from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel
@@ -217,10 +218,12 @@ async def list_connections(db: AsyncSession = Depends(get_db), _: User = Depends
     usage_map: dict[int, float] = {}
     try:
         usage_q = (
-            select(AIModel.connection_id, func.coalesce(func.sum(RequestLog.total_cost_usd), 0.0))
-            .select_from(RequestLog)
-            .join(AIModel, RequestLog.model_id == AIModel.external_id)
-            .group_by(AIModel.connection_id)
+            select(
+                UsageEvent.connection_id,
+                func.coalesce(func.sum(UsageEvent.final_cost_usd), 0.0),
+            )
+            .where(UsageEvent.connection_id.is_not(None))
+            .group_by(UsageEvent.connection_id)
         )
         usage_map = {r[0]: float(r[1]) for r in (await db.execute(usage_q)).all()}
     except Exception:
@@ -1609,8 +1612,10 @@ async def reset_user_budget(user_id: int, db: AsyncSession = Depends(get_db), _:
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404)
+    reset_at = datetime.utcnow()
     user.budget_used_usd = 0.0
     user.budget_reserved_usd = 0.0
+    user.budget_period_start = reset_at
     await db.execute(
         update(BudgetReservation)
         .where(
@@ -1618,7 +1623,7 @@ async def reset_user_budget(user_id: int, db: AsyncSession = Depends(get_db), _:
             BudgetReservation.subject_id == user_id,
             BudgetReservation.status == "held",
         )
-        .values(status="released", settled_at=datetime.utcnow())
+        .values(status="released", settled_at=reset_at)
     )
     user.monthly_budget_usd = await resolve_monthly_budget(db, user)
     await db.flush()

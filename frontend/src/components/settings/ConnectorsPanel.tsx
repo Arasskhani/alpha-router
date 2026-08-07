@@ -207,7 +207,7 @@ export default function ConnectorsPanel() {
     setError("");
     setMessage("");
     setOpenMenuFor(null);
-    if (!window.confirm(`Disconnect ${providerId}? Alpha Router will lose access to this service.`)) return;
+    if (!window.confirm(`Disconnect ${providerId}? Alpharouter will lose access to this service.`)) return;
     try {
       await api(`/api/user/connectors/${providerId}`, { method: "DELETE" });
       setMessage(`${providerId} disconnected.`);

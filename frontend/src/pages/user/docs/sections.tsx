@@ -25,7 +25,7 @@ export const userManualSections: DocSection[] = [
       <>
         <h1>User Manual</h1>
         <p className="docs-lead">
-          Welcome to Alpha Router — your organization’s AI workspace. Use approved models in Chat, keep generated files in
+          Welcome to alpharouter — your organization’s AI workspace. Use approved models in Chat, keep generated files in
           Media, and track your own spend under Activity. Administrators configure models, budgets, and
           sign-in; this manual covers what you can do in the <strong>/app</strong> panel after you sign in.
         </p>
@@ -83,7 +83,7 @@ export const userManualSections: DocSection[] = [
       <>
         <h2>Sign-in</h2>
         <p>
-          Open the Alpha Router URL your administrator gave you and sign in on <code>/login</code>. Depending on your
+          Open the alpharouter URL your administrator gave you and sign in on <code>/login</code>. Depending on your
           organization you may see:
         </p>
         <ul>
@@ -92,12 +92,12 @@ export const userManualSections: DocSection[] = [
             a backup code) after the password.
           </li>
           <li>
-            <strong>Active Directory / LDAP</strong> — same username/password form; Alpha Router validates against your
+            <strong>Active Directory / LDAP</strong> — same username/password form; alpharouter validates against your
             directory.
           </li>
           <li>
             <strong>SSO</strong> — SAML or OIDC buttons that redirect to your company identity provider, then return you
-            to Alpha Router.
+            to alpharouter.
           </li>
         </ul>
         <Note>
@@ -160,7 +160,7 @@ export const userManualSections: DocSection[] = [
         <h3>Top bar</h3>
         <ul>
           <li>
-            <strong>Alpha Router</strong> brand / home context
+            <strong>alpharouter</strong> brand / home context
           </li>
           <li>
             On Chat: model search / picker controls when available
@@ -300,7 +300,7 @@ export const userManualSections: DocSection[] = [
           <li>Type your prompt in the composer (Persian and English are both supported; direction follows the text).</li>
           <li>Send to start a turn. The assistant reply streams token by token.</li>
           <li>
-            Use <strong>Stop</strong> to cancel generation for that session. Alpha Router still finalizes billing for work
+            Use <strong>Stop</strong> to cancel generation for that session. alpharouter still finalizes billing for work
             already done upstream when applicable.
           </li>
         </ol>
@@ -354,7 +354,7 @@ export const userManualSections: DocSection[] = [
       <>
         <h2>Image generation</h2>
         <p>
-          When an image-capable model (or image tool flow) is selected, Alpha Router generates images through the platform
+          When an image-capable model (or image tool flow) is selected, alpharouter generates images through the platform
           image API. Generation can continue in the background for that session; you can navigate away and return while
           a job is pending.
         </p>
@@ -439,11 +439,11 @@ export const userManualSections: DocSection[] = [
         <h2>Private mode</h2>
         <p>
           Private mode keeps a chat on your device: sessions and messages stay in local browser storage; media uses
-          IndexedDB. Alpha Router does <strong>not</strong> persist that session’s messages to the server.
+          IndexedDB. alpharouter does <strong>not</strong> persist that session’s messages to the server.
         </p>
         <ul>
           <li>Enabling Private mode requires confirmation and is <strong>not reversible</strong> for that chat.</li>
-          <li>Model calls still go through Alpha Router (and count toward budget) — only chat history storage is local.</li>
+          <li>Model calls still go through alpharouter (and count toward budget) — only chat history storage is local.</li>
           <li>
             On logout, private chats are cleared unless your browser has persistence explicitly enabled by policy/local
             flag (administrators document this for your site).
@@ -556,7 +556,7 @@ export const userManualSections: DocSection[] = [
             <strong>Export</strong> server-side chats as JSON
           </li>
           <li>
-            <strong>Import</strong> JSON from Alpha Router, ChatGPT, or Open WebUI formats (merges into your account)
+            <strong>Import</strong> JSON from alpharouter, ChatGPT, or Open WebUI formats (merges into your account)
           </li>
         </ul>
         <p>Private-mode chats are not included in server export.</p>
@@ -630,17 +630,11 @@ export const userManualSections: DocSection[] = [
     content: (
       <>
         <h2>Copyright</h2>
-        <p>
-          Alpha Router was designed by <strong>Majid Arasskhani</strong> and developed by <strong>Cursor AI</strong> within
-          the <strong>BitPin IT Department</strong>.
-        </p>
-        <p>
-          <strong>About BitPin Exchange</strong> — Iranian digital asset platform focused on reliability, security, and
-          transparent operations.
-        </p>
+        <p>© 2026 Majid Arasskhani. All rights reserved.</p>
+        <p>alpharouter is designed and developed by Majid Arasskhani.</p>
+        <p>Unauthorized reproduction, distribution, or modification is prohibited.</p>
         <div style={{ marginTop: "1rem" }}>
-          <p style={{ margin: 0 }}>Copyright: BitPin IT Department</p>
-          <p style={{ margin: "0.2rem 0 0" }}>Contact: IT@BitPin.co</p>
+          <p style={{ margin: 0 }}>Contact: Majid.Arasskhani@Gmail.com</p>
         </div>
       </>
     ),

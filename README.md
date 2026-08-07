@@ -1,6 +1,6 @@
-# Alpha Router — Organizational AI Control Plane
+# Alpharouter — Organizational AI Control Plane
 
-Alpha Router is an organizational AI control plane with a built-in web UI. It
+Alpharouter is an organizational AI control plane with a built-in web UI. It
 connects teams to upstream LLM providers such as OpenRouter, OpenAI, Anthropic,
 Google, and xAI while enforcing budgets, RBAC, quotas, retention, and audit
 logging.
@@ -13,7 +13,7 @@ The platform provides:
 - **OpenAI-compatible gateway** (`/v1`) — API-key access for external tools
   and automation
 
-Alpha Router is OS-independent. Develop on any host with Docker available, and
+Alpharouter is OS-independent. Develop on any host with Docker available, and
 run the same Compose stack on Linux or any other Docker-capable environment.
 
 ## Quick start with Docker
@@ -92,7 +92,7 @@ For production, set `ENVIRONMENT=production` and keep
 
 ## External clients
 
-Alpha Router exposes `/v1` for clients that use the OpenAI API contract:
+Alpharouter exposes `/v1` for clients that use the OpenAI API contract:
 
 - **Base URL:** `http://<alpha-router-host>:8080/v1`
 - **API key:** an `alpha_router_...` key created under Admin → API Keys

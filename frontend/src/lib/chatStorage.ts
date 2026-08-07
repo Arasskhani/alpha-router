@@ -798,7 +798,42 @@ export async function patchStreamingAssistantOnServer(
   broadcastChatRefresh({ at: Date.now(), sessionId });
 }
 
-/** Finalize assistant turn: patch placeholder if present, else append. */
+function serverHasUserMessage(serverMsgs: ChatMessage[], user: ChatMessage): boolean {
+  if (user.clientMessageId) {
+    return serverMsgs.some(
+      (m) => m.role === "user" && m.clientMessageId === user.clientMessageId,
+    );
+  }
+  const content = (user.content || "").trim();
+  if (!content) return false;
+  return serverMsgs.some((m) => m.role === "user" && (m.content || "").trim() === content);
+}
+
+/** True when the trailing assistant belongs to this user turn (prepare already ran). */
+function serverTailIsUserTurn(
+  serverMsgs: ChatMessage[],
+  user: ChatMessage,
+): "patch-assistant" | "append-assistant" | "append-turn" {
+  const last = serverMsgs[serverMsgs.length - 1];
+  const prev = serverMsgs[serverMsgs.length - 2];
+  const userMatch = (m: ChatMessage | undefined) =>
+    !!m &&
+    m.role === "user" &&
+    ((user.clientMessageId && m.clientMessageId === user.clientMessageId) ||
+      (!!user.content && (m.content || "").trim() === (user.content || "").trim()));
+
+  if (last?.role === "assistant" && userMatch(prev)) return "patch-assistant";
+  if (userMatch(last)) return "append-assistant";
+  if (serverHasUserMessage(serverMsgs, user)) return "append-assistant";
+  return "append-turn";
+}
+
+/**
+ * Finalize assistant turn: patch placeholder if present, else append.
+ * When `userMessage` is provided and the server never persisted that turn
+ * (preflight failures before stream prepare), appends [user, assistant] so
+ * new chats keep the prompt above the error for retry.
+ */
 export async function finalizeAssistantOnServer(
   sessionId: string,
   content: string,
@@ -807,6 +842,7 @@ export async function finalizeAssistantOnServer(
     modelId?: string;
     modelName?: string;
     clientMessageId?: string;
+    userMessage?: ChatMessage;
   },
 ): Promise<void> {
   const live = chatSessionsProvider().find((s) => s.id === sessionId);
@@ -814,8 +850,35 @@ export async function finalizeAssistantOnServer(
 
   await createSessionOnServerIfMissing(live);
 
+  const assistantRow: ChatMessage = {
+    role: "assistant",
+    content,
+    receivedAt: opts?.receivedAt,
+    clientMessageId: opts?.clientMessageId || newClientMessageId(),
+    modelId: opts?.modelId,
+    modelName: opts?.modelName,
+  };
+
   try {
     const { messages: serverMsgs } = await fetchSessionMessagesFromServer(sessionId, { limit: 8 });
+    if (opts?.userMessage) {
+      const mode = serverTailIsUserTurn(serverMsgs, opts.userMessage);
+      if (mode === "patch-assistant") {
+        await patchStreamingAssistantOnServer(sessionId, content, opts);
+        return;
+      }
+      if (mode === "append-assistant") {
+        await persistChatMessages(sessionId, [assistantRow]);
+        return;
+      }
+      const userRow: ChatMessage = {
+        ...opts.userMessage,
+        role: "user",
+        clientMessageId: opts.userMessage.clientMessageId || newClientMessageId(),
+      };
+      await persistChatMessages(sessionId, [userRow, assistantRow]);
+      return;
+    }
     if (serverMsgs[serverMsgs.length - 1]?.role === "assistant") {
       await patchStreamingAssistantOnServer(sessionId, content, opts);
       return;
@@ -824,16 +887,17 @@ export async function finalizeAssistantOnServer(
     /* append below */
   }
 
-  await persistChatMessages(sessionId, [
-    {
-      role: "assistant",
-      content,
-      receivedAt: opts?.receivedAt,
-      clientMessageId: opts?.clientMessageId || newClientMessageId(),
-      modelId: opts?.modelId,
-      modelName: opts?.modelName,
-    },
-  ]);
+  if (opts?.userMessage) {
+    const userRow: ChatMessage = {
+      ...opts.userMessage,
+      role: "user",
+      clientMessageId: opts.userMessage.clientMessageId || newClientMessageId(),
+    };
+    await persistChatMessages(sessionId, [userRow, assistantRow]);
+    return;
+  }
+
+  await persistChatMessages(sessionId, [assistantRow]);
 }
 
 async function handleRevisionConflict(sessionId: string): Promise<ChatSession | null> {

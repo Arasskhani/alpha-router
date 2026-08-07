@@ -318,7 +318,7 @@ async def _sso_exchange(
     response: Response,
     request: Request,
 ) -> TokenResponse:
-    """Exchange a one-time SSO code for the Alpha Router session (keeps JWT out of the URL)."""
+    """Exchange a one-time SSO code for the Alpharouter session (keeps JWT out of the URL)."""
     payload = await consume_code(body.code)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired login code")
@@ -477,7 +477,7 @@ async def saml_metadata(db: AsyncSession = Depends(get_db)):
 
 @router.get("/saml/logout")
 async def saml_logout(request: Request, db: AsyncSession = Depends(get_db)):
-    """Terminate the Alpha Router session and optionally redirect to IdP SLO."""
+    """Terminate the Alpharouter session and optionally redirect to IdP SLO."""
     token = request.cookies.get(settings.session_cookie_name)
     name_id: str | None = None
     if token:

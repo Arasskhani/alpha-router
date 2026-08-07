@@ -1,4 +1,4 @@
-"""Export / import user chats as versioned JSON (Alpha Router, ChatGPT, Open WebUI)."""
+"""Export / import user chats as versioned JSON (Alpharouter, ChatGPT, Open WebUI)."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ class ChatImportError(ValueError):
 
 
 def _timestamp_to_ms(value: Any) -> int | None:
-    """Normalize OpenWebUI/ChatGPT/Alpha Router timestamps to unix milliseconds."""
+    """Normalize OpenWebUI/ChatGPT/Alpharouter timestamps to unix milliseconds."""
     if value is None or value is False:
         return None
     try:
@@ -50,7 +50,7 @@ def _timestamp_to_ms(value: Any) -> int | None:
 def finalize_imported_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Mark imported history as completed so the UI does not treat it as streaming.
 
-    Alpha Router treats an assistant message without ``receivedAt`` as an in-flight
+    Alpharouter treats an assistant message without ``receivedAt`` as an in-flight
     generation (STOP button). Imported chats must always finalize that field.
     """
     now_ms = int(time.time() * 1000)
@@ -446,7 +446,7 @@ async def import_user_chats(db: AsyncSession, user_id: int, payload: Any) -> dic
         "imported": imported,
         "skipped": skipped,
         "format": fmt,
-        "message": f"Imported {imported} chat(s) from {fmt}"
+        "message": f"Added {imported} chat(s) from {fmt}"
         + (f", skipped {skipped}" if skipped else "")
-        + ".",
+        + ". Existing chats were kept.",
     }

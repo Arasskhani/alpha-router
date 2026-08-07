@@ -32,7 +32,6 @@ from app.services.image_model_resolver import (
 from app.services.model_access_service import resolve_access_subject, user_can_access_model
 from app.services.budget_reservation_service import (
     estimate_image_hold,
-    release,
     reservation_key,
     reserve,
 )
@@ -68,6 +67,7 @@ from app.services.image_billing_service import ImageBillingCapture, log_image_us
 from app.services.image_attempt_service import image_attempt_outcome, record_image_attempt
 from app.services.llm_providers import litellm_model_for_provider, resolve_litellm_provider
 from app.services.openrouter_image_service import prepare_image_generation_prompt
+from app.services.usage_accounting_service import configured_metered_cost
 
 router = APIRouter(prefix="/api/images", tags=["images"])
 _ALPHA_ROUTER_MEDIA_PATH = re.compile(r"/api/chat/media/(\d+)/file/?(?:\?.*)?$")
@@ -112,7 +112,7 @@ async def _await_image_work(
 
 
 def parse_alpha_router_media_asset_id(reference: str) -> int | None:
-    """Extract a media asset id from Alpha Router /api/chat/media/{id}/file URLs."""
+    """Extract a media asset id from Alpharouter /api/chat/media/{id}/file URLs."""
     ref = (reference or "").strip()
     if not ref:
         return None
@@ -131,7 +131,7 @@ async def resolve_reference_image_for_upstream(
     user: User,
     reference_image: str | None,
 ) -> str | None:
-    """Turn Alpha Router media paths into data URLs external providers can consume."""
+    """Turn Alpharouter media paths into data URLs external providers can consume."""
     ref = (reference_image or "").strip()
     if not ref:
         return None
@@ -794,6 +794,8 @@ async def generate_image(
     success = True
     error_message: str | None = None
     image_request_id = str(uuid.uuid4())
+    current_attempt_started_at: datetime.datetime | None = None
+    current_attempt_source_count = 0
 
     requested_model = _normalize_model_id(body.model)
     auto_router_requested = is_openrouter_auto_model(requested_model)
@@ -843,11 +845,24 @@ async def generate_image(
         hold_body = body.model_dump()
         if request.headers.get("Idempotency-Key"):
             hold_body["_idempotency_key"] = request.headers["Idempotency-Key"]
+        requested_quantity = max(1, min(4, int(body.n or 1)))
+        configured_hold = await configured_metered_cost(
+            db,
+            provider_type=provider_type or "unknown",
+            service_type="image",
+            model_id=model_id,
+            connection_id=getattr(ai_model, "connection_id", None),
+            quantity=requested_quantity,
+            unit="image",
+        )
         hold = await reserve(
             db,
             user_id=user.id,
             alpha_router_api_key_id=None,
-            amount_usd=estimate_image_hold(ai_model),
+            amount_usd=max(
+                estimate_image_hold(ai_model, quantity=requested_quantity),
+                float(configured_hold or 0) * 1.1,
+            ),
             operation="image",
             model_id=model_id,
             idempotency_key=reservation_key(hold_body, operation="image"),
@@ -929,17 +944,44 @@ async def generate_image(
                         max_attempts=(
                             1 if using_auto_router else OPENROUTER_IMAGE_MAX_ATTEMPTS
                         ),
+                        on_attempt_error=lambda _attempt, started_at, exc: billing.add_usage(
+                            None,
+                            started_at=started_at,
+                            success=False,
+                            error_message=str(exc),
+                        ),
                     )
                     if img_resp.status_code >= 400:
+                        try:
+                            error_payload = img_resp.json()
+                        except Exception:
+                            error_payload = None
+                        billing.add_usage(
+                            error_payload,
+                            started_at=img_resp.extensions.get(
+                                "alpha_router_started_at"
+                            ),
+                            success=False,
+                            error_message=(img_resp.text or "")[:2000],
+                        )
                         return None, None
                     img_data = img_resp.json()
                     items = _collect_standard_image_payload(img_data) or None
+                    billing.add_usage(
+                        img_data if isinstance(img_data, dict) else None,
+                        started_at=img_resp.extensions.get(
+                            "alpha_router_started_at"
+                        ),
+                        success=bool(items),
+                        quantity=len(items or []) or None,
+                        error_message=(
+                            None if items else "Provider returned no image"
+                        ),
+                    )
                     return items, img_data if isinstance(img_data, dict) else None
 
                 if _prefer_openrouter_images_generations(model_id) and not reference_image:
                     out_gen, usage_data = await _try_openrouter_images_generations()
-                    if usage_data:
-                        billing.usage_source = usage_data
                     if out_gen:
                         return await _finalize_image_response(
                             db, user, body, out_gen, aspect_ratio=resolved_aspect,
@@ -978,11 +1020,46 @@ async def generate_image(
                         max_attempts=(
                             1 if using_auto_router else OPENROUTER_IMAGE_MAX_ATTEMPTS
                         ),
+                        on_attempt_error=lambda _attempt, started_at, exc: billing.add_usage(
+                            None,
+                            started_at=started_at,
+                            success=False,
+                            error_message=str(exc),
+                        ),
                     )
                     if chat_resp.status_code >= 400:
-                        return None, None, chat_resp
+                        try:
+                            error_payload = chat_resp.json()
+                        except Exception:
+                            error_payload = None
+                        billing.add_usage(
+                            error_payload,
+                            started_at=chat_resp.extensions.get(
+                                "alpha_router_started_at"
+                            ),
+                            success=False,
+                            error_message=(chat_resp.text or "")[:2000],
+                        )
+                        return (
+                            None,
+                            error_payload
+                            if isinstance(error_payload, dict)
+                            else None,
+                            chat_resp,
+                        )
                     chat_data = chat_resp.json()
                     collected = _collect_openrouter_images(chat_data) if isinstance(chat_data, dict) else None
+                    billing.add_usage(
+                        chat_data if isinstance(chat_data, dict) else None,
+                        started_at=chat_resp.extensions.get(
+                            "alpha_router_started_at"
+                        ),
+                        success=bool(collected),
+                        quantity=len(collected or []) or None,
+                        error_message=(
+                            None if collected else "Provider returned no image"
+                        ),
+                    )
                     if collected:
                         body.image_size_tier = tier or gemini_image_size_for_model(model_id, pixel_size)
                     return collected, chat_data if isinstance(chat_data, dict) else None, chat_resp
@@ -1119,8 +1196,6 @@ async def generate_image(
                     detail_msg = body_preview
                     try:
                         j = resp.json()
-                        if isinstance(j, dict):
-                            billing.usage_source = j
                         detail_msg = (
                             (j.get("error") or {}).get("message")
                             or j.get("message")
@@ -1135,8 +1210,6 @@ async def generate_image(
                         status_code=status,
                         detail=f"OpenRouter image request failed ({resp.status_code}): {detail_msg[:500] or 'Image generation failed'}",
                     )
-                if isinstance(data, dict):
-                    billing.usage_source = data
                 if out:
                     return await _finalize_image_response(
                         db, user, body, out, aspect_ratio=resolved_aspect,
@@ -1155,8 +1228,6 @@ async def generate_image(
                             )
                         if not reference_image:
                             out_gen, usage_data = await _try_openrouter_images_generations()
-                            if usage_data:
-                                billing.usage_source = usage_data
                             if out_gen:
                                 return await _finalize_image_response(
                                     db, user, body, out_gen, aspect_ratio=resolved_aspect,
@@ -1169,8 +1240,6 @@ async def generate_image(
                                 fallbacks=False,
                                 tier="1K",
                             )
-                            if isinstance(retry_data, dict):
-                                billing.usage_source = retry_data
                             if retry_out:
                                 return await _finalize_image_response(
                                     db, user, body, retry_out, aspect_ratio=resolved_aspect,
@@ -1198,8 +1267,6 @@ async def generate_image(
 
                 # Legacy / non-chat image models only: short fallback attempts.
                 out_gen, usage_data = await _try_openrouter_images_generations()
-                if usage_data:
-                    billing.usage_source = usage_data
                 if out_gen:
                     return await _finalize_image_response(
                         db, user, body, out_gen, aspect_ratio=resolved_aspect,
@@ -1224,14 +1291,24 @@ async def generate_image(
                     ).strip(),
                 )
 
+            litellm_started_at = datetime.datetime.utcnow()
             response = await litellm.aimage_generation(**kwargs)
-            billing.usage_source = response
             out = _collect_litellm_image_items(response)
+            billing.add_usage(
+                response,
+                started_at=litellm_started_at,
+                success=bool(out),
+                quantity=len(out or []) or None,
+            )
             if out:
                 return await _finalize_image_response(
                     db, user, body, out, aspect_ratio=resolved_aspect,
                     routing=routing_reason,
                 )
+            raise HTTPException(
+                status_code=502,
+                detail="The image provider returned no image.",
+            )
         model_attempts = auto_candidates if auto_candidates else [None]
         last_failover_exc: BaseException | None = None
         auto_deadline = (
@@ -1239,6 +1316,7 @@ async def generate_image(
             if using_auto_router
             else None
         )
+        current_attempt_source_count = len(billing.usage_sources)
         for attempt_idx, candidate in enumerate(model_attempts):
             if candidate is None:
                 attempt_routing = routing_reason
@@ -1270,6 +1348,8 @@ async def generate_image(
                     )
                     attempt_routing["failover_from_error"] = str(prev)[:240]
             attempt_started_at = datetime.datetime.utcnow()
+            current_attempt_started_at = attempt_started_at
+            current_attempt_source_count = len(billing.usage_sources)
             attempt_started = time.perf_counter()
             try:
                 timeout_seconds = OPENROUTER_FALLBACK_TIMEOUT
@@ -1304,6 +1384,13 @@ async def generate_image(
                 )
                 return result
             except ImageClientDisconnected as attempt_exc:
+                if len(billing.usage_sources) == current_attempt_source_count:
+                    billing.add_usage(
+                        None,
+                        started_at=attempt_started_at,
+                        success=False,
+                        error_message="Client disconnected",
+                    )
                 await record_image_attempt(
                     request_id=image_request_id,
                     user_id=user.id,
@@ -1326,6 +1413,13 @@ async def generate_image(
                     status_code=504,
                     detail="Image model attempt timed out.",
                 )
+                if len(billing.usage_sources) == current_attempt_source_count:
+                    billing.add_usage(
+                        None,
+                        started_at=attempt_started_at,
+                        success=False,
+                        error_message=str(wrapped.detail),
+                    )
                 await record_image_attempt(
                     request_id=image_request_id,
                     user_id=user.id,
@@ -1345,6 +1439,16 @@ async def generate_image(
                     continue
                 raise wrapped from attempt_exc
             except HTTPException as attempt_exc:
+                if (
+                    attempt_exc.status_code >= 500
+                    and len(billing.usage_sources) == current_attempt_source_count
+                ):
+                    billing.add_usage(
+                        None,
+                        started_at=attempt_started_at,
+                        success=False,
+                        error_message=str(attempt_exc.detail),
+                    )
                 await record_image_attempt(
                     request_id=image_request_id,
                     user_id=user.id,
@@ -1375,6 +1479,13 @@ async def generate_image(
                         "Please retry; if it persists, try another image model or check the OpenRouter connection."
                     )
                 wrapped = HTTPException(status_code=502, detail=detail[:500])
+                if len(billing.usage_sources) == current_attempt_source_count:
+                    billing.add_usage(
+                        None,
+                        started_at=attempt_started_at,
+                        success=False,
+                        error_message=detail,
+                    )
                 await record_image_attempt(
                     request_id=image_request_id,
                     user_id=user.id,
@@ -1406,6 +1517,17 @@ async def generate_image(
                 status_code=502,
                 detail=str(last_failover_exc)[:500],
             ) from last_failover_exc
+    except asyncio.CancelledError as exc:
+        success = False
+        error_message = str(exc) or "Image generation cancelled"
+        if len(billing.usage_sources) == current_attempt_source_count:
+            billing.add_usage(
+                None,
+                started_at=current_attempt_started_at,
+                success=False,
+                error_message=error_message,
+            )
+        raise
     except HTTPException as exc:
         success = False
         detail = exc.detail
@@ -1435,7 +1557,9 @@ async def generate_image(
         elapsed_ms = (time.perf_counter() - generation_start) * 1000
         commit_error: Exception | None = None
         try:
-            await _close_image_request_transaction(db, success=success)
+            await asyncio.shield(
+                _close_image_request_transaction(db, success=success)
+            )
         except Exception as exc:
             import logging
 
@@ -1451,40 +1575,38 @@ async def generate_image(
                 error_message = "Image persistence failed"
                 commit_error = exc
 
-        settled = False
-        try:
-            async with AsyncSessionLocal() as log_db:
-                await log_image_usage(
-                    log_db,
-                    user=user,
-                    capture=billing,
-                    prompt=body.prompt,
-                    response_time_ms=elapsed_ms,
-                    success=success,
-                    error_message=error_message,
-                    source_ip=request.client.host if request.client else None,
-                    operation=body.operation,
-                    budget_reservation_id=budget_reservation_id,
-                )
-                await log_db.commit()
-                settled = True
-        except Exception:
-            import logging
+        async def _settle_image_usage() -> bool:
+            for attempt in range(3):
+                try:
+                    async with AsyncSessionLocal() as log_db:
+                        await log_image_usage(
+                            log_db,
+                            user=user,
+                            capture=billing,
+                            prompt=body.prompt,
+                            response_time_ms=elapsed_ms,
+                            success=success,
+                            error_message=error_message,
+                            source_ip=request.client.host if request.client else None,
+                            operation=body.operation,
+                            budget_reservation_id=budget_reservation_id,
+                            quantity=body.n,
+                        )
+                        await log_db.commit()
+                    return True
+                except Exception:
+                    if attempt < 2:
+                        await asyncio.sleep(0.1 * (attempt + 1))
+                        continue
+                    import logging
 
-            logging.getLogger("app.api.images").exception(
-                "Image usage settlement failed; releasing reservation when possible"
-            )
-        if budget_reservation_id and not settled:
-            try:
-                async with AsyncSessionLocal() as release_db:
-                    await release(release_db, budget_reservation_id)
-                    await release_db.commit()
-            except Exception:
-                import logging
+                    logging.getLogger("app.api.images").exception(
+                        "Image usage settlement failed after retries; "
+                        "reservation remains held for recovery"
+                    )
+            return False
 
-                logging.getLogger("app.api.images").exception(
-                    "Failed to release image budget reservation after billing error"
-                )
+        await asyncio.shield(_settle_image_usage())
         if commit_error is not None:
             raise HTTPException(
                 status_code=500,

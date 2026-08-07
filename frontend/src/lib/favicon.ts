@@ -1,6 +1,6 @@
-/** Keep the browser tab icon blank (do not use auto-generated branding from the page). */
-const BLANK_FAVICON_SVG = "/favicon.svg?v=2";
-const BLANK_FAVICON_ICO = "/favicon.ico?v=2";
+/** Apply Alpharouter brand favicon (cache-bust when mark assets change). */
+const BRAND_FAVICON_SVG = "/favicon.svg?v=4";
+const BRAND_FAVICON_ICO = "/favicon.ico?v=4";
 
 const ICON_SELECTOR =
   'link[rel="icon"], link[rel="shortcut icon"], link[rel="apple-touch-icon"], link[rel="mask-icon"]';
@@ -11,22 +11,22 @@ export function applyBlankFavicon(): void {
   const svg = document.createElement("link");
   svg.rel = "icon";
   svg.type = "image/svg+xml";
-  svg.href = BLANK_FAVICON_SVG;
+  svg.href = BRAND_FAVICON_SVG;
   document.head.appendChild(svg);
 
   const ico = document.createElement("link");
   ico.rel = "icon";
   ico.type = "image/x-icon";
-  ico.href = BLANK_FAVICON_ICO;
+  ico.href = BRAND_FAVICON_ICO;
   document.head.appendChild(ico);
 
   const shortcut = document.createElement("link");
   shortcut.rel = "shortcut icon";
-  shortcut.href = BLANK_FAVICON_ICO;
+  shortcut.href = BRAND_FAVICON_ICO;
   document.head.appendChild(shortcut);
 
   const touch = document.createElement("link");
   touch.rel = "apple-touch-icon";
-  touch.href = BLANK_FAVICON_SVG;
+  touch.href = BRAND_FAVICON_SVG;
   document.head.appendChild(touch);
 }

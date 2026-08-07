@@ -6,10 +6,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.budget import BudgetPlan, PlanAssignment
+from app.models.cost_accounting import LedgerEntry
 from app.models.logging import RequestLog
 from app.models.user import User, user_group_members
 
-NO_PLAN_BUDGET_DETAIL = "No budget plan assigned"
+NO_PLAN_BUDGET_DETAIL = (
+    "No budget plan is assigned to your account. "
+    "Ask an administrator to assign a plan before you can use Alpharouter features."
+)
 BUDGET_EXCEEDED_DETAIL = "Monthly budget exceeded"
 
 
@@ -253,12 +257,34 @@ async def get_user_budget_state(db: AsyncSession, user: User) -> tuple[float, fl
 
 async def get_month_usage(db: AsyncSession, user_id: int) -> float:
     now = datetime.datetime.utcnow()
-    start = datetime.datetime(now.year, now.month, 1)
-    q = select(func.coalesce(func.sum(RequestLog.total_cost_usd), 0.0)).where(
+    month_start = datetime.datetime(now.year, now.month, 1)
+    user_period_start = (
+        await db.execute(
+            select(User.budget_period_start).where(User.id == user_id)
+        )
+    ).scalar_one_or_none()
+    start = (
+        user_period_start
+        if user_period_start is not None and user_period_start > month_start
+        else month_start
+    )
+    ledger_q = select(
+        func.coalesce(func.sum(LedgerEntry.amount_usd), 0.0)
+    ).where(
+        LedgerEntry.subject_type == "user",
+        LedgerEntry.subject_id == user_id,
+        LedgerEntry.effective_at >= start,
+    )
+    legacy_q = select(
+        func.coalesce(func.sum(RequestLog.total_cost_usd), 0.0)
+    ).where(
         RequestLog.user_id == user_id,
         RequestLog.request_time >= start,
+        RequestLog.usage_operation_id.is_(None),
     )
-    return float((await db.execute(q)).scalar_one())
+    ledger_total = float((await db.execute(ledger_q)).scalar_one())
+    legacy_total = float((await db.execute(legacy_q)).scalar_one())
+    return max(0.0, ledger_total + legacy_total)
 
 
 async def ensure_budget_period(db: AsyncSession, user: User) -> None:

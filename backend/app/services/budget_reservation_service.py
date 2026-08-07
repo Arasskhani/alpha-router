@@ -1,4 +1,4 @@
-"""Atomic reservations for user budgets and Alpha Router API-key credit."""
+"""Atomic reservations for user budgets and Alpharouter API-key credit."""
 
 from __future__ import annotations
 
@@ -15,7 +15,11 @@ from app.models.api_key import AlphaRouterApiKey
 from app.models.budget_reservation import BudgetReservation
 from app.models.model_catalog import AIModel
 from app.models.user import User
-from app.services.budget_service import ensure_budget_period
+from app.services.budget_service import (
+    BUDGET_EXCEEDED_DETAIL,
+    NO_PLAN_BUDGET_DETAIL,
+    ensure_budget_period,
+)
 from app.services.alpha_router_api_key_service import ensure_key_usable
 
 SUBJECT_USER = "user"
@@ -88,13 +92,26 @@ def estimate_embedding_hold(ai_model: AIModel, body: dict) -> float:
     return _clamp_hold((prompt_tokens / 1000) * in_rate * 1.25, fallback)
 
 
-def estimate_image_hold(ai_model: AIModel | None) -> float:
+def estimate_image_hold(ai_model: AIModel | None, *, quantity: int = 1) -> float:
     del ai_model
     settings = get_settings()
     return _clamp_hold(
-        float(settings.budget_image_fallback_hold_usd or 0.25),
+        float(settings.budget_image_fallback_hold_usd or 0.25)
+        * max(1, int(quantity or 1)),
         0.25,
     )
+
+
+def estimate_metered_service_hold(service_type: str) -> float:
+    """Conservative hold for non-token services without a quoted maximum."""
+
+    settings = get_settings()
+    service = (service_type or "").strip().lower()
+    if service in {"audio", "transcription", "speech"}:
+        fallback = float(settings.budget_audio_fallback_hold_usd or 0.10)
+    else:
+        fallback = float(settings.budget_tool_fallback_hold_usd or 0.05)
+    return _clamp_hold(fallback, fallback)
 
 
 def reservation_key(body: dict, *, operation: str) -> str:
@@ -175,9 +192,9 @@ async def reserve(
         used = float(user.budget_used_usd or 0)
         held = float(user.budget_reserved_usd or 0)
         if limit <= 0:
-            raise HTTPException(status_code=402, detail="No budget plan assigned")
+            raise HTTPException(status_code=402, detail=NO_PLAN_BUDGET_DETAIL)
         if used + held + amount > limit:
-            raise HTTPException(status_code=402, detail="Monthly budget exceeded")
+            raise HTTPException(status_code=402, detail=BUDGET_EXCEEDED_DETAIL)
         user.budget_reserved_usd = round(held + amount, 8)
 
     settings = get_settings()
@@ -208,8 +225,43 @@ async def _lock_reservation(
             select(BudgetReservation)
             .where(BudgetReservation.id == reservation_id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
+
+
+async def _lock_subject(
+    db: AsyncSession,
+    subject_type: str,
+    subject_id: int,
+) -> bool:
+    if subject_type == SUBJECT_USER:
+        return (
+            await db.execute(
+                select(User).where(User.id == subject_id).with_for_update()
+            )
+        ).scalar_one_or_none() is not None
+    if subject_type == SUBJECT_ALPHA_ROUTER_KEY:
+        return (
+            await db.execute(
+                select(AlphaRouterApiKey)
+                .where(AlphaRouterApiKey.id == subject_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none() is not None
+    return False
+
+
+async def _lock_subject_then_reservation(
+    db: AsyncSession,
+    reservation_id: str,
+) -> BudgetReservation | None:
+    probe = await db.get(BudgetReservation, reservation_id)
+    if probe is None:
+        return None
+    if not await _lock_subject(db, probe.subject_type, int(probe.subject_id)):
+        return None
+    return await _lock_reservation(db, reservation_id)
 
 
 async def _apply_release_to_subject(
@@ -268,7 +320,7 @@ async def settle(
     actual_usd: float,
     request_log_id: int | None = None,
 ) -> bool:
-    row = await _lock_reservation(db, reservation_id)
+    row = await _lock_subject_then_reservation(db, reservation_id)
     if row is None or row.status != STATUS_HELD:
         return False
     actual = max(0.0, float(actual_usd or 0))
@@ -287,7 +339,7 @@ async def release(
     *,
     expired: bool = False,
 ) -> bool:
-    row = await _lock_reservation(db, reservation_id)
+    row = await _lock_subject_then_reservation(db, reservation_id)
     if row is None or row.status != STATUS_HELD:
         return False
     await _apply_release_to_subject(db, row, actual_usd=None)
@@ -298,19 +350,18 @@ async def release(
 
 
 async def expire_stale_reservations(db: AsyncSession) -> int:
-    rows = (
+    reservation_ids = (
         await db.execute(
-            select(BudgetReservation)
+            select(BudgetReservation.id)
             .where(
                 BudgetReservation.status == STATUS_HELD,
                 BudgetReservation.expires_at < _now(),
             )
-            .with_for_update(skip_locked=True)
         )
     ).scalars().all()
     expired = 0
-    for row in rows:
-        if await release(db, row.id, expired=True):
+    for reservation_id in reservation_ids:
+        if await release(db, reservation_id, expired=True):
             expired += 1
     return expired
 
@@ -367,6 +418,7 @@ async def release_open_holds_for_subject(
     requests that finish later charge via the settle-miss fallback on the new
     period instead of mutating a stale hold.
     """
+    await _lock_subject(db, subject_type, int(subject_id))
     rows = (
         await db.execute(
             select(BudgetReservation)

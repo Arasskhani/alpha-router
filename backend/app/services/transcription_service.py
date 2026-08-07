@@ -2,15 +2,24 @@
 
 from __future__ import annotations
 
+import datetime
 import os
 import tempfile
 from pathlib import Path
 
 from litellm import atranscription
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.branding import CHAT_CLIENT_APP
 from app.models.connection import Connection
+from app.models.model_catalog import AIModel
+from app.services.budget_reservation_service import (
+    estimate_metered_service_hold,
+    reservation_key,
+    reserve,
+)
+from app.services.proxy_service import settle_auxiliary_usage
 from app.services.secret_crypto import decrypt_secret
 
 _MAX_BYTES = 25 * 1024 * 1024
@@ -39,8 +48,8 @@ def _suffix_for_file(filename: str, mime_type: str) -> str:
 
 async def _resolve_transcription_provider(
     db: AsyncSession,
-) -> tuple[str, str | None, str | None]:
-    """Return (provider_type, api_key, base_url) for the first usable STT connection."""
+) -> tuple[str, str | None, str | None, int | None]:
+    """Return provider credentials and connection id for speech-to-text."""
     preferred = ("openai", "azure", "openrouter")
     rows = (
         await db.execute(
@@ -55,10 +64,15 @@ async def _resolve_transcription_provider(
     for p in preferred:
         conn = by_type.get(p)
         if conn:
-            return p, decrypt_secret(conn.api_key_encrypted), conn.base_url
+            return p, decrypt_secret(conn.api_key_encrypted), conn.base_url, conn.id
     if rows and rows[0].api_key_encrypted:
         c = rows[0]
-        return (c.provider_type or "openai").lower(), decrypt_secret(c.api_key_encrypted), c.base_url
+        return (
+            (c.provider_type or "openai").lower(),
+            decrypt_secret(c.api_key_encrypted),
+            c.base_url,
+            c.id,
+        )
     raise ValueError("No active connection with an API key is available for speech-to-text.")
 
 
@@ -82,6 +96,8 @@ async def transcribe_audio_bytes(
     filename: str = "voice.webm",
     mime_type: str = "audio/webm",
     language: str | None = None,
+    user_id: int | None = None,
+    username: str | None = None,
 ) -> str:
     if not audio_bytes:
         raise ValueError("Empty audio file.")
@@ -90,8 +106,46 @@ async def transcribe_audio_bytes(
     if len(audio_bytes) > _MAX_BYTES:
         raise ValueError("Audio file is too large (max 25 MB).")
 
-    provider_type, api_key, base_url = await _resolve_transcription_provider(db)
+    provider_type, api_key, base_url, connection_id = await _resolve_transcription_provider(db)
     model = _transcription_model(provider_type)
+    ai_model = (
+        (
+            await db.execute(
+                select(AIModel)
+                .where(
+                    AIModel.connection_id == connection_id,
+                    or_(
+                        AIModel.external_id == model,
+                        AIModel.external_id == model.removeprefix("openai/"),
+                    ),
+                )
+                .order_by(AIModel.id.desc())
+            )
+        ).scalars().first()
+        if connection_id is not None
+        else None
+    )
+    reservation_id: str | None = None
+    if user_id is not None:
+        hold_body = {
+            "model": model,
+            "bytes": len(audio_bytes),
+            "filename": filename,
+        }
+        hold = await reserve(
+            db,
+            user_id=user_id,
+            alpha_router_api_key_id=None,
+            amount_usd=estimate_metered_service_hold("audio"),
+            operation="transcription",
+            model_id=model,
+            idempotency_key=reservation_key(
+                hold_body,
+                operation="transcription",
+            ),
+        )
+        reservation_id = hold.id if hold else None
+        await db.commit()
     suffix = _suffix_for_file(filename, mime_type)
 
     # Normalize the language hint for Whisper (ISO-639-1). A Persian prompt hint
@@ -101,6 +155,11 @@ async def transcribe_audio_bytes(
     whisper_prompt = "این یک پیام صوتی به زبان فارسی است." if whisper_lang == "fa" else None
 
     tmp_path: str | None = None
+    result = None
+    transcript = ""
+    success = False
+    error_message: str | None = None
+    started_at = datetime.datetime.utcnow()
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(audio_bytes)
@@ -132,10 +191,33 @@ async def transcribe_audio_bytes(
         text = (getattr(result, "text", None) or "").strip()
         if not text:
             raise ValueError("No speech detected. Try speaking closer to the microphone.")
-        return text
+        transcript = text
+        success = True
+        return transcript
+    except Exception as exc:
+        error_message = str(exc)[:500]
+        raise
     finally:
         if tmp_path:
             try:
                 os.unlink(tmp_path)
             except OSError:
                 pass
+        if user_id is not None and username is not None:
+            await settle_auxiliary_usage(
+                user_id=user_id,
+                username=username,
+                ai_model=ai_model,
+                provider_type=provider_type,
+                model_id=model,
+                response=result,
+                prompt=f"audio:{filename}:{len(audio_bytes)} bytes",
+                completion=transcript,
+                operation_name="transcription",
+                client_app=f"{CHAT_CLIENT_APP} (audio:transcription)",
+                budget_reservation_id=reservation_id,
+                success=success,
+                error_message=error_message,
+                service_type="audio",
+                started_at=started_at,
+            )

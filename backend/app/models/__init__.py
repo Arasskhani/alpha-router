@@ -7,6 +7,14 @@ from app.models.api_key import AlphaRouterApiKey, AlphaRouterApiKeyAuditLog, Use
 from app.models.budget import BudgetPlan, PlanAssignment
 from app.models.logging import ImageGenerationAttempt, RequestLog
 from app.models.budget_reservation import BudgetReservation
+from app.models.cost_accounting import (
+    CostLineItem,
+    LedgerEntry,
+    PricingSnapshot,
+    ReconciliationRun,
+    UsageEvent,
+    UsageOperation,
+)
 from app.models.system import SmtpSettings, ReportSchedule, SystemMetricSnapshot, SystemSetting
 from app.models.auth_provider import AuthProviderConfig
 from app.models.media import MediaAsset
@@ -29,6 +37,12 @@ __all__ = [
     "RequestLog",
     "ImageGenerationAttempt",
     "BudgetReservation",
+    "PricingSnapshot",
+    "UsageOperation",
+    "UsageEvent",
+    "CostLineItem",
+    "LedgerEntry",
+    "ReconciliationRun",
     "SmtpSettings",
     "ReportSchedule",
     "SystemSetting",

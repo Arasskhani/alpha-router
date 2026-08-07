@@ -14,6 +14,7 @@ Security:
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
 import logging
@@ -26,6 +27,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.branding import LOGGER_NAMESPACE
 from app.models.user_connector import UserConnector
 from app.services.connector_registry import get_connector, is_allowed_mcp_url
+from app.services.metered_usage_service import (
+    finish_metered_usage,
+    start_metered_usage,
+)
 from app.services.secret_crypto import decrypt_secret, encrypt_secret
 
 logger = logging.getLogger(f"{LOGGER_NAMESPACE}.mcp")
@@ -38,6 +43,21 @@ _JSONRPC_HEADERS = {
 
 class McpError(Exception):
     """Raised when a remote MCP server returns an error."""
+
+
+def _validated_rpc_payload(payload: Any, method: str) -> dict:
+    if not isinstance(payload, dict):
+        raise McpError(f"MCP {method} returned a non-object response")
+    error = payload.get("error")
+    if error:
+        if isinstance(error, dict):
+            detail = error.get("message") or error.get("code") or "unknown error"
+        else:
+            detail = str(error)
+        raise McpError(f"MCP {method} error: {detail}")
+    if "result" not in payload:
+        raise McpError(f"MCP {method} response is missing result")
+    return payload
 
 
 async def _get_connector_row(db: AsyncSession, user_id: int, provider_id: str) -> UserConnector | None:
@@ -115,24 +135,37 @@ async def _rpc(url: str, token: str, method: str, params: dict | None = None, *,
     # Remote MCP may return JSON or SSE-framed JSON. Parse the JSON object.
     body = resp.text
     try:
-        return json.loads(body)
+        return _validated_rpc_payload(json.loads(body), method)
     except json.JSONDecodeError:
         # SSE: lines like "data: {...}". Extract the last data line.
         for line in reversed(body.splitlines()):
             line = line.strip()
             if line.startswith("data:"):
                 try:
-                    return json.loads(line[len("data:"):].strip())
+                    return _validated_rpc_payload(
+                        json.loads(line[len("data:"):].strip()),
+                        method,
+                    )
                 except json.JSONDecodeError:
                     continue
         raise McpError(f"MCP {method} returned non-JSON body")
 
 
-async def list_tools_for_user(db: AsyncSession, user_id: int) -> list[dict]:
+async def list_tools_for_user(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    username: str | None = None,
+    account_usage: bool = False,
+    reserve_budget: bool = True,
+) -> list[dict]:
     """Aggregate OpenAI-style tool schemas from every connected connector."""
     rows = (
         await db.execute(select(UserConnector).where(UserConnector.user_id == user_id))
     ).scalars().all()
+    if account_usage:
+        # End the read transaction before separate reservation/ledger sessions write.
+        await db.commit()
     tools: list[dict] = []
     for row in rows:
         if row.revoked_at is not None:
@@ -140,9 +173,28 @@ async def list_tools_for_user(db: AsyncSession, user_id: int) -> list[dict]:
         spec = get_connector(row.provider_id)
         if spec is None or not is_allowed_mcp_url(spec.mcp_url):
             continue
+        metered = None
         try:
             token = await _refresh_if_needed(db, row, row.provider_id)
+            if account_usage:
+                metered = await start_metered_usage(
+                    user_id=user_id,
+                    username=username,
+                    provider_type=row.provider_id,
+                    service_type="mcp",
+                    operation_name="mcp_tools_list",
+                    model_id=row.provider_id,
+                    reserve_budget=reserve_budget,
+                )
             result = await _rpc(spec.mcp_url, token, "tools/list", req_id=row.id)
+            if metered is not None:
+                await finish_metered_usage(
+                    metered,
+                    response=result,
+                    success=True,
+                    quantity=1,
+                    unit="request",
+                )
             for tool in result.get("result", {}).get("tools", []) or []:
                 tools.append(
                     {
@@ -156,9 +208,37 @@ async def list_tools_for_user(db: AsyncSession, user_id: int) -> list[dict]:
                         "_alpha_router_tool": tool.get("name", ""),
                     }
                 )
+        except asyncio.CancelledError as exc:
+            if metered is not None:
+                await finish_metered_usage(
+                    metered,
+                    success=False,
+                    quantity=None,
+                    unit=None,
+                    error_message=str(exc) or "MCP tools/list cancelled",
+                )
+            raise
         except McpError as exc:
+            if metered is not None:
+                await finish_metered_usage(
+                    metered,
+                    success=False,
+                    quantity=None,
+                    unit=None,
+                    error_message=str(exc),
+                )
             logger.warning("list_tools failed user=%s provider=%s: %s", user_id, row.provider_id, exc)
             continue
+        except Exception as exc:
+            if metered is not None:
+                await finish_metered_usage(
+                    metered,
+                    success=False,
+                    quantity=None,
+                    unit=None,
+                    error_message=str(exc),
+                )
+            raise
     return tools
 
 
@@ -168,6 +248,10 @@ async def call_tool(
     provider_id: str,
     tool_name: str,
     arguments: dict | None = None,
+    *,
+    username: str | None = None,
+    account_usage: bool = False,
+    reserve_budget: bool = True,
 ) -> dict:
     """Invoke a single MCP tool on behalf of the user. Refreshes on 401."""
     spec = get_connector(provider_id)
@@ -177,24 +261,55 @@ async def call_tool(
     if row is None or row.revoked_at is not None:
         raise McpError(f"Not connected to {provider_id}")
     token = await _refresh_if_needed(db, row, provider_id)
-    try:
-        result = await _rpc(
-            spec.mcp_url,
-            token,
-            "tools/call",
-            {"name": tool_name, "arguments": arguments or {}},
-            req_id=row.id,
+
+    async def invoke(access_token: str) -> dict:
+        metered = (
+            await start_metered_usage(
+                user_id=user_id,
+                username=username,
+                provider_type=provider_id,
+                service_type="tool",
+                operation_name=f"mcp:{tool_name}",
+                model_id=f"{provider_id}.{tool_name}",
+                reserve_budget=reserve_budget,
+            )
+            if account_usage
+            else None
         )
+        try:
+            result = await _rpc(
+                spec.mcp_url,
+                access_token,
+                "tools/call",
+                {"name": tool_name, "arguments": arguments or {}},
+                req_id=row.id,
+            )
+        except BaseException as exc:
+            if metered is not None:
+                await finish_metered_usage(
+                    metered,
+                    success=False,
+                    quantity=None,
+                    unit=None,
+                    error_message=str(exc),
+                )
+            raise
+        if metered is not None:
+            await finish_metered_usage(
+                metered,
+                response=result,
+                success=True,
+                quantity=1,
+                unit="request",
+            )
+        return result
+
+    try:
+        result = await invoke(token)
     except McpError as exc:
         if str(exc) != "unauthorized":
             raise
         # 401 → force refresh and retry.
         token = await _refresh_if_needed(db, row, provider_id, force=True)
-        result = await _rpc(
-            spec.mcp_url,
-            token,
-            "tools/call",
-            {"name": tool_name, "arguments": arguments or {}},
-            req_id=row.id,
-        )
+        result = await invoke(token)
     return result.get("result", {})

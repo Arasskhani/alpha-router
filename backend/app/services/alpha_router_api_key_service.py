@@ -82,7 +82,7 @@ async def record_key_usage(db: AsyncSession, key: AlphaRouterApiKey, cost_usd: f
         return
     await maybe_reset_key_period(db, key)
     # Atomic increment via SQL UPDATE — concurrent gateway requests using the
-    # same Alpha Router key would otherwise race on period_used_usd/total_used_usd
+    # same Alpharouter key would otherwise race on period_used_usd/total_used_usd
     # and lose updates (read-modify-write on the ORM object is not atomic).
     await db.execute(
         text(

@@ -20,8 +20,8 @@ import { PRIVATE_MEDIA_DB_NAME } from "./privateMediaStore";
 
 describe("project-owned naming contracts", () => {
   it("locks the product display identity", () => {
-    expect(PRODUCT_NAME).toBe("Alpha Router");
-    expect(PAGE_TITLE).toBe("Alpha Router | turning ideas into reality...");
+    expect(PRODUCT_NAME).toBe("Alpharouter");
+    expect(PAGE_TITLE).toBe("Alpharouter | One route. Every model.");
   });
 
   it("locks browser storage names", () => {
@@ -46,6 +46,7 @@ describe("project-owned naming contracts", () => {
     expect(BROWSER_EVENT_NAMES).toEqual({
       userPrefsSaved: "alpha-router:user-prefs-saved",
       modelsSyncFlash: "alpha-router:models-sync-flash",
+      chatsImported: "alpha-router:chats-imported",
     });
   });
 

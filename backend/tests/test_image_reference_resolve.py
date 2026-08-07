@@ -1,4 +1,4 @@
-"""Tests for Alpha Router media URL → data URL resolution before upstream image APIs."""
+"""Tests for Alpharouter media URL → data URL resolution before upstream image APIs."""
 
 import asyncio
 from types import SimpleNamespace

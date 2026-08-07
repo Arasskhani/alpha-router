@@ -1,4 +1,4 @@
-"""OpenAI-compatible gateway for Open WebUI and Alpha Router API keys."""
+"""OpenAI-compatible gateway for Open WebUI and Alpharouter API keys."""
 
 from dataclasses import dataclass
 import secrets
@@ -129,7 +129,7 @@ async def _require_valid_gateway_key(
 ) -> None:
     """Auth gate for read-only gateway routes (e.g. /v1/models).
 
-    Accepts the master key or any valid user/Alpha Router API key; rejects missing or
+    Accepts the master key or any valid user/Alpharouter API key; rejects missing or
     unknown keys with 401. Does not consume budget.
     """
     auth = request.headers.get("Authorization", "")

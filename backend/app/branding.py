@@ -1,9 +1,10 @@
 """Canonical product identity shared across backend surfaces."""
 
-PRODUCT_NAME = "Alpha Router"
+PRODUCT_NAME = "Alpharouter"
 PRODUCT_TOKEN = "AlphaRouter"
 PRODUCT_SLUG = "alpha-router"
 PRODUCT_SNAKE = "alpha_router"
+DEFAULT_ADMIN_EMAIL = "alpharouter@alpharouter.net"
 
 APPLICATION_TITLE = f"{PRODUCT_NAME} Organizational AI Platform"
 CHAT_CLIENT_APP = f"{PRODUCT_NAME} Chat"

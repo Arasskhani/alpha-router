@@ -36,7 +36,14 @@ class RequestLog(Base):
     prompt_tokens = Column(Integer, default=0)
     completion_tokens = Column(Integer, default=0)
     cached_tokens = Column(Integer, default=0)
-    total_cost_usd = Column(Float, default=0.0)  # from provider usage, not adjusted
+    total_cost_usd = Column(Float, default=0.0)
+    provider_cost_usd = Column(Float, nullable=True)
+    calculated_cost_usd = Column(Float, nullable=True)
+    cost_source = Column(String(32), nullable=True, default="unknown", index=True)
+    cost_confidence = Column(String(24), nullable=True, default="unknown", index=True)
+    has_unpriced_usage = Column(Boolean, nullable=True, default=False, index=True)
+    usage_operation_id = Column(String(36), nullable=True, index=True)
+    reconciled_at = Column(DateTime, nullable=True)
 
     request_time = Column(DateTime, default=datetime.datetime.utcnow, index=True)
     response_time_ms = Column(Float, default=0.0)

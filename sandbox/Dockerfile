@@ -1,4 +1,4 @@
-# Minimal, dependency-light image for the Alpha Router code interpreter sandbox.
+# Minimal, dependency-light image for the Alpharouter code interpreter sandbox.
 # Contains NO application code and NO secrets. Executed with:
 #   --network none --read-only --tmpfs /tmp --user 65534:65534
 #   --cap-drop ALL --security-opt no-new-privileges --rm -i

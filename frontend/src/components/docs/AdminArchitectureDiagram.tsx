@@ -171,7 +171,7 @@ function ComponentCard({
 /** Visual architecture map for Admin Guide (monochrome, theme-aware). */
 export default function AdminArchitectureDiagram() {
   return (
-    <figure className="docs-arch" aria-label="Alpha Router platform architecture">
+    <figure className="docs-arch" aria-label="Alpharouter platform architecture">
       <figcaption className="docs-arch-title">Platform architecture</figcaption>
 
       <div className="docs-arch-board">
@@ -181,7 +181,7 @@ export default function AdminArchitectureDiagram() {
             <ComponentCard
               icon={<IconExternalClients className="docs-arch-icon" />}
               title="External integrations"
-              subtitle="HTTPS · Authorization: Bearer Alpha Router key"
+              subtitle="HTTPS · Authorization: Bearer Alpharouter key"
             >
               <ul className="docs-arch-route-list">
                 <li>
@@ -198,7 +198,7 @@ export default function AdminArchitectureDiagram() {
             </ComponentCard>
             <ComponentCard
               icon={<IconBrowser className="docs-arch-icon" />}
-              title="Alpha Router web UI"
+              title="Alpharouter web UI"
               subtitle="HTTPS · session cookie after /api/auth/login"
             >
               <ul className="docs-arch-route-list">
@@ -227,7 +227,7 @@ export default function AdminArchitectureDiagram() {
           <h4 className="docs-arch-zone-label">Application</h4>
           <ComponentCard
             variant="core"
-            title="Alpha Router application"
+            title="Alpharouter application"
             subtitle="FastAPI backend + React SPA"
           >
             <div className="docs-arch-stack" aria-label="Stack">
@@ -277,7 +277,7 @@ export default function AdminArchitectureDiagram() {
               subtitle="Object storage"
             >
               <p>
-                S3 API for media blobs (hash dedup per user). Served only through authenticated Alpha Router media APIs.
+                S3 API for media blobs (hash dedup per user). Served only through authenticated Alpharouter media APIs.
               </p>
             </ComponentCard>
             <ComponentCard

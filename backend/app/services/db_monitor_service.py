@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 
-# Alpha Router application tables (read-only row counts for admins).
+# Alpharouter application tables (read-only row counts for admins).
 TABLE_LABELS: list[tuple[str, str]] = [
     ("users", "Users"),
     ("user_groups", "Groups"),
@@ -26,6 +26,13 @@ TABLE_LABELS: list[tuple[str, str]] = [
     ("budget_plans", "Plans"),
     ("plan_assignments", "Plan assignments"),
     ("request_logs", "API request logs"),
+    ("budget_reservations", "Budget reservations"),
+    ("pricing_snapshots", "Pricing snapshots"),
+    ("usage_operations", "Usage operations"),
+    ("usage_events", "Usage events"),
+    ("cost_line_items", "Cost line items"),
+    ("cost_ledger_entries", "Cost ledger entries"),
+    ("reconciliation_runs", "Cost reconciliation runs"),
     ("media_assets", "Media metadata"),
     ("smtp_settings", "SMTP settings"),
     ("report_schedules", "Report schedules"),
@@ -99,7 +106,7 @@ async def _count_rows(db: AsyncSession, table: str) -> int | None:
 
 
 def _collect_system_metrics() -> dict[str, Any]:
-    """Host and Alpha Router process CPU/RAM (machine or container running this API)."""
+    """Host and Alpharouter process CPU/RAM (machine or container running this API)."""
     out: dict[str, Any] = {
         "available": False,
         "host": None,

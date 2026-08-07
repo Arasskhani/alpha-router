@@ -483,7 +483,7 @@ def _open_connection(cfg: dict, *, user: str | None = None, password: str | None
         if _needs_signed_ldap([msg]):
             raise RuntimeError(
                 f"{msg} — Active Directory requires LDAPS. Configure a valid certificate on the domain "
-                "controller for port 636, then retry from Alpha Router."
+                "controller for port 636, then retry from Alpharouter."
             ) from ldap3_error
         lower = msg.lower()
         if _is_tls_error(RuntimeError(msg)) or "starttls failed" in lower:

@@ -116,7 +116,7 @@ export default function DatabaseMonitor() {
       }
     >
       <p className="muted-text">
-        Read-only monitoring for the Alpha Router PostgreSQL database and for CPU/RAM on the host (or container) running
+        Read-only monitoring for the Alpharouter PostgreSQL database and for CPU/RAM on the host (or container) running
         this API process. No queries or schema changes from this page.
       </p>
       {error && <p className="alert alert-error">{error}</p>}
@@ -165,7 +165,7 @@ export default function DatabaseMonitor() {
             <h3>CPU, memory & database</h3>
             <p className="muted-text" style={{ marginTop: 0 }}>
               Snapshot at refresh. Host = machine or Docker container; database size/ping = current engine; process =
-              this Alpha Router API worker.
+              this Alpharouter API worker.
             </p>
 
             <div className="db-monitor-metric db-monitor-metric--static">
@@ -244,7 +244,7 @@ export default function DatabaseMonitor() {
 
             {data.system?.available && data.system.process && (
                 <>
-                  <h4 className="db-monitor-resource-heading">Alpha Router process</h4>
+                  <h4 className="db-monitor-resource-heading">Alpharouter process</h4>
                   <dl className="db-monitor-dl">
                     <div>
                       <dt>PID</dt>
@@ -272,7 +272,7 @@ export default function DatabaseMonitor() {
           <div className="card">
             <h3>Tables</h3>
             <p className="muted-text" style={{ marginTop: 0 }}>
-              Row counts across Alpha Router tables (approx. {totalRows.toLocaleString()} rows total).
+              Row counts across Alpharouter tables (approx. {totalRows.toLocaleString()} rows total).
             </p>
             <table className="data-table">
               <thead>

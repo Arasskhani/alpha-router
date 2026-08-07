@@ -1,6 +1,6 @@
 """One-time exchange-code store for SSO token delivery (SAML / OIDC).
 
-After the IdP callback validates the response, we mint an Alpha Router JWT but must NOT
+After the IdP callback validates the response, we mint an Alpharouter JWT but must NOT
 put it in the redirect URL. Instead we store the JWT under a random opaque code
 in Redis with a short TTL, redirect to ``/login?code=<opaque>``, and the
 frontend exchanges the code via ``POST /api/auth/sso/exchange``.

@@ -18,7 +18,7 @@ afterEach(() => {
 });
 
 describe("image retry request identity", () => {
-  it("round-trips the Alpha Router image wire marker", () => {
+  it("round-trips the Alpharouter image wire marker", () => {
     const payload = {
       url: "/api/chat/media/42/file",
       prompt: "A red cat",

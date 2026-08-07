@@ -1,4 +1,4 @@
-"""Sync users and groups from LDAP / Active Directory into Alpha Router."""
+"""Sync users and groups from LDAP / Active Directory into Alpharouter."""
 
 import asyncio
 from typing import Any

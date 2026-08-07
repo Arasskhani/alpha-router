@@ -1,9 +1,9 @@
 /** Product branding and browser storage keys. */
 
-export const PRODUCT_NAME = "Alpha Router";
+export const PRODUCT_NAME = "Alpharouter";
 
-/** Login page tagline (shown below the Alpha Router wordmark). */
-export const LOGIN_TAGLINE = "turning ideas into reality...";
+/** Login page tagline (shown below the Alpharouter wordmark). */
+export const LOGIN_TAGLINE = "One route. Every model.";
 
 export const COOKIE_NAMES = {
   session: "alpha_router_session",
@@ -29,6 +29,8 @@ export const STORAGE_KEYS = {
 export const BROWSER_EVENT_NAMES = {
   userPrefsSaved: "alpha-router:user-prefs-saved",
   modelsSyncFlash: "alpha-router:models-sync-flash",
+  /** Fired after Settings → Import chats succeeds (additive merge). */
+  chatsImported: "alpha-router:chats-imported",
 } as const;
 
 export const PAGE_TITLE = `${PRODUCT_NAME} | ${LOGIN_TAGLINE}`;

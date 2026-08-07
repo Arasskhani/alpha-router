@@ -355,8 +355,8 @@ export default function Authentication() {
   return (
     <AdminPage title="Authentication">
       <p style={{ color: "var(--muted)" }}>
-        Connect Alpha Router to your corporate directory with a domain controller and service account. Active Directory uses{" "}
-        <strong>LDAPS on port 636</strong> only — the Alpha Router container must be able to reach the DC on that port.
+        Connect Alpharouter to your corporate directory with a domain controller and service account. Active Directory uses{" "}
+        <strong>LDAPS on port 636</strong> only — the Alpharouter container must be able to reach the DC on that port.
       </p>
 
       {msg && <p className="card">{msg}</p>}
@@ -434,9 +434,9 @@ export default function Authentication() {
           <div className="card" style={{ marginTop: 12, background: "var(--surface-2, transparent)" }}>
             <h3 style={{ marginTop: 0 }}>LDAPS certificate on the directory server</h3>
             <p className="muted-text" style={{ marginTop: 0 }}>
-              Alpha Router connects with LDAPS only. Issue a TLS certificate whose subject or SAN matches the
+              Alpharouter connects with LDAPS only. Issue a TLS certificate whose subject or SAN matches the
               directory server FQDN, install it so the directory service can present it on port 636, and ensure
-              Alpha Router trusts that certificate (or enable trust for untrusted certificates only for lab use).
+              Alpharouter trusts that certificate (or enable trust for untrusted certificates only for lab use).
             </p>
             <ol className="muted-text" style={{ paddingLeft: "1.25rem", marginBottom: 0 }}>
               <li>
@@ -445,10 +445,10 @@ export default function Authentication() {
               </li>
               <li>Install the certificate where the directory service expects TLS credentials for LDAPS.</li>
               <li>
-                Ensure Alpha Router can validate the certificate chain, or use the untrusted-certificate option
+                Ensure Alpharouter can validate the certificate chain, or use the untrusted-certificate option
                 only in non-production environments.
               </li>
-              <li>Confirm LDAPS connectivity on port 636, then use Test in Alpha Router.</li>
+              <li>Confirm LDAPS connectivity on port 636, then use Test in Alpharouter.</li>
             </ol>
           </div>
 
@@ -503,7 +503,7 @@ export default function Authentication() {
                   const ok = await confirm({
                     title: "Remove users outside Sync OUs?",
                     message:
-                      "When enabled, users and groups outside the Sync OUs filter will be removed from Users and Groups on the next sync. Removed users cannot sign in. Users who have signed in to Alpha Router at least once will be moved to Deleted Users (their data stays on the server).",
+                      "When enabled, users and groups outside the Sync OUs filter will be removed from Users and Groups on the next sync. Removed users cannot sign in. Users who have signed in to Alpharouter at least once will be moved to Deleted Users (their data stays on the server).",
                     confirmLabel: "Enable removal",
                     cancelLabel: "Cancel",
                     danger: true,
@@ -548,7 +548,7 @@ export default function Authentication() {
       {tab === "saml" && (
         <form className="card" onSubmit={(e) => void saveSaml(e)}>
           <p className="muted-text" style={{ marginTop: 0 }}>
-            Alpha Router is a SAML 2.0 Service Provider. Users are created or updated on first successful SSO login (no
+            Alpharouter is a SAML 2.0 Service Provider. Users are created or updated on first successful SSO login (no
             directory sync). Register the ACS URL and SP metadata with your Identity Provider.
           </p>
           <label>

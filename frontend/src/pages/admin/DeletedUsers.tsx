@@ -71,7 +71,7 @@ export default function DeletedUsers() {
     if (!ok1) return;
     const ok2 = await confirm({
       title: "Final confirmation",
-      message: `You are about to permanently erase "${u.username}" from Alpha Router. Confirm permanent deletion?`,
+      message: `You are about to permanently erase "${u.username}" from Alpharouter. Confirm permanent deletion?`,
       confirmLabel: "Permanently delete",
       cancelLabel: "Cancel",
       danger: true,

@@ -1,4 +1,4 @@
-"""Alpha Router application entrypoint."""
+"""Alpharouter application entrypoint."""
 
 import asyncio
 import logging
@@ -17,6 +17,7 @@ from app.api import admin, auth, authentication, chat, gateway, groups, images, 
 from app.branding import (
     APPLICATION_TITLE,
     CSRF_COOKIE_NAME,
+    DEFAULT_ADMIN_EMAIL,
     INTERNAL_DOMAIN,
     LOGGER_NAMESPACE,
     PRODUCT_NAME,
@@ -26,7 +27,7 @@ from app.branding import (
 from app.config import INSECURE_DEFAULTS, get_settings
 from app.core.security import hash_password
 from app.database import AsyncSessionLocal, Base, engine
-from app.db_migrate import apply_schema_column_patches
+from app.db_migrate import apply_schema_column_patches, validate_accounting_schema
 from app.legacy_brand_denylist import (
     LEGACY_CSRF_COOKIE_NAMES,
     LEGACY_DATABASE_URLS,
@@ -399,6 +400,7 @@ async def lifespan(app: FastAPI):
             await conn.execute(text("SELECT pg_advisory_xact_lock(56023113)"))
         await conn.run_sync(Base.metadata.create_all)
     await apply_schema_column_patches()
+    await validate_accounting_schema()
 
     async with AsyncSessionLocal() as db:
         from app.services.username_norm import find_user_by_username_ci, normalize_username
@@ -411,13 +413,32 @@ async def lifespan(app: FastAPI):
         admin_username = normalize_username(settings.admin_username) or settings.admin_username.strip()
         admin_user = await find_user_by_username_ci(db, admin_username)
         if not admin_user:
+            # A seed admin may already exist under a previous ADMIN_USERNAME.
+            # Reuse it by current or legacy bootstrap email instead of creating
+            # a duplicate administrator.
+            admin_user = (
+                await db.execute(select(User).where(User.email == DEFAULT_ADMIN_EMAIL))
+            ).scalars().first()
+        if not admin_user:
+            legacy_admin_emails = (
+                "alpharouter@alpharouter.ent",
+                f"admin@{INTERNAL_DOMAIN}",
+            )
+            for legacy_admin_email in legacy_admin_emails:
+                admin_user = (
+                    await db.execute(select(User).where(User.email == legacy_admin_email))
+                ).scalars().first()
+                if admin_user:
+                    admin_user.email = DEFAULT_ADMIN_EMAIL
+                    break
+        if not admin_user:
             from app.services.rbac import bootstrap_super_admin_role_slugs, primary_role_slug
 
             bootstrap_roles = bootstrap_super_admin_role_slugs()
             db.add(
                 User(
                     username=admin_username,
-                    email=f"admin@{INTERNAL_DOMAIN}",
+                    email=DEFAULT_ADMIN_EMAIL,
                     display_name="Administrator",
                     hashed_password=hash_password(settings.admin_password),
                     role=primary_role_slug(bootstrap_roles),
@@ -431,7 +452,7 @@ async def lifespan(app: FastAPI):
 
                 for slug in bootstrap_roles:
                     db.add(UserRoleAssignment(user_id=admin_user.id, role_slug=slug))
-            await db.commit()
+        await db.commit()
 
     async with AsyncSessionLocal() as db:
         await asyncio.to_thread(oss.ensure_bucket)

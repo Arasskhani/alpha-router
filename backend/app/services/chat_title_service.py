@@ -2,10 +2,12 @@
 
 import json
 import re
+import datetime
 
 from litellm import acompletion
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.branding import CHAT_CLIENT_APP
 from app.models.user import User
 from app.services.budget_service import budget_request_blocked, get_user_budget_state
 from app.services.chat_markers import (
@@ -17,7 +19,9 @@ from app.services.chat_markers import (
 from app.services.proxy_service import (
     _apply_litellm_provider_kwargs,
     _litellm_model_for_provider,
+    reserve_auxiliary_llm_usage,
     resolve_model_and_key,
+    settle_auxiliary_usage,
 )
 
 _TITLE_SYSTEM = (
@@ -138,17 +142,55 @@ async def generate_chat_title(
     }
     _apply_litellm_provider_kwargs(kwargs, provider_type or ai_model.provider_type, model)
 
+    reservation_id: str | None = None
+    try:
+        reservation_id = await reserve_auxiliary_llm_usage(
+            db,
+            user_id=user.id,
+            ai_model=ai_model,
+            operation_name="chat_title",
+            messages=kwargs["messages"],
+            max_tokens=32,
+        )
+    except Exception:
+        return _sanitize_title(_fallback_title(messages))
+
+    response = None
+    success = False
+    error_message: str | None = None
+    completion_text = ""
+    started_at = datetime.datetime.utcnow()
     try:
         response = await acompletion(**kwargs)
         content = ""
         if response.choices:
             content = getattr(response.choices[0].message, "content", None) or ""
+        completion_text = content
         title = _sanitize_title(content or _fallback_title(messages))
+        success = True
         if title == "New chat":
             return _sanitize_title(_fallback_title(messages))
         return title
-    except Exception:
+    except Exception as exc:
+        error_message = str(exc)[:500]
         return _sanitize_title(_fallback_title(messages))
+    finally:
+        await settle_auxiliary_usage(
+            user_id=user.id,
+            username=user.username,
+            ai_model=ai_model,
+            provider_type=provider_type,
+            model_id=model,
+            response=response,
+            prompt=kwargs["messages"],
+            completion=completion_text,
+            operation_name="chat_title",
+            client_app=f"{CHAT_CLIENT_APP} (helper:title)",
+            budget_reservation_id=reservation_id,
+            success=success,
+            error_message=error_message,
+            started_at=started_at,
+        )
 
 
 def _clip_fallback(text: str) -> str:

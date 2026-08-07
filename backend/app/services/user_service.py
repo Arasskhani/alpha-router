@@ -35,7 +35,7 @@ async def get_or_create_user_from_request(db: AsyncSession, identifier: str) -> 
 
 
 async def get_user_by_api_key(db: AsyncSession, raw_key: str):
-    """Resolve an Alpha Router or user API key."""
+    """Resolve an Alpharouter or user API key."""
     from app.core.security import hash_api_key
     from app.models.api_key import AlphaRouterApiKey, UserApiKey
 

@@ -60,7 +60,6 @@ import {
   shouldSkipEmptyIncrementalSync,
   registerImmediateChatSync,
   registerPrivateMessagesSync,
-  persistChatMessages,
   finalizeAssistantOnServer,
   syncSessionMessagesToServer,
   cancelStreamingReplyOnServer,
@@ -466,7 +465,8 @@ export default function ChatPanel() {
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
   const [colorPickerFolderId, setColorPickerFolderId] = useState<string | null>(null);
-  const [movingSessionId, setMovingSessionId] = useState<string | null>(null);
+  const [movingSessionIds, setMovingSessionIds] = useState<string[] | null>(null);
+  const [selectedChatIds, setSelectedChatIds] = useState<Set<string>>(() => new Set());
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -900,8 +900,13 @@ export default function ChatPanel() {
       messagesRef.current = msgs;
       setMessages(msgs);
     }
-    const next = sessionsRef.current.map((s) =>
-      s.id === sessionId ? withSessionMessagesActivity(s, msgs) : s,
+    const idx = sessionsRef.current.findIndex((s) => s.id === sessionId);
+    if (idx < 0) {
+      // New chat may not be in sessionsRef yet; keep messagesRef and retry on next write.
+      return;
+    }
+    const next = sessionsRef.current.map((s, i) =>
+      i === idx ? withSessionMessagesActivity(s, msgs) : s,
     );
     sessionsRef.current = next;
     setSessions(next);
@@ -1223,6 +1228,35 @@ export default function ChatPanel() {
     }
     window.addEventListener(BROWSER_EVENT_NAMES.userPrefsSaved, onPrefsSaved);
     return () => window.removeEventListener(BROWSER_EVENT_NAMES.userPrefsSaved, onPrefsSaved);
+  }, []);
+
+  useEffect(() => {
+    async function onChatsImported() {
+      if (!chatsHydratedRef.current) return;
+      try {
+        const remote = await fetchUserChatsFromServer({ limit: 200 });
+        const protectedIds = new Set<string>([
+          ...Object.keys(streamingSessionsRef.current),
+          ...getBackgroundImageSessionIds(),
+        ]);
+        const merged = mergeRemoteChatSessions(sessionsRef.current, remote.sessions, protectedIds);
+        sessionsRef.current = merged;
+        commitServerListSync(merged);
+        setSessions(merged);
+        setFolders((prev) => {
+          const byId = new Map(prev.map((f) => [f.id, f]));
+          for (const f of remote.folders) byId.set(f.id, f);
+          return [...byId.values()].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+        });
+        setSessionsTotal(remote.total ?? merged.length);
+        if (remote.older_total != null) setOlderTotal(remote.older_total);
+        setHydrateOutcome(merged.length > 0 ? "ok" : "empty");
+      } catch {
+        /* keep current sidebar */
+      }
+    }
+    window.addEventListener(BROWSER_EVENT_NAMES.chatsImported, onChatsImported);
+    return () => window.removeEventListener(BROWSER_EVENT_NAMES.chatsImported, onChatsImported);
   }, []);
 
   useEffect(() => {
@@ -1962,8 +1996,9 @@ export default function ChatPanel() {
     if (!m) return null;
     const freshTools = copyFreshChatTools();
     const s = createSession(m, "New chat", freshTools);
-    persistSessions((prev) => [s, ...prev], { debounce: false, metadataSessionIds: [s.id] });
+    // flushSync so sessionsRef includes the new chat before the first send turn.
     flushSync(() => {
+      persistSessions((prev) => [s, ...prev], { debounce: false, metadataSessionIds: [s.id] });
       activeIdRef.current = s.id;
       setActiveId(s.id);
       setModel(m);
@@ -2027,13 +2062,16 @@ export default function ChatPanel() {
     }
     const freshTools = copyFreshChatTools();
     const s = createSession(m, "New chat", freshTools);
-    persistSessions((prev) => [s, ...prev], { debounce: false, metadataSessionIds: [s.id] });
-    activeIdRef.current = s.id;
-    pinScrollToBottomRef.current = true;
-    setActiveId(s.id);
-    setModel(m);
-    setMessages([]);
-    setChatTools(freshTools);
+    flushSync(() => {
+      persistSessions((prev) => [s, ...prev], { debounce: false, metadataSessionIds: [s.id] });
+      activeIdRef.current = s.id;
+      pinScrollToBottomRef.current = true;
+      setActiveId(s.id);
+      setModel(m);
+      setMessages([]);
+      setChatTools(freshTools);
+    });
+    clearChatSelection();
     setToolsMenuOpen(false);
     setChatError("");
     requestAnimationFrame(() => scrollChatToBottom("auto"));
@@ -2042,6 +2080,12 @@ export default function ChatPanel() {
   async function removeChatSession(id: string): Promise<void> {
     stopBackgroundImageGeneration(id);
     clearComposerDraft(id);
+    setSelectedChatIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
     const controller = abortControllersRef.current[id];
     if (controller) {
       controller.abort();
@@ -2291,6 +2335,59 @@ export default function ChatPanel() {
     setDropFolderId(null);
   }
 
+  function moveSessionsToFolder(sessionIds: string[], folderId: string | null) {
+    if (!sessionIds.length) return;
+    const idSet = new Set(sessionIds);
+    persistSessions(
+      (prev) => prev.map((s) => (idSet.has(s.id) ? { ...s, folderId } : s)),
+      { debounce: false, metadataSessionIds: sessionIds },
+    );
+    for (const sessionId of sessionIds) {
+      if (!sessionPrivateMode(sessionId)) {
+        void pushSessionMetadataToServer(sessionId).catch(() => {});
+      }
+    }
+    setDropFolderId(null);
+    setSelectedChatIds(new Set());
+  }
+
+  function toggleChatSelected(sessionId: string) {
+    setSelectedChatIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) next.delete(sessionId);
+      else next.add(sessionId);
+      return next;
+    });
+  }
+
+  function clearChatSelection() {
+    setSelectedChatIds(new Set());
+  }
+
+  function selectAllVisibleChats() {
+    setSelectedChatIds(new Set(filteredSessions.map((s) => s.id)));
+  }
+
+  async function deleteSelectedChats() {
+    if (readOnly) return;
+    const ids = [...selectedChatIds];
+    if (!ids.length) return;
+    const ok = await confirm({
+      title: "Delete chats",
+      message: `Delete ${ids.length} chat${ids.length === 1 ? "" : "s"}? This cannot be undone.`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
+    const active = activeIdRef.current;
+    const ordered =
+      active && ids.includes(active) ? [...ids.filter((id) => id !== active), active] : ids;
+    clearChatSelection();
+    for (const id of ordered) {
+      await removeChatSession(id);
+    }
+  }
+
   function sessionDisplayTitle(s: ChatSession): string {
     if (!isDefaultChatTitle(s.title)) return s.title;
     const derived = sessionTitleFromMessages(s.messages);
@@ -2299,8 +2396,25 @@ export default function ChatPanel() {
 
   function renderSessionRow(s: ChatSession, wrap: "li" | "div" = "li") {
     const isRenaming = renamingSessionId === s.id;
+    const isSelected = selectedChatIds.has(s.id);
+    const selectionActive = selectedChatIds.size > 0;
     const inner = (
       <>
+        {!readOnly && !isRenaming ? (
+          <label
+            className={`alpha-router-history-check${isSelected || selectionActive ? " is-visible" : ""}`}
+            title="Select chat"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={() => toggleChatSelected(s.id)}
+              aria-label={`Select ${sessionDisplayTitle(s)}`}
+            />
+          </label>
+        ) : null}
         {isRenaming ? (
           <form
             className="alpha-router-history-rename"
@@ -2319,7 +2433,7 @@ export default function ChatPanel() {
         ) : (
           <button
             type="button"
-            className={`alpha-router-history-item${s.id === activeId ? " active" : ""}${streamingSessions[s.id] || isBackgroundImageRunning(s.id) ? " is-streaming" : ""}`}
+            className={`alpha-router-history-item${s.id === activeId ? " active" : ""}${isSelected ? " is-selected" : ""}${streamingSessions[s.id] || isBackgroundImageRunning(s.id) ? " is-streaming" : ""}`}
             onClick={() => selectSession(s.id)}
           >
             {s.privateMode ? (
@@ -2344,7 +2458,7 @@ export default function ChatPanel() {
               menuClassName="row-actions-menu--sidebar"
               actions={[
                 { label: "Rename", onClick: () => startRenameSession(s) },
-                { label: "Move", onClick: () => setMovingSessionId(s.id) },
+                { label: "Move", onClick: () => setMovingSessionIds([s.id]) },
                 {
                   label: "Delete",
                   onClick: () => void deleteSession(s.id),
@@ -2367,15 +2481,16 @@ export default function ChatPanel() {
         setDropFolderId(null);
       },
     };
+    const rowClass = `alpha-router-history-row${isSelected ? " is-selected" : ""}`;
     if (wrap === "div") {
       return (
-        <div key={s.id} className="alpha-router-history-row" {...dragProps}>
+        <div key={s.id} className={rowClass} {...dragProps}>
           {inner}
         </div>
       );
     }
     return (
-      <li key={s.id} {...dragProps}>
+      <li key={s.id} className={isSelected ? "is-selected" : undefined} {...dragProps}>
         {inner}
       </li>
     );
@@ -2682,20 +2797,31 @@ export default function ChatPanel() {
       )
     ) {
       if (referenceImage && !modelSupportsImageToImage(turnModel, models)) {
-        const errMsgs: ChatMessage[] = [
-          ...historyForApi,
-          {
-            role: "assistant",
-            content:
-              "Error: The selected model does not support image-to-image. Choose a model that accepts image input (e.g. Gemini image or FLUX Kontext).",
-            receivedAt: Date.now(),
-          },
-        ];
+        const errAssistant: ChatMessage = {
+          role: "assistant",
+          content:
+            "Error: The selected model does not support image-to-image. Choose a model that accepts image input (e.g. Gemini image or FLUX Kontext).",
+          receivedAt: Date.now(),
+          clientMessageId: newClientMessageId(),
+          modelId: turnModel.id,
+          modelName: turnModel.name,
+        };
+        const base =
+          historyForApi.at(-1)?.role === "assistant" && !(historyForApi.at(-1)?.content || "").trim()
+            ? historyForApi.slice(0, -1)
+            : historyForApi;
+        const errMsgs: ChatMessage[] = [...base, errAssistant];
+        const userForPersist =
+          persistCtx?.userMessage ?? base.filter((m) => m.role === "user").at(-1) ?? undefined;
         flushSync(() => applyMessages(sid, errMsgs));
         if (!sessionPrivateMode(sid)) {
-          void persistChatMessages(sid, errMsgs.slice(-1)).catch((err) =>
-            reportSyncError(err, sid),
-          );
+          void finalizeAssistantOnServer(sid, errAssistant.content, {
+            receivedAt: errAssistant.receivedAt,
+            modelId: turnModel.id,
+            modelName: turnModel.name,
+            clientMessageId: errAssistant.clientMessageId,
+            userMessage: userForPersist,
+          }).catch((err) => reportSyncError(err, sid));
         }
         return;
       }
@@ -2747,13 +2873,11 @@ export default function ChatPanel() {
         } else {
           const session = await fetchSessionWithMessages(sid);
           if (session) {
-            const local = sessionsRef.current.find((s) => s.id === sid);
-            const msgs =
-              session.messages.length > 0
-                ? session.messages
-                : local?.messages.length
-                  ? local.messages
-                  : session.messages;
+            const local = getLocalMessagesForSession(sid);
+            const msgs = mergeChatMessagesPreferLocal(
+              local.length ? local : sessionsRef.current.find((s) => s.id === sid)?.messages ?? [],
+              session.messages,
+            );
             flushSync(() => updateSessionMessages(sid, msgs));
             void scheduleSessionTitle(sid, turnModel.id, msgs);
           }
@@ -3227,6 +3351,10 @@ export default function ChatPanel() {
   }
 
   function getSessionMessages(sessionId: string): ChatMessage[] {
+    // Prefer the live active thread — sessionsRef can lag right after creating a chat.
+    if (sessionId === activeIdRef.current && messagesRef.current.length) {
+      return messagesRef.current;
+    }
     return sessionsRef.current.find((s) => s.id === sessionId)?.messages ?? [];
   }
 
@@ -3317,17 +3445,27 @@ export default function ChatPanel() {
           return;
         }
         const friendly = friendlyTurnError(err);
+        const errAssistant: ChatMessage = {
+          role: "assistant",
+          content: `Error: ${friendly}`,
+          receivedAt: Date.now(),
+          clientMessageId: assistantClientMessageId,
+          modelId: validModel.id,
+          modelName: validModel.name,
+        };
         const errMsgs: ChatMessage[] = [
-          ...next,
-          { role: "assistant", content: `Error: ${friendly}`, receivedAt: Date.now() },
+          ...prevMsgs,
+          userMsg,
+          errAssistant,
         ];
         applyMessages(sessionId, errMsgs);
         if (!sessionPrivateMode(sessionId)) {
-          const assistantOnly = errMsgs[errMsgs.length - 1];
-          void finalizeAssistantOnServer(sessionId, assistantOnly.content, {
-            receivedAt: assistantOnly.receivedAt,
+          void finalizeAssistantOnServer(sessionId, errAssistant.content, {
+            receivedAt: errAssistant.receivedAt,
             modelId: validModel.id,
             modelName: validModel.name,
+            clientMessageId: errAssistant.clientMessageId,
+            userMessage: userMsg,
           }).catch((e) => reportSyncError(e, sessionId));
         }
         void scheduleSessionTitle(sessionId, validModel.id, errMsgs);
@@ -3399,6 +3537,8 @@ export default function ChatPanel() {
               receivedAt: errAssistant.receivedAt,
               modelId: turnModel.id,
               modelName: turnModel.name,
+              clientMessageId: errAssistant.clientMessageId,
+              userMessage: i === 0 ? userMsg : undefined,
             }).catch((e) => reportSyncError(e, sessionId));
           }
         }
@@ -3412,6 +3552,16 @@ export default function ChatPanel() {
             return;
           }
           const local = getLocalMessagesForSession(sessionId);
+          // Never let an orphan server error-only thread wipe a local user prompt.
+          if (
+            local.some((m) => m.role === "user") &&
+            !remote.messages.some((m) => m.role === "user") &&
+            remote.messages.every(
+              (m) => m.role === "assistant" && (m.content || "").startsWith("Error:"),
+            )
+          ) {
+            return;
+          }
           const reconciled = mergeChatMessagesPreferLocal(
             local,
             remote.messages,
@@ -3795,6 +3945,8 @@ export default function ChatPanel() {
               receivedAt: errAssistant.receivedAt,
               modelId: turnModel.id,
               modelName: turnModel.name,
+              clientMessageId: errAssistant.clientMessageId,
+              userMessage: i === 0 ? userMsg : undefined,
             }).catch((e) => reportSyncError(e, sid));
           }
         }
@@ -4163,7 +4315,7 @@ export default function ChatPanel() {
       />
 
       <div className="alpha-router-workspace">
-      <aside className="alpha-router-sidebar">
+      <aside className={`alpha-router-sidebar${selectedChatIds.size > 0 ? " is-selecting" : ""}`}>
         <div className="alpha-router-sidebar-top">
           <button
             type="button"
@@ -4189,6 +4341,47 @@ export default function ChatPanel() {
               value={historySearch}
               onChange={(e) => setHistorySearch(e.target.value)}
             />
+            {!readOnly && selectedChatIds.size > 0 ? (
+              <div className="alpha-router-bulk-bar" role="toolbar" aria-label="Selected chats">
+                <span className="alpha-router-bulk-bar__count">
+                  {selectedChatIds.size} selected
+                </span>
+                <button
+                  type="button"
+                  className="alpha-router-bulk-bar__btn"
+                  onClick={() => setMovingSessionIds([...selectedChatIds])}
+                >
+                  Move
+                </button>
+                <button
+                  type="button"
+                  className="alpha-router-bulk-bar__btn alpha-router-bulk-bar__btn--danger"
+                  onClick={() => void deleteSelectedChats()}
+                >
+                  Delete
+                </button>
+                <div className="alpha-router-bulk-bar__secondary">
+                  <button
+                    type="button"
+                    className="alpha-router-bulk-bar__btn"
+                    onClick={selectAllVisibleChats}
+                    disabled={
+                      filteredSessions.length > 0 &&
+                      filteredSessions.every((s) => selectedChatIds.has(s.id))
+                    }
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    className="alpha-router-bulk-bar__btn"
+                    onClick={clearChatSelection}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+            ) : null}
             {!readOnly && (
             <div className="alpha-router-folder-create">
               <input
@@ -4226,7 +4419,15 @@ export default function ChatPanel() {
                   onDragLeave={() => setDropFolderId((prev) => (prev === f.id ? null : prev))}
                   onDrop={(e) => {
                     e.preventDefault();
-                    if (draggingSessionId) moveSessionToFolder(draggingSessionId, f.id);
+                    if (
+                      draggingSessionId &&
+                      selectedChatIds.size > 0 &&
+                      selectedChatIds.has(draggingSessionId)
+                    ) {
+                      moveSessionsToFolder([...selectedChatIds], f.id);
+                    } else if (draggingSessionId) {
+                      moveSessionToFolder(draggingSessionId, f.id);
+                    }
                   }}
                 >
                   <div className="alpha-router-folder-title">
@@ -4982,16 +5183,16 @@ export default function ChatPanel() {
       />
 
       <MoveToFolderModal
-        open={!!movingSessionId}
+        open={!!movingSessionIds?.length}
         folders={folders}
         currentFolderId={
-          movingSessionId
-            ? sessions.find((s) => s.id === movingSessionId)?.folderId ?? null
+          movingSessionIds?.length === 1
+            ? sessions.find((s) => s.id === movingSessionIds[0])?.folderId ?? null
             : null
         }
-        onClose={() => setMovingSessionId(null)}
+        onClose={() => setMovingSessionIds(null)}
         onMove={(folderId) => {
-          if (movingSessionId) moveSessionToFolder(movingSessionId, folderId);
+          if (movingSessionIds?.length) moveSessionsToFolder(movingSessionIds, folderId);
         }}
       />
 

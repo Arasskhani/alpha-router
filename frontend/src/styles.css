@@ -1,12 +1,12 @@
-/* Light, performant UI — subtle rounding, no heavy shadows */
+/* Light, performant UI — cool slate neutrals, teal as signal only */
 :root {
-  --bg: #fafafa;
+  --bg: #f1f5f9;
   --surface: #ffffff;
-  --text: #18181b;
-  --muted: #71717a;
-  --accent: #7c3aed;
-  --accent-hover: #6d28d9;
-  --border: #e4e4e7;
+  --text: #0f172a;
+  --muted: #64748b;
+  --accent: #0f766e;
+  --accent-hover: #115e59;
+  --border: #e2e8f0;
   --radius: 10px;
   --radius-sm: 8px;
   /* Control density tokens — keep fields/buttons aligned app-wide */
@@ -16,9 +16,10 @@
   --control-pad-x: 0.65rem;
   --control-font: 0.8125rem;
   --app-topbar-height: 40px;
-  --brand-grad-ink: #18181b;
-  --brand-grad-indigo: #2e1065;
-  --brand-grad-purple: #6d28d9;
+  /* Near-solid ink wordmark (mint themes remap these to green) */
+  --brand-grad-ink: #0f172a;
+  --brand-grad-indigo: #0f172a;
+  --brand-grad-purple: #1e293b;
   --alpha-router-code-pane: #4a5160;
   --alpha-router-code-fg: #ffffff;
   --alpha-router-code-comment: #a8b4c6;
@@ -33,13 +34,16 @@
 }
 
 [data-theme="dark"] {
-  --bg: #09090b;
-  --surface: #17171c;
-  --text: #fafafa;
-  --muted: #a1a1aa;
-  --accent: #a78bfa;
-  --accent-hover: #c4b5fd;
-  --border: #27272a;
+  --bg: #0b0f14;
+  --surface: #12171e;
+  --text: #f1f5f9;
+  --muted: #94a3b8;
+  --accent: #14b8a6;
+  --accent-hover: #2dd4bf;
+  --border: #1e293b;
+  --brand-grad-ink: #f8fafc;
+  --brand-grad-indigo: #f8fafc;
+  --brand-grad-purple: #e2e8f0;
 }
 
 /* Figma semantic tokens (Light mode) — Mint brand accent */
@@ -135,56 +139,216 @@ body:not(.login-route) {
 
 .alpha-router-logo-word {
   display: inline-flex;
-  align-items: center;
-  gap: 0.1rem;
+  align-items: baseline;
+  gap: 0;
   color: inherit;
   line-height: 1;
 }
 
-.alpha-router-logo-word--with-mark {
-  gap: 0.35rem;
+.alpha-router-logo-alpha {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.01em;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+}
+
+.alpha-router-logo-alpha-rest {
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
 }
 
 .alpha-router-logo-mark {
-  display: block;
+  display: inline-block;
   flex-shrink: 0;
-  width: auto;
-  height: 1.05em;
+  /* Cap-height of the surrounding wordmark (letter A). */
+  width: 0.84em;
+  height: 0.84em;
   max-height: calc(var(--app-topbar-height) - 14px);
-  object-fit: contain;
-  object-position: center;
-  /* Black mark; invert on dark so it stays visible without a white box */
+  /* Same ink as adjacent text — not a washed PNG at small sizes. */
+  background-color: currentColor;
+  color: inherit;
+  -webkit-mask-image: var(--alpha-mark-url);
+  mask-image: var(--alpha-mark-url);
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center bottom;
+  mask-position: center bottom;
+  -webkit-mask-mode: alpha;
+  mask-mode: alpha;
+  /* Sit on the text baseline like a capital letter. */
+  transform: translateY(0.06em);
+  opacity: 1;
+}
+
+.alpha-router-logo-word--mark-as-a .alpha-router-logo-mark {
+  /* Slight optical tighten into “lpha”. */
+  margin-inline-end: -0.02em;
+}
+
+/* Topbar: classic lockup, readable wordmark size */
+.topbar-brand {
+  display: inline-flex;
+  align-items: center;
+  align-self: stretch;
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0 0.35rem 0 0.15rem;
+  text-decoration: none;
+  color: var(--text);
+  min-width: 0;
+  max-height: 100%;
+  overflow: visible;
+}
+
+.topbar-brand:hover {
+  color: var(--text);
+}
+
+.topbar-brand .alpha-router-logo-word {
+  align-items: baseline;
+  gap: 0;
+  font-size: 0.9375rem !important;
+  line-height: 1 !important;
+  color: var(--text);
+}
+
+.topbar-brand .alpha-router-logo-word--joined {
+  letter-spacing: -0.03em;
+}
+
+.topbar-brand .alpha-router-logo-word--joined .alpha-router-logo-alpha-rest,
+.topbar-brand .alpha-router-logo-word--joined .alpha-router-logo-tail {
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  text-transform: lowercase;
+}
+
+/* Same joined lockup as login: larger A, glued lowercase rest */
+.topbar-brand .alpha-router-logo-word--joined .alpha-router-logo-mark {
+  width: 1.16em;
+  height: 1.16em;
+  max-height: none;
+  /* Explicit same ink as “lpharouter” — avoid washed mask at small size */
+  color: var(--text) !important;
+  background-color: var(--text) !important;
+  opacity: 1 !important;
   filter: none;
+  transform: translateY(0.08em);
+  margin-inline-end: 0.01em;
+  /* Optical densify: soft mask fringe reads as full ink like bold glyphs */
+  -webkit-mask-mode: alpha;
+  mask-mode: alpha;
+  box-shadow:
+    0 0 0.35px var(--text),
+    0 0 0.35px var(--text);
 }
 
-/* Topbar: grow wolf as large as the fixed 40px bar allows (no bar height change) */
 .topbar-brand .alpha-router-logo-mark {
-  width: 30px;
-  height: 30px;
-  max-height: calc(var(--app-topbar-height) - 8px);
+  width: 0.87em;
+  height: 0.87em;
+  max-height: none;
+  color: var(--text) !important;
+  background-color: var(--text) !important;
+  opacity: 1 !important;
+  filter: none;
+  transform: translateY(0.05em);
 }
 
+.topbar-brand .alpha-router-logo-tail {
+  display: inline;
+  font-size: inherit;
+  font-weight: 700;
+  letter-spacing: -0.022em;
+  line-height: 1;
+  transform: none;
+  color: var(--text);
+  background: none !important;
+  -webkit-text-fill-color: unset !important;
+  background-clip: border-box !important;
+  -webkit-background-clip: border-box !important;
+}
+
+.topbar-brand .alpha-router-logo--topbar .alpha-router-logo-tail,
+.topbar-brand .alpha-router-logo--gradient .alpha-router-logo-tail {
+  font-weight: 700;
+  color: var(--text);
+  background: none !important;
+  -webkit-text-fill-color: unset !important;
+}
+
+.topbar-brand:hover .alpha-router-logo-tail {
+  filter: none;
+  opacity: 0.9;
+}
+
+.topbar-brand:hover .alpha-router-logo-mark {
+  /* Keep mark ink matched to text on hover (don’t fade A alone) */
+  opacity: 0.9 !important;
+}
+
+[data-scheme="dark"] .topbar-brand .alpha-router-logo-mark,
 [data-scheme="dark"] .alpha-router-logo-mark {
-  filter: invert(1);
+  filter: none;
+  opacity: 1 !important;
+  color: var(--text) !important;
+  background-color: var(--text) !important;
+}
+
+[data-scheme="dark"] .topbar-brand {
+  color: var(--text);
 }
 
 .alpha-router-logo-tail {
   font-weight: 700;
   letter-spacing: -0.01em;
-  display: inline-block;
-  transform: translateY(-1px);
+  display: inline;
+  transform: none;
+  color: inherit;
 }
 
-/* Alpha Router wordmark gradient (login + topbar) */
+.alpha-router-logo-tail--split {
+  display: inline-flex;
+  align-items: baseline;
+  white-space: nowrap;
+}
+
+.alpha-router-logo-part {
+  display: inline;
+  font: inherit;
+  letter-spacing: inherit;
+  font-weight: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+/* Login / gradient: Router (and full Alpha when no mark) can clip; “lpha” stays solid ink */
 .alpha-router-logo--gradient .alpha-router-logo-tail {
+  font-weight: 800;
+  background: none !important;
+  -webkit-text-fill-color: unset !important;
+  background-clip: border-box !important;
+  -webkit-background-clip: border-box !important;
+  color: inherit;
+}
+
+.alpha-router-logo--gradient .alpha-router-logo-part--router,
+.alpha-router-logo--gradient .alpha-router-logo-part--alpha:not(:has(.alpha-router-logo-mark)) {
   font-weight: 800;
   background: linear-gradient(
     118deg,
     var(--brand-grad-ink) 0%,
-    var(--brand-grad-indigo) 38%,
-    var(--brand-grad-purple) 72%,
-    color-mix(in srgb, var(--accent) 55%, var(--brand-grad-purple)) 88%,
-    var(--accent) 100%
+    var(--brand-grad-ink) 72%,
+    var(--brand-grad-indigo) 90%,
+    var(--brand-grad-purple) 100%
   );
   -webkit-background-clip: text;
   background-clip: text;
@@ -192,39 +356,56 @@ body:not(.login-route) {
   color: transparent;
 }
 
+/* “lpha” next to the mark: solid ink (clip-to-text made it invisible). */
+.alpha-router-logo--gradient .alpha-router-logo-alpha-rest,
+.alpha-router-logo--gradient .alpha-router-logo-part--alpha .alpha-router-logo-alpha-rest {
+  font-weight: 800;
+  background: none !important;
+  -webkit-background-clip: border-box !important;
+  background-clip: border-box !important;
+  -webkit-text-fill-color: var(--brand-grad-ink) !important;
+  color: var(--brand-grad-ink) !important;
+}
+
+/* Keep the mark as solid ink matching “lpha” / Router (mask uses currentColor). */
+.alpha-router-logo--gradient .alpha-router-logo-mark {
+  filter: none;
+  opacity: 1;
+  color: var(--brand-grad-ink);
+  background-color: currentColor;
+}
+
 [data-scheme="dark"] .alpha-router-logo--gradient .alpha-router-logo-tail {
+  background: none !important;
+  -webkit-text-fill-color: unset !important;
+}
+
+[data-scheme="dark"] .alpha-router-logo--gradient .alpha-router-logo-part--router,
+[data-scheme="dark"] .alpha-router-logo--gradient .alpha-router-logo-part--alpha:not(:has(.alpha-router-logo-mark)) {
   background: linear-gradient(
     118deg,
-    #fafafa 0%,
-    #ddd6fe 42%,
-    #c4b5fd 72%,
-    color-mix(in srgb, var(--accent-hover) 70%, #a78bfa) 90%,
-    var(--accent-hover) 100%
+    var(--brand-grad-ink) 0%,
+    var(--brand-grad-ink) 72%,
+    var(--brand-grad-indigo) 90%,
+    var(--brand-grad-purple) 100%
   );
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
+  color: transparent;
 }
 
-.topbar-brand {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  margin: 0;
-  padding: 0.1rem 0.15rem;
-  text-decoration: none;
-  color: inherit;
-  min-width: 0;
-  max-height: 100%;
-  overflow: hidden;
+[data-scheme="dark"] .alpha-router-logo--gradient .alpha-router-logo-alpha-rest,
+[data-scheme="dark"] .alpha-router-logo--gradient .alpha-router-logo-part--alpha .alpha-router-logo-alpha-rest {
+  background: none !important;
+  -webkit-text-fill-color: var(--brand-grad-ink) !important;
+  color: var(--brand-grad-ink) !important;
 }
 
-.topbar-brand:hover {
-  color: inherit;
-}
-
-.topbar-brand:hover .alpha-router-logo--gradient .alpha-router-logo-tail {
-  filter: brightness(1.05);
+[data-scheme="dark"] .alpha-router-logo--gradient .alpha-router-logo-mark {
+  filter: none;
+  color: var(--brand-grad-ink);
+  background-color: currentColor;
 }
 
 .sidebar-nav {
@@ -582,7 +763,7 @@ body:not(.login-route) {
 }
 
 .topbar-model-search {
-  /* Align start with the chat sidebar’s right edge (after Alpha Router brand). */
+  /* Align start with the chat sidebar’s right edge (after Alpharouter brand). */
   position: absolute;
   left: var(--alpha-router-sidebar-width, 260px);
   transform: none;
@@ -1052,7 +1233,7 @@ input:focus, select:focus, textarea:focus {
   border-color: var(--accent);
 }
 
-/* Activity filter search: kill global purple focus ring inside the field */
+/* Activity filter search: kill global accent focus ring inside the field */
 .activity-filter-flyout__search input,
 .activity-filter-flyout__search input:focus,
 .activity-filter-flyout__search input:focus-visible,
@@ -1464,9 +1645,181 @@ table.card tbody td:last-child {
   color: var(--muted);
 }
 
+.api-logs-row--clickable {
+  cursor: pointer;
+}
+
+.api-logs-row--clickable:hover,
+.api-logs-row--clickable:focus-visible {
+  background: color-mix(in srgb, var(--surface, #fff) 88%, var(--muted) 12%);
+  outline: none;
+}
+
+.modal-panel--cost-details {
+  width: min(720px, calc(100vw - 2rem));
+}
+
+.api-log-cost-details {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.api-log-cost-details__summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem 1rem;
+}
+
+.api-log-cost-details__summary > div,
+.api-log-cost-details__operation dl > div,
+.api-log-cost-event dl > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.api-log-cost-details__summary span,
+.api-log-cost-details dt {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.api-log-cost-details__summary strong,
+.api-log-cost-details dd {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.api-log-cost-details h4 {
+  margin: 0 0 0.55rem;
+  font-size: 0.9rem;
+}
+
+.api-log-cost-details__operation dl,
+.api-log-cost-event dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem 0.85rem;
+  margin: 0;
+}
+
+.api-log-cost-details__events {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.api-log-cost-event {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 0.85rem;
+  background: color-mix(in srgb, var(--bg, #f8fafc) 70%, transparent);
+}
+
+.api-log-cost-event header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.55rem;
+}
+
+.api-log-cost-event header > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.api-log-cost-event code {
+  font-size: 0.78rem;
+}
+
+.api-log-cost-lines {
+  width: 100%;
+  margin-top: 0.65rem;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.api-log-cost-lines th,
+.api-log-cost-lines td {
+  text-align: left;
+  padding: 0.3rem 0.35rem;
+  border-top: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.api-log-cost-lines th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+@media (max-width: 640px) {
+  .api-log-cost-details__summary,
+  .api-log-cost-details__operation dl,
+  .api-log-cost-event dl {
+    grid-template-columns: 1fr;
+  }
+}
+
 .api-log-cost {
   display: inline-flex;
   align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+.api-log-cost-quality {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.25rem;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--border, #d8dee4);
+  border-radius: 999px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface, #fff) 88%, var(--muted) 12%);
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.api-log-cost-quality--exact,
+.api-log-cost-quality--reconciled {
+  color: #047857;
+  border-color: color-mix(in srgb, #10b981 38%, var(--border, #d8dee4));
+  background: color-mix(in srgb, #10b981 12%, transparent);
+}
+
+.api-log-cost-quality--calculated,
+.api-log-cost-quality--estimated {
+  color: #a16207;
+  border-color: color-mix(in srgb, #eab308 38%, var(--border, #d8dee4));
+  background: color-mix(in srgb, #eab308 12%, transparent);
+}
+
+.api-log-cost-quality--unknown {
+  color: #b91c1c;
+  border-color: color-mix(in srgb, #ef4444 38%, var(--border, #d8dee4));
+  background: color-mix(in srgb, #ef4444 10%, transparent);
+}
+
+[data-scheme="dark"] .api-log-cost-quality--exact,
+[data-scheme="dark"] .api-log-cost-quality--reconciled {
+  color: #6ee7b7;
+}
+
+[data-scheme="dark"] .api-log-cost-quality--calculated,
+[data-scheme="dark"] .api-log-cost-quality--estimated {
+  color: #fde047;
+}
+
+[data-scheme="dark"] .api-log-cost-quality--unknown {
+  color: #fca5a5;
 }
 
 .api-log-prompt-cache {
@@ -3214,6 +3567,13 @@ table.card tbody td:last-child {
   min-width: 0;
 }
 
+.alpha-router-history-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
 .alpha-router-history-scroll {
   overflow: visible;
 }
@@ -3222,6 +3582,99 @@ table.card tbody td:last-child {
   display: flex;
   gap: 0.35rem;
   margin: 0 0.25rem 0.45rem;
+}
+
+.alpha-router-bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0 0.25rem 0.45rem;
+  padding: 0.35rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--alpha-router-sidebar-hover);
+}
+
+.alpha-router-bulk-bar__count {
+  flex: 1;
+  min-width: 4.5rem;
+  font-size: 0.78rem;
+  color: var(--alpha-router-sidebar-muted);
+}
+
+.alpha-router-bulk-bar__btn {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  border-radius: 6px;
+  padding: 0.2rem 0.45rem;
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.alpha-router-bulk-bar__btn:hover {
+  background: var(--alpha-router-sidebar-active);
+}
+
+.alpha-router-bulk-bar__btn--danger {
+  color: var(--danger, #c0392b);
+  border-color: color-mix(in srgb, var(--danger, #c0392b) 35%, var(--border));
+}
+
+.alpha-router-bulk-bar__btn--danger:hover {
+  background: color-mix(in srgb, var(--danger, #c0392b) 12%, transparent);
+}
+
+.alpha-router-bulk-bar__secondary {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.alpha-router-bulk-bar__btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.alpha-router-history-check {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  margin-inline-start: 0.2rem;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.alpha-router-history-check input {
+  width: 0.9rem;
+  height: 0.9rem;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.alpha-router-history li:hover .alpha-router-history-check,
+.alpha-router-history-row:hover .alpha-router-history-check,
+.alpha-router-history-check.is-visible,
+.alpha-router-sidebar.is-selecting .alpha-router-history-check {
+  opacity: 1;
+}
+
+.alpha-router-history li.is-selected,
+.alpha-router-history-row.is-selected {
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.alpha-router-history-item.is-selected {
+  background: transparent;
 }
 
 .alpha-router-folder-create input {
@@ -3925,7 +4378,7 @@ table.card tbody td:last-child {
   margin-left: auto;
 }
 
-/* Tools: bare wrench silhouette — no border/fill box (like the Alpha Router mark). */
+/* Tools: bare wrench silhouette — no border/fill box (like the Alpharouter mark). */
 .alpha-router-tools-trigger--icon.alpha-router-composer-ctrl,
 .alpha-router-model-trigger.alpha-router-tools-trigger--icon {
   max-width: none;
@@ -5426,7 +5879,7 @@ table.card tbody td:last-child {
   height: 1.9rem;
   border-radius: 0.5rem;
   border: none;
-  background: #7c3aed;
+  background: var(--accent);
   color: #fff;
   display: inline-flex;
   align-items: center;
@@ -5437,7 +5890,7 @@ table.card tbody td:last-child {
 }
 
 .alpha-router-voice-btn:hover:not(:disabled) {
-  background: #6d28d9;
+  background: var(--accent-hover);
 }
 
 .alpha-router-voice-btn:disabled {
@@ -8358,22 +8811,22 @@ body.activity-pdf-export .activity-page {
 
 .activity-heatmap--requests .activity-heatmap__cell--l1,
 .activity-heatmap--tokens .activity-heatmap__cell--l1 {
-  background: #ede9fe;
+  background: #ccfbf1;
 }
 
 .activity-heatmap--requests .activity-heatmap__cell--l2,
 .activity-heatmap--tokens .activity-heatmap__cell--l2 {
-  background: #c4b5fd;
+  background: #5eead4;
 }
 
 .activity-heatmap--requests .activity-heatmap__cell--l3,
 .activity-heatmap--tokens .activity-heatmap__cell--l3 {
-  background: #a78bfa;
+  background: #2dd4bf;
 }
 
 .activity-heatmap--requests .activity-heatmap__cell--l4,
 .activity-heatmap--tokens .activity-heatmap__cell--l4 {
-  background: #7c3aed;
+  background: #0f766e;
 }
 
 .activity-heatmap--spend .activity-heatmap__cell--l1 {
@@ -8394,22 +8847,22 @@ body.activity-pdf-export .activity-page {
 
 [data-scheme="dark"] .activity-heatmap--requests .activity-heatmap__cell--l1,
 [data-scheme="dark"] .activity-heatmap--tokens .activity-heatmap__cell--l1 {
-  background: #3b2d5c;
+  background: #134e4a;
 }
 
 [data-scheme="dark"] .activity-heatmap--requests .activity-heatmap__cell--l2,
 [data-scheme="dark"] .activity-heatmap--tokens .activity-heatmap__cell--l2 {
-  background: #5b3f8f;
+  background: #115e59;
 }
 
 [data-scheme="dark"] .activity-heatmap--requests .activity-heatmap__cell--l3,
 [data-scheme="dark"] .activity-heatmap--tokens .activity-heatmap__cell--l3 {
-  background: #7c4fd4;
+  background: #0f766e;
 }
 
 [data-scheme="dark"] .activity-heatmap--requests .activity-heatmap__cell--l4,
 [data-scheme="dark"] .activity-heatmap--tokens .activity-heatmap__cell--l4 {
-  background: #a78bfa;
+  background: #2dd4bf;
 }
 
 [data-scheme="dark"] .activity-heatmap--spend .activity-heatmap__cell--l1 {
@@ -9332,8 +9785,8 @@ body.login-route #root {
   height: 38vmin;
   top: -12%;
   left: 8%;
-  background: color-mix(in srgb, var(--accent) 28%, transparent);
-  opacity: 0.5;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  opacity: 0.55;
 }
 
 .login-page__glow--b {
@@ -9341,8 +9794,8 @@ body.login-route #root {
   height: 32vmin;
   bottom: -8%;
   right: 12%;
-  background: color-mix(in srgb, #22c55e 18%, transparent);
-  opacity: 0.4;
+  background: color-mix(in srgb, var(--muted) 10%, transparent);
+  opacity: 0.35;
 }
 
 .login-page__shell {
@@ -9350,68 +9803,45 @@ body.login-route #root {
   z-index: 1;
   display: grid;
   grid-template-columns: minmax(0, 1.48fr) minmax(280px, 0.52fr);
+  grid-template-rows: auto;
   width: 100%;
   max-width: min(1400px, calc(100vw - 2rem));
   height: 100%;
   max-height: 100dvh;
   margin: 0 auto;
   padding: clamp(1rem, 2.5vh, 1.75rem) clamp(1rem, 3vw, 2.5rem);
-  gap: clamp(1rem, 2vw, 2rem);
+  column-gap: clamp(1rem, 2vw, 2rem);
+  row-gap: 0;
   box-sizing: border-box;
-  align-items: center;
+  align-items: start;
+  align-content: center;
+  overflow: visible;
 }
 
+/* Left column matches Sign in height (panel stays content-sized; cards shrink) */
 .login-brand {
-  position: relative;
+  grid-column: 1;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  align-items: stretch;
-  min-height: 0;
-  height: 100%;
+  gap: clamp(0.55rem, 1.2vh, 0.85rem);
+  position: relative;
+  min-width: 0;
+  /* Do not inflate row height — follow the Sign in panel instead */
+  height: 0;
+  min-height: 100%;
+  max-height: 100%;
+  /* Allow brand mark to extend above/below the Sign in band */
+  overflow: visible;
   padding-right: clamp(0.5rem, 2vw, 1.5rem);
   border-right: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  overflow: hidden;
-}
-
-/* Faint full-bleed wolf mark behind left login column — barely readable */
-.login-brand__watermark {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-}
-
-.login-brand__watermark img {
-  width: min(118%, 42rem);
-  height: min(118%, 42rem);
-  max-width: none;
-  object-fit: contain;
-  opacity: 0.045;
-  user-select: none;
-  transform: translate(-4%, 2%);
-}
-
-[data-scheme="dark"] .login-brand__watermark img {
-  opacity: 0.07;
-  filter: invert(1);
-}
-
-.login-brand__column {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  gap: clamp(0.75rem, 1.6vh, 1.15rem);
-  min-width: 0;
+  box-sizing: border-box;
 }
 
 .login-brand__head {
-  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
 }
 
 .login-brand__title {
@@ -9421,69 +9851,101 @@ body.login-route #root {
   overflow: visible;
 }
 
-.login-brand__title--boost .alpha-router-logo-word {
-  display: inline-block;
-  animation: login-alpha-router-boost 0.72s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+/* Restrained assemble: Alpha from left, Router from top — short travel, no bounce */
+.login-brand__title--assemble .alpha-router-logo-word {
+  align-items: baseline;
+  gap: 0;
 }
 
-.login-brand__alpha-router-track {
-  position: absolute;
-  left: 0;
-  bottom: 0.12em;
-  height: 0.22em;
-  width: 0;
-  border-radius: 999px;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    color-mix(in srgb, var(--accent) 35%, transparent) 40%,
-    color-mix(in srgb, var(--login-grad-purple) 50%, transparent) 100%
-  );
-  filter: blur(3px);
+.login-brand__title--assemble .alpha-router-logo-word--joined {
+  letter-spacing: -0.03em;
+}
+
+.login-brand__title--assemble .alpha-router-logo-word--joined .alpha-router-logo-tail--split {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
+  letter-spacing: -0.03em;
+  background: none;
+  -webkit-text-fill-color: unset;
+  color: transparent;
+}
+
+.login-brand__title--assemble .alpha-router-logo-word--joined .alpha-router-logo-part--rest {
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  text-transform: lowercase;
+}
+
+/* Display-cap A: clearly larger than lowercase “lpharouter” */
+.login-brand__title--assemble .alpha-router-logo-word--joined .alpha-router-logo-mark {
+  width: 1.16em;
+  height: 1.16em;
+  max-height: none;
+  transform: translateY(0.1em);
+  filter: none;
+  color: var(--brand-grad-ink);
+  background-color: currentColor;
+  margin-inline-end: 0.01em;
+}
+
+.login-brand__title--assemble .alpha-router-logo-part {
+  display: inline;
+  font-weight: 800;
+  font-size: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  color: var(--brand-grad-ink);
+  will-change: transform, opacity;
+}
+
+/* Beat gradient clip rules so letters stay visible */
+.login-brand__title--assemble .alpha-router-logo-part--rest,
+.login-brand__title--assemble .alpha-router-logo-alpha-rest,
+.login-brand__title--assemble .alpha-router-logo-part--router,
+.login-brand__title--assemble .alpha-router-logo-part--alpha .alpha-router-logo-alpha-rest {
+  background: none !important;
+  -webkit-background-clip: border-box !important;
+  background-clip: border-box !important;
+  -webkit-text-fill-color: var(--brand-grad-ink) !important;
+  color: var(--brand-grad-ink) !important;
+}
+
+/* 1) A mark appears first */
+.login-brand__title--assemble .alpha-router-logo-part--mark {
+  display: inline-flex;
+  align-items: baseline;
   opacity: 0;
-  animation: login-alpha-router-track 0.65s ease-out forwards;
-  pointer-events: none;
+  transform: scale(0.92);
+  animation: login-word-mark 0.42s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
-@keyframes login-alpha-router-boost {
-  0% {
-    opacity: 0;
-    transform: translateX(calc(-100vw - 2rem)) skewX(-14deg);
-    filter: blur(6px);
-  }
-  72% {
+/* 2) Immediately after: “lpharouter” drops from above beside A */
+.login-brand__title--assemble .alpha-router-logo-part--rest {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(-0.85rem);
+  animation: login-word-rest 0.55s cubic-bezier(0.22, 1, 0.36, 1) 0.12s forwards;
+}
+
+@keyframes login-word-mark {
+  to {
     opacity: 1;
-    transform: translateX(10px) skewX(-3deg);
-    filter: blur(0);
-  }
-  86% {
-    transform: translateX(-5px) skewX(0deg);
-  }
-  100% {
-    opacity: 1;
-    transform: translateX(0) skewX(0deg);
-    filter: blur(0);
+    transform: scale(1);
   }
 }
 
-@keyframes login-alpha-router-track {
-  0% {
-    opacity: 0;
-    width: 0;
-  }
-  15% {
-    opacity: 0.85;
-    width: 120%;
-  }
-  100% {
-    opacity: 0;
-    width: 40%;
-    transform: translateX(180%);
+@keyframes login-word-rest {
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
 .login-brand__title .alpha-router-logo-word {
   color: var(--text);
+  font-size: clamp(2.35rem, 1.85rem + 1.1vw, 3rem) !important;
+  line-height: 1.05 !important;
 }
 
 .login-brand__title .alpha-router-logo-tail {
@@ -9499,10 +9961,10 @@ body.login-route #root {
 
 .login-brand__tagline--reveal {
   opacity: 0;
-  filter: blur(14px);
-  transform: translateY(8px);
-  animation: login-tagline-emerge 0.5s ease-out forwards;
-  animation-delay: 0.72s;
+  filter: blur(8px);
+  transform: translateY(6px);
+  animation: login-tagline-emerge 0.48s ease-out forwards;
+  animation-delay: 0.82s;
 }
 
 @keyframes login-tagline-emerge {
@@ -9517,43 +9979,31 @@ body.login-route #root {
   position: relative;
   z-index: 1;
   display: inline-block;
-  font-size: clamp(1.45rem, 1.05rem + 1.15vw, 1.95rem);
-  font-weight: 600;
-  letter-spacing: -0.03em;
-  line-height: 1.25;
+  font-size: clamp(1.05rem, 0.92rem + 0.45vw, 1.28rem);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.35;
   white-space: nowrap;
-  background: linear-gradient(
-    118deg,
-    var(--login-grad-indigo) 0%,
-    var(--login-grad-purple) 42%,
-    color-mix(in srgb, var(--accent) 75%, var(--login-grad-purple)) 78%,
-    var(--accent) 100%
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--muted);
+  background: none;
+  -webkit-text-fill-color: unset;
 }
 
 [data-scheme="dark"] .login-brand__tagline-text {
-  background: linear-gradient(
-    118deg,
-    #e4e4e7 0%,
-    #ddd6fe 40%,
-    var(--accent-hover) 78%,
-    var(--accent) 100%
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--muted);
+  background: none;
+  -webkit-text-fill-color: unset;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .login-brand__title--boost .alpha-router-logo-word,
-  .login-brand__alpha-router-track {
+  .login-brand__title--assemble .alpha-router-logo-part--mark,
+  .login-brand__title--assemble .alpha-router-logo-part--rest,
+  .login-brand__title--assemble .alpha-router-logo-part--alpha,
+  .login-brand__title--assemble .alpha-router-logo-part--router,
+  .login-brand__title--assemble .alpha-router-logo-part--gap {
     animation: none;
     opacity: 1;
     transform: none;
-    filter: none;
   }
 
   .login-brand__tagline--reveal {
@@ -9572,29 +10022,46 @@ body.login-route #root {
 }
 
 .login-highlights {
+  position: relative;
+  z-index: 1;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: repeat(3, auto);
-  gap: clamp(0.45rem, 0.85vh, 0.62rem);
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+  gap: clamp(0.28rem, 0.55vh, 0.42rem);
   width: 100%;
+  min-height: 0;
+  flex: 1 1 0;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .login-highlight {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: 0.4rem;
   width: 100%;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
   box-sizing: border-box;
-  padding: clamp(0.42rem, 0.85vh, 0.58rem) clamp(0.55rem, 0.9vw, 0.72rem);
+  padding: clamp(0.28rem, 0.55vh, 0.42rem) clamp(0.42rem, 0.7vw, 0.55rem);
   border-radius: var(--radius-sm);
-  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  backdrop-filter: blur(10px);
+  border: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  background: color-mix(in srgb, var(--surface) 68%, transparent);
+  backdrop-filter: blur(12px) saturate(1.05);
+  -webkit-backdrop-filter: blur(12px) saturate(1.05);
   transition:
     border-color 0.2s ease,
     transform 0.2s ease,
-    box-shadow 0.2s ease;
+    box-shadow 0.2s ease,
+    background 0.2s ease;
+}
+
+.login-highlight:hover {
+  border-color: color-mix(in srgb, var(--text) 18%, var(--border));
+  transform: translateY(-1px);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--text) 8%, transparent);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
 }
 
 .login-highlight--reveal {
@@ -9612,21 +10079,18 @@ body.login-route #root {
   }
 }
 
-.login-highlight:hover {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-  transform: translateY(-1px);
-  box-shadow: 0 10px 28px color-mix(in srgb, var(--accent) 12%, transparent);
-}
-
 .login-highlight__visual {
   flex-shrink: 0;
-  width: 2.35rem;
-  height: 2rem;
+  width: 2.15rem;
+  height: 2.15rem;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 7px;
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+  background: color-mix(in srgb, var(--border) 55%, var(--bg));
+  overflow: hidden;
+  padding: 0.2rem;
+  box-sizing: border-box;
 }
 
 .login-highlight__copy {
@@ -9654,56 +10118,44 @@ body.login-route #root {
   overflow: hidden;
 }
 
-.login-highlight__art--providers {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 3px;
-  width: 2.5rem;
-}
-
-.login-highlight__dot {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 0.55rem;
-  height: 0.55rem;
-  border-radius: 50%;
-  font-size: 0.45rem;
-  font-weight: 700;
-  color: var(--muted);
-  background: var(--surface);
-  border: 1px solid var(--border);
-}
-
 .login-highlight__svg {
-  width: 2.15rem;
-  height: auto;
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
 }
 
 .login-signin {
+  grid-column: 2;
+  grid-row: 1;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   min-height: 0;
+  height: auto;
+  align-self: start;
 }
 
 .login-panel {
   position: relative;
   width: 100%;
   max-width: 380px;
+  height: auto;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
   padding: clamp(1rem, 2vh, 1.35rem) clamp(1rem, 2vw, 1.35rem);
   border-radius: calc(var(--radius) + 4px);
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
   backdrop-filter: blur(16px);
   box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--surface) 60%, transparent) inset,
-    0 24px 48px color-mix(in srgb, var(--text) 8%, transparent),
-    0 0 80px color-mix(in srgb, var(--accent) 10%, transparent);
+    0 0 0 1px color-mix(in srgb, var(--surface) 70%, transparent) inset,
+    0 1px 2px color-mix(in srgb, var(--text) 4%, transparent),
+    0 18px 40px color-mix(in srgb, var(--text) 7%, transparent);
 }
 
 .login-panel__shine {
@@ -9713,7 +10165,7 @@ body.login-route #root {
   pointer-events: none;
   background: linear-gradient(
     145deg,
-    color-mix(in srgb, var(--accent) 12%, transparent) 0%,
+    color-mix(in srgb, var(--surface) 55%, transparent) 0%,
     transparent 42%,
     transparent 100%
   );
@@ -9722,10 +10174,10 @@ body.login-route #root {
 .login-panel__eyebrow {
   margin: 0;
   font-size: 0.7rem;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--accent);
+  color: color-mix(in srgb, var(--accent) 86%, #2dd4bf);
 }
 
 .login-panel__title {
@@ -9820,7 +10272,14 @@ body.login-route #root {
   padding: 0.6rem 1rem;
   font-weight: 600;
   border-radius: var(--radius-sm);
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 35%, transparent);
+  /* Softer CTA: lighter than global accent, still readable with white text */
+  background: color-mix(in srgb, var(--accent) 64%, #99f6e4);
+  box-shadow: 0 3px 12px color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.login-form__submit:hover {
+  background: color-mix(in srgb, var(--accent) 78%, #5eead4);
+  box-shadow: 0 5px 16px color-mix(in srgb, var(--text) 8%, transparent);
 }
 
 .login-panel__footer {
@@ -9852,7 +10311,7 @@ body.login-route #root {
 @media (min-width: 1380px) {
   .login-highlights {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    grid-template-rows: auto auto;
+    grid-template-rows: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -9861,31 +10320,34 @@ body.login-route #root {
     grid-template-columns: 1fr;
     grid-template-rows: auto 1fr;
     padding: 1rem 1.15rem;
-    gap: 0.75rem;
+    column-gap: 0.75rem;
+    row-gap: 0.75rem;
   }
 
   .login-brand {
-    border-right: none;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-    padding-right: 0;
-    padding-bottom: 0.75rem;
+    grid-column: 1;
+    grid-row: 1;
+    display: flex;
     flex-direction: row;
     flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem 1rem;
     height: auto;
-  }
-
-  .login-brand__column {
     min-height: 0;
     max-height: none;
-    height: auto;
+    overflow: visible;
+    border-right: none;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    padding-right: 0;
+    padding-bottom: 0.75rem;
   }
 
-  .login-panel {
-    min-height: 0;
-    max-height: none;
+  .login-brand__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.35rem 0.75rem;
   }
 
   .login-brand__tagline {
@@ -9894,15 +10356,8 @@ body.login-route #root {
   }
 
   .login-brand__tagline-text {
-    font-size: clamp(1.2rem, 4.2vw, 1.55rem);
+    font-size: clamp(0.95rem, 3.2vw, 1.15rem);
     white-space: normal;
-  }
-
-  .login-brand__head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 0.35rem 0.75rem;
   }
 
   .login-brand__title {
@@ -9914,31 +10369,39 @@ body.login-route #root {
   }
 
   .login-signin {
-    flex: 1;
-    min-height: 0;
+    grid-column: 1;
+    grid-row: 2;
+    height: auto;
+    align-items: center;
   }
 
   .login-panel {
+    height: auto;
     max-width: 400px;
   }
 }
 
 @media (max-height: 640px) and (min-width: 901px) {
+  .login-brand {
+    gap: 0.4rem;
+  }
+
   .login-brand__tagline-text {
-    font-size: clamp(1.15rem, 0.95rem + 0.8vw, 1.45rem);
+    font-size: clamp(0.95rem, 0.88rem + 0.35vw, 1.12rem);
   }
 
   .login-highlights {
-    gap: 0.38rem;
+    gap: 0.24rem;
   }
 
   .login-highlight {
-    padding: 0.38rem 0.5rem;
+    padding: 0.24rem 0.4rem;
   }
 
   .login-highlight__visual {
-    width: 2.1rem;
-    height: 1.85rem;
+    width: 1.95rem;
+    height: 1.95rem;
+    padding: 0.16rem;
   }
 }
 
@@ -9985,7 +10448,7 @@ body.login-route #root {
 .media-page-quota__fill {
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, #7c3aed, #a78bfa);
+  background: linear-gradient(90deg, var(--accent-hover), var(--accent));
   transition: width 0.25s ease;
 }
 
@@ -10371,7 +10834,10 @@ body.login-route #root {
   overflow-y: auto;
 }
 .settings-nav-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
   width: 100%;
   text-align: left;
   border: none;
@@ -10390,6 +10856,42 @@ body.login-route #root {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent);
   font-weight: 600;
+}
+.settings-nav-item__badge {
+  flex-shrink: 0;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--border) 70%, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.08rem 0.35rem;
+  line-height: 1.2;
+}
+.settings-nav-item.active .settings-nav-item__badge {
+  color: color-mix(in srgb, var(--accent) 70%, var(--muted));
+  border-color: color-mix(in srgb, var(--accent) 25%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+.settings-coming-soon {
+  margin-top: 0.85rem;
+  padding: 1rem 1.05rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--border) 28%, var(--surface));
+}
+.settings-coming-soon__title {
+  margin: 0 0 0.3rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.settings-coming-soon .muted-text {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
 }
 .settings-panel {
   flex: 1;

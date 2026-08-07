@@ -50,7 +50,7 @@ def generate_api_key() -> tuple[str, str, str]:
 
 
 def generate_api_key_for_user(email_local: str) -> tuple[str, str, str]:
-    """Return an Alpha Router API key scoped to the supplied identity label."""
+    """Return an Alpharouter API key scoped to the supplied identity label."""
     safe = "".join(c for c in email_local if c.isalnum() or c in "._-")[:32] or "user"
     raw = f"{API_KEY_PREFIX}{safe}_{secrets.token_urlsafe(28)}"
     prefix = raw[:16]

@@ -61,7 +61,7 @@ services:
     image: redis:7-alpine
     # Require authentication when REDIS_PASSWORD is set; empty (default) keeps
     # legacy no-auth behavior for existing single-box deployments. When set,
-    # wire REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0 in the Alpha Router service.
+    # wire REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0 in the Alpharouter service.
     command: ["sh", "-c", "exec redis-server --requirepass \"$${REDIS_PASSWORD:-}\""]
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
@@ -100,7 +100,7 @@ services:
       start_period: 25s
 
   # Code-interpreter sandbox image. Not started as a long-running service; it is
-  # spawned on demand as a disposable, network-less container by Alpha Router.
+  # spawned on demand as a disposable, network-less container by Alpharouter.
   # Build explicitly with: docker compose build alpha-router-sandbox
   alpha-router-sandbox:
     build:

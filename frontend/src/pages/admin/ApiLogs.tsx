@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import AdminPage from "../../components/AdminPage";
 import LogFilterCombobox from "../../components/admin/LogFilterCombobox";
+import Modal from "../../components/Modal";
 import ModelName from "../../components/ModelName";
 import { api } from "../../api";
 import { useConfirm } from "../../context/ConfirmContext";
@@ -25,9 +26,65 @@ type Log = {
   completion_tokens: number;
   cached_tokens?: number;
   total_cost_usd: number;
+  provider_cost_usd?: number | null;
+  calculated_cost_usd?: number | null;
+  cost_source?: string;
+  cost_confidence?: "exact" | "reconciled" | "calculated" | "estimated" | "unknown";
+  has_unpriced_usage?: boolean;
+  reconciled_at?: string | null;
   response_time_ms: number;
   source_ip: string;
   success: boolean;
+};
+
+type CostLineItem = {
+  category: string;
+  quantity: number;
+  unit: string;
+  unit_price_usd: number | null;
+  cost_usd: number | null;
+  pricing_source: string;
+};
+
+type CostEvent = {
+  id: string;
+  provider_type: string;
+  service_type: string;
+  operation_name: string;
+  model_id: string | null;
+  attempt_index: number;
+  upstream_request_id: string | null;
+  status: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cached_tokens: number;
+  cache_write_tokens: number;
+  reasoning_tokens: number;
+  provider_cost_usd: number | null;
+  calculated_cost_usd: number | null;
+  final_cost_usd: number | null;
+  cost_source: string;
+  cost_confidence: string;
+  reconciliation_attempts: number;
+  last_reconciliation_attempt_at: string | null;
+  error_message: string | null;
+  line_items: CostLineItem[];
+};
+
+type CostDetails = {
+  operation: {
+    id: string;
+    operation_type: string;
+    status: string;
+    total_cost_usd: number;
+    provider_cost_usd: number | null;
+    calculated_cost_usd: number | null;
+    unpriced_event_count: number;
+    reconciled_at: string | null;
+  } | null;
+  events: CostEvent[];
+  legacy: boolean;
+  total_cost_usd?: number;
 };
 
 type FilterOptions = {
@@ -49,6 +106,10 @@ export default function ApiLogs() {
   const [loading, setLoading] = useState(false);
   const [filterOptions, setFilterOptions] = useState<FilterOptions>({ usernames: [], models: [] });
   const [optionsLoading, setOptionsLoading] = useState(false);
+  const [selectedLog, setSelectedLog] = useState<Log | null>(null);
+  const [costDetails, setCostDetails] = useState<CostDetails | null>(null);
+  const [costDetailsLoading, setCostDetailsLoading] = useState(false);
+  const [costDetailsError, setCostDetailsError] = useState("");
 
   const loadFilterOptions = useCallback(async () => {
     setOptionsLoading(true);
@@ -87,6 +148,58 @@ export default function ApiLogs() {
     const share = pct > 0 ? ` (${pct}% of ${fmt(prompt)} input tokens)` : "";
     return `Prompt cache hit: ${fmt(cached)} prompt tokens served from provider cache${share}`;
   };
+  const confidenceLabel = (key: string, unpriced = false) => {
+    if (unpriced) return { key: "unknown", label: "Unpriced" };
+    const labels: Record<string, string> = {
+      exact: "Provider",
+      reconciled: "Reconciled",
+      calculated: "Catalog",
+      estimated: "Estimated",
+      unknown: "Unknown",
+    };
+    return { key: key || "unknown", label: labels[key] || key || "Unknown" };
+  };
+
+  const money = (n: number | null | undefined) =>
+    n == null || Number.isNaN(n) ? "—" : `$${n.toFixed(8)}`;
+
+  const costQuality = (log: Log) => {
+    const base = confidenceLabel(log.cost_confidence || "unknown", !!log.has_unpriced_usage);
+    const details = log.has_unpriced_usage
+      ? [
+          "At least one upstream call did not expose enough billing data; the shown total excludes that unknown cost.",
+        ]
+      : [
+          `Source: ${log.cost_source || "unknown"}`,
+          log.provider_cost_usd != null ? `Provider: $${log.provider_cost_usd.toFixed(8)}` : "",
+          log.calculated_cost_usd != null ? `Calculated: $${log.calculated_cost_usd.toFixed(8)}` : "",
+          log.reconciled_at ? `Reconciled: ${formatLocalDateTime(log.reconciled_at)}` : "",
+          "Click row for cost details",
+        ].filter(Boolean);
+    return { ...base, title: details.join(" · ") };
+  };
+
+  const openCostDetails = async (log: Log) => {
+    setSelectedLog(log);
+    setCostDetails(null);
+    setCostDetailsError("");
+    setCostDetailsLoading(true);
+    try {
+      const details = await api<CostDetails>(`/api/admin/logs/${log.id}/cost-details`);
+      setCostDetails(details);
+    } catch (err) {
+      setCostDetailsError(err instanceof Error ? err.message : "Failed to load cost details");
+    } finally {
+      setCostDetailsLoading(false);
+    }
+  };
+
+  const closeCostDetails = () => {
+    setSelectedLog(null);
+    setCostDetails(null);
+    setCostDetailsError("");
+    setCostDetailsLoading(false);
+  };
 
   async function clearAllLogs() {
     const step1 = await confirm({
@@ -101,7 +214,7 @@ export default function ApiLogs() {
     const step2 = await confirm({
       title: "Delete all request history?",
       message:
-        "Reports and activity charts that rely on request logs will no longer include this data. Copies exported to Excel or PDF outside Alpha Router are not affected.",
+        "Reports and activity charts that rely on request logs will no longer include this data. Copies exported to Excel or PDF outside Alpharouter are not affected.",
       confirmLabel: "Yes, delete all",
       danger: true,
     });
@@ -110,7 +223,7 @@ export default function ApiLogs() {
     const step3 = await confirm({
       title: "Final confirmation",
       message:
-        "You are about to purge ALL API logs from Alpha Router. Only continue if you intentionally want an empty log table.",
+        "You are about to purge ALL API logs from Alpharouter. Only continue if you intentionally want an empty log table.",
       confirmLabel: "Clear all logs now",
       danger: true,
     });
@@ -241,12 +354,26 @@ export default function ApiLogs() {
           <tbody>
             {items.map((r) => {
               const cached = (r.cached_tokens || 0) > 0;
+              const cost = costQuality(r);
               return (
-                <tr key={r.id}>
+                <tr
+                  key={r.id}
+                  className="api-logs-row--clickable"
+                  onClick={() => void openCostDetails(r)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      void openCostDetails(r);
+                    }
+                  }}
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`Open cost details for request ${r.id}`}
+                >
                   <td>{formatLocalDateTime(r.request_time)}</td>
                   <td>
                     {r.identity_type === "api_key" ? (
-                      <span className="api-log-identity" title="Alpha Router API key">
+                      <span className="api-log-identity" title="Alpharouter API key">
                         <svg
                           className="api-log-identity-icon"
                           viewBox="0 0 24 24"
@@ -264,7 +391,7 @@ export default function ApiLogs() {
                         <span className="api-log-identity-tag">(API Key)</span>
                       </span>
                     ) : r.identity_type === "chat" ? (
-                      <span className="api-log-identity" title="Alpha Router web chat">
+                      <span className="api-log-identity" title="Alpharouter web chat">
                         <svg
                           className="api-log-identity-icon"
                           viewBox="0 0 24 24"
@@ -317,7 +444,14 @@ export default function ApiLogs() {
                       )}
                     </span>
                   </td>
-                  <td>{r.total_cost_usd?.toFixed(5)}</td>
+                  <td>
+                    <span className="api-log-cost" title={cost.title}>
+                      <span>{r.total_cost_usd?.toFixed(5)}</span>
+                      <span className={`api-log-cost-quality api-log-cost-quality--${cost.key}`}>
+                        {cost.label}
+                      </span>
+                    </span>
+                  </td>
                   <td title={`${Math.round(r.response_time_ms)} ms total stream · ${tok(r.completion_tokens || 0)} output`}>
                     {Math.round(r.response_time_ms)}
                   </td>
@@ -328,6 +462,198 @@ export default function ApiLogs() {
           </tbody>
         </table>
       </div>
+
+      <Modal
+        open={!!selectedLog}
+        title={selectedLog ? `Cost details · #${selectedLog.id}` : "Cost details"}
+        onClose={closeCostDetails}
+        panelClassName="modal-panel--cost-details"
+      >
+        {selectedLog && (
+          <div className="api-log-cost-details">
+            <div className="api-log-cost-details__summary">
+              <div>
+                <span className="muted">Time</span>
+                <strong>{formatLocalDateTime(selectedLog.request_time)}</strong>
+              </div>
+              <div>
+                <span className="muted">Model</span>
+                <strong>
+                  <ModelName modelId={selectedLog.model_id} label={selectedLog.model_id} size={14} />
+                </strong>
+              </div>
+              <div>
+                <span className="muted">Logged cost</span>
+                <strong>{money(selectedLog.total_cost_usd)}</strong>
+              </div>
+              <div>
+                <span className="muted">Quality</span>
+                <strong>
+                  <span
+                    className={`api-log-cost-quality api-log-cost-quality--${
+                      confidenceLabel(selectedLog.cost_confidence || "unknown", !!selectedLog.has_unpriced_usage).key
+                    }`}
+                  >
+                    {
+                      confidenceLabel(selectedLog.cost_confidence || "unknown", !!selectedLog.has_unpriced_usage)
+                        .label
+                    }
+                  </span>
+                </strong>
+              </div>
+            </div>
+
+            {costDetailsLoading && <p className="muted">Loading cost ledger…</p>}
+            {costDetailsError && <p className="error">{costDetailsError}</p>}
+
+            {!costDetailsLoading && !costDetailsError && costDetails?.legacy && (
+              <p className="muted">
+                This request was logged before the usage ledger. Only the summary total is available
+                ({money(costDetails.total_cost_usd ?? selectedLog.total_cost_usd)}).
+              </p>
+            )}
+
+            {!costDetailsLoading && !costDetailsError && costDetails && !costDetails.legacy && (
+              <>
+                {costDetails.operation && (
+                  <div className="api-log-cost-details__operation">
+                    <h4>Operation</h4>
+                    <dl>
+                      <div>
+                        <dt>Type</dt>
+                        <dd>{costDetails.operation.operation_type}</dd>
+                      </div>
+                      <div>
+                        <dt>Status</dt>
+                        <dd>{costDetails.operation.status}</dd>
+                      </div>
+                      <div>
+                        <dt>Total</dt>
+                        <dd>{money(costDetails.operation.total_cost_usd)}</dd>
+                      </div>
+                      <div>
+                        <dt>Provider</dt>
+                        <dd>{money(costDetails.operation.provider_cost_usd)}</dd>
+                      </div>
+                      <div>
+                        <dt>Calculated</dt>
+                        <dd>{money(costDetails.operation.calculated_cost_usd)}</dd>
+                      </div>
+                      <div>
+                        <dt>Unpriced events</dt>
+                        <dd>{costDetails.operation.unpriced_event_count}</dd>
+                      </div>
+                      {costDetails.operation.reconciled_at && (
+                        <div>
+                          <dt>Reconciled</dt>
+                          <dd>{formatLocalDateTime(costDetails.operation.reconciled_at)}</dd>
+                        </div>
+                      )}
+                    </dl>
+                  </div>
+                )}
+
+                <div className="api-log-cost-details__events">
+                  <h4>Upstream attempts ({costDetails.events.length})</h4>
+                  {costDetails.events.length === 0 && (
+                    <p className="muted">No usage events were recorded for this operation.</p>
+                  )}
+                  {costDetails.events.map((event) => {
+                    const quality = confidenceLabel(event.cost_confidence || "unknown");
+                    return (
+                      <article key={event.id} className="api-log-cost-event">
+                        <header>
+                          <div>
+                            <strong>
+                              Attempt {event.attempt_index} · {event.operation_name || event.service_type}
+                            </strong>
+                            <span className="muted">
+                              {event.provider_type}
+                              {event.model_id ? ` · ${event.model_id}` : ""}
+                              {` · ${event.status}`}
+                            </span>
+                          </div>
+                          <span className={`api-log-cost-quality api-log-cost-quality--${quality.key}`}>
+                            {quality.label}
+                          </span>
+                        </header>
+                        <dl>
+                          <div>
+                            <dt>Final</dt>
+                            <dd>{money(event.final_cost_usd)}</dd>
+                          </div>
+                          <div>
+                            <dt>Provider</dt>
+                            <dd>{money(event.provider_cost_usd)}</dd>
+                          </div>
+                          <div>
+                            <dt>Calculated</dt>
+                            <dd>{money(event.calculated_cost_usd)}</dd>
+                          </div>
+                          <div>
+                            <dt>Source</dt>
+                            <dd>{event.cost_source || "—"}</dd>
+                          </div>
+                          <div>
+                            <dt>Tokens</dt>
+                            <dd>
+                              {fmt(event.prompt_tokens || 0)} in / {fmt(event.completion_tokens || 0)} out
+                              {(event.cached_tokens || 0) > 0 ? ` · ${fmt(event.cached_tokens)} cached` : ""}
+                              {(event.reasoning_tokens || 0) > 0
+                                ? ` · ${fmt(event.reasoning_tokens)} reasoning`
+                                : ""}
+                            </dd>
+                          </div>
+                          {event.upstream_request_id && (
+                            <div>
+                              <dt>Upstream ID</dt>
+                              <dd>
+                                <code>{event.upstream_request_id}</code>
+                              </dd>
+                            </div>
+                          )}
+                          {event.error_message && (
+                            <div>
+                              <dt>Error</dt>
+                              <dd>{event.error_message}</dd>
+                            </div>
+                          )}
+                        </dl>
+                        {event.line_items.length > 0 && (
+                          <table className="api-log-cost-lines">
+                            <thead>
+                              <tr>
+                                <th>Category</th>
+                                <th>Qty</th>
+                                <th>Unit price</th>
+                                <th>Cost</th>
+                                <th>Pricing</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {event.line_items.map((line, idx) => (
+                                <tr key={`${event.id}-${line.category}-${idx}`}>
+                                  <td>{line.category}</td>
+                                  <td>
+                                    {fmt(line.quantity)} {line.unit}
+                                  </td>
+                                  <td>{money(line.unit_price_usd)}</td>
+                                  <td>{money(line.cost_usd)}</td>
+                                  <td>{line.pricing_source || "—"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </Modal>
     </AdminPage>
   );
 }

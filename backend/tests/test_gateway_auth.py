@@ -4,7 +4,7 @@ Covers:
 - Missing/empty/unknown Bearer key → 401 (no anonymous access).
 - Master key maps to a FIXED service account; body.user is ignored (no impersonation).
 - User API key resolves to its owner with budget applied (skip_budget=False).
-- Alpha Router API key skips user budget but is still subject to its own credit limit.
+- Alpharouter API key skips user budget but is still subject to its own credit limit.
 - /v1/models read gate (_require_valid_gateway_key) rejects missing/unknown, accepts valid.
 """
 

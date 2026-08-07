@@ -43,12 +43,12 @@ def _default(field_name: str):
 
 
 def test_application_identity_contracts():
-    assert _default("app_name") == "Alpha Router"
-    assert app.title == "Alpha Router Organizational AI Platform"
-    assert sandbox_broker_app.title == "Alpha Router Sandbox Broker"
+    assert _default("app_name") == "Alpharouter"
+    assert app.title == "Alpharouter Organizational AI Platform"
+    assert sandbox_broker_app.title == "Alpharouter Sandbox Broker"
     assert health_payload() == {"status": "ok", "service": "alpha-router"}
-    assert format_app_source("alpha_router_key") == "Alpha Router API Key"
-    assert format_app_source("alpha_router_chat") == "Alpha Router Chat"
+    assert format_app_source("alpha_router_key") == "Alpharouter API Key"
+    assert format_app_source("alpha_router_chat") == "Alpharouter Chat"
 
 
 def test_infrastructure_identity_contracts():
@@ -76,14 +76,14 @@ def test_auth_and_api_key_naming_contracts():
 
 def test_totp_and_provider_attribution_contracts():
     uri = provisioning_uri("JBSWY3DPEHPK3PXP", "alice")
-    assert parse_qs(urlparse(uri).query)["issuer"] == ["Alpha Router"]
+    assert parse_qs(urlparse(uri).query)["issuer"] == ["Alpharouter"]
 
     headers = build_openrouter_headers("secret", referer="https://alpha-router.local")
-    assert headers["X-Title"] == "Alpha Router"
+    assert headers["X-Title"] == "Alpharouter"
     assert OUTBOUND_USER_AGENT == "AlphaRouter/1.0 (+https://alpha-router.local)"
 
     request = SimpleNamespace(headers={"referer": "http://localhost:8080/admin/chat"})
-    assert detect_client_app(request) == "Alpha Router Chat"
+    assert detect_client_app(request) == "Alpharouter Chat"
 
 
 def test_database_naming_contracts():
@@ -135,16 +135,36 @@ async def _test_fresh_database_schema_contracts() -> None:
                         "alpha_router_api_key_audit_logs"
                     )
                 }
-                return tables, request_columns, audit_columns
+                usage_event_columns = {
+                    column["name"]
+                    for column in inspector.get_columns("usage_events")
+                }
+                return tables, request_columns, audit_columns, usage_event_columns
 
-            tables, request_columns, audit_columns = await conn.run_sync(snapshot)
+            (
+                tables,
+                request_columns,
+                audit_columns,
+                usage_event_columns,
+            ) = await conn.run_sync(snapshot)
     finally:
         await engine.dispose()
 
     assert "alpha_router_api_keys" in tables
     assert "alpha_router_api_key_audit_logs" in tables
+    assert "pricing_snapshots" in tables
+    assert "usage_operations" in tables
+    assert "usage_events" in tables
+    assert "cost_line_items" in tables
+    assert "cost_ledger_entries" in tables
+    assert "reconciliation_runs" in tables
     assert "alpha_router_api_key_id" in request_columns
+    assert "usage_operation_id" in request_columns
+    assert "cost_source" in request_columns
+    assert "cost_confidence" in request_columns
     assert "alpha_router_api_key_id" in audit_columns
+    assert "final_cost_usd" in usage_event_columns
+    assert "reconciliation_attempts" in usage_event_columns
 
 
 def test_fresh_database_schema_contracts() -> None:

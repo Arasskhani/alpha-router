@@ -346,7 +346,7 @@ export default function ActivityView({
 
   const subtitle = useMemo(() => {
     if (scope === "mine") {
-      return <>Your personal usage on Alpha Router</>;
+      return <>Your personal usage on Alpharouter</>;
     }
     if (scope === "user" && data?.user) {
       const name = data.user.display_name?.trim() || data.user.username;
@@ -388,7 +388,7 @@ export default function ActivityView({
         </>
       );
     }
-    return <>Service usage across models on Alpha Router</>;
+    return <>Service usage across models on Alpharouter</>;
   }, [scope, data]);
 
   async function exportActivity(fmt: "csv" | "pdf") {

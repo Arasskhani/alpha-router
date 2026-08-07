@@ -110,7 +110,7 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
         <div className={`layout${layoutClass}`}>
           <header className="app-topbar">
             <Link to={home} className="topbar-brand">
-              <AlphaRouterLogo size={22} showMark className="alpha-router-logo--gradient" />
+              <AlphaRouterLogo size={24} showMark joined className="alpha-router-logo--topbar" />
             </Link>
             {isChat ? <TopbarModelSearch /> : null}
             <TopbarNav theme={theme} onThemeChange={setTheme} />
@@ -152,7 +152,7 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
   );
 }
 
-/** Model Search in the app topbar — left-aligned after Alpha Router, at the chat sidebar edge. */
+/** Model Search in the app topbar — left-aligned after Alpharouter, at the chat sidebar edge. */
 function TopbarModelSearch() {
   const api = useChatModelChromeApi();
   return (

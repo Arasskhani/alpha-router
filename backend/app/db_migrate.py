@@ -64,6 +64,70 @@ async def apply_schema_column_patches() -> None:
         await conn.run_sync(patch)
 
 
+async def validate_accounting_schema() -> None:
+    """Fail readiness when required accounting storage is incomplete."""
+
+    required = {
+        "pricing_snapshots": {
+            "provider_type",
+            "service_type",
+            "active_scope_key",
+            "pricing_json",
+        },
+        "usage_operations": {
+            "idempotency_key",
+            "accounting_status",
+            "total_cost_usd",
+        },
+        "usage_events": {
+            "operation_id",
+            "final_cost_usd",
+            "cost_source",
+            "cost_confidence",
+            "reconciliation_attempts",
+        },
+        "cost_line_items": {"usage_event_id", "quantity", "unit", "cost_usd"},
+        "cost_ledger_entries": {
+            "operation_id",
+            "amount_usd",
+            "idempotency_key",
+            "effective_at",
+        },
+        "reconciliation_runs": {"provider_type", "status", "adjustment_usd"},
+        "request_logs": {
+            "usage_operation_id",
+            "cost_source",
+            "cost_confidence",
+            "has_unpriced_usage",
+        },
+    }
+
+    async with engine.connect() as conn:
+        def validate(connection) -> list[str]:
+            inspector = inspect(connection)
+            tables = set(inspector.get_table_names())
+            missing: list[str] = []
+            for table_name, expected_columns in required.items():
+                if table_name not in tables:
+                    missing.append(f"table:{table_name}")
+                    continue
+                present = {
+                    column["name"]
+                    for column in inspector.get_columns(table_name)
+                }
+                missing.extend(
+                    f"column:{table_name}.{column}"
+                    for column in sorted(expected_columns - present)
+                )
+            return missing
+
+        missing = await conn.run_sync(validate)
+    if missing:
+        raise RuntimeError(
+            "Accounting schema is incomplete: " + ", ".join(missing)
+        )
+
+
 async def apply_sqlite_schema_patches() -> None:
     """Apply current-schema patches only for a configured SQLite database."""
     if "sqlite" not in get_settings().database_url:

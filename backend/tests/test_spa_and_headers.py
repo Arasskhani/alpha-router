@@ -1,6 +1,6 @@
 """Phase 5: SPA fallback path-traversal containment + API 404 masking guard.
 
-Rather than booting the full Alpha Router app (which requires DB / S3 / scheduler),
+Rather than booting the full Alpharouter app (which requires DB / S3 / scheduler),
 these tests build a minimal FastAPI app that mirrors the spa_fallback route and
 the SecurityHeadersMiddleware logic, and assert the security properties
 directly. This keeps the test hermetic and fast while validating the exact

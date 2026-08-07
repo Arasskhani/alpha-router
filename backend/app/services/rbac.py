@@ -1,4 +1,4 @@
-"""Role-based access control for the Alpha Router admin panel (per-menu roles)."""
+"""Role-based access control for the Alpharouter admin panel (per-menu roles)."""
 
 from __future__ import annotations
 

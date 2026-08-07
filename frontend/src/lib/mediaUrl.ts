@@ -1,4 +1,4 @@
-/** Alpha Router media files are served from an authenticated API route. */
+/** Alpharouter media files are served from an authenticated API route. */
 import { authFetch } from "../api";
 
 

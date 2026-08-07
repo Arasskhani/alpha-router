@@ -1645,6 +1645,15 @@ table.card tbody td:last-child {
   color: var(--muted);
 }
 
+.api-logs-export-error {
+  margin: 0.15rem 0 0;
+}
+
+.api-log-cost-details__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .api-logs-row--clickable {
   cursor: pointer;
 }

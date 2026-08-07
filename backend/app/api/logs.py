@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +24,13 @@ from app.models.cost_accounting import (
 from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel
 from app.models.user import User
+from app.services.log_export_service import (
+    dataframe_to_csv_bytes,
+    detail_rows_to_csv_bytes,
+    request_log_detail_to_export_rows,
+    request_logs_to_export_dataframe,
+    resolve_log_export_maps,
+)
 from app.utils.display import format_app_source
 from app.services.usage_accounting_service import (
     create_configured_pricing_snapshot,
@@ -207,6 +215,47 @@ async def admin_logs_filter_options(
         "usernames": identity_options,
         "models": [m for m in models if (m or "").strip()],
     }
+
+
+@router.get("/admin/logs/export")
+async def admin_logs_export(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_api_logs),
+    limit: int = Query(5000, ge=1, le=20000),
+    username: str | None = None,
+    model_id: str | None = None,
+    response_status: str | None = Query(default=None, pattern="^(success|fail)$"),
+    prompt_cache: str | None = Query(default=None, pattern="^(yes|no)$"),
+    start_date: str | None = None,
+    end_date: str | None = None,
+    timezone: str = Query("local", pattern="^(local|utc)$"),
+):
+    q = select(RequestLog).order_by(RequestLog.request_time.desc())
+    q = _apply_log_filters(
+        q,
+        username=username,
+        model_id=model_id,
+        response_status=response_status,
+        prompt_cache=prompt_cache,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    rows = (await db.execute(q.limit(limit))).scalars().all()
+    provider_map, key_map = await resolve_log_export_maps(db, rows)
+    df = request_logs_to_export_dataframe(
+        rows,
+        tz_mode=timezone,
+        provider_map=provider_map,
+        key_map=key_map,
+    )
+    content = dataframe_to_csv_bytes(df)
+    stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    filename = f"alpharouter-api-logs-{stamp}.csv"
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/admin/logs")
@@ -468,6 +517,76 @@ async def cost_accounting_summary(
             for run in recent_runs
         ],
     }
+
+
+@router.get("/admin/logs/{log_id}/export")
+async def admin_log_export(
+    log_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_api_logs),
+    timezone: str = Query("local", pattern="^(local|utc)$"),
+):
+    log_row = await db.get(RequestLog, log_id)
+    if log_row is None:
+        raise HTTPException(status_code=404, detail="Request log not found")
+
+    provider_map, key_map = await resolve_log_export_maps(db, [log_row])
+    provider = provider_map.get((log_row.model_id or "").strip())
+    router_key = (
+        key_map.get(log_row.alpha_router_api_key_id)
+        if log_row.alpha_router_api_key_id
+        else None
+    )
+
+    operation = None
+    events: list[UsageEvent] = []
+    lines_by_event: dict[str, list[CostLineItem]] = {}
+    if log_row.usage_operation_id:
+        operation = await db.get(UsageOperation, log_row.usage_operation_id)
+        events = (
+            await db.execute(
+                select(UsageEvent)
+                .where(UsageEvent.operation_id == log_row.usage_operation_id)
+                .order_by(UsageEvent.attempt_index, UsageEvent.started_at)
+            )
+        ).scalars().all()
+        providers = {
+            (event.provider_type or "").strip()
+            for event in events
+            if (event.provider_type or "").strip()
+        }
+        if len(providers) == 1:
+            provider = next(iter(providers))
+        elif len(providers) > 1:
+            provider = "mixed"
+        event_ids = [event.id for event in events]
+        if event_ids:
+            line_rows = (
+                await db.execute(
+                    select(CostLineItem)
+                    .where(CostLineItem.usage_event_id.in_(event_ids))
+                    .order_by(CostLineItem.id)
+                )
+            ).scalars().all()
+            for line in line_rows:
+                lines_by_event.setdefault(line.usage_event_id, []).append(line)
+
+    detail_rows = request_log_detail_to_export_rows(
+        log_row,
+        tz_mode=timezone,
+        provider=provider,
+        router_key=router_key,
+        operation=operation,
+        events=events,
+        lines_by_event=lines_by_event,
+    )
+    content = detail_rows_to_csv_bytes(detail_rows)
+    filename = f"alpharouter-api-log-{log_id}.csv"
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/admin/logs/{log_id}/cost-details")

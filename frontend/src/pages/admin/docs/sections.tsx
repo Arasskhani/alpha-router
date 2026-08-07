@@ -1086,9 +1086,14 @@ export const docSections: DocSection[] = [
             provider and calculated amounts.
           </li>
           <li>
-            Click a row to open <strong>Cost details</strong>: operation totals, each upstream attempt (tokens, sources,
-            provider IDs), and line items from{" "}
+            Click a row to open <strong>Cost details</strong>: user or API key, operation totals, each upstream attempt
+            (tokens, sources, provider IDs), and line items from{" "}
             <code>GET /api/admin/logs/&lt;id&gt;/cost-details</code>. Pre-ledger rows show only the legacy summary.
+          </li>
+          <li>
+            <strong>Export</strong> downloads the current filtered set (including date range) as CSV via{" "}
+            <code>GET /api/admin/logs/export</code>. Inside Cost details, <strong>Export</strong> downloads that one
+            request plus its ledger rows via <code>GET /api/admin/logs/&lt;id&gt;/export</code>.
           </li>
           <li>
             <strong>Clear All Logs</strong> — write-gated, multi-step confirm.

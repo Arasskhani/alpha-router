@@ -4,7 +4,7 @@ import AdminPage from "../../components/AdminPage";
 import LogFilterCombobox from "../../components/admin/LogFilterCombobox";
 import Modal from "../../components/Modal";
 import ModelName from "../../components/ModelName";
-import { api } from "../../api";
+import { api, authFetch, formatApiError } from "../../api";
 import { useConfirm } from "../../context/ConfirmContext";
 import { useAdminWriteLock } from "../../lib/adminWriteLock";
 import { formatLocalDateTime } from "../../lib/dateTime";
@@ -92,6 +92,40 @@ type FilterOptions = {
   models: string[];
 };
 
+async function downloadCsvExport(path: string): Promise<void> {
+  const res = await authFetch(path);
+  if (!res.ok) {
+    let message = `Export failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.detail) message = String(body.detail);
+    } catch {
+      /* ignore */
+    }
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  const cd = res.headers.get("Content-Disposition");
+  const match = cd?.match(/filename="([^"]+)"/);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = match?.[1] ?? "alpharouter-api-logs.csv";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+}
+
+function logIdentityLabel(log: Log): string {
+  if (log.identity_type === "api_key") {
+    return `${log.api_key_name || log.username || "API key"} (API Key)`;
+  }
+  if (log.identity_type === "chat") {
+    return `${log.username || "unknown"} (Chat)`;
+  }
+  return log.username || "unknown";
+}
+
 export default function ApiLogs() {
   const { confirm } = useConfirm();
   const writeLock = useAdminWriteLock();
@@ -110,6 +144,24 @@ export default function ApiLogs() {
   const [costDetails, setCostDetails] = useState<CostDetails | null>(null);
   const [costDetailsLoading, setCostDetailsLoading] = useState(false);
   const [costDetailsError, setCostDetailsError] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exportingOne, setExportingOne] = useState(false);
+  const [exportError, setExportError] = useState("");
+
+  const buildFilterQuery = useCallback(
+    (limit?: string) => {
+      const q = new URLSearchParams();
+      if (limit) q.set("limit", limit);
+      if (username.trim()) q.set("username", username.trim());
+      if (model.trim()) q.set("model_id", model.trim());
+      if (responseStatus) q.set("response_status", responseStatus);
+      if (promptCache) q.set("prompt_cache", promptCache);
+      if (start) q.set("start_date", start);
+      if (end) q.set("end_date", end);
+      return q;
+    },
+    [username, model, responseStatus, promptCache, start, end],
+  );
 
   const loadFilterOptions = useCallback(async () => {
     setOptionsLoading(true);
@@ -124,19 +176,39 @@ export default function ApiLogs() {
   }, []);
 
   const load = async () => {
-    const q = new URLSearchParams({ limit: "200" });
-    if (username.trim()) q.set("username", username.trim());
-    if (model.trim()) q.set("model_id", model.trim());
-    if (responseStatus) q.set("response_status", responseStatus);
-    if (promptCache) q.set("prompt_cache", promptCache);
-    if (start) q.set("start_date", start);
-    if (end) q.set("end_date", end);
+    const q = buildFilterQuery("200");
     setLoading(true);
     try {
       const d = await api<{ items: Log[] }>(`/api/admin/logs?${q}`);
       setItems(d.items);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const exportFiltered = async () => {
+    setExportError("");
+    setExporting(true);
+    try {
+      const q = buildFilterQuery("5000");
+      await downloadCsvExport(`/api/admin/logs/export?${q}`);
+    } catch (err) {
+      setExportError(formatApiError(err));
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const exportSelected = async () => {
+    if (!selectedLog) return;
+    setExportError("");
+    setExportingOne(true);
+    try {
+      await downloadCsvExport(`/api/admin/logs/${selectedLog.id}/export`);
+    } catch (err) {
+      setExportError(formatApiError(err));
+    } finally {
+      setExportingOne(false);
     }
   };
 
@@ -183,6 +255,7 @@ export default function ApiLogs() {
     setSelectedLog(log);
     setCostDetails(null);
     setCostDetailsError("");
+    setExportError("");
     setCostDetailsLoading(true);
     try {
       const details = await api<CostDetails>(`/api/admin/logs/${log.id}/cost-details`);
@@ -198,6 +271,7 @@ export default function ApiLogs() {
     setSelectedLog(null);
     setCostDetails(null);
     setCostDetailsError("");
+    setExportError("");
     setCostDetailsLoading(false);
   };
 
@@ -298,6 +372,15 @@ export default function ApiLogs() {
         <div className="api-logs-toolbar__actions">
           <button
             type="button"
+            className="btn btn-readonly-ok api-logs-toolbar-btn"
+            onClick={() => void exportFiltered()}
+            disabled={loading || exporting}
+            title="Export the current filtered logs as CSV"
+          >
+            {exporting ? "Exporting…" : "Export"}
+          </button>
+          <button
+            type="button"
             className="btn btn-danger api-logs-toolbar-btn"
             {...writeLock.writeLockProps}
             onClick={() => void clearAllLogs()}
@@ -331,6 +414,7 @@ export default function ApiLogs() {
             Refresh
           </button>
         </div>
+        {exportError && !selectedLog && <p className="error api-logs-export-error">{exportError}</p>}
       </div>
       <div className="table-wrap">
         <table className="card data-table">
@@ -471,10 +555,26 @@ export default function ApiLogs() {
       >
         {selectedLog && (
           <div className="api-log-cost-details">
+            <div className="api-log-cost-details__actions">
+              <button
+                type="button"
+                className="btn btn-readonly-ok api-logs-toolbar-btn"
+                onClick={() => void exportSelected()}
+                disabled={exportingOne || costDetailsLoading}
+                title="Export this request and its cost ledger as CSV"
+              >
+                {exportingOne ? "Exporting…" : "Export"}
+              </button>
+            </div>
+            {exportError && <p className="error">{exportError}</p>}
             <div className="api-log-cost-details__summary">
               <div>
                 <span className="muted">Time</span>
                 <strong>{formatLocalDateTime(selectedLog.request_time)}</strong>
+              </div>
+              <div>
+                <span className="muted">User / API key</span>
+                <strong>{logIdentityLabel(selectedLog)}</strong>
               </div>
               <div>
                 <span className="muted">Model</span>

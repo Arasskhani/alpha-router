@@ -24,16 +24,20 @@ def test_validate_saml_requires_metadata_when_enabled():
 
 
 def test_validate_saml_accepts_metadata_url():
-    data = validate_saml_config(
-        {
-            "enabled": True,
-            "idp_metadata_url": "https://idp.example.com/metadata",
-            "idp_metadata_xml": "",
-            "entity_id": "https://alpha-router.example/api/auth/saml/metadata",
-            "strict": True,
-            "want_assertions_signed": True,
-        }
-    )
+    with patch(
+        "app.services.ssrf_guard.socket.getaddrinfo",
+        return_value=[(2, 1, 6, "", ("8.8.8.8", 0))],
+    ):
+        data = validate_saml_config(
+            {
+                "enabled": True,
+                "idp_metadata_url": "https://idp.example.com/metadata",
+                "idp_metadata_xml": "",
+                "entity_id": "https://alpha-router.example/api/auth/saml/metadata",
+                "strict": True,
+                "want_assertions_signed": True,
+            }
+        )
     assert data["idp_metadata_url"] == "https://idp.example.com/metadata"
     assert data["entity_id"].endswith("/api/auth/saml/metadata")
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from onelogin.saml2.auth import OneLogin_Saml2_Auth
@@ -12,6 +12,7 @@ from onelogin.saml2.idp_metadata_parser import OneLogin_Saml2_IdPMetadataParser
 from onelogin.saml2.settings import OneLogin_Saml2_Settings
 
 from app.services.auth_urls import public_api_base
+from app.services.ssrf_guard import SSRFBlockedError, assert_response_target_safe, assert_url_safe
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,10 @@ SLO_PATH = "/api/auth/saml/logout"
 DEFAULT_ATTR_USERNAME = "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name"
 DEFAULT_ATTR_EMAIL = "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"
 DEFAULT_ATTR_DISPLAY_NAME = "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname"
+
+# Match admin UI upload limit; also bounds outbound metadata fetches.
+IDP_METADATA_MAX_BYTES = 1024 * 1024
+_IDP_METADATA_MAX_REDIRECTS = 5
 
 
 def default_saml_config() -> dict[str, Any]:
@@ -80,6 +85,31 @@ def _safe_public_base() -> bool:
         return False
 
 
+def validate_idp_metadata_url(url: str) -> str:
+    """Validate IdP metadata URL shape and SSRF safety (DNS / private ranges).
+
+    Internal IdPs on private networks should use uploaded Metadata XML instead,
+    unless ``ALLOW_SSRF_PRIVATE_RANGES=true`` is set for the deployment.
+    """
+    cleaned = (url or "").strip()
+    if not cleaned:
+        raise ValueError("Invalid IdP Metadata URL")
+    parsed = urlsplit(cleaned)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Invalid IdP Metadata URL")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("IdP Metadata URL must not include credentials")
+    try:
+        assert_url_safe(cleaned)
+    except SSRFBlockedError as exc:
+        raise ValueError(
+            "IdP Metadata URL target is not allowed (private/loopback/metadata hosts "
+            "are blocked). For an internal IdP, upload Metadata XML instead, or set "
+            "ALLOW_SSRF_PRIVATE_RANGES=true only on trusted internal deployments."
+        ) from exc
+    return cleaned
+
+
 def validate_saml_config(cfg: dict[str, Any]) -> dict[str, Any]:
     """Normalize and validate admin-submitted SAML config."""
     view = public_view(cfg)
@@ -87,10 +117,13 @@ def validate_saml_config(cfg: dict[str, Any]) -> dict[str, Any]:
     xml = (view.get("idp_metadata_xml") or "").strip()
     if view["enabled"] and not url and not xml:
         raise ValueError("IdP Metadata URL or IdP Metadata XML is required when SAML is enabled")
+    if xml and len(xml.encode("utf-8")) > IDP_METADATA_MAX_BYTES:
+        raise ValueError(
+            f"IdP Metadata XML exceeds the maximum size "
+            f"({IDP_METADATA_MAX_BYTES // (1024 * 1024)} MB)."
+        )
     if url:
-        parsed = urlsplit(url)
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            raise ValueError("Invalid IdP Metadata URL")
+        url = validate_idp_metadata_url(url)
     entity_id = (view.get("entity_id") or "").strip()
     if not entity_id:
         raise ValueError("SP Entity ID is required")
@@ -106,18 +139,67 @@ def validate_saml_config(cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _fetch_idp_metadata_xml(url: str) -> str:
+    """SSRF-safe GET of IdP metadata XML (manual redirects, size-bounded)."""
+    current = validate_idp_metadata_url(url)
+    with httpx.Client(
+        timeout=httpx.Timeout(20.0, connect=10.0),
+        follow_redirects=False,
+        trust_env=False,
+    ) as client:
+        for hop in range(_IDP_METADATA_MAX_REDIRECTS):
+            assert_url_safe(current)
+            with client.stream("GET", current) as response:
+                assert_response_target_safe(response)
+                if response.status_code in {301, 302, 303, 307, 308}:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise ValueError("IdP metadata redirect is missing Location")
+                    if hop >= _IDP_METADATA_MAX_REDIRECTS - 1:
+                        raise ValueError("IdP metadata redirect limit exceeded")
+                    current = urljoin(current, location)
+                    continue
+                response.raise_for_status()
+                declared = response.headers.get("content-length")
+                if declared is not None:
+                    try:
+                        length = int(declared)
+                    except ValueError:
+                        length = -1
+                    if length > IDP_METADATA_MAX_BYTES:
+                        raise ValueError("IdP metadata response exceeds the allowed size")
+                chunks: list[bytes] = []
+                total = 0
+                for chunk in response.iter_bytes():
+                    total += len(chunk)
+                    if total > IDP_METADATA_MAX_BYTES:
+                        raise ValueError("IdP metadata response exceeds the allowed size")
+                    chunks.append(chunk)
+                return b"".join(chunks).decode("utf-8", errors="replace")
+    raise ValueError("IdP metadata redirect limit exceeded")
+
+
 def _load_idp_data(cfg: dict[str, Any]) -> dict[str, Any]:
-    """Load IdP settings. URL takes precedence over uploaded/stored XML when both are set."""
+    """Load IdP settings. Stored XML is preferred over URL (safer for internal IdPs)."""
     xml = (cfg.get("idp_metadata_xml") or "").strip()
     url = (cfg.get("idp_metadata_url") or "").strip()
-    if url:
-        with httpx.Client(timeout=20.0, follow_redirects=True) as client:
-            resp = client.get(url)
-            resp.raise_for_status()
-            parsed = OneLogin_Saml2_IdPMetadataParser.parse(resp.text)
-        return parsed.get("idp") or {}
     if xml:
+        if len(xml.encode("utf-8")) > IDP_METADATA_MAX_BYTES:
+            raise ValueError("IdP Metadata XML exceeds the allowed size")
         parsed = OneLogin_Saml2_IdPMetadataParser.parse(xml)
+        return parsed.get("idp") or {}
+    if url:
+        try:
+            body = _fetch_idp_metadata_xml(url)
+        except SSRFBlockedError as exc:
+            raise ValueError(
+                "IdP Metadata URL target is not allowed. Upload Metadata XML for "
+                "internal IdPs, or enable ALLOW_SSRF_PRIVATE_RANGES only on trusted "
+                "internal deployments."
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ValueError(f"Failed to fetch IdP metadata: {exc}") from exc
+        parsed = OneLogin_Saml2_IdPMetadataParser.parse(body)
         return parsed.get("idp") or {}
     raise ValueError("IdP metadata is not configured")
 

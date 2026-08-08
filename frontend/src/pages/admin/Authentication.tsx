@@ -561,17 +561,20 @@ export default function Authentication() {
           </label>
 
           <label className="input-block" style={{ marginTop: 12 }}>
-            <span className="muted-text">IdP Metadata URL</span>
+            <span className="muted-text">IdP Metadata URL (public IdPs only)</span>
             <input
               value={saml.idp_metadata_url}
               onChange={(e) => setSaml({ ...saml, idp_metadata_url: e.target.value })}
               placeholder="https://idp.example.com/metadata"
               style={{ width: "100%" }}
             />
+            <span className="muted-text" style={{ fontSize: "0.85rem", display: "block", marginTop: 4 }}>
+              Private/loopback hosts are blocked (SSRF protection). For an internal IdP, upload Metadata XML below.
+            </span>
           </label>
 
           <div className="input-block" style={{ marginTop: 8 }}>
-            <span className="muted-text">IdP Metadata XML file (optional if URL is set)</span>
+            <span className="muted-text">IdP Metadata XML file (recommended for internal IdPs)</span>
             <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.5rem", marginTop: 6 }}>
               <input
                 ref={idpXmlInputRef}
@@ -603,7 +606,7 @@ export default function Authentication() {
               )}
             </div>
             <span className="muted-text" style={{ fontSize: "0.85rem", display: "block", marginTop: 4 }}>
-              If both URL and file are set, the URL is used.
+              If both URL and file are set, the uploaded XML is used (no outbound fetch).
             </span>
           </div>
 

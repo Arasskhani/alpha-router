@@ -412,8 +412,9 @@ export const docSections: DocSection[] = [
         </p>
         <h3>SAML 2.0</h3>
         <p>
-          IdP metadata URL or uploaded XML, SP entity ID, ACS URL (shown read-only), attribute mapping, and signature
-          options. Login uses a one-time exchange code (Redis, short TTL) so JWTs are never placed in redirect URLs.
+          IdP metadata via public URL (SSRF-guarded) or uploaded XML (preferred for internal IdPs; XML wins when both
+          are set), SP entity ID, ACS URL (shown read-only), attribute mapping, and signature options. Login uses a
+          one-time exchange code (Redis, short TTL) so JWTs are never placed in redirect URLs.
         </p>
         <h3>OIDC</h3>
         <p>

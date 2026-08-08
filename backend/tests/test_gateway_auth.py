@@ -65,7 +65,6 @@ async def _seed_user_key(
             username="alice",
             email="alice@test",
             hashed_password="x",
-            role="user",
             auth_provider="local",
             is_active=True,
         )

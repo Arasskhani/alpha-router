@@ -21,12 +21,18 @@ def _ensure_missing_indexes(connection, table, inspector) -> None:
 
 
 async def apply_schema_column_patches() -> None:
-    """Add ORM columns and indexes missing from existing current-schema tables.
+    """Add ORM columns/indexes and drop retired columns missing from current schema.
 
     Multiple workers serialize discovery and DDL with a PostgreSQL advisory
     lock.  Duplicate-column errors are tolerated only for the race where
     another worker completed the same patch first.
     """
+    # Columns removed from the ORM that should be dropped from existing DBs.
+    # Safe when empty/greenfield; roles live only in ``user_role_assignments``.
+    retired_columns: dict[str, frozenset[str]] = {
+        "users": frozenset({"role"}),
+    }
+
     async with engine.begin() as conn:
         if conn.dialect.name == "postgresql":
             await conn.execute(text("SELECT pg_advisory_xact_lock(56023113)"))
@@ -57,6 +63,18 @@ async def apply_schema_column_patches() -> None:
                             "already exists" in message
                             or "duplicate column" in message
                         ):
+                            continue
+                        raise
+                for retired in retired_columns.get(table.name, ()):
+                    if retired not in existing:
+                        continue
+                    try:
+                        connection.execute(
+                            text(f"ALTER TABLE {table.name} DROP COLUMN {retired}")
+                        )
+                    except Exception as exc:
+                        message = str(exc).lower()
+                        if "does not exist" in message or "no such column" in message:
                             continue
                         raise
                 _ensure_missing_indexes(connection, table, inspector)

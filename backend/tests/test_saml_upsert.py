@@ -45,7 +45,7 @@ async def _test_saml_refuses_cross_provider_username_collision() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     async with factory() as db:
-        db.add(User(username="admin", hashed_password="x", role="user", auth_provider="local"))
+        db.add(User(username="admin", hashed_password="x", auth_provider="local"))
         await db.commit()
     async with factory() as db:
         with pytest.raises(HTTPException) as exc:
@@ -67,7 +67,7 @@ async def _test_saml_same_provider_username_backfills_external_id() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     async with factory() as db:
-        db.add(User(username="bob", role="user", auth_provider="saml", external_id=None))
+        db.add(User(username="bob", auth_provider="saml", external_id=None))
         await db.commit()
     async with factory() as db:
         u = await _upsert_directory_user(
@@ -138,7 +138,7 @@ async def _test_oidc_refuses_local_username_takeover() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     async with factory() as db:
-        db.add(User(username="admin", hashed_password="x", role="user", auth_provider="local"))
+        db.add(User(username="admin", hashed_password="x", auth_provider="local"))
         await db.commit()
     async with factory() as db:
         with pytest.raises(HTTPException) as exc:

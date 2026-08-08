@@ -583,7 +583,7 @@ async def _upsert_directory_user(db: AsyncSession, profile: dict, provider: str)
 
     mapped = map_ldap_profile(profile) if provider == "ldap" else profile
     if not user:
-        user = User(username=username, role="user", auth_provider=provider)
+        user = User(username=username, auth_provider=provider)
         db.add(user)
     user.email = mapped.get("email") or user.email
     user.display_name = mapped.get("display_name") or user.display_name

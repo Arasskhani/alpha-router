@@ -20,7 +20,6 @@ async def _run_prune_soft_deletes_without_login_history() -> None:
             username="ldap.user",
             email="ldap.user@test",
             hashed_password="",
-            role="user",
             auth_provider="ldap",
             external_id="CN=ldap.user,OU=Old,DC=test,DC=local",
             is_active=True,

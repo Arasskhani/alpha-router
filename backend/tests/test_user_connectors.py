@@ -63,8 +63,8 @@ async def _test_unique_constraint_and_user_scoping() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     async with factory() as db:
-        db.add(User(username="alice", role="user", auth_provider="local", hashed_password="x"))
-        db.add(User(username="bob", role="user", auth_provider="local", hashed_password="x"))
+        db.add(User(username="alice", auth_provider="local", hashed_password="x"))
+        db.add(User(username="bob", auth_provider="local", hashed_password="x"))
         await db.commit()
         from sqlalchemy import select
 
@@ -109,7 +109,7 @@ async def _test_encrypted_fields_round_trip() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     async with factory() as db:
-        db.add(User(username="alice", role="user", auth_provider="local", hashed_password="x"))
+        db.add(User(username="alice", auth_provider="local", hashed_password="x"))
         await db.commit()
         from sqlalchemy import select
 

@@ -68,7 +68,6 @@ async def _bootstrap():
             username="reserve-user",
             email="reserve@test",
             hashed_password="x",
-            role="user",
             auth_provider="local",
             is_active=True,
             monthly_budget_usd=1.0,

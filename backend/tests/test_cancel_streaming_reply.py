@@ -50,7 +50,6 @@ async def _run_cancel_roundtrip() -> None:
                     email="tester@alpha-router.local",
                     display_name="Tester",
                     hashed_password="x",
-                    role="user",
                     auth_provider="local",
                 )
             )
@@ -118,7 +117,6 @@ async def _run_cancel_image_pending() -> None:
                 email="tester2@alpha-router.local",
                 display_name="Tester",
                 hashed_password="x",
-                role="user",
                 auth_provider="local",
             )
         )
@@ -168,7 +166,6 @@ async def _run_stale_pending_reconcile() -> None:
                 email="tester3@alpha-router.local",
                 display_name="Tester",
                 hashed_password="x",
-                role="user",
                 auth_provider="local",
             )
         )
@@ -232,7 +229,6 @@ async def _run_cancel_orphan_pending_with_received_at() -> None:
                 email="tester4@alpha-router.local",
                 display_name="Tester",
                 hashed_password="x",
-                role="user",
                 auth_provider="local",
             )
         )
@@ -295,7 +291,6 @@ async def _run_reconcile_orphan_pending_with_received_at() -> None:
                 email="tester5@alpha-router.local",
                 display_name="Tester",
                 hashed_password="x",
-                role="user",
                 auth_provider="local",
             )
         )

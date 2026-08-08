@@ -22,7 +22,6 @@ async def _run() -> None:
             username="locked",
             email="locked@alpha-router.local",
             hashed_password=hash_password("aStrong-1Pass!"),
-            role="user",
             auth_provider="local",
             totp_enabled=True,
             totp_secret_encrypted=encrypt_secret("JBSWY3DPEHPK3PXP"),
@@ -32,7 +31,6 @@ async def _run() -> None:
         ldap_user = User(
             username="ldap-person",
             email="ldap@alpha-router.local",
-            role="user",
             auth_provider="ldap",
             totp_enabled=True,
             totp_secret_encrypted=encrypt_secret("JBSWY3DPEHPK3PXP"),

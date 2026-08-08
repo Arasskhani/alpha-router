@@ -37,7 +37,7 @@ from app.models.cost_accounting import UsageEvent
 from app.models.media import MediaAsset
 from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel
-from app.models.user import User, UserGroup, user_group_members
+from app.models.user import User, UserGroup, UserRoleAssignment, user_group_members
 from app.services import activity_service
 from app.services.model_capabilities import model_catalog_meta, model_kinds
 from app.services.model_access_service import (
@@ -84,6 +84,7 @@ from app.services.smtp_service import SmtpNotConfiguredError, SmtpSendError, sen
 from app.services.username_norm import normalize_username, username_taken_ci
 from app.services.rbac import (
     FULL_ADMIN_SLUG,
+    USER_SLUG,
     actor_may_assign_roles,
     is_valid_role_slug,
     list_roles,
@@ -96,6 +97,7 @@ from app.services.user_role_service import (
     count_full_administrators,
     get_roles_map,
     get_user_role_slugs,
+    primary_role_for_user,
     set_user_roles,
     user_has_full_administrator,
 )
@@ -576,7 +578,6 @@ async def create_local_user(
         email=body.email,
         display_name=display_name,
         hashed_password=hash_password(password),
-        role=new_slugs[0],
         auth_provider="local",
         department=body.department,
         job_title=body.job_title,
@@ -640,7 +641,21 @@ def _apply_user_list_filters(
     if job_title:
         stmt = stmt.where(User.job_title.ilike(f"%{job_title.strip()}%"))
     if role:
-        stmt = stmt.where(User.role == role.strip().lower())
+        slug = normalize_role_slug(role.strip())
+        has_assignment = exists(
+            select(UserRoleAssignment.user_id).where(
+                UserRoleAssignment.user_id == User.id,
+                UserRoleAssignment.role_slug == slug,
+            )
+        )
+        if slug == USER_SLUG:
+            # Default end users may have no assignment rows yet.
+            has_any_assignment = exists(
+                select(UserRoleAssignment.user_id).where(UserRoleAssignment.user_id == User.id)
+            )
+            stmt = stmt.where(or_(~has_any_assignment, has_assignment))
+        else:
+            stmt = stmt.where(has_assignment)
     if is_active is not None:
         stmt = stmt.where(User.is_active == is_active)
     if group_id is not None:
@@ -1544,6 +1559,7 @@ async def list_user_api_keys(db: AsyncSession = Depends(get_db), _: User = Depen
             .order_by(UserApiKey.created_at.desc())
         )
     ).all()
+    roles_map = await get_roles_map(db, [u.id for _, u in rows])
     return [
         {
             "id": k.id,
@@ -1553,7 +1569,7 @@ async def list_user_api_keys(db: AsyncSession = Depends(get_db), _: User = Depen
             "created_at": k.created_at.isoformat() if k.created_at else None,
             "user_id": u.id,
             "username": u.username,
-            "role": u.role,
+            "role": primary_role_slug(roles_map.get(u.id, ["user"])),
             "email": u.email,
             "monthly_budget_usd": u.monthly_budget_usd,
             "budget_used_usd": u.budget_used_usd,
@@ -2130,7 +2146,7 @@ async def dashboard_activity_export(
         filename_stem=f"alpha-router-activity-{period}-{group_by}",
         scope="service",
         jwt_token=jwt_token,
-        user_role=admin.role,
+        user_role=await primary_role_for_user(db, admin.id),
         period=period,
         prompts_period=prompts_period,
         group_by=group_by,
@@ -2299,7 +2315,7 @@ async def api_key_activity_export(
         filename_stem=f"alpha-router-api-key-{key_id}-activity-{period}",
         scope="api_key",
         jwt_token=jwt_token,
-        user_role=admin.role,
+        user_role=await primary_role_for_user(db, admin.id),
         period=period,
         prompts_period=prompts_period,
         group_by="model",
@@ -2436,7 +2452,7 @@ async def connection_activity_export(
         filename_stem=f"alpha-router-connection-{conn_id}-activity-{period}",
         scope="connection",
         jwt_token=jwt_token,
-        user_role=admin.role,
+        user_role=await primary_role_for_user(db, admin.id),
         period=period,
         prompts_period=prompts_period,
         group_by="model",
@@ -2488,7 +2504,7 @@ async def user_activity_export(
         filename_stem=f"alpha-router-user-{user_id}-activity-{period}",
         scope="user",
         jwt_token=jwt_token,
-        user_role=admin.role,
+        user_role=await primary_role_for_user(db, admin.id),
         period=period,
         prompts_period=prompts_period,
         group_by="model",

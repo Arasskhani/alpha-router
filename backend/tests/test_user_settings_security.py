@@ -44,7 +44,6 @@ def test_prefs_timezone_and_language_normalization():
                     username="prefs-user",
                     email="prefs@alpha-router.local",
                     hashed_password="x",
-                    role="user",
                     auth_provider="local",
                 )
             )
@@ -155,7 +154,6 @@ def test_import_assistant_messages_have_received_at():
                     username="imp",
                     email="imp@alpha-router.local",
                     hashed_password="x",
-                    role="user",
                     auth_provider="local",
                 )
             )
@@ -206,7 +204,6 @@ def test_export_import_roundtrip_new_ids():
                     username="exp",
                     email="exp@alpha-router.local",
                     hashed_password="x",
-                    role="user",
                     auth_provider="local",
                 )
             )

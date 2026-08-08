@@ -37,7 +37,6 @@ async def _bootstrap_user_and_session(factory):
                 username="corrupt",
                 email="corrupt@test",
                 hashed_password="x",
-                role="user",
                 auth_provider="local",
             )
         )

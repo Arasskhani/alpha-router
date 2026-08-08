@@ -58,7 +58,6 @@ async def _run_purge_roundtrip() -> None:
                 email="tester@alpha-router.local",
                 display_name="Tester",
                 hashed_password="x",
-                role="user",
                 auth_provider="local",
             )
         )
@@ -124,7 +123,6 @@ async def _run_purge_removes_empty_sessions() -> None:
                 email="purge@alpha-router.local",
                 display_name="Purge",
                 hashed_password="x",
-                role="user",
                 auth_provider="local",
             )
         )

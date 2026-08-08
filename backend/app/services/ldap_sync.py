@@ -64,7 +64,6 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, int]:
         else:
             user = User(
                 username=username,
-                role="user",
                 auth_provider="ldap",
                 email=item.get("email"),
                 display_name=item.get("display_name") or raw_username or username,

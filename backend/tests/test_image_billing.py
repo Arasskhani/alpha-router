@@ -67,7 +67,6 @@ async def _test_log_image_usage_writes_request_log_and_budget() -> None:
             username="imguser",
             email="imguser@test",
             hashed_password="x",
-            role="user",
             auth_provider="local",
             monthly_budget_usd=10.0,
         )
@@ -134,7 +133,6 @@ async def _test_log_image_usage_failure_row() -> None:
             username="imgfail",
             email="imgfail@test",
             hashed_password="x",
-            role="user",
             auth_provider="local",
         )
         db.add(user)
@@ -172,7 +170,6 @@ async def _test_image_attempts_keep_individual_outcomes_and_quantities() -> None
             username="img-attempts",
             email="img-attempts@test",
             hashed_password="x",
-            role="user",
             auth_provider="local",
             monthly_budget_usd=10.0,
         )

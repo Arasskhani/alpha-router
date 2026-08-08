@@ -50,7 +50,6 @@ class User(Base):
     display_name = Column(String(255), nullable=True)
     hashed_password = Column(String(255), nullable=True)
 
-    role = Column(String(64), default="user")  # RBAC role slug
     auth_provider = Column(String(32), default="local")  # local | ldap | saml
     external_id = Column(String(255), nullable=True, index=True)
     is_active = Column(Boolean, default=True)

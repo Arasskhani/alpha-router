@@ -432,7 +432,7 @@ async def lifespan(app: FastAPI):
                     admin_user.email = DEFAULT_ADMIN_EMAIL
                     break
         if not admin_user:
-            from app.services.rbac import bootstrap_super_admin_role_slugs, primary_role_slug
+            from app.services.rbac import bootstrap_super_admin_role_slugs
 
             bootstrap_roles = bootstrap_super_admin_role_slugs()
             db.add(
@@ -441,7 +441,6 @@ async def lifespan(app: FastAPI):
                     email=DEFAULT_ADMIN_EMAIL,
                     display_name="Administrator",
                     hashed_password=hash_password(settings.admin_password),
-                    role=primary_role_slug(bootstrap_roles),
                     auth_provider="local",
                 )
             )

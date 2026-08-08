@@ -29,7 +29,6 @@ async def _test_no_plan_assignments_yield_zero_budget() -> None:
                 email="nobudget@test",
                 hashed_password="x",
                 monthly_budget_usd=5.0,
-                role="user",
                 auth_provider="local",
             )
         )
@@ -51,7 +50,6 @@ async def _test_direct_plan_assignment_sets_budget() -> None:
                 username="member",
                 email="member@test",
                 hashed_password="x",
-                role="user",
                 auth_provider="local",
             )
         )
@@ -76,7 +74,6 @@ async def _test_explicit_no_plan_blocks_group_inheritance() -> None:
             username="blocked",
             email="blocked@test",
             hashed_password="x",
-            role="user",
             auth_provider="local",
         )
         db.add(user)
@@ -105,7 +102,6 @@ async def _test_inherit_group_plan_without_user_override() -> None:
             username="inherit",
             email="inherit@test",
             hashed_password="x",
-            role="user",
             auth_provider="local",
         )
         db.add(user)

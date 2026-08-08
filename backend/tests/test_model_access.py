@@ -36,7 +36,6 @@ async def _user(db: AsyncSession, username: str, *, role: str = USER_SLUG) -> Us
         username=username,
         email=f"{username}@test",
         hashed_password="x",
-        role=role,
         auth_provider="local",
         is_active=True,
     )

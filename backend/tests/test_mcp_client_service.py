@@ -48,12 +48,12 @@ def _make_transport(handler):
 async def _seed(factory, alice_id=None, bob_id=None):
     async with factory() as db:
         if alice_id is None:
-            db.add(User(username="alice", role="user", auth_provider="local", hashed_password="x"))
+            db.add(User(username="alice", auth_provider="local", hashed_password="x"))
             await db.commit()
             alice = (await db.execute(select(User).where(User.username == "alice"))).scalar_one()
             alice_id = alice.id
         if bob_id is None:
-            db.add(User(username="bob", role="user", auth_provider="local", hashed_password="x"))
+            db.add(User(username="bob", auth_provider="local", hashed_password="x"))
             await db.commit()
             bob = (await db.execute(select(User).where(User.username == "bob"))).scalar_one()
             bob_id = bob.id

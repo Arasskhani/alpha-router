@@ -11,6 +11,7 @@ from app.services import activity_service
 from app.database import get_db
 from app.models.api_key import UserApiKey
 from app.models.user import User
+from app.services.user_role_service import primary_role_for_user
 
 router = APIRouter(prefix="/api/user", tags=["user"])
 
@@ -150,7 +151,7 @@ async def my_activity_export(
         filename_stem=f"alpha-router-my-activity-{user.id}-{period}",
         scope="mine",
         jwt_token=jwt_token,
-        user_role=user.role,
+        user_role=await primary_role_for_user(db, user.id),
         period=period,
         prompts_period=prompts_period,
         group_by="model",

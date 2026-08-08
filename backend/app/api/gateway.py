@@ -51,7 +51,6 @@ async def _get_or_create_gateway_service_user(db: AsyncSession) -> User:
         email=f"gateway-service@{INTERNAL_DOMAIN}",
         display_name="Gateway Service",
         hashed_password=hash_password(secrets.token_urlsafe(32)),
-        role="user",
         auth_provider="system",
         is_active=True,
     )

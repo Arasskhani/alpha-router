@@ -32,7 +32,7 @@ async def _test_find_and_taken_ci() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     async with factory() as db:
-        db.add(User(username="Ali", role="user", auth_provider="local", hashed_password="x"))
+        db.add(User(username="Ali", auth_provider="local", hashed_password="x"))
         await db.commit()
     async with factory() as db:
         found = await find_user_by_username_ci(db, "ALI")
@@ -49,7 +49,7 @@ async def _test_upsert_matches_existing_mixed_case_without_rename() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     async with factory() as db:
-        db.add(User(username="Ali", role="user", auth_provider="ldap"))
+        db.add(User(username="Ali", auth_provider="ldap"))
         await db.commit()
     async with factory() as db:
         user = await _upsert_directory_user(
@@ -80,7 +80,7 @@ async def _test_upsert_refuses_cross_provider_case_collision() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     async with factory() as db:
-        db.add(User(username="admin", hashed_password="x", role="user", auth_provider="local"))
+        db.add(User(username="admin", hashed_password="x", auth_provider="local"))
         await db.commit()
     async with factory() as db:
         with pytest.raises(HTTPException) as exc:

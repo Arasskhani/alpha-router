@@ -64,7 +64,7 @@ async def _purge_roundtrip(monkeypatch) -> None:
 
     async with session_factory() as db:
 
-        user = User(username="alice", email="a@test.local", role="user", auth_provider="local")
+        user = User(username="alice", email="a@test.local", auth_provider="local")
 
         db.add(user)
 

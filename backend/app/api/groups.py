@@ -10,13 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin import _activity_export_response, _activity_query_filters
 from app.api.deps import get_bearer_token, require_groups, require_groups_write
-from app.services.rbac import is_admin_panel_role
 from app.database import get_db
 from app.models.budget import PlanAssignment
 from app.models.user import User, UserGroup, user_group_members
 from app.services import activity_service
 from app.services.auth_config import get_provider_config
 from app.services.ldap_auth import fetch_ldap_groups
+from app.services.rbac import user_is_admin_panel
+from app.services.user_role_service import get_roles_map, primary_role_for_user
 
 router = APIRouter(prefix="/api/admin/groups", tags=["groups"])
 
@@ -300,6 +301,22 @@ async def group_activity(
     }
 
 
+async def _disable_users_skipping_admins(db: AsyncSession, users: list[User]) -> tuple[int, int]:
+    """Deactivate members using ``user_role_assignments`` as the sole RBAC source."""
+    roles_map = await get_roles_map(db, [u.id for u in users])
+    disabled = 0
+    skipped_admins = 0
+    for u in users:
+        if user_is_admin_panel(roles_map.get(u.id, [])):
+            skipped_admins += 1
+            continue
+        if u.is_active:
+            u.is_active = False
+            u.token_version = int(u.token_version or 0) + 1
+            disabled += 1
+    return disabled, skipped_admins
+
+
 @router.get("/{group_id}/activity/export")
 async def group_activity_export(
     group_id: int,
@@ -323,7 +340,7 @@ async def group_activity_export(
         filename_stem=f"alpha-router-group-{group_id}-activity-{period}",
         scope="group",
         jwt_token=jwt_token,
-        user_role=admin.role,
+        user_role=await primary_role_for_user(db, admin.id),
         period=period,
         prompts_period=prompts_period,
         group_by="model",
@@ -347,16 +364,7 @@ async def disable_group_members(
     if not member_ids:
         return {"ok": True, "disabled": 0, "skipped_admins": 0}
     users = (await db.execute(select(User).where(User.id.in_(member_ids)))).scalars().all()
-    disabled = 0
-    skipped_admins = 0
-    for u in users:
-        if is_admin_panel_role(u.role):
-            skipped_admins += 1
-            continue
-        if u.is_active:
-            u.is_active = False
-            u.token_version = int(u.token_version or 0) + 1
-            disabled += 1
+    disabled, skipped_admins = await _disable_users_skipping_admins(db, list(users))
     await db.commit()
     return {"ok": True, "disabled": disabled, "skipped_admins": skipped_admins}
 
@@ -399,14 +407,9 @@ async def bulk_update_groups(
             if not member_ids:
                 continue
             users = (await db.execute(select(User).where(User.id.in_(member_ids)))).scalars().all()
-            for u in users:
-                if is_admin_panel_role(u.role):
-                    skipped_admins += 1
-                    continue
-                if u.is_active:
-                    u.is_active = False
-                    u.token_version = int(u.token_version or 0) + 1
-                    disabled_total += 1
+            disabled, skipped = await _disable_users_skipping_admins(db, list(users))
+            disabled_total += disabled
+            skipped_admins += skipped
         await db.commit()
         return {"ok": True, "disabled": disabled_total, "skipped_admins": skipped_admins}
 

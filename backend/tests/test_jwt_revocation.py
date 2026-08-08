@@ -51,7 +51,6 @@ async def _setup() -> tuple[async_sessionmaker[AsyncSession], User]:
             email="alice@alpha-router.local",
             display_name="Alice",
             hashed_password="x",
-            role="user",
             auth_provider="local",
             token_version=0,
         )

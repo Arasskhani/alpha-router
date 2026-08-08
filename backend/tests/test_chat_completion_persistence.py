@@ -24,7 +24,6 @@ async def _run_persist_roundtrip() -> None:
                 email="tester@alpha-router.local",
                 display_name="Tester",
                 hashed_password="x",
-                role="user",
                 auth_provider="local",
             )
         )
@@ -80,7 +79,6 @@ async def _run_persist_creates_missing_session() -> None:
                 email="tester2@alpha-router.local",
                 display_name="Tester2",
                 hashed_password="x",
-                role="user",
                 auth_provider="local",
             )
         )
@@ -125,7 +123,6 @@ async def _run_persist_sets_fallback_title() -> None:
                 email="tester3@alpha-router.local",
                 display_name="Tester3",
                 hashed_password="x",
-                role="user",
                 auth_provider="local",
             )
         )

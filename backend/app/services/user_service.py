@@ -26,7 +26,6 @@ async def get_or_create_user_from_request(db: AsyncSession, identifier: str) -> 
         username=username,
         email=key if "@" in key else f"{username}@openwebui.local",
         display_name=key,
-        role="user",
         auth_provider="openwebui",
     )
     db.add(user)

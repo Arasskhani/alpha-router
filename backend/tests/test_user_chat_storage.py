@@ -36,7 +36,6 @@ async def _run_roundtrip() -> None:
                 email="tester@alpha-router.local",
                 display_name="Tester",
                 hashed_password="x",
-                role="user",
                 auth_provider="local",
             )
         )
@@ -188,7 +187,6 @@ async def _run_activity_filters() -> None:
                 email="activity@test",
                 display_name="Activity",
                 hashed_password="x",
-                role="user",
                 auth_provider="local",
             )
         )
@@ -271,7 +269,6 @@ async def _run_attachment_append():
                 email="attach@test",
                 display_name="Attach",
                 hashed_password="x",
-                role="user",
                 auth_provider="local",
             )
         )

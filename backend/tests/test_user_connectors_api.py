@@ -65,8 +65,8 @@ def factory_and_users():
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         async with factory() as db:
-            db.add(User(username="alice", role="user", auth_provider="local", hashed_password="x"))
-            db.add(User(username="bob", role="user", auth_provider="local", hashed_password="x"))
+            db.add(User(username="alice", auth_provider="local", hashed_password="x"))
+            db.add(User(username="bob", auth_provider="local", hashed_password="x"))
             await db.commit()
             alice = (await db.execute(select(User).where(User.username == "alice"))).scalar_one()
             bob = (await db.execute(select(User).where(User.username == "bob"))).scalar_one()

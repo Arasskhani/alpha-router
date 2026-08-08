@@ -34,7 +34,6 @@ async def _bootstrap():
                 username="atomic",
                 email="atomic@test",
                 hashed_password="x",
-                role="user",
                 auth_provider="local",
                 monthly_budget_usd=100.0,
                 budget_used_usd=0.0,

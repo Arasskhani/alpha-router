@@ -38,7 +38,6 @@ async def _run_quota_roundtrip() -> None:
             email="quota@alpha-router.local",
             display_name="Quota",
             hashed_password="x",
-            role="user",
             auth_provider="local",
         )
         session.add(user)

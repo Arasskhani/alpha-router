@@ -20,6 +20,10 @@ from app.services.rbac import (
 
 
 async def get_user_role_slugs(db: AsyncSession, user_id: int) -> list[str]:
+    """Return assignable role slugs from ``user_role_assignments`` only.
+
+    Users with no assignment rows are treated as the end-user role.
+    """
     rows = (
         await db.execute(
             select(UserRoleAssignment.role_slug)
@@ -29,9 +33,6 @@ async def get_user_role_slugs(db: AsyncSession, user_id: int) -> list[str]:
     ).scalars().all()
     if rows:
         return _normalize_role_list([str(r) for r in rows])
-    user = await db.get(User, user_id)
-    if user and user.role:
-        return _normalize_role_list([user.role])
     return [USER_SLUG]
 
 
@@ -45,15 +46,16 @@ async def get_roles_map(db: AsyncSession, user_ids: list[int]) -> dict[int, list
             .order_by(UserRoleAssignment.user_id, UserRoleAssignment.role_slug)
         )
     ).all()
-    out: dict[int, list[str]] = {uid: [] for uid in user_ids}
+    raw: dict[int, list[str]] = {uid: [] for uid in user_ids}
     for uid, slug in rows:
         if uid is not None:
-            out.setdefault(int(uid), []).append(normalize_role_slug(str(slug)))
-    for uid in user_ids:
-        if not out.get(uid):
-            user = await db.get(User, uid)
-            out[uid] = [normalize_role_slug(user.role if user else USER_SLUG)]
-    return out
+            raw.setdefault(int(uid), []).append(str(slug))
+    return {uid: _normalize_role_list(slugs) for uid, slugs in raw.items()}
+
+
+async def primary_role_for_user(db: AsyncSession, user_id: int) -> str:
+    """Derived display/JWT primary slug from assignment rows."""
+    return primary_role_slug(await get_user_role_slugs(db, user_id))
 
 
 def _normalize_role_list(slugs: list[str] | None) -> list[str]:
@@ -73,11 +75,11 @@ def _normalize_role_list(slugs: list[str] | None) -> list[str]:
 
 
 async def set_user_roles(db: AsyncSession, user: User, slugs: list[str] | None) -> list[str]:
+    """Replace the user's role assignments. Assignments are the sole source of truth."""
     normalized = _normalize_role_list(slugs)
     await db.execute(delete(UserRoleAssignment).where(UserRoleAssignment.user_id == user.id))
     for slug in normalized:
         db.add(UserRoleAssignment(user_id=user.id, role_slug=slug))
-    user.role = primary_role_slug(normalized)
     await db.flush()
     return normalized
 
@@ -119,6 +121,5 @@ async def ensure_super_admin_roles(db: AsyncSession, user: User, *, admin_userna
             await set_user_roles(db, user, bootstrap_super_admin_role_slugs())
         return
 
-    legacy_global = normalize_role_slug(user.role) in (FULL_ADMIN_SLUG, LEGACY_ADMIN_SLUG)
-    if legacy_global or user.username == admin_username:
+    if user.username == admin_username:
         await set_user_roles(db, user, bootstrap_super_admin_role_slugs())

@@ -139,7 +139,6 @@ async def _build_users(factory):
             email="super@alpha-router.local",
             display_name="Super",
             hashed_password="x",
-            role="super_admin",
             auth_provider="local",
             is_active=True,
         )
@@ -148,7 +147,6 @@ async def _build_users(factory):
             email="regular@alpha-router.local",
             display_name="Regular",
             hashed_password="x",
-            role="user",
             auth_provider="local",
             is_active=True,
         )

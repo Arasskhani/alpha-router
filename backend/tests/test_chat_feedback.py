@@ -30,7 +30,6 @@ async def _run_feedback_roundtrip() -> None:
             email="feedback@alpha-router.local",
             display_name="Feedback",
             hashed_password="x",
-            role="user",
             auth_provider="local",
         )
         db.add(user)

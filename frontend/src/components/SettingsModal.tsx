@@ -20,7 +20,7 @@ import { broadcastChatRefresh } from "../lib/chatLeader";
 import Modal from "./Modal";
 import ThemeSegmentedControl from "./ThemeSegmentedControl";
 
-type TabId = "general" | "data-control" | "security" | "connectors";
+type TabId = "general" | "data-control" | "security";
 
 type SecurityStatus = {
   auth_provider: string;
@@ -47,7 +47,6 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "general", label: "General" },
   { id: "data-control", label: "Data Control" },
   { id: "security", label: "Security" },
-  { id: "connectors", label: "Connectors" },
 ];
 
 const NAMED_THEME_OPTIONS: NamedTheme[] = ["default", "mint", "dark-mint"];
@@ -80,16 +79,11 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange }: P
             <button
               key={item.id}
               type="button"
-              className={`settings-nav-item${tab === item.id ? " active" : ""}${
-                item.id === "connectors" ? " settings-nav-item--soon" : ""
-              }`}
+              className={`settings-nav-item${tab === item.id ? " active" : ""}`}
               onClick={() => setTab(item.id)}
               aria-current={tab === item.id ? "page" : undefined}
             >
               <span>{item.label}</span>
-              {item.id === "connectors" ? (
-                <span className="settings-nav-item__badge">Soon</span>
-              ) : null}
             </button>
           ))}
         </aside>
@@ -100,27 +94,9 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange }: P
           )}
           {tab === "data-control" && <DataControlPanel />}
           {tab === "security" && <SecurityPanel />}
-          {tab === "connectors" && <ConnectorsComingSoon />}
         </section>
       </div>
     </Modal>
-  );
-}
-
-function ConnectorsComingSoon() {
-  return (
-    <div className="settings-section">
-      <h2>Connectors</h2>
-      <p className="settings-section-desc">
-        Link third-party tools such as Gmail, Drive, GitHub, and Notion for use in chat.
-      </p>
-      <div className="settings-coming-soon" role="status">
-        <p className="settings-coming-soon__title">Coming soon</p>
-        <p className="muted-text">
-          Connectors are temporarily unavailable. This section will open when the feature is ready.
-        </p>
-      </div>
-    </div>
   );
 }
 

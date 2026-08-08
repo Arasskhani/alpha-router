@@ -175,7 +175,7 @@ export const userManualSections: DocSection[] = [
             Monthly <strong>Budget</strong> (used vs limit) when a plan is assigned
           </li>
           <li>
-            <strong>Settings</strong> — general preferences, data control, security, connectors
+            <strong>Settings</strong> — general preferences, data control, security
           </li>
           <li>
             <strong>Sign out</strong>
@@ -412,15 +412,6 @@ export const userManualSections: DocSection[] = [
                 on.
               </td>
             </tr>
-            <tr>
-              <td>
-                <strong>Connectors</strong>
-              </td>
-              <td>
-                Exposes your linked MCP connectors (Gmail, Drive, GitHub, Notion, …) as tools the model can call. Connect
-                accounts under Settings → Connectors first.
-              </td>
-            </tr>
           </tbody>
         </table>
         <Note>
@@ -569,13 +560,6 @@ export const userManualSections: DocSection[] = [
             LDAP / SAML / OIDC accounts: password and 2FA are managed at your identity provider
           </li>
         </ul>
-        <h3>Connectors</h3>
-        <p>
-          Link allowed third-party tools (for example Gmail, Google Drive, Google Calendar, GitHub, Notion, Figma,
-          Hugging Face, and others your build includes). You provide OAuth client credentials when required, complete
-          the provider consent screen, and can disconnect later. Enable the <strong>Connectors</strong> chat tool to let
-          the model call them.
-        </p>
       </>
     ),
   },

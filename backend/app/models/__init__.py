@@ -19,7 +19,6 @@ from app.models.system import SmtpSettings, ReportSchedule, SystemMetricSnapshot
 from app.models.auth_provider import AuthProviderConfig
 from app.models.media import MediaAsset
 from app.models.chat import ChatFolder, ChatMessage, ChatMessageFeedback, ChatSession, UserChatPrefs
-from app.models.user_connector import UserConnector
 
 __all__ = [
     "User",
@@ -54,5 +53,4 @@ __all__ = [
     "ChatMessageFeedback",
     "ChatSession",
     "UserChatPrefs",
-    "UserConnector",
 ]

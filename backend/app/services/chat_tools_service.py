@@ -25,7 +25,6 @@ class ChatToolsConfig:
     web_search_depth: str = "medium"
     web_fetch: bool = False
     code_interpreter: bool = False
-    connectors: bool = False
 
 
 def parse_tools_config(body: dict) -> ChatToolsConfig:
@@ -38,7 +37,6 @@ def parse_tools_config(body: dict) -> ChatToolsConfig:
         web_search_depth=depth,
         web_fetch=bool(tools.get("web_fetch") or body.get("web_fetch")),
         code_interpreter=bool(tools.get("code_interpreter") or body.get("code_interpreter")),
-        connectors=bool(tools.get("connectors") or body.get("connectors")),
     )
 
 

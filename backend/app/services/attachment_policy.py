@@ -147,6 +147,76 @@ ALLOWED_DOCUMENT_EXTENSIONS: frozenset[str] = frozenset(
 
 ALLOWED_EXTENSIONS = ALLOWED_IMAGE_EXTENSIONS | ALLOWED_DOCUMENT_EXTENSIONS
 
+# Extension → MIME for documents. Client Content-Type is never trusted for these.
+DOCUMENT_MIME_BY_EXTENSION: dict[str, str] = {
+    "pdf": "application/pdf",
+    "doc": "application/msword",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xls": "application/vnd.ms-excel",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
+    "csv": "text/csv",
+    "tsv": "text/tab-separated-values",
+    "txt": "text/plain",
+    "text": "text/plain",
+    "md": "text/plain",
+    "markdown": "text/plain",
+    "rtf": "application/rtf",
+    "odt": "application/vnd.oasis.opendocument.text",
+    "ods": "application/vnd.oasis.opendocument.spreadsheet",
+    "odp": "application/vnd.oasis.opendocument.presentation",
+    "ppt": "application/vnd.ms-powerpoint",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "json": "application/json",
+    "yaml": "application/yaml",
+    "yml": "application/yaml",
+    "xml": "application/xml",
+    "log": "text/plain",
+    "ini": "text/plain",
+    "cfg": "text/plain",
+    "conf": "text/plain",
+    "tex": "text/plain",
+    "rst": "text/plain",
+    "sql": "text/plain",
+    "toml": "application/toml",
+    "properties": "text/plain",
+}
+
+IMAGE_MIME_BY_EXTENSION: dict[str, str] = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "gif": "image/gif",
+    "webp": "image/webp",
+    "bmp": "image/bmp",
+    "tif": "image/tiff",
+    "tiff": "image/tiff",
+    "heic": "image/heic",
+    "heif": "image/heif",
+    "avif": "image/avif",
+    "ico": "image/x-icon",
+}
+
+# Never store or serve these as Content-Type (XSS / script execution risk).
+UNSAFE_MEDIA_MIMES: frozenset[str] = frozenset(
+    {
+        "text/html",
+        "application/xhtml+xml",
+        "image/svg+xml",
+        "text/javascript",
+        "application/javascript",
+        "application/x-javascript",
+        "text/jscript",
+        "text/vbscript",
+        "application/x-httpd-php",
+        "text/x-python",
+        "application/x-python-code",
+        "text/x-sh",
+        "application/x-sh",
+        "application/x-msdownload",
+    }
+)
+
 MAX_ATTACHMENT_BYTES = 12 * 1024 * 1024
 MAX_ATTACHMENTS_PER_REQUEST = 5
 
@@ -162,6 +232,10 @@ def _extension(filename: str) -> str:
 def _all_extensions(filename: str) -> list[str]:
     name = (filename or "").strip().replace("\\", "/")
     return [s.lstrip(".").lower() for s in PurePath(name).suffixes if s]
+
+
+def _normalize_mime(value: str | None) -> str:
+    return (value or "").split(";")[0].strip().lower()
 
 
 class AttachmentPolicyError(ValueError):
@@ -203,3 +277,95 @@ def validate_attachment_size(size: int, *, max_bytes: int | None = None) -> None
         raise AttachmentPolicyError(
             f"File is too large (max {max(1, limit // (1024 * 1024))} MB)."
         )
+
+
+def resolve_attachment_mime(
+    *,
+    filename: str,
+    kind: str,
+    client_mime: str | None = None,
+) -> str:
+    """Derive a safe MIME for storage. Document uploads ignore client Content-Type."""
+    ext = _extension(filename)
+    kind_norm = (kind or "").strip().lower()
+    client = _normalize_mime(client_mime)
+
+    if kind_norm == "image":
+        mapped = IMAGE_MIME_BY_EXTENSION.get(ext)
+        if mapped:
+            return mapped
+        if client.startswith("image/") and client not in UNSAFE_MEDIA_MIMES:
+            return client
+        return "application/octet-stream"
+
+    # Documents and anything else: extension map only; never trust client.
+    mapped = DOCUMENT_MIME_BY_EXTENSION.get(ext)
+    if mapped and mapped not in UNSAFE_MEDIA_MIMES:
+        return mapped
+    return "application/octet-stream"
+
+
+def coerce_safe_storage_mime(kind: str, mime: str | None) -> str:
+    """Strip unsafe MIME types before persistence (defense in depth)."""
+    kind_norm = (kind or "").strip().lower()
+    cleaned = _normalize_mime(mime) or "application/octet-stream"
+    if cleaned in UNSAFE_MEDIA_MIMES:
+        return "application/octet-stream"
+    if kind_norm == "document" and cleaned.startswith("text/html"):
+        return "application/octet-stream"
+    if kind_norm == "image" and cleaned == "image/svg+xml":
+        return "application/octet-stream"
+    return cleaned
+
+
+def is_inline_image_media(*, kind: str | None, mime: str | None) -> bool:
+    """True when the asset may be served with Content-Disposition: inline."""
+    kind_norm = (kind or "").strip().lower()
+    cleaned = _normalize_mime(mime)
+    if cleaned in UNSAFE_MEDIA_MIMES:
+        return False
+    if kind_norm == "document":
+        return False
+    if kind_norm == "image":
+        return cleaned.startswith("image/") or not cleaned
+    return cleaned.startswith("image/")
+
+
+def build_media_content_disposition(file_name: str, *, disposition: str) -> str:
+    """RFC 6266 Content-Disposition with ASCII fallback + UTF-8 filename*."""
+    from urllib.parse import quote
+
+    disp = disposition if disposition in ("inline", "attachment") else "attachment"
+    raw = (file_name or "download").replace("\\", "/").split("/")[-1]
+    raw = raw.replace("\r", "").replace("\n", "").replace('"', "").strip() or "download"
+    ascii_name = (
+        "".join(c for c in raw if (c.isascii() and c.isalnum()) or c in "-_.") or "download"
+    )[:80]
+    utf8_name = quote(raw[:120], safe="")
+    return f'{disp}; filename="{ascii_name}"; filename*=UTF-8\'\'{utf8_name}'
+
+
+def media_response_type_and_disposition(
+    *,
+    file_name: str,
+    kind: str | None,
+    stored_mime: str | None,
+) -> tuple[str, str]:
+    """Safe (media_type, Content-Disposition) for GET media file responses."""
+    kind_norm = (kind or "").strip().lower()
+    stored = _normalize_mime(stored_mime)
+
+    if is_inline_image_media(kind=kind_norm, mime=stored):
+        mime = stored if stored.startswith("image/") else resolve_attachment_mime(
+            filename=file_name, kind="image", client_mime=stored
+        )
+        if mime in UNSAFE_MEDIA_MIMES or not mime.startswith("image/"):
+            return (
+                "application/octet-stream",
+                build_media_content_disposition(file_name, disposition="attachment"),
+            )
+        return mime, build_media_content_disposition(file_name, disposition="inline")
+
+    # Documents / unknown / legacy unsafe MIME: force download + extension-derived type.
+    mime = resolve_attachment_mime(filename=file_name, kind="document", client_mime=None)
+    return mime, build_media_content_disposition(file_name, disposition="attachment")

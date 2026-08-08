@@ -28,6 +28,8 @@ from app.services.attachment_extract import processed_attachment_payload
 from app.services.attachment_policy import (
     AttachmentPolicyError,
     MAX_ATTACHMENTS_PER_REQUEST,
+    media_response_type_and_disposition,
+    resolve_attachment_mime,
     validate_attachment_filename,
     validate_attachment_size,
 )
@@ -113,7 +115,6 @@ class ChatToolsIn(BaseModel):
     web_fetch: bool = False
     image_generation: bool = False
     code_interpreter: bool = False
-    connectors: bool = False
 
 
 class ChatRequest(BaseModel):
@@ -388,7 +389,11 @@ async def process_attachments(
         except AttachmentPolicyError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        mime = (upload.content_type or "application/octet-stream").split(";")[0].strip()
+        mime = resolve_attachment_mime(
+            filename=filename,
+            kind=kind,
+            client_mime=upload.content_type,
+        )
         try:
             asset = await store_generated_blob(
                 db,
@@ -498,10 +503,15 @@ async def media_file(
         data = await read_media_bytes(row)
     except FileNotFoundError:
         raise HTTPException(404, detail="File not found") from None
+    media_type, content_disposition = media_response_type_and_disposition(
+        file_name=row.file_name or "download",
+        kind=getattr(row, "kind", None),
+        stored_mime=row.mime_type,
+    )
     return Response(
         content=data,
-        media_type=row.mime_type,
-        headers={"Content-Disposition": f'inline; filename="{row.file_name}"'},
+        media_type=media_type,
+        headers={"Content-Disposition": content_disposition},
     )
 
 

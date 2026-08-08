@@ -197,7 +197,11 @@ def normalize_image_for_storage(blob: bytes, mime: str) -> tuple[bytes, str, str
 
 def media_content_hash(blob: bytes, mime: str, kind: str) -> tuple[bytes, str, str]:
     """Return storage bytes, MIME, and SHA-256 hex (pixel-normalized for images)."""
-    if kind == "image" or (mime or "").lower().startswith("image/"):
+    from app.services.attachment_policy import coerce_safe_storage_mime
+
+    kind_norm = (kind or "").strip().lower()
+    mime = coerce_safe_storage_mime(kind_norm, mime)
+    if kind_norm == "image" or mime.startswith("image/"):
         normalized = normalize_image_for_storage(blob, mime)
         if normalized:
             storage_blob, storage_mime, digest = normalized

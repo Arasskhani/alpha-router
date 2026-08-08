@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.branding import (
     API_KEY_PREFIX,
-    CONNECTOR_STATE_COOKIE_NAME,
     OIDC_STATE_COOKIE_NAME,
     OUTBOUND_USER_AGENT,
     REPLACE_MESSAGES_HEADER,
@@ -65,7 +64,6 @@ def test_auth_and_api_key_naming_contracts():
     assert _default("csrf_cookie_name") == "alpha_router_csrf"
     assert _default("gateway_master_key") == "sk-alpha-router-master"
     assert OIDC_STATE_COOKIE_NAME == "alpha_router_oidc_state"
-    assert CONNECTOR_STATE_COOKIE_NAME == "alpha_router_connector_state"
     assert REPLACE_MESSAGES_HEADER == "X-Alpha-Router-Replace-Messages"
 
     raw, prefix, _ = generate_api_key_for_user("branding.test")

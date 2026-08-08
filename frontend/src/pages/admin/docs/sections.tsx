@@ -240,8 +240,8 @@ export const docSections: DocSection[] = [
             credit).
           </li>
           <li>
-            Streaming goes through LiteLLM to the upstream provider. Optional tools: web search/fetch, MCP connectors,
-            code interpreter (via sandbox-broker).
+            Streaming goes through LiteLLM to the upstream provider. Optional tools: web search/fetch and code
+            interpreter (via sandbox-broker).
           </li>
           <li>
             Every upstream attempt is normalized into usage events and immutable ledger entries. The reservation is{" "}
@@ -551,8 +551,8 @@ export const docSections: DocSection[] = [
       <>
         <h2>Secrets &amp; encryption</h2>
         <p>
-          Provider API keys, SMTP passwords, LDAP/OIDC client secrets, connector tokens, and TOTP secrets are stored
-          with Fernet encryption. The only encryption key is derived from <code>DATA_ENCRYPTION_KEY</code> (PBKDF2).
+          Provider API keys, SMTP passwords, LDAP/OIDC client secrets, and TOTP secrets are stored with Fernet
+          encryption. The only encryption key is derived from <code>DATA_ENCRYPTION_KEY</code> (PBKDF2).
           Plaintext, malformed ciphertext, and ciphertext from another key are rejected instead of being forwarded upstream.
         </p>
         <h3>Sandbox trust boundary</h3>
@@ -1128,7 +1128,7 @@ export const docSections: DocSection[] = [
           <li>Chat with enabled models, tools, voice, images, private mode, export.</li>
           <li>Media library with quota and optional personal cleanup schedule.</li>
           <li>Personal Activity with CSV/PDF export.</li>
-          <li>Settings: theme, font, voice language, chat import/export, password/2FA, MCP connectors.</li>
+          <li>Settings: theme, font, voice language, chat import/export, password/2FA.</li>
         </ul>
       </>
     ),
@@ -1224,8 +1224,7 @@ export const docSections: DocSection[] = [
           <li>Every chat/embedding/image provider attempt, including retry, fallback, tool loop, and code loop iterations</li>
           <li>Automatic title generation, prompt enhancement/translation, voice refinement, and transcription</li>
           <li>
-            Web search/fetch requests, MCP <code>tools/list</code> discovery, and MCP tool calls; metered units such as
-            request, credit, second, character, or image are supported
+            Web search/fetch requests; metered units such as request, credit, second, character, or image are supported
           </li>
           <li>User API key traffic on <code>/v1</code> and gateway key traffic against the key’s credit limit</li>
         </ul>
@@ -1290,10 +1289,8 @@ export const docSections: DocSection[] = [
         </p>
         <p>
           Built-in web search emits <code>provider_type=duckduckgo</code> and <code>service_type=web_search</code>;
-          direct URL fetch emits <code>provider_type=direct_http</code> and <code>service_type=web_fetch</code>. MCP
-          discovery uses the connector provider ID with <code>service_type=mcp</code>, while an invoked MCP tool uses{" "}
-          <code>service_type=tool</code>. All four use the <code>request</code> unit unless the provider response exposes
-          a more specific metered unit.
+          direct URL fetch emits <code>provider_type=direct_http</code> and <code>service_type=web_fetch</code>. Both use
+          the <code>request</code> unit unless the provider response exposes a more specific metered unit.
         </p>
         <Code>{`curl -X POST "$ALPHA_ROUTER_BASE/api/admin/cost-accounting/pricing" \\
   -H "Content-Type: application/json" \\

@@ -1,7 +1,7 @@
 """Symmetric encryption for secrets stored at rest.
 
-All persisted provider credentials, connector tokens, SMTP passwords, and TOTP
-secrets use one Fernet key derived from ``DATA_ENCRYPTION_KEY``.  Greenfield
+All persisted provider credentials, SMTP passwords, and TOTP secrets use one
+Fernet key derived from ``DATA_ENCRYPTION_KEY``.  Greenfield
 deployments intentionally have no plaintext reader, alternate salt, or
 historical-key fallback: undecryptable stored values fail closed.
 """

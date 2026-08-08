@@ -1,7 +1,5 @@
 import { STORAGE_KEYS } from "./brand";
 
-
-
 import {
   DEFAULT_CUSTOM_ASPECT_RATIO,
   DEFAULT_IMAGE_ASPECT_PRESET,
@@ -25,14 +23,9 @@ export type ChatToolsState = {
   /** @deprecated legacy WxH — migrated to imageCustomAspectRatio on load. */
   imageCustomSize?: string;
   codeInterpreter: boolean;
-  /** Allow the model to call tools from connected third-party MCP connectors. */
-  connectors: boolean;
 };
 
-
-
 /** All tools off — used for new chats and reset. */
-
 export const FRESH_CHAT_TOOLS: ChatToolsState = {
   webSearch: false,
   webSearchDepth: "medium",
@@ -41,7 +34,6 @@ export const FRESH_CHAT_TOOLS: ChatToolsState = {
   imageAspectRatio: DEFAULT_IMAGE_ASPECT_PRESET,
   imageCustomAspectRatio: DEFAULT_CUSTOM_ASPECT_RATIO,
   codeInterpreter: false,
-  connectors: false,
 };
 
 export function copyFreshChatTools(): ChatToolsState {
@@ -53,29 +45,18 @@ export function anyChatToolEnabled(tools: ChatToolsState): boolean {
     tools.webSearch ||
     tools.webFetch ||
     tools.imageGeneration ||
-    tools.codeInterpreter ||
-    tools.connectors
+    tools.codeInterpreter
   );
 }
 
-
-
 export const DEFAULT_CHAT_TOOLS: ChatToolsState = { ...FRESH_CHAT_TOOLS };
 
-
-
 function normalizeDepth(v: string | undefined): WebSearchDepth {
-
   if (v === "low" || v === "high") return v;
-
   return "medium";
-
 }
 
-
-
 export function normalizeChatTools(raw?: Partial<ChatToolsState> | null): ChatToolsState {
-
   if (!raw) return { ...FRESH_CHAT_TOOLS };
 
   const legacySize = (raw as Partial<ChatToolsState>).imageCustomSize;
@@ -93,71 +74,35 @@ export function normalizeChatTools(raw?: Partial<ChatToolsState> | null): ChatTo
     ),
     imageCustomAspectRatio: customAspect ?? FRESH_CHAT_TOOLS.imageCustomAspectRatio,
     codeInterpreter: raw.codeInterpreter ?? FRESH_CHAT_TOOLS.codeInterpreter,
-    connectors: raw.connectors ?? FRESH_CHAT_TOOLS.connectors,
   };
-
 }
-
-
 
 /** @deprecated Global tools prefs; sessions store their own tools now. */
-
 export function loadChatTools(): ChatToolsState {
-
   try {
-
     const raw = localStorage.getItem(STORAGE_KEYS.chatTools);
-
     if (!raw) return { ...FRESH_CHAT_TOOLS };
-
     return normalizeChatTools(JSON.parse(raw) as Partial<ChatToolsState>);
-
   } catch {
-
     return { ...FRESH_CHAT_TOOLS };
-
   }
-
 }
-
-
 
 export function toolsToApiPayload(state: ChatToolsState) {
-
   return {
-
     web_search: state.webSearch,
-
     tools: {
-
       web_search: state.webSearch,
-
       web_search_depth: state.webSearchDepth,
-
       web_fetch: state.webFetch,
-
       image_generation: state.imageGeneration,
-
       code_interpreter: state.codeInterpreter,
-
-      connectors: state.connectors,
-
     },
-
   };
-
 }
-
-
 
 export function webSearchDepthLabel(depth: WebSearchDepth) {
-
   if (depth === "low") return "Low";
-
   if (depth === "high") return "High";
-
   return "Medium";
-
 }
-
-

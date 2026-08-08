@@ -32,12 +32,26 @@ async def apply_schema_column_patches() -> None:
     retired_columns: dict[str, frozenset[str]] = {
         "users": frozenset({"role"}),
     }
+    # Tables removed from the ORM (feature retired).
+    retired_tables: frozenset[str] = frozenset({"user_connectors"})
 
     async with engine.begin() as conn:
         if conn.dialect.name == "postgresql":
             await conn.execute(text("SELECT pg_advisory_xact_lock(56023113)"))
 
         def patch(connection) -> None:
+            inspector = inspect(connection)
+            tables = set(inspector.get_table_names())
+            for retired_table in retired_tables:
+                if retired_table not in tables:
+                    continue
+                try:
+                    connection.execute(text(f"DROP TABLE IF EXISTS {retired_table} CASCADE"))
+                except Exception as exc:
+                    message = str(exc).lower()
+                    if "does not exist" in message or "no such table" in message:
+                        continue
+                    raise
             inspector = inspect(connection)
             tables = set(inspector.get_table_names())
             for table in Base.metadata.sorted_tables:

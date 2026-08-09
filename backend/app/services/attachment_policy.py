@@ -315,6 +315,10 @@ def coerce_safe_storage_mime(kind: str, mime: str | None) -> str:
         return "application/octet-stream"
     if kind_norm == "image" and cleaned == "image/svg+xml":
         return "application/octet-stream"
+    if kind_norm == "video" and cleaned not in {"video/mp4", "video/webm"}:
+        if cleaned.startswith("video/"):
+            return "video/mp4"
+        return "application/octet-stream"
     return cleaned
 
 
@@ -324,11 +328,23 @@ def is_inline_image_media(*, kind: str | None, mime: str | None) -> bool:
     cleaned = _normalize_mime(mime)
     if cleaned in UNSAFE_MEDIA_MIMES:
         return False
-    if kind_norm == "document":
+    if kind_norm in {"document", "video"}:
         return False
     if kind_norm == "image":
         return cleaned.startswith("image/") or not cleaned
     return cleaned.startswith("image/")
+
+
+def is_inline_video_media(*, kind: str | None, mime: str | None) -> bool:
+    kind_norm = (kind or "").strip().lower()
+    cleaned = _normalize_mime(mime)
+    if cleaned in UNSAFE_MEDIA_MIMES:
+        return False
+    if kind_norm in {"document", "image"}:
+        return False
+    if kind_norm == "video":
+        return cleaned in {"video/mp4", "video/webm"} or cleaned.startswith("video/")
+    return cleaned in {"video/mp4", "video/webm"}
 
 
 def build_media_content_disposition(file_name: str, *, disposition: str) -> str:
@@ -364,6 +380,12 @@ def media_response_type_and_disposition(
                 "application/octet-stream",
                 build_media_content_disposition(file_name, disposition="attachment"),
             )
+        return mime, build_media_content_disposition(file_name, disposition="inline")
+
+    if is_inline_video_media(kind=kind_norm, mime=stored):
+        mime = stored if stored.startswith("video/") else "video/mp4"
+        if mime not in {"video/mp4", "video/webm"}:
+            mime = "video/mp4"
         return mime, build_media_content_disposition(file_name, disposition="inline")
 
     # Documents / unknown / legacy unsafe MIME: force download + extension-derived type.

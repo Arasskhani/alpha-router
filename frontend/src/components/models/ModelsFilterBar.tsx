@@ -80,6 +80,17 @@ function FilterIcon({ kind }: { kind: ModelKind }) {
   }
 }
 
+function AllFilterIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width={18} height={18} aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M4 4h6v6H4V4zm10 0h6v6h-6V4zM4 14h6v6H4v-6zm10 0h6v6h-6v-6z"
+      />
+    </svg>
+  );
+}
+
 type Props = {
   models: CatalogModel[];
   active: ModelKind | null;
@@ -91,6 +102,16 @@ export default function ModelsFilterBar({ models, active, onChange }: Props) {
 
   return (
     <div className="models-filter-bar" role="toolbar" aria-label="Filter models by type">
+      <button
+        type="button"
+        className={`models-filter-chip${active === null ? " models-filter-chip--active" : ""}`}
+        onClick={() => onChange(null)}
+        aria-pressed={active === null}
+      >
+        <AllFilterIcon />
+        <span>All</span>
+        <span className="models-filter-chip__count">{models.length}</span>
+      </button>
       {MODEL_KIND_ORDER.map((kind) => {
         const selected = active === kind;
         return (

@@ -1,6 +1,7 @@
 """Sync model catalogs and provider-native pricing from connections."""
 
 import json
+import logging
 from datetime import datetime
 
 import httpx
@@ -10,6 +11,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.services.model_tool_compatibility_service import ensure_model_compatibility_rows
+from app.services.video_catalog_service import normalize_video_capabilities
+
+logger = logging.getLogger("app.services.model_sync")
+
+
+def _fresh_request_headers(api_key: str) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {api_key}",
+        "Cache-Control": "no-cache, no-store, max-age=0",
+        "Pragma": "no-cache",
+    }
 
 
 def _per_1k_from_openrouter_pricing(pricing) -> tuple[float | None, float | None]:
@@ -45,13 +57,221 @@ def _guess_is_image_model(ext_id: str) -> bool:
     )
 
 
+def _guess_is_video_model(ext_id: str, item: dict | None = None) -> bool:
+    del ext_id
+    if not isinstance(item, dict):
+        return False
+    arch = item.get("architecture") if isinstance(item.get("architecture"), dict) else {}
+    outputs = arch.get("output_modalities") or item.get("output_modalities") or []
+    if isinstance(outputs, list) and any(str(x).lower() == "video" for x in outputs):
+        return True
+    return bool(item.get("video_generation") or item.get("video_capabilities"))
+
+
 async def fetch_openrouter_models(api_key: str, base_url: str | None) -> list[dict]:
     url = (base_url or "https://openrouter.ai/api/v1").rstrip("/") + "/models"
-    headers = {"Authorization": f"Bearer {api_key}"}
+    headers = _fresh_request_headers(api_key)
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.get(url, headers=headers)
+        # OpenRouter defaults this endpoint to text-output models. Request the
+        # complete catalog so image/audio/video-only models are not omitted.
+        resp = await client.get(
+            url,
+            headers=headers,
+            params={"output_modalities": "all"},
+        )
         resp.raise_for_status()
-        return resp.json().get("data", [])
+        payload = resp.json()
+        data = payload.get("data", []) if isinstance(payload, dict) else []
+        return data if isinstance(data, list) else []
+
+
+async def fetch_openrouter_video_models(api_key: str, base_url: str | None) -> dict[str, dict]:
+    """Map model id → OpenRouter /videos/models capability snapshot."""
+    url = (base_url or "https://openrouter.ai/api/v1").rstrip("/") + "/videos/models"
+    headers = _fresh_request_headers(api_key)
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code >= 400:
+                logger.warning(
+                    "OpenRouter video catalog returned HTTP %s for %s",
+                    resp.status_code,
+                    url,
+                )
+                return {}
+            payload = resp.json()
+            data = payload.get("data", []) if isinstance(payload, dict) else []
+    except Exception:
+        logger.warning("OpenRouter video catalog sync failed for %s", url, exc_info=True)
+        return {}
+    out: dict[str, dict] = {}
+    if not isinstance(data, list):
+        return out
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        ext_id = item.get("id") or item.get("canonical_slug")
+        if not ext_id:
+            continue
+        # Keep both identifiers: /models commonly exposes `id`, while
+        # /videos/models may expose a canonical slug for the same model.
+        for key in (item.get("id"), item.get("canonical_slug")):
+            if key:
+                out[str(key)] = item
+    return out
+
+
+async def fetch_openrouter_image_models(api_key: str, base_url: str | None) -> dict[str, dict]:
+    """Map model identifiers to OpenRouter /images/models snapshots."""
+    url = (base_url or "https://openrouter.ai/api/v1").rstrip("/") + "/images/models"
+    headers = _fresh_request_headers(api_key)
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code >= 400:
+                logger.warning(
+                    "OpenRouter image catalog returned HTTP %s for %s",
+                    resp.status_code,
+                    url,
+                )
+                return {}
+            payload = resp.json()
+            data = payload.get("data", []) if isinstance(payload, dict) else []
+    except Exception:
+        logger.warning("OpenRouter image catalog sync failed for %s", url, exc_info=True)
+        return {}
+    out: dict[str, dict] = {}
+    if not isinstance(data, list):
+        return out
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        for key in (item.get("id"), item.get("canonical_slug")):
+            if key:
+                out[str(key)] = item
+    return out
+
+
+async def fetch_provider_models(
+    provider: str,
+    api_key: str,
+    base_url: str | None,
+) -> list[dict]:
+    """Fetch the complete model catalog for a configured provider.
+
+    Most presets expose the OpenAI-compatible `/models` response. Native
+    Google and Anthropic connections use different authentication/response
+    conventions, so normalize those responses here instead of dropping them
+    from the catalog.
+    """
+    provider = provider.lower()
+    base = (base_url or "https://api.openai.com/v1").rstrip("/")
+    headers = _fresh_request_headers(api_key)
+    params: dict[str, str] | None = None
+
+    if provider in {"google", "gemini", "google-ai-studio", "google-gemini"}:
+        headers = {
+            "Cache-Control": "no-cache, no-store, max-age=0",
+            "Pragma": "no-cache",
+        }
+        params = {"key": api_key}
+    elif provider == "anthropic":
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "Cache-Control": "no-cache, no-store, max-age=0",
+            "Pragma": "no-cache",
+        }
+    elif provider in {"azure", "azure-openai"}:
+        headers = {
+            "api-key": api_key,
+            "Cache-Control": "no-cache, no-store, max-age=0",
+            "Pragma": "no-cache",
+        }
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.get(f"{base}/models", headers=headers, params=params)
+        resp.raise_for_status()
+        payload = resp.json()
+
+    if not isinstance(payload, dict):
+        return []
+    raw_items = payload.get("data")
+    if not isinstance(raw_items, list):
+        raw_items = payload.get("models")
+    if not isinstance(raw_items, list):
+        return []
+
+    normalized: list[dict] = []
+    for item in raw_items:
+        if isinstance(item, str):
+            item = {"id": item}
+        if not isinstance(item, dict):
+            continue
+        model = dict(item)
+        model_id = model.get("id") or model.get("name")
+        if not model_id:
+            continue
+        model_id = str(model_id)
+        if model_id.startswith("models/"):
+            model_id = model_id.removeprefix("models/")
+        model["id"] = model_id
+        normalized.append(model)
+    return normalized
+
+
+def _openrouter_snapshot(
+    model: dict,
+    video_meta: dict | None,
+    image_meta: dict | None = None,
+) -> dict:
+    """Build the catalog snapshot with the provider's authoritative modalities."""
+    snapshot = dict(model)
+    if video_meta:
+        model_id = str(model.get("id") or video_meta.get("id") or "")
+        snapshot["video_generation"] = video_meta
+        snapshot["video_capabilities"] = normalize_video_capabilities(
+            provider_type="openrouter",
+            model_id=model_id,
+            raw={**model, "video_generation": video_meta},
+        )
+    else:
+        snapshot.pop("video_generation", None)
+        snapshot.pop("video_capabilities", None)
+
+    if image_meta:
+        image_architecture = image_meta.get("architecture")
+        if isinstance(image_architecture, dict):
+            snapshot["architecture"] = image_architecture
+        snapshot["image_generation"] = image_meta
+    else:
+        snapshot.pop("image_generation", None)
+
+    # OpenRouter's general catalog can advertise media output for models that
+    # are not available through its dedicated generation APIs. The specialized
+    # catalogs are authoritative for both Video and Image generation.
+    architecture = snapshot.get("architecture")
+    if isinstance(architecture, dict):
+        outputs = architecture.get("output_modalities")
+        if isinstance(outputs, list):
+            allowed_outputs = {
+                str(value).lower()
+                for value in outputs
+                if str(value).lower() not in {"video", "image"}
+            }
+            if video_meta:
+                allowed_outputs.add("video")
+            if image_meta:
+                allowed_outputs.add("image")
+            snapshot["architecture"] = {
+                **architecture,
+                "output_modalities": [
+                                    value
+                                    for value in outputs
+                    if str(value).lower() in allowed_outputs
+                ],
+            }
+    return snapshot
 
 
 async def set_model_admin_enabled(db: AsyncSession, model: AIModel, enabled: bool) -> None:
@@ -84,10 +304,16 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
 
     if provider == "openrouter":
         items = await fetch_openrouter_models(api_key, conn.base_url)
+        video_models = await fetch_openrouter_video_models(api_key, conn.base_url)
+        image_models = await fetch_openrouter_image_models(api_key, conn.base_url)
+        seen_ids: set[str] = set()
         for m in items:
             ext_id = m.get("id")
             if not ext_id:
                 continue
+            seen_ids.add(str(ext_id))
+            if m.get("canonical_slug"):
+                seen_ids.add(str(m["canonical_slug"]))
             pricing = m.get("pricing") or {}
             in_1k, out_1k = _per_1k_from_openrouter_pricing(pricing)
             existing = (
@@ -98,6 +324,10 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
                     )
                 )
             ).scalars().first()
+            video_meta = video_models.get(str(ext_id))
+            image_meta = image_models.get(str(ext_id))
+            snapshot = _openrouter_snapshot(m, video_meta, image_meta)
+            video_meta = video_models.get(ext_id)
             payload = {
                 "connection_id": conn.id,
                 "external_id": ext_id,
@@ -106,9 +336,10 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
                 "input_cost_per_1k": in_1k,
                 "output_cost_per_1k": out_1k,
                 "pricing_unit": "1k",
-                "pricing_raw": json.dumps(m),
+                "pricing_raw": json.dumps(snapshot),
                 "context_length": m.get("context_length"),
-                "is_image_model": _guess_is_image_model(ext_id),
+                "is_image_model": bool(image_meta),
+                "is_video_model": bool(video_meta),
                 "last_synced_at": datetime.utcnow(),
             }
             if existing:
@@ -123,48 +354,129 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
                     )
                 )
             synced += 1
-    else:
-        # OpenAI-compatible /v1/models — list only; pricing may require separate catalog
-        base = (conn.base_url or "https://api.openai.com/v1").rstrip("/")
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.get(
-                f"{base}/models",
-                headers={"Authorization": f"Bearer {api_key}"},
+
+        # Upsert video-only catalog entries that appear on /videos/models but not /models.
+        video_only_seen: set[str] = set()
+        for lookup_id, video_meta in video_models.items():
+            canonical_id = str(
+                video_meta.get("id")
+                or video_meta.get("canonical_slug")
+                or lookup_id
             )
-            resp.raise_for_status()
-            for m in resp.json().get("data", []):
-                ext_id = m.get("id")
-                if not ext_id:
-                    continue
-                existing = (
-                    await db.execute(
-                        select(AIModel).where(
-                            AIModel.connection_id == conn.id,
-                            AIModel.external_id == ext_id,
-                        )
+            aliases = {
+                str(value)
+                for value in (
+                    video_meta.get("id"),
+                    video_meta.get("canonical_slug"),
+                    lookup_id,
+                )
+                if value
+            }
+            if aliases & seen_ids or canonical_id in video_only_seen:
+                continue
+            video_only_seen.update(aliases)
+            ext_id = canonical_id
+            existing = (
+                await db.execute(
+                    select(AIModel).where(
+                        AIModel.connection_id == conn.id,
+                        AIModel.external_id == ext_id,
                     )
-                ).scalars().first()
-                payload = {
-                    "connection_id": conn.id,
-                    "external_id": ext_id,
-                    "display_name": ext_id,
-                    "provider_type": provider,
-                    "pricing_raw": json.dumps(m),
-                    "is_image_model": _guess_is_image_model(ext_id),
-                    "last_synced_at": datetime.utcnow(),
-                }
-                if existing:
-                    for k, v in payload.items():
-                        setattr(existing, k, v)
-                else:
-                    db.add(
-                        AIModel(
-                            **payload,
-                            is_enabled=new_enabled,
-                            admin_disabled=False,
-                        )
+                )
+            ).scalars().first()
+            snapshot = {
+                "id": ext_id,
+                "name": video_meta.get("name") or ext_id,
+                "architecture": {
+                    "input_modalities": ["text", "image"]
+                    if video_meta.get("supported_frame_images")
+                    else ["text"],
+                    "output_modalities": ["video"],
+                },
+                "video_generation": video_meta,
+            }
+            snapshot["video_capabilities"] = normalize_video_capabilities(
+                provider_type=provider,
+                model_id=ext_id,
+                raw=snapshot,
+            )
+            pricing = video_meta.get("pricing") or video_meta.get("pricing_skus") or {}
+            in_1k, out_1k = _per_1k_from_openrouter_pricing(pricing)
+            video_only_payload = {
+                "connection_id": conn.id,
+                "external_id": ext_id,
+                "display_name": video_meta.get("name") or ext_id,
+                "provider_type": provider,
+                "input_cost_per_1k": in_1k,
+                "output_cost_per_1k": out_1k,
+                "pricing_unit": "1k",
+                "pricing_raw": json.dumps(snapshot),
+                "context_length": video_meta.get("context_length"),
+                "is_image_model": False,
+                "is_video_model": True,
+                "last_synced_at": datetime.utcnow(),
+            }
+            if existing:
+                for k, v in video_only_payload.items():
+                    setattr(existing, k, v)
+            else:
+                db.add(
+                    AIModel(
+                        **video_only_payload,
+                        is_enabled=new_enabled,
+                        admin_disabled=False,
                     )
-                synced += 1
+                )
+            synced += 1
+
+        # A fresh provider catalog is authoritative. Models that disappeared
+        # from the full response must not remain selectable from a previous
+        # sync, while their rows are retained for audit/history.
+        if seen_ids:
+            await db.execute(
+                update(AIModel)
+                .where(
+                    AIModel.connection_id == conn.id,
+                    AIModel.external_id.not_in(seen_ids),
+                )
+                .values(is_enabled=False)
+            )
+    else:
+        items = await fetch_provider_models(provider, api_key, conn.base_url)
+        for m in items:
+            ext_id = m.get("id")
+            if not ext_id:
+                continue
+            existing = (
+                await db.execute(
+                    select(AIModel).where(
+                        AIModel.connection_id == conn.id,
+                        AIModel.external_id == ext_id,
+                    )
+                )
+            ).scalars().first()
+            payload = {
+                "connection_id": conn.id,
+                "external_id": ext_id,
+                "display_name": m.get("display_name") or m.get("name") or ext_id,
+                "provider_type": provider,
+                "pricing_raw": json.dumps(m),
+                "is_image_model": _guess_is_image_model(ext_id),
+                "is_video_model": _guess_is_video_model(ext_id, m if isinstance(m, dict) else None),
+                "last_synced_at": datetime.utcnow(),
+            }
+            if existing:
+                for k, v in payload.items():
+                    setattr(existing, k, v)
+            else:
+                db.add(
+                    AIModel(
+                        **payload,
+                        is_enabled=new_enabled,
+                        admin_disabled=False,
+                    )
+                )
+            synced += 1
 
     conn.last_sync_at = datetime.utcnow()
     await db.flush()

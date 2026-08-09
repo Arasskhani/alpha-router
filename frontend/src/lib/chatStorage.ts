@@ -6,6 +6,8 @@ import {
   AUDIO_MESSAGE_PREFIX,
   IMAGE_MESSAGE_PREFIX,
   IMAGE_PENDING_MARKER,
+  VIDEO_MESSAGE_PREFIX,
+  VIDEO_PENDING_MARKER,
 } from "./chatMarkers";
 import {
   compactPrivateSessionsForStorage,
@@ -1922,19 +1924,22 @@ export function isDefaultChatTitle(title: string | undefined): boolean {
 const _IMAGE_PREFIX = IMAGE_MESSAGE_PREFIX;
 const _IMAGE_PENDING = IMAGE_PENDING_MARKER;
 
-function _parseImagePrompt(raw: string, prefix: string): string {
+const _VIDEO_PREFIX = VIDEO_MESSAGE_PREFIX;
+const _VIDEO_PENDING = VIDEO_PENDING_MARKER;
+
+function _parseMediaPrompt(raw: string, prefix: string, fallback: string): string {
   try {
     const payload = JSON.parse(raw.slice(prefix.length)) as { prompt?: string };
-    return (payload.prompt || "").trim() || "Generated image";
+    return (payload.prompt || "").trim() || fallback;
   } catch {
-    return "Generated image";
+    return fallback;
   }
 }
 
 /** Plain text for title generation — never raw image JSON or internal markers. */
 export function normalizeMessageForTitle(content: string): string {
   const raw = (content || "").trim();
-  if (!raw || raw === _IMAGE_PENDING) return "";
+  if (!raw || raw === _IMAGE_PENDING || raw === _VIDEO_PENDING) return "";
 
   const attachPrefix = ATTACHMENT_MESSAGE_PREFIX;
   if (raw.startsWith(attachPrefix)) {
@@ -1962,7 +1967,12 @@ export function normalizeMessageForTitle(content: string): string {
     }
   }
 
-  if (raw.startsWith(_IMAGE_PREFIX)) return _parseImagePrompt(raw, _IMAGE_PREFIX);
+  if (raw.startsWith(_IMAGE_PREFIX)) {
+    return _parseMediaPrompt(raw, _IMAGE_PREFIX, "Generated image");
+  }
+  if (raw.startsWith(_VIDEO_PREFIX)) {
+    return _parseMediaPrompt(raw, _VIDEO_PREFIX, "Generated video");
+  }
 
   return raw;
 }

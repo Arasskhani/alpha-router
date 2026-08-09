@@ -39,6 +39,7 @@ class AIModel(Base):
     # public = all users; private = only assigned users/groups (empty = super admin only)
     access_type = Column(String(16), nullable=False, default="public")
     is_image_model = Column(Boolean, default=False)
+    is_video_model = Column(Boolean, default=False)
 
     # Per 1K token USD from provider (nullable if provider does not expose)
     input_cost_per_1k = Column(Float, nullable=True)

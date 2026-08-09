@@ -1,5 +1,7 @@
 /** Canonical persisted chat/media wire markers. */
 export const IMAGE_MESSAGE_PREFIX = "__ALPHA_ROUTER_IMAGE_JSON__:";
 export const IMAGE_PENDING_MARKER = "__ALPHA_ROUTER_IMAGE_PENDING__";
+export const VIDEO_MESSAGE_PREFIX = "__ALPHA_ROUTER_VIDEO_JSON__:";
+export const VIDEO_PENDING_MARKER = "__ALPHA_ROUTER_VIDEO_PENDING__";
 export const ATTACHMENT_MESSAGE_PREFIX = "__ALPHA_ROUTER_ATTACH_JSON__:";
 export const AUDIO_MESSAGE_PREFIX = "__ALPHA_ROUTER_AUDIO_JSON__:";

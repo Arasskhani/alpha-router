@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
-from app.api import admin, auth, authentication, chat, gateway, groups, images, logs, operations, plans, reports, smtp, user_chats, user_media, user_routes, user_settings
+from app.api import admin, auth, authentication, chat, gateway, groups, images, logs, operations, plans, reports, smtp, user_chats, user_media, user_routes, user_settings, videos
 from app.branding import (
     APPLICATION_TITLE,
     CSRF_COOKIE_NAME,
@@ -43,6 +43,7 @@ from app.services.scheduler import (
     start_scheduler,
     stop_scheduler,
 )
+from app.services.video_job_service import start_video_worker, stop_video_worker
 from app.services.security_headers import SecurityHeadersMiddleware
 from app.services.docs_guard import OpenApiDocsGuardMiddleware
 from app.services.observability import increment
@@ -539,11 +540,13 @@ async def lifespan(app: FastAPI):
         await db.commit()
 
     start_scheduler()
+    start_video_worker()
     await refresh_storage_cleanup_schedule()
     await refresh_chat_retention_cleanup_schedule()
     await refresh_auth_sync_schedules()
     configure_litellm_cache()
     yield
+    await stop_video_worker()
     stop_scheduler()
     await close_openrouter_http_client()
     await engine.dispose()
@@ -615,6 +618,7 @@ app.include_router(user_chats.router)
 app.include_router(user_chats.messages_router)
 app.include_router(user_settings.router)
 app.include_router(images.router)
+app.include_router(videos.router)
 app.include_router(operations.router)
 app.include_router(plans.router)
 app.include_router(reports.router)

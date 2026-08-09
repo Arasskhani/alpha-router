@@ -418,7 +418,9 @@ export const docSections: DocSection[] = [
         </ol>
         <Note>
           Image generation uses <code>POST /api/images/generate</code> with its own model selection, retries, and the
-          same reservation/settle billing pattern.
+          same reservation/settle billing pattern. Video generation uses <code>POST /api/videos/generate</code>{" "}
+          (async OpenRouter <code>/videos</code> jobs) plus <code>GET /api/videos/jobs/{"{id}"}</code> polling — never
+          inbound webhooks — and settles with <code>service_type=video</code>.
         </Note>
       </>
     ),

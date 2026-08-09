@@ -3,6 +3,7 @@
 import asyncio
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -15,6 +16,19 @@ from app.services.model_sync import (
     sync_connection_models,
     sync_connection_with_flash,
 )
+
+
+@pytest.fixture(autouse=True)
+def isolate_specialized_openrouter_catalog():
+    """These tests exercise generic upsert semantics, not live video catalog data."""
+    with patch(
+        "app.services.model_sync.fetch_openrouter_video_models",
+        new=AsyncMock(return_value={}),
+    ), patch(
+        "app.services.model_sync.fetch_openrouter_image_models",
+        new=AsyncMock(return_value={}),
+    ):
+        yield
 
 
 async def _session_factory():

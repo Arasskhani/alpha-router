@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api, authFetch } from "../api";
 import AdminPage from "../components/AdminPage";
 import AuthenticatedImage from "../components/AuthenticatedImage";
+import AuthenticatedVideo from "../components/AuthenticatedVideo";
 import RowActionsMenu from "../components/RowActionsMenu";
 import { useConfirm } from "../context/ConfirmContext";
 import { useReadOnly } from "../context/ReadOnlyContext";
@@ -517,6 +518,12 @@ export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProp
             >
               {m.kind === "image" ? (
                 <AuthenticatedImage url={m.url} alt={m.file_name} className="media-page-item__img" />
+              ) : m.kind === "video" ? (
+                <AuthenticatedVideo
+                  url={m.url}
+                  className="media-page-item__img"
+                  title={m.source_prompt || m.file_name}
+                />
               ) : (
                 <div className="media-page-item__file">{m.file_name}</div>
               )}

@@ -220,6 +220,8 @@ export const userManualSections: DocSection[] = [
           </li>
           <li>
             <a href="#chat-images">Image generation</a>
+            {" · "}
+            <a href="#chat-videos">Video generation</a>
           </li>
           <li>
             <a href="#chat-tools">Chat Tools</a>
@@ -362,6 +364,26 @@ export const userManualSections: DocSection[] = [
           <li>Prompt enhancement / translation helpers may be available from the composer for image prompts.</li>
           <li>Completed images appear in the thread and usually in your Media library (unless Private mode).</li>
           <li>Costs count against your monthly budget like other paid requests.</li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    id: "chat-videos",
+    title: "Video generation",
+    group: "Chat",
+    content: (
+      <>
+        <h2>Video generation</h2>
+        <p>
+          Enable <strong>Video Generation</strong> in Chat Tools to create clips from a text prompt (text-to-video) or
+          from an attached / prior image as the first frame (image-to-video). Jobs run asynchronously; a pending
+          placeholder stays in the thread until the clip is ready.
+        </p>
+        <ul>
+          <li>Choose duration, resolution, and aspect ratio from the tools menu before sending.</li>
+          <li>Completed videos appear in the thread and in your Media library (unless Private mode).</li>
+          <li>Only one video job runs at a time per user by default; costs count against your monthly budget.</li>
         </ul>
       </>
     ),

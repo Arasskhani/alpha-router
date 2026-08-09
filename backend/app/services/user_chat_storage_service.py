@@ -26,6 +26,8 @@ from app.services.chat_markers import (
     ATTACHMENT_MESSAGE_PREFIX,
     IMAGE_MESSAGE_PREFIX,
     IMAGE_PENDING_MARKER,
+    VIDEO_MESSAGE_PREFIX,
+    VIDEO_PENDING_MARKER,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,6 +44,7 @@ _PURGE_BATCH_SIZE = 5000
 # Must exceed the OpenRouter read timeout (180s) plus the frontend client timeout (240s)
 # margin, so a slow-but-alive generation is never finalized as "stopped" mid-flight.
 _STALE_IMAGE_PENDING_SEC = 300
+_STALE_VIDEO_PENDING_SEC = 900
 _STALE_TEXT_STREAMING_SEC = 600
 
 
@@ -696,13 +699,19 @@ async def _try_reconcile_inflight_assistant(
     content = str(last.content or "")
     # Finalized assistant rows are done; a pending marker may still be open even
     # when meta incorrectly carries receivedAt (orphan image placeholder).
-    if meta.get("receivedAt") is not None and content != IMAGE_PENDING_MARKER:
+    if meta.get("receivedAt") is not None and content not in (
+        IMAGE_PENDING_MARKER,
+        VIDEO_PENDING_MARKER,
+    ):
         return False
 
     age = (dt.datetime.utcnow() - last.created_at).total_seconds()
     force = bool(meta.get("cancelRequested"))
     if content == IMAGE_PENDING_MARKER:
         if meta.get("receivedAt") is not None or age >= _STALE_IMAGE_PENDING_SEC:
+            force = True
+    if content == VIDEO_PENDING_MARKER:
+        if meta.get("receivedAt") is not None or age >= _STALE_VIDEO_PENDING_SEC:
             force = True
     if (
         not force
@@ -716,7 +725,7 @@ async def _try_reconcile_inflight_assistant(
     if (
         not force
         and content.strip()
-        and content != IMAGE_PENDING_MARKER
+        and content not in (IMAGE_PENDING_MARKER, VIDEO_PENDING_MARKER)
         and meta.get("receivedAt") is None
         and meta.get("streaming") is not True
     ):
@@ -726,6 +735,8 @@ async def _try_reconcile_inflight_assistant(
 
     if content == IMAGE_PENDING_MARKER:
         new_content = "Image generation stopped."
+    elif content == VIDEO_PENDING_MARKER:
+        new_content = "Video generation stopped."
     elif content.strip():
         new_content = content
     else:
@@ -982,6 +993,85 @@ async def finalize_chat_session_image(
     return False
 
 
+def _build_video_message(
+    url: str,
+    prompt: str,
+    model: str,
+    *,
+    params: dict[str, Any] | None = None,
+) -> str:
+    payload: dict[str, Any] = {"url": url, "prompt": prompt, "model": model}
+    if params:
+        payload.update({k: v for k, v in params.items() if v is not None})
+    return f"{VIDEO_MESSAGE_PREFIX}{json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}"
+
+
+async def finalize_chat_session_video(
+    db: AsyncSession,
+    user_id: int,
+    session_id: str,
+    video_url: str,
+    prompt: str,
+    model: str,
+    *,
+    params: dict[str, Any] | None = None,
+) -> bool:
+    """Replace trailing video pending marker with the generated video message (idempotent)."""
+    if not session_id or not video_url:
+        return False
+
+    session = await db.get(ChatSession, session_id)
+    if session is None or session.user_id != user_id:
+        return False
+
+    last = (
+        await db.execute(
+            select(ChatMessage)
+            .where(ChatMessage.session_id == session_id)
+            .order_by(ChatMessage.sequence.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if last is None or last.role != "assistant":
+        return False
+
+    content = str(last.content or "")
+    video_content = _build_video_message(video_url, prompt, model, params=params)
+    if content == VIDEO_PENDING_MARKER:
+        last.content = video_content
+        last.meta = {
+            **(last.meta if isinstance(last.meta, dict) else {}),
+            "modelId": model,
+        }
+        session.last_message_at = dt.datetime.utcnow()
+        _bump_session_revision(session)
+        await db.flush()
+        return True
+    if content.startswith(VIDEO_MESSAGE_PREFIX):
+        return True
+    # The frontend normally persists the pending marker before starting the
+    # durable job. If that request races with job completion (or is lost
+    # during a refresh), preserve the prompt by appending the completed video
+    # after its user turn instead of leaving the media orphaned.
+    if last.role == "user":
+        await append_session_messages(
+            db,
+            user_id,
+            session_id,
+            [
+                {
+                    "role": "assistant",
+                    "content": video_content,
+                    "clientMessageId": str(uuid.uuid4()),
+                    "receivedAt": int(time.time() * 1000),
+                    "modelId": model,
+                }
+            ],
+        )
+        return True
+    return False
+
+
 async def update_last_session_message(
     db: AsyncSession,
     user_id: int,
@@ -1047,6 +1137,8 @@ async def cancel_streaming_reply(
 
     if content == IMAGE_PENDING_MARKER:
         new_content = "Image generation stopped."
+    elif content == VIDEO_PENDING_MARKER:
+        new_content = "Video generation stopped."
     elif content.strip():
         new_content = content
     else:

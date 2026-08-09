@@ -55,7 +55,7 @@ export default function Models() {
   const debouncedSearch = useDebounced(search, 280);
 
   async function loadModels() {
-    return api<CatalogModel[]>("/api/admin/models");
+    return api<CatalogModel[]>("/api/admin/models", { cache: "no-store" });
   }
 
   const models = useMemo(

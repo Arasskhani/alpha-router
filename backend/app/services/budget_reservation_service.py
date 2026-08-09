@@ -102,6 +102,34 @@ def estimate_image_hold(ai_model: AIModel | None, *, quantity: int = 1) -> float
     )
 
 
+_VIDEO_RESOLUTION_HOLD_FACTOR = {
+    "480p": 0.75,
+    "720p": 1.0,
+    "1080p": 1.5,
+    "1k": 1.5,
+    "2k": 2.0,
+    "4k": 3.0,
+}
+
+
+def estimate_video_hold(
+    ai_model: AIModel | None,
+    *,
+    duration_seconds: int = 4,
+    resolution: str | None = "720p",
+) -> float:
+    """Conservative hold for async video generation (duration × resolution tier)."""
+    del ai_model
+    settings = get_settings()
+    base = float(settings.budget_video_fallback_hold_usd or 1.50)
+    duration = max(1, min(int(duration_seconds or 4), int(settings.video_max_duration_seconds or 8)))
+    res_key = (resolution or "720p").strip().lower()
+    factor = float(_VIDEO_RESOLUTION_HOLD_FACTOR.get(res_key, 1.0))
+    # Scale from a 4-second baseline clip.
+    amount = base * (duration / 4.0) * factor
+    return _clamp_hold(amount, base)
+
+
 def estimate_metered_service_hold(service_type: str) -> float:
     """Conservative hold for non-token services without a quoted maximum."""
 

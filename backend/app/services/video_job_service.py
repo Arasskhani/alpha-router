@@ -1,0 +1,616 @@
+"""Lifecycle + in-process worker for async video generation jobs."""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import contextlib
+import datetime
+import json
+import logging
+import time
+import uuid
+from typing import Any
+
+from sqlalchemy import func, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import get_settings
+from app.core.text_safety import strip_nul
+from app.database import AsyncSessionLocal
+from app.models.model_catalog import AIModel
+from app.models.user import User
+from app.models.video import VideoGenerationJob
+from app.services.openrouter_video_service import (
+    clamp_video_duration,
+    normalize_video_aspect_ratio,
+    normalize_video_resolution,
+)
+from app.services.video_providers import NormalizedVideoRequest, ProviderJobRef, get_video_adapter
+from app.services.storage_service import (
+    media_content_hash,
+    media_public_url,
+    store_media_from_blob,
+)
+from app.services.user_chat_storage_service import finalize_chat_session_video
+from app.services.video_billing_service import VideoBillingCapture, log_video_usage
+from app.services.observability import increment
+
+_LOG = logging.getLogger("alpha_router.video_jobs")
+_ACTIVE_TASKS: dict[str, asyncio.Task] = {}
+_WORKER_TASK: asyncio.Task | None = None
+_WORKER_STOP = asyncio.Event()
+_TERMINAL = frozenset({"completed", "failed", "cancelled"})
+
+
+def _now() -> datetime.datetime:
+    return datetime.datetime.utcnow()
+
+
+def serialize_job(job: VideoGenerationJob, *, include_provider: bool = False) -> dict[str, Any]:
+    params: dict[str, Any] = {}
+    if job.params_json:
+        try:
+            loaded = json.loads(job.params_json)
+            if isinstance(loaded, dict):
+                params = loaded
+        except json.JSONDecodeError:
+            params = {}
+    media_url = None
+    if job.media_asset_id:
+        media_url = media_public_url(int(job.media_asset_id))
+    out: dict[str, Any] = {
+        "id": job.id,
+        "status": job.status,
+        "operation": job.operation,
+        "model": job.model_id,
+        "prompt": job.prompt,
+        "params": params,
+        "media_url": media_url,
+        "media_asset_id": job.media_asset_id,
+        "chat_session_id": job.chat_session_id,
+        "error_code": job.error_code,
+        "error_message": job.error_message,
+        "created_at": job.created_at.isoformat() + "Z" if job.created_at else None,
+        "updated_at": job.updated_at.isoformat() + "Z" if job.updated_at else None,
+        "completed_at": job.completed_at.isoformat() + "Z" if job.completed_at else None,
+    }
+    if include_provider:
+        out["provider_job_id"] = job.provider_job_id
+    return out
+
+
+async def count_active_jobs(db: AsyncSession, user_id: int) -> int:
+    result = await db.execute(
+        select(func.count(VideoGenerationJob.id)).where(
+            VideoGenerationJob.user_id == user_id,
+            VideoGenerationJob.status.in_(("queued", "running")),
+        )
+    )
+    return int(result.scalar_one() or 0)
+
+
+async def create_video_job(
+    db: AsyncSession,
+    *,
+    user: User,
+    model_id: str,
+    prompt: str,
+    operation: str,
+    params: dict[str, Any],
+    chat_session_id: str | None,
+    persist: bool,
+    reference_image: str | None,
+    budget_reservation_id: str | None,
+    idempotency_key: str | None,
+    catalog_model_id: int | None,
+    source_ip: str | None,
+    connection_id: int | None = None,
+    provider_type: str = "openrouter",
+    adapter_key: str | None = None,
+    capability_snapshot: dict[str, Any] | None = None,
+) -> VideoGenerationJob:
+    settings = get_settings()
+    if idempotency_key:
+        existing = (
+            await db.execute(
+                select(VideoGenerationJob).where(
+                    VideoGenerationJob.user_id == user.id,
+                    VideoGenerationJob.idempotency_key == idempotency_key,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing
+    max_concurrent = max(1, int(settings.video_max_concurrent_jobs_per_user or 1))
+    active = await count_active_jobs(db, user.id)
+    if active >= max_concurrent:
+        raise PermissionError(
+            f"Video generation concurrency limit reached ({max_concurrent} active job(s))"
+        )
+
+    duration = clamp_video_duration(params.get("duration"))
+    resolution = normalize_video_resolution(params.get("resolution"))
+    aspect = normalize_video_aspect_ratio(params.get("aspect_ratio"))
+    clean_params = {
+        "duration": duration,
+        "resolution": resolution,
+        "aspect_ratio": aspect,
+        "generate_audio": bool(params.get("generate_audio", False)),
+    }
+    if params.get("seed") is not None:
+        clean_params["seed"] = params.get("seed")
+
+    adapter = get_video_adapter(provider_type, adapter_key=adapter_key)
+    job_id = str(uuid.uuid4())
+    reference_storage_path = None
+    reference_image_mime = None
+    if reference_image:
+        from app.services.bounded_io import decode_data_url_bounded
+        from app.services import object_storage_service as oss
+
+        reference_bytes, reference_image_mime = decode_data_url_bounded(
+            reference_image,
+            max_decoded_bytes=int(settings.max_media_input_bytes),
+        )
+        reference_storage_path = f"private/video-input/{job_id}.bin"
+        await asyncio.to_thread(oss.put_object, reference_storage_path, reference_bytes, reference_image_mime)
+    job = VideoGenerationJob(
+        id=job_id,
+        user_id=user.id,
+        chat_session_id=(chat_session_id or "").strip() or None,
+        model_id=model_id,
+        catalog_model_id=catalog_model_id,
+        connection_id=connection_id,
+        provider_type=(provider_type or "unknown").strip().lower(),
+        adapter_key=(adapter_key or provider_type or "unknown").strip().lower(),
+        adapter_version=getattr(adapter, "adapter_version", None),
+        operation=(operation or "generation").strip().lower(),
+        status="queued",
+        prompt=strip_nul(prompt) or "",
+        params_json=json.dumps(clean_params),
+        budget_reservation_id=budget_reservation_id,
+        idempotency_key=(idempotency_key or "")[:160] or None,
+        persist=1 if persist else 0,
+        reference_image=None,
+        reference_storage_path=reference_storage_path,
+        reference_image_mime=reference_image_mime,
+        capability_snapshot_json=json.dumps(capability_snapshot or {}),
+        source_ip=(source_ip or "")[:64] or None,
+        created_at=_now(),
+        updated_at=_now(),
+        expires_at=_now() + datetime.timedelta(seconds=int(settings.video_job_timeout_seconds or 600) + 300),
+        next_action_at=_now(),
+    )
+    db.add(job)
+    await db.flush()
+    return job
+
+
+async def claim_due_video_jobs(*, limit: int = 4) -> list[str]:
+    """Claim due jobs using a short lease so multiple workers cannot duplicate work."""
+    now = _now()
+    lease_until = now + datetime.timedelta(seconds=120)
+    owner = f"video-worker:{uuid.uuid4()}"
+    async with AsyncSessionLocal() as db:
+        query = (
+            select(VideoGenerationJob)
+            .where(
+                VideoGenerationJob.status.in_(("queued", "submitted", "running", "ingesting")),
+                (VideoGenerationJob.next_action_at.is_(None) | (VideoGenerationJob.next_action_at <= now)),
+                (VideoGenerationJob.lease_expires_at.is_(None) | (VideoGenerationJob.lease_expires_at < now)),
+            )
+            .order_by(VideoGenerationJob.created_at.asc())
+            .limit(max(1, min(limit, 16)))
+            .with_for_update(skip_locked=True)
+        )
+        rows = (await db.execute(query)).scalars().all()
+        ids: list[str] = []
+        for job in rows:
+            job.lease_owner = owner
+            job.lease_expires_at = lease_until
+            job.attempt_count = int(job.attempt_count or 0) + 1
+            job.next_action_at = None
+            ids.append(job.id)
+        if ids:
+            await db.commit()
+        return ids
+
+
+async def _durable_worker_loop() -> None:
+    """Continuously claim DB jobs; safe to run in each application worker."""
+    while not _WORKER_STOP.is_set():
+        try:
+            job_ids = await claim_due_video_jobs()
+            if job_ids:
+                await asyncio.gather(*(_run_video_job(job_id) for job_id in job_ids))
+            else:
+                await asyncio.sleep(1.0)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOG.exception("Video durable worker iteration failed")
+            await asyncio.sleep(2.0)
+
+
+def start_video_worker() -> None:
+    global _WORKER_TASK
+    if _WORKER_TASK is None or _WORKER_TASK.done():
+        _WORKER_STOP.clear()
+        _WORKER_TASK = asyncio.create_task(_durable_worker_loop(), name="video-durable-worker")
+
+
+async def stop_video_worker() -> None:
+    global _WORKER_TASK
+    _WORKER_STOP.set()
+    if _WORKER_TASK and not _WORKER_TASK.done():
+        _WORKER_TASK.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _WORKER_TASK
+    _WORKER_TASK = None
+
+
+def kick_video_job(job_id: str) -> None:
+    """Compatibility hook: durable workers discover queued jobs from the DB."""
+    del job_id
+    start_video_worker()
+
+
+async def cancel_video_job(db: AsyncSession, job: VideoGenerationJob) -> VideoGenerationJob:
+    if job.status in _TERMINAL:
+        return job
+    job.cancel_requested_at = _now()
+    if job.provider_job_id:
+        try:
+            from app.models.connection import Connection
+            from app.services.secret_crypto import decrypt_secret
+
+            model = await db.get(AIModel, job.catalog_model_id) if job.catalog_model_id else None
+            conn = await db.get(Connection, job.connection_id) if job.connection_id else None
+            if model and conn and conn.is_active:
+                adapter = get_video_adapter(job.provider_type, adapter_key=job.adapter_key)
+                await adapter.cancel(
+                    api_key=decrypt_secret(conn.api_key_encrypted),
+                    base_url=conn.base_url,
+                    job=ProviderJobRef(
+                        provider_type=job.provider_type,
+                        provider_job_id=job.provider_job_id,
+                        polling_url=job.provider_polling_url,
+                    ),
+                )
+        except Exception:
+            _LOG.warning("Provider cancel failed for video job %s", job.id, exc_info=True)
+    job.status = "cancelled"
+    job.error_code = "cancelled"
+    job.error_message = "Cancelled by user"
+    job.completed_at = _now()
+    job.updated_at = _now()
+    await db.flush()
+    task = _ACTIVE_TASKS.get(job.id)
+    if task and not task.done():
+        task.cancel()
+    return job
+
+
+async def reclaim_stale_video_jobs() -> int:
+    """Mark stuck running/queued jobs as failed and settle billing when possible."""
+    settings = get_settings()
+    cutoff = _now() - datetime.timedelta(seconds=int(settings.video_job_reclaim_after_seconds or 900))
+    reclaimed = 0
+    async with AsyncSessionLocal() as db:
+        if db.get_bind().dialect.name == "postgresql":
+            locked = await db.execute(text("SELECT pg_try_advisory_xact_lock(56023119)"))
+            if not bool(locked.scalar()):
+                return 0
+        rows = (
+            await db.execute(
+                select(VideoGenerationJob).where(
+                    VideoGenerationJob.status.in_(("queued", "running")),
+                    VideoGenerationJob.updated_at < cutoff,
+                )
+            )
+        ).scalars().all()
+        for job in rows:
+            job.status = "failed"
+            job.error_code = "timeout"
+            job.error_message = "Video job timed out and was reclaimed"
+            job.completed_at = _now()
+            job.updated_at = _now()
+            reclaimed += 1
+            try:
+                user = await db.get(User, job.user_id)
+                ai_model = await db.get(AIModel, job.catalog_model_id) if job.catalog_model_id else None
+                if user:
+                    capture = VideoBillingCapture(
+                        model_id=job.model_id,
+                        ai_model=ai_model,
+                        provider_type=ai_model.provider_type if ai_model else "openrouter",
+                    )
+                    capture.add_usage(None, success=False, error_message=job.error_message)
+                    await log_video_usage(
+                        db,
+                        user=user,
+                        capture=capture,
+                        prompt=job.prompt or "",
+                        response_time_ms=0,
+                        success=False,
+                        error_message=job.error_message,
+                        source_ip=job.source_ip,
+                        operation=job.operation,
+                        budget_reservation_id=job.budget_reservation_id,
+                        job_id=job.id,
+                    )
+            except Exception:
+                _LOG.exception("Failed settling reclaimed video job %s", job.id)
+        if reclaimed:
+            await db.commit()
+    return reclaimed
+
+
+async def _run_video_job(job_id: str) -> None:
+    started = time.perf_counter()
+    async with AsyncSessionLocal() as db:
+        job = await db.get(VideoGenerationJob, job_id)
+        if job is None or job.status in _TERMINAL:
+            return
+        user = await db.get(User, job.user_id)
+        if user is None:
+            job.status = "failed"
+            job.error_code = "user_missing"
+            job.error_message = "User not found"
+            job.completed_at = _now()
+            job.updated_at = _now()
+            await db.commit()
+            return
+
+        ai_model = await db.get(AIModel, job.catalog_model_id) if job.catalog_model_id else None
+        api_key = None
+        base_url = None
+        provider_type = job.provider_type or "openrouter"
+        if ai_model is not None:
+            from app.models.connection import Connection
+            from app.services.secret_crypto import decrypt_secret
+
+            conn = await db.get(Connection, ai_model.connection_id)
+            if conn and conn.is_active:
+                api_key = decrypt_secret(conn.api_key_encrypted)
+                base_url = conn.base_url
+                provider_type = job.provider_type or conn.provider_type or "openrouter"
+
+        billing = VideoBillingCapture(
+            model_id=job.model_id,
+            ai_model=ai_model,
+            provider_type=provider_type,
+        )
+        params: dict[str, Any] = {}
+        if job.params_json:
+            try:
+                loaded = json.loads(job.params_json)
+                if isinstance(loaded, dict):
+                    params = loaded
+            except json.JSONDecodeError:
+                params = {}
+
+        duration = clamp_video_duration(params.get("duration"))
+        success = False
+        error_message: str | None = None
+        settings = get_settings()
+        deadline = time.monotonic() + float(settings.video_job_timeout_seconds or 600)
+        poll_interval = max(0.5, float(settings.video_job_poll_interval_ms or 2500) / 1000.0)
+
+        try:
+            if not api_key:
+                raise RuntimeError(f"No active {provider_type} connection for video model")
+            adapter = get_video_adapter(provider_type, adapter_key=job.adapter_key)
+            increment("video_job_started")
+
+            job.status = "running"
+            job.started_at = job.started_at or _now()
+            job.updated_at = _now()
+            await db.commit()
+
+            reference_bytes = None
+            reference_mime = job.reference_image_mime
+            if job.reference_storage_path:
+                from app.services import object_storage_service as oss
+
+                reference_bytes = await asyncio.to_thread(
+                    oss.get_object_bytes,
+                    job.reference_storage_path,
+                )
+                input_path = job.reference_storage_path
+                job.reference_storage_path = None
+                await asyncio.to_thread(oss.delete_object, input_path)
+                if job.operation != "img2vid":
+                    job.operation = "img2vid"
+
+            normalized_request = NormalizedVideoRequest(
+                model_id=job.model_id,
+                prompt=job.prompt,
+                operation=job.operation,
+                duration_seconds=duration,
+                resolution=params.get("resolution"),
+                aspect_ratio=params.get("aspect_ratio"),
+                generate_audio=bool(params.get("generate_audio", False)),
+                reference_image=reference_bytes,
+                reference_image_mime=reference_mime,
+                seed=params.get("seed"),
+            )
+            referer = settings.frontend_url
+            submit_started = _now()
+            if job.provider_job_id:
+                provider_job = ProviderJobRef(
+                    provider_type=job.provider_type,
+                    provider_job_id=job.provider_job_id,
+                    polling_url=job.provider_polling_url,
+                )
+            else:
+                job.status = "submitting"
+                provider_job = await adapter.submit(
+                    api_key=api_key,
+                    base_url=base_url,
+                    request=normalized_request,
+                )
+                increment("video_provider_submit")
+                job.provider_job_id = provider_job.provider_job_id
+                job.provider_polling_url = provider_job.polling_url
+                job.status = "submitted"
+                job.updated_at = _now()
+                await db.commit()
+
+            final_snapshot = None
+            status = "submitted"
+            while status not in _TERMINAL:
+                if time.monotonic() > deadline:
+                    raise TimeoutError("Video generation timed out")
+                # Reload cancel state
+                await db.refresh(job)
+                if job.status == "cancelled":
+                    raise asyncio.CancelledError()
+                job.lease_expires_at = _now() + datetime.timedelta(seconds=120)
+                await asyncio.sleep(poll_interval)
+                final_snapshot = await adapter.poll(
+                    api_key=api_key,
+                    base_url=base_url,
+                    job=provider_job,
+                )
+                status = final_snapshot.state
+                job.provider_status_raw = json.dumps(final_snapshot.raw)[:20000]
+                # When the provider signals completion, transition to "ingesting"
+                # — NOT "completed" — so the frontend keeps polling until the
+                # media asset is stored and media_url is available.
+                if status == "completed":
+                    job.status = "ingesting"
+                elif status in _TERMINAL:
+                    job.status = status
+                else:
+                    job.status = "running"
+                job.updated_at = _now()
+                await db.commit()
+
+            if status == "cancelled":
+                raise asyncio.CancelledError()
+            if status != "completed" or final_snapshot is None:
+                raise RuntimeError(final_snapshot.error_message if final_snapshot else "Video generation failed")
+
+            asset_ref = await adapter.fetch_result(
+                api_key=api_key,
+                base_url=base_url,
+                snapshot=final_snapshot,
+            )
+
+            from app.services.video_media_ingest_service import fetch_video_asset
+            blob, mime = await fetch_video_asset(
+                url=asset_ref.url,
+                api_key=api_key,
+                requires_auth=asset_ref.requires_auth,
+                allowed_hosts=asset_ref.allowed_hosts,
+            )
+            usage = adapter.normalize_usage(final_snapshot)
+            billing.add_usage(
+                usage.raw,
+                started_at=submit_started,
+                success=True,
+                quantity=usage.quantity or float(duration),
+                unit=usage.unit or "second",
+            )
+
+            media_url: str | None = None
+            if int(job.persist or 0) == 1:
+                storage_blob, storage_mime, digest = media_content_hash(blob, mime, "video")
+                asset = await store_media_from_blob(
+                    db,
+                    user_id=user.id,
+                    kind="video",
+                    blob=storage_blob,
+                    mime=storage_mime,
+                    content_hash=digest,
+                    source_model=job.model_id,
+                    source_prompt=job.prompt,
+                    chat_session_id=job.chat_session_id,
+                    file_name_hint="generated.mp4",
+                    metadata={"operation": job.operation, "duration": duration},
+                )
+                job.media_asset_id = asset.id
+                media_url = media_public_url(asset.id)
+                if job.chat_session_id:
+                    await finalize_chat_session_video(
+                        db,
+                        user.id,
+                        job.chat_session_id,
+                        media_url,
+                        job.prompt,
+                        job.model_id,
+                        params={
+                            "duration": duration,
+                            "resolution": params.get("resolution"),
+                            "aspect_ratio": params.get("aspect_ratio"),
+                            "operation": job.operation,
+                        },
+                    )
+            else:
+                # Private mode uses a short-lived object, never SQL base64.
+                from app.services import object_storage_service as oss
+
+                private_key = f"private/videos/{job.id}.{mime.rsplit('/', 1)[-1]}"
+                await asyncio.to_thread(oss.put_object, private_key, blob, mime)
+                job.ephemeral_storage_path = private_key
+                job.ephemeral_expires_at = _now() + datetime.timedelta(minutes=15)
+                media_url = f"/api/videos/jobs/{job.id}/private-file"
+
+            job.status = "completed"
+            increment("video_job_completed")
+            job.lease_owner = None
+            job.lease_expires_at = None
+            job.completed_at = _now()
+            job.updated_at = _now()
+            job.error_code = None
+            job.error_message = None
+            success = True
+            await db.commit()
+        except asyncio.CancelledError:
+            await db.refresh(job)
+            if job.status != "cancelled":
+                job.status = "cancelled"
+                job.error_code = "cancelled"
+                job.error_message = "Cancelled"
+                job.completed_at = _now()
+                job.updated_at = _now()
+            job.lease_owner = None
+            job.lease_expires_at = None
+            error_message = job.error_message
+            billing.add_usage(None, success=False, error_message=error_message)
+            await db.commit()
+        except Exception as exc:
+            error_message = str(exc)[:2000]
+            job.status = "failed"
+            job.error_code = "upstream_error"
+            job.error_message = error_message
+            job.completed_at = _now()
+            job.updated_at = _now()
+            job.lease_owner = None
+            job.lease_expires_at = None
+            billing.add_usage(None, success=False, error_message=error_message)
+            await db.commit()
+            _LOG.warning("Video job %s failed: %s", job_id, error_message)
+            increment("video_job_failed")
+        finally:
+            try:
+                elapsed_ms = (time.perf_counter() - started) * 1000.0
+                await log_video_usage(
+                    db,
+                    user=user,
+                    capture=billing,
+                    prompt=job.prompt or "",
+                    response_time_ms=elapsed_ms,
+                    success=success,
+                    error_message=error_message,
+                    source_ip=job.source_ip,
+                    operation=job.operation,
+                    budget_reservation_id=job.budget_reservation_id,
+                    duration_seconds=duration,
+                    job_id=job.id,
+                )
+                await db.commit()
+            except Exception:
+                _LOG.exception("Failed to settle video billing for job %s", job_id)

@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { api, authFetch, formatApiError, getCachedSession, isApiAuthError } from "../api";
 import { chatModelsEmptyMessage, normalizeChatModelsError } from "../lib/chatMessages";
 import AuthenticatedImage from "./AuthenticatedImage";
+import AuthenticatedVideo from "./AuthenticatedVideo";
 import MarkdownContent from "./MarkdownContent";
 import ModelName from "./ModelName";
 import ModelProviderIcon from "./ModelProviderIcon";
@@ -153,6 +154,23 @@ import {
   resolveSessionModelForTools,
 } from "../lib/chatImageModels";
 import {
+  isBackgroundVideoRunning,
+  parseVideoMessage,
+  runBackgroundVideoGeneration,
+  shouldRouteToVideoGeneration,
+  stopBackgroundVideoGeneration,
+  subscribeBackgroundVideoUpdates,
+  VIDEO_MESSAGE_PREFIX,
+  VIDEO_PENDING_MARKER,
+  type VideoPayload,
+} from "../lib/chatVideo";
+import {
+  findVideoGenerationFallbackModel,
+  modelSupportsVideos,
+  resolveVideoGenerationModel as resolveConcreteVideoModel,
+  resolveSessionModelForVideoTools,
+} from "../lib/chatVideoModels";
+import {
   codeInterpreterBlockedReason,
   findCodeInterpreterFallbackModel,
   modelSupportsCodeInterpreter,
@@ -192,6 +210,12 @@ type Model = {
   is_image_model?: boolean;
   supports_text_to_image?: boolean;
   supports_image_to_image?: boolean;
+  is_video_model?: boolean;
+  supports_text_to_video?: boolean;
+  supports_image_to_video?: boolean;
+  supported_durations?: number[];
+  supported_resolutions?: string[];
+  supported_aspect_ratios?: string[];
   supports_vision?: boolean;
   code_interpreter?: CodeInterpreterCompatibility | null;
 };
@@ -297,11 +321,18 @@ function displayTextForMessage(content: string): string {
   if (audio?.transcript) return audio.transcript;
   const image = readImageMessage(content);
   if (image?.prompt?.trim()) return image.prompt.trim();
+  const video = readVideoMessage(content);
+  if (video?.prompt?.trim()) return video.prompt.trim();
   return content;
 }
 
 function messageDirectionForContent(content: string): TextDirection {
-  if (content === IMAGE_PENDING_MARKER || content.startsWith(IMAGE_MESSAGE_PREFIX)) {
+  if (
+    content === IMAGE_PENDING_MARKER ||
+    content.startsWith(IMAGE_MESSAGE_PREFIX) ||
+    content === VIDEO_PENDING_MARKER ||
+    content.startsWith(VIDEO_MESSAGE_PREFIX)
+  ) {
     return "ltr";
   }
   const attach = readAttachmentMessage(content);
@@ -311,6 +342,29 @@ function messageDirectionForContent(content: string): TextDirection {
   const audio = readAudioMessage(content);
   if (audio?.transcript) return messageDirectionForText(audio.transcript);
   return messageDirectionForText(displayTextForMessage(content));
+}
+
+function readVideoMessage(content: string): VideoPayload | null {
+  return parseVideoMessage(content);
+}
+
+/** Last assistant slot is a video placeholder still being generated. */
+function messagesHavePendingVideo(messages: ChatMessage[]): boolean {
+  const last = messages.at(-1);
+  return last?.role === "assistant" && last.content === VIDEO_PENDING_MARKER;
+}
+
+function buildStoppedVideoMessages(
+  messages: ChatMessage[],
+  stoppedText = "Video generation stopped.",
+): ChatMessage[] {
+  const withoutPending = messages.filter((m) => m.content !== VIDEO_PENDING_MARKER);
+  const last = withoutPending.at(-1);
+  if (last?.role === "assistant" && last.content === stoppedText) return withoutPending;
+  return [
+    ...withoutPending,
+    { role: "assistant", content: stoppedText, receivedAt: Date.now() },
+  ];
 }
 
 function readImageMessage(content: string): ImagePayload | null {
@@ -349,7 +403,9 @@ function extractMarkdownImage(content: string): { imageUrl: string | null; text:
 function isTextAssistantExportable(content: string): boolean {
   if (!content?.trim()) return false;
   if (content === IMAGE_PENDING_MARKER) return false;
+  if (content === VIDEO_PENDING_MARKER) return false;
   if (readImageMessage(content)) return false;
+  if (readVideoMessage(content)) return false;
   if (readAudioMessage(content)) return false;
   const md = extractMarkdownImage(content);
   if (md.imageUrl && !md.text.trim()) return false;
@@ -558,7 +614,9 @@ export default function ChatPanel() {
     !!activeId &&
     (isSessionStreaming ||
       isBackgroundImageRunning(activeId) ||
-      sessionHasPendingImage(messages));
+      isBackgroundVideoRunning(activeId) ||
+      sessionHasPendingImage(messages) ||
+      messagesHavePendingVideo(messages));
   const activeTurnPhase = activeId ? turnPhases[activeId] : undefined;
   const activeQueue = activeId ? promptQueues[activeId] || [] : [];
   const returningChatUser = isReturningChatUser(sessions);
@@ -633,13 +691,14 @@ export default function ChatPanel() {
   const pickerModels = useMemo((): Model[] => {
     const matched = models.filter((m) => {
       if (chatTools.imageGeneration && !modelSupportsImages(m, models)) return false;
+      if (chatTools.videoGeneration && !modelSupportsVideos(m, models)) return false;
       if (chatTools.codeInterpreter && !modelSupportsCodeInterpreter(m)) return false;
       return true;
     });
     const autoRouter = matched.find((m) => isAutoRouterModel(m));
     if (!autoRouter) return matched;
     return [autoRouter, ...matched.filter((m) => m.id !== autoRouter.id)];
-  }, [models, chatTools.imageGeneration, chatTools.codeInterpreter]);
+  }, [models, chatTools.imageGeneration, chatTools.videoGeneration, chatTools.codeInterpreter]);
 
   const selectedModels = useMemo(
     () =>
@@ -657,6 +716,7 @@ export default function ChatPanel() {
     if (chatTools.webSearch) n += 1;
     if (chatTools.webFetch) n += 1;
     if (chatTools.imageGeneration) n += 1;
+    if (chatTools.videoGeneration) n += 1;
     if (chatTools.codeInterpreter) n += 1;
     if (activePrivateMode) n += 1;
     return n;
@@ -775,13 +835,17 @@ export default function ChatPanel() {
     return isPrivateChat(sessionsRef.current.find((s) => s.id === sessionId));
   }
 
+  /** Video wins over image when both flags survive a legacy session payload. */
+  function resolveModelForTools(sessionModel: string | undefined, tools: ChatToolsState): string {
+    const fallback = (current?: string) => resolveNewChatModel(models, current, defaultModel);
+    if (tools.videoGeneration) {
+      return resolveSessionModelForVideoTools(models, sessionModel, true, fallback);
+    }
+    return resolveSessionModelForTools(models, sessionModel, tools.imageGeneration, fallback);
+  }
+
   function resolveModelForSession(session: ChatSession): string {
-    return resolveSessionModelForTools(
-      models,
-      session.model,
-      sessionTools(session).imageGeneration,
-      (current) => resolveNewChatModel(models, current, defaultModel),
-    );
+    return resolveModelForTools(session.model, sessionTools(session));
   }
 
   function persistSessionModelCorrection(sessionId: string, modelId: string) {
@@ -817,7 +881,11 @@ export default function ChatPanel() {
    * then blocks itself on it, so a stale pending marker never resolves).
    */
   function isLocalWorkInFlight(sessionId: string): boolean {
-    return !!abortControllersRef.current[sessionId] || isBackgroundImageRunning(sessionId);
+    return (
+      !!abortControllersRef.current[sessionId] ||
+      isBackgroundImageRunning(sessionId) ||
+      isBackgroundVideoRunning(sessionId)
+    );
   }
 
   function getLocalMessagesForSession(sessionId: string): ChatMessage[] {
@@ -849,6 +917,7 @@ export default function ChatPanel() {
   function reportSyncError(err: unknown, sessionId?: string) {
     if (isChatRevisionConflict(err)) return;
     if (sessionId && isBackgroundImageRunning(sessionId)) return;
+    if (sessionId && isBackgroundVideoRunning(sessionId)) return;
     if (!sessionId && getBackgroundImageSessionIds().length > 0) return;
     if (sessionId && isLocalTurnInFlight(sessionId)) return;
     if (sessionId && streamingSessionsRef.current[sessionId]) return;
@@ -1084,7 +1153,7 @@ export default function ChatPanel() {
             setMessages(preferLocalMessagesOverRemote(sid, s.messages));
           }
         }
-        if (isBackgroundImageRunning(sid)) {
+        if (isBackgroundImageRunning(sid) || isBackgroundVideoRunning(sid)) {
           setSessionStreaming(sid, true);
         } else if (!abortControllersRef.current[sid]) {
           // Decide streaming from the locally-preferred view: a lagging server copy
@@ -1143,7 +1212,7 @@ export default function ChatPanel() {
       .catch(() => {
         /* keep DEFAULT_MAX_ATTACHMENTS */
       });
-    api<Model[]>("/api/chat/models")
+    api<Model[]>("/api/chat/models", { cache: "no-store" })
       .then((m) => {
         if (cancelled) return;
         setModels(m);
@@ -1187,12 +1256,7 @@ export default function ChatPanel() {
     if (!session) return;
     const stored = (session.model || "").trim();
     // Per-chat model wins. Default is only for sessions that never chose a model.
-    const resolved = resolveSessionModelForTools(
-      models,
-      session.model,
-      sessionTools(session).imageGeneration,
-      (current) => resolveNewChatModel(models, current, defaultModel),
-    );
+    const resolved = resolveModelForTools(session.model, sessionTools(session));
     if (!resolved) return;
     setModel((prev) => (prev === resolved ? prev : resolved));
     // Persist only remaps (e.g. external_id → catalog id, image-tool swap) — never
@@ -1596,8 +1660,8 @@ export default function ChatPanel() {
   }, [messagesHasOlder, messagesLoadingOlder, persistSessions, syncScrollPinFromContainer]);
 
   useEffect(() => {
-    return subscribeBackgroundImageUpdates((sessionId) => {
-      if (isBackgroundImageRunning(sessionId)) {
+    const onBackgroundMediaUpdate = (sessionId: string) => {
+      if (isBackgroundImageRunning(sessionId) || isBackgroundVideoRunning(sessionId)) {
         setSessionStreaming(sessionId, true);
         return;
       }
@@ -1641,12 +1705,20 @@ export default function ChatPanel() {
           .catch(() => {});
       }
       void syncSessionsFromServer(sessionId);
-    });
+    };
+    const unsubscribeImage = subscribeBackgroundImageUpdates(onBackgroundMediaUpdate);
+    const unsubscribeVideo = subscribeBackgroundVideoUpdates(onBackgroundMediaUpdate);
+    return () => {
+      unsubscribeImage();
+      unsubscribeVideo();
+    };
   }, [syncSessionsFromServer, persistSessions]);
 
   useEffect(() => {
     const hasNonPrivatePending = sessions.some(
-      (s) => sessionHasPendingImage(s.messages) && !s.privateMode,
+      (s) =>
+        (sessionHasPendingImage(s.messages) || messagesHavePendingVideo(s.messages)) &&
+        !s.privateMode,
     );
     if (!hasNonPrivatePending) return;
     const id = window.setInterval(() => {
@@ -1666,7 +1738,11 @@ export default function ChatPanel() {
     if (!session || session.privateMode) return;
     const msgs = messagesRef.current.length ? messagesRef.current : session.messages;
     if (!sessionHasInFlightGeneration(msgs)) {
-      if (streamingSessionsRef.current[sid] && !isBackgroundImageRunning(sid)) {
+      if (
+        streamingSessionsRef.current[sid] &&
+        !isBackgroundImageRunning(sid) &&
+        !isBackgroundVideoRunning(sid)
+      ) {
         setSessionStreaming(sid, false);
       }
       return;
@@ -2119,6 +2195,7 @@ export default function ChatPanel() {
 
   async function removeChatSession(id: string): Promise<void> {
     stopBackgroundImageGeneration(id);
+    stopBackgroundVideoGeneration(id);
     clearComposerDraft(id);
     setSelectedChatIds((prev) => {
       if (!prev.has(id)) return prev;
@@ -2473,7 +2550,7 @@ export default function ChatPanel() {
         ) : (
           <button
             type="button"
-            className={`alpha-router-history-item${s.id === activeId ? " active" : ""}${isSelected ? " is-selected" : ""}${streamingSessions[s.id] || isBackgroundImageRunning(s.id) ? " is-streaming" : ""}`}
+            className={`alpha-router-history-item${s.id === activeId ? " active" : ""}${isSelected ? " is-selected" : ""}${streamingSessions[s.id] || isBackgroundImageRunning(s.id) || isBackgroundVideoRunning(s.id) ? " is-streaming" : ""}`}
             onClick={() => selectSession(s.id)}
           >
             {s.privateMode ? (
@@ -2481,7 +2558,7 @@ export default function ChatPanel() {
                 <PrivateModeLockIcon className="alpha-router-history-item__lock-icon" size={14} />
               </span>
             ) : null}
-            {streamingSessions[s.id] || isBackgroundImageRunning(s.id) ? (
+            {streamingSessions[s.id] || isBackgroundImageRunning(s.id) || isBackgroundVideoRunning(s.id) ? (
               <span className="alpha-router-history-item__busy" title="Generating…" aria-hidden />
             ) : null}
             {sessionDisplayTitle(s)}
@@ -2568,10 +2645,10 @@ export default function ChatPanel() {
     persistSessionPrimaryModel(id);
   }
 
-  /** Add Model: append for multi-model UI (blocked while Image Generation is on). */
+  /** Add Model: append for multi-model UI (blocked while Image/Video Generation is on). */
   function appendModelSelection(id: string) {
-    if (chatToolsRef.current.imageGeneration) {
-      // Image generation is single-model only — Add Model replaces the primary.
+    if (chatToolsRef.current.imageGeneration || chatToolsRef.current.videoGeneration) {
+      // Media generation is single-model only — Add Model replaces the primary.
       replaceModelSelection(id);
       return;
     }
@@ -2608,6 +2685,21 @@ export default function ChatPanel() {
     if (isAutoRouterModel(candidate)) return candidate;
     // Resolve for the request only — do not collapse multi-selection via pickModel.
     return resolveConcreteImageModel(models, candidate);
+  }
+
+  function resolveVideoGenerationModel(candidate: Model): Model {
+    if (isAutoRouterModel(candidate)) return candidate;
+    // Resolve for the request only — do not collapse multi-selection via pickModel.
+    return resolveConcreteVideoModel(models, candidate);
+  }
+
+  function willRoutePromptToVideoGeneration(tools: ChatToolsState, primaryModel: Model): boolean {
+    if (!tools.videoGeneration) return false;
+    const turnModel = resolveVideoGenerationModel(primaryModel);
+    return shouldRouteToVideoGeneration({
+      videoGenerationEnabled: true,
+      modelSupportsVideo: modelSupportsVideos(turnModel, models),
+    });
   }
 
   function willRoutePromptToImageGeneration(
@@ -2733,7 +2825,7 @@ export default function ChatPanel() {
   type RunChatTurnOptions = {
     skipTitle?: boolean;
     skipReconcile?: boolean;
-    /** When false, never route this turn to /api/images (multi-model text siblings). */
+    /** When false, never route this turn to /api/images or /api/videos (multi-model text siblings). */
     allowImageRoute?: boolean;
   };
 
@@ -2855,6 +2947,45 @@ export default function ChatPanel() {
     const userContent =
       scopedHistory.filter((m) => m.role === "user").at(-1)?.content || "";
     const promptText = promptTextFromUserContent(userContent);
+    const allowMediaRoute = options?.allowImageRoute !== false;
+
+    // Video wins over both image and text when its tool is on for this turn.
+    if (allowMediaRoute && willRoutePromptToVideoGeneration(turnTools, primaryModel)) {
+      const videoModel = resolveVideoGenerationModel(primaryModel);
+      const pendingMsgs: ChatMessage[] = [
+        ...historyForApi,
+        { role: "assistant", content: VIDEO_PENDING_MARKER, clientMessageId: newClientMessageId() },
+      ];
+      flushSync(() => updateSessionMessages(sid, pendingMsgs));
+      const privateMode = sessionPrivateMode(sid);
+      try {
+        // Ensure the durable worker can replace the pending marker in SQL.
+        // Without this barrier a fast completion can leave the video only in
+        // Media Library, while the prompt disappears after refresh.
+        await syncSessionMessagesToServer(sid, pendingMsgs);
+        await runBackgroundVideoGeneration({
+          sessionId: sid,
+          prompt: promptText,
+          model: videoModel.id,
+          userContent,
+          history: scopedHistory.slice(0, -1),
+          persist: !privateMode,
+          duration: turnTools.videoDuration,
+          resolution: turnTools.videoResolution,
+          aspectRatio: turnTools.videoAspectRatio,
+          generateAudio: turnTools.videoGenerateAudio,
+          onUpdate: (msgs) => updateSessionMessages(sid, msgs),
+          getMessages: () => getSessionMessages(sid),
+        });
+        setChatError("");
+        deferSessionTitle(sid, videoModel.id, getSessionMessages(sid));
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        void scheduleSessionTitle(sid, videoModel.id, getSessionMessages(sid));
+      }
+      return;
+    }
+
     const usePriorImage = promptImpliesImageEdit(promptText);
     const priorImage = usePriorImage
       ? lastAssistantImageUrl(scopedHistory.slice(0, -1))
@@ -2864,7 +2995,7 @@ export default function ChatPanel() {
       scopedHistory.slice(0, -1),
       usePriorImage,
     );
-    const allowImageRoute = options?.allowImageRoute !== false;
+    const allowImageRoute = allowMediaRoute;
     const turnModel =
       allowImageRoute && turnTools.imageGeneration
         ? resolveImageGenerationModel(primaryModel)
@@ -3133,6 +3264,22 @@ export default function ChatPanel() {
         setSelectedModelIds((prev) => (prev.length <= 1 ? prev : [primary]));
       }
     }
+    if (next.videoGeneration) {
+      const current = models.find((m) => m.id === model);
+      if (!current || !modelSupportsVideos(current, models)) {
+        const fallback = findVideoGenerationFallbackModel(models);
+        if (fallback) {
+          pickModel(fallback.id);
+          return;
+        }
+        setChatError("No video-capable model is available. Enable one in Admin → Models.");
+      }
+      // Video generation is single-model — collapse any multi-selection to primary.
+      const primary = current?.id || model;
+      if (primary) {
+        setSelectedModelIds((prev) => (prev.length <= 1 ? prev : [primary]));
+      }
+    }
     if (next.codeInterpreter) {
       const current = models.find((m) => m.id === model);
       if (current && !modelSupportsCodeInterpreter(current)) {
@@ -3169,6 +3316,7 @@ export default function ChatPanel() {
   function canProcessPromptQueue(sessionId: string): boolean {
     if (abortControllersRef.current[sessionId]) return false;
     if (isBackgroundImageRunning(sessionId)) return false;
+    if (isBackgroundVideoRunning(sessionId)) return false;
     if (streamingSessionsRef.current[sessionId]) return false;
     return !sessionHasInFlightGeneration(sessionMessagesForQueue(sessionId));
   }
@@ -3176,6 +3324,7 @@ export default function ChatPanel() {
   function isSessionBusyForSend(sessionId: string): boolean {
     if (abortControllersRef.current[sessionId]) return true;
     if (isBackgroundImageRunning(sessionId)) return true;
+    if (isBackgroundVideoRunning(sessionId)) return true;
     if (streamingSessionsRef.current[sessionId]) return true;
     return sessionHasInFlightGeneration(sessionMessagesForQueue(sessionId));
   }
@@ -3184,6 +3333,7 @@ export default function ChatPanel() {
     if (!streamingSessionsRef.current[sessionId]) return;
     if (abortControllersRef.current[sessionId]) return;
     if (isBackgroundImageRunning(sessionId)) return;
+    if (isBackgroundVideoRunning(sessionId)) return;
     if (sessionHasInFlightGeneration(sessionMessagesForQueue(sessionId))) return;
     setSessionStreaming(sessionId, false);
   }
@@ -3374,6 +3524,7 @@ export default function ChatPanel() {
     if (!sid) return;
 
     stopBackgroundImageGeneration(sid);
+    stopBackgroundVideoGeneration(sid);
     const controller = abortControllersRef.current[sid];
     if (controller) {
       controller.abort();
@@ -3383,6 +3534,8 @@ export default function ChatPanel() {
     const localMsgs = getSessionMessages(sid);
     if (localMsgs.some((m) => m.content === IMAGE_PENDING_MARKER)) {
       applyMessages(sid, buildStoppedImageMessages(localMsgs));
+    } else if (localMsgs.some((m) => m.content === VIDEO_PENDING_MARKER)) {
+      applyMessages(sid, buildStoppedVideoMessages(localMsgs));
     } else {
       let lastUserIdx = -1;
       for (let i = 0; i < localMsgs.length; i += 1) {
@@ -3404,6 +3557,7 @@ export default function ChatPanel() {
 
     if (!sessionPrivateMode(sid) && isChatSessionOnServer(sid)) {
       const hadPendingImage = localMsgs.some((m) => m.content === IMAGE_PENDING_MARKER);
+      const hadPendingVideo = localMsgs.some((m) => m.content === VIDEO_PENDING_MARKER);
       const refreshAfterStop = () => {
         void pollSessionMessagesFromServer(sid, { limit: 50 })
           .then(({ messages: remoteMsgs, revision }) => {
@@ -3433,8 +3587,11 @@ export default function ChatPanel() {
       void cancelStreamingReplyOnServer(sid)
         .catch((err) => reportSyncError(err, sid))
         .finally(() => {
-          if (hadPendingImage) {
-            void patchLastSessionMessageOnServer(sid, "Image generation stopped.", {
+          if (hadPendingImage || hadPendingVideo) {
+            const stoppedText = hadPendingImage
+              ? "Image generation stopped."
+              : "Video generation stopped.";
+            void patchLastSessionMessageOnServer(sid, stoppedText, {
               receivedAt: Date.now(),
             })
               .catch(() => {})
@@ -3534,17 +3691,22 @@ export default function ChatPanel() {
       validModel,
       prevMsgs,
     );
-    // Image generation is always single-model (primary only).
-    const turnModels = willRouteToImage || toolsForTurn.imageGeneration
-      ? [validModel]
-      : resolveTurnModels(validModel);
+    const willRouteToVideo = willRoutePromptToVideoGeneration(toolsForTurn, validModel);
+    // Media generation is always single-model (primary only).
+    const turnModels =
+      willRouteToImage ||
+      willRouteToVideo ||
+      toolsForTurn.imageGeneration ||
+      toolsForTurn.videoGeneration
+        ? [validModel]
+        : resolveTurnModels(validModel);
     const controller = new AbortController();
     abortControllersRef.current[sessionId] = controller;
     setSessionStreaming(sessionId, true);
     setTurnPhase(sessionId, toolsForTurn.webSearch ? "searching" : "preparing");
 
-    // Image generation stays primary-model only.
-    if (willRouteToImage) {
+    // Image and video generation stay primary-model only.
+    if (willRouteToImage || willRouteToVideo) {
       const assistantClientMessageId = newClientMessageId();
       const next: ChatMessage[] = [
         ...prevMsgs,
@@ -3801,6 +3963,64 @@ export default function ChatPanel() {
     }
   }
 
+  async function downloadVideo(url: string) {
+    const triggerDownload = (href: string) => {
+      const safeHref = safeBrowserUrl(href, "download");
+      if (!safeHref) throw new Error("Blocked unsafe video URL.");
+      const a = document.createElement("a");
+      a.href = safeHref;
+      a.download = "alpha-router-generated-video.mp4";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    };
+
+    try {
+      if (isPrivateBlobRef(url)) {
+        const blobUrl = await resolvePrivateBlobRef(url);
+        triggerDownload(blobUrl);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+        return;
+      }
+      if (isAlphaRouterMediaFileUrl(url)) {
+        const blob = await fetchAuthenticatedMediaBlob(url);
+        const blobUrl = URL.createObjectURL(blob);
+        triggerDownload(blobUrl);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+        return;
+      }
+      triggerDownload(url);
+    } catch (err) {
+      setChatError(formatApiError(err));
+    }
+  }
+
+  async function openVideoFullSize(url: string) {
+    const openByAnchor = (href: string) => {
+      if (!openSafeUrlInNewTab(href, "media")) {
+        throw new Error("Blocked unsafe video URL.");
+      }
+    };
+
+    try {
+      if (isPrivateBlobRef(url)) {
+        const blobUrl = await resolvePrivateBlobRef(url);
+        openByAnchor(blobUrl);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+        return;
+      }
+      if (isAlphaRouterMediaFileUrl(url)) {
+        const blobUrl = await fetchAuthenticatedMediaObjectUrl(url);
+        openByAnchor(blobUrl);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+        return;
+      }
+      openByAnchor(url);
+    } catch (err) {
+      setChatError(formatApiError(err));
+    }
+  }
+
   async function openImageFullSize(url: string) {
     const openByAnchor = (href: string) => {
       if (!openSafeUrlInNewTab(href, "image")) {
@@ -3971,8 +4191,12 @@ export default function ChatPanel() {
       validModel,
       messages.slice(0, index),
     );
+    const willRouteToVideo = willRoutePromptToVideoGeneration(toolsForRetry, validModel);
     const turnModels =
-      willRouteToImage || toolsForRetry.imageGeneration
+      willRouteToImage ||
+      willRouteToVideo ||
+      toolsForRetry.imageGeneration ||
+      toolsForRetry.videoGeneration
         ? [validModel]
         : resolveTurnModels(validModel);
     const base = messages.slice(0, index);
@@ -3989,7 +4213,7 @@ export default function ChatPanel() {
     setSessionStreaming(sid, true);
     setChatError("");
 
-    if (willRouteToImage) {
+    if (willRouteToImage || willRouteToVideo) {
       const assistantClientMessageId = newClientMessageId();
       const next: ChatMessage[] = [
         ...base,
@@ -4367,7 +4591,9 @@ export default function ChatPanel() {
       models.find((m) => m.external_id === model) ||
       models[0];
     if (!validModel) return;
-    const assistContext = chatTools.imageGeneration ? "image" : "chat";
+    // Video prompts want the same visual-prompt phrasing as image prompts.
+    const assistContext =
+      chatTools.imageGeneration || chatTools.videoGeneration ? "image" : "chat";
     setTranslateToEngBusy(true);
     setChatError("");
     try {
@@ -4757,19 +4983,25 @@ export default function ChatPanel() {
           }}
           disabled={
             !models.length ||
-            (!chatTools.imageGeneration && selectedModelIds.length >= MAX_MULTI_MODELS)
+            (!chatTools.imageGeneration &&
+              !chatTools.videoGeneration &&
+              selectedModelIds.length >= MAX_MULTI_MODELS)
           }
           aria-label={
-            chatTools.imageGeneration
-              ? "Change image model"
-              : "Add model for multi-model response"
+            chatTools.videoGeneration
+              ? "Change video model"
+              : chatTools.imageGeneration
+                ? "Change image model"
+                : "Add model for multi-model response"
           }
           title={
-            chatTools.imageGeneration
-              ? "Image Generation uses one model — picking another replaces it"
-              : selectedModelIds.length >= MAX_MULTI_MODELS
-                ? `Maximum ${MAX_MULTI_MODELS} models`
-                : "Add model"
+            chatTools.videoGeneration
+              ? "Video Generation uses one model — picking another replaces it"
+              : chatTools.imageGeneration
+                ? "Image Generation uses one model — picking another replaces it"
+                : selectedModelIds.length >= MAX_MULTI_MODELS
+                  ? `Maximum ${MAX_MULTI_MODELS} models`
+                  : "Add model"
           }
         >
           <span aria-hidden>+</span>
@@ -4858,6 +5090,21 @@ export default function ChatPanel() {
                       </div>
                     );
                   }
+                  if (m.content === VIDEO_PENDING_MARKER) {
+                    return (
+                      <div className="alpha-router-generated-block alpha-router-generated-block--pending">
+                        <div
+                          className="alpha-router-generated-video alpha-router-generated-video--loading"
+                          role="status"
+                          aria-live="polite"
+                          aria-label="Generating video"
+                        >
+                          <span className="alpha-router-image-loading__spinner" aria-hidden />
+                          <span className="alpha-router-image-loading__label">Generating video…</span>
+                        </div>
+                      </div>
+                    );
+                  }
                   const imagePayload = readImageMessage(m.content);
                   if (imagePayload) {
                     return (
@@ -4866,6 +5113,18 @@ export default function ChatPanel() {
                           url={imagePayload.url}
                           alt="Generated"
                           className="alpha-router-generated-image"
+                        />
+                      </div>
+                    );
+                  }
+                  const videoPayload = readVideoMessage(m.content);
+                  if (videoPayload) {
+                    return (
+                      <div className="alpha-router-generated-block">
+                        <AuthenticatedVideo
+                          url={videoPayload.url}
+                          className="alpha-router-generated-video"
+                          title={videoPayload.prompt || "Generated video"}
                         />
                       </div>
                     );
@@ -4915,6 +5174,32 @@ export default function ChatPanel() {
               </div>
               <div className="alpha-router-msg-actions">
                 <MessageInfoButton title={chatMessageInfoTitle(m, m.role, messages, i)} />
+                {(() => {
+                  const videoPayload = readVideoMessage(m.content);
+                  if (!videoPayload?.url) return null;
+                  return (
+                    <>
+                      <button
+                        type="button"
+                        className="alpha-router-msg-action-btn alpha-router-msg-action-btn--icon"
+                        title="Download"
+                        aria-label="Download video"
+                        onClick={() => void downloadVideo(videoPayload.url)}
+                      >
+                        <DownloadIcon />
+                      </button>
+                      <button
+                        type="button"
+                        className="alpha-router-msg-action-btn alpha-router-msg-action-btn--icon"
+                        title="Open full size"
+                        aria-label="Open video full size"
+                        onClick={() => void openVideoFullSize(videoPayload.url)}
+                      >
+                        <OpenFullSizeIcon />
+                      </button>
+                    </>
+                  );
+                })()}
                 {(() => {
                   const imagePayload = readImageMessage(m.content);
                   const mdImage = extractMarkdownImage(m.content || "");
@@ -4994,6 +5279,7 @@ export default function ChatPanel() {
                     {m.id &&
                     !activePrivateMode &&
                     m.content !== IMAGE_PENDING_MARKER &&
+                    m.content !== VIDEO_PENDING_MARKER &&
                     !m.streaming &&
                     !(isSessionStreaming && i === messages.length - 1) ? (
                       <>
@@ -5208,6 +5494,7 @@ export default function ChatPanel() {
                     onChange={updateChatTools}
                     onPrivateModeChange={togglePrivateMode}
                     onClose={() => setToolsMenuOpen(false)}
+                    videoCapabilities={selectedModels[0]}
                   />
                   </div>
                   <button

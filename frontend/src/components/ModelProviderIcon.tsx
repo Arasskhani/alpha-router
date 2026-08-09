@@ -20,6 +20,12 @@ import xai from "@lobehub/icons-static-svg/icons/xai.svg?url";
 import zhipu from "@lobehub/icons-static-svg/icons/zhipu-color.svg?url";
 import { resolveProviderIconSlug } from "../lib/modelProvider";
 
+// Runway is present in OpenRouter's catalog but is not included in the
+// installed LobeHub icon set. Keep a small local mark so new Runway models do
+// not fall back to the generic unknown-provider icon.
+const runway =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%23000'/%3E%3Cpath fill='%23fff' d='M6 5h6.1c3.8 0 5.9 1.8 5.9 4.7 0 2.1-1.1 3.6-3.1 4.3L18.5 19h-3.8l-3.1-4.4H9.4V19H6V5Zm3.4 2.9v3.8h2.5c1.8 0 2.7-.6 2.7-1.9 0-1.3-.9-1.9-2.7-1.9H9.4Z'/%3E%3C/svg%3E";
+
 type Props = {
   /** Full model id (`google/gemini-…`) or bare provider slug. */
   modelId?: string | null;
@@ -51,6 +57,7 @@ const LOGO_BY_SLUG: Record<string, string> = {
   openrouter,
   perplexity,
   qwen,
+  runway,
   xai,
   grok: xai,
   zhipu,
@@ -88,10 +95,9 @@ export default function ModelProviderIcon({
       >
         <svg viewBox="0 0 24 24" width={size} height={size} focusable="false">
           <circle cx="12" cy="12" r="9" fill="#94a3b8" />
-          <path
-            fill="#fff"
-            d="M12 7.2a1.2 1.2 0 110 2.4 1.2 1.2 0 010-2.4zm-1.1 4.3h2.2v5.3h-2.2v-5.3z"
-          />
+          <text x="12" y="16" fill="#fff" textAnchor="middle" fontSize="10" fontWeight="700">
+            {slug === "unknown" ? "?" : slug.slice(0, 2).toUpperCase()}
+          </text>
         </svg>
       </span>
     );

@@ -496,6 +496,12 @@ def _catalog_quote(
     provider = (provider_type or "unknown").lower()
     pricing = _pricing_map(ai_model)
     raw_pricing = _parse_pricing_raw(ai_model)
+    if service_type == "video":
+        video_meta = raw_pricing.get("video_capabilities") or raw_pricing.get("video_generation")
+        if isinstance(video_meta, dict):
+            video_pricing = video_meta.get("pricing") or video_meta.get("pricing_skus")
+            if isinstance(video_pricing, dict):
+                pricing = {**pricing, **video_pricing}
     items: list[LineItemQuote] = []
     source = COST_SOURCE_CATALOG
     pricing_complete = True
@@ -520,6 +526,14 @@ def _catalog_quote(
         )
         request_present, request_rate = _rate(pricing, "request")
         image_present, image_rate = _rate(pricing, "image", "output_image")
+        video_present, video_rate = _rate(
+            pricing,
+            "video",
+            "output_video",
+            "generate",
+            "clip",
+            "second",
+        )
         search_present, search_rate = _rate(
             pricing,
             "web_search",
@@ -544,6 +558,22 @@ def _catalog_quote(
             separately_priced_cache = (
                 (cache_read_present and cache_read_rate is not None)
                 or (cache_write_present and cache_write_rate is not None)
+            )
+        if (
+            service_type == "video"
+            and video_present
+            and video_rate is not None
+            and quantity is not None
+            and float(quantity) > 0
+        ):
+            items.append(
+                _line_item(
+                    category="video",
+                    quantity=float(quantity),
+                    unit=unit or "clip",
+                    unit_price_usd=video_rate,
+                    pricing_source=source,
+                )
             )
             standard_prompt_tokens = usage.prompt_tokens
             if separately_priced_cache:

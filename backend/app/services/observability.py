@@ -23,6 +23,10 @@ _KNOWN_EVENTS = frozenset(
         "docs_denied",
         "production_guard_warning",
         "sandbox_orphan_removed",
+        "video_job_started",
+        "video_provider_submit",
+        "video_job_completed",
+        "video_job_failed",
     }
 )
 _lock = Lock()

@@ -14,6 +14,7 @@ class Connection(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(128), nullable=False)
     provider_type = Column(String(64), nullable=False, index=True)  # openrouter, openai, anthropic, google, custom
+    adapter_key = Column(String(64), nullable=True, index=True)
     api_key_encrypted = Column(Text, nullable=False)
     base_url = Column(String(512), nullable=True)
     is_active = Column(Boolean, default=True)

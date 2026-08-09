@@ -5111,6 +5111,47 @@ table.card tbody td:last-child {
   animation: none;
 }
 
+.alpha-router-generated-video {
+  display: block;
+  max-width: min(100%, 30rem);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
+.alpha-router-generated-video--loading,
+.alpha-router-generated-video--error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  min-height: 10rem;
+  min-width: min(100%, 16rem);
+  padding: 0.75rem 1rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface) 88%, var(--border));
+  position: relative;
+  overflow: hidden;
+}
+
+.alpha-router-generated-video--loading {
+  flex-direction: column;
+  background:
+    linear-gradient(
+      110deg,
+      color-mix(in srgb, var(--surface) 88%, var(--border)) 0%,
+      color-mix(in srgb, var(--accent) 10%, var(--surface)) 45%,
+      color-mix(in srgb, var(--surface) 88%, var(--border)) 90%
+    );
+  background-size: 200% 100%;
+  animation: alpha-router-image-loading-shimmer 1.6s ease-in-out infinite;
+}
+
+.alpha-router-generated-video--error {
+  color: var(--danger, #b42318);
+  animation: none;
+}
+
 .alpha-router-generated-block {
   display: inline-flex;
   flex-direction: column;
@@ -9730,6 +9771,7 @@ body.activity-pdf-export .activity-page {
 }
 .models-filter-bar {
   display: flex;
+  direction: ltr;
   flex-wrap: wrap;
   gap: 0.35rem 0.5rem;
   margin-bottom: 1rem;

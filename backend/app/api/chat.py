@@ -23,7 +23,12 @@ from app.services.budget_service import (
     resolve_monthly_budget,
 )
 from app.services.bounded_io import BoundedIOError, clamp_limit, read_upload_bounded
-from app.services.model_capabilities import image_generation_capabilities, supports_vision
+from app.services.model_capabilities import (
+    image_generation_capabilities,
+    model_media_flags,
+    supports_vision,
+    video_generation_capabilities,
+)
 from app.services.media_authorization_service import MediaAccessAction, load_authorized_media_asset
 from app.services.attachment_extract import processed_attachment_payload
 from app.services.attachment_policy import (
@@ -99,25 +104,31 @@ async def chat_models(user: User = Depends(get_current_user), db: AsyncSession =
             ),
             **image_generation_capabilities(
                 external_id=m.external_id or "",
-                is_image_model=bool(m.is_image_model),
-                pricing_raw=m.pricing_raw,
+                is_image_model=media["is_image_model"],
+                pricing_raw=m.pricing_raw if media["is_image_model"] else None,
+            ),
+            **video_generation_capabilities(
+                external_id=m.external_id or "",
+                is_video_model=media["is_video_model"],
+                pricing_raw=m.pricing_raw if media["is_video_model"] else None,
             ),
             "supports_vision": supports_vision(
                 external_id=m.external_id or "",
-                is_image_model=bool(m.is_image_model),
+                is_image_model=media["is_image_model"],
                 pricing_raw=m.pricing_raw,
             ),
-            "is_image_model": bool(
-                m.is_image_model
-                or "image" in (m.external_id or "").lower()
-                or "dall" in (m.external_id or "").lower()
-                or "flux" in (m.external_id or "").lower()
-                or "sdxl" in (m.external_id or "").lower()
-                or "stable-diffusion" in (m.external_id or "").lower()
-                or "nanobanana" in (m.external_id or "").lower()
-            ),
+            **media,
         }
         for m in rows
+        for media in [
+            model_media_flags(
+                external_id=m.external_id or "",
+                is_image_model=bool(m.is_image_model),
+                is_video_model=bool(getattr(m, "is_video_model", False)),
+                pricing_raw=m.pricing_raw,
+                provider_type=m.provider_type,
+            )
+        ]
     ]
 
 
@@ -126,6 +137,7 @@ class ChatToolsIn(BaseModel):
     web_search_depth: str = "medium"
     web_fetch: bool = False
     image_generation: bool = False
+    video_generation: bool = False
     code_interpreter: bool = False
 
 
@@ -535,6 +547,7 @@ async def user_media(
 @router.get("/media/{asset_id}/file")
 async def media_file(
     asset_id: int,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -553,10 +566,52 @@ async def media_file(
         kind=getattr(row, "kind", None),
         stored_mime=row.mime_type,
     )
+    headers = {
+        "Content-Disposition": content_disposition,
+        "Accept-Ranges": "bytes",
+    }
+    range_header = (request.headers.get("range") or "").strip()
+    kind = (getattr(row, "kind", None) or "").strip().lower()
+    if range_header.lower().startswith("bytes=") and kind in {"video", "audio"}:
+        # Single-range support for HTML5 media seekers.
+        spec = range_header.split("=", 1)[1].strip()
+        if "," not in spec:
+            start_s, _, end_s = spec.partition("-")
+            try:
+                total = len(data)
+                if start_s == "":
+                    # suffix bytes: bytes=-N
+                    suffix = int(end_s)
+                    start = max(0, total - suffix)
+                    end = total - 1
+                else:
+                    start = int(start_s)
+                    end = int(end_s) if end_s else total - 1
+                if start < 0 or end < start or start >= total:
+                    raise ValueError("invalid range")
+                end = min(end, total - 1)
+                chunk = data[start : end + 1]
+                headers.update(
+                    {
+                        "Content-Range": f"bytes {start}-{end}/{total}",
+                        "Content-Length": str(len(chunk)),
+                    }
+                )
+                return Response(
+                    content=chunk,
+                    status_code=206,
+                    media_type=media_type,
+                    headers=headers,
+                )
+            except ValueError:
+                headers["Content-Range"] = f"bytes */{len(data)}"
+                return Response(status_code=416, headers=headers)
+
+    headers["Content-Length"] = str(len(data))
     return Response(
         content=data,
         media_type=media_type,
-        headers={"Content-Disposition": content_disposition},
+        headers=headers,
     )
 
 

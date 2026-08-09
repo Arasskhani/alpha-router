@@ -46,6 +46,19 @@ def media_input_limit() -> int:
     )
 
 
+def video_output_limit() -> int:
+    """Hard ceiling for generated video downloads (bytes)."""
+    from app.config import get_settings
+    from app.services.bounded_io import clamp_limit
+
+    settings = get_settings()
+    return clamp_limit(
+        int(settings.video_max_output_bytes or (200 * 1024 * 1024)),
+        minimum=1024 * 1024,
+        maximum=1024 * 1024 * 1024,
+    )
+
+
 def _ext_from_mime(mime: str) -> str:
     m = (mime or "").lower()
     if "png" in m:
@@ -74,6 +87,8 @@ def _ext_from_mime(mime: str) -> str:
         return ".mp3"
     if "wav" in m:
         return ".wav"
+    if "video/mp4" in m or m == "video/mp4":
+        return ".mp4"
     if "mp4" in m or "m4a" in m:
         return ".m4a"
     return ".bin"

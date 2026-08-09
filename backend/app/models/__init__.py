@@ -23,6 +23,7 @@ from app.models.cost_accounting import (
 from app.models.system import SmtpSettings, ReportSchedule, SystemMetricSnapshot, SystemSetting
 from app.models.auth_provider import AuthProviderConfig
 from app.models.media import MediaAsset
+from app.models.video import VideoGenerationJob
 from app.models.chat import ChatFolder, ChatMessage, ChatMessageFeedback, ChatSession, UserChatPrefs
 
 __all__ = [
@@ -55,6 +56,7 @@ __all__ = [
     "SystemMetricSnapshot",
     "AuthProviderConfig",
     "MediaAsset",
+    "VideoGenerationJob",
     "ChatFolder",
     "ChatMessage",
     "ChatMessageFeedback",

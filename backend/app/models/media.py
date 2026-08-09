@@ -12,7 +12,7 @@ class MediaAsset(Base):
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
-    kind = Column(String(32), nullable=False, default="image")  # image | document | other
+    kind = Column(String(32), nullable=False, default="image")  # image | video | document | other
     mime_type = Column(String(128), nullable=False, default="application/octet-stream")
     file_name = Column(String(255), nullable=False)
     storage_path = Column(Text, nullable=False)  # object key under S3 (cdn/u/{user}/…)

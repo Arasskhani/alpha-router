@@ -36,6 +36,9 @@ export type CatalogModel = {
   total_cost_per_1k: number;
   kinds?: ModelKind[];
   is_image_model?: boolean;
+  is_video_model?: boolean;
+  supports_text_to_video?: boolean;
+  supports_image_to_video?: boolean;
   title?: string;
   description?: string;
   context_length?: number | null;

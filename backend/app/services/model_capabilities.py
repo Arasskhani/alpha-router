@@ -32,6 +32,38 @@ def _catalog_raw(pricing_raw: str | None) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def authoritative_video_model(
+    *,
+    provider_type: str | None,
+    is_video_model: bool,
+    pricing_raw: str | None,
+) -> bool:
+    """Return Video status using the provider's authoritative catalog.
+
+    OpenRouter's general `/models` snapshot can advertise video output for
+    non-video-generation models. Its dedicated `/videos/models` snapshot is
+    embedded under `video_generation` / `video_capabilities`, so use that
+    source when determining the Video tool catalog.
+    """
+    if (provider_type or "").strip().lower() == "openrouter":
+        raw = _catalog_raw(pricing_raw)
+        return isinstance(raw.get("video_generation") or raw.get("video_capabilities"), dict)
+    return bool(is_video_model)
+
+
+def authoritative_image_model(
+    *,
+    provider_type: str | None,
+    is_image_model: bool,
+    pricing_raw: str | None,
+) -> bool:
+    """Return Image Generation status from the provider's dedicated catalog."""
+    if (provider_type or "").strip().lower() == "openrouter":
+        raw = _catalog_raw(pricing_raw)
+        return isinstance(raw.get("image_generation"), dict)
+    return bool(is_image_model)
+
+
 def _architecture_from_raw(pricing_raw: str | None) -> dict[str, Any]:
     data = _catalog_raw(pricing_raw)
     arch = data.get("architecture")
@@ -138,43 +170,158 @@ def image_generation_capabilities(
     }
 
 
+def _video_id_heuristic(external_id: str, is_video_model: bool = False) -> bool:
+    del external_id
+    return bool(is_video_model)
+
+
+def _video_catalog_meta(pricing_raw: str | None) -> dict[str, Any]:
+    """Optional OpenRouter video-models snapshot fields embedded in pricing_raw."""
+    raw = _catalog_raw(pricing_raw)
+    video = raw.get("video_capabilities") or raw.get("video_generation")
+    if isinstance(video, dict):
+        return video
+    # Direct video-models endpoint shape may be stored as the root snapshot.
+    if any(
+        key in raw
+        for key in (
+            "supported_durations",
+            "supported_resolutions",
+            "supported_aspect_ratios",
+            "supported_frame_images",
+        )
+    ):
+        return raw
+    return {}
+
+
+def video_generation_capabilities(
+    *,
+    external_id: str,
+    is_video_model: bool = False,
+    pricing_raw: str | None = None,
+) -> dict[str, Any]:
+    """Detect text-to-video and image-to-video support from provider catalog metadata."""
+    arch = _architecture_from_raw(pricing_raw)
+    inputs, outputs = _modalities(arch)
+    has_catalog = bool(inputs or outputs)
+    video_meta = _video_catalog_meta(pricing_raw)
+    frame_images = video_meta.get("supported_frame_images")
+    if isinstance(frame_images, list):
+        frame_support = {str(x).lower() for x in frame_images if str(x).strip()}
+    else:
+        frame_support = set()
+
+    if has_catalog:
+        supports_t2v = "video" in outputs
+        supports_i2v = ("image" in inputs and "video" in outputs) or bool(frame_support)
+        return {
+            "supports_text_to_video": supports_t2v,
+            "supports_image_to_video": supports_i2v,
+            "supported_durations": video_meta.get("supported_durations"),
+            "supported_resolutions": video_meta.get("supported_resolutions"),
+            "supported_aspect_ratios": video_meta.get("supported_aspect_ratios"),
+            "supported_frame_images": list(frame_support) if frame_support else None,
+        }
+
+    heuristic = _video_id_heuristic(external_id, is_video_model)
+    return {
+        "supports_text_to_video": heuristic,
+        "supports_image_to_video": heuristic and bool(frame_support),
+        "supported_durations": video_meta.get("supported_durations"),
+        "supported_resolutions": video_meta.get("supported_resolutions"),
+        "supported_aspect_ratios": video_meta.get("supported_aspect_ratios"),
+        "supported_frame_images": list(frame_support) if frame_support else None,
+    }
+
+
 def model_kinds(
     *,
     external_id: str,
     is_image_model: bool = False,
+    is_video_model: bool = False,
     pricing_raw: str | None = None,
+    provider_type: str | None = None,
 ) -> list[str]:
-    """Return applicable filter tags (a model may match several, like OpenRouter)."""
+    """Return applicable filter tags — the single source of truth for categorization.
+
+    Media kinds (image, video, audio) are derived from **output** modalities and
+    the provider's authoritative generation catalog — not from input modalities.
+    A model that merely *accepts* video/audio as input (e.g. a vision model that
+    can analyse a video clip) must not appear in the Video or Audio filter.
+
+    ID-based heuristics are a last-resort fallback when the provider supplies
+    no architecture metadata at all.
+    """
     ext = (external_id or "").lower()
     arch = _architecture_from_raw(pricing_raw)
     inputs, outputs = _modalities(arch)
+    has_metadata = bool(inputs or outputs)
     kinds: set[str] = set()
 
-    if "embed" in ext or "embedding" in ext:
-        kinds.add("embeddings")
-    if "rerank" in ext:
-        kinds.add("rerank")
-    if any(x in ext for x in ("whisper", "transcribe", "transcription", "/stt")):
-        kinds.add("transcription")
-    if any(x in ext for x in ("tts", "/speech", "text-to-speech")):
-        kinds.add("speech")
-    if is_image_model or any(
+    # --- Authoritative media flags (provider-specific) ---
+    auth_video = authoritative_video_model(
+        provider_type=provider_type,
+        is_video_model=is_video_model,
+        pricing_raw=pricing_raw,
+    )
+    auth_image = authoritative_image_model(
+        provider_type=provider_type,
+        is_image_model=is_image_model,
+        pricing_raw=pricing_raw,
+    )
+
+    # --- Embeddings / rerank / transcription / speech: output modality first, ID fallback ---
+    if has_metadata:
+        if "embeddings" in outputs:
+            kinds.add("embeddings")
+        if "rerank" in outputs:
+            kinds.add("rerank")
+        if "transcription" in outputs:
+            kinds.add("transcription")
+        if "speech" in outputs:
+            kinds.add("speech")
+    else:
+        if "embed" in ext or "embedding" in ext:
+            kinds.add("embeddings")
+        if "rerank" in ext:
+            kinds.add("rerank")
+        if any(x in ext for x in ("whisper", "transcribe", "transcription", "/stt")):
+            kinds.add("transcription")
+        if any(x in ext for x in ("tts", "/speech", "text-to-speech")):
+            kinds.add("speech")
+
+    # --- Image: output modality or authoritative flag ---
+    if auth_image or (has_metadata and "image" in outputs):
+        kinds.add("image")
+    elif not has_metadata and any(
         x in ext for x in ("dall-e", "dalle", "stable-diffusion", "flux", "midjourney", "/image")
     ):
         kinds.add("image")
-    if "video" in inputs or "video" in outputs or "video" in ext:
+
+    # --- Video: output modality or authoritative flag ---
+    if auth_video or (has_metadata and "video" in outputs):
         kinds.add("video")
-    if ("audio" in inputs or "audio" in outputs) and "transcription" not in kinds:
-        if "whisper" not in ext:
-            kinds.add("audio")
-    if "text" in outputs or "text" in inputs:
-        kinds.add("text")
-    if not kinds:
-        if not any(
-            k in ext
-            for k in ("embed", "rerank", "whisper", "tts", "dall", "flux", "video", "audio")
-        ):
+    elif not has_metadata and _video_id_heuristic(external_id, is_video_model):
+        kinds.add("video")
+
+    # --- Audio: output modality only (not input) ---
+    if has_metadata:
+        if "audio" in outputs and "transcription" not in kinds:
+            if "whisper" not in ext:
+                kinds.add("audio")
+    else:
+        if "audio" in ext and "transcription" not in kinds:
+            if "whisper" not in ext:
+                kinds.add("audio")
+
+    # --- Text: output modality only ---
+    if has_metadata:
+        if "text" in outputs:
             kinds.add("text")
+    else:
+        kinds.add("text")
+
     return [k for k in MODEL_KINDS if k in kinds]
 
 
@@ -195,6 +342,35 @@ _VISION_HEURISTIC_HINTS = (
     "qwen-vl",
     "qwen2-vl",
 )
+
+
+def model_media_flags(
+    *,
+    external_id: str,
+    is_image_model: bool = False,
+    is_video_model: bool = False,
+    pricing_raw: str | None = None,
+    provider_type: str | None = None,
+) -> dict[str, bool]:
+    """Single source of truth for image/video classification.
+
+    Both ``/api/chat/models`` and ``/api/admin/models`` call this helper so
+    the two endpoints can never diverge.
+    """
+    auth_video = authoritative_video_model(
+        provider_type=provider_type,
+        is_video_model=is_video_model,
+        pricing_raw=pricing_raw,
+    )
+    auth_image = authoritative_image_model(
+        provider_type=provider_type,
+        is_image_model=is_image_model,
+        pricing_raw=pricing_raw,
+    )
+    return {
+        "is_image_model": auth_image,
+        "is_video_model": auth_video,
+    }
 
 
 def supports_vision(

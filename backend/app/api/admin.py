@@ -39,7 +39,12 @@ from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel, ModelToolCompatibilityEvent
 from app.models.user import User, UserGroup, UserRoleAssignment, user_group_members
 from app.services import activity_service
-from app.services.model_capabilities import model_catalog_meta, model_kinds
+from app.services.model_capabilities import (
+    model_catalog_meta,
+    model_kinds,
+    model_media_flags,
+    video_generation_capabilities,
+)
 from app.services.model_access_service import (
     bulk_set_access_type,
     get_model_access_detail,
@@ -335,11 +340,18 @@ async def list_admin_models(
             "output_cost_per_1k": m.output_cost_per_1k,
             "total_cost_per_1k": (m.input_cost_per_1k or 0) + (m.output_cost_per_1k or 0),
             "provider": m.provider_type,
-            "is_image_model": bool(m.is_image_model),
+            **media,
             "kinds": model_kinds(
                 external_id=m.external_id,
-                is_image_model=bool(m.is_image_model),
+                is_image_model=media["is_image_model"],
+                is_video_model=media["is_video_model"],
                 pricing_raw=m.pricing_raw,
+                provider_type=m.provider_type,
+            ),
+            **video_generation_capabilities(
+                external_id=m.external_id or "",
+                is_video_model=media["is_video_model"],
+                pricing_raw=m.pricing_raw if media["is_video_model"] else None,
             ),
             "code_interpreter": compatibility_payload(
                 compatibility.get((int(m.connection_id), m.external_id)),
@@ -354,6 +366,15 @@ async def list_admin_models(
             ),
         }
         for m in rows
+        for media in [
+            model_media_flags(
+                external_id=m.external_id or "",
+                is_image_model=bool(m.is_image_model),
+                is_video_model=bool(getattr(m, "is_video_model", False)),
+                pricing_raw=m.pricing_raw,
+                provider_type=m.provider_type,
+            )
+        ]
     ]
 
 

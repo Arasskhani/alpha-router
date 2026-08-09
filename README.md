@@ -108,6 +108,15 @@ models also shape OpenRouter Auto Router constraints per request. Administrators
 can review evidence, probe on demand, or pin a decision from
 Admin → Models → Code Interpreter.
 
+### Video generation
+
+Chat Tools → **Video Generation** runs OpenRouter async `/videos` jobs
+(`POST /api/videos/generate`, poll `GET /api/videos/jobs/{id}`). Text-to-video
+and image-to-video (first-frame reference) reuse the same auth, budget hold,
+SSRF, and media ACL path as image generation. Provider polling URLs stay
+server-side; completed clips are stored as `MediaAsset` (`kind=video`) and
+served with HTTP Range support.
+
 ### Code Interpreter capacity and workspace
 
 Code Interpreter turns use a Redis-backed lease shared by all API workers.

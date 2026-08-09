@@ -40,6 +40,7 @@ export function providerFromModelId(modelId: string | null | undefined): string 
   if (raw.includes("deepseek")) return "deepseek";
   if (raw.includes("qwen")) return "qwen";
   if (raw.includes("mistral") || raw.includes("mixtral")) return "mistral";
+  if (raw.includes("runway")) return "runway";
   if (raw.includes("llama")) return "meta";
   if (raw.includes("gpt") || /(^|\/)o[1-4]/.test(raw)) return "openai";
 
@@ -64,7 +65,8 @@ export function resolveProviderIconSlug(
     fromId === "mistral" ||
     fromId === "deepseek" ||
     fromId === "qwen" ||
-    fromId === "alibaba"
+    fromId === "alibaba" ||
+    fromId === "runway"
   ) {
     return fromId;
   }

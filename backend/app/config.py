@@ -141,10 +141,20 @@ class Settings(BaseSettings):
     budget_chat_fallback_hold_usd: float = 0.05
     budget_embedding_fallback_hold_usd: float = 0.01
     budget_image_fallback_hold_usd: float = 0.25
+    budget_video_fallback_hold_usd: float = 1.50
     budget_audio_fallback_hold_usd: float = 0.10
     budget_tool_fallback_hold_usd: float = 0.05
     budget_max_hold_usd: float = 5.0
     budget_reservation_ttl_seconds: int = 7200
+
+    # Video generation (OpenRouter /videos async jobs)
+    video_max_duration_seconds: int = 8
+    video_max_resolution: str = "1080p"
+    video_max_output_bytes: int = 200 * 1024 * 1024
+    video_max_concurrent_jobs_per_user: int = 1
+    video_job_poll_interval_ms: int = 2500
+    video_job_timeout_seconds: int = 600
+    video_job_reclaim_after_seconds: int = 900
     cost_reconciliation_enabled: bool = True
     cost_reconciliation_interval_minutes: int = 30
     cost_reconciliation_batch_size: int = 50

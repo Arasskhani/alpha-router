@@ -18,6 +18,11 @@ type Props = {
   onChange: (next: ChatToolsState) => void;
   onPrivateModeChange: (next: boolean) => void;
   onClose: () => void;
+  videoCapabilities?: {
+    supported_durations?: number[];
+    supported_resolutions?: string[];
+    supported_aspect_ratios?: string[];
+  };
 };
 
 function Toggle({
@@ -102,6 +107,7 @@ export default function ServerToolsMenu({
   onChange,
   onPrivateModeChange,
   onClose,
+  videoCapabilities,
 }: Props) {
   const [pos, setPos] = useState<{ left: number; bottom: number } | null>(null);
   const [customAspectDraft, setCustomAspectDraft] = useState(tools.imageCustomAspectRatio);
@@ -222,7 +228,12 @@ export default function ServerToolsMenu({
         title="Image Generation"
         description="Create or edit images from text"
         on={tools.imageGeneration}
-        onToggle={() => patch({ imageGeneration: !tools.imageGeneration })}
+        onToggle={() =>
+          patch({
+            imageGeneration: !tools.imageGeneration,
+            videoGeneration: !tools.imageGeneration ? false : tools.videoGeneration,
+          })
+        }
       />
 
       {tools.imageGeneration ? (
@@ -289,6 +300,98 @@ export default function ServerToolsMenu({
             Text-to-image uses this aspect ratio. With a source attachment (image-to-image), output size matches the
             source image. Override in prompt: <code>--ar 16:9</code>
           </span>
+        </div>
+      ) : null}
+
+      <ToolRow
+        icon={
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <rect x="3" y="6" width="14" height="12" rx="2" />
+            <path d="m17 10 4-2v8l-4-2z" />
+          </svg>
+        }
+        title="Video Generation"
+        description="Create videos from text or an image"
+        on={tools.videoGeneration}
+        onToggle={() =>
+          patch({
+            videoGeneration: !tools.videoGeneration,
+            imageGeneration: !tools.videoGeneration ? false : tools.imageGeneration,
+          })
+        }
+      />
+
+      {tools.videoGeneration ? (
+        <div className="alpha-router-image-aspect-picker" onMouseDown={(e) => e.stopPropagation()}>
+          <span className="alpha-router-image-aspect-picker__label">Duration / resolution</span>
+          <div className="alpha-router-image-aspect-picker__options" role="group" aria-label="Video duration">
+            {(videoCapabilities?.supported_durations?.length
+              ? videoCapabilities.supported_durations
+              : [4, 5, 6, 8]
+            ).map((sec) => {
+              const active = tools.videoDuration === sec;
+              return (
+                <button
+                  key={sec}
+                  type="button"
+                  className={`alpha-router-image-aspect-picker__chip${active ? " active" : ""}`}
+                  aria-pressed={active}
+                  onClick={() => patch({ videoDuration: sec })}
+                >
+                  {sec}s
+                </button>
+              );
+            })}
+          </div>
+          <div className="alpha-router-image-aspect-picker__options" role="group" aria-label="Video resolution">
+            {(videoCapabilities?.supported_resolutions?.length
+              ? videoCapabilities.supported_resolutions
+              : ["480p", "720p", "1080p"]
+            ).map((res) => {
+              const active = tools.videoResolution === res;
+              return (
+                <button
+                  key={res}
+                  type="button"
+                  className={`alpha-router-image-aspect-picker__chip${active ? " active" : ""}`}
+                  aria-pressed={active}
+                  onClick={() => patch({ videoResolution: res as ChatToolsState["videoResolution"] })}
+                >
+                  {res}
+                </button>
+              );
+            })}
+          </div>
+          <div className="alpha-router-image-aspect-picker__options" role="group" aria-label="Video aspect ratio">
+            {(videoCapabilities?.supported_aspect_ratios?.length
+              ? videoCapabilities.supported_aspect_ratios
+              : ["16:9", "9:16", "1:1"]
+            ).map((ar) => {
+              const active = tools.videoAspectRatio === ar;
+              return (
+                <button
+                  key={ar}
+                  type="button"
+                  className={`alpha-router-image-aspect-picker__chip${active ? " active" : ""}`}
+                  aria-pressed={active}
+                  onClick={() => patch({ videoAspectRatio: ar })}
+                >
+                  {ar}
+                </button>
+              );
+            })}
+          </div>
+          <span className="alpha-router-image-aspect-picker__hint">
+            Text-to-video uses these settings. Attach an image to animate it (image-to-video).
+          </span>
+          <label className="alpha-router-image-aspect-picker__audio">
+            <input
+              type="checkbox"
+              checked={tools.videoGenerateAudio}
+              onChange={(e) => patch({ videoGenerateAudio: e.target.checked })}
+            />
+            Generate audio when supported
+          </label>
         </div>
       ) : null}
 

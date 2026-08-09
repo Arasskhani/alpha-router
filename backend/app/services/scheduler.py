@@ -218,6 +218,15 @@ async def refresh_chat_retention_cleanup_schedule() -> None:
         )
 
 
+async def job_reclaim_stale_video_jobs():
+    from app.services.video_job_service import reclaim_stale_video_jobs
+
+    try:
+        await reclaim_stale_video_jobs()
+    except Exception:
+        logger.exception("Video job reclaim failed")
+
+
 def start_scheduler():
     if scheduler.running:
         return
@@ -229,6 +238,14 @@ def start_scheduler():
         "interval",
         minutes=5,
         id="budget_reservation_expiry",
+    )
+    scheduler.add_job(
+        job_reclaim_stale_video_jobs,
+        "interval",
+        minutes=5,
+        id="video_job_reclaim",
+        max_instances=1,
+        coalesce=True,
     )
     settings = get_settings()
     if settings.cost_reconciliation_enabled:

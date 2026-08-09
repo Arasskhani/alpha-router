@@ -10,6 +10,7 @@ import {
 } from "./imageSize";
 
 export type WebSearchDepth = "low" | "medium" | "high";
+export type VideoResolution = "480p" | "720p" | "1080p";
 
 export type ChatToolsState = {
   webSearch: boolean;
@@ -22,6 +23,11 @@ export type ChatToolsState = {
   imageCustomAspectRatio: string;
   /** @deprecated legacy WxH — migrated to imageCustomAspectRatio on load. */
   imageCustomSize?: string;
+  videoGeneration: boolean;
+  videoDuration: number;
+  videoResolution: VideoResolution;
+  videoAspectRatio: string;
+  videoGenerateAudio: boolean;
   codeInterpreter: boolean;
 };
 
@@ -33,6 +39,11 @@ export const FRESH_CHAT_TOOLS: ChatToolsState = {
   imageGeneration: false,
   imageAspectRatio: DEFAULT_IMAGE_ASPECT_PRESET,
   imageCustomAspectRatio: DEFAULT_CUSTOM_ASPECT_RATIO,
+  videoGeneration: false,
+  videoDuration: 4,
+  videoResolution: "720p",
+  videoAspectRatio: "16:9",
+  videoGenerateAudio: false,
   codeInterpreter: false,
 };
 
@@ -45,6 +56,7 @@ export function anyChatToolEnabled(tools: ChatToolsState): boolean {
     tools.webSearch ||
     tools.webFetch ||
     tools.imageGeneration ||
+    tools.videoGeneration ||
     tools.codeInterpreter
   );
 }
@@ -56,6 +68,23 @@ function normalizeDepth(v: string | undefined): WebSearchDepth {
   return "medium";
 }
 
+function normalizeVideoResolution(v: string | undefined): VideoResolution {
+  if (v === "480p" || v === "1080p" || v === "720p") return v;
+  return "720p";
+}
+
+function normalizeVideoDuration(v: number | undefined): number {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 4;
+  return Math.max(1, Math.min(8, Math.round(n)));
+}
+
+function normalizeVideoAspectRatio(v: string | undefined): string {
+  const raw = (v || "").trim();
+  if (["16:9", "9:16", "1:1", "3:2", "2:3", "4:3", "3:4"].includes(raw)) return raw;
+  return "16:9";
+}
+
 export function normalizeChatTools(raw?: Partial<ChatToolsState> | null): ChatToolsState {
   if (!raw) return { ...FRESH_CHAT_TOOLS };
 
@@ -64,15 +93,27 @@ export function normalizeChatTools(raw?: Partial<ChatToolsState> | null): ChatTo
     normalizeCustomAspectRatio((raw as Partial<ChatToolsState>).imageCustomAspectRatio) ??
     aspectRatioFromLegacySize(legacySize);
 
+  let imageGeneration = raw.imageGeneration ?? FRESH_CHAT_TOOLS.imageGeneration;
+  let videoGeneration = raw.videoGeneration ?? FRESH_CHAT_TOOLS.videoGeneration;
+  // Mutual exclusion: prefer the explicitly-on tool; if both, keep video off.
+  if (imageGeneration && videoGeneration) {
+    videoGeneration = false;
+  }
+
   return {
     webSearch: raw.webSearch ?? FRESH_CHAT_TOOLS.webSearch,
     webSearchDepth: normalizeDepth(raw.webSearchDepth),
     webFetch: raw.webFetch ?? FRESH_CHAT_TOOLS.webFetch,
-    imageGeneration: raw.imageGeneration ?? FRESH_CHAT_TOOLS.imageGeneration,
+    imageGeneration,
     imageAspectRatio: normalizeImageAspectPreset(
       (raw as Partial<ChatToolsState>).imageAspectRatio,
     ),
     imageCustomAspectRatio: customAspect ?? FRESH_CHAT_TOOLS.imageCustomAspectRatio,
+    videoGeneration,
+    videoDuration: normalizeVideoDuration(raw.videoDuration),
+    videoResolution: normalizeVideoResolution(raw.videoResolution),
+    videoAspectRatio: normalizeVideoAspectRatio(raw.videoAspectRatio),
+    videoGenerateAudio: raw.videoGenerateAudio ?? FRESH_CHAT_TOOLS.videoGenerateAudio,
     codeInterpreter: raw.codeInterpreter ?? FRESH_CHAT_TOOLS.codeInterpreter,
   };
 }
@@ -96,6 +137,7 @@ export function toolsToApiPayload(state: ChatToolsState) {
       web_search_depth: state.webSearchDepth,
       web_fetch: state.webFetch,
       image_generation: state.imageGeneration,
+      video_generation: state.videoGeneration,
       code_interpreter: state.codeInterpreter,
     },
   };

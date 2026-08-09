@@ -10,7 +10,11 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chat import ChatMessage, ChatMessageFeedback, ChatSession
-from app.services.chat_markers import IMAGE_MESSAGE_PREFIX, IMAGE_PENDING_MARKER
+from app.services.chat_markers import (
+    IMAGE_MESSAGE_PREFIX,
+    IMAGE_PENDING_MARKER,
+    VIDEO_MESSAGE_PREFIX,
+)
 
 VALID_FEEDBACK_REASONS = frozenset(
     {
@@ -24,22 +28,36 @@ VALID_FEEDBACK_REASONS = frozenset(
 )
 
 
-def _image_payload_model(content: str) -> str | None:
-    if not content.startswith(IMAGE_MESSAGE_PREFIX):
+def _media_payload_model(content: str, prefix: str) -> str | None:
+    if not content.startswith(prefix):
         return None
     try:
-        payload = json.loads(content[len(IMAGE_MESSAGE_PREFIX) :])
+        payload = json.loads(content[len(prefix) :])
     except (json.JSONDecodeError, TypeError):
         return None
     model = payload.get("model") if isinstance(payload, dict) else None
     return str(model).strip() if model else None
 
 
+def _image_payload_model(content: str) -> str | None:
+    return _media_payload_model(content, IMAGE_MESSAGE_PREFIX)
+
+
 def feedback_target(message: ChatMessage) -> tuple[str, str | None]:
     content = str(message.content or "")
-    output_kind = "image" if content.startswith(IMAGE_MESSAGE_PREFIX) else "text"
+    if content.startswith(VIDEO_MESSAGE_PREFIX):
+        output_kind = "video"
+    elif content.startswith(IMAGE_MESSAGE_PREFIX):
+        output_kind = "image"
+    else:
+        output_kind = "text"
     meta = message.meta if isinstance(message.meta, dict) else {}
-    model_id = _image_payload_model(content) or str(meta.get("modelId") or "").strip() or None
+    model_id = (
+        _media_payload_model(content, VIDEO_MESSAGE_PREFIX)
+        or _image_payload_model(content)
+        or str(meta.get("modelId") or "").strip()
+        or None
+    )
     return output_kind, model_id
 
 

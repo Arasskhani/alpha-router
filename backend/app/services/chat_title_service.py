@@ -15,6 +15,8 @@ from app.services.chat_markers import (
     AUDIO_MESSAGE_PREFIX,
     IMAGE_MESSAGE_PREFIX,
     IMAGE_PENDING_MARKER,
+    VIDEO_MESSAGE_PREFIX,
+    VIDEO_PENDING_MARKER,
 )
 from app.services.proxy_service import (
     _apply_litellm_provider_kwargs,
@@ -37,8 +39,11 @@ _FALLBACK_TITLE_MAX_WORDS = 4
 
 _IMAGE_PREFIX = IMAGE_MESSAGE_PREFIX
 _IMAGE_PENDING = IMAGE_PENDING_MARKER
+_VIDEO_PREFIX = VIDEO_MESSAGE_PREFIX
+_VIDEO_PENDING = VIDEO_PENDING_MARKER
 _INTERNAL_TITLE_PREFIXES = (
     _IMAGE_PREFIX,
+    _VIDEO_PREFIX,
     ATTACHMENT_MESSAGE_PREFIX,
     AUDIO_MESSAGE_PREFIX,
 )
@@ -69,10 +74,12 @@ def _parse_json_prompt(raw: str, prefix: str, fallback: str) -> str:
 
 def _normalize_content_for_title(content: str) -> str:
     t = (content or "").strip()
-    if not t or t == _IMAGE_PENDING:
+    if not t or t == _IMAGE_PENDING or t == _VIDEO_PENDING:
         return ""
     if t.startswith(_IMAGE_PREFIX):
         return _parse_json_prompt(t, _IMAGE_PREFIX, "Generated image")
+    if t.startswith(_VIDEO_PREFIX):
+        return _parse_json_prompt(t, _VIDEO_PREFIX, "Generated video")
     if t.startswith(ATTACHMENT_MESSAGE_PREFIX):
         return _parse_json_prompt(t, ATTACHMENT_MESSAGE_PREFIX, "")
     if t.startswith(AUDIO_MESSAGE_PREFIX):

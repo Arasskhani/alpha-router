@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
+from app.services.model_tool_compatibility_service import ensure_model_compatibility_rows
 
 
 def _per_1k_from_openrouter_pricing(pricing) -> tuple[float | None, float | None]:
@@ -167,6 +168,10 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
 
     conn.last_sync_at = datetime.utcnow()
     await db.flush()
+    synced_models = (
+        await db.execute(select(AIModel).where(AIModel.connection_id == conn.id))
+    ).scalars().all()
+    await ensure_model_compatibility_rows(db, synced_models)
     return synced
 
 

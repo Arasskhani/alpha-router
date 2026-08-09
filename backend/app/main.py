@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -114,6 +114,59 @@ def _assert_production_safe() -> None:
         csrf_cookie_name=settings.csrf_cookie_name,
         guard_mode=settings.production_guard_mode,
     )
+
+
+def collect_dangerous_opt_in_flags(
+    *,
+    allow_legacy_bearer_auth: bool = False,
+    allow_ssrf_private_ranges: bool = False,
+    allow_insecure_code_subprocess: bool = False,
+) -> list[tuple[str, str]]:
+    """Return (env_name, reason) for dangerous escape-hatch flags that are on.
+
+    Defaults are false; enabling any of these weakens CSRF, SSRF, or sandbox
+    isolation. Used for loud startup warnings (does not block boot in development).
+    """
+    enabled: list[tuple[str, str]] = []
+    if allow_legacy_bearer_auth:
+        enabled.append(
+            (
+                "ALLOW_LEGACY_BEARER_AUTH",
+                "browser Bearer JWT bypasses the HttpOnly session cookie + CSRF path; "
+                "use /v1 API keys for machine clients instead",
+            )
+        )
+    if allow_ssrf_private_ranges:
+        enabled.append(
+            (
+                "ALLOW_SSRF_PRIVATE_RANGES",
+                "ssrf_guard allows private/loopback/metadata targets; prefer SAML "
+                "Metadata XML upload or a public proxy URL for internal resources",
+            )
+        )
+    if allow_insecure_code_subprocess:
+        enabled.append(
+            (
+                "ALLOW_INSECURE_CODE_SUBPROCESS",
+                "code interpreter may run on the API host via subprocess in development; "
+                "prefer CODE_SANDBOX_BROKER_URL + SANDBOX_BROKER_TOKEN",
+            )
+        )
+    return enabled
+
+
+def _warn_dangerous_opt_in_flags() -> None:
+    """Log a clear warning for each dangerous opt-in flag that is enabled."""
+    for name, reason in collect_dangerous_opt_in_flags(
+        allow_legacy_bearer_auth=settings.allow_legacy_bearer_auth,
+        allow_ssrf_private_ranges=settings.allow_ssrf_private_ranges,
+        allow_insecure_code_subprocess=settings.allow_insecure_code_subprocess,
+    ):
+        logging.getLogger(LOGGER_NAMESPACE).warning(
+            "Dangerous opt-in enabled: %s — %s. Leave this false outside an isolated lab.",
+            name,
+            reason,
+        )
 
 
 def _redis_url_has_password(redis_url: str, *, redis_password: str = "") -> bool:
@@ -392,6 +445,7 @@ _PRODUCTION_GUARD_LOG = logging.getLogger(f"{LOGGER_NAMESPACE}.production_guard"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _assert_production_safe()
+    _warn_dangerous_opt_in_flags()
     async with engine.begin() as conn:
         # Multiple uvicorn workers enter lifespan concurrently. Serialize DDL
         # discovery/creation so a newly introduced table cannot race in
@@ -466,6 +520,23 @@ async def lifespan(app: FastAPI):
         from app.services.transfer_limits_service import get_transfer_limits
 
         await get_transfer_limits(db)
+        from app.services.code_interpreter_capacity_service import (
+            sync_code_interpreter_capacity_policy,
+        )
+
+        try:
+            await sync_code_interpreter_capacity_policy(db)
+        except HTTPException:
+            logging.getLogger(LOGGER_NAMESPACE).warning(
+                "Code Interpreter capacity policy could not be published; "
+                "Code Interpreter admission will fail closed until Redis recovers."
+            )
+        from app.services.model_tool_compatibility_service import (
+            ensure_all_model_compatibility_rows,
+        )
+
+        await ensure_all_model_compatibility_rows(db)
+        await db.commit()
 
     start_scheduler()
     await refresh_storage_cleanup_schedule()

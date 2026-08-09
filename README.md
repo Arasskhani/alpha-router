@@ -24,6 +24,12 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
+Compose builds the code-interpreter image through a one-shot
+`alpha-router-sandbox` initializer. Seeing that initializer as `Exited (0)` is
+expected; `alpha-router-sandbox-broker` is the long-running service and creates
+networkless disposable containers for each execution. No manual sandbox start
+is required.
+
 ### Local endpoints
 
 | Service | URL |
@@ -89,6 +95,50 @@ Copy `.env.example` to `.env`. Important groups include:
 
 For production, set `ENVIRONMENT=production` and keep
 `PRODUCTION_GUARD_MODE=hard-fail`.
+
+### Code Interpreter model compatibility
+
+Compatibility with the Code Interpreter tool is measured per connection and
+model instead of being hardcoded per vendor, so new models need no code change.
+A scheduled job probes due models in small claimed batches (Python block →
+sandbox execution → artifact → follow-up turn), and real chat turns feed the
+same registry. Repeated hard failures such as `MALFORMED_FUNCTION_CALL`
+quarantine a model, transient provider errors do not. Verified and blocked
+models also shape OpenRouter Auto Router constraints per request. Administrators
+can review evidence, probe on demand, or pin a decision from
+Admin → Models → Code Interpreter.
+
+### Code Interpreter capacity and workspace
+
+Code Interpreter turns use a Redis-backed lease shared by all API workers.
+The default admission ceiling is 200 end-to-end turns, with a separate
+per-user/API-key ceiling. Requests above capacity are rejected before provider
+or budget reservation work with HTTP `429` and `Retry-After`; Redis outages fail
+closed for this feature.
+Operators can lower the live global/per-subject ceilings and Retry-After value
+from Admin → Operations; the environment value remains the non-bypassable hard
+ceiling.
+
+Sandbox execution is identified by a job ID and supports explicit cancellation,
+so Stop terminates the disposable container instead of only abandoning the HTTP
+wait. The Docker broker remains the current executor, behind an interface that
+can later be replaced by a Kubernetes executor without changing chat behavior.
+
+File count and workspace size are separate controls. Admins can configure files
+per upload and Code Interpreter workspace files independently (including 100
+small text files), while the broker retains higher hard safety ceilings for
+payload bytes, filenames, file count, artifacts, and runtime resources. Inputs
+are rejected with an explicit workspace-limit error rather than silently
+truncated.
+
+Workspace and artifact filenames may use any script, so a generated
+`گزارش-مدیریتی.pdf` keeps its name through the sandbox, Media, and the download
+header. The shared policy in `backend/app/sandbox/filenames.py` (mirrored in
+`sandbox/runner.py`) rejects only path separators, control characters, BiDi and
+zero-width formatting characters that disguise the real extension, hidden or
+argument-looking names, and names over the character/UTF-8 byte budget. What a
+file is allowed to be is still decided by the extension allowlist and the
+per-artifact content validation.
 
 ## External clients
 

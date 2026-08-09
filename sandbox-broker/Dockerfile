@@ -21,6 +21,9 @@ RUN pip install --no-cache-dir fastapi uvicorn \
 
 COPY backend/app/__init__.py /srv/app/__init__.py
 COPY backend/app/branding.py /srv/app/branding.py
+COPY backend/app/sandbox/__init__.py /srv/app/sandbox/__init__.py
+COPY backend/app/sandbox/contracts.py /srv/app/sandbox/contracts.py
+COPY backend/app/sandbox/filenames.py /srv/app/sandbox/filenames.py
 COPY backend/app/sandbox_broker.py /srv/broker.py
 RUN chown -R alpha_router:alpha_router /srv/app /srv/broker.py
 

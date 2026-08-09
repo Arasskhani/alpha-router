@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import AdminPage from "../../components/AdminPage";
 import OperationsMetricCard, { type OpsSegment } from "../../components/operations/OperationsMetricCard";
@@ -8,6 +8,7 @@ import OperationsTimeRangeMenu, {
   type OpsRangeKey,
 } from "../../components/operations/OperationsTimeRangeMenu";
 import { api } from "../../api";
+import { useReadOnly } from "../../context/ReadOnlyContext";
 import { formatLocalDateTime } from "../../lib/dateTime";
 
 type OpsFooter = {
@@ -56,6 +57,31 @@ type DashboardPayload = {
   };
   snapshot_count: number;
   request_log_count: number;
+};
+
+type CodeInterpreterCapacityPayload = {
+  settings: {
+    max_concurrent_turns: number;
+    max_per_subject: number;
+    retry_after_seconds: number;
+    lease_ttl_seconds: number;
+    heartbeat_seconds: number;
+    hard_max_concurrent_turns: number;
+  };
+  runtime: {
+    active: number;
+    available: number;
+    limit: number;
+    utilization_percent: number;
+  };
+  broker: {
+    status: string;
+    max_concurrent?: number;
+    in_use?: number;
+    available?: number;
+    active_jobs?: number;
+    tracked_jobs?: number;
+  };
 };
 
 function humanSize(bytes: number) {
@@ -112,12 +138,32 @@ function OpsCardView({
 }
 
 export default function Operations() {
+  const readOnly = useReadOnly();
   const [data, setData] = useState<DashboardPayload | null>(null);
+  const [capacity, setCapacity] = useState<CodeInterpreterCapacityPayload | null>(null);
+  const [capacityMax, setCapacityMax] = useState(200);
+  const [capacityPerSubject, setCapacityPerSubject] = useState(2);
+  const [capacityRetryAfter, setCapacityRetryAfter] = useState(30);
+  const [savingCapacity, setSavingCapacity] = useState(false);
   const [rangeKey, setRangeKey] = useState<OpsRangeKey>(DEFAULT_OPS_RANGE);
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
   const intervalRef = useRef<number | null>(null);
+
+  const loadCapacity = useCallback(async () => {
+    try {
+      const payload = await api<CodeInterpreterCapacityPayload>(
+        "/api/admin/operations/code-interpreter-capacity",
+      );
+      setCapacity(payload);
+      setCapacityMax(payload.settings.max_concurrent_turns);
+      setCapacityPerSubject(payload.settings.max_per_subject);
+      setCapacityRetryAfter(payload.settings.retry_after_seconds);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
 
   const load = useCallback(
     async (record: boolean, range: OpsRangeKey) => {
@@ -146,11 +192,49 @@ export default function Operations() {
 
   useEffect(() => {
     void load(false, rangeKey);
-    intervalRef.current = window.setInterval(() => void load(false, rangeKey), 3600_000);
+    void loadCapacity();
+    intervalRef.current = window.setInterval(() => {
+      void load(false, rangeKey);
+      void loadCapacity();
+    }, 3600_000);
     return () => {
       if (intervalRef.current) window.clearInterval(intervalRef.current);
     };
-  }, [load, rangeKey]);
+  }, [load, loadCapacity, rangeKey]);
+
+  async function saveCapacity(e: FormEvent) {
+    e.preventDefault();
+    const hardMax = capacity?.settings.hard_max_concurrent_turns ?? 200;
+    const nextMax = Math.max(1, Math.min(hardMax, Math.round(Number(capacityMax) || 1)));
+    const nextPerSubject = Math.max(
+      1,
+      Math.min(nextMax, Math.round(Number(capacityPerSubject) || 1)),
+    );
+    const nextRetry = Math.max(1, Math.min(300, Math.round(Number(capacityRetryAfter) || 1)));
+    setSavingCapacity(true);
+    setError("");
+    try {
+      const payload = await api<CodeInterpreterCapacityPayload>(
+        "/api/admin/operations/code-interpreter-capacity",
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            max_concurrent_turns: nextMax,
+            max_per_subject: nextPerSubject,
+            retry_after_seconds: nextRetry,
+          }),
+        },
+      );
+      setCapacity(payload);
+      setCapacityMax(payload.settings.max_concurrent_turns);
+      setCapacityPerSubject(payload.settings.max_per_subject);
+      setCapacityRetryAfter(payload.settings.retry_after_seconds);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSavingCapacity(false);
+    }
+  }
 
   const c = data?.cards;
 
@@ -168,7 +252,10 @@ export default function Operations() {
             type="button"
             className="btn"
             disabled={checking || loading}
-            onClick={() => void load(true, rangeKey)}
+            onClick={() => {
+              void load(true, rangeKey);
+              void loadCapacity();
+            }}
           >
             {checking ? "Checking…" : "Check Now"}
           </button>
@@ -194,6 +281,77 @@ export default function Operations() {
         </p>
       )}
       {error && <p className="alert alert-error">{error}</p>}
+
+      {capacity && (
+        <>
+          <h3 className="operations-section-title">Code Interpreter capacity</h3>
+          <div className="card operations-capacity-card">
+            <div className="operations-capacity-summary">
+              <span>
+                <strong>{capacity.runtime.active}</strong> active
+              </span>
+              <span>
+                <strong>{capacity.runtime.available}</strong> available
+              </span>
+              <span>
+                <strong>{capacity.runtime.utilization_percent.toFixed(1)}%</strong> utilized
+              </span>
+              <span>
+                <strong>
+                  {capacity.broker.status === "ok" ? capacity.broker.active_jobs ?? 0 : "—"}
+                </strong>{" "}
+                broker jobs
+              </span>
+            </div>
+            <div className="operations-capacity-track" aria-label="Code Interpreter capacity utilization">
+              <span style={{ width: `${Math.min(100, capacity.runtime.utilization_percent)}%` }} />
+            </div>
+            <form className="operations-capacity-form" onSubmit={saveCapacity}>
+              <label>
+                Concurrent turns
+                <input
+                  type="number"
+                  min={1}
+                  max={capacity.settings.hard_max_concurrent_turns}
+                  value={capacityMax}
+                  onChange={(e) => setCapacityMax(Number(e.target.value))}
+                  disabled={readOnly || savingCapacity}
+                />
+              </label>
+              <label>
+                Per user / API key
+                <input
+                  type="number"
+                  min={1}
+                  max={capacityMax}
+                  value={capacityPerSubject}
+                  onChange={(e) => setCapacityPerSubject(Number(e.target.value))}
+                  disabled={readOnly || savingCapacity}
+                />
+              </label>
+              <label>
+                Retry-After (seconds)
+                <input
+                  type="number"
+                  min={1}
+                  max={300}
+                  value={capacityRetryAfter}
+                  onChange={(e) => setCapacityRetryAfter(Number(e.target.value))}
+                  disabled={readOnly || savingCapacity}
+                />
+              </label>
+              <button className="btn btn-primary" disabled={readOnly || savingCapacity}>
+                {savingCapacity ? "Saving…" : "Save capacity"}
+              </button>
+            </form>
+            <p className="muted-text">
+              Environment hard ceiling: {capacity.settings.hard_max_concurrent_turns} turns · lease TTL{" "}
+              {capacity.settings.lease_ttl_seconds}s · heartbeat {capacity.settings.heartbeat_seconds}s.
+              Requests above the operational limit are rejected immediately with HTTP 429.
+            </p>
+          </div>
+        </>
+      )}
 
       {c && (
         <>

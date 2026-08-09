@@ -2,7 +2,12 @@
 
 from app.models.user import User, UserGroup, user_group_members
 from app.models.connection import Connection, ConnectionAuditLog
-from app.models.model_catalog import AIModel, ModelAccessAssignment
+from app.models.model_catalog import (
+    AIModel,
+    ModelAccessAssignment,
+    ModelToolCompatibility,
+    ModelToolCompatibilityEvent,
+)
 from app.models.api_key import AlphaRouterApiKey, AlphaRouterApiKeyAuditLog, UserApiKey
 from app.models.budget import BudgetPlan, PlanAssignment
 from app.models.logging import ImageGenerationAttempt, RequestLog
@@ -28,6 +33,8 @@ __all__ = [
     "ConnectionAuditLog",
     "AIModel",
     "ModelAccessAssignment",
+    "ModelToolCompatibility",
+    "ModelToolCompatibilityEvent",
     "AlphaRouterApiKey",
     "AlphaRouterApiKeyAuditLog",
     "UserApiKey",

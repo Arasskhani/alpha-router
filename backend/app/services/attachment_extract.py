@@ -7,13 +7,14 @@ from typing import Any
 
 import pandas as pd
 
+from app.core.text_safety import clean_extracted_text
 from app.services.attachment_policy import ALLOWED_IMAGE_EXTENSIONS, _extension
 
 _MAX_EXTRACT_CHARS = 120_000
 
 
 def _truncate(text: str) -> str:
-    text = (text or "").strip()
+    text = clean_extracted_text(text).strip()
     if len(text) <= _MAX_EXTRACT_CHARS:
         return text
     return text[:_MAX_EXTRACT_CHARS] + "\n\n[…truncated…]"

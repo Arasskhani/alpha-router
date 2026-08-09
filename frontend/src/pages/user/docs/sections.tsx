@@ -408,8 +408,16 @@ export const userManualSections: DocSection[] = [
                 <strong>Code interpreter</strong>
               </td>
               <td>
-                Runs Python in an isolated sandbox for calculation / data tasks. Extra budget hold may apply while it is
-                on.
+                Runs Python in an isolated sandbox for calculation / data tasks. The model must emit a fenced{" "}
+                <code>python</code> code block for anything to execute. Spreadsheet attachments reach the sandbox as CSV
+                (use Code interpreter outside Private mode for Excel). Valid PDF, CSV, JSON, text, and Markdown outputs
+                are saved to your Media library and shown as authenticated download links in Chat, including files named
+                in Persian or any other language. Generated files are
+                not persisted in Private mode. Extra budget hold may apply while the tool is on. While the tool is on,
+                the model list hides models that were measured as unable to complete this flow; if your current model is
+                one of them, Chat switches to a suitable model and tells you why. If all execution slots are occupied,
+                Chat reports that Code Interpreter is busy before sending the request to the model; wait for the
+                indicated retry interval and try again. Pressing Stop also cancels the active sandbox job.
               </td>
             </tr>
           </tbody>

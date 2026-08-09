@@ -1444,6 +1444,33 @@ table tr:first-child td { border-top: none; }
   color: var(--text);
   font-weight: 600;
 }
+.model-compat-btn--blocked {
+  color: var(--danger, #d14343);
+  font-weight: 600;
+}
+.model-compat-btn--verified {
+  color: var(--accent);
+  font-weight: 600;
+}
+.model-compat__summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem 1rem;
+  margin-bottom: 0.85rem;
+}
+.model-compat__summary > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+  word-break: break-word;
+}
+.model-compat__choice--on {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  font-weight: 600;
+}
 .model-access-form__label {
   margin: 0 0 0.75rem;
   word-break: break-all;
@@ -2938,6 +2965,45 @@ table.card tbody td:last-child {
   margin: 0 0 0.75rem;
 }
 
+.operations-capacity-card {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.operations-capacity-summary,
+.operations-capacity-form {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+}
+
+.operations-capacity-summary span {
+  min-width: 7rem;
+}
+
+.operations-capacity-track {
+  height: 0.5rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 72%, var(--surface));
+}
+
+.operations-capacity-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 180ms ease;
+}
+
+.operations-capacity-form label {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 10rem;
+  font-size: 0.85rem;
+}
+
 .operations-slow-models h3 {
   margin-top: 0;
 }
@@ -3849,6 +3915,9 @@ table.card tbody td:last-child {
 
 .alpha-router-history-item-actions {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.05rem;
   opacity: 0;
 }
 
@@ -3857,6 +3926,38 @@ table.card tbody td:last-child {
 .alpha-router-history-item-actions:focus-within,
 .alpha-router-history-item-actions:has(.row-actions-trigger[aria-expanded="true"]) {
   opacity: 1;
+}
+
+.alpha-router-history-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.55rem;
+  height: 1.55rem;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--alpha-router-sidebar-muted);
+  cursor: pointer;
+}
+
+.alpha-router-history-delete svg {
+  width: 0.9rem;
+  height: 0.9rem;
+  display: block;
+}
+
+.alpha-router-history-delete:hover,
+.alpha-router-history-delete:focus-visible {
+  color: #b91c1c;
+  background: color-mix(in srgb, #ef4444 12%, transparent);
+  outline: none;
+}
+
+[data-scheme="dark"] .alpha-router-history-delete:hover,
+[data-scheme="dark"] .alpha-router-history-delete:focus-visible {
+  color: #fca5a5;
 }
 
 .alpha-router-history-item-actions .row-actions-trigger {

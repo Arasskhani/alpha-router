@@ -116,7 +116,7 @@ import {
   cloneProcessedAttachments,
   compactChatMessagesForStorage,
   hasApiContent,
-  MAX_ATTACHMENTS,
+  DEFAULT_MAX_ATTACHMENTS,
   readAttachmentMessage,
   promptImpliesImageEdit,
   shouldRouteToImageGeneration,
@@ -153,6 +153,12 @@ import {
   resolveSessionModelForTools,
 } from "../lib/chatImageModels";
 import {
+  codeInterpreterBlockedReason,
+  findCodeInterpreterFallbackModel,
+  modelSupportsCodeInterpreter,
+  type CodeInterpreterCompatibility,
+} from "../lib/chatCodeInterpreterModels";
+import {
   isAutoRouterModel,
   resolveDefaultModelPreference,
 } from "../lib/chatModels";
@@ -187,6 +193,7 @@ type Model = {
   supports_text_to_image?: boolean;
   supports_image_to_image?: boolean;
   supports_vision?: boolean;
+  code_interpreter?: CodeInterpreterCompatibility | null;
 };
 type AudioPayload = { url: string; transcript: string };
 type QueuedPrompt = {
@@ -409,6 +416,26 @@ function PrivateModeStrip() {
   );
 }
 
+type ParsedChatApiError = {
+  message: string;
+  code?: string;
+  retryAfterSeconds?: number;
+};
+
+class ChatCompletionApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly retryAfterSeconds?: number;
+
+  constructor(parsed: ParsedChatApiError, status: number) {
+    super(parsed.message);
+    this.name = "ChatCompletionApiError";
+    this.status = status;
+    this.code = parsed.code;
+    this.retryAfterSeconds = parsed.retryAfterSeconds;
+  }
+}
+
 export default function ChatPanel() {
   const readOnly = useReadOnly();
   const shellMenu = useShellMenu();
@@ -504,6 +531,7 @@ export default function ChatPanel() {
   const [voiceRecording, setVoiceRecording] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<ProcessedAttachment[]>([]);
+  const [maxAttachments, setMaxAttachments] = useState(DEFAULT_MAX_ATTACHMENTS);
   const pendingAttachmentsRef = useRef<ProcessedAttachment[]>([]);
   const [attachUploading, setAttachUploading] = useState(false);
   const [promptQueues, setPromptQueues] = useState<Record<string, QueuedPrompt[]>>({});
@@ -605,12 +633,13 @@ export default function ChatPanel() {
   const pickerModels = useMemo((): Model[] => {
     const matched = models.filter((m) => {
       if (chatTools.imageGeneration && !modelSupportsImages(m, models)) return false;
+      if (chatTools.codeInterpreter && !modelSupportsCodeInterpreter(m)) return false;
       return true;
     });
     const autoRouter = matched.find((m) => isAutoRouterModel(m));
     if (!autoRouter) return matched;
     return [autoRouter, ...matched.filter((m) => m.id !== autoRouter.id)];
-  }, [models, chatTools.imageGeneration]);
+  }, [models, chatTools.imageGeneration, chatTools.codeInterpreter]);
 
   const selectedModels = useMemo(
     () =>
@@ -1103,6 +1132,17 @@ export default function ChatPanel() {
       return;
     }
     let cancelled = false;
+    api<{ max_chat_attachments_count?: number }>("/api/chat/attachment-limits")
+      .then((limits) => {
+        if (cancelled) return;
+        const count = Number(limits?.max_chat_attachments_count);
+        if (Number.isFinite(count) && count >= 1) {
+          setMaxAttachments(Math.min(50, Math.round(count)));
+        }
+      })
+      .catch(() => {
+        /* keep DEFAULT_MAX_ATTACHMENTS */
+      });
     api<Model[]>("/api/chat/models")
       .then((m) => {
         if (cancelled) return;
@@ -2453,6 +2493,17 @@ export default function ChatPanel() {
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
+            <button
+              type="button"
+              className="alpha-router-history-delete"
+              title="Delete chat"
+              aria-label={`Delete ${sessionDisplayTitle(s)}`}
+              onClick={(e) => void deleteSession(s.id, e)}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
+              </svg>
+            </button>
             <RowActionsMenu
               label="⋯"
               menuClassName="row-actions-menu--sidebar"
@@ -2618,7 +2669,18 @@ export default function ChatPanel() {
       ),
       signal,
     });
-    if (!res.ok) throw new Error(parseApiError(await res.text(), res.status));
+    if (!res.ok) {
+      const parsed = parseApiError(await res.text(), res.status);
+      const retryAfterHeader = Number(res.headers.get("Retry-After"));
+      if (
+        parsed.retryAfterSeconds == null
+        && Number.isFinite(retryAfterHeader)
+        && retryAfterHeader > 0
+      ) {
+        parsed.retryAfterSeconds = Math.ceil(retryAfterHeader);
+      }
+      throw new ChatCompletionApiError(parsed, res.status);
+    }
 
     const reader = res.body?.getReader();
     if (!reader) throw new Error("No response stream");
@@ -2725,6 +2787,28 @@ export default function ChatPanel() {
   }
 
   function friendlyTurnError(err: unknown): string {
+    if (
+      err instanceof ChatCompletionApiError
+      && err.code === "code_interpreter_capacity_busy"
+    ) {
+      const retry =
+        err.retryAfterSeconds && err.retryAfterSeconds > 0
+          ? ` Try again in about ${err.retryAfterSeconds} seconds.`
+          : " Please try again later.";
+      return `Code Interpreter is currently busy.${retry}`;
+    }
+    if (
+      err instanceof ChatCompletionApiError
+      && err.code === "code_interpreter_capacity_unavailable"
+    ) {
+      return "Code Interpreter is temporarily unavailable because capacity coordination is offline. Please try again shortly.";
+    }
+    if (
+      err instanceof ChatCompletionApiError
+      && err.code === "code_interpreter_workspace_limit"
+    ) {
+      return err.message;
+    }
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes("network") || message === "Failed to fetch") {
       return `Cannot reach ${PRODUCT_NAME} API. Check that Docker is running and hard-refresh (Ctrl+Shift+R).`;
@@ -3049,6 +3133,30 @@ export default function ChatPanel() {
         setSelectedModelIds((prev) => (prev.length <= 1 ? prev : [primary]));
       }
     }
+    if (next.codeInterpreter) {
+      const current = models.find((m) => m.id === model);
+      if (current && !modelSupportsCodeInterpreter(current)) {
+        const fallback = findCodeInterpreterFallbackModel(models);
+        const reason = codeInterpreterBlockedReason(current);
+        if (fallback) {
+          setChatError(
+            `${current.name} is not available for Code Interpreter${
+              reason ? ` (${reason})` : ""
+            }. Switched to ${fallback.name}.`,
+          );
+          pickModel(fallback.id);
+          return;
+        }
+        if (reason) setChatError(reason);
+      }
+      setSelectedModelIds((prev) => {
+        const allowed = prev.filter((id) => {
+          const found = models.find((m) => m.id === id);
+          return !found || modelSupportsCodeInterpreter(found);
+        });
+        return allowed.length && allowed.length !== prev.length ? allowed : prev;
+      });
+    }
   }
 
   function sessionMessagesForQueue(sessionId: string): ChatMessage[] {
@@ -3227,12 +3335,37 @@ export default function ChatPanel() {
       });
   }
 
-  function parseApiError(raw: string, status: number) {
+  function parseApiError(raw: string, status: number): ParsedChatApiError {
     try {
-      const j = JSON.parse(raw);
-      return j.detail || j.message || raw;
+      const j = JSON.parse(raw) as {
+        detail?: string | {
+          message?: string;
+          code?: string;
+          retry_after_seconds?: number;
+        };
+        message?: string;
+        code?: string;
+        retry_after_seconds?: number;
+      };
+      const detail = j.detail;
+      if (detail && typeof detail === "object") {
+        return {
+          message: detail.message || raw || `Request failed (${status})`,
+          code: detail.code || j.code,
+          retryAfterSeconds: detail.retry_after_seconds ?? j.retry_after_seconds,
+        };
+      }
+      return {
+        message:
+          (typeof detail === "string" ? detail : undefined)
+          || j.message
+          || raw
+          || `Request failed (${status})`,
+        code: j.code,
+        retryAfterSeconds: j.retry_after_seconds,
+      };
     } catch {
-      return raw || `Request failed (${status})`;
+      return { message: raw || `Request failed (${status})` };
     }
   }
 
@@ -3989,7 +4122,7 @@ export default function ChatPanel() {
         method: "POST",
         body: fd,
       });
-      if (!res.ok) throw new Error(parseApiError(await res.text(), res.status));
+      if (!res.ok) throw new Error(parseApiError(await res.text(), res.status).message);
       const data = (await res.json()) as { transcript?: string };
       baseTranscript = (data.transcript || "").trim();
     } catch (err) {
@@ -4162,8 +4295,8 @@ export default function ChatPanel() {
     if (!list?.length) return;
     const sid = ensureActiveSession();
     const files = Array.from(list);
-    if (pendingAttachments.length + files.length > MAX_ATTACHMENTS) {
-      setChatError(`You can attach up to ${MAX_ATTACHMENTS} files at once.`);
+    if (pendingAttachments.length + files.length > maxAttachments) {
+      setChatError(`You can attach up to ${maxAttachments} files at once.`);
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
@@ -4173,7 +4306,7 @@ export default function ChatPanel() {
     try {
       if (sid && sessionPrivateMode(sid)) {
         const localAttachments = await processAttachmentFilesLocally(files);
-        setPendingAttachments((prev) => [...prev, ...localAttachments].slice(0, MAX_ATTACHMENTS));
+        setPendingAttachments((prev) => [...prev, ...localAttachments].slice(0, maxAttachments));
       } else {
         for (const file of files) {
           validateAttachmentFile(file);
@@ -4185,9 +4318,9 @@ export default function ChatPanel() {
           method: "POST",
           body: fd,
         });
-        if (!res.ok) throw new Error(parseApiError(await res.text(), res.status));
+        if (!res.ok) throw new Error(parseApiError(await res.text(), res.status).message);
         const data = (await res.json()) as { attachments: ProcessedAttachment[] };
-        setPendingAttachments((prev) => [...prev, ...data.attachments].slice(0, MAX_ATTACHMENTS));
+        setPendingAttachments((prev) => [...prev, ...data.attachments].slice(0, maxAttachments));
       }
     } catch (err) {
       reportUserFacingApiError(err);

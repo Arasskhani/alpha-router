@@ -5,6 +5,7 @@ import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.background import BackgroundTask
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -194,7 +195,17 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             alpha_router_api_key_id=auth_ctx.alpha_router_api_key_id,
             source=auth_ctx.source,
         )
-        await db.commit()
+        try:
+            await db.commit()
+        except BaseException:
+            permit = getattr(resolved, "code_interpreter_capacity_permit", None)
+            if permit is not None:
+                from app.services.code_interpreter_capacity_service import (
+                    release_code_interpreter_turn,
+                )
+
+                await release_code_interpreter_turn(permit)
+            raise
         gen = stream_chat(
             request,
             body,
@@ -206,10 +217,25 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             alpha_router_api_key_id=auth_ctx.alpha_router_api_key_id,
             resolved=resolved,
         )
+        permit = getattr(resolved, "code_interpreter_capacity_permit", None)
+
+        async def release_capacity_fallback() -> None:
+            if permit is not None:
+                from app.services.code_interpreter_capacity_service import (
+                    release_code_interpreter_turn,
+                )
+
+                await release_code_interpreter_turn(permit)
+
         return StreamingResponse(
             gen,
             media_type="text/event-stream",
             headers=STREAM_SSE_HEADERS,
+            background=(
+                BackgroundTask(release_capacity_fallback)
+                if permit is not None
+                else None
+            ),
         )
     raise HTTPException(status_code=400, detail="Non-streaming mode: use stream=true")
 

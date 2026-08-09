@@ -115,6 +115,14 @@ class Settings(BaseSettings):
     # Retained only to detect and reject a legacy image-only configuration.
     code_sandbox_image: str = ""  # env: CODE_SANDBOX_IMAGE (e.g. alpha-router-sandbox:latest)
     code_sandbox_timeout_seconds: int = 20  # env: CODE_SANDBOX_TIMEOUT_SECONDS
+    # Cross-worker Code Interpreter turn admission (Redis leased semaphore).
+    # Global hard ceiling for concurrent CI turns; request over capacity is
+    # rejected immediately (no queue) with HTTP 429 + Retry-After.
+    code_interpreter_capacity_global_max: int = 200  # env: CODE_INTERPRETER_CAPACITY_GLOBAL_MAX
+    code_interpreter_capacity_per_subject_max: int = 2  # env: CODE_INTERPRETER_CAPACITY_PER_SUBJECT_MAX
+    code_interpreter_capacity_lease_ttl_seconds: int = 900  # env: CODE_INTERPRETER_CAPACITY_LEASE_TTL_SECONDS
+    code_interpreter_capacity_heartbeat_seconds: int = 30  # env: CODE_INTERPRETER_CAPACITY_HEARTBEAT_SECONDS
+    code_interpreter_capacity_retry_after_seconds: int = 30  # env: CODE_INTERPRETER_CAPACITY_RETRY_AFTER_SECONDS
 
     # Bounded I/O defaults. Callers clamp overrides to hard safety ceilings.
     max_request_body_bytes: int = 64 * 1024 * 1024

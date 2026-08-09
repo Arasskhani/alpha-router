@@ -10,6 +10,18 @@ export type ModelKind =
 
 export type ModelAccessType = "public" | "private";
 
+export type CodeInterpreterCompatibilityInfo = {
+  status: "compatible" | "unknown" | "probing" | "degraded" | "incompatible";
+  compatible: boolean;
+  selectable: boolean;
+  auto_router?: boolean;
+  verified?: boolean;
+  score?: number | null;
+  reason_code?: string | null;
+  reason_detail?: string | null;
+  manual_override?: string | null;
+};
+
 export type CatalogModel = {
   id: number;
   external_id: string;
@@ -29,7 +41,38 @@ export type CatalogModel = {
   context_length?: number | null;
   provider_author?: string;
   released_at?: string | null;
+  code_interpreter?: CodeInterpreterCompatibilityInfo | null;
 };
+
+/** Short admin label for the measured Code Interpreter state. */
+export function codeInterpreterLabel(m: CatalogModel): string {
+  const info = m.code_interpreter;
+  if (!info) return "Unknown";
+  if (info.manual_override === "compatible") return "Allowed (pinned)";
+  if (info.manual_override === "incompatible") return "Blocked (pinned)";
+  switch (info.status) {
+    case "compatible":
+      return "Verified";
+    case "degraded":
+      return "Quarantined";
+    case "incompatible":
+      return "Blocked";
+    case "probing":
+      return "Probing";
+    default:
+      return "Unknown";
+  }
+}
+
+export function codeInterpreterButtonClass(m: CatalogModel): string {
+  const info = m.code_interpreter;
+  if (!info) return "";
+  if (info.status === "compatible") return " model-compat-btn--verified";
+  if (info.status === "degraded" || info.status === "incompatible") {
+    return " model-compat-btn--blocked";
+  }
+  return "";
+}
 
 export const MODEL_KIND_ORDER: ModelKind[] = [
   "text",

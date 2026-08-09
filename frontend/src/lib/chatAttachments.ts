@@ -21,7 +21,9 @@ export type AttachmentMessagePayload = {
   attachments: ProcessedAttachment[];
 };
 
-export const MAX_ATTACHMENTS = 5;
+export const DEFAULT_MAX_ATTACHMENTS = 5;
+/** @deprecated Prefer the admin-configured limit from `/api/chat/attachment-limits`. */
+export const MAX_ATTACHMENTS = DEFAULT_MAX_ATTACHMENTS;
 
 const BLOCKED_EXTENSIONS = new Set([
   "apk", "app", "application", "asp", "aspx", "bat", "bin", "cab", "cmd", "com", "cpl", "crt",

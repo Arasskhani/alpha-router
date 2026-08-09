@@ -4,6 +4,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
+from starlette.background import BackgroundTask
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,7 +28,6 @@ from app.services.media_authorization_service import MediaAccessAction, load_aut
 from app.services.attachment_extract import processed_attachment_payload
 from app.services.attachment_policy import (
     AttachmentPolicyError,
-    MAX_ATTACHMENTS_PER_REQUEST,
     media_response_type_and_disposition,
     resolve_attachment_mime,
     validate_attachment_filename,
@@ -49,6 +49,12 @@ from app.services.image_prompt_service import (
     enhance_user_prompt,
 )
 from app.services.model_access_service import filter_models_for_subject, resolve_access_subject
+from app.services.model_tool_compatibility_service import (
+    compatibility_map_for_models,
+    compatibility_payload,
+    is_auto_router_model_id,
+    is_code_interpreter_candidate,
+)
 from app.services.proxy_service import STREAM_SSE_HEADERS, preflight_stream_chat, stream_chat
 from app.services.transcription_service import transcribe_audio_bytes
 from app.services.voice_refine_service import refine_voice_transcript
@@ -80,11 +86,17 @@ async def chat_models(user: User = Depends(get_current_user), db: AsyncSession =
     ).scalars().all()
     subject = await resolve_access_subject(db, user_id=user.id)
     rows = await filter_models_for_subject(db, list(rows), subject)
+    compatibility = await compatibility_map_for_models(db, rows)
     return [
         {
             "id": f"model::{m.id}",
             "name": m.display_name or m.external_id,
             "external_id": m.external_id,
+            "code_interpreter": compatibility_payload(
+                compatibility.get((int(m.connection_id), m.external_id)),
+                static_candidate=is_code_interpreter_candidate(m),
+                auto_router=is_auto_router_model_id(m.external_id),
+            ),
             **image_generation_capabilities(
                 external_id=m.external_id or "",
                 is_image_model=bool(m.is_image_model),
@@ -225,7 +237,17 @@ async def chat_completions(
         user_id=user.id,
         skip_budget=False,
     )
-    await db.commit()
+    try:
+        await db.commit()
+    except BaseException:
+        permit = getattr(resolved, "code_interpreter_capacity_permit", None)
+        if permit is not None:
+            from app.services.code_interpreter_capacity_service import (
+                release_code_interpreter_turn,
+            )
+
+            await release_code_interpreter_turn(permit)
+        raise
     gen = stream_chat(
         request,
         payload,
@@ -236,10 +258,21 @@ async def chat_completions(
         skip_budget=False,
         resolved=resolved,
     )
+    permit = getattr(resolved, "code_interpreter_capacity_permit", None)
+
+    async def release_capacity_fallback() -> None:
+        if permit is not None:
+            from app.services.code_interpreter_capacity_service import (
+                release_code_interpreter_turn,
+            )
+
+            await release_code_interpreter_turn(permit)
+
     return StreamingResponse(
         gen,
         media_type="text/event-stream",
         headers=STREAM_SSE_HEADERS,
+        background=BackgroundTask(release_capacity_fallback) if permit is not None else None,
     )
 
 
@@ -336,6 +369,17 @@ async def refine_voice_message(
     return {"transcript": refined}
 
 
+@router.get("/attachment-limits")
+async def get_attachment_limits(
+    _: User = Depends(require_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Public transfer limits needed by the chat composer."""
+    from app.services.transfer_limits_service import get_transfer_limits, transfer_limits_public_view
+
+    return transfer_limits_public_view(await get_transfer_limits(db))
+
+
 @router.post("/attachments/process")
 async def process_attachments(
     files: list[UploadFile] = File(...),
@@ -347,17 +391,18 @@ async def process_attachments(
     await ensure_budget_period(db, user)
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded.")
-    if len(files) > MAX_ATTACHMENTS_PER_REQUEST:
-        raise HTTPException(
-            status_code=400,
-            detail=f"You can attach up to {MAX_ATTACHMENTS_PER_REQUEST} files at once.",
-        )
 
     out: list[dict] = []
     total_bytes = 0
     from app.services.transfer_limits_service import get_transfer_limits
 
     transfer = await get_transfer_limits(db)
+    max_count = int(transfer["max_chat_attachments_count"])
+    if len(files) > max_count:
+        raise HTTPException(
+            status_code=400,
+            detail=f"You can attach up to {max_count} files at once.",
+        )
     attachment_limit = clamp_limit(
         int(transfer["max_upload_file_bytes"]),
         minimum=1024 * 1024,

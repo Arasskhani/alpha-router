@@ -15,6 +15,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.text_safety import strip_nul
 from app.models.media import MediaAsset
 from app.models.system import SystemSetting
 from app.models.user import User
@@ -289,6 +290,11 @@ async def store_media_from_blob(
     digest = (content_hash or "").strip().lower()
     if not digest:
         raise ValueError("content_hash is required")
+
+    # Prompts derived from attachments can carry NUL, which PostgreSQL refuses
+    # to store; scrubbing here keeps every caller safe.
+    source_prompt = strip_nul(source_prompt)
+    source_model = strip_nul(source_model)
 
     owner_username = await _resolve_username_raw(db, user_id, username)
     ext = _ext_from_mime(mime)

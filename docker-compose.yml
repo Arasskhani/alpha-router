@@ -107,8 +107,14 @@ services:
       context: ./sandbox
       dockerfile: Dockerfile
     image: alpha-router-sandbox:latest
-    profiles: ["build-only"]
+    entrypoint: ["/bin/true"]
     restart: "no"
+    network_mode: "none"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
   alpha-router-sandbox-broker:
     build:
@@ -116,6 +122,9 @@ services:
       dockerfile: sandbox-broker/Dockerfile
     image: alpha-router-sandbox-broker:latest
     restart: unless-stopped
+    depends_on:
+      alpha-router-sandbox:
+        condition: service_completed_successfully
     # Runs as uid 10001. On many Docker hosts docker.sock is root:root mode 660,
     # so the supplementary root group is required for API access without process
     # uid 0. The socket remains a residual host trust boundary; never publish
@@ -125,6 +134,15 @@ services:
       - "0"
     environment:
       SANDBOX_BROKER_TOKEN: ${SANDBOX_BROKER_TOKEN:?SANDBOX_BROKER_TOKEN must be set in .env}
+      SANDBOX_MAX_CONCURRENT: ${SANDBOX_MAX_CONCURRENT:-200}
+      SANDBOX_QUEUE_TIMEOUT_SECONDS: ${SANDBOX_QUEUE_TIMEOUT_SECONDS:-0.1}
+      SANDBOX_RETRY_AFTER_SECONDS: ${SANDBOX_RETRY_AFTER_SECONDS:-30}
+      SANDBOX_HARD_MAX_WORKSPACE_FILES: ${SANDBOX_HARD_MAX_WORKSPACE_FILES:-1000}
+      SANDBOX_HARD_MAX_WORKSPACE_FILE_BYTES: ${SANDBOX_HARD_MAX_WORKSPACE_FILE_BYTES:-67108864}
+      SANDBOX_HARD_MAX_WORKSPACE_TOTAL_BYTES: ${SANDBOX_HARD_MAX_WORKSPACE_TOTAL_BYTES:-67108864}
+      SANDBOX_HARD_MAX_REQUEST_BYTES: ${SANDBOX_HARD_MAX_REQUEST_BYTES:-75497472}
+      SANDBOX_JOB_RETENTION_SECONDS: ${SANDBOX_JOB_RETENTION_SECONDS:-300}
+      SANDBOX_MAX_TRACKED_JOBS: ${SANDBOX_MAX_TRACKED_JOBS:-10000}
       HOME: /home/alpha_router
       DOCKER_HOST: unix:///var/run/docker.sock
     expose:
@@ -133,10 +151,16 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     read_only: true
     tmpfs:
-      - /tmp:rw,nosuid,nodev,size=16m
+      - /tmp:rw,nosuid,nodev,size=256m
       - /home/alpha_router:rw,nosuid,nodev,size=16m,uid=10001,gid=10001,mode=700
-    mem_limit: 256m
-    pids_limit: 128
+    # 200 concurrent docker CLI children cannot run under the previous 128 PID /
+    # 256 MiB broker limits. Final values remain subject to the documented load gate.
+    mem_limit: 2g
+    pids_limit: 512
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 8192
     cap_drop:
       - ALL
     security_opt:
@@ -148,6 +172,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+      start_period: 45s
 
   alpha-router:
     build:
@@ -164,6 +189,11 @@ services:
       CODE_SANDBOX_BROKER_TOKEN: ${SANDBOX_BROKER_TOKEN:?SANDBOX_BROKER_TOKEN must be set in .env}
       # Object storage (SeaweedFS S3 API). Overrides .env hostnames for Compose DNS.
       S3_ENDPOINT_URL: http://seaweedfs:8333
+      # Never set these to true here. Keep false in .env unless you have a written
+      # lab-only exception (see .env.example "DANGEROUS OPT-IN FLAGS"):
+      #   ALLOW_LEGACY_BEARER_AUTH, ALLOW_SSRF_PRIVATE_RANGES,
+      #   ALLOW_INSECURE_CODE_SUBPROCESS
+
     cap_drop:
       - ALL
     security_opt:

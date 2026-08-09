@@ -1,8 +1,11 @@
 """Security policy tests for the internal sandbox broker."""
 
 import asyncio
+import base64
+import hashlib
 import json
 import os
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -15,6 +18,20 @@ TOKEN = "t" * 48
 
 def _client() -> TestClient:
     return TestClient(broker.app)
+
+
+def test_compose_prepares_sandbox_before_starting_broker() -> None:
+    compose = (Path(__file__).parents[2] / "docker-compose.yml").read_text(encoding="utf-8")
+    sandbox_section = compose.split("  alpha-router-sandbox:", 1)[1].split(
+        "  alpha-router-sandbox-broker:", 1
+    )[0]
+    broker_section = compose.split("  alpha-router-sandbox-broker:", 1)[1].split(
+        "  alpha-router:", 1
+    )[0]
+    assert 'entrypoint: ["/bin/true"]' in sandbox_section
+    assert 'network_mode: "none"' in sandbox_section
+    assert "profiles:" not in sandbox_section
+    assert "condition: service_completed_successfully" in broker_section
 
 
 def test_broker_rejects_missing_and_wrong_tokens() -> None:
@@ -56,6 +73,67 @@ def test_broker_accepts_token_and_returns_sandbox_result() -> None:
     assert response.json() == result
 
 
+def _artifact_payload(name: str, content: bytes, mime_type: str) -> dict:
+    return {
+        "name": name,
+        "mime_type": mime_type,
+        "size_bytes": len(content),
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "content_base64": base64.b64encode(content).decode("ascii"),
+    }
+
+
+def test_broker_returns_artifacts_with_non_english_names() -> None:
+    pdf = b"%PDF-1.4\n%%EOF"
+    artifacts = broker._validated_artifacts(
+        [_artifact_payload("گزارش-مدیریتی.pdf", pdf, "application/pdf")]
+    )
+    assert [item["name"] for item in artifacts] == ["گزارش-مدیریتی.pdf"]
+
+
+def test_broker_validates_artifacts_before_returning_them() -> None:
+    pdf = b"%PDF-1.4\n%%EOF"
+    item = _artifact_payload("report.pdf", pdf, "application/pdf")
+    assert broker._validated_artifacts([item]) == [item]
+
+    tampered = dict(item, sha256="0" * 64)
+    with pytest.raises(ValueError, match="digest"):
+        broker._validated_artifacts([tampered])
+
+    unsafe = dict(item, name="../report.pdf")
+    with pytest.raises(ValueError, match="filename"):
+        broker._validated_artifacts([unsafe])
+
+
+def test_broker_lifespan_smoke_tests_runtime() -> None:
+    async def run():
+        with patch.object(
+            broker,
+            "_run_container",
+            AsyncMock(return_value={"stdout": "ready", "stderr": "", "exit_code": 0}),
+        ) as execute:
+            async with broker._lifespan(broker.app):
+                assert broker._runtime_ready
+            assert not broker._runtime_ready
+            execute.assert_awaited_once()
+
+    asyncio.run(run())
+
+
+def test_health_rejects_before_runtime_smoke_test() -> None:
+    async def run():
+        with (
+            patch.dict(os.environ, {"SANDBOX_BROKER_TOKEN": TOKEN}),
+            patch.object(broker, "_runtime_ready", False),
+            pytest.raises(broker.HTTPException) as exc,
+        ):
+            await broker.health()
+        assert exc.value.status_code == 503
+        assert "not ready" in str(exc.value.detail)
+
+    asyncio.run(run())
+
+
 def test_broker_rejects_saturated_queue_with_bounded_wait() -> None:
     async def run():
         saturated = asyncio.Semaphore(0)
@@ -82,7 +160,24 @@ def test_broker_rejects_policy_injection_fields(field: str) -> None:
     assert response.status_code == 422
 
 
-@pytest.mark.parametrize("filename", ["../secret", "/etc/passwd", "a/b.txt", "a\\b.txt", ".."])
+@pytest.mark.parametrize("filename", ["گزارش.csv", "خلاصه‌فاکتورها.txt", "отчет.json"])
+def test_broker_accepts_non_english_workspace_filenames(filename: str) -> None:
+    request = broker.ExecuteRequest(code="print(1)", files={filename: "x"})
+    assert set(request.files) == {filename}
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "../secret",
+        "/etc/passwd",
+        "a/b.txt",
+        "a\\b.txt",
+        "..",
+        "report\u202efdp.txt",
+        ".hidden.txt",
+    ],
+)
 def test_broker_rejects_unsafe_filenames(filename: str) -> None:
     with patch.dict(os.environ, {"SANDBOX_BROKER_TOKEN": TOKEN}):
         response = _client().post(
@@ -95,12 +190,16 @@ def test_broker_rejects_unsafe_filenames(filename: str) -> None:
 
 def test_broker_rejects_file_count_and_size_limits() -> None:
     headers = {"Authorization": f"Bearer {TOKEN}"}
-    with patch.dict(os.environ, {"SANDBOX_BROKER_TOKEN": TOKEN}):
+    with (
+        patch.dict(os.environ, {"SANDBOX_BROKER_TOKEN": TOKEN}),
+        patch.object(broker, "HARD_MAX_WORKSPACE_FILES", 10),
+        patch.object(broker, "MAX_FILE_BYTES", 10),
+    ):
         too_many = _client().post(
             "/v1/execute",
             json={
                 "code": "print(1)",
-                "files": {f"f{i}.txt": "x" for i in range(broker.MAX_FILES + 1)},
+                "files": {f"f{i}.txt": "x" for i in range(11)},
             },
             headers=headers,
         )
@@ -108,12 +207,20 @@ def test_broker_rejects_file_count_and_size_limits() -> None:
             "/v1/execute",
             json={
                 "code": "print(1)",
-                "files": {"large.txt": "x" * (broker.MAX_FILE_BYTES + 1)},
+                "files": {"large.txt": "x" * 11},
             },
             headers=headers,
         )
     assert too_many.status_code == 422
     assert too_large.status_code == 422
+
+
+def test_broker_accepts_one_hundred_small_workspace_files() -> None:
+    request = broker.ExecuteRequest(
+        code="print(1)",
+        files={f"f{i}.txt": "x" for i in range(100)},
+    )
+    assert len(request.files) == 100
 
 
 def test_broker_authenticates_before_reading_request_body() -> None:
@@ -149,9 +256,10 @@ def test_broker_authenticates_before_reading_request_body() -> None:
 
 def test_broker_caps_streamed_body_without_content_length() -> None:
     sent = []
+    test_limit = 1024
     chunks = [
-        b"x" * (broker.MAX_REQUEST_BYTES // 2),
-        b"x" * (broker.MAX_REQUEST_BYTES // 2 + 1),
+        b"x" * (test_limit // 2),
+        b"x" * (test_limit // 2 + 1),
     ]
 
     async def receive():
@@ -183,7 +291,10 @@ def test_broker_caps_streamed_body_without_content_length() -> None:
         "client": ("127.0.0.1", 1234),
         "server": ("broker", 8081),
     }
-    with patch.dict(os.environ, {"SANDBOX_BROKER_TOKEN": TOKEN}):
+    with (
+        patch.dict(os.environ, {"SANDBOX_BROKER_TOKEN": TOKEN}),
+        patch.object(broker, "MAX_REQUEST_BYTES", test_limit),
+    ):
         middleware = broker.BrokerSecurityMiddleware(drain_app)
         asyncio.run(middleware(scope, receive, send))
     assert any(message.get("status") == 413 for message in sent)

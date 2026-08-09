@@ -1,10 +1,11 @@
 import { createContext, useContext } from "react";
-import type { ComponentPropsWithoutRef } from "react";
+import type { ComponentPropsWithoutRef, MouseEvent, ReactNode } from "react";
 import type { ExtraProps } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import ChatCodeBlock from "./chat/ChatCodeBlock";
 import { inertBrowserUrl, safeBrowserUrl } from "../lib/browserUrlPolicy";
+import { fetchAuthenticatedMediaBlob, isAlphaRouterMediaFileUrl } from "../lib/mediaUrl";
 
 type Props = {
   content: string;
@@ -19,13 +20,50 @@ function stripTrailingNewline(raw: string): string {
   return raw.replace(/\n$/, "");
 }
 
+function linkText(children: ReactNode): string {
+  if (typeof children === "string" || typeof children === "number") return String(children);
+  if (Array.isArray(children)) return children.map(linkText).join("");
+  return "download";
+}
+
+export async function downloadAuthenticatedMedia(url: string, fileName: string): Promise<void> {
+  const blob = await fetchAuthenticatedMediaBlob(url);
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = fileName || "download";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+}
+
 function SafeLink({
   href,
   children,
+  onClick,
   ...props
 }: ComponentPropsWithoutRef<"a"> & ExtraProps) {
+  const safeHref = inertBrowserUrl(href, "navigation");
+  const authenticatedMedia = Boolean(href && isAlphaRouterMediaFileUrl(href));
+
+  function handleClick(event: MouseEvent<HTMLAnchorElement>) {
+    onClick?.(event);
+    if (event.defaultPrevented || !authenticatedMedia || !href) return;
+    event.preventDefault();
+    void downloadAuthenticatedMedia(href, linkText(children)).catch((error) => {
+      console.error("Authenticated media download failed", error);
+    });
+  }
+
   return (
-    <a href={inertBrowserUrl(href, "navigation")} target="_blank" rel="noopener noreferrer" {...props}>
+    <a
+      href={safeHref}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={handleClick}
+      {...props}
+    >
       {children}
     </a>
   );

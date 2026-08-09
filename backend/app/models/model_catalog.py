@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -83,3 +84,101 @@ class ModelAccessAssignment(Base):
     model = relationship("AIModel", back_populates="access_assignments")
     user = relationship("User", foreign_keys=[user_id])
     group = relationship("UserGroup", foreign_keys=[group_id])
+
+
+class ModelToolCompatibility(Base):
+    """Observed compatibility of one provider model with an Alpharouter tool."""
+
+    __tablename__ = "model_tool_compatibilities"
+    __table_args__ = (
+        UniqueConstraint(
+            "connection_id",
+            "external_model_id",
+            "tool",
+            name="uq_model_tool_compatibility_target",
+        ),
+        Index(
+            "ix_model_tool_compatibility_due",
+            "tool",
+            "status",
+            "next_probe_at",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    connection_id = Column(
+        Integer,
+        ForeignKey("connections.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    model_id = Column(
+        Integer,
+        ForeignKey("ai_models.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    external_model_id = Column(String(512), nullable=False, index=True)
+    tool = Column(String(64), nullable=False, default="code_interpreter", index=True)
+    status = Column(String(24), nullable=False, default="unknown", index=True)
+    score = Column(Float, nullable=False, default=0.5)
+    consecutive_successes = Column(Integer, nullable=False, default=0)
+    consecutive_failures = Column(Integer, nullable=False, default=0)
+    total_successes = Column(Integer, nullable=False, default=0)
+    total_failures = Column(Integer, nullable=False, default=0)
+    reason_code = Column(String(64), nullable=True)
+    reason_detail = Column(Text, nullable=True)
+    manual_override = Column(String(24), nullable=True)
+    probe_version = Column(String(32), nullable=False, default="v1")
+    evidence_json = Column(Text, nullable=True)
+    last_probe_at = Column(DateTime, nullable=True)
+    last_success_at = Column(DateTime, nullable=True)
+    last_failure_at = Column(DateTime, nullable=True)
+    next_probe_at = Column(DateTime, nullable=True, index=True)
+    quarantine_until = Column(DateTime, nullable=True, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.datetime.utcnow,
+        onupdate=datetime.datetime.utcnow,
+    )
+
+    model = relationship("AIModel")
+    connection = relationship("Connection")
+    events = relationship(
+        "ModelToolCompatibilityEvent",
+        back_populates="compatibility",
+        cascade="all, delete-orphan",
+    )
+
+
+class ModelToolCompatibilityEvent(Base):
+    """Bounded audit evidence used by compatibility scoring and Admin UI."""
+
+    __tablename__ = "model_tool_compatibility_events"
+    __table_args__ = (
+        Index(
+            "ix_model_tool_compatibility_event_time",
+            "compatibility_id",
+            "created_at",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    compatibility_id = Column(
+        Integer,
+        ForeignKey("model_tool_compatibilities.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source = Column(String(24), nullable=False)
+    success = Column(Boolean, nullable=False)
+    reason_code = Column(String(64), nullable=True)
+    detail = Column(Text, nullable=True)
+    requested_model_id = Column(String(512), nullable=True)
+    upstream_request_id = Column(String(255), nullable=True)
+    evidence_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow, index=True)
+
+    compatibility = relationship("ModelToolCompatibility", back_populates="events")

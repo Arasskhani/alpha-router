@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.database import AsyncSessionLocal
 from app.config import get_settings
 from app.models.connection import Connection
+from app.models.model_catalog import AIModel
 from app.services.budget_service import reset_all_monthly_budgets
 from app.services.model_sync import sync_connection_with_flash
 from app.services.secret_crypto import decrypt_secret
@@ -136,6 +137,36 @@ async def job_chat_stats_reconcile():
         await db.commit()
 
 
+async def job_model_tool_compatibility():
+    """Refresh a claimed, rate-limited batch of Code Interpreter capabilities."""
+    from app.services.code_interpreter_probe_service import (
+        claim_due_probe_model_ids,
+        probe_model_compatibility,
+    )
+    from app.services.model_tool_compatibility_service import (
+        prune_compatibility_events,
+    )
+
+    async with AsyncSessionLocal() as db:
+        model_ids = await claim_due_probe_model_ids(db)
+    for model_id in model_ids:
+        async with AsyncSessionLocal() as db:
+            model = await db.get(AIModel, model_id)
+            if model is None:
+                continue
+            try:
+                await probe_model_compatibility(db, model)
+            except Exception:
+                await db.rollback()
+                logger.exception(
+                    "Model-tool compatibility probe crashed model_id=%s",
+                    model_id,
+                )
+    async with AsyncSessionLocal() as db:
+        await prune_compatibility_events(db)
+        await db.commit()
+
+
 async def job_chat_retention_cleanup():
     async with AsyncSessionLocal() as db:
         from app.services.retention_policy_service import get_chat_retention_settings, purge_expired_chat_messages
@@ -229,6 +260,15 @@ def start_scheduler():
     scheduler.add_job(job_chat_stats_reconcile, "cron", hour=3, minute=30, id="chat_stats_reconcile")
     scheduler.add_job(job_user_media_cleanup, "cron", hour="*", minute=0, id="user_media_cleanup")
     scheduler.add_job(job_system_metrics_snapshot, "interval", hours=1, id="system_metrics_snapshot")
+    scheduler.add_job(
+        job_model_tool_compatibility,
+        "interval",
+        minutes=30,
+        id="model_tool_compatibility",
+        next_run_time=datetime.now(),
+        max_instances=1,
+        coalesce=True,
+    )
     scheduler.start()
 
 

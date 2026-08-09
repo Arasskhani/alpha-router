@@ -92,3 +92,87 @@ async def _run_stream_timing_test() -> None:
 
 def test_stream_chat_logs_provider_stream_duration_not_post_processing():
     asyncio.run(_run_stream_timing_test())
+
+
+async def _run_empty_code_interpreter_test() -> None:
+    calls = 0
+
+    async def fake_acompletion(**kwargs):
+        nonlocal calls
+        del kwargs
+        calls += 1
+
+        async def _gen():
+            if False:
+                yield None
+
+        return _gen()
+
+    request = MagicMock()
+    request.client = SimpleNamespace(host="127.0.0.1")
+    request.is_disconnected = AsyncMock(return_value=False)
+    resolved = SimpleNamespace(
+        ai_model=SimpleNamespace(
+            provider_type="openrouter",
+            input_cost_per_1k=0.001,
+            output_cost_per_1k=0.002,
+            external_id="openrouter/auto",
+            display_name="Auto Router",
+        ),
+        api_key="sk-test",
+        base_url="https://example.com/v1",
+        provider_type="openrouter",
+        model_id="openrouter/auto",
+    )
+    logged: dict = {}
+
+    async def capture_log(*args, **kwargs):
+        del args
+        logged.update(kwargs)
+
+    fake_db = AsyncMock()
+    fake_ctx = MagicMock()
+    fake_ctx.__aenter__ = AsyncMock(return_value=fake_db)
+    fake_ctx.__aexit__ = AsyncMock(return_value=None)
+    tools = SimpleNamespace(code_interpreter=True)
+    body = {
+        "model": "openrouter/auto",
+        "messages": [{"role": "user", "content": "Analyze data"}],
+    }
+
+    with (
+        patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(proxy_service, "parse_tools_config", return_value=tools),
+        patch.object(
+            proxy_service,
+            "augment_messages_with_tools",
+            AsyncMock(side_effect=lambda db, m, t, **_kwargs: m),
+        ),
+        patch.object(proxy_service, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
+        patch.object(proxy_service, "acompletion", side_effect=fake_acompletion),
+        patch.object(proxy_service, "_usage_from_stream_wrapper", return_value=(10, 0, 0)),
+        patch.object(proxy_service, "_compute_token_cost_usd", return_value=0.0),
+        patch.object(proxy_service, "log_usage", side_effect=capture_log),
+    ):
+        output = [
+            chunk
+            async for chunk in proxy_service.stream_chat(
+                request,
+                body,
+                user_id=1,
+                username="admin",
+                source="alpha_router_chat",
+                skip_budget=False,
+                resolved=resolved,
+            )
+        ]
+
+    joined = b"".join(output).decode("utf-8")
+    assert calls == 2
+    assert "no usable content" in joined
+    assert logged["success"] is False
+    assert [event.status for event in logged["usage_events"]] == ["failed", "failed"]
+
+
+def test_empty_code_interpreter_completion_is_logged_as_failure():
+    asyncio.run(_run_empty_code_interpreter_test())

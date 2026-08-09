@@ -70,9 +70,9 @@ export const docSections: DocSection[] = [
           <tbody>
             <tr>
               <td>
-                <a href="#architecture">Get started</a>
+                <a href="#requirements">Get started</a>
               </td>
-              <td>Architecture, services, deployment overview, first-time setup</td>
+              <td>Hardware &amp; software requirements, architecture, services, deployment overview</td>
             </tr>
             <tr>
               <td>
@@ -133,6 +133,169 @@ export const docSections: DocSection[] = [
             <code>/v1</code> API for external tools.
           </li>
         </ol>
+      </>
+    ),
+  },
+  {
+    id: "requirements",
+    title: "Hardware & software requirements",
+    group: "Get started",
+    content: (
+      <>
+        <h2>Hardware &amp; software requirements</h2>
+        <p>
+          alpharouter ships as a Docker Compose stack. Plan the host from two independent drivers: the always-on
+          platform services (app, database, cache, object storage) and the Code Interpreter sandbox fleet, which is
+          sized from its concurrent-execution ceiling rather than from the number of signed-in users.
+        </p>
+
+        <h3>Operating system &amp; platform</h3>
+        <ul>
+          <li>
+            <strong>OS:</strong> a 64-bit Linux host is recommended for production (Ubuntu 22.04 LTS / 24.04 LTS,
+            Debian 12, or an equivalent current kernel). macOS and Windows are supported for evaluation through Docker
+            Desktop only.
+          </li>
+          <li>
+            <strong>CPU architecture:</strong> <code>x86_64 / amd64</code> is required. The sandbox broker bundles the
+            <code> x86_64</code> Docker CLI and the disposable sandbox image is built for amd64, so ARM hosts (Apple
+            Silicon, Graviton) must run under amd64 emulation, which is not recommended for production.
+          </li>
+          <li>
+            <strong>Container runtime:</strong> Docker Engine <code>24.0+</code> with the Compose v2 plugin
+            (<code>docker compose</code>). The broker talks to the host Docker socket to spawn disposable containers, so
+            a working Docker daemon is mandatory — rootless/podman substitutes are not validated.
+          </li>
+          <li>
+            <strong>Networking:</strong> outbound HTTPS to your upstream LLM providers, and only the app port{" "}
+            <code>8080</code> exposed to clients. Keep Postgres, Redis, SeaweedFS, and the broker on internal networks.
+          </li>
+        </ul>
+
+        <h3>Pinned service versions</h3>
+        <p>
+          These are the images the repository <code>docker-compose.yml</code> pins. Keep them aligned when upgrading;
+          they are validated together.
+        </p>
+        <table className="docs-table">
+          <thead>
+            <tr>
+              <th>Component</th>
+              <th>Version</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>PostgreSQL</td>
+              <td>
+                <code>16</code> (alpine)
+              </td>
+              <td>Primary data store; fronted by PgBouncer in transaction pooling mode</td>
+            </tr>
+            <tr>
+              <td>PgBouncer</td>
+              <td>
+                <code>1.22</code>
+              </td>
+              <td>
+                SCRAM auth; listens on <code>6432</code>
+              </td>
+            </tr>
+            <tr>
+              <td>Redis</td>
+              <td>
+                <code>7</code> (alpine)
+              </td>
+              <td>Rate limits, SSO/2FA state, Code Interpreter capacity leases, LiteLLM cache</td>
+            </tr>
+            <tr>
+              <td>SeaweedFS</td>
+              <td>
+                <code>4.40</code>
+              </td>
+              <td>S3-compatible object storage for media blobs</td>
+            </tr>
+            <tr>
+              <td>Application runtime</td>
+              <td>
+                Python <code>3.12</code>
+              </td>
+              <td>FastAPI + uvicorn; bundled headless Chromium for server-side PDF rendering</td>
+            </tr>
+            <tr>
+              <td>Frontend build</td>
+              <td>
+                Node <code>20</code>
+              </td>
+              <td>Build-time only (the SPA is served as static files by the app)</td>
+            </tr>
+          </tbody>
+        </table>
+        <Note>
+          Local development without Docker needs Python <code>3.12</code> and Node <code>20</code> on the workstation.
+          You still need reachable Postgres and Redis instances for a full run.
+        </Note>
+
+        <h3>Baseline platform sizing (excluding Code Interpreter)</h3>
+        <p>
+          The following covers the always-on services and moderate chat/gateway traffic. Code Interpreter sandboxes are
+          sized separately below.
+        </p>
+        <table className="docs-table">
+          <thead>
+            <tr>
+              <th>Profile</th>
+              <th>vCPU</th>
+              <th>RAM</th>
+              <th>Disk</th>
+              <th>Use</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Evaluation / single box</td>
+              <td>4</td>
+              <td>8 GiB</td>
+              <td>40 GiB SSD</td>
+              <td>Trials and small teams; Code Interpreter kept at a low ceiling</td>
+            </tr>
+            <tr>
+              <td>Small production</td>
+              <td>8</td>
+              <td>16 GiB</td>
+              <td>100 GiB SSD</td>
+              <td>Daily use for a department; light concurrent Code Interpreter</td>
+            </tr>
+            <tr>
+              <td>Growing production</td>
+              <td>16+</td>
+              <td>32+ GiB</td>
+              <td>250+ GiB SSD</td>
+              <td>Higher concurrency; media growth; larger request logs</td>
+            </tr>
+          </tbody>
+        </table>
+        <Note>
+          Disk grows with media (SeaweedFS), request logs, and the app <code>/tmp</code> tmpfs used to pack ZIP
+          downloads (Compose reserves up to <code>10g</code>). Provision RAM above the tmpfs sizes so heavy exports do
+          not compete with service memory.
+        </Note>
+
+        <h3>Sizing the Code Interpreter fleet</h3>
+        <p>
+          Capacity must be planned from the configured concurrent-sandbox ceiling, not from signed-in users. Each active
+          execution is a disposable container. With the default per-sandbox memory limit of <code>256MiB</code>, 200
+          simultaneous containers reach a theoretical sandbox ceiling of about <strong>50GiB RAM</strong> before adding
+          Docker, the broker, API workers, database, Redis, object storage, tmpfs, and OS headroom. CPU demand can
+          approach one vCPU per active sandbox.
+        </p>
+        <Warn>
+          Do not advertise a 200-execution profile by only raising the concurrency ceiling. Validate 50, 100, 150, and
+          200 concurrency stages with representative workspace and artifact sizes, then set the operational ceiling from
+          Admin → Operations to the highest stage that passes latency, memory, cancellation, and soak-test gates. See{" "}
+          <a href="#architecture">Architecture &amp; services</a> for the request path and broker trust boundary.
+        </Warn>
       </>
     ),
   },
@@ -230,14 +393,18 @@ export const docSections: DocSection[] = [
             </tr>
           </tbody>
         </table>
+        <Note>
+          Hardware sizing, pinned service versions, and the Code Interpreter fleet calculation live in{" "}
+          <a href="#requirements">Hardware &amp; software requirements</a>.
+        </Note>
         <h3>LLM request path (summary)</h3>
         <ol>
           <li>
             Client calls <code>POST /api/chat/completions</code> or <code>POST /v1/chat/completions</code>.
           </li>
           <li>
-            alpharouter resolves an enabled model and Connection key, then <strong>reserves</strong> budget (or API-key
-            credit).
+            alpharouter resolves an enabled model and Connection key. Code Interpreter requests validate their workspace
+            and acquire a Redis capacity lease before alpharouter <strong>reserves</strong> budget (or API-key credit).
           </li>
           <li>
             Streaming goes through LiteLLM to the upstream provider. Optional tools: web search/fetch and code
@@ -266,8 +433,10 @@ export const docSections: DocSection[] = [
         <p>
           Production deployments typically use the repository <code>docker-compose.yml</code>: Postgres, PgBouncer,
           Redis, SeaweedFS, sandbox-broker, and the intended Stage 8 <code>alpha-router</code> app service (port{" "}
-          <code>8080</code>). Build the sandbox
-          image separately when you need the code interpreter (<code>docker compose build sandbox</code>).
+          <code>8080</code>). <code>docker compose up --build -d</code> prepares the disposable sandbox image through a
+          one-shot initializer; its <code>Exited (0)</code> status is expected. The long-running{" "}
+          <code>alpha-router-sandbox-broker</code> smoke-tests the image at startup and creates a short-lived container
+          for each execution, so operators must not start a persistent sandbox manually.
         </p>
         <h3>Configuration</h3>
         <p>
@@ -558,10 +727,23 @@ export const docSections: DocSection[] = [
         </p>
         <h3>Sandbox trust boundary</h3>
         <p>
-          Code interpreter workloads are sent to <code>sandbox-broker</code>, which authenticates with a long Bearer
-          token and starts containers with <code>--network none</code>, read-only root, dropped capabilities, and
-          resource limits. The broker’s Docker socket mount remains the residual host trust boundary — keep the broker
-          on an internal network only.
+          Code interpreter workloads are sent to <code>alpha-router-sandbox-broker</code>, which authenticates with a
+          long Bearer token (<code>SANDBOX_BROKER_TOKEN</code> / <code>CODE_SANDBOX_BROKER_TOKEN</code>, ≥32 characters)
+          and starts disposable containers from <code>alpha-router-sandbox:latest</code> with{" "}
+          <code>--network none</code>, read-only root, dropped capabilities, and resource limits. The broker’s Docker
+          socket mount remains the residual host trust boundary — keep the broker on an internal network only and never
+          publish port <code>8081</code>. Spreadsheet uploads are converted to CSV text before they reach the sandbox.
+          Generated PDF/CSV/JSON/text artifacts are bounded and validated twice, then stored in the requesting
+          user&apos;s Media library; no host volume is mounted into the sandbox. Each execution has a Job ID and an
+          explicit cancel path, so Stop terminates the disposable container and releases its capacity slot.
+        </p>
+        <p>
+          Workspace and artifact names may use any script (Persian, Arabic, Cyrillic, CJK), so a generated file such as{" "}
+          <code>گزارش-مدیریتی.pdf</code> is stored and downloadable under its own name. The name policy rejects only
+          deceptive or non-local components: path separators, <code>.</code>/<code>..</code>, control characters, BiDi
+          and zero-width formatting characters that hide the real extension, a leading dot or dash, and names over 128
+          characters or 255 UTF-8 bytes. The extension allowlist plus per-artifact content validation remain the
+          controls that decide what may leave the sandbox.
         </p>
       </>
     ),
@@ -585,8 +767,9 @@ export const docSections: DocSection[] = [
             Require Redis authentication; wire <code>REDIS_PASSWORD</code> (or an authenticated URL).
           </li>
           <li>
-            Set <code>CODE_SANDBOX_BROKER_URL</code> and a ≥32-character <code>SANDBOX_BROKER_TOKEN</code>. Keep{" "}
-            <code>ALLOW_INSECURE_CODE_SUBPROCESS=false</code>.
+            Set <code>CODE_SANDBOX_BROKER_URL</code>, a ≥32-character <code>SANDBOX_BROKER_TOKEN</code>, and (for local
+            API runs) matching <code>CODE_SANDBOX_BROKER_TOKEN</code>. Verify the sandbox initializer exits with code
+            zero, the broker becomes healthy, and keep <code>ALLOW_INSECURE_CODE_SUBPROCESS=false</code>.
           </li>
           <li>
             Lock OpenAPI docs to Super Admin (<code>OPENAPI_ADMIN_ONLY=true</code>).
@@ -596,14 +779,63 @@ export const docSections: DocSection[] = [
             surface is TLS-terminated.
           </li>
           <li>
-            Keep <code>ALLOW_LEGACY_BEARER_AUTH=false</code> and <code>ALLOW_SSRF_PRIVATE_RANGES=false</code> unless you
-            have a documented internal exception.
+            Keep all dangerous opt-in flags <code>false</code> (see table below). Startup logs a warning if any are
+            enabled.
           </li>
           <li>
             Rotate the gateway master key away from any default; treat it as a full-power service credential.
           </li>
           <li>Never publish sandbox-broker ports to the host or public network.</li>
         </ul>
+        <h3>Dangerous opt-in flags</h3>
+        <p>
+          These escape hatches default to <code>false</code>. Do not enable them on shared or internet-facing hosts.
+          Prefer the safer alternative in the last column.
+        </p>
+        <table className="docs-table">
+          <thead>
+            <tr>
+              <th>Flag</th>
+              <th>If enabled</th>
+              <th>When (if ever)</th>
+              <th>Safer alternative</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <code>ALLOW_LEGACY_BEARER_AUTH</code>
+              </td>
+              <td>Browser JWT in <code>Authorization</code> bypasses cookie + CSRF</td>
+              <td>Never in production; rejected by production guard</td>
+              <td>Session cookies for browsers; <code>/v1</code> API keys for machines</td>
+            </tr>
+            <tr>
+              <td>
+                <code>ALLOW_SSRF_PRIVATE_RANGES</code>
+              </td>
+              <td>
+                <code>ssrf_guard</code> allows private/loopback/metadata fetches
+              </td>
+              <td>Isolated internal lab only, with a written exception</td>
+              <td>Upload SAML Metadata XML; expose internal docs via a controlled proxy</td>
+            </tr>
+            <tr>
+              <td>
+                <code>ALLOW_INSECURE_CODE_SUBPROCESS</code>
+              </td>
+              <td>Code interpreter can run on the API host (development only)</td>
+              <td>Local single-developer lab without Docker broker; never production</td>
+              <td>
+                Keep <code>CODE_SANDBOX_BROKER_URL</code> + <code>SANDBOX_BROKER_TOKEN</code>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <Warn>
+          Copying <code>true</code> for these flags from an old lab <code>.env</code> into a shared server is a common
+          misconfiguration. Leave them <code>false</code> unless you deliberately accept the risk.
+        </Warn>
         <p>
           Browser hardening: CSP starts in Report-Only mode; enforced CSP is opt-in via{" "}
           <code>CONTENT_SECURITY_POLICY</code>. Review reports before enforcing.
@@ -723,9 +955,16 @@ export const docSections: DocSection[] = [
           <li>
             <strong>Model experience</strong> — slow requests, P95, slowest models table (links into API Logs).
           </li>
+          <li>
+            <strong>Code Interpreter capacity</strong> — active/available turn leases, global and per-user ceilings,
+            broker job counts, and editable operational limits. The environment ceiling remains a hard upper bound;
+            rejection and cancellation counters are exposed by observability.
+          </li>
         </ul>
         <Note>
-          Observability counters are also available via <code>GET /api/admin/operations/observability</code>.
+          Code Interpreter requests above the configured ceiling are rejected before provider billing with{" "}
+          <code>HTTP 429</code> and <code>Retry-After</code>. Observability counters are also available via{" "}
+          <code>GET /api/admin/operations/observability</code>.
         </Note>
       </>
     ),
@@ -801,10 +1040,61 @@ export const docSections: DocSection[] = [
           <li>
             Bulk edit: turn ON, OFF, or delete selected models.
           </li>
+          <li>
+            <strong>Code Interpreter</strong> column — measured compatibility per model, with probe history and manual
+            pinning.
+          </li>
         </ul>
         <Note>
           Only enabled models on active connections appear in the chat model picker and <code>/v1/models</code>.
         </Note>
+        <h3>Code Interpreter compatibility</h3>
+        <p>
+          Not every text model can complete the Code Interpreter flow: some never emit a <code>```python</code> block,
+          and some providers reject the tool-calling schema (for example with <code>MALFORMED_FUNCTION_CALL</code>).
+          alpharouter therefore <em>measures</em> compatibility per Connection + model instead of hardcoding vendor
+          names, so newly released models are handled without a code change.
+        </p>
+        <ul>
+          <li>
+            <strong>Unknown</strong> — never measured. The model stays selectable so new releases are not lost.
+          </li>
+          <li>
+            <strong>Verified</strong> — a probe or a real chat turn completed the whole flow (Python block → sandbox
+            execution → artifact → follow-up answer).
+          </li>
+          <li>
+            <strong>Quarantined</strong> — repeated or hard runtime failures. Hidden from the picker and rejected by the
+            API until the quarantine expires and the next probe runs.
+          </li>
+          <li>
+            <strong>Blocked</strong> — a probe proved the flow fails. Re-probed automatically about once a day.
+          </li>
+        </ul>
+        <p>
+          A scheduled job probes a small batch of due models every 30 minutes (claimed with row locks so multiple
+          workers cannot pay for the same probe twice). Probe cost is recorded as a normal system usage operation.
+        </p>
+        <p>
+          Evidence is weighted by what it actually proves. Transient provider problems (rate limits, timeouts, auth
+          errors) and unclassified upstream errors never hide a model on their own — they lower the health score and
+          schedule an earlier re-probe, and a model that already passed keeps its verified status. Only repeated
+          unclassified failures escalate. Models the provider cannot serve interactively at all (batch-only ids, retired
+          ids, no routable provider) are blocked with reason <code>model_unavailable</code> and re-checked weekly instead
+          of daily.
+        </p>
+        <p>
+          For OpenRouter Auto Router, alpharouter derives per-request routing constraints from this registry: verified
+          models become the allowed pool and blocked models are excluded. The Auto Router entry itself is never hidden.
+          Because the router reports its alias while streaming, the concretely selected model is resolved from the
+          provider afterwards, so evidence is credited to the model that actually ran the flow rather than to the alias.
+        </p>
+        <p>
+          Open the Code Interpreter cell to review evidence, run a probe on demand, or pin{" "}
+          <strong>Force allow</strong> / <strong>Force block</strong>. Pinning overrides all automatic measurement until
+          you switch back to <strong>Automatic</strong>. Because a pin silently outranks every measurement, each change
+          is recorded in the same evidence list with the administrator who made it.
+        </p>
       </>
     ),
   },
@@ -1019,7 +1309,13 @@ export const docSections: DocSection[] = [
           </li>
           <li>Per-user quota (GB).</li>
           <li>
-            Global transfer limits (MB): max upload, max chat attachments total per message, max ZIP download.
+            Global transfer limits: max upload (MB), max chat attachments total per message (MB), maximum files per
+            upload, max ZIP download (MB).
+          </li>
+          <li>
+            Code Interpreter workspace limits: maximum files per turn and maximum extracted-text size. The product
+            limit can support 100 or more small files, while a higher broker hard ceiling still protects against
+            pathological zero-byte file counts and payload abuse.
           </li>
         </ul>
       </>
@@ -1373,6 +1669,7 @@ export const docSections: DocSection[] = [
           <li>Per-user media cleanup schedules</li>
           <li>System metrics snapshots</li>
           <li>Chat session stats reconcile</li>
+          <li>Code Interpreter compatibility probes for due models (interval, small claimed batches)</li>
           <li>Auth directory sync schedules (when configured)</li>
         </ul>
       </>

@@ -42,9 +42,13 @@ def _patch_transfer_limits():
         "max_upload_file_mb": 25,
         "max_chat_attachments_total_mb": 36,
         "max_media_zip_download_mb": 256,
+        "max_chat_attachments_count": 5,
+        "max_code_interpreter_workspace_files": 5,
+        "max_code_interpreter_workspace_total_mb": 16,
         "max_upload_file_bytes": 25 * 1024 * 1024,
         "max_chat_attachments_total_bytes": 36 * 1024 * 1024,
         "max_media_zip_download_bytes": 256 * 1024 * 1024,
+        "max_code_interpreter_workspace_total_bytes": 16 * 1024 * 1024,
     }
     return patch(
         "app.services.transfer_limits_service.get_transfer_limits",

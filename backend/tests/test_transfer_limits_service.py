@@ -71,16 +71,100 @@ def test_set_and_get_roundtrip_updates_cache() -> None:
             max_upload_file_mb=30,
             max_chat_attachments_total_mb=60,
             max_media_zip_download_mb=512,
+            max_chat_attachments_count=12,
         )
         assert saved["max_upload_file_mb"] == 30
         assert saved["max_chat_attachments_total_mb"] == 60
         assert saved["max_media_zip_download_mb"] == 512
+        assert saved["max_chat_attachments_count"] == 12
+        # Workspace files inherit upload count when not explicitly stored.
+        assert saved["max_code_interpreter_workspace_files"] == 12
+        assert saved["max_code_interpreter_workspace_total_mb"] == tls.DEFAULT_CI_WORKSPACE_TOTAL_MB
         assert tls.cached_upload_limit_bytes() == 30 * 1024 * 1024
         assert tls.cached_zip_aggregate_limit_bytes() == 512 * 1024 * 1024
+        assert tls.cached_chat_attachments_count() == 12
         loaded = await tls.get_transfer_limits(db)
         assert loaded["max_upload_file_mb"] == 30
+        assert loaded["max_chat_attachments_count"] == 12
+        assert loaded["max_code_interpreter_workspace_files"] == 12
+        assert loaded["max_code_interpreter_workspace_total_mb"] == tls.DEFAULT_CI_WORKSPACE_TOTAL_MB
+        assert "max_code_interpreter_workspace_files" not in db.store
+        assert "max_code_interpreter_workspace_total_mb" not in db.store
 
     asyncio.run(run())
+
+
+def test_attachment_count_is_clamped() -> None:
+    data = tls._normalize_limits(25, 36, 256, 999)
+    assert data["max_chat_attachments_count"] == tls.MAX_CHAT_ATTACHMENTS_COUNT
+    assert tls.MAX_CHAT_ATTACHMENTS_COUNT == 500
+    data = tls._normalize_limits(25, 36, 256, 0)
+    assert data["max_chat_attachments_count"] == tls.MIN_CHAT_ATTACHMENTS_COUNT
+
+
+def test_workspace_defaults_inherit_attachment_count() -> None:
+    data = tls._normalize_limits(25, 36, 256, 100)
+    assert data["max_code_interpreter_workspace_files"] == 100
+    assert data["max_code_interpreter_workspace_total_mb"] == tls.DEFAULT_CI_WORKSPACE_TOTAL_MB
+    assert data["max_code_interpreter_workspace_total_bytes"] == 16 * 1024 * 1024
+
+
+def test_workspace_limits_are_clamped() -> None:
+    data = tls._normalize_limits(25, 36, 256, 5, workspace_files=999, workspace_total_mb=999)
+    assert data["max_code_interpreter_workspace_files"] == tls.MAX_CI_WORKSPACE_FILES
+    assert data["max_code_interpreter_workspace_total_mb"] == tls.MAX_CI_WORKSPACE_TOTAL_MB
+    data = tls._normalize_limits(25, 36, 256, 5, workspace_files=0, workspace_total_mb=0)
+    assert data["max_code_interpreter_workspace_files"] == tls.MIN_CI_WORKSPACE_FILES
+    assert data["max_code_interpreter_workspace_total_mb"] == tls.MIN_CI_WORKSPACE_TOTAL_MB
+
+
+def test_workspace_files_inherit_until_explicitly_stored() -> None:
+    db = FakeDb()
+
+    async def run():
+        await tls.set_transfer_limits(db, max_chat_attachments_count=40)
+        loaded = await tls.get_transfer_limits(db)
+        assert loaded["max_chat_attachments_count"] == 40
+        assert loaded["max_code_interpreter_workspace_files"] == 40
+        assert "max_code_interpreter_workspace_files" not in db.store
+
+        await tls.set_transfer_limits(db, max_chat_attachments_count=80)
+        loaded = await tls.get_transfer_limits(db)
+        assert loaded["max_code_interpreter_workspace_files"] == 80
+
+        saved = await tls.set_transfer_limits(db, max_code_interpreter_workspace_files=100)
+        assert saved["max_code_interpreter_workspace_files"] == 100
+        assert db.store["max_code_interpreter_workspace_files"].value == "100"
+
+        await tls.set_transfer_limits(db, max_chat_attachments_count=20)
+        loaded = await tls.get_transfer_limits(db)
+        assert loaded["max_chat_attachments_count"] == 20
+        assert loaded["max_code_interpreter_workspace_files"] == 100
+
+    asyncio.run(run())
+
+
+def test_workspace_total_mb_persists_when_set() -> None:
+    db = FakeDb()
+
+    async def run():
+        saved = await tls.set_transfer_limits(db, max_code_interpreter_workspace_total_mb=32)
+        assert saved["max_code_interpreter_workspace_total_mb"] == 32
+        assert saved["max_code_interpreter_workspace_total_bytes"] == 32 * 1024 * 1024
+        assert db.store["max_code_interpreter_workspace_total_mb"].value == "32"
+        loaded = await tls.get_transfer_limits(db)
+        assert loaded["max_code_interpreter_workspace_total_mb"] == 32
+
+    asyncio.run(run())
+
+
+def test_public_view_includes_workspace_fields() -> None:
+    data = tls._normalize_limits(25, 36, 256, 12, workspace_files=100, workspace_total_mb=24)
+    view = tls.transfer_limits_public_view(data)
+    assert view["max_chat_attachments_count"] == 12
+    assert view["max_code_interpreter_workspace_files"] == 100
+    assert view["max_code_interpreter_workspace_total_mb"] == 24
+    assert view["max_code_interpreter_workspace_total_bytes"] == 24 * 1024 * 1024
 
 
 def test_media_input_limit_uses_transfer_cache(monkeypatch) -> None:

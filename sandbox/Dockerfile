@@ -4,10 +4,18 @@
 #   --cap-drop ALL --security-opt no-new-privileges --rm -i
 FROM python:3.12-slim
 
+# Unicode font used by ReportLab for multilingual PDF artifacts.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 # Data libraries commonly used by the interpreter. Kept small on purpose.
 RUN pip install --no-cache-dir \
       pandas==2.2.3 \
-      numpy==2.1.3
+      numpy==2.1.3 \
+      reportlab \
+      arabic-reshaper \
+      python-bidi
 
 # Runner lives at a fixed path; workspace is a writable tmpfs at runtime.
 COPY runner.py /opt/runner.py

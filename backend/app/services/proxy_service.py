@@ -8,19 +8,22 @@ import json
 import logging
 import time
 import datetime
+import uuid
 from dataclasses import dataclass
 from typing import AsyncIterator
 
+import httpx
 import litellm
 from fastapi import HTTPException, Request
 from litellm import acompletion, aembedding
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import effective_redis_url, get_settings
 from app.database import AsyncSessionLocal
 from app.core.language_detect import detect_prompt_language
 from app.models.logging import RequestLog
+from app.models.chat import ChatSession
 from app.models.model_catalog import AIModel
 from app.services.budget_reservation_service import (
     estimate_chat_hold,
@@ -33,15 +36,40 @@ from app.services.budget_reservation_service import (
 from app.services.prompt_cache_service import apply_prompt_cache_breakpoints
 from app.services.chat_tools_service import augment_messages_with_tools, parse_tools_config
 from app.services.code_interpreter_service import (
+    DEFAULT_MAX_WORKSPACE_FILES,
+    DEFAULT_MAX_WORKSPACE_TOTAL_BYTES,
     MAX_CODE_ITERATIONS,
+    SandboxArtifact,
+    SandboxExecutionResult,
+    WorkspaceLimitError,
+    code_interpreter_error_hint,
+    code_interpreter_nudge_message,
+    code_interpreter_workspace_message,
     extract_last_python_block,
     format_code_output_for_chat,
     run_python_sandbox,
     workspace_files_from_messages,
 )
 from app.services.chat_completion_persistence import persister_from_body
+from app.services.code_interpreter_capacity_service import (
+    CapacityPermit,
+    acquire_code_interpreter_turn,
+    heartbeat_code_interpreter_turn,
+    release_code_interpreter_turn,
+    subject_for_api_key,
+    subject_for_system,
+    subject_for_user,
+)
 from app.services.llm_providers import litellm_model_for_provider, resolve_litellm_provider
+from app.services.model_tool_compatibility_service import (
+    assert_code_interpreter_model_available,
+    classify_failure_reason,
+    is_auto_router_model_id,
+    openrouter_auto_plugin,
+    record_compatibility_result,
+)
 from app.services.secret_crypto import decrypt_secret
+from app.services.storage_service import media_public_url, store_generated_blob
 from app.services.usage_accounting_service import (
     PendingUsageEvent,
     capture_usage_event,
@@ -82,6 +110,73 @@ class ResolvedStreamContext:
     provider_type: str
     model_id: str
     budget_reservation_id: str | None = None
+    code_interpreter_workspace_files: dict[str, str] | None = None
+    code_interpreter_capacity_permit: CapacityPermit | None = None
+
+
+@dataclass(frozen=True)
+class StoredCodeArtifact:
+    asset_id: int
+    name: str
+    url: str
+
+
+async def _persist_code_interpreter_artifacts(
+    artifacts: tuple[SandboxArtifact, ...],
+    *,
+    user_id: int,
+    username: str,
+    chat_session_id: str,
+    model_id: str,
+    source_prompt: str,
+) -> list[StoredCodeArtifact]:
+    """Store validated sandbox output in the owner's existing Media library."""
+    async with AsyncSessionLocal() as media_db:
+        session = (
+            await media_db.execute(
+                select(ChatSession).where(
+                    ChatSession.id == chat_session_id,
+                    ChatSession.user_id == user_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if session is None:
+            raise ValueError("Chat session is unavailable for artifact storage")
+
+        stored: list[StoredCodeArtifact] = []
+        for artifact in artifacts:
+            asset = await store_generated_blob(
+                media_db,
+                user_id=user_id,
+                username=username,
+                kind="document",
+                blob=artifact.content,
+                mime=artifact.mime_type,
+                source_model=model_id,
+                source_prompt=source_prompt[:4000] or "Code interpreter output",
+                chat_session_id=chat_session_id,
+                file_name_hint=artifact.name,
+                metadata={
+                    "source": "code_interpreter",
+                    "sha256": artifact.sha256,
+                },
+            )
+            stored.append(
+                StoredCodeArtifact(
+                    asset_id=asset.id,
+                    name=asset.file_name,
+                    url=media_public_url(asset.id),
+                )
+            )
+        await media_db.commit()
+        return stored
+
+
+def _artifact_links_markdown(artifacts: list[StoredCodeArtifact]) -> str:
+    if not artifacts:
+        return ""
+    links = "\n".join(f"- [{item.name}]({item.url})" for item in artifacts)
+    return f"\n\n---\n**Generated files:**\n{links}\n\n"
 
 
 def _normalize_model_id(model_id: str | None) -> str:
@@ -280,6 +375,285 @@ def _serialize_stream_chunk(chunk) -> str:
         return json.dumps(chunk, default=str)
 
 
+def _usage_event_model_id(event: PendingUsageEvent | None) -> str | None:
+    if event is None:
+        return None
+
+    def _from_raw(value) -> str | None:
+        if not isinstance(value, dict):
+            return None
+        model_value = value.get("model")
+        if model_value:
+            return str(model_value)
+        for key in ("primary", "fallback"):
+            nested = _from_raw(value.get(key))
+            if nested:
+                return nested
+        return None
+
+    value = _from_raw(event.usage.raw_usage)
+    if value and value.startswith("openrouter/"):
+        return value.removeprefix("openrouter/")
+    return value
+
+
+async def _openrouter_generation_outcome(
+    *,
+    base_url: str,
+    api_key: str,
+    upstream_request_id: str | None,
+) -> dict | None:
+    request_id = (upstream_request_id or "").strip()
+    if not request_id:
+        return None
+    base = (base_url or "https://openrouter.ai/api/v1").strip().rstrip("/")
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0),
+        trust_env=False,
+    ) as client:
+        # The generation record becomes queryable a moment after the stream ends,
+        # so a single fast retry is not enough to resolve the routed model.
+        for delay in (0.0, 0.6, 1.2, 2.4):
+            if delay:
+                await asyncio.sleep(delay)
+            try:
+                response = await client.get(
+                    f"{base}/generation",
+                    params={"id": request_id},
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                if response.status_code == 404:
+                    continue
+                response.raise_for_status()
+                payload = response.json()
+            except (httpx.HTTPError, ValueError):
+                return None
+            data = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(data, dict):
+                return None
+            return {
+                "model": data.get("model"),
+                "provider_name": data.get("provider_name"),
+                "finish_reason": data.get("finish_reason"),
+                "native_finish_reason": data.get("native_finish_reason"),
+            }
+    return None
+
+
+async def _record_runtime_compatibility(
+    *,
+    ai_model: AIModel,
+    external_model_id: str,
+    success: bool,
+    reason_code: str | None = None,
+    detail: str | None = None,
+    upstream_request_id: str | None = None,
+    evidence: dict | None = None,
+) -> None:
+    connection_id = getattr(ai_model, "connection_id", None)
+    if connection_id is None:
+        return
+    target = (external_model_id or ai_model.external_id).strip()
+    if target.startswith("openrouter/"):
+        target = target.removeprefix("openrouter/")
+    if not target or is_auto_router_model_id(target):
+        # Evidence keyed on a router alias cannot constrain routing and would
+        # score the alias itself, so it is dropped instead of stored.
+        return
+    async with AsyncSessionLocal() as compatibility_db:
+        catalog_model = (
+            await compatibility_db.execute(
+                select(AIModel).where(
+                    AIModel.connection_id == int(connection_id),
+                    AIModel.external_id == target,
+                )
+            )
+        ).scalar_one_or_none()
+        await record_compatibility_result(
+            compatibility_db,
+            connection_id=int(connection_id),
+            external_model_id=target,
+            model_id=catalog_model.id if catalog_model is not None else None,
+            success=success,
+            source="runtime",
+            reason_code=reason_code,
+            detail=detail,
+            requested_model_id=ai_model.external_id,
+            upstream_request_id=upstream_request_id,
+            evidence=evidence,
+        )
+        await compatibility_db.commit()
+
+
+"""Strong refs for fire-and-forget bookkeeping so tasks are not GC'd early."""
+_background_compatibility_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_compatibility_task(coro) -> None:
+    task = asyncio.create_task(coro)
+    _background_compatibility_tasks.add(task)
+    task.add_done_callback(_background_compatibility_tasks.discard)
+
+
+# How often the sandbox wait wakes up to notice that the user pressed Stop.
+_SANDBOX_CANCEL_POLL_SECONDS = 0.4
+
+
+def _abandon_task(task: asyncio.Task) -> None:
+    """Cancel a task we no longer wait on and swallow its eventual result.
+
+    Without draining it, asyncio logs "Task exception was never retrieved" once
+    the abandoned sandbox call finishes or raises.
+    """
+    task.cancel()
+
+    async def _drain() -> None:
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+
+    _spawn_compatibility_task(_drain())
+
+
+async def _log_compatibility_task_errors(coro) -> None:
+    try:
+        await coro
+    except Exception:
+        logger.exception("Failed to record Code Interpreter compatibility result")
+
+
+async def _record_code_interpreter_success(
+    *,
+    ai_model: AIModel,
+    provider: str,
+    base_url: str,
+    api_key: str,
+    event: PendingUsageEvent | None,
+    observed_model_ids: set[str],
+) -> None:
+    """Credit the concrete model that ran the flow, not the router alias."""
+    targets = {m for m in observed_model_ids if m and not is_auto_router_model_id(m)}
+    if not targets:
+        # OpenRouter streams the requested alias back, so the real model has to
+        # be resolved before a router success can be credited to anything.
+        target = _usage_event_model_id(event)
+        if provider == "openrouter" and (not target or is_auto_router_model_id(target)):
+            outcome = await _openrouter_generation_outcome(
+                base_url=base_url,
+                api_key=api_key,
+                upstream_request_id=(
+                    event.usage.upstream_request_id if event is not None else None
+                ),
+            )
+            selected = outcome.get("model") if outcome else None
+            if selected:
+                target = str(selected)
+        if not target or is_auto_router_model_id(target):
+            target = ai_model.external_id
+        targets = {target}
+    for observed in targets:
+        await _record_runtime_compatibility(
+            ai_model=ai_model,
+            external_model_id=observed,
+            success=True,
+            upstream_request_id=(
+                event.usage.upstream_request_id if event is not None else None
+            ),
+            evidence={"source_request_model": ai_model.external_id},
+        )
+
+
+async def _record_code_interpreter_failure(
+    *,
+    ai_model: AIModel,
+    provider: str,
+    base_url: str,
+    api_key: str,
+    event: PendingUsageEvent | None,
+    detail: str,
+    reason_code_override: str | None = None,
+) -> str:
+    target = _usage_event_model_id(event)
+    evidence: dict | None = None
+    upstream_id = event.usage.upstream_request_id if event is not None else None
+    if provider == "openrouter" and (
+        not target or is_auto_router_model_id(target)
+    ):
+        evidence = await _openrouter_generation_outcome(
+            base_url=base_url,
+            api_key=api_key,
+            upstream_request_id=upstream_id,
+        )
+        selected = evidence.get("model") if evidence else None
+        if selected:
+            target = str(selected)
+    native_reason = (
+        str(evidence.get("native_finish_reason") or evidence.get("finish_reason") or "")
+        if evidence
+        else ""
+    )
+    reason_code = reason_code_override or classify_failure_reason(
+        f"{detail} {native_reason}"
+    )
+    await _record_runtime_compatibility(
+        ai_model=ai_model,
+        external_model_id=target or ai_model.external_id,
+        success=False,
+        reason_code=reason_code,
+        detail=(native_reason or detail)[:1000],
+        upstream_request_id=upstream_id,
+        evidence=evidence,
+    )
+    return reason_code
+
+
+async def _adaptive_openrouter_extra_body(ai_model: AIModel) -> dict | None:
+    """Constrain Auto Router with recorded evidence, never with vendor names."""
+    connection_id = getattr(ai_model, "connection_id", None)
+    if connection_id is None:
+        return None
+    try:
+        async with AsyncSessionLocal() as compatibility_db:
+            plugin = await openrouter_auto_plugin(
+                compatibility_db,
+                connection_id=int(connection_id),
+                requested_model_id=ai_model.external_id,
+            )
+    except Exception:
+        logger.exception("Failed to build adaptive Auto Router constraints")
+        return None
+    return {"plugins": [plugin]}
+
+
+def _code_interpreter_capacity_subject(
+    *,
+    user_id: int | None,
+    alpha_router_api_key_id: int | None,
+    source: str | None,
+) -> str:
+    if alpha_router_api_key_id is not None:
+        return subject_for_api_key(alpha_router_api_key_id)
+    if user_id is not None:
+        return subject_for_user(user_id)
+    return subject_for_system(source or "gateway")
+
+
+def _code_interpreter_capacity_lease_id(body: dict, subject: str) -> str | None:
+    request_key = (
+        body.get("_idempotency_key")
+        or body.get("assistant_client_message_id")
+    )
+    if not request_key:
+        return None
+    return str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"alpharouter:code-interpreter:{subject}:{request_key}",
+        )
+    )
+
+
 async def preflight_stream_chat(
     db: AsyncSession,
     body: dict,
@@ -305,22 +679,67 @@ async def preflight_stream_chat(
     )
     if not await user_can_access_model(db, ai_model, subject):
         raise HTTPException(status_code=404, detail=f"Model not enabled: {selected_model}")
-    hold = None
-    if alpha_router_api_key_id or (not skip_budget and user_id):
-        estimate = (
-            estimate_embedding_hold(ai_model, body)
-            if operation == "embedding"
-            else estimate_chat_hold(ai_model, body)
+    tools = parse_tools_config(body)
+    workspace_files: dict[str, str] | None = None
+    capacity_permit: CapacityPermit | None = None
+    if tools.code_interpreter:
+        await assert_code_interpreter_model_available(db, ai_model)
+        from app.services.transfer_limits_service import get_transfer_limits
+
+        transfer_limits = await get_transfer_limits(db)
+        max_workspace_files = int(
+            transfer_limits.get(
+                "max_code_interpreter_workspace_files",
+                transfer_limits.get(
+                    "max_chat_attachments_count",
+                    DEFAULT_MAX_WORKSPACE_FILES,
+                ),
+            )
         )
-        hold = await reserve(
-            db,
-            user_id=None if alpha_router_api_key_id else user_id,
+        max_workspace_bytes = int(
+            transfer_limits.get(
+                "max_code_interpreter_workspace_total_bytes",
+                DEFAULT_MAX_WORKSPACE_TOTAL_BYTES,
+            )
+        )
+        try:
+            workspace_files = workspace_files_from_messages(
+                list(body.get("messages") or []),
+                max_files=max_workspace_files,
+                max_total_bytes=max_workspace_bytes,
+            )
+        except WorkspaceLimitError as exc:
+            raise HTTPException(status_code=413, detail=exc.api_detail()) from exc
+        capacity_subject = _code_interpreter_capacity_subject(
+            user_id=user_id,
             alpha_router_api_key_id=alpha_router_api_key_id,
-            amount_usd=estimate,
-            operation=operation,
-            model_id=ai_model.external_id,
-            idempotency_key=reservation_key(body, operation=operation),
+            source=source,
         )
+        capacity_permit = await acquire_code_interpreter_turn(
+            capacity_subject,
+            lease_id=_code_interpreter_capacity_lease_id(body, capacity_subject),
+        )
+    hold = None
+    try:
+        if alpha_router_api_key_id or (not skip_budget and user_id):
+            estimate = (
+                estimate_embedding_hold(ai_model, body)
+                if operation == "embedding"
+                else estimate_chat_hold(ai_model, body)
+            )
+            hold = await reserve(
+                db,
+                user_id=None if alpha_router_api_key_id else user_id,
+                alpha_router_api_key_id=alpha_router_api_key_id,
+                amount_usd=estimate,
+                operation=operation,
+                model_id=ai_model.external_id,
+                idempotency_key=reservation_key(body, operation=operation),
+            )
+    except BaseException:
+        if capacity_permit is not None:
+            await asyncio.shield(release_code_interpreter_turn(capacity_permit))
+        raise
     return ResolvedStreamContext(
         ai_model=ai_model,
         api_key=api_key,
@@ -328,6 +747,8 @@ async def preflight_stream_chat(
         provider_type=provider_type or ai_model.provider_type or "",
         model_id=litellm_model_for_provider(ai_model.external_id, provider_type or ai_model.provider_type),
         budget_reservation_id=hold.id if hold else None,
+        code_interpreter_workspace_files=workspace_files,
+        code_interpreter_capacity_permit=capacity_permit,
     )
 
 
@@ -646,7 +1067,13 @@ async def stream_chat(
                 skip_budget=skip_budget,
                 alpha_router_api_key_id=alpha_router_api_key_id,
             )
-            await db.commit()
+            try:
+                await db.commit()
+            except BaseException:
+                permit = getattr(resolved, "code_interpreter_capacity_permit", None)
+                if permit is not None:
+                    await release_code_interpreter_turn(permit)
+                raise
 
         ai_model = resolved.ai_model
         api_key = resolved.api_key
@@ -659,6 +1086,13 @@ async def stream_chat(
         collected_content = ""
         usage_events: list[PendingUsageEvent] = []
         stream_reservation_id = getattr(resolved, "budget_reservation_id", None)
+        capacity_permit = getattr(
+            resolved,
+            "code_interpreter_capacity_permit",
+            None,
+        )
+        capacity_lost = asyncio.Event()
+        capacity_heartbeat_task: asyncio.Task | None = None
 
         async def _release_stream_reservation() -> None:
             if not stream_reservation_id:
@@ -666,6 +1100,34 @@ async def stream_chat(
             async with AsyncSessionLocal() as release_db:
                 await release(release_db, stream_reservation_id)
                 await release_db.commit()
+
+        async def _release_capacity_permit() -> None:
+            if capacity_permit is None:
+                return
+            await release_code_interpreter_turn(capacity_permit)
+
+        async def _capacity_heartbeat_loop() -> None:
+            heartbeat_seconds = max(
+                5,
+                int(settings.code_interpreter_capacity_heartbeat_seconds or 30),
+            )
+            while True:
+                await asyncio.sleep(heartbeat_seconds)
+                try:
+                    alive = await heartbeat_code_interpreter_turn(capacity_permit)
+                except HTTPException:
+                    logger.exception("Code Interpreter capacity heartbeat failed")
+                    capacity_lost.set()
+                    return
+                if not alive:
+                    logger.error("Code Interpreter capacity lease was lost")
+                    capacity_lost.set()
+                    return
+
+        if capacity_permit is not None:
+            capacity_heartbeat_task = asyncio.create_task(
+                _capacity_heartbeat_loop()
+            )
 
         completion_kwargs: dict = {
             "messages": messages,
@@ -676,6 +1138,14 @@ async def stream_chat(
         }
         model = _apply_litellm_provider_kwargs(completion_kwargs, provider_type, model)
         provider = (provider_type or ai_model.provider_type or "").lower()
+        if (
+            tools.code_interpreter
+            and provider == "openrouter"
+            and is_auto_router_model_id(ai_model.external_id)
+        ):
+            auto_router_extra_body = await _adaptive_openrouter_extra_body(ai_model)
+            if auto_router_extra_body:
+                completion_kwargs["extra_body"] = auto_router_extra_body
         if provider in ("openai", "azure", "openrouter", "anthropic", "xai"):
             completion_kwargs["stream_options"] = {"include_usage": True}
 
@@ -694,10 +1164,42 @@ async def stream_chat(
                 await asyncio.shield(_release_stream_reservation())
             except Exception:
                 logger.exception("Failed to release chat reservation after tool setup error")
+            if capacity_heartbeat_task is not None:
+                capacity_heartbeat_task.cancel()
+            await asyncio.shield(_release_capacity_permit())
             raise
         messages = apply_prompt_cache_breakpoints(messages)
         original_messages = list(body.get("messages", []))
-        workspace_files = workspace_files_from_messages(original_messages) if tools.code_interpreter else {}
+        resolved_workspace_files = getattr(
+            resolved,
+            "code_interpreter_workspace_files",
+            None,
+        )
+        workspace_files = (
+            resolved_workspace_files
+            if tools.code_interpreter and resolved_workspace_files is not None
+            else (
+                workspace_files_from_messages(original_messages)
+                if tools.code_interpreter
+                else {}
+            )
+        )
+        if tools.code_interpreter and workspace_files:
+            inventory = code_interpreter_workspace_message(workspace_files)
+            if inventory:
+                messages = list(messages)
+                if messages and messages[0].get("role") == "system" and isinstance(
+                    messages[0].get("content"), str
+                ):
+                    messages[0] = {
+                        "role": "system",
+                        "content": f"{messages[0]['content']}\n\n{inventory}",
+                    }
+                else:
+                    messages = [
+                        {"role": "system", "content": inventory},
+                        *messages,
+                    ]
         current_messages = list(messages)
         completion_kwargs["messages"] = current_messages
         generation_start = time.perf_counter()
@@ -760,9 +1262,65 @@ async def stream_chat(
             )
 
         was_cancelled = False
+        # Sticky for the whole request: once the user presses Stop (or the client
+        # goes away), later Code Interpreter iterations must not resume work.
+        client_disconnected = False
+
+        async def _client_stopped() -> bool:
+            """Checkpoint used outside the chunk loop (around sandbox execution)."""
+            nonlocal client_disconnected
+            if capacity_lost.is_set():
+                client_disconnected = True
+                return True
+            if client_disconnected:
+                return True
+            try:
+                if await request.is_disconnected():
+                    client_disconnected = True
+                    return True
+            except Exception:
+                pass
+            if persister:
+                try:
+                    if await persister.is_cancel_requested(force=True):
+                        client_disconnected = True
+                        return True
+                except Exception:
+                    pass
+            return False
+
+        async def _run_sandbox_until_stopped(
+            code: str,
+            files: dict[str, str],
+        ) -> SandboxExecutionResult | None:
+            """Run sandbox code, abandoning the wait as soon as the user stops.
+
+            Returns ``None`` when the client stopped while the sandbox was still
+            running. Cancelling the executor task invokes the broker Job DELETE
+            path, which force-removes the active container.
+            """
+            task = asyncio.create_task(run_python_sandbox(code, files))
+            while True:
+                done, _pending = await asyncio.wait(
+                    {task},
+                    timeout=_SANDBOX_CANCEL_POLL_SECONDS,
+                )
+                if task in done:
+                    return task.result()
+                if await _client_stopped():
+                    _abandon_task(task)
+                    increment("code_interpreter_cancelled")
+                    return None
+
         try:
             code_iterations = 0
+            code_nudge_sent = False
+            code_executed = False
+            emitted_artifact_ids: set[int] = set()
+            observed_compatibility_models: set[str] = set()
             while True:
+                if client_disconnected:
+                    break
                 active_started_at = datetime.datetime.utcnow()
                 active_messages = list(completion_kwargs.get("messages", messages))
                 active_prompt_tokens = 0
@@ -772,9 +1330,10 @@ async def stream_chat(
                 response = await acompletion(**completion_kwargs)
                 active_response = response
                 iteration_content = ""
-                client_disconnected = False
                 async for chunk in response:
                     stream_end_at = time.perf_counter()
+                    if capacity_lost.is_set():
+                        client_disconnected = True
                     if not client_disconnected and await request.is_disconnected():
                         client_disconnected = True
                     if (
@@ -803,7 +1362,9 @@ async def stream_chat(
                         delta = chunk.choices[0].delta.content
                         iteration_content += delta
                         collected_content += delta
-                        if persister:
+                        # A partial flush after Stop would re-mark the message as
+                        # streaming, so the UI would show it as still generating.
+                        if persister and not client_disconnected:
                             try:
                                 await persister.on_content(collected_content)
                             except Exception:
@@ -849,26 +1410,37 @@ async def stream_chat(
                         )
                     except Exception:
                         pass
-                usage_events.append(
-                    capture_usage_event(
-                        response,
-                        fallback_response=active_last_chunk,
-                        ai_model=ai_model,
-                        provider_type=provider_type,
-                        service_type="llm",
-                        operation_name="chat_completion",
-                        model_id=model,
-                        attempt_index=len(usage_events),
-                        status="succeeded",
-                        started_at=active_started_at,
-                        completed_at=datetime.datetime.utcnow(),
-                        prompt_tokens=active_prompt_tokens,
-                        completion_tokens=active_completion_tokens,
-                        cached_tokens=active_cached_tokens,
-                        prompt=active_messages,
-                        completion=iteration_content,
-                    )
+                empty_completion = not iteration_content.strip()
+                attempt_error = (
+                    "Upstream model returned an empty completion."
+                    if empty_completion
+                    else None
                 )
+                active_event = capture_usage_event(
+                    response,
+                    fallback_response=active_last_chunk,
+                    ai_model=ai_model,
+                    provider_type=provider_type,
+                    service_type="llm",
+                    operation_name="chat_completion",
+                    model_id=model,
+                    attempt_index=len(usage_events),
+                    status="failed" if empty_completion else "succeeded",
+                    started_at=active_started_at,
+                    completed_at=datetime.datetime.utcnow(),
+                    prompt_tokens=active_prompt_tokens,
+                    completion_tokens=active_completion_tokens,
+                    cached_tokens=active_cached_tokens,
+                    prompt=active_messages,
+                    completion=iteration_content,
+                    error_message=attempt_error,
+                )
+                usage_events.append(active_event)
+                observed_model_id = _usage_event_model_id(active_event)
+                if observed_model_id and not is_auto_router_model_id(
+                    observed_model_id
+                ):
+                    observed_compatibility_models.add(observed_model_id)
                 prompt_tokens += active_prompt_tokens
                 completion_tokens += active_completion_tokens
                 cached_tokens += active_cached_tokens
@@ -883,19 +1455,175 @@ async def stream_chat(
                 if client_disconnected:
                     break
 
+                if empty_completion and tools.code_interpreter:
+                    try:
+                        await _record_code_interpreter_failure(
+                            ai_model=ai_model,
+                            provider=provider,
+                            base_url=base_url,
+                            api_key=api_key,
+                            event=active_event,
+                            detail=attempt_error or "Empty Code Interpreter response",
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to record Code Interpreter compatibility failure"
+                        )
+                    if provider == "openrouter" and is_auto_router_model_id(
+                        ai_model.external_id
+                    ):
+                        retry_extra_body = await _adaptive_openrouter_extra_body(
+                            ai_model
+                        )
+                        if retry_extra_body:
+                            completion_kwargs["extra_body"] = retry_extra_body
+
+                if empty_completion and (
+                    not tools.code_interpreter
+                    or code_nudge_sent
+                    or code_iterations >= MAX_CODE_ITERATIONS
+                ):
+                    success = False
+                    error_message = (
+                        "The upstream model returned no usable content. "
+                        "Retry the request or select a different model."
+                    )
+                    yield f"data: {json.dumps({'error': error_message})}\n\n".encode()
+                    break
+
                 if not tools.code_interpreter or code_iterations >= MAX_CODE_ITERATIONS:
-                    break;
+                    break
 
                 code = extract_last_python_block(iteration_content)
                 if not code:
+                    if code_executed:
+                        # Code already ran in this turn, so an answer without a new
+                        # block is the normal end of the flow: never nudge again and
+                        # never score it as a compatibility failure.
+                        break
+                    if code_nudge_sent:
+                        try:
+                            await _record_code_interpreter_failure(
+                                ai_model=ai_model,
+                                provider=provider,
+                                base_url=base_url,
+                                api_key=api_key,
+                                event=active_event,
+                                detail=(
+                                    "The model did not emit a runnable Python block "
+                                    "after an explicit nudge."
+                                ),
+                                reason_code_override="no_python_block",
+                            )
+                        except Exception:
+                            logger.exception(
+                                "Failed to record Code Interpreter compatibility failure"
+                            )
+                        break
+                    code_nudge_sent = True
+                    current_messages = apply_prompt_cache_breakpoints(
+                        current_messages
+                        + [
+                            {"role": "assistant", "content": iteration_content},
+                            {
+                                "role": "user",
+                                "content": code_interpreter_nudge_message(
+                                    workspace_files
+                                ),
+                            },
+                        ]
+                    )
+                    completion_kwargs["messages"] = current_messages
+                    continue
+
+                # Sandbox runs can take tens of seconds, so Stop must be honored
+                # both before starting and while waiting for the result.
+                if await _client_stopped():
                     break
 
                 try:
-                    exec_result = await run_python_sandbox(code, workspace_files)
+                    exec_result = await _run_sandbox_until_stopped(code, workspace_files)
                 except ValueError as exc:
-                    exec_result = f"Code interpreter error: {exc}"
+                    exec_result = SandboxExecutionResult(
+                        output=f"Code interpreter error: {exc}",
+                        exit_code=1,
+                    )
+                if exec_result is None or await _client_stopped():
+                    break
+                if isinstance(exec_result, str):
+                    exec_result = SandboxExecutionResult(
+                        output=exec_result,
+                        exit_code=0,
+                    )
+
+                if exec_result.exit_code == 0:
+                    code_executed = True
+                    # Resolving the routed model can take a second upstream, so it
+                    # is never allowed to delay the user's stream.
+                    _spawn_compatibility_task(
+                        _log_compatibility_task_errors(
+                            _record_code_interpreter_success(
+                                ai_model=ai_model,
+                                provider=provider,
+                                base_url=base_url,
+                                api_key=api_key,
+                                event=active_event,
+                                observed_model_ids=set(observed_compatibility_models),
+                            )
+                        )
+                    )
 
                 formatted = format_code_output_for_chat(exec_result)
+                artifact_context = ""
+                if exec_result.artifacts:
+                    can_persist_artifacts = bool(
+                        source == "alpha_router_chat"
+                        and body.get("persist_chat")
+                        and user_id
+                        and body.get("chat_session_id")
+                    )
+                    if can_persist_artifacts:
+                        try:
+                            stored_artifacts = await _persist_code_interpreter_artifacts(
+                                exec_result.artifacts,
+                                user_id=int(user_id),
+                                username=username,
+                                chat_session_id=str(body["chat_session_id"]),
+                                model_id=model,
+                                source_prompt=_extract_prompt_text(messages),
+                            )
+                            new_artifacts = [
+                                item
+                                for item in stored_artifacts
+                                if item.asset_id not in emitted_artifact_ids
+                            ]
+                            emitted_artifact_ids.update(item.asset_id for item in new_artifacts)
+                            formatted += _artifact_links_markdown(new_artifacts)
+                            artifact_context = (
+                                "Platform-stored artifacts (use only these exact download links):\n"
+                                + "\n".join(
+                                    f"- {item.name}: {item.url}" for item in stored_artifacts
+                                )
+                            )
+                        except Exception:
+                            logger.exception("Failed to persist code interpreter artifacts")
+                            artifact_context = (
+                                "The generated files could not be stored in Media. "
+                                "Do not invent download links."
+                            )
+                            formatted += (
+                                "\n> Generated files could not be stored in Media. "
+                                "No download link was created.\n\n"
+                            )
+                    else:
+                        artifact_context = (
+                            "This is not a persisted app chat, so generated files were not stored. "
+                            "Do not invent download links."
+                        )
+                        formatted += (
+                            "\n> Generated files are not persisted for Private Mode or "
+                            "non-persisted API chats.\n\n"
+                        )
                 collected_content += formatted
                 if persister:
                     try:
@@ -906,17 +1634,29 @@ async def stream_chat(
                 if not client_disconnected:
                     yield _sse_delta_chunk(formatted)
 
+                remediation = (
+                    code_interpreter_error_hint(exec_result.output)
+                    if exec_result.exit_code != 0
+                    else ""
+                )
+                feedback_parts = [
+                    part
+                    for part in (
+                        exec_result.output,
+                        artifact_context,
+                        remediation,
+                        "Continue your reply to the user using these results. "
+                        "Do not repeat the same code unless necessary.",
+                    )
+                    if part
+                ]
                 current_messages = apply_prompt_cache_breakpoints(
                     current_messages
                     + [
                         {"role": "assistant", "content": iteration_content},
                         {
                             "role": "user",
-                            "content": (
-                                f"{exec_result}\n\n"
-                                "Continue your reply to the user using these results. "
-                                "Do not repeat the same code unless necessary."
-                            ),
+                            "content": "\n\n".join(feedback_parts),
                         },
                     ]
                 )
@@ -979,6 +1719,20 @@ async def stream_chat(
                 prompt_tokens += active_prompt_tokens
                 completion_tokens += active_completion_tokens
                 cached_tokens += active_cached_tokens
+                if tools.code_interpreter:
+                    try:
+                        await _record_code_interpreter_failure(
+                            ai_model=ai_model,
+                            provider=provider,
+                            base_url=base_url,
+                            api_key=api_key,
+                            event=failed_event,
+                            detail=str(exc),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to record Code Interpreter compatibility failure"
+                        )
             active_response = None
             active_last_chunk = None
             active_started_at = None
@@ -1079,6 +1833,16 @@ async def stream_chat(
                 error_message = _format_provider_error(exc, provider)[:500]
                 yield f"data: {json.dumps({'error': error_message})}\n\n".encode()
         finally:
+            if capacity_heartbeat_task is not None:
+                capacity_heartbeat_task.cancel()
+                await asyncio.gather(
+                    capacity_heartbeat_task,
+                    return_exceptions=True,
+                )
+            try:
+                await asyncio.shield(_release_capacity_permit())
+            except Exception:
+                logger.exception("Failed to release Code Interpreter capacity permit")
             if persister:
                 try:
                     await asyncio.shield(

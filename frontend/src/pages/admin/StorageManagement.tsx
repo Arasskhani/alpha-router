@@ -9,6 +9,9 @@ type StorageSettings = {
   max_upload_file_mb?: number;
   max_chat_attachments_total_mb?: number;
   max_media_zip_download_mb?: number;
+  max_chat_attachments_count?: number;
+  max_code_interpreter_workspace_files?: number;
+  max_code_interpreter_workspace_total_mb?: number;
 };
 
 type StorageOverview = {
@@ -38,6 +41,9 @@ export default function StorageManagement() {
   const [uploadMb, setUploadMb] = useState(25);
   const [chatTotalMb, setChatTotalMb] = useState(36);
   const [zipMb, setZipMb] = useState(256);
+  const [chatCount, setChatCount] = useState(5);
+  const [workspaceFiles, setWorkspaceFiles] = useState(5);
+  const [workspaceTotalMb, setWorkspaceTotalMb] = useState(16);
   const [savingQuota, setSavingQuota] = useState(false);
   const [savingTransfer, setSavingTransfer] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -59,6 +65,17 @@ export default function StorageManagement() {
       }
       if (typeof data.settings?.max_media_zip_download_mb === "number") {
         setZipMb(data.settings.max_media_zip_download_mb);
+      }
+      if (typeof data.settings?.max_chat_attachments_count === "number") {
+        setChatCount(data.settings.max_chat_attachments_count);
+      }
+      if (typeof data.settings?.max_code_interpreter_workspace_files === "number") {
+        setWorkspaceFiles(data.settings.max_code_interpreter_workspace_files);
+      } else if (typeof data.settings?.max_chat_attachments_count === "number") {
+        setWorkspaceFiles(data.settings.max_chat_attachments_count);
+      }
+      if (typeof data.settings?.max_code_interpreter_workspace_total_mb === "number") {
+        setWorkspaceTotalMb(data.settings.max_code_interpreter_workspace_total_mb);
       }
     } catch (e) {
       setError(String(e));
@@ -114,6 +131,9 @@ export default function StorageManagement() {
     const nextUpload = Math.max(1, Math.min(1024, Math.round(Number(uploadMb) || 1)));
     const nextChat = Math.max(1, Math.min(2048, Math.round(Number(chatTotalMb) || 1)));
     const nextZip = Math.max(1, Math.min(8192, Math.round(Number(zipMb) || 1)));
+    const nextCount = Math.max(1, Math.min(500, Math.round(Number(chatCount) || 1)));
+    const nextWorkspaceFiles = Math.max(1, Math.min(500, Math.round(Number(workspaceFiles) || 1)));
+    const nextWorkspaceTotal = Math.max(1, Math.min(64, Math.round(Number(workspaceTotalMb) || 1)));
     if (nextChat < nextUpload) {
       setError("Maximum chat attachments total must be greater than or equal to maximum upload size.");
       return;
@@ -128,10 +148,15 @@ export default function StorageManagement() {
           max_upload_file_mb: nextUpload,
           max_chat_attachments_total_mb: nextChat,
           max_media_zip_download_mb: nextZip,
+          max_chat_attachments_count: nextCount,
+          max_code_interpreter_workspace_files: nextWorkspaceFiles,
+          max_code_interpreter_workspace_total_mb: nextWorkspaceTotal,
         }),
       });
       setFlash(
-        `Transfer limits updated for all users: upload ${nextUpload} MB, chat total ${nextChat} MB, ZIP download ${nextZip} MB.`,
+        `Transfer limits updated for all users: upload ${nextUpload} MB, chat total ${nextChat} MB, ` +
+          `max ${nextCount} files per upload, workspace ${nextWorkspaceFiles} files / ${nextWorkspaceTotal} MB, ` +
+          `ZIP download ${nextZip} MB.`,
       );
       await load();
     } catch (e) {
@@ -279,8 +304,10 @@ export default function StorageManagement() {
       <form className="card" onSubmit={saveTransferSettings}>
         <h3>Transfer size limits</h3>
         <p className="muted-text">
-          Global limits for all users (megabytes). Upload size applies to Media and chat attachments. Chat total is
-          the sum of files in one message. ZIP download is the combined size of selected Media files.
+          Global limits for all users. Upload size applies to Media and chat attachments. Chat total is the sum of
+          files in one message. Maximum files per upload is how many files a user may select at once. Code Interpreter
+          workspace limits cover files from the whole conversation turn. ZIP download is the combined size of selected
+          Media files.
         </p>
 
         <label htmlFor="max-upload-file-mb">Maximum upload size (MB)</label>
@@ -309,6 +336,48 @@ export default function StorageManagement() {
           onChange={(e) => setChatTotalMb(Number(e.target.value || 1))}
         />
 
+        <label htmlFor="max-chat-attachments-count" style={{ marginTop: "0.75rem", display: "block" }}>
+          Maximum files per upload
+        </label>
+        <input
+          id="max-chat-attachments-count"
+          type="number"
+          min={1}
+          max={500}
+          step={1}
+          className="input-block"
+          value={chatCount}
+          onChange={(e) => setChatCount(Number(e.target.value || 1))}
+        />
+
+        <label htmlFor="max-code-interpreter-workspace-files" style={{ marginTop: "0.75rem", display: "block" }}>
+          Maximum Code Interpreter workspace files
+        </label>
+        <input
+          id="max-code-interpreter-workspace-files"
+          type="number"
+          min={1}
+          max={500}
+          step={1}
+          className="input-block"
+          value={workspaceFiles}
+          onChange={(e) => setWorkspaceFiles(Number(e.target.value || 1))}
+        />
+
+        <label htmlFor="max-code-interpreter-workspace-total-mb" style={{ marginTop: "0.75rem", display: "block" }}>
+          Maximum Code Interpreter workspace total (MB)
+        </label>
+        <input
+          id="max-code-interpreter-workspace-total-mb"
+          type="number"
+          min={1}
+          max={64}
+          step={1}
+          className="input-block"
+          value={workspaceTotalMb}
+          onChange={(e) => setWorkspaceTotalMb(Number(e.target.value || 1))}
+        />
+
         <label htmlFor="max-media-zip-download-mb" style={{ marginTop: "0.75rem", display: "block" }}>
           Maximum ZIP download size (MB)
         </label>
@@ -325,7 +394,12 @@ export default function StorageManagement() {
 
         <p className="muted-text" style={{ marginTop: "0.5rem" }}>
           Current: upload {stats?.settings?.max_upload_file_mb ?? 25} MB · chat total{" "}
-          {stats?.settings?.max_chat_attachments_total_mb ?? 36} MB · ZIP{" "}
+          {stats?.settings?.max_chat_attachments_total_mb ?? 36} MB · files per upload{" "}
+          {stats?.settings?.max_chat_attachments_count ?? 5} · workspace{" "}
+          {stats?.settings?.max_code_interpreter_workspace_files ??
+            stats?.settings?.max_chat_attachments_count ??
+            5}{" "}
+          files / {stats?.settings?.max_code_interpreter_workspace_total_mb ?? 16} MB · ZIP{" "}
           {stats?.settings?.max_media_zip_download_mb ?? 256} MB
         </p>
         <div className="dialog-actions">

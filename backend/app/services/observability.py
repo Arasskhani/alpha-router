@@ -17,8 +17,12 @@ _KNOWN_EVENTS = frozenset(
         "csrf_failure",
         "repeated_401",
         "budget_hold_leak",
+        "code_interpreter_capacity_rejected",
+        "code_interpreter_lease_expired",
+        "code_interpreter_cancelled",
         "docs_denied",
         "production_guard_warning",
+        "sandbox_orphan_removed",
     }
 )
 _lock = Lock()

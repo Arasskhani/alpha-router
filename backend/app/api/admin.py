@@ -36,7 +36,7 @@ from app.models.connection import Connection
 from app.models.cost_accounting import UsageEvent
 from app.models.media import MediaAsset
 from app.models.logging import RequestLog
-from app.models.model_catalog import AIModel
+from app.models.model_catalog import AIModel, ModelToolCompatibilityEvent
 from app.models.user import User, UserGroup, UserRoleAssignment, user_group_members
 from app.services import activity_service
 from app.services.model_capabilities import model_catalog_meta, model_kinds
@@ -45,6 +45,16 @@ from app.services.model_access_service import (
     get_model_access_detail,
     list_assignment_counts,
     set_model_access,
+)
+from app.services.code_interpreter_probe_service import probe_model_compatibility
+from app.services.model_tool_compatibility_service import (
+    compatibility_map_for_models,
+    compatibility_payload,
+    get_compatibility,
+    get_or_create_compatibility,
+    is_auto_router_model_id,
+    is_code_interpreter_candidate,
+    set_manual_override,
 )
 from app.services.model_sync import (
     disable_models_for_connection,
@@ -311,6 +321,7 @@ async def list_admin_models(
         )
     rows = (await db.execute(stmt)).scalars().all()
     counts = await list_assignment_counts(db, [m.id for m in rows])
+    compatibility = await compatibility_map_for_models(db, rows)
     return [
         {
             "id": m.id,
@@ -330,6 +341,11 @@ async def list_admin_models(
                 is_image_model=bool(m.is_image_model),
                 pricing_raw=m.pricing_raw,
             ),
+            "code_interpreter": compatibility_payload(
+                compatibility.get((int(m.connection_id), m.external_id)),
+                static_candidate=is_code_interpreter_candidate(m),
+                auto_router=is_auto_router_model_id(m.external_id),
+            ),
             **model_catalog_meta(
                 external_id=m.external_id,
                 display_name=m.display_name,
@@ -339,6 +355,130 @@ async def list_admin_models(
         }
         for m in rows
     ]
+
+
+class ModelCompatibilityOverrideIn(BaseModel):
+    override: Literal["compatible", "incompatible", "auto"]
+
+
+@router.get("/models/{model_id}/code-interpreter-compatibility")
+async def get_model_code_interpreter_compatibility(
+    model_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_models),
+):
+    """Compatibility state plus recent probe/runtime evidence for one model."""
+    model = await db.get(AIModel, model_id)
+    if not model:
+        raise HTTPException(404)
+    row = await get_compatibility(
+        db,
+        connection_id=model.connection_id,
+        external_model_id=model.external_id,
+    )
+    events: list[dict] = []
+    if row is not None:
+        event_rows = (
+            await db.execute(
+                select(ModelToolCompatibilityEvent)
+                .where(ModelToolCompatibilityEvent.compatibility_id == row.id)
+                .order_by(ModelToolCompatibilityEvent.created_at.desc())
+                .limit(20)
+            )
+        ).scalars().all()
+        events = [
+            {
+                "id": event.id,
+                "source": event.source,
+                "success": bool(event.success),
+                "reason_code": event.reason_code,
+                "detail": event.detail,
+                "requested_model_id": event.requested_model_id,
+                "created_at": event.created_at.isoformat() if event.created_at else None,
+            }
+            for event in event_rows
+        ]
+    return {
+        "model_id": model.id,
+        "external_id": model.external_id,
+        "compatibility": compatibility_payload(
+            row,
+            static_candidate=is_code_interpreter_candidate(model),
+            auto_router=is_auto_router_model_id(model.external_id),
+        ),
+        "events": events,
+    }
+
+
+@router.put("/models/{model_id}/code-interpreter-compatibility")
+async def put_model_code_interpreter_compatibility(
+    model_id: int,
+    body: ModelCompatibilityOverrideIn,
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(require_models_write),
+):
+    """Pin or release the automatic Code Interpreter compatibility decision."""
+    model = await db.get(AIModel, model_id)
+    if not model:
+        raise HTTPException(404)
+    row = await get_or_create_compatibility(
+        db,
+        connection_id=model.connection_id,
+        external_model_id=model.external_id,
+        model_id=model.id,
+    )
+    try:
+        await set_manual_override(
+            db,
+            row,
+            None if body.override == "auto" else body.override,
+            actor=actor.username,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await db.commit()
+    return {
+        "ok": True,
+        "compatibility": compatibility_payload(
+            row,
+            static_candidate=is_code_interpreter_candidate(model),
+            auto_router=is_auto_router_model_id(model.external_id),
+        ),
+    }
+
+
+@router.post("/models/{model_id}/code-interpreter-probe")
+async def run_model_code_interpreter_probe(
+    model_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_models_write),
+):
+    """Run one paid capability probe on demand and return the outcome."""
+    model = await db.get(AIModel, model_id)
+    if not model:
+        raise HTTPException(404)
+    if not is_code_interpreter_candidate(model):
+        raise HTTPException(400, detail="Only enabled text models can be probed")
+    try:
+        result = await probe_model_compatibility(db, model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    row = await get_compatibility(
+        db,
+        connection_id=model.connection_id,
+        external_model_id=model.external_id,
+    )
+    return {
+        "ok": result.success,
+        "reason_code": result.reason_code,
+        "detail": result.detail,
+        "selected_model_id": result.selected_model_id,
+        "compatibility": compatibility_payload(
+            row,
+            static_candidate=True,
+            auto_router=is_auto_router_model_id(model.external_id),
+        ),
+    }
 
 
 @router.patch("/models/{model_id}/toggle")
@@ -2523,6 +2663,9 @@ class StorageSettingsPatch(BaseModel):
     max_upload_file_mb: int | None = None
     max_chat_attachments_total_mb: int | None = None
     max_media_zip_download_mb: int | None = None
+    max_chat_attachments_count: int | None = None
+    max_code_interpreter_workspace_files: int | None = None
+    max_code_interpreter_workspace_total_mb: int | None = None
 
 
 class ChatRetentionSettingsPatch(BaseModel):
@@ -2582,6 +2725,9 @@ async def patch_storage_settings(
         body.max_upload_file_mb is not None
         or body.max_chat_attachments_total_mb is not None
         or body.max_media_zip_download_mb is not None
+        or body.max_chat_attachments_count is not None
+        or body.max_code_interpreter_workspace_files is not None
+        or body.max_code_interpreter_workspace_total_mb is not None
     )
     if transfer_fields:
         from app.services.transfer_limits_service import set_transfer_limits, transfer_limits_public_view
@@ -2592,6 +2738,9 @@ async def patch_storage_settings(
                 max_upload_file_mb=body.max_upload_file_mb,
                 max_chat_attachments_total_mb=body.max_chat_attachments_total_mb,
                 max_media_zip_download_mb=body.max_media_zip_download_mb,
+                max_chat_attachments_count=body.max_chat_attachments_count,
+                max_code_interpreter_workspace_files=body.max_code_interpreter_workspace_files,
+                max_code_interpreter_workspace_total_mb=body.max_code_interpreter_workspace_total_mb,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

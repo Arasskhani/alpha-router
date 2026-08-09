@@ -6,6 +6,7 @@ import ModelName from "../../components/ModelName";
 import ModelsFilterBar from "../../components/models/ModelsFilterBar";
 import ModelsBrowseView from "../../components/models/ModelsBrowseView";
 import ModelAccessModal from "../../components/models/ModelAccessModal";
+import ModelCodeInterpreterModal from "../../components/models/ModelCodeInterpreterModal";
 import { api } from "../../api";
 import { useConfirm } from "../../context/ConfirmContext";
 import { useDebounced } from "../../hooks/useDebounced";
@@ -13,6 +14,8 @@ import { BROWSER_EVENT_NAMES, STORAGE_KEYS } from "../../lib/brand";
 import {
   accessCounts,
   accessTypeLabel,
+  codeInterpreterButtonClass,
+  codeInterpreterLabel,
   enabledCounts,
   filterCatalogModels,
   type CatalogModel,
@@ -47,6 +50,7 @@ export default function Models() {
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [accessModelId, setAccessModelId] = useState<number | null>(null);
+  const [compatModelId, setCompatModelId] = useState<number | null>(null);
   const [msg, setMsg] = useState("");
   const debouncedSearch = useDebounced(search, 280);
 
@@ -62,6 +66,7 @@ export default function Models() {
   const statusCounts = useMemo(() => enabledCounts(allModels), [allModels]);
   const accessFilterCounts = useMemo(() => accessCounts(allModels), [allModels]);
   const accessModel = allModels.find((m) => m.id === accessModelId) || null;
+  const compatModel = allModels.find((m) => m.id === compatModelId) || null;
 
   useEffect(() => {
     loadModels().then(setAllModels).catch(() => setAllModels([]));
@@ -297,6 +302,7 @@ export default function Models() {
                   <th>Output / 1K</th>
                   <th>Total / 1K</th>
                   <th>Access Type</th>
+                  <th>Code Interpreter</th>
                   <th className="col-onoff">ON/OFF</th>
                 </tr>
               </thead>
@@ -326,6 +332,19 @@ export default function Models() {
                         onClick={() => setAccessModelId(m.id)}
                       >
                         {accessTypeLabel(m)}
+                      </button>
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className={`btn btn-sm btn-ghost${codeInterpreterButtonClass(m)}`}
+                        onClick={() => setCompatModelId(m.id)}
+                        title={
+                          m.code_interpreter?.reason_detail ||
+                          "Code Interpreter compatibility and probe history"
+                        }
+                      >
+                        {codeInterpreterLabel(m)}
                       </button>
                     </td>
                     <td className="col-onoff">
@@ -385,6 +404,14 @@ export default function Models() {
         modelId={accessModelId}
         modelLabel={accessModel?.external_id || ""}
         onClose={() => setAccessModelId(null)}
+        onSaved={async () => setAllModels(await loadModels())}
+      />
+
+      <ModelCodeInterpreterModal
+        open={compatModelId != null}
+        modelId={compatModelId}
+        modelLabel={compatModel?.external_id || ""}
+        onClose={() => setCompatModelId(null)}
         onSaved={async () => setAllModels(await loadModels())}
       />
     </AdminPage>

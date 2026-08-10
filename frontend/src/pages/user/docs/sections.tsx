@@ -479,6 +479,36 @@ export const userManualSections: DocSection[] = [
     ),
   },
   {
+    id: "chat-memory",
+    title: "Memory",
+    group: "Chat",
+    content: (
+      <>
+        <h2>Memory</h2>
+        <p>
+          Personalization has two additive context layers for non-private chats (they never replace session messages):
+        </p>
+        <ul>
+          <li>
+            <strong>Account profile</strong> — directory fields from your user record (Company, Department, Job title,
+            Report to). Read-only in Settings → Personalization; managed by admins or directory sync.
+          </li>
+          <li>
+            <strong>Saved memories</strong> — short facts you explicitly save. Toggle referencing, edit, or delete in
+            Settings → Personalization.
+          </li>
+        </ul>
+        <ul>
+          <li>Private mode chats do not receive profile context or memories.</li>
+        </ul>
+        <Note>
+          Only save facts you are comfortable keeping on the server for your account. Prefer concise durable facts over
+          pasting full conversations.
+        </Note>
+      </>
+    ),
+  },
+  {
     id: "chat-export",
     title: "Export &amp; feedback",
     group: "Chat",
@@ -564,7 +594,7 @@ export const userManualSections: DocSection[] = [
     content: (
       <>
         <h2>Settings</h2>
-        <p>Open Settings from the profile menu. Four tabs:</p>
+        <p>Open Settings from the profile menu:</p>
         <h3>General</h3>
         <ul>
           <li>Time zone for activity displays</li>
@@ -574,6 +604,14 @@ export const userManualSections: DocSection[] = [
             tab is in the background
           </li>
           <li>Theme: light, dark, or system</li>
+        </ul>
+        <h3>Personalization</h3>
+        <ul>
+          <li>
+            View read-only account profile fields (Company, Department, Job title, Report to) used in non-private chats
+          </li>
+          <li>Toggle whether saved memories are referenced in non-private chats</li>
+          <li>Add, edit, enable/disable, or delete explicit memories</li>
         </ul>
         <h3>Data Control</h3>
         <ul>

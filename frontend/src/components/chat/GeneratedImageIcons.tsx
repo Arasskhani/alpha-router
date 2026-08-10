@@ -70,16 +70,14 @@ export function DocIcon() {
   );
 }
 
-export function ExcelIcon() {
+export function TxtIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
       <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
       <path d="M14 3v5h5" />
-      <path d="M8 12h8" />
-      <path d="M8 15h8" />
-      <path d="M8 18h8" />
-      <path d="M11 12v6" />
-      <path d="M14 12v6" />
+      <path d="M9 12h6" />
+      <path d="M9 15.5h6" />
+      <path d="M9 9.5h3.5" />
     </svg>
   );
 }

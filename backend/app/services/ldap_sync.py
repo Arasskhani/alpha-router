@@ -68,6 +68,7 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, int]:
                 email=item.get("email"),
                 display_name=item.get("display_name") or raw_username or username,
                 external_id=external_id,
+                company=item.get("company"),
                 job_title=item.get("job_title"),
                 department=item.get("department"),
                 office=item.get("office"),
@@ -235,7 +236,7 @@ async def _apply_directory_profile(db: AsyncSession, user: User, item: dict[str,
         user.display_name = item["display_name"]
     if item.get("external_id"):
         user.external_id = item["external_id"]
-    for field in ("job_title", "department", "office", "reporting_to"):
+    for field in ("company", "job_title", "department", "office", "reporting_to"):
         val = item.get(field)
         if val is not None and str(val).strip():
             setattr(user, field, str(val).strip())

@@ -122,3 +122,27 @@ class UserChatPrefs(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     prefs = Column(JsonDocument, nullable=False, default=dict)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+
+class UserMemory(Base):
+    """Durable facts the user explicitly saved for cross-session personalization."""
+
+    __tablename__ = "user_memories"
+
+    id = Column(String(36), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    content = Column(Text, nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True)
+    source_session_id = Column(
+        String(36),
+        ForeignKey("chat_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    content_hash = Column(String(64), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "content_hash", name="ux_user_memories_user_hash"),
+        Index("ix_user_memories_user_updated", "user_id", "updated_at"),
+    )

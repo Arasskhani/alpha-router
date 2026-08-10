@@ -102,6 +102,8 @@ def _default_prefs() -> dict[str, Any]:
         # Opt-in: notify when a chat reply finishes while the user is away.
         "reply_notify_away": False,
         "reply_notify_sound": True,
+        # When true, enabled user memories are injected into non-private completions.
+        "memory_enabled": True,
     }
 
 
@@ -187,6 +189,8 @@ def _normalize_prefs(raw: dict[str, Any] | None) -> dict[str, Any]:
         base["reply_notify_away"] = _coerce_bool(raw.get("reply_notify_away"), default=False)
     if "reply_notify_sound" in raw:
         base["reply_notify_sound"] = _coerce_bool(raw.get("reply_notify_sound"), default=True)
+    if "memory_enabled" in raw:
+        base["memory_enabled"] = _coerce_bool(raw.get("memory_enabled"), default=True)
     return base
 
 

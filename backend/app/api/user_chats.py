@@ -46,6 +46,7 @@ class UserPrefsPatchIn(BaseModel):
     persian_font: str | None = None
     reply_notify_away: bool | None = None
     reply_notify_sound: bool | None = None
+    memory_enabled: bool | None = None
 
 
 class ChatSessionCreateIn(BaseModel):

@@ -24,7 +24,14 @@ from app.models.system import SmtpSettings, ReportSchedule, SystemMetricSnapshot
 from app.models.auth_provider import AuthProviderConfig
 from app.models.media import MediaAsset
 from app.models.video import VideoGenerationJob
-from app.models.chat import ChatFolder, ChatMessage, ChatMessageFeedback, ChatSession, UserChatPrefs
+from app.models.chat import (
+    ChatFolder,
+    ChatMessage,
+    ChatMessageFeedback,
+    ChatSession,
+    UserChatPrefs,
+    UserMemory,
+)
 
 __all__ = [
     "User",
@@ -62,4 +69,5 @@ __all__ = [
     "ChatMessageFeedback",
     "ChatSession",
     "UserChatPrefs",
+    "UserMemory",
 ]

@@ -11231,6 +11231,20 @@ body.login-route #root {
   font-size: 0.75rem;
   line-height: 1.4;
 }
+.settings-subsection-title {
+  margin: 1rem 0 0.25rem;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+.settings-row__readonly {
+  font-size: 0.84rem;
+  color: var(--text);
+  max-width: 16rem;
+  text-align: end;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* Compact preference list — matches profile/menu density */
 .settings-list {
   width: 100%;
@@ -11521,3 +11535,52 @@ body.login-route #root {
   opacity: 0.55;
   cursor: default;
 }
+
+.settings-memory-draft {
+  width: 100%;
+  margin: 0.55rem 0 0.75rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.84rem;
+  line-height: 1.4;
+  resize: vertical;
+  min-height: 4.5rem;
+}
+
+.settings-memory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-top: 0.25rem;
+}
+
+.settings-memory-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+}
+
+.settings-memory-item__text {
+  margin: 0 0 0.45rem;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.settings-memory-item__text.is-disabled {
+  opacity: 0.55;
+}
+
+.settings-memory-item__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+

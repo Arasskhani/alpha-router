@@ -35,6 +35,8 @@ from app.services.budget_reservation_service import (
 )
 from app.services.prompt_cache_service import apply_prompt_cache_breakpoints
 from app.services.chat_tools_service import augment_messages_with_tools, parse_tools_config
+from app.services.user_memory_service import augment_messages_with_memory
+from app.services.user_profile_context_service import augment_messages_with_profile
 from app.services.code_interpreter_service import (
     DEFAULT_MAX_WORKSPACE_FILES,
     DEFAULT_MAX_WORKSPACE_TOTAL_BYTES,
@@ -1083,6 +1085,26 @@ async def settle_auxiliary_usage(
             )
 
 
+async def _resolve_private_mode_for_memory(
+    db: AsyncSession,
+    body: dict,
+    *,
+    user_id: int | None,
+) -> bool:
+    """Skip memory inject when the client or owned session is private."""
+    if bool(body.get("private_mode") or body.get("privateMode")):
+        return True
+    if user_id is None:
+        return False
+    session_id = str(body.get("chat_session_id") or "").strip()
+    if not session_id:
+        return False
+    row = await db.get(ChatSession, session_id)
+    if row is None or row.user_id != user_id:
+        return False
+    return bool(row.private_mode)
+
+
 async def stream_chat(
     request: Request,
     body: dict,
@@ -1208,6 +1230,29 @@ async def stream_chat(
                 await asyncio.shield(_release_stream_reservation())
             except Exception:
                 logger.exception("Failed to release chat reservation after tool setup error")
+            if capacity_heartbeat_task is not None:
+                capacity_heartbeat_task.cancel()
+            await asyncio.shield(_release_capacity_permit())
+            raise
+        private_mode = await _resolve_private_mode_for_memory(db, body, user_id=user_id)
+        try:
+            messages = await augment_messages_with_profile(
+                db,
+                messages,
+                user_id=user_id,
+                private_mode=private_mode,
+            )
+            messages = await augment_messages_with_memory(
+                db,
+                messages,
+                user_id=user_id,
+                private_mode=private_mode,
+            )
+        except BaseException:
+            try:
+                await asyncio.shield(_release_stream_reservation())
+            except Exception:
+                logger.exception("Failed to release chat reservation after memory setup error")
             if capacity_heartbeat_task is not None:
                 capacity_heartbeat_task.cancel()
             await asyncio.shield(_release_capacity_permit())

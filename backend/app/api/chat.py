@@ -167,6 +167,7 @@ class ChatRequest(BaseModel):
     tools: ChatToolsIn | None = None
     chat_session_id: str | None = None
     persist_chat: bool = False
+    private_mode: bool = False
     user_message: dict | None = None
     assistant_client_message_id: str | None = None
 
@@ -264,6 +265,7 @@ async def chat_completions(
         "user": user.email or user.username,
         "chat_session_id": body.chat_session_id,
         "persist_chat": body.persist_chat,
+        "private_mode": bool(body.private_mode),
         "user_message": body.user_message,
         "assistant_client_message_id": body.assistant_client_message_id,
     }

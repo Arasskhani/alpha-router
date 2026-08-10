@@ -60,6 +60,7 @@ class User(Base):
     token_version = Column(Integer, nullable=False, server_default="0", default=0)
 
     # Directory / HR fields for reporting filters
+    company = Column(String(255), nullable=True)
     job_title = Column(String(255), nullable=True)
     department = Column(String(255), nullable=True, index=True)
     office = Column(String(255), nullable=True)

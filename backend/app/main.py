@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
-from app.api import admin, auth, authentication, chat, gateway, groups, images, logs, operations, plans, reports, smtp, speech, user_chats, user_media, user_routes, user_settings, videos
+from app.api import admin, auth, authentication, chat, gateway, groups, images, logs, operations, plans, reports, smtp, speech, user_chats, user_media, user_memories, user_routes, user_settings, videos
 from app.branding import (
     APPLICATION_TITLE,
     CSRF_COOKIE_NAME,
@@ -616,6 +616,7 @@ app.include_router(user_routes.router)
 app.include_router(user_media.router)
 app.include_router(user_chats.router)
 app.include_router(user_chats.messages_router)
+app.include_router(user_memories.router)
 app.include_router(user_settings.router)
 app.include_router(images.router)
 app.include_router(videos.router)

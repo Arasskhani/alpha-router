@@ -18,10 +18,21 @@ import { COMMON_TIMEZONES, detectBrowserTimezone } from "../lib/timezones";
 import { BROWSER_EVENT_NAMES } from "../lib/brand";
 import { broadcastChatRefresh } from "../lib/chatLeader";
 import { requestReplyNotifyPermission } from "../lib/replyReadyNotify";
+import {
+  MAX_MEMORY_CHARS,
+  createUserMemory,
+  deleteAllUserMemories,
+  deleteUserMemory,
+  fetchUserMemoriesBundle,
+  normalizeMemoryDraft,
+  updateUserMemory,
+  type UserMemory,
+  type UserProfileContext,
+} from "../lib/userMemories";
 import Modal from "./Modal";
 import ThemeSegmentedControl from "./ThemeSegmentedControl";
 
-type TabId = "general" | "data-control" | "security";
+type TabId = "general" | "personalization" | "data-control" | "security";
 
 type SecurityStatus = {
   auth_provider: string;
@@ -46,6 +57,7 @@ type ImportResult = {
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "general", label: "General" },
+  { id: "personalization", label: "Personalization" },
   { id: "data-control", label: "Data Control" },
   { id: "security", label: "Security" },
 ];
@@ -93,6 +105,7 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange }: P
           {tab === "general" && (
             <GeneralPanel theme={theme} setTheme={onThemeChange} onSaved={onClose} />
           )}
+          {tab === "personalization" && <PersonalizationPanel />}
           {tab === "data-control" && <DataControlPanel />}
           {tab === "security" && <SecurityPanel />}
         </section>
@@ -367,6 +380,331 @@ function GeneralPanel({
         </button>
       </div>
     </form>
+  );
+}
+
+function PersonalizationPanel() {
+  const [memoryEnabled, setMemoryEnabled] = useState(true);
+  const [memories, setMemories] = useState<UserMemory[]>([]);
+  const [profile, setProfile] = useState<UserProfileContext>({
+    company: null,
+    department: null,
+    job_title: null,
+    reporting_to: null,
+  });
+  const [draft, setDraft] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function refresh() {
+    const [prefs, bundle] = await Promise.all([
+      fetchUserPrefsFromServer(),
+      fetchUserMemoriesBundle(),
+    ]);
+    setMemoryEnabled(prefs.memory_enabled !== false);
+    setMemories(bundle.memories);
+    setProfile(bundle.profile);
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        await refresh();
+      } catch (err) {
+        if (!cancelled) setError(formatApiError(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function onToggleMemory(checked: boolean) {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await saveUserPrefs({ memory_enabled: checked });
+      setMemoryEnabled(checked);
+      window.dispatchEvent(new CustomEvent(BROWSER_EVENT_NAMES.userPrefsSaved));
+      setMessage(checked ? "Memories will be referenced in chat." : "Memory referencing is off.");
+    } catch (err) {
+      setError(formatApiError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onAddMemory() {
+    const content = normalizeMemoryDraft(draft);
+    if (!content) {
+      setError("Enter something to remember.");
+      return;
+    }
+    if (content.length > MAX_MEMORY_CHARS) {
+      setError(`Memory must be at most ${MAX_MEMORY_CHARS} characters.`);
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await createUserMemory(content);
+      setDraft("");
+      await refresh();
+      setMessage("Memory saved.");
+    } catch (err) {
+      setError(formatApiError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onSaveEdit(id: string) {
+    const content = normalizeMemoryDraft(editDraft);
+    if (!content) {
+      setError("Memory content cannot be empty.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await updateUserMemory(id, { content });
+      setEditingId(null);
+      setEditDraft("");
+      await refresh();
+      setMessage("Memory updated.");
+    } catch (err) {
+      setError(formatApiError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onToggleItem(item: UserMemory, enabled: boolean) {
+    setBusy(true);
+    setError("");
+    try {
+      await updateUserMemory(item.id, { enabled });
+      await refresh();
+    } catch (err) {
+      setError(formatApiError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onDeleteItem(id: string) {
+    if (!window.confirm("Delete this memory?")) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await deleteUserMemory(id);
+      await refresh();
+      setMessage("Memory deleted.");
+    } catch (err) {
+      setError(formatApiError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onDeleteAll() {
+    if (!window.confirm("Delete all saved memories? This cannot be undone.")) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const deleted = await deleteAllUserMemories();
+      await refresh();
+      setMessage(deleted ? `Deleted ${deleted} memor${deleted === 1 ? "y" : "ies"}.` : "No memories to delete.");
+    } catch (err) {
+      setError(formatApiError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (loading) return <p className="muted">Loading personalization…</p>;
+
+  const hasProfile = !!(
+    profile.company || profile.department || profile.job_title || profile.reporting_to
+  );
+
+  return (
+    <div className="settings-section">
+      <h2>Personalization</h2>
+      <p className="settings-section-desc">
+        Account profile fields and explicit memories are added alongside chat history — they never replace it.
+        Private chats never use profile context or memories.
+      </p>
+
+      <h3 className="settings-subsection-title">From your account</h3>
+      <p className="settings-section-desc">
+        Read-only directory fields. Managed by administrators (or directory sync). Used in non-private chats when present.
+      </p>
+      <div className="settings-list">
+        <SettingsRow title="Company" hint="From User Properties">
+          <span className="settings-row__readonly">{profile.company || "—"}</span>
+        </SettingsRow>
+        <SettingsRow title="Department" hint="From User Properties">
+          <span className="settings-row__readonly">{profile.department || "—"}</span>
+        </SettingsRow>
+        <SettingsRow title="Job title" hint="From User Properties">
+          <span className="settings-row__readonly">{profile.job_title || "—"}</span>
+        </SettingsRow>
+        <SettingsRow title="Report to" hint="From User Properties">
+          <span className="settings-row__readonly">{profile.reporting_to || "—"}</span>
+        </SettingsRow>
+      </div>
+      {!hasProfile ? (
+        <p className="muted" style={{ marginTop: "0.45rem" }}>
+          No company, department, job title, or report-to is set on your account yet.
+        </p>
+      ) : null}
+
+      <h3 className="settings-subsection-title">Saved memories</h3>
+      <div className="settings-list">
+        <SettingsRow
+          title="Reference saved memories"
+          hint="Inject enabled memories into non-private chat completions"
+        >
+          <input
+            type="checkbox"
+            checked={memoryEnabled}
+            disabled={busy}
+            onChange={(e) => void onToggleMemory(e.target.checked)}
+            aria-label="Reference saved memories"
+          />
+        </SettingsRow>
+
+        <SettingsRow title="Add a memory" hint={`Up to ${MAX_MEMORY_CHARS} characters`}>
+          <button
+            type="button"
+            className="settings-row__action"
+            disabled={busy || !normalizeMemoryDraft(draft)}
+            onClick={() => void onAddMemory()}
+          >
+            Save
+          </button>
+        </SettingsRow>
+      </div>
+
+      <textarea
+        className="settings-memory-draft"
+        value={draft}
+        maxLength={MAX_MEMORY_CHARS}
+        rows={3}
+        placeholder="What should be remembered?"
+        disabled={busy}
+        onChange={(e) => setDraft(e.target.value)}
+      />
+
+      <div className="settings-memory-list" role="list">
+        {memories.length === 0 ? (
+          <p className="muted">No memories saved yet.</p>
+        ) : (
+          memories.map((item) => (
+            <div key={item.id} className="settings-memory-item" role="listitem">
+              {editingId === item.id ? (
+                <>
+                  <textarea
+                    className="settings-memory-draft"
+                    value={editDraft}
+                    maxLength={MAX_MEMORY_CHARS}
+                    rows={3}
+                    disabled={busy}
+                    onChange={(e) => setEditDraft(e.target.value)}
+                  />
+                  <div className="settings-memory-item__actions">
+                    <button
+                      type="button"
+                      className="settings-row__action"
+                      disabled={busy}
+                      onClick={() => void onSaveEdit(item.id)}
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      className="settings-row__action"
+                      disabled={busy}
+                      onClick={() => {
+                        setEditingId(null);
+                        setEditDraft("");
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className={`settings-memory-item__text${!item.enabled ? " is-disabled" : ""}`}>
+                    {item.content}
+                  </p>
+                  <div className="settings-memory-item__actions">
+                    <label className="settings-inline-check">
+                      <input
+                        type="checkbox"
+                        checked={item.enabled}
+                        disabled={busy}
+                        onChange={(e) => void onToggleItem(item, e.target.checked)}
+                      />
+                      <span>Enabled</span>
+                    </label>
+                    <button
+                      type="button"
+                      className="settings-row__action"
+                      disabled={busy}
+                      onClick={() => {
+                        setEditingId(item.id);
+                        setEditDraft(item.content);
+                      }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="settings-row__action"
+                      disabled={busy}
+                      onClick={() => void onDeleteItem(item.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+
+      {memories.length > 0 ? (
+        <div className="settings-actions" style={{ marginTop: "0.75rem" }}>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            disabled={busy}
+            onClick={() => void onDeleteAll()}
+          >
+            Delete all memories
+          </button>
+        </div>
+      ) : null}
+
+      {error && <p className="settings-error">{error}</p>}
+      {message && <p className="settings-success">{message}</p>}
+    </div>
   );
 }
 

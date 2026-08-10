@@ -695,8 +695,11 @@ class LocalUserIn(BaseModel):
     password: str
     display_name: str | None = None
     role: str = "user"
+    company: str | None = None
     department: str | None = None
+    office: str | None = None
     job_title: str | None = None
+    reporting_to: str | None = None
     group_id: int | None = None
     plan_id: int | None = None
     no_plan: bool = False
@@ -740,8 +743,11 @@ async def create_local_user(
         display_name=display_name,
         hashed_password=hash_password(password),
         auth_provider="local",
-        department=body.department,
-        job_title=body.job_title,
+        company=_clean_optional_str(body.company),
+        department=_clean_optional_str(body.department),
+        office=_clean_optional_str(body.office),
+        job_title=_clean_optional_str(body.job_title),
+        reporting_to=_clean_optional_str(body.reporting_to),
     )
     db.add(user)
     await db.flush()
@@ -943,6 +949,7 @@ async def list_users(
             "roles": roles_map.get(u.id, ["user"]),
             "is_active": bool(u.is_active),
             "group_names": groups_map.get(u.id, []),
+            "company": u.company,
             "department": u.department,
             "job_title": u.job_title,
             "office": u.office,
@@ -1023,6 +1030,7 @@ async def list_deleted_users(
             "role": primary_role_slug(roles_map.get(u.id, ["user"])),
             "roles": roles_map.get(u.id, ["user"]),
             "is_active": bool(u.is_active),
+            "company": u.company,
             "department": u.department,
             "job_title": u.job_title,
             "office": u.office,
@@ -1357,6 +1365,7 @@ def _user_admin_dict(user: User, roles: list[str], monthly_budget_usd: float | N
         "role": primary_role_slug(roles),
         "roles": roles,
         "is_active": bool(user.is_active),
+        "company": user.company,
         "department": user.department,
         "job_title": user.job_title,
         "office": user.office,
@@ -1374,6 +1383,7 @@ class UserAdminPatch(BaseModel):
     role: str | None = None
     roles: list[str] | None = None
     is_active: bool | None = None
+    company: str | None = None
     department: str | None = None
     office: str | None = None
     job_title: str | None = None
@@ -1426,6 +1436,8 @@ async def patch_user(
         saved_roles = await set_user_roles(db, user, [new_role])
     else:
         saved_roles = await get_user_role_slugs(db, user.id)
+    if body.company is not None:
+        user.company = _clean_optional_str(body.company)
     if body.department is not None:
         user.department = _clean_optional_str(body.department)
     if body.office is not None:

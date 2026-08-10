@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.database import Base
 
-from app.models.chat import ChatSession, UserChatPrefs
+from app.models.chat import ChatSession, UserChatPrefs, UserMemory
 
 from app.models.media import MediaAsset
 
@@ -112,6 +112,24 @@ async def _purge_roundtrip(monkeypatch) -> None:
 
         db.add(UserChatPrefs(user_id=user.id, prefs={}))
 
+        db.add(
+
+            UserMemory(
+
+                id="mem1",
+
+                user_id=user.id,
+
+                content="Likes tea",
+
+                enabled=True,
+
+                content_hash="abc",
+
+            )
+
+        )
+
         await db.commit()
 
 
@@ -182,11 +200,15 @@ async def _purge_roundtrip(monkeypatch) -> None:
 
         prefs_left = await db.get(UserChatPrefs, user.id)
 
+        memory_left = await db.get(UserMemory, "mem1")
+
         assert not media_left
 
         assert chat_left is None
 
         assert prefs_left is None
+
+        assert memory_left is None
 
     await engine.dispose()
 

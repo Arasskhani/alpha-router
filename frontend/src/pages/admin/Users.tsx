@@ -111,6 +111,7 @@ type U = {
   is_active?: boolean;
   totp_enabled?: boolean;
   group_names?: string[];
+  company?: string;
   department?: string;
   job_title?: string;
   office?: string;
@@ -134,6 +135,7 @@ type BulkStatusAction = "" | "enable" | "disable";
 type EditForm = {
   display_name: string;
   email: string;
+  company: string;
   department: string;
   office: string;
   job_title: string;
@@ -145,6 +147,7 @@ type EditForm = {
 const emptyEditForm: EditForm = {
   display_name: "",
   email: "",
+  company: "",
   department: "",
   office: "",
   job_title: "",
@@ -250,8 +253,11 @@ export default function Users() {
       password: values.password,
       role: values.role,
       display_name: values.display_name || undefined,
+      company: values.company || undefined,
       department: values.department || undefined,
+      office: values.office || undefined,
       job_title: values.job_title || undefined,
+      reporting_to: values.reporting_to || undefined,
       group_id: values.group_id ?? undefined,
     };
     if (values.budget_plan === "__inherit__") {
@@ -376,6 +382,7 @@ export default function Users() {
     setEditForm({
       display_name: u.display_name || "",
       email: u.email || "",
+      company: u.company || "",
       department: u.department || "",
       office: u.office || "",
       job_title: u.job_title || "",
@@ -410,6 +417,7 @@ export default function Users() {
         body: JSON.stringify({
           display_name: editForm.display_name,
           email: editForm.email,
+          company: editForm.company,
           department: editForm.department,
           office: editForm.office,
           job_title: editForm.job_title,
@@ -947,6 +955,12 @@ export default function Users() {
               value={editForm.email}
               onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
             />
+            <label>Company</label>
+            <input
+              className="input-block"
+              value={editForm.company}
+              onChange={(e) => setEditForm({ ...editForm, company: e.target.value })}
+            />
             <label>Department</label>
             <input
               className="input-block"
@@ -965,7 +979,7 @@ export default function Users() {
               value={editForm.job_title}
               onChange={(e) => setEditForm({ ...editForm, job_title: e.target.value })}
             />
-            <label>Reports to</label>
+            <label>Report to</label>
             <input
               className="input-block"
               value={editForm.reporting_to}

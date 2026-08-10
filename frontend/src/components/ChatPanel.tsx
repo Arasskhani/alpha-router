@@ -115,7 +115,7 @@ import {
   CsvIcon,
   PdfIcon,
   DocIcon,
-  ExcelIcon,
+  TxtIcon,
 } from "./chat/GeneratedImageIcons";
 import RequestLogCostDetailsModal from "./RequestLogCostDetailsModal";
 import {
@@ -225,7 +225,7 @@ import {
 } from "../lib/chatModels";
 import { applyPersianFontToChat, normalizePersianFontId } from "../lib/persianFonts";
 import { copyTextToClipboard } from "../lib/clipboard";
-import { downloadCsv, exportMessagePdf, exportMessageDocx, exportMessageXlsx } from "../lib/chatExport";
+import { downloadCsv, downloadTxt, exportMessagePdf, exportMessageDocx } from "../lib/chatExport";
 import { isNearScrollBottom, scrollContainerToBottom } from "../lib/chatScroll";
 import {
   clearComposerDraft,
@@ -2255,6 +2255,7 @@ export default function ChatPanel() {
       model: modelId,
       messages: await apiMessages(history, forModel, privateMode),
       stream: true,
+      private_mode: !!privateMode,
       ...toolsPayload,
       ...(persist
         ? {
@@ -5950,17 +5951,14 @@ export default function ChatPanel() {
                         <button
                           type="button"
                           className="alpha-router-msg-action-btn alpha-router-msg-action-btn--icon"
-                          title="Download Excel"
-                          aria-label="Download Excel spreadsheet"
+                          title="Download TXT"
+                          aria-label="Download plain text"
                           onClick={() => {
                             const title = (activeSession?.title || "chat-export").slice(0, 60);
-                            void exportMessageXlsx(m.content || "", title).catch((e) => {
-                              console.error("XLSX export failed", e);
-                              alert(`Excel export failed: ${e?.message || e}`);
-                            });
+                            downloadTxt(title, m.content || "");
                           }}
                         >
-                          <ExcelIcon />
+                          <TxtIcon />
                         </button>
                       </>
                     ) : null}

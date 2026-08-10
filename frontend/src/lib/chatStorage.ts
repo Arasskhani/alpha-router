@@ -39,6 +39,8 @@ export type UserPrefs = {
   reply_notify_away: boolean;
   /** Play a short local sound with reply-ready notifications. */
   reply_notify_sound: boolean;
+  /** When true, enabled memories are injected into non-private chat completions. */
+  memory_enabled: boolean;
 };
 
 export type UserChatsPayload = {
@@ -97,6 +99,7 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
       : persianRaw.slice(0, 64);
   const replyNotifyAway = coercePrefsBool(raw?.reply_notify_away, false);
   const replyNotifySound = coercePrefsBool(raw?.reply_notify_sound, true);
+  const memoryEnabled = coercePrefsBool(raw?.memory_enabled, true);
   return {
     default_model: model,
     theme,
@@ -106,6 +109,7 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
     persian_font: persianFont,
     reply_notify_away: replyNotifyAway,
     reply_notify_sound: replyNotifySound,
+    memory_enabled: memoryEnabled,
   };
 }
 

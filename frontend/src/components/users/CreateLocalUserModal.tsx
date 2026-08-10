@@ -9,8 +9,11 @@ export type CreateLocalUserValues = {
   email: string;
   password: string;
   display_name: string;
+  company: string;
   department: string;
+  office: string;
   job_title: string;
+  reporting_to: string;
   role: string;
   group_id: number | null;
   budget_plan: string;
@@ -32,8 +35,11 @@ const defaultValues: CreateLocalUserValues = {
   email: "",
   password: "",
   display_name: "",
+  company: "",
   department: "",
+  office: "",
   job_title: "",
+  reporting_to: "",
   role: "user",
   group_id: null,
   budget_plan: "__inherit__",
@@ -88,8 +94,11 @@ export default function CreateLocalUserModal({ open, roles, plans, onClose, onSu
         username: form.username.trim(),
         email: form.email.trim(),
         display_name: form.display_name.trim(),
+        company: form.company.trim(),
         department: form.department.trim(),
+        office: form.office.trim(),
         job_title: form.job_title.trim(),
+        reporting_to: form.reporting_to.trim(),
       });
       onClose();
     } catch (ex) {
@@ -134,17 +143,35 @@ export default function CreateLocalUserModal({ open, roles, plans, onClose, onSu
           value={form.display_name}
           onChange={(e) => setForm((f) => ({ ...f, display_name: e.target.value }))}
         />
+        <label>Company</label>
+        <input
+          className="input-block"
+          value={form.company}
+          onChange={(e) => setForm((f) => ({ ...f, company: e.target.value }))}
+        />
         <label>Department</label>
         <input
           className="input-block"
           value={form.department}
           onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))}
         />
+        <label>Office</label>
+        <input
+          className="input-block"
+          value={form.office}
+          onChange={(e) => setForm((f) => ({ ...f, office: e.target.value }))}
+        />
         <label>Job title</label>
         <input
           className="input-block"
           value={form.job_title}
           onChange={(e) => setForm((f) => ({ ...f, job_title: e.target.value }))}
+        />
+        <label>Report to</label>
+        <input
+          className="input-block"
+          value={form.reporting_to}
+          onChange={(e) => setForm((f) => ({ ...f, reporting_to: e.target.value }))}
         />
         <label>Role</label>
         <select
@@ -199,18 +226,13 @@ export default function CreateLocalUserModal({ open, roles, plans, onClose, onSu
             </option>
           ))}
         </select>
-        <p className="muted-text" style={{ marginTop: "-0.35rem", marginBottom: "0.75rem" }}>
-          {form.group_id
-            ? "From group uses the selected group’s plan when one is assigned."
-            : "From group falls back to a department plan, if any."}
-        </p>
-        {err && <p className="alert alert-error">{err}</p>}
-        <div className="dialog-actions">
-          <button type="submit" className="btn" disabled={saving}>
-            {saving ? "Creating…" : "Create"}
-          </button>
-          <button type="button" className="btn btn-ghost dialog-actions-cancel" onClick={onClose}>
+        {err && <p className="error">{err}</p>}
+        <div className="modal-actions">
+          <button type="button" className="btn btn-ghost" onClick={onClose} disabled={saving}>
             Cancel
+          </button>
+          <button type="submit" className="btn" disabled={saving}>
+            {saving ? "Creating…" : "Create user"}
           </button>
         </div>
       </form>

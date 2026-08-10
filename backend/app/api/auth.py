@@ -587,7 +587,7 @@ async def _upsert_directory_user(db: AsyncSession, profile: dict, provider: str)
         db.add(user)
     user.email = mapped.get("email") or user.email
     user.display_name = mapped.get("display_name") or user.display_name
-    for field in ("job_title", "department", "office", "reporting_to"):
+    for field in ("company", "job_title", "department", "office", "reporting_to"):
         val = mapped.get(field)
         if val is not None and str(val).strip():
             setattr(user, field, str(val).strip())

@@ -116,6 +116,25 @@ export function downloadCsv(filename: string, content: string): void {
   URL.revokeObjectURL(url);
 }
 
+export function downloadTxt(filename: string, content: string): void {
+  const text = (content || "").trim();
+  if (!text) return;
+  // BOM helps editors (and Excel) detect UTF-8 for Persian text.
+  const blob = new Blob(["\uFEFF" + text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const safe =
+    (filename || "chat-export")
+      .replace(/[^\p{L}\p{N}_-]+/gu, "_")
+      .slice(0, 60) || "chat-export";
+  a.download = safe.endsWith(".txt") ? safe : `${safe}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 // ---------------------------------------------------------------------------
 // PDF (backend renderer)
 // ---------------------------------------------------------------------------
@@ -141,18 +160,6 @@ export async function exportMessageDocx(
     { content, title },
     title,
     "docx",
-  );
-}
-
-export async function exportMessageXlsx(
-  content: string,
-  title?: string,
-): Promise<void> {
-  await _postBlobDownload(
-    "/api/chat/export/xlsx",
-    { content, title },
-    title,
-    "xlsx",
   );
 }
 

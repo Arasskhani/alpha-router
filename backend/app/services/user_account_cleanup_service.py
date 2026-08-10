@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 
 
-from app.models.chat import ChatFolder, ChatMessage, ChatSession, UserChatPrefs
+from app.models.chat import ChatFolder, ChatMessage, ChatSession, UserChatPrefs, UserMemory
 
 from app.models.user_media_prefs import UserMediaPreferences
 
@@ -59,6 +59,8 @@ async def purge_user_account_data(
     media_rows = await delete_all_user_media(db, user_id)
 
 
+
+    await db.execute(delete(UserMemory).where(UserMemory.user_id == user_id))
 
     await db.execute(delete(ChatMessage).where(ChatMessage.user_id == user_id))
 

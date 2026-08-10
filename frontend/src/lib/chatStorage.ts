@@ -2100,16 +2100,12 @@ export async function enhancePrompt(
 ): Promise<string | null> {
   const trimmed = (prompt || "").trim();
   if (!trimmed) return null;
-  try {
-    const data = await api<{ prompt: string }>("/api/chat/enhance-prompt", {
-      method: "POST",
-      body: JSON.stringify({ model, prompt: trimmed, mode, context }),
-    });
-    const result = (data.prompt || "").trim();
-    return result || null;
-  } catch {
-    return null;
-  }
+  const data = await api<{ prompt: string }>("/api/chat/enhance-prompt", {
+    method: "POST",
+    body: JSON.stringify({ model, prompt: trimmed, mode, context }),
+  });
+  const result = (data.prompt || "").trim();
+  return result || null;
 }
 
 /** @deprecated Use enhancePrompt */

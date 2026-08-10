@@ -144,6 +144,18 @@ export async function exportMessageDocx(
   );
 }
 
+export async function exportMessageXlsx(
+  content: string,
+  title?: string,
+): Promise<void> {
+  await _postBlobDownload(
+    "/api/chat/export/xlsx",
+    { content, title },
+    title,
+    "xlsx",
+  );
+}
+
 async function _postBlobDownload(
   path: string,
   body: { content: string; title?: string },

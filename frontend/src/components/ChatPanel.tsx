@@ -115,6 +115,7 @@ import {
   CsvIcon,
   PdfIcon,
   DocIcon,
+  ExcelIcon,
 } from "./chat/GeneratedImageIcons";
 import RequestLogCostDetailsModal from "./RequestLogCostDetailsModal";
 import {
@@ -216,12 +217,15 @@ import {
   type CodeInterpreterCompatibility,
 } from "../lib/chatCodeInterpreterModels";
 import {
+  findTextChatFallbackModel,
   isAutoRouterModel,
+  modelSupportsTextChat,
   resolveDefaultModelPreference,
+  resolvePromptAssistModel,
 } from "../lib/chatModels";
 import { applyPersianFontToChat, normalizePersianFontId } from "../lib/persianFonts";
 import { copyTextToClipboard } from "../lib/clipboard";
-import { downloadCsv, exportMessagePdf, exportMessageDocx } from "../lib/chatExport";
+import { downloadCsv, exportMessagePdf, exportMessageDocx, exportMessageXlsx } from "../lib/chatExport";
 import { isNearScrollBottom, scrollContainerToBottom } from "../lib/chatScroll";
 import {
   clearComposerDraft,
@@ -246,6 +250,7 @@ type Model = {
   id: string;
   name: string;
   external_id?: string;
+  kinds?: string[];
   is_image_model?: boolean;
   supports_text_to_image?: boolean;
   supports_image_to_image?: boolean;
@@ -275,13 +280,24 @@ type TurnPhase = "preparing" | "searching" | "writing";
 function turnPhaseLabel(phase: TurnPhase): string {
   switch (phase) {
     case "searching":
-      return "Searching the web…";
+      return "Searching the web";
     case "writing":
-      return "Writing…";
+      return "Writing";
     case "preparing":
     default:
-      return "Thinking…";
+      return "Preparing";
   }
+}
+
+/** Three LTR dots that fade in/out in sequence while the turn is pending. */
+function TurnStatusDots() {
+  return (
+    <span className="alpha-router-turn-status__dots" aria-hidden>
+      <span className="alpha-router-turn-status__dot">.</span>
+      <span className="alpha-router-turn-status__dot">.</span>
+      <span className="alpha-router-turn-status__dot">.</span>
+    </span>
+  );
 }
 function shortModelName(name: string, id: string) {
   const n = name || id;
@@ -769,6 +785,15 @@ export default function ChatPanel() {
       if (chatTools.videoGeneration && !modelSupportsVideos(m, models)) return false;
       if (chatTools.speechGeneration && !modelSupportsSpeech(m, models)) return false;
       if (chatTools.codeInterpreter && !modelSupportsCodeInterpreter(m)) return false;
+      // Plain text chat: hide embeddings/rerank/media-only models that cannot answer chat.
+      if (
+        !chatTools.imageGeneration &&
+        !chatTools.videoGeneration &&
+        !chatTools.speechGeneration &&
+        !modelSupportsTextChat(m)
+      ) {
+        return false;
+      }
       return true;
     });
     const autoRouter = matched.find((m) => isAutoRouterModel(m));
@@ -1526,6 +1551,43 @@ export default function ChatPanel() {
     // No per-chat model — heal UI from default / catalog only.
     setModel(resolveNewChatModel(models, undefined, defaultModel));
   }, [userPrefsReady, models, model, defaultModel]);
+
+  useEffect(() => {
+    if (
+      !models.length ||
+      !model ||
+      chatTools.imageGeneration ||
+      chatTools.videoGeneration ||
+      chatTools.speechGeneration
+    ) {
+      return;
+    }
+    const current = models.find((m) => m.id === model || m.external_id === model);
+    if (!current || modelSupportsTextChat(current)) return;
+    const fallback = findTextChatFallbackModel(models);
+    if (!fallback || fallback.id === current.id) return;
+    setModel(fallback.id);
+    setSelectedModelIds((prev) => (prev.length <= 1 ? [fallback.id] : prev));
+    const sid = activeIdRef.current || ensureActiveSession();
+    if (sid) {
+      persistSessions(
+        (prev) => prev.map((s) => (s.id === sid ? { ...s, model: fallback.id } : s)),
+        { debounce: false, metadataSessionIds: [sid] },
+      );
+      if (!sessionPrivateMode(sid)) {
+        void pushSessionMetadataToServer(sid).catch(() => {});
+      }
+    }
+    setChatError(
+      `${current.name} is not available for text chat. Switched to ${fallback.name}.`,
+    );
+  }, [
+    models,
+    model,
+    chatTools.imageGeneration,
+    chatTools.videoGeneration,
+    chatTools.speechGeneration,
+  ]);
 
   useEffect(() => {
     const gen = ++hydrateGenRef.current;
@@ -5033,11 +5095,11 @@ export default function ChatPanel() {
   async function handleTranslateToEng() {
     const text = input.trim();
     if (!text || translateToEngBusy || !textNeedsEnglishTranslation(text)) return;
-    const validModel =
-      models.find((m) => m.id === model) ||
-      models.find((m) => m.external_id === model) ||
-      models[0];
-    if (!validModel) return;
+    const validModel = resolvePromptAssistModel(models, model);
+    if (!validModel) {
+      setChatError("No text model is available for translation. Enable one in Admin → Models.");
+      return;
+    }
     // Video prompts want the same visual-prompt phrasing as image prompts.
     const assistContext =
       chatTools.imageGeneration || chatTools.videoGeneration || chatTools.speechGeneration
@@ -5047,15 +5109,23 @@ export default function ChatPanel() {
     setChatError("");
     try {
       const enhanced = await enhancePrompt(validModel.id, text, "translate", assistContext);
-      if (enhanced) {
-        const dir = inputDirectionForText(enhanced, enhanced.length);
-        setInput(enhanced);
-        setInputDirection(dir);
-        persistActiveComposerDraft({ text: enhanced, direction: dir });
-        requestAnimationFrame(() => textareaRef.current?.focus());
-      } else {
+      if (!enhanced) {
         setChatError("Couldn't translate to English. Try again or send as is.");
+        return;
       }
+      // Treat unchanged / still-non-English output as failure (backend may also reject).
+      if (enhanced.trim() === text || textNeedsEnglishTranslation(enhanced)) {
+        setChatError("Couldn't translate to English. Try another text model or send as is.");
+        return;
+      }
+      const dir = inputDirectionForText(enhanced, enhanced.length);
+      setInput(enhanced);
+      setInputDirection(dir);
+      persistActiveComposerDraft({ text: enhanced, direction: dir });
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    } catch (e) {
+      const message = e instanceof Error && e.message ? e.message : "";
+      setChatError(message || "Couldn't translate to English. Try again or send as is.");
     } finally {
       setTranslateToEngBusy(false);
     }
@@ -5639,9 +5709,16 @@ export default function ChatPanel() {
                     return (
                       <>
                         {showTurnStatus ? (
-                          <p className="alpha-router-turn-status" aria-live="polite">
+                          <p
+                            className="alpha-router-turn-status"
+                            aria-live="polite"
+                            aria-label={`${turnPhaseLabel(activeTurnPhase)}...`}
+                          >
                             <span className="alpha-router-turn-status__pulse" aria-hidden />
-                            {turnPhaseLabel(activeTurnPhase)}
+                            <span className="alpha-router-turn-status__label">
+                              {turnPhaseLabel(activeTurnPhase)}
+                              <TurnStatusDots />
+                            </span>
                           </p>
                         ) : null}
                         {m.content?.trim() || !showTurnStatus ? (
@@ -5869,6 +5946,21 @@ export default function ChatPanel() {
                           }}
                         >
                           <DocIcon />
+                        </button>
+                        <button
+                          type="button"
+                          className="alpha-router-msg-action-btn alpha-router-msg-action-btn--icon"
+                          title="Download Excel"
+                          aria-label="Download Excel spreadsheet"
+                          onClick={() => {
+                            const title = (activeSession?.title || "chat-export").slice(0, 60);
+                            void exportMessageXlsx(m.content || "", title).catch((e) => {
+                              console.error("XLSX export failed", e);
+                              alert(`Excel export failed: ${e?.message || e}`);
+                            });
+                          }}
+                        >
+                          <ExcelIcon />
                         </button>
                       </>
                     ) : null}

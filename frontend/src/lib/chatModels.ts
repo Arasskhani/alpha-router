@@ -4,7 +4,21 @@ export type ChatModelRef = {
   id: string;
   name?: string;
   external_id?: string;
+  /** Provider capability tags from the catalog (`text`, `rerank`, `embeddings`, …). */
+  kinds?: string[];
 };
+
+/**
+ * True when the model can answer text chat completions.
+ * Missing `kinds` is treated as text-capable for backward compatibility with
+ * older API payloads; pure rerank/embeddings models always advertise kinds.
+ */
+export function modelSupportsTextChat(m?: ChatModelRef | null): boolean {
+  if (!m) return false;
+  if (isAutoRouterModel(m)) return true;
+  const kinds = m.kinds?.length ? m.kinds : ["text"];
+  return kinds.includes("text");
+}
 
 export const AUTO_ROUTER_EXTERNAL_ID = "openrouter/auto";
 
@@ -29,6 +43,33 @@ export function isAutoRouterModel(m?: ChatModelRef | null): boolean {
 
 export function findAutoRouterModel(models: ChatModelRef[]): ChatModelRef | undefined {
   return models.find(isAutoRouterModel);
+}
+
+/** Prefer Auto Router, otherwise the first text-capable catalog model. */
+export function findTextChatFallbackModel<T extends ChatModelRef>(models: T[]): T | undefined {
+  const autoRouter = models.find((m) => isAutoRouterModel(m) && modelSupportsTextChat(m));
+  if (autoRouter) return autoRouter;
+  return models.find((m) => modelSupportsTextChat(m));
+}
+
+/**
+ * Pick a model for short helper calls (To ENG / prompt assist).
+ * Prefer the user's current selection when it is text-capable; otherwise a
+ * concrete text model, then Auto Router.
+ */
+export function resolvePromptAssistModel<T extends ChatModelRef>(
+  models: T[],
+  preferredId?: string | null,
+): T | undefined {
+  const preferred =
+    models.find((m) => m.id === preferredId) ||
+    models.find((m) => (m.external_id || "").trim() === (preferredId || "").trim());
+  if (preferred && modelSupportsTextChat(preferred)) {
+    return preferred;
+  }
+  const concrete = models.find((m) => modelSupportsTextChat(m) && !isAutoRouterModel(m));
+  if (concrete) return concrete;
+  return findTextChatFallbackModel(models);
 }
 
 /**

@@ -65,7 +65,12 @@ from app.services.storage_service import (
 from app.services.user_chat_storage_service import finalize_chat_session_image
 from app.services.image_billing_service import ImageBillingCapture, log_image_usage
 from app.services.image_attempt_service import image_attempt_outcome, record_image_attempt
-from app.services.llm_providers import litellm_model_for_provider, resolve_litellm_provider
+from app.services.llm_providers import (
+    external_id_lookup_candidates,
+    litellm_model_for_provider,
+    normalize_model_id,
+    resolve_litellm_provider,
+)
 from app.services.openrouter_image_service import prepare_image_generation_prompt
 from app.services.usage_accounting_service import configured_metered_cost
 
@@ -189,11 +194,7 @@ async def resolve_reference_image_for_upstream(
     raise HTTPException(status_code=400, detail=f"Invalid reference image URL: {ref[:160]}")
 
 
-def _normalize_model_id(model_id: str) -> str:
-    raw = (model_id or "").strip()
-    while raw.startswith("~"):
-        raw = raw[1:]
-    return raw
+_normalize_model_id = normalize_model_id
 
 
 def _normalize_openrouter_base(base_url: str | None) -> str:
@@ -754,18 +755,19 @@ async def _resolve_image_model(
 
     if not row:
         # external_id can exist in multiple connections; prefer latest model bound to an active connection.
+        id_candidates = external_id_lookup_candidates(model_id)
         candidates = (
             await db.execute(
                 select(AIModel, Connection)
                 .join(Connection, Connection.id == AIModel.connection_id)
                 .where(
-                    AIModel.external_id == model_id,
+                    AIModel.external_id.in_(id_candidates),
                     AIModel.is_enabled == True,  # noqa: E712
                     Connection.is_active == True,  # noqa: E712
                 )
                 .order_by(AIModel.id.desc())
             )
-        ).all()
+        ).all() if id_candidates else []
         for cand_row, conn in candidates:
             if subject is None or await user_can_access_model(db, cand_row, subject):
                 return (

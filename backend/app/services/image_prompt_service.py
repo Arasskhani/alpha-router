@@ -7,9 +7,11 @@ from litellm import acompletion
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.branding import CHAT_CLIENT_APP
-from app.core.language_detect import detect_prompt_language
+from app.core.language_detect import needs_english_translation
 from app.models.user import User
 from app.services.budget_service import budget_request_blocked, get_user_budget_state
+from app.services.model_capabilities import model_kinds, model_media_flags
+from app.services.model_tool_compatibility_service import is_auto_router_model_id
 from app.services.proxy_service import (
     _apply_litellm_provider_kwargs,
     _litellm_model_for_provider,
@@ -20,6 +22,12 @@ from app.services.proxy_service import (
 
 ENHANCE_MODES = ("improve", "translate", "translate_improve")
 ENHANCE_CONTEXTS = ("image", "chat")
+# Modes that must not silently return the original prompt on failure.
+_STRICT_TRANSLATE_MODES = frozenset({"translate", "translate_improve"})
+
+
+class PromptEnhanceError(Exception):
+    """Prompt enhance/translate failed; callers should surface this to the client."""
 
 # Legacy aliases kept for older clients.
 _MODE_ALIASES = {
@@ -200,7 +208,34 @@ def _user_message_for_mode(mode: str, original: str, context: str) -> str:
 
 
 def _max_tokens_for_prompt(original: str) -> int:
-    return min(600, max(96, len(original) + 80))
+    # Character length is a rough proxy; leave headroom for English expansion.
+    return min(900, max(128, int(len(original) * 1.6) + 80))
+
+
+def _model_supports_text_chat(ai_model) -> bool:
+    if is_auto_router_model_id(ai_model.external_id):
+        return True
+    media = model_media_flags(
+        external_id=ai_model.external_id or "",
+        is_image_model=bool(ai_model.is_image_model),
+        is_video_model=bool(getattr(ai_model, "is_video_model", False)),
+        pricing_raw=ai_model.pricing_raw,
+        provider_type=ai_model.provider_type,
+    )
+    kinds = model_kinds(
+        external_id=ai_model.external_id or "",
+        is_image_model=media["is_image_model"],
+        is_video_model=media["is_video_model"],
+        pricing_raw=ai_model.pricing_raw,
+        provider_type=ai_model.provider_type,
+    )
+    return "text" in kinds
+
+
+def _fail_or_fallback(mode: str, message: str, fallback: str) -> str:
+    if mode in _STRICT_TRANSLATE_MODES:
+        raise PromptEnhanceError(message)
+    return fallback
 
 
 async def enhance_user_prompt(
@@ -211,28 +246,48 @@ async def enhance_user_prompt(
     mode: str,
     context: str = "image",
 ) -> str:
-    """Return an enhanced/translated prompt; falls back to the original on any issue."""
+    """Return an enhanced/translated prompt.
+
+    ``improve`` falls back to the original on soft failures.
+    ``translate`` / ``translate_improve`` raise ``PromptEnhanceError`` instead of
+    silently returning the untranslated original.
+    """
     original = (prompt or "").strip()
     if not original:
         return original
     normalized_mode = _normalize_mode(mode)
     normalized_context = _normalize_context(context)
     if normalized_mode is None:
-        return original
-    if normalized_mode == "translate" and detect_prompt_language(original) == "en":
+        return _fail_or_fallback(mode, "Invalid enhancement mode", original)
+    # Only skip the LLM when the text already looks English (aligned with UI).
+    if normalized_mode in _STRICT_TRANSLATE_MODES and not needs_english_translation(original):
         return original
 
     system = _SYSTEM_BY_CONTEXT_AND_MODE.get(normalized_context, {}).get(normalized_mode)
     if not system:
-        return original
+        return _fail_or_fallback(normalized_mode, "Enhancement mode is not available", original)
 
     budget, usage = await get_user_budget_state(db, user)
     if budget_request_blocked(budget, usage):
-        return original
+        return _fail_or_fallback(
+            normalized_mode,
+            "Budget limit reached. Translation is unavailable until the next period.",
+            original,
+        )
 
     ai_model, api_key, base_url, provider_type = await resolve_model_and_key(db, model_ref)
     if not ai_model or not api_key:
-        return original
+        return _fail_or_fallback(
+            normalized_mode,
+            "No enabled text model is available for translation.",
+            original,
+        )
+    if not _model_supports_text_chat(ai_model):
+        return _fail_or_fallback(
+            normalized_mode,
+            "Selected model cannot translate text. Choose a text chat model.",
+            original,
+        )
 
     model = _litellm_model_for_provider(ai_model.external_id, provider_type or ai_model.provider_type)
     kwargs: dict = {
@@ -262,7 +317,11 @@ async def enhance_user_prompt(
             max_tokens=int(kwargs["max_tokens"]),
         )
     except Exception:
-        return original
+        return _fail_or_fallback(
+            normalized_mode,
+            "Could not reserve budget for translation. Try again shortly.",
+            original,
+        )
 
     response = None
     success = False
@@ -280,11 +339,27 @@ async def enhance_user_prompt(
             result = _guard_improve_output(result, original)
         elif normalized_mode == "translate_improve":
             result = _guard_translate_improve_output(result, original)
+        if normalized_mode in _STRICT_TRANSLATE_MODES:
+            if not result or result.strip() == original.strip():
+                raise PromptEnhanceError(
+                    "Translation returned unchanged text. Try another text model."
+                )
+            if needs_english_translation(result):
+                raise PromptEnhanceError(
+                    "Translation did not produce English. Try another text model."
+                )
         success = True
         return result
+    except PromptEnhanceError as exc:
+        error_message = str(exc)[:500]
+        raise
     except Exception as exc:
         error_message = str(exc)[:500]
-        return original
+        return _fail_or_fallback(
+            normalized_mode,
+            "Translation failed. Try again or choose another text model.",
+            original,
+        )
     finally:
         await settle_auxiliary_usage(
             user_id=user.id,

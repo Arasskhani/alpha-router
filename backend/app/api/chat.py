@@ -25,6 +25,7 @@ from app.services.budget_service import (
 from app.services.bounded_io import BoundedIOError, clamp_limit, read_upload_bounded
 from app.services.model_capabilities import (
     image_generation_capabilities,
+    model_kinds,
     model_media_flags,
     speech_generation_capabilities,
     supports_vision,
@@ -48,9 +49,12 @@ from app.services.chat_export_service import (
 )
 from app.services.chat_docx_service import ChatExportError as DocxExportError
 from app.services.chat_docx_service import render_chat_docx
+from app.services.chat_xlsx_service import ChatExportError as XlsxExportError
+from app.services.chat_xlsx_service import render_chat_xlsx
 from app.services.image_prompt_service import (
     ENHANCE_CONTEXTS,
     ENHANCE_MODES,
+    PromptEnhanceError,
     enhance_image_generation_prompt,
     enhance_user_prompt,
 )
@@ -122,6 +126,13 @@ async def chat_models(user: User = Depends(get_current_user), db: AsyncSession =
                 external_id=m.external_id or "",
                 is_image_model=media["is_image_model"],
                 pricing_raw=m.pricing_raw,
+            ),
+            "kinds": model_kinds(
+                external_id=m.external_id or "",
+                is_image_model=media["is_image_model"],
+                is_video_model=media["is_video_model"],
+                pricing_raw=m.pricing_raw,
+                provider_type=m.provider_type,
             ),
             **media,
         }
@@ -211,9 +222,12 @@ async def enhance_prompt(
         raise HTTPException(status_code=400, detail="Invalid enhancement mode")
     if body.context not in ENHANCE_CONTEXTS:
         raise HTTPException(status_code=400, detail="Invalid enhancement context")
-    text = await enhance_user_prompt(
-        db, user, body.model, body.prompt, body.mode, context=body.context
-    )
+    try:
+        text = await enhance_user_prompt(
+            db, user, body.model, body.prompt, body.mode, context=body.context
+        )
+    except PromptEnhanceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"prompt": text}
 
 
@@ -226,7 +240,10 @@ async def enhance_image_prompt(
     """Legacy endpoint — image context only."""
     if body.mode not in ENHANCE_MODES:
         raise HTTPException(status_code=400, detail="Invalid enhancement mode")
-    text = await enhance_image_generation_prompt(db, user, body.model, body.prompt, body.mode)
+    try:
+        text = await enhance_image_generation_prompt(db, user, body.model, body.prompt, body.mode)
+    except PromptEnhanceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"prompt": text}
 
 
@@ -704,6 +721,39 @@ async def export_chat_docx(
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={
             "Content-Disposition": build_download_content_disposition(payload.title, "docx"),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+class ChatExportXlsxIn(BaseModel):
+    content: str
+    title: str | None = None
+
+
+@router.post("/export/xlsx")
+async def export_chat_xlsx(
+    payload: ChatExportXlsxIn,
+    user: User = Depends(require_active_user),
+):
+    """Export an assistant chat message (markdown) to an Excel .xlsx file.
+
+    ``openpyxl`` only constructs the OpenXML package (no code execution, no
+    network). See ``chat_xlsx_service``.
+    """
+    if not payload.content or not payload.content.strip():
+        raise HTTPException(status_code=400, detail="content must not be empty")
+    try:
+        xlsx_bytes = await asyncio.to_thread(
+            render_chat_xlsx, content=payload.content, title=payload.title
+        )
+    except XlsxExportError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": build_download_content_disposition(payload.title, "xlsx"),
             "Cache-Control": "no-store",
         },
     )

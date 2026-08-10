@@ -60,7 +60,13 @@ from app.services.code_interpreter_capacity_service import (
     subject_for_system,
     subject_for_user,
 )
-from app.services.llm_providers import litellm_model_for_provider, resolve_litellm_provider
+from app.services.llm_providers import (
+    external_id_lookup_candidates,
+    litellm_model_for_provider,
+    normalize_model_id,
+    resolve_litellm_provider,
+)
+from app.services.model_capabilities import model_kinds, model_media_flags
 from app.services.model_tool_compatibility_service import (
     assert_code_interpreter_model_available,
     classify_failure_reason,
@@ -94,7 +100,7 @@ STREAM_SSE_HEADERS = {
 }
 
 def _apply_litellm_provider_kwargs(kwargs: dict, provider_type: str | None, model_id: str) -> str:
-    litellm_model = litellm_model_for_provider(_normalize_model_id(model_id), provider_type)
+    litellm_model = litellm_model_for_provider(normalize_model_id(model_id), provider_type)
     kwargs["model"] = litellm_model
     llm_provider = resolve_litellm_provider(provider_type)
     if llm_provider:
@@ -179,11 +185,8 @@ def _artifact_links_markdown(artifacts: list[StoredCodeArtifact]) -> str:
     return f"\n\n---\n**Generated files:**\n{links}\n\n"
 
 
-def _normalize_model_id(model_id: str | None) -> str:
-    raw = (model_id or "").strip()
-    while raw.startswith("~"):
-        raw = raw[1:]
-    return raw
+# Backward-compatible alias — keeps OpenRouter ``~`` alias IDs intact.
+_normalize_model_id = normalize_model_id
 
 
 def configure_litellm_cache() -> None:
@@ -206,7 +209,7 @@ async def resolve_model_and_key(
     from sqlalchemy import select
     from app.models.connection import Connection
 
-    normalized_input = _normalize_model_id(model_id)
+    normalized_input = normalize_model_id(model_id)
     row: AIModel | None = None
     if isinstance(normalized_input, str) and normalized_input.startswith("model::"):
         try:
@@ -220,17 +223,56 @@ async def resolve_model_and_key(
                 )
             ).scalars().first()
     if not row:
-        row = (
-            await db.execute(
-                select(AIModel).where(AIModel.external_id == normalized_input, AIModel.is_enabled == True)  # noqa: E712
-            )
-        ).scalars().first()
+        candidates = external_id_lookup_candidates(normalized_input)
+        if candidates:
+            row = (
+                await db.execute(
+                    select(AIModel).where(
+                        AIModel.external_id.in_(candidates),
+                        AIModel.is_enabled == True,  # noqa: E712
+                    )
+                )
+            ).scalars().first()
     if not row:
         return None, None, None, None
     conn = await db.get(Connection, row.connection_id)
     if not conn or not conn.is_active:
         return None, None, None, None
     return row, decrypt_secret(conn.api_key_encrypted), conn.base_url, conn.provider_type
+
+
+def assert_model_supports_text_chat(ai_model: AIModel) -> None:
+    """Reject embeddings/rerank/media-only models from the chat-completions path."""
+    if is_auto_router_model_id(ai_model.external_id):
+        return
+    media = model_media_flags(
+        external_id=ai_model.external_id or "",
+        is_image_model=bool(ai_model.is_image_model),
+        is_video_model=bool(getattr(ai_model, "is_video_model", False)),
+        pricing_raw=ai_model.pricing_raw,
+        provider_type=ai_model.provider_type,
+    )
+    kinds = model_kinds(
+        external_id=ai_model.external_id or "",
+        is_image_model=media["is_image_model"],
+        is_video_model=media["is_video_model"],
+        pricing_raw=ai_model.pricing_raw,
+        provider_type=ai_model.provider_type,
+    )
+    if "text" in kinds:
+        return
+    kind_label = ", ".join(kinds) if kinds else "unknown"
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "message": (
+                "This model is not available for text chat "
+                f"(capabilities: {kind_label}). Choose a text model instead."
+            ),
+            "code": "model_not_for_chat",
+            "kinds": kinds,
+        },
+    )
 
 
 def _extract_prompt_text(messages: list) -> str:
@@ -671,6 +713,7 @@ async def preflight_stream_chat(
     ai_model, api_key, base_url, provider_type = await resolve_model_and_key(db, selected_model)
     if not ai_model or not api_key:
         raise HTTPException(status_code=404, detail=f"Model not enabled: {selected_model}")
+    assert_model_supports_text_chat(ai_model)
     subject = await resolve_access_subject(
         db,
         user_id=user_id,

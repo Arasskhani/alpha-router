@@ -24,6 +24,7 @@ from app.services.budget_reservation_service import (
     reservation_key,
     reserve,
 )
+from app.services.llm_providers import external_id_lookup_candidates, normalize_model_id
 from app.services.model_capabilities import speech_generation_capabilities
 from app.services.secret_crypto import decrypt_secret
 from app.services.speech_billing_service import SpeechBillingCapture, log_speech_usage
@@ -57,11 +58,7 @@ class SpeechRequest(BaseModel):
     assistant_client_message_id: str | None = None
 
 
-def _normalize_model_id(model_id: str) -> str:
-    raw = (model_id or "").strip()
-    while raw.startswith("~"):
-        raw = raw[1:]
-    return raw
+_normalize_model_id = normalize_model_id
 
 
 def _normalize_text(text: str) -> str:
@@ -142,18 +139,19 @@ async def _resolve_speech_model(
             row = None
 
     if not row:
+        id_candidates = external_id_lookup_candidates(model_id)
         candidates = (
             await db.execute(
                 select(AIModel, Connection)
                 .join(Connection, Connection.id == AIModel.connection_id)
                 .where(
-                    AIModel.external_id == model_id,
+                    AIModel.external_id.in_(id_candidates),
                     AIModel.is_enabled == True,  # noqa: E712
                     Connection.is_active == True,  # noqa: E712
                 )
                 .order_by(AIModel.id.desc())
             )
-        ).all()
+        ).all() if id_candidates else []
         for cand_row, conn in candidates:
             if subject is None or await user_can_access_model(db, cand_row, subject):
                 return (

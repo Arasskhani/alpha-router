@@ -75,6 +75,12 @@ def serialize_job(job: VideoGenerationJob, *, include_provider: bool = False) ->
         "updated_at": job.updated_at.isoformat() + "Z" if job.updated_at else None,
         "completed_at": job.completed_at.isoformat() + "Z" if job.completed_at else None,
     }
+    request_log_id = params.get("request_log_id")
+    if request_log_id is not None:
+        try:
+            out["request_log_id"] = int(request_log_id)
+        except (TypeError, ValueError):
+            pass
     if include_provider:
         out["provider_job_id"] = job.provider_job_id
     return out
@@ -140,6 +146,9 @@ async def create_video_job(
     }
     if params.get("seed") is not None:
         clean_params["seed"] = params.get("seed")
+    assistant_cid = str(params.get("assistant_client_message_id") or "").strip()
+    if assistant_cid:
+        clean_params["assistant_client_message_id"] = assistant_cid
 
     adapter = get_video_adapter(provider_type, adapter_key=adapter_key)
     job_id = str(uuid.uuid4())
@@ -507,8 +516,22 @@ async def _run_video_job(job_id: str) -> None:
                 allowed_hosts=asset_ref.allowed_hosts,
             )
             usage = adapter.normalize_usage(final_snapshot)
+            # Ensure provider cost/duration land under usage.* so
+            # extract_normalized_usage can treat OpenRouter cost as exact.
+            usage_payload: dict = dict(usage.raw) if isinstance(usage.raw, dict) else {}
+            usage_obj = (
+                dict(usage_payload["usage"])
+                if isinstance(usage_payload.get("usage"), dict)
+                else {}
+            )
+            if usage.quantity is not None:
+                usage_obj.setdefault("duration_seconds", usage.quantity)
+            if usage.cost_usd is not None:
+                usage_obj["cost"] = usage.cost_usd
+            if usage_obj:
+                usage_payload["usage"] = usage_obj
             billing.add_usage(
-                usage.raw,
+                usage_payload or usage.raw,
                 started_at=submit_started,
                 success=True,
                 quantity=usage.quantity or float(duration),
@@ -597,7 +620,7 @@ async def _run_video_job(job_id: str) -> None:
         finally:
             try:
                 elapsed_ms = (time.perf_counter() - started) * 1000.0
-                await log_video_usage(
+                log_id = await log_video_usage(
                     db,
                     user=user,
                     capture=billing,
@@ -611,6 +634,30 @@ async def _run_video_job(job_id: str) -> None:
                     duration_seconds=duration,
                     job_id=job.id,
                 )
+                if log_id and success:
+                    job_params: dict[str, Any] = {}
+                    if job.params_json:
+                        try:
+                            loaded = json.loads(job.params_json)
+                            if isinstance(loaded, dict):
+                                job_params = loaded
+                        except json.JSONDecodeError:
+                            job_params = {}
+                    job_params["request_log_id"] = int(log_id)
+                    job.params_json = json.dumps(job_params)
+                    assistant_cid = str(job_params.get("assistant_client_message_id") or "").strip()
+                    if job.chat_session_id:
+                        from app.services.user_chat_storage_service import (
+                            attach_request_log_id_to_chat_message,
+                        )
+
+                        await attach_request_log_id_to_chat_message(
+                            db,
+                            user.id,
+                            job.chat_session_id,
+                            int(log_id),
+                            client_message_id=assistant_cid or None,
+                        )
                 await db.commit()
             except Exception:
                 _LOG.exception("Failed to settle video billing for job %s", job_id)

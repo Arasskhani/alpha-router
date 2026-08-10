@@ -69,3 +69,4 @@ export function DocIcon() {
     </svg>
   );
 }
+

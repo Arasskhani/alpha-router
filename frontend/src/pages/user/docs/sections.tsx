@@ -569,6 +569,10 @@ export const userManualSections: DocSection[] = [
         <ul>
           <li>Time zone for activity displays</li>
           <li>Voice recording language (English / Persian)</li>
+          <li>
+            Chat notification — optional toast (and sound) when a chat finishes while you are in another chat or the
+            tab is in the background
+          </li>
           <li>Theme: light, dark, or system</li>
         </ul>
         <h3>Data Control</h3>

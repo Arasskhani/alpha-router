@@ -589,15 +589,7 @@ async def admin_log_export(
     )
 
 
-@router.get("/admin/logs/{log_id}/cost-details")
-async def admin_log_cost_details(
-    log_id: int,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_api_logs),
-):
-    log_row = await db.get(RequestLog, log_id)
-    if log_row is None:
-        raise HTTPException(status_code=404, detail="Request log not found")
+async def _cost_details_payload(db: AsyncSession, log_row: RequestLog) -> dict:
     if not log_row.usage_operation_id:
         return {
             "operation": None,
@@ -718,6 +710,18 @@ async def admin_log_cost_details(
         ],
         "legacy": False,
     }
+
+
+@router.get("/admin/logs/{log_id}/cost-details")
+async def admin_log_cost_details(
+    log_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_api_logs),
+):
+    log_row = await db.get(RequestLog, log_id)
+    if log_row is None:
+        raise HTTPException(status_code=404, detail="Request log not found")
+    return await _cost_details_payload(db, log_row)
 
 
 @router.post("/admin/cost-accounting/reconcile/provider")
@@ -844,3 +848,32 @@ async def user_logs_route(
         )
     ).scalars().all()
     return [_log_row(r) for r in rows]
+
+
+async def _owned_request_log(db: AsyncSession, user: User, log_id: int) -> RequestLog:
+    log_row = await db.get(RequestLog, log_id)
+    if log_row is None or log_row.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Request log not found")
+    return log_row
+
+
+@router.get("/user/request-logs/{log_id}")
+async def user_request_log_summary(
+    log_id: int,
+    user: User = Depends(require_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Single owned request log summary for chat message cost details (no list/browse)."""
+    log_row = await _owned_request_log(db, user, log_id)
+    return _log_row(log_row)
+
+
+@router.get("/user/request-logs/{log_id}/cost-details")
+async def user_request_log_cost_details(
+    log_id: int,
+    user: User = Depends(require_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cost ledger for one owned request log — same payload shape as admin cost-details."""
+    log_row = await _owned_request_log(db, user, log_id)
+    return await _cost_details_payload(db, log_row)

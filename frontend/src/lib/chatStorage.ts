@@ -35,6 +35,10 @@ export type UserPrefs = {
   voice_recording_language: string;
   /** Build-time font catalog id from public/fonts; empty = system UI font. */
   persian_font: string;
+  /** Notify when a reply finishes only if the user is away from that chat/tab. */
+  reply_notify_away: boolean;
+  /** Play a short local sound with reply-ready notifications. */
+  reply_notify_sound: boolean;
 };
 
 export type UserChatsPayload = {
@@ -62,6 +66,8 @@ export type ChatMessage = {
   streaming?: boolean;
   /** Server sequence for pagination (optional, from API). */
   sequence?: number;
+  /** Owned RequestLog id for Cost details (chat info button). */
+  requestLogId?: number;
   feedback?: {
     rating: -1 | 1;
     reason?: string | null;
@@ -89,6 +95,8 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
     !persianRaw || persianRaw.toLowerCase() === "system" || persianRaw.toLowerCase() === "default"
       ? ""
       : persianRaw.slice(0, 64);
+  const replyNotifyAway = coercePrefsBool(raw?.reply_notify_away, false);
+  const replyNotifySound = coercePrefsBool(raw?.reply_notify_sound, true);
   return {
     default_model: model,
     theme,
@@ -96,7 +104,20 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
     language: language === "en" ? "en" : "en",
     voice_recording_language: voiceRecordingLang,
     persian_font: persianFont,
+    reply_notify_away: replyNotifyAway,
+    reply_notify_sound: replyNotifySound,
   };
+}
+
+function coercePrefsBool(value: unknown, defaultValue: boolean): boolean {
+  if (typeof value === "boolean") return value;
+  if (value === 0 || value === 1) return Boolean(value);
+  if (typeof value === "string") {
+    const token = value.trim().toLowerCase();
+    if (token === "1" || token === "true" || token === "yes" || token === "on") return true;
+    if (token === "0" || token === "false" || token === "no" || token === "off" || token === "") return false;
+  }
+  return defaultValue;
 }
 
 function readLocalPrefsMigration(): Partial<UserPrefs> {
@@ -452,6 +473,24 @@ function pickMergedTitle(local: ChatSession, remote: ChatSession): string {
   return lt.length >= rt.length ? lt : rt;
 }
 
+/**
+ * Merge a message-load result into the live sidebar row without wiping a better
+ * local title. Lazy loads often still carry the DB default "New chat"; the UI
+ * may already have a derived/generated title that has not reached the server yet.
+ */
+export function mergeSessionAfterMessageLoad(
+  local: ChatSession | undefined,
+  loaded: ChatSession,
+): ChatSession {
+  if (!local) return loaded;
+  return {
+    ...loaded,
+    title: pickMergedTitle(local, loaded),
+    titleLocked: !!(local.titleLocked || loaded.titleLocked),
+    titleGenerated: !!(local.titleGenerated || loaded.titleGenerated),
+  };
+}
+
 function pickMergedMessages(local: ChatSession, remote: ChatSession): ChatMessage[] {
   const lm = local.messages.length;
   const rm = remote.messages.length;
@@ -560,6 +599,13 @@ export function isPendingDelete(id: string): boolean {
 }
 
 function mapApiMessage(raw: Record<string, unknown>): ChatMessage {
+  const requestLogRaw = raw.requestLogId;
+  const requestLogId =
+    typeof requestLogRaw === "number" && Number.isFinite(requestLogRaw)
+      ? requestLogRaw
+      : typeof requestLogRaw === "string" && /^\d+$/.test(requestLogRaw.trim())
+        ? Number(requestLogRaw.trim())
+        : undefined;
   return {
     id: typeof raw.id === "string" ? raw.id : undefined,
     role: (raw.role as ChatMessage["role"]) || "user",
@@ -572,6 +618,7 @@ function mapApiMessage(raw: Record<string, unknown>): ChatMessage {
     receivedAt: typeof raw.receivedAt === "number" ? raw.receivedAt : undefined,
     streaming: typeof raw.streaming === "boolean" ? raw.streaming : undefined,
     sequence: typeof raw.sequence === "number" ? raw.sequence : undefined,
+    ...(requestLogId != null ? { requestLogId } : {}),
     feedback:
       raw.feedback &&
       typeof raw.feedback === "object" &&
@@ -698,6 +745,7 @@ async function appendSessionMessagesOnServer(
     modelName: m.modelName,
     sentAt: m.sentAt,
     receivedAt: m.receivedAt,
+    ...(m.requestLogId != null ? { requestLogId: m.requestLogId } : {}),
   }));
   const data = await api<{
     messages: Record<string, unknown>[];

@@ -840,7 +840,7 @@ async def log_usage(
     usage_events: list[PendingUsageEvent] | None = None,
     operation_type: str = "chat",
     operation_idempotency_key: str | None = None,
-) -> None:
+) -> int | None:
     events = list(usage_events or [])
     if not events:
         events = [
@@ -892,7 +892,7 @@ async def log_usage(
         if budget_reservation_id:
             await release(db, budget_reservation_id)
         await db.flush()
-        return
+        return None
     total_cost_usd = _sanitize_cost_usd(accounting.total_cost_usd)
     log_row.prompt_tokens = accounting.prompt_tokens
     log_row.completion_tokens = accounting.completion_tokens
@@ -922,6 +922,7 @@ async def log_usage(
     elif not settled and user_id and total_cost_usd > 0:
         await _apply_cost_to_user(db, user_id, total_cost_usd)
     await db.flush()
+    return int(log_row.id) if log_row.id is not None else None
 
 
 async def reserve_auxiliary_llm_usage(
@@ -1873,11 +1874,13 @@ async def stream_chat(
                 )
             )
 
-            async def _persist_stream_usage() -> bool:
+            stream_request_log_id: int | None = None
+
+            async def _persist_stream_usage() -> int | None:
                 for attempt in range(3):
                     try:
                         async with AsyncSessionLocal() as log_db:
-                            await log_usage(
+                            log_id = await log_usage(
                                 log_db,
                                 user_id=user_id,
                                 username=username,
@@ -1899,8 +1902,30 @@ async def stream_chat(
                                 operation_type="chat",
                                 operation_idempotency_key=accounting_key,
                             )
+                            chat_session_id = str(body.get("chat_session_id") or "").strip()
+                            assistant_cid = str(
+                                body.get("assistant_client_message_id") or ""
+                            ).strip()
+                            if (
+                                log_id
+                                and success
+                                and source == "alpha_router_chat"
+                                and user_id
+                                and chat_session_id
+                            ):
+                                from app.services.user_chat_storage_service import (
+                                    attach_request_log_id_to_chat_message,
+                                )
+
+                                await attach_request_log_id_to_chat_message(
+                                    log_db,
+                                    int(user_id),
+                                    chat_session_id,
+                                    int(log_id),
+                                    client_message_id=assistant_cid or None,
+                                )
                             await log_db.commit()
-                        return True
+                        return log_id
                     except Exception:
                         if attempt < 2:
                             await asyncio.sleep(0.1 * (attempt + 1))
@@ -1909,9 +1934,20 @@ async def stream_chat(
                             "Chat usage settlement failed after retries; "
                             "reservation remains held for recovery"
                         )
-                return False
+                return None
 
-            await asyncio.shield(_persist_stream_usage())
+            stream_request_log_id = await asyncio.shield(_persist_stream_usage())
+            if (
+                not was_cancelled
+                and success
+                and stream_request_log_id
+                and source == "alpha_router_chat"
+            ):
+                meta_payload = json.dumps(
+                    {"alpha_router": {"request_log_id": int(stream_request_log_id)}},
+                    separators=(",", ":"),
+                )
+                yield f"data: {meta_payload}\n\n".encode("utf-8")
             if not was_cancelled:
                 yield b"data: [DONE]\n\n"
 

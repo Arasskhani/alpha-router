@@ -462,6 +462,49 @@ def _rate(pricing: dict[str, Any], *keys: str) -> tuple[bool, float | None]:
     return False, None
 
 
+def _speech_character_rate_usd(pricing: dict[str, Any]) -> tuple[bool, float | None]:
+    """Resolve USD/character for TTS catalog rows.
+
+    Dedicated keys (``speech``/``audio``/``tts``/``character``) win when present.
+    OpenRouter's live TTS catalog stores the per-character rate in
+    ``pricing.prompt`` instead — that fallback is only for speech quoting and
+    must never be used as a token rate for chat/image.
+    """
+    present, rate = _rate(pricing, "speech", "audio", "tts", "character")
+    if present:
+        return present, rate
+    return _rate(pricing, "prompt")
+
+
+def _video_second_rate_usd(pricing: dict[str, Any]) -> tuple[bool, float | None]:
+    """Resolve USD/second (or per-clip) for video catalog rows.
+
+    OpenRouter video models expose ``pricing_skus.cents_per_second_output``
+    (cents, not dollars). Convert to USD/second after dedicated USD keys.
+    """
+    present, rate = _rate(
+        pricing,
+        "video",
+        "output_video",
+        "generate",
+        "clip",
+        "second",
+        "usd_per_second",
+        "usd_per_second_output",
+    )
+    if present:
+        return present, rate
+    cents_present, cents_rate = _rate(
+        pricing,
+        "cents_per_second_output",
+        "cents_per_second",
+        "cents_per_second_video",
+    )
+    if cents_present and cents_rate is not None:
+        return True, float(cents_rate) / 100.0
+    return False, None
+
+
 def _line_item(
     *,
     category: str,
@@ -526,19 +569,35 @@ def _catalog_quote(
         )
         request_present, request_rate = _rate(pricing, "request")
         image_present, image_rate = _rate(pricing, "image", "output_image")
-        video_present, video_rate = _rate(
-            pricing,
-            "video",
-            "output_video",
-            "generate",
-            "clip",
-            "second",
-        )
+        # Video/speech rate resolution is service-scoped so OpenRouter's
+        # TTS ``prompt`` (USD/char) and video ``cents_per_second_*`` SKUs never
+        # leak into chat/image catalog math.
+        if service_type == "video":
+            video_present, video_rate = _video_second_rate_usd(pricing)
+        else:
+            video_present, video_rate = _rate(
+                pricing,
+                "video",
+                "output_video",
+                "generate",
+                "clip",
+                "second",
+            )
         search_present, search_rate = _rate(
             pricing,
             "web_search",
             "search",
         )
+        if service_type == "speech":
+            speech_present, speech_rate = _speech_character_rate_usd(pricing)
+        else:
+            speech_present, speech_rate = _rate(
+                pricing,
+                "speech",
+                "audio",
+                "tts",
+                "character",
+            )
         if usage.prompt_tokens and not prompt_present:
             pricing_complete = False
         if usage.completion_tokens and not completion_present:
@@ -553,12 +612,19 @@ def _catalog_quote(
             and not request_present
         ):
             pricing_complete = False
+        if (
+            service_type == "speech"
+            and quantity
+            and not speech_present
+        ):
+            pricing_complete = False
+        if (
+            service_type == "video"
+            and quantity
+            and not video_present
+        ):
+            pricing_complete = False
 
-        if prompt_present and prompt_rate is not None:
-            separately_priced_cache = (
-                (cache_read_present and cache_read_rate is not None)
-                or (cache_write_present and cache_write_rate is not None)
-            )
         if (
             service_type == "video"
             and video_present
@@ -574,6 +640,18 @@ def _catalog_quote(
                     unit_price_usd=video_rate,
                     pricing_source=source,
                 )
+            )
+
+        # Token line items apply to chat/llm (and residual token usage on some
+        # media calls). Keep them outside the video-only block so catalog
+        # quoting remains complete when provider cost is absent.
+        #
+        # For speech, OpenRouter's pricing.prompt is USD/character (consumed by
+        # the speech line item above) — never reinterpret it as a token rate.
+        if service_type != "speech" and prompt_present and prompt_rate is not None:
+            separately_priced_cache = (
+                (cache_read_present and cache_read_rate is not None)
+                or (cache_write_present and cache_write_rate is not None)
             )
             standard_prompt_tokens = usage.prompt_tokens
             if separately_priced_cache:
@@ -624,7 +702,7 @@ def _catalog_quote(
                     )
                 )
 
-        if completion_present and completion_rate is not None:
+        if service_type != "speech" and completion_present and completion_rate is not None:
             standard_completion_tokens = usage.completion_tokens
             if reasoning_present and reasoning_rate is not None:
                 standard_completion_tokens = max(
@@ -679,6 +757,22 @@ def _catalog_quote(
                     quantity=float(quantity),
                     unit=unit or "image",
                     unit_price_usd=image_rate,
+                    pricing_source=source,
+                )
+            )
+        if (
+            service_type == "speech"
+            and speech_present
+            and speech_rate is not None
+            and quantity is not None
+            and float(quantity) > 0
+        ):
+            items.append(
+                _line_item(
+                    category="speech",
+                    quantity=float(quantity),
+                    unit=unit or "character",
+                    unit_price_usd=speech_rate,
                     pricing_source=source,
                 )
             )

@@ -219,6 +219,7 @@ class ImageRequest(BaseModel):
     persist: bool = True
     image_size_tier: str | None = None
     routing: dict[str, object] | None = None
+    assistant_client_message_id: str | None = None
 
 
 def _is_openrouter_chat_image_model(model_id: str) -> bool:
@@ -796,6 +797,24 @@ async def generate_image(
     image_request_id = str(uuid.uuid4())
     current_attempt_started_at: datetime.datetime | None = None
     current_attempt_source_count = 0
+    response_out: dict | None = None
+
+    async def _ok_response(
+        items: list[dict],
+        *,
+        aspect_ratio: str | None = None,
+        routing: dict[str, object] | None = None,
+    ) -> dict:
+        nonlocal response_out
+        response_out = await _finalize_image_response(
+            db,
+            user,
+            body,
+            items,
+            aspect_ratio=aspect_ratio,
+            routing=routing,
+        )
+        return response_out
 
     requested_model = _normalize_model_id(body.model)
     auto_router_requested = is_openrouter_auto_model(requested_model)
@@ -983,8 +1002,9 @@ async def generate_image(
                 if _prefer_openrouter_images_generations(model_id) and not reference_image:
                     out_gen, usage_data = await _try_openrouter_images_generations()
                     if out_gen:
-                        return await _finalize_image_response(
-                            db, user, body, out_gen, aspect_ratio=resolved_aspect,
+                        return await _ok_response(
+                            out_gen,
+                            aspect_ratio=resolved_aspect,
                             routing=routing_reason,
                         )
 
@@ -1211,8 +1231,9 @@ async def generate_image(
                         detail=f"OpenRouter image request failed ({resp.status_code}): {detail_msg[:500] or 'Image generation failed'}",
                     )
                 if out:
-                    return await _finalize_image_response(
-                        db, user, body, out, aspect_ratio=resolved_aspect,
+                    return await _ok_response(
+                        out,
+                        aspect_ratio=resolved_aspect,
                         routing=routing_reason,
                     )
 
@@ -1229,8 +1250,9 @@ async def generate_image(
                         if not reference_image:
                             out_gen, usage_data = await _try_openrouter_images_generations()
                             if out_gen:
-                                return await _finalize_image_response(
-                                    db, user, body, out_gen, aspect_ratio=resolved_aspect,
+                                return await _ok_response(
+                                    out_gen,
+                                    aspect_ratio=resolved_aspect,
                                     routing=routing_reason,
                                 )
                         if modalities != ["image"]:
@@ -1241,8 +1263,9 @@ async def generate_image(
                                 tier="1K",
                             )
                             if retry_out:
-                                return await _finalize_image_response(
-                                    db, user, body, retry_out, aspect_ratio=resolved_aspect,
+                                return await _ok_response(
+                                    retry_out,
+                                    aspect_ratio=resolved_aspect,
                                     routing=routing_reason,
                                 )
                         raise HTTPException(
@@ -1268,8 +1291,9 @@ async def generate_image(
                 # Legacy / non-chat image models only: short fallback attempts.
                 out_gen, usage_data = await _try_openrouter_images_generations()
                 if out_gen:
-                    return await _finalize_image_response(
-                        db, user, body, out_gen, aspect_ratio=resolved_aspect,
+                    return await _ok_response(
+                        out_gen,
+                        aspect_ratio=resolved_aspect,
                         routing=routing_reason,
                     )
 
@@ -1301,8 +1325,9 @@ async def generate_image(
                 quantity=len(out or []) or None,
             )
             if out:
-                return await _finalize_image_response(
-                    db, user, body, out, aspect_ratio=resolved_aspect,
+                return await _ok_response(
+                    out,
+                    aspect_ratio=resolved_aspect,
                     routing=routing_reason,
                 )
             raise HTTPException(
@@ -1575,11 +1600,11 @@ async def generate_image(
                 error_message = "Image persistence failed"
                 commit_error = exc
 
-        async def _settle_image_usage() -> bool:
+        async def _settle_image_usage() -> int | None:
             for attempt in range(3):
                 try:
                     async with AsyncSessionLocal() as log_db:
-                        await log_image_usage(
+                        log_id = await log_image_usage(
                             log_db,
                             user=user,
                             capture=billing,
@@ -1592,8 +1617,20 @@ async def generate_image(
                             budget_reservation_id=budget_reservation_id,
                             quantity=body.n,
                         )
+                        if log_id and success and body.chat_session_id:
+                            from app.services.user_chat_storage_service import (
+                                attach_request_log_id_to_chat_message,
+                            )
+
+                            await attach_request_log_id_to_chat_message(
+                                log_db,
+                                user.id,
+                                body.chat_session_id,
+                                int(log_id),
+                                client_message_id=body.assistant_client_message_id,
+                            )
                         await log_db.commit()
-                    return True
+                    return log_id
                 except Exception:
                     if attempt < 2:
                         await asyncio.sleep(0.1 * (attempt + 1))
@@ -1604,9 +1641,11 @@ async def generate_image(
                         "Image usage settlement failed after retries; "
                         "reservation remains held for recovery"
                     )
-            return False
+            return None
 
-        await asyncio.shield(_settle_image_usage())
+        settled_log_id = await asyncio.shield(_settle_image_usage())
+        if response_out is not None and settled_log_id:
+            response_out["request_log_id"] = int(settled_log_id)
         if commit_error is not None:
             raise HTTPException(
                 status_code=500,

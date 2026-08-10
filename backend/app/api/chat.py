@@ -26,6 +26,7 @@ from app.services.bounded_io import BoundedIOError, clamp_limit, read_upload_bou
 from app.services.model_capabilities import (
     image_generation_capabilities,
     model_media_flags,
+    speech_generation_capabilities,
     supports_vision,
     video_generation_capabilities,
 )
@@ -112,6 +113,11 @@ async def chat_models(user: User = Depends(get_current_user), db: AsyncSession =
                 is_video_model=media["is_video_model"],
                 pricing_raw=m.pricing_raw if media["is_video_model"] else None,
             ),
+            **speech_generation_capabilities(
+                external_id=m.external_id or "",
+                is_speech_model=media["is_speech_model"],
+                pricing_raw=m.pricing_raw if media["is_speech_model"] else None,
+            ),
             "supports_vision": supports_vision(
                 external_id=m.external_id or "",
                 is_image_model=media["is_image_model"],
@@ -138,6 +144,7 @@ class ChatToolsIn(BaseModel):
     web_fetch: bool = False
     image_generation: bool = False
     video_generation: bool = False
+    speech_generation: bool = False
     code_interpreter: bool = False
 
 

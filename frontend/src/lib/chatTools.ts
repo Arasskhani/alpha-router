@@ -11,6 +11,7 @@ import {
 
 export type WebSearchDepth = "low" | "medium" | "high";
 export type VideoResolution = "480p" | "720p" | "1080p";
+export type SpeechFormat = "mp3";
 
 export type ChatToolsState = {
   webSearch: boolean;
@@ -28,6 +29,10 @@ export type ChatToolsState = {
   videoResolution: VideoResolution;
   videoAspectRatio: string;
   videoGenerateAudio: boolean;
+  speechGeneration: boolean;
+  speechVoice: string;
+  speechFormat: SpeechFormat;
+  speechSpeed: number;
   codeInterpreter: boolean;
 };
 
@@ -44,6 +49,10 @@ export const FRESH_CHAT_TOOLS: ChatToolsState = {
   videoResolution: "720p",
   videoAspectRatio: "16:9",
   videoGenerateAudio: false,
+  speechGeneration: false,
+  speechVoice: "alloy",
+  speechFormat: "mp3",
+  speechSpeed: 1.0,
   codeInterpreter: false,
 };
 
@@ -57,6 +66,7 @@ export function anyChatToolEnabled(tools: ChatToolsState): boolean {
     tools.webFetch ||
     tools.imageGeneration ||
     tools.videoGeneration ||
+    tools.speechGeneration ||
     tools.codeInterpreter
   );
 }
@@ -85,6 +95,21 @@ function normalizeVideoAspectRatio(v: string | undefined): string {
   return "16:9";
 }
 
+function normalizeSpeechFormat(_v: string | undefined): SpeechFormat {
+  return "mp3";
+}
+
+function normalizeSpeechVoice(v: string | undefined): string {
+  const raw = (v || "").trim();
+  return raw || "alloy";
+}
+
+function normalizeSpeechSpeed(v: number | undefined): number {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 1.0;
+  return Math.max(0.25, Math.min(4.0, n));
+}
+
 export function normalizeChatTools(raw?: Partial<ChatToolsState> | null): ChatToolsState {
   if (!raw) return { ...FRESH_CHAT_TOOLS };
 
@@ -95,9 +120,14 @@ export function normalizeChatTools(raw?: Partial<ChatToolsState> | null): ChatTo
 
   let imageGeneration = raw.imageGeneration ?? FRESH_CHAT_TOOLS.imageGeneration;
   let videoGeneration = raw.videoGeneration ?? FRESH_CHAT_TOOLS.videoGeneration;
-  // Mutual exclusion: prefer the explicitly-on tool; if both, keep video off.
-  if (imageGeneration && videoGeneration) {
+  let speechGeneration = raw.speechGeneration ?? FRESH_CHAT_TOOLS.speechGeneration;
+  // Mutual exclusion: only one media generation tool can be on at a time.
+  // Priority: speech > video > image when multiple are explicitly set.
+  if (speechGeneration) {
+    imageGeneration = false;
     videoGeneration = false;
+  } else if (videoGeneration) {
+    imageGeneration = false;
   }
 
   return {
@@ -114,6 +144,10 @@ export function normalizeChatTools(raw?: Partial<ChatToolsState> | null): ChatTo
     videoResolution: normalizeVideoResolution(raw.videoResolution),
     videoAspectRatio: normalizeVideoAspectRatio(raw.videoAspectRatio),
     videoGenerateAudio: raw.videoGenerateAudio ?? FRESH_CHAT_TOOLS.videoGenerateAudio,
+    speechGeneration,
+    speechVoice: normalizeSpeechVoice(raw.speechVoice),
+    speechFormat: normalizeSpeechFormat(raw.speechFormat),
+    speechSpeed: normalizeSpeechSpeed(raw.speechSpeed),
     codeInterpreter: raw.codeInterpreter ?? FRESH_CHAT_TOOLS.codeInterpreter,
   };
 }
@@ -138,6 +172,7 @@ export function toolsToApiPayload(state: ChatToolsState) {
       web_fetch: state.webFetch,
       image_generation: state.imageGeneration,
       video_generation: state.videoGeneration,
+      speech_generation: state.speechGeneration,
       code_interpreter: state.codeInterpreter,
     },
   };

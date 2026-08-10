@@ -319,6 +319,10 @@ def coerce_safe_storage_mime(kind: str, mime: str | None) -> str:
         if cleaned.startswith("video/"):
             return "video/mp4"
         return "application/octet-stream"
+    if kind_norm == "audio" and cleaned not in INLINE_AUDIO_MIMES:
+        if cleaned.startswith("audio/"):
+            return "audio/mpeg"
+        return "application/octet-stream"
     return cleaned
 
 
@@ -345,6 +349,39 @@ def is_inline_video_media(*, kind: str | None, mime: str | None) -> bool:
     if kind_norm == "video":
         return cleaned in {"video/mp4", "video/webm"} or cleaned.startswith("video/")
     return cleaned in {"video/mp4", "video/webm"}
+
+
+# Audio MIME types safe to serve inline (for <audio> playback).
+INLINE_AUDIO_MIMES: frozenset[str] = frozenset(
+    {
+        "audio/mpeg",
+        "audio/mp3",
+        "audio/wav",
+        "audio/x-wav",
+        "audio/wave",
+        "audio/ogg",
+        "audio/webm",
+        "audio/flac",
+        "audio/aac",
+        "audio/x-aac",
+        "audio/mp4",
+        "audio/m4a",
+        "audio/x-m4a",
+    }
+)
+
+
+def is_inline_audio_media(*, kind: str | None, mime: str | None) -> bool:
+    """True when the asset may be served with Content-Disposition: inline."""
+    kind_norm = (kind or "").strip().lower()
+    cleaned = _normalize_mime(mime)
+    if cleaned in UNSAFE_MEDIA_MIMES:
+        return False
+    if kind_norm in {"document", "image", "video"}:
+        return False
+    if kind_norm == "audio":
+        return cleaned in INLINE_AUDIO_MIMES or cleaned.startswith("audio/")
+    return cleaned in INLINE_AUDIO_MIMES
 
 
 def build_media_content_disposition(file_name: str, *, disposition: str) -> str:
@@ -386,6 +423,12 @@ def media_response_type_and_disposition(
         mime = stored if stored.startswith("video/") else "video/mp4"
         if mime not in {"video/mp4", "video/webm"}:
             mime = "video/mp4"
+        return mime, build_media_content_disposition(file_name, disposition="inline")
+
+    if is_inline_audio_media(kind=kind_norm, mime=stored):
+        mime = stored if stored.startswith("audio/") else "audio/mpeg"
+        if mime not in INLINE_AUDIO_MIMES and not mime.startswith("audio/"):
+            mime = "audio/mpeg"
         return mime, build_media_content_disposition(file_name, disposition="inline")
 
     # Documents / unknown / legacy unsafe MIME: force download + extension-derived type.

@@ -23,6 +23,12 @@ type Props = {
     supported_resolutions?: string[];
     supported_aspect_ratios?: string[];
   };
+  speechCapabilities?: {
+    supported_voices?: string[];
+    supported_formats?: string[];
+    supported_speeds?: [number, number] | number[];
+    max_text_length?: number;
+  };
 };
 
 function Toggle({
@@ -108,6 +114,7 @@ export default function ServerToolsMenu({
   onPrivateModeChange,
   onClose,
   videoCapabilities,
+  speechCapabilities,
 }: Props) {
   const [pos, setPos] = useState<{ left: number; bottom: number } | null>(null);
   const [customAspectDraft, setCustomAspectDraft] = useState(tools.imageCustomAspectRatio);
@@ -232,6 +239,7 @@ export default function ServerToolsMenu({
           patch({
             imageGeneration: !tools.imageGeneration,
             videoGeneration: !tools.imageGeneration ? false : tools.videoGeneration,
+            speechGeneration: !tools.imageGeneration ? false : tools.speechGeneration,
           })
         }
       />
@@ -317,6 +325,7 @@ export default function ServerToolsMenu({
           patch({
             videoGeneration: !tools.videoGeneration,
             imageGeneration: !tools.videoGeneration ? false : tools.imageGeneration,
+            speechGeneration: !tools.videoGeneration ? false : tools.speechGeneration,
           })
         }
       />
@@ -392,6 +401,68 @@ export default function ServerToolsMenu({
             />
             Generate audio when supported
           </label>
+        </div>
+      ) : null}
+
+      <ToolRow
+        icon={
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <path d="M11 5 6 9H2v6h4l5 4V5z" />
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+          </svg>
+        }
+        title="Text to Speech"
+        description="Generate audio from text"
+        on={tools.speechGeneration}
+        onToggle={() =>
+          patch({
+            speechGeneration: !tools.speechGeneration,
+            imageGeneration: !tools.speechGeneration ? false : tools.imageGeneration,
+            videoGeneration: !tools.speechGeneration ? false : tools.videoGeneration,
+          })
+        }
+      />
+
+      {tools.speechGeneration ? (
+        <div className="alpha-router-image-aspect-picker" onMouseDown={(e) => e.stopPropagation()}>
+          <span className="alpha-router-image-aspect-picker__label">Voice</span>
+          <div className="alpha-router-image-aspect-picker__options" role="group" aria-label="Speech voice">
+            {(speechCapabilities?.supported_voices?.length
+              ? speechCapabilities.supported_voices
+              : []
+            ).map((voice) => {
+              const active = tools.speechVoice === voice;
+              return (
+                <button
+                  key={voice}
+                  type="button"
+                  className={`alpha-router-image-aspect-picker__chip${active ? " active" : ""}`}
+                  aria-pressed={active}
+                  onClick={() => patch({ speechVoice: voice })}
+                >
+                  {voice}
+                </button>
+              );
+            })}
+          </div>
+          <div className="alpha-router-image-aspect-picker__custom">
+            <span className="alpha-router-image-aspect-picker__label">Speed</span>
+            <input
+              type="range"
+              min={Number(speechCapabilities?.supported_speeds?.[0] ?? 0.25)}
+              max={Number(speechCapabilities?.supported_speeds?.[1] ?? 4.0)}
+              step={0.05}
+              value={tools.speechSpeed}
+              aria-label="Speech speed"
+              onChange={(e) => patch({ speechSpeed: Number(e.target.value) })}
+            />
+            <span className="alpha-router-image-aspect-picker__custom-hint">{tools.speechSpeed.toFixed(2)}x</span>
+          </div>
+          <span className="alpha-router-image-aspect-picker__hint">
+            Text-to-speech generates audio from your message text. Max{" "}
+            {speechCapabilities?.max_text_length ?? 5000} characters.
+          </span>
         </div>
       ) : null}
 

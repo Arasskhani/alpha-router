@@ -74,3 +74,18 @@ def test_serialize_job_completed_has_media_url():
     payload = serialize_job(job)
     assert payload["status"] == "completed"
     assert payload["media_url"] is not None
+
+
+def test_serialize_job_exposes_request_log_id_from_params():
+    job = VideoGenerationJob(
+        id="11111111-1111-1111-1111-111111111111",
+        user_id=1,
+        model_id="google/veo-3.1-lite",
+        operation="generation",
+        status="completed",
+        prompt="sunrise",
+        params_json=json.dumps({"duration": 4, "request_log_id": 99}),
+        media_asset_id=42,
+    )
+    payload = serialize_job(job)
+    assert payload["request_log_id"] == 99

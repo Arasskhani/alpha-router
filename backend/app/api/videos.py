@@ -61,6 +61,7 @@ class VideoRequest(BaseModel):
     generate_audio: bool = False
     seed: int | None = None
     routing: dict[str, Any] | None = None
+    assistant_client_message_id: str | None = None
 
 
 def _normalize_model_id(raw: str) -> str:
@@ -246,6 +247,8 @@ async def generate_video(
                 "aspect_ratio": aspect_ratio,
                 "generate_audio": bool(body.generate_audio),
                 "seed": body.seed,
+                "assistant_client_message_id": (body.assistant_client_message_id or "").strip()
+                or None,
             },
             chat_session_id=body.chat_session_id,
             persist=bool(body.persist),

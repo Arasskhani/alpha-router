@@ -4,6 +4,7 @@ import { api, authFetch, formatApiError, getCachedSession, isApiAuthError } from
 import { chatModelsEmptyMessage, normalizeChatModelsError } from "../lib/chatMessages";
 import AuthenticatedImage from "./AuthenticatedImage";
 import AuthenticatedVideo from "./AuthenticatedVideo";
+import AuthenticatedAudio from "./AuthenticatedAudio";
 import MarkdownContent from "./MarkdownContent";
 import ModelName from "./ModelName";
 import ModelProviderIcon from "./ModelProviderIcon";
@@ -42,6 +43,7 @@ import {
   loadChatSessionsLocal,
   loadSessionMessagesIfNeeded,
   loadOlderSessionMessages,
+  mergeSessionAfterMessageLoad,
   resolveNewChatModel,
   saveDefaultModelToServer,
   migrateLegacyChatsToServer,
@@ -88,6 +90,10 @@ import {
 } from "../lib/chatLeader";
 import { formatLocalDateTimeFromMs } from "../lib/dateTime";
 import { BROWSER_EVENT_NAMES, PRODUCT_NAME, STORAGE_KEYS } from "../lib/brand";
+import {
+  notifyReplyReady,
+  REPLY_READY_FOCUS_EVENT,
+} from "../lib/replyReadyNotify";
 import { getSessionUser, isSessionActive, logout } from "../lib/session";
 import { copyFreshChatTools, toolsToApiPayload, type ChatToolsState } from "../lib/chatTools";
 import ChatAttachmentMessage from "./chat/ChatAttachmentMessage";
@@ -102,7 +108,21 @@ import {
   MAX_MULTI_MODELS,
   shortcutModKey,
 } from "../lib/chatModelPresets";
-import { DownloadIcon, OpenFullSizeIcon, RegenerateIcon, CsvIcon, PdfIcon, DocIcon } from "./chat/GeneratedImageIcons";
+import {
+  DownloadIcon,
+  OpenFullSizeIcon,
+  RegenerateIcon,
+  CsvIcon,
+  PdfIcon,
+  DocIcon,
+} from "./chat/GeneratedImageIcons";
+import RequestLogCostDetailsModal from "./RequestLogCostDetailsModal";
+import {
+  fetchOwnedRequestLog,
+  fetchOwnedRequestLogCostDetails,
+  type CostDetails,
+  type RequestLogSummary,
+} from "../lib/requestLogCostDetails";
 import VirtualSidebarList from "./chat/ChatSidebarVirtual";
 import PrivateModeLockIcon from "./chat/PrivateModeLockIcon";
 import { BrowserSpeechCapture, pickVoiceRecordingMime } from "../lib/voiceInput";
@@ -171,6 +191,25 @@ import {
   resolveSessionModelForVideoTools,
 } from "../lib/chatVideoModels";
 import {
+  buildStoppedSpeechMessages,
+  isBackgroundSpeechRunning,
+  parseSpeechMessage,
+  runBackgroundSpeechGeneration,
+  shouldRouteToSpeechGeneration,
+  SPEECH_MESSAGE_PREFIX,
+  SPEECH_PENDING_MARKER,
+  stopBackgroundSpeechGeneration,
+  subscribeBackgroundSpeechUpdates,
+  type SpeechPayload,
+} from "../lib/chatSpeech";
+import {
+  findSpeechGenerationFallbackModel,
+  modelSupportsSpeech,
+  resolveSpeechGenerationModel as resolveConcreteSpeechModel,
+  resolveSessionModelForSpeechTools,
+  resolveSpeechVoiceForModel,
+} from "../lib/chatSpeechModels";
+import {
   codeInterpreterBlockedReason,
   findCodeInterpreterFallbackModel,
   modelSupportsCodeInterpreter,
@@ -216,6 +255,12 @@ type Model = {
   supported_durations?: number[];
   supported_resolutions?: string[];
   supported_aspect_ratios?: string[];
+  is_speech_model?: boolean;
+  supports_text_to_speech?: boolean;
+  supported_voices?: string[];
+  supported_formats?: string[];
+  supported_speeds?: [number, number] | number[];
+  max_text_length?: number;
   supports_vision?: boolean;
   code_interpreter?: CodeInterpreterCompatibility | null;
 };
@@ -323,6 +368,8 @@ function displayTextForMessage(content: string): string {
   if (image?.prompt?.trim()) return image.prompt.trim();
   const video = readVideoMessage(content);
   if (video?.prompt?.trim()) return video.prompt.trim();
+  const speech = readSpeechMessage(content);
+  if (speech?.prompt?.trim()) return speech.prompt.trim();
   return content;
 }
 
@@ -331,7 +378,9 @@ function messageDirectionForContent(content: string): TextDirection {
     content === IMAGE_PENDING_MARKER ||
     content.startsWith(IMAGE_MESSAGE_PREFIX) ||
     content === VIDEO_PENDING_MARKER ||
-    content.startsWith(VIDEO_MESSAGE_PREFIX)
+    content.startsWith(VIDEO_MESSAGE_PREFIX) ||
+    content === SPEECH_PENDING_MARKER ||
+    content.startsWith(SPEECH_MESSAGE_PREFIX)
   ) {
     return "ltr";
   }
@@ -346,6 +395,16 @@ function messageDirectionForContent(content: string): TextDirection {
 
 function readVideoMessage(content: string): VideoPayload | null {
   return parseVideoMessage(content);
+}
+
+function readSpeechMessage(content: string): SpeechPayload | null {
+  return parseSpeechMessage(content);
+}
+
+/** Last assistant slot is a speech placeholder still being generated. */
+function messagesHavePendingSpeech(messages: ChatMessage[]): boolean {
+  const last = messages.at(-1);
+  return last?.role === "assistant" && last.content === SPEECH_PENDING_MARKER;
 }
 
 /** Last assistant slot is a video placeholder still being generated. */
@@ -404,8 +463,10 @@ function isTextAssistantExportable(content: string): boolean {
   if (!content?.trim()) return false;
   if (content === IMAGE_PENDING_MARKER) return false;
   if (content === VIDEO_PENDING_MARKER) return false;
+  if (content === SPEECH_PENDING_MARKER) return false;
   if (readImageMessage(content)) return false;
   if (readVideoMessage(content)) return false;
+  if (readSpeechMessage(content)) return false;
   if (readAudioMessage(content)) return false;
   const md = extractMarkdownImage(content);
   if (md.imageUrl && !md.text.trim()) return false;
@@ -435,13 +496,20 @@ function chatMessageInfoTitle(message: ChatMessage, role: "user" | "assistant", 
   return lines.length ? lines.join("\n") : "Timing not recorded for this message.";
 }
 
-function MessageInfoButton({ title }: { title: string }) {
+function MessageInfoButton({
+  title,
+  onClick,
+}: {
+  title: string;
+  onClick?: () => void;
+}) {
   return (
     <button
       type="button"
       className="alpha-router-msg-action-btn alpha-router-msg-action-btn--info"
       title={title}
       aria-label={title}
+      onClick={onClick}
     >
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
         <circle cx="12" cy="12" r="10" />
@@ -562,6 +630,10 @@ export default function ChatPanel() {
   const [turnPhases, setTurnPhases] = useState<Record<string, TurnPhase>>({});
   const [chatError, setChatError] = useState("");
   const [copiedMessageKey, setCopiedMessageKey] = useState<string | null>(null);
+  const [costDetailsLog, setCostDetailsLog] = useState<RequestLogSummary | null>(null);
+  const [costDetails, setCostDetails] = useState<CostDetails | null>(null);
+  const [costDetailsLoading, setCostDetailsLoading] = useState(false);
+  const [costDetailsError, setCostDetailsError] = useState("");
   const [draggingSessionId, setDraggingSessionId] = useState<string | null>(null);
   const [dropFolderId, setDropFolderId] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -600,6 +672,7 @@ export default function ChatPanel() {
   const drainSessionQueueRef = useRef<(sessionId: string) => Promise<void>>(async () => {});
   const tryDrainPromptQueueRef = useRef<(sessionId: string) => void>(() => {});
   const messagesRef = useRef<ChatMessage[]>([]);
+  const replyNotifyPrefsRef = useRef({ away: false, sound: true });
 
   activeIdRef.current = activeId;
   composerInputRef.current = input;
@@ -615,8 +688,10 @@ export default function ChatPanel() {
     (isSessionStreaming ||
       isBackgroundImageRunning(activeId) ||
       isBackgroundVideoRunning(activeId) ||
+      isBackgroundSpeechRunning(activeId) ||
       sessionHasPendingImage(messages) ||
-      messagesHavePendingVideo(messages));
+      messagesHavePendingVideo(messages) ||
+      messagesHavePendingSpeech(messages));
   const activeTurnPhase = activeId ? turnPhases[activeId] : undefined;
   const activeQueue = activeId ? promptQueues[activeId] || [] : [];
   const returningChatUser = isReturningChatUser(sessions);
@@ -692,13 +767,20 @@ export default function ChatPanel() {
     const matched = models.filter((m) => {
       if (chatTools.imageGeneration && !modelSupportsImages(m, models)) return false;
       if (chatTools.videoGeneration && !modelSupportsVideos(m, models)) return false;
+      if (chatTools.speechGeneration && !modelSupportsSpeech(m, models)) return false;
       if (chatTools.codeInterpreter && !modelSupportsCodeInterpreter(m)) return false;
       return true;
     });
     const autoRouter = matched.find((m) => isAutoRouterModel(m));
     if (!autoRouter) return matched;
     return [autoRouter, ...matched.filter((m) => m.id !== autoRouter.id)];
-  }, [models, chatTools.imageGeneration, chatTools.videoGeneration, chatTools.codeInterpreter]);
+  }, [
+    models,
+    chatTools.imageGeneration,
+    chatTools.videoGeneration,
+    chatTools.speechGeneration,
+    chatTools.codeInterpreter,
+  ]);
 
   const selectedModels = useMemo(
     () =>
@@ -717,6 +799,7 @@ export default function ChatPanel() {
     if (chatTools.webFetch) n += 1;
     if (chatTools.imageGeneration) n += 1;
     if (chatTools.videoGeneration) n += 1;
+    if (chatTools.speechGeneration) n += 1;
     if (chatTools.codeInterpreter) n += 1;
     if (activePrivateMode) n += 1;
     return n;
@@ -835,9 +918,12 @@ export default function ChatPanel() {
     return isPrivateChat(sessionsRef.current.find((s) => s.id === sessionId));
   }
 
-  /** Video wins over image when both flags survive a legacy session payload. */
+  /** Speech > video > image when multiple legacy flags survive a session payload. */
   function resolveModelForTools(sessionModel: string | undefined, tools: ChatToolsState): string {
     const fallback = (current?: string) => resolveNewChatModel(models, current, defaultModel);
+    if (tools.speechGeneration) {
+      return resolveSessionModelForSpeechTools(models, sessionModel, true, fallback);
+    }
     if (tools.videoGeneration) {
       return resolveSessionModelForVideoTools(models, sessionModel, true, fallback);
     }
@@ -884,7 +970,8 @@ export default function ChatPanel() {
     return (
       !!abortControllersRef.current[sessionId] ||
       isBackgroundImageRunning(sessionId) ||
-      isBackgroundVideoRunning(sessionId)
+      isBackgroundVideoRunning(sessionId) ||
+      isBackgroundSpeechRunning(sessionId)
     );
   }
 
@@ -918,6 +1005,7 @@ export default function ChatPanel() {
     if (isChatRevisionConflict(err)) return;
     if (sessionId && isBackgroundImageRunning(sessionId)) return;
     if (sessionId && isBackgroundVideoRunning(sessionId)) return;
+    if (sessionId && isBackgroundSpeechRunning(sessionId)) return;
     if (!sessionId && getBackgroundImageSessionIds().length > 0) return;
     if (sessionId && isLocalTurnInFlight(sessionId)) return;
     if (sessionId && streamingSessionsRef.current[sessionId]) return;
@@ -961,19 +1049,20 @@ export default function ChatPanel() {
       next: ChatSession[] | ((prev: ChatSession[]) => ChatSession[]),
       opts?: { debounce?: boolean; metadataSessionIds?: string[] },
     ) => {
-      setSessions((prev) => {
-        const resolved = typeof next === "function" ? next(prev) : next;
-        sessionsRef.current = resolved;
-        const metaIds = opts?.metadataSessionIds;
-        if (metaIds?.length) {
-          for (const id of metaIds) {
-            const row = resolved.find((s) => s.id === id);
-            if (row && !row.privateMode) markSessionMetadataDirty(id);
-          }
+      // Resolve against the live ref first. React may defer the setState updater,
+      // and title/metadata push reads sessionsRef / the chatSessionsProvider.
+      const resolved =
+        typeof next === "function" ? next(sessionsRef.current) : next;
+      sessionsRef.current = resolved;
+      const metaIds = opts?.metadataSessionIds;
+      if (metaIds?.length) {
+        for (const id of metaIds) {
+          const row = resolved.find((s) => s.id === id);
+          if (row && !row.privateMode) markSessionMetadataDirty(id);
         }
-        scheduleServerChatSave({ debounce: opts?.debounce !== false });
-        return resolved;
-      });
+      }
+      scheduleServerChatSave({ debounce: opts?.debounce !== false });
+      setSessions(resolved);
     },
     [scheduleServerChatSave],
   );
@@ -989,8 +1078,23 @@ export default function ChatPanel() {
           prev.map((s) => (s.id === sid ? { ...s, title } : s)),
         { debounce: false, metadataSessionIds: [sid] },
       );
+      if (!sessionPrivateMode(sid)) {
+        void pushSessionMetadataToServer(sid).catch(() => {});
+      }
     },
     [persistSessions],
+  );
+
+  const applyLoadedSessionMessages = useCallback(
+    (sessionId: string, loaded: ChatSession) => {
+      const live = sessionsRef.current.find((s) => s.id === sessionId);
+      const merged = mergeSessionAfterMessageLoad(live, loaded);
+      const next = sessionsRef.current.map((s) => (s.id === sessionId ? merged : s));
+      sessionsRef.current = next;
+      setSessions(next);
+      patchDefaultTitleFromMessages(sessionId, merged.messages);
+    },
+    [patchDefaultTitleFromMessages],
   );
 
   const updateSessionMessages = useCallback((sessionId: string, msgs: ChatMessage[]) => {
@@ -1153,7 +1257,7 @@ export default function ChatPanel() {
             setMessages(preferLocalMessagesOverRemote(sid, s.messages));
           }
         }
-        if (isBackgroundImageRunning(sid) || isBackgroundVideoRunning(sid)) {
+        if (isBackgroundImageRunning(sid) || isBackgroundVideoRunning(sid) || isBackgroundSpeechRunning(sid)) {
           setSessionStreaming(sid, true);
         } else if (!abortControllersRef.current[sid]) {
           // Decide streaming from the locally-preferred view: a lagging server copy
@@ -1302,6 +1406,10 @@ export default function ChatPanel() {
         setDefaultModel(prefs.default_model || "");
         setVoiceRecordingLang(prefs.voice_recording_language === "fa" ? "fa" : "en");
         setPersianFont(normalizePersianFontId(prefs.persian_font));
+        replyNotifyPrefsRef.current = {
+          away: !!prefs.reply_notify_away,
+          sound: prefs.reply_notify_sound !== false,
+        };
         setUserPrefsReady(true);
       })
       .catch(() => {
@@ -1310,6 +1418,7 @@ export default function ChatPanel() {
         setDefaultModel("");
         setVoiceRecordingLang("en");
         setPersianFont("");
+        replyNotifyPrefsRef.current = { away: false, sound: true };
         setUserPrefsReady(true);
       });
     return () => {
@@ -1323,6 +1432,10 @@ export default function ChatPanel() {
         .then((prefs) => {
           setVoiceRecordingLang(prefs.voice_recording_language === "fa" ? "fa" : "en");
           setPersianFont(normalizePersianFontId(prefs.persian_font));
+          replyNotifyPrefsRef.current = {
+            away: !!prefs.reply_notify_away,
+            sound: prefs.reply_notify_sound !== false,
+          };
           if (prefs.default_model != null) {
             setDefaultModel(prefs.default_model || "");
             serverDefaultModelRef.current = prefs.default_model;
@@ -1477,12 +1590,7 @@ export default function ChatPanel() {
               if (sessionHasIncompleteTextReply(loaded.messages)) {
                 setSessionStreaming(first.id, true);
               }
-              patchDefaultTitleFromMessages(first.id, loaded.messages);
-              setSessions((prev) => {
-                const next = prev.map((row) => (row.id === first.id ? loaded : row));
-                sessionsRef.current = next;
-                return next;
-              });
+              applyLoadedSessionMessages(first.id, loaded);
             });
           } else {
             setMessages(first.messages);
@@ -1661,7 +1769,7 @@ export default function ChatPanel() {
 
   useEffect(() => {
     const onBackgroundMediaUpdate = (sessionId: string) => {
-      if (isBackgroundImageRunning(sessionId) || isBackgroundVideoRunning(sessionId)) {
+      if (isBackgroundImageRunning(sessionId) || isBackgroundVideoRunning(sessionId) || isBackgroundSpeechRunning(sessionId)) {
         setSessionStreaming(sessionId, true);
         return;
       }
@@ -1708,16 +1816,20 @@ export default function ChatPanel() {
     };
     const unsubscribeImage = subscribeBackgroundImageUpdates(onBackgroundMediaUpdate);
     const unsubscribeVideo = subscribeBackgroundVideoUpdates(onBackgroundMediaUpdate);
+    const unsubscribeSpeech = subscribeBackgroundSpeechUpdates(onBackgroundMediaUpdate);
     return () => {
       unsubscribeImage();
       unsubscribeVideo();
+      unsubscribeSpeech();
     };
   }, [syncSessionsFromServer, persistSessions]);
 
   useEffect(() => {
     const hasNonPrivatePending = sessions.some(
       (s) =>
-        (sessionHasPendingImage(s.messages) || messagesHavePendingVideo(s.messages)) &&
+        (sessionHasPendingImage(s.messages) ||
+          messagesHavePendingVideo(s.messages) ||
+          messagesHavePendingSpeech(s.messages)) &&
         !s.privateMode,
     );
     if (!hasNonPrivatePending) return;
@@ -1741,7 +1853,8 @@ export default function ChatPanel() {
       if (
         streamingSessionsRef.current[sid] &&
         !isBackgroundImageRunning(sid) &&
-        !isBackgroundVideoRunning(sid)
+        !isBackgroundVideoRunning(sid) &&
+        !isBackgroundSpeechRunning(sid)
       ) {
         setSessionStreaming(sid, false);
       }
@@ -1938,17 +2051,13 @@ export default function ChatPanel() {
           } else if (sessionHasPendingImage(loaded.messages)) {
             setSessionStreaming(activeId, true);
           }
-        setSessions((prev) => {
-          const next = prev.map((row) => (row.id === activeId ? loaded : row));
-          sessionsRef.current = next;
-          return next;
-        });
+        applyLoadedSessionMessages(activeId, loaded);
       });
     } else {
       setMessages(s.messages);
       setMessagesHasOlder(false);
     }
-  }, [activeId, sessions, scrollChatToBottom, persistSessions, syncScrollPinFromContainer]);
+  }, [activeId, sessions, scrollChatToBottom, applyLoadedSessionMessages, syncScrollPinFromContainer]);
 
   useEffect(() => {
     const id = requestAnimationFrame(() => syncScrollPinFromContainer());
@@ -2151,12 +2260,7 @@ export default function ChatPanel() {
         if (activeIdRef.current !== id) return;
         setMessages(loaded.messages);
         setMessagesHasOlder((loaded.messageCount ?? 0) > loaded.messages.length);
-        patchDefaultTitleFromMessages(id, loaded.messages);
-        setSessions((prev) => {
-          const next = prev.map((row) => (row.id === id ? loaded : row));
-          sessionsRef.current = next;
-          return next;
-        });
+        applyLoadedSessionMessages(id, loaded);
       });
     } else {
       setMessages(s.messages);
@@ -2167,6 +2271,93 @@ export default function ChatPanel() {
 
   function selectSession(id: string) {
     activateSessionFromRef(id);
+  }
+
+  useEffect(() => {
+    function onReplyReadyFocus(ev: Event) {
+      const detail = (ev as CustomEvent<{ sessionId?: string }>).detail;
+      const sid = typeof detail?.sessionId === "string" ? detail.sessionId.trim() : "";
+      if (!sid) return;
+      activateSessionFromRef(sid);
+    }
+    window.addEventListener(REPLY_READY_FOCUS_EVENT, onReplyReadyFocus as EventListener);
+    return () => window.removeEventListener(REPLY_READY_FOCUS_EVENT, onReplyReadyFocus as EventListener);
+  }, []);
+
+  function isSuccessfulNotifyContent(content: string): boolean {
+    const text = (content || "").trim();
+    if (!text) return false;
+    if (
+      text === IMAGE_PENDING_MARKER ||
+      text === VIDEO_PENDING_MARKER ||
+      text === SPEECH_PENDING_MARKER
+    ) {
+      return false;
+    }
+    if (text.startsWith("Error:") || text.startsWith("No response from model.")) return false;
+    if (
+      text === "Image generation stopped." ||
+      text === "Speech generation stopped." ||
+      text.startsWith("Image generation timed out") ||
+      text.startsWith("Speech generation timed out") ||
+      text.startsWith("Preparing the")
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  function maybeNotifyReplyReady(sessionId: string, messageKey: string, content: string) {
+    if (readOnly) return;
+    if (!replyNotifyPrefsRef.current.away) return;
+    if (!isSuccessfulNotifyContent(content)) return;
+    const session = sessionsRef.current.find((s) => s.id === sessionId);
+    notifyReplyReady({
+      sessionId,
+      activeId: activeIdRef.current,
+      title: session?.title || "Chat",
+      sound: replyNotifyPrefsRef.current.sound,
+      messageKey,
+    });
+  }
+
+  /** After image/video/speech jobs that may finish without throwing on abort. */
+  function maybeNotifyMediaReady(sessionId: string, messageKey?: string, allowRetry = true) {
+    const fromActive =
+      sessionId === activeIdRef.current ? messagesRef.current : undefined;
+    const fromSession = sessionsRef.current.find((s) => s.id === sessionId)?.messages;
+    const msgs = fromActive?.length ? fromActive : fromSession?.length ? fromSession : getSessionMessages(sessionId);
+    let lastAssistant: ChatMessage | undefined;
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      if (msgs[i].role === "assistant") {
+        lastAssistant = msgs[i];
+        break;
+      }
+    }
+    if (!lastAssistant) return;
+    const content = lastAssistant.content || "";
+    const stillPending =
+      content === IMAGE_PENDING_MARKER ||
+      content === VIDEO_PENDING_MARKER ||
+      content === SPEECH_PENDING_MARKER;
+    if (stillPending) {
+      // Image/speech sync may land in sessionsRef a tick after the job resolves.
+      if (allowRetry) {
+        window.setTimeout(() => maybeNotifyMediaReady(sessionId, messageKey, false), 400);
+      }
+      return;
+    }
+    const mediaOk =
+      content.startsWith(IMAGE_MESSAGE_PREFIX) ||
+      content.startsWith(VIDEO_MESSAGE_PREFIX) ||
+      content.startsWith(SPEECH_MESSAGE_PREFIX);
+    if (!mediaOk) return;
+    const key =
+      (messageKey || "").trim() ||
+      lastAssistant.clientMessageId ||
+      lastAssistant.id ||
+      `${sessionId}:media:${lastAssistant.receivedAt ?? Date.now()}`;
+    maybeNotifyReplyReady(sessionId, key, content);
   }
 
   function startNewChat() {
@@ -2281,18 +2472,23 @@ export default function ChatPanel() {
       setRenamingTitle("");
       return;
     }
-    persistSessions((prev) =>
-      prev.map((s) =>
-        s.id === sid
-          ? {
-              ...s,
-              title,
-              titleLocked: true,
-              updatedAt: Date.now(),
-            }
-          : s,
-      ),
+    persistSessions(
+      (prev) =>
+        prev.map((s) =>
+          s.id === sid
+            ? {
+                ...s,
+                title,
+                titleLocked: true,
+                updatedAt: Date.now(),
+              }
+            : s,
+        ),
+      { debounce: false, metadataSessionIds: [sid] },
     );
+    if (!sessionPrivateMode(sid)) {
+      void pushSessionMetadataToServer(sid).catch(() => {});
+    }
     setRenamingSessionId(null);
     setRenamingTitle("");
   }
@@ -2550,7 +2746,7 @@ export default function ChatPanel() {
         ) : (
           <button
             type="button"
-            className={`alpha-router-history-item${s.id === activeId ? " active" : ""}${isSelected ? " is-selected" : ""}${streamingSessions[s.id] || isBackgroundImageRunning(s.id) || isBackgroundVideoRunning(s.id) ? " is-streaming" : ""}`}
+            className={`alpha-router-history-item${s.id === activeId ? " active" : ""}${isSelected ? " is-selected" : ""}${streamingSessions[s.id] || isBackgroundImageRunning(s.id) || isBackgroundVideoRunning(s.id) || isBackgroundSpeechRunning(s.id) ? " is-streaming" : ""}`}
             onClick={() => selectSession(s.id)}
           >
             {s.privateMode ? (
@@ -2558,7 +2754,7 @@ export default function ChatPanel() {
                 <PrivateModeLockIcon className="alpha-router-history-item__lock-icon" size={14} />
               </span>
             ) : null}
-            {streamingSessions[s.id] || isBackgroundImageRunning(s.id) || isBackgroundVideoRunning(s.id) ? (
+            {streamingSessions[s.id] || isBackgroundImageRunning(s.id) || isBackgroundVideoRunning(s.id) || isBackgroundSpeechRunning(s.id) ? (
               <span className="alpha-router-history-item__busy" title="Generating…" aria-hidden />
             ) : null}
             {sessionDisplayTitle(s)}
@@ -2645,9 +2841,13 @@ export default function ChatPanel() {
     persistSessionPrimaryModel(id);
   }
 
-  /** Add Model: append for multi-model UI (blocked while Image/Video Generation is on). */
+  /** Add Model: append for multi-model UI (blocked while media generation is on). */
   function appendModelSelection(id: string) {
-    if (chatToolsRef.current.imageGeneration || chatToolsRef.current.videoGeneration) {
+    if (
+      chatToolsRef.current.imageGeneration ||
+      chatToolsRef.current.videoGeneration ||
+      chatToolsRef.current.speechGeneration
+    ) {
       // Media generation is single-model only — Add Model replaces the primary.
       replaceModelSelection(id);
       return;
@@ -2693,12 +2893,26 @@ export default function ChatPanel() {
     return resolveConcreteVideoModel(models, candidate);
   }
 
+  function resolveSpeechGenerationModel(candidate: Model): Model {
+    if (isAutoRouterModel(candidate)) return candidate;
+    return resolveConcreteSpeechModel(models, candidate);
+  }
+
   function willRoutePromptToVideoGeneration(tools: ChatToolsState, primaryModel: Model): boolean {
     if (!tools.videoGeneration) return false;
     const turnModel = resolveVideoGenerationModel(primaryModel);
     return shouldRouteToVideoGeneration({
       videoGenerationEnabled: true,
       modelSupportsVideo: modelSupportsVideos(turnModel, models),
+    });
+  }
+
+  function willRoutePromptToSpeechGeneration(tools: ChatToolsState, primaryModel: Model): boolean {
+    if (!tools.speechGeneration) return false;
+    const turnModel = resolveSpeechGenerationModel(primaryModel);
+    return shouldRouteToSpeechGeneration({
+      speechGenerationEnabled: true,
+      modelSupportsSpeech: modelSupportsSpeech(turnModel, models),
     });
   }
 
@@ -2750,7 +2964,7 @@ export default function ChatPanel() {
       includeUserMessage?: boolean;
     },
     privateMode = false,
-  ): Promise<string> {
+  ): Promise<{ content: string; requestLogId?: number }> {
     const res = await authFetch("/api/chat/completions", {
       method: "POST",
       headers: {
@@ -2780,6 +2994,7 @@ export default function ChatPanel() {
     const decoder = new TextDecoder();
     let assistant = "";
     let buffer = "";
+    let requestLogId: number | undefined;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -2801,6 +3016,10 @@ export default function ChatPanel() {
                 : json.error?.message || JSON.stringify(json.error);
             throw new Error(errMsg);
           }
+          const metaLogId = json?.alpha_router?.request_log_id;
+          if (typeof metaLogId === "number" && Number.isFinite(metaLogId)) {
+            requestLogId = metaLogId;
+          }
           const delta = json.choices?.[0]?.delta?.content;
           if (delta) {
             assistant += delta;
@@ -2812,7 +3031,45 @@ export default function ChatPanel() {
         }
       }
     }
-    return assistant;
+    return { content: assistant, ...(requestLogId != null ? { requestLogId } : {}) };
+  }
+
+  async function openMessageCostDetails(requestLogId: number) {
+    setCostDetailsLog({
+      id: requestLogId,
+      request_time: "",
+      username: "",
+      model_id: "",
+      prompt_language: "",
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_cost_usd: 0,
+      response_time_ms: 0,
+      source_ip: "",
+      success: true,
+    });
+    setCostDetails(null);
+    setCostDetailsError("");
+    setCostDetailsLoading(true);
+    try {
+      const [log, details] = await Promise.all([
+        fetchOwnedRequestLog(requestLogId),
+        fetchOwnedRequestLogCostDetails(requestLogId),
+      ]);
+      setCostDetailsLog(log);
+      setCostDetails(details);
+    } catch (err) {
+      setCostDetailsError(err instanceof Error ? err.message : "Failed to load cost details");
+    } finally {
+      setCostDetailsLoading(false);
+    }
+  }
+
+  function closeMessageCostDetails() {
+    setCostDetailsLog(null);
+    setCostDetails(null);
+    setCostDetailsError("");
+    setCostDetailsLoading(false);
   }
 
   type TextTurnPersistCtx = {
@@ -2876,6 +3133,28 @@ export default function ChatPanel() {
       if (out.length >= MAX_MULTI_MODELS) break;
     }
     return out.length ? out : [primary];
+  }
+
+  function isDedicatedMediaModel(m?: Model | null): boolean {
+    if (!m || isAutoRouterModel(m)) return false;
+    if (m.is_video_model || m.supports_text_to_video) return true;
+    if (m.is_speech_model || m.supports_text_to_speech) return true;
+    // Pure image generators often cannot run chat_title completions.
+    if ((m.is_image_model || m.supports_text_to_image) && !m.supports_vision) return true;
+    return false;
+  }
+
+  function resolveSessionTitleModelId(mediaModelId?: string): string {
+    const preferred = resolveDefaultModelPreference(models, defaultModel);
+    if (preferred) {
+      const preferredModel = models.find((m) => m.id === preferred);
+      if (preferredModel && !isDedicatedMediaModel(preferredModel)) return preferred;
+    }
+    const auto = models.find(isAutoRouterModel);
+    if (auto) return auto.id;
+    const textModel = models.find((m) => !isDedicatedMediaModel(m));
+    if (textModel) return textModel.id;
+    return (mediaModelId || "").trim();
   }
 
   function friendlyTurnError(err: unknown): string {
@@ -2949,12 +3228,61 @@ export default function ChatPanel() {
     const promptText = promptTextFromUserContent(userContent);
     const allowMediaRoute = options?.allowImageRoute !== false;
 
+    // Speech wins over video/image/text when its tool is on for this turn.
+    if (allowMediaRoute && willRoutePromptToSpeechGeneration(turnTools, primaryModel)) {
+      const speechModel = resolveSpeechGenerationModel(primaryModel);
+      const titleModelId = resolveSessionTitleModelId(speechModel.id);
+      const speechVoice = resolveSpeechVoiceForModel(speechModel, turnTools.speechVoice);
+      if (speechVoice !== turnTools.speechVoice) {
+        updateChatTools({ ...turnTools, speechVoice });
+      }
+      const speechAssistantId = newClientMessageId();
+      const pendingMsgs: ChatMessage[] = [
+        ...historyForApi,
+        {
+          role: "assistant",
+          content: SPEECH_PENDING_MARKER,
+          clientMessageId: speechAssistantId,
+        },
+      ];
+      flushSync(() => updateSessionMessages(sid, pendingMsgs));
+      const privateMode = sessionPrivateMode(sid);
+      try {
+        await syncSessionMessagesToServer(sid, pendingMsgs);
+        await runBackgroundSpeechGeneration({
+          sessionId: sid,
+          localMessages: historyForApi,
+          text: promptText,
+          modelId: speechModel.id,
+          privateMode,
+          voice: speechVoice,
+          format: turnTools.speechFormat,
+          speed: turnTools.speechSpeed,
+          assistantClientMessageId: speechAssistantId,
+        });
+        setChatError("");
+        deferSessionTitle(sid, titleModelId, getSessionMessages(sid));
+        maybeNotifyMediaReady(sid, speechAssistantId);
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setChatError(friendlyTurnError(err));
+        void scheduleSessionTitle(sid, titleModelId, getSessionMessages(sid));
+      }
+      return;
+    }
+
     // Video wins over both image and text when its tool is on for this turn.
     if (allowMediaRoute && willRoutePromptToVideoGeneration(turnTools, primaryModel)) {
       const videoModel = resolveVideoGenerationModel(primaryModel);
+      const titleModelId = resolveSessionTitleModelId(videoModel.id);
+      const videoAssistantId = newClientMessageId();
       const pendingMsgs: ChatMessage[] = [
         ...historyForApi,
-        { role: "assistant", content: VIDEO_PENDING_MARKER, clientMessageId: newClientMessageId() },
+        {
+          role: "assistant",
+          content: VIDEO_PENDING_MARKER,
+          clientMessageId: videoAssistantId,
+        },
       ];
       flushSync(() => updateSessionMessages(sid, pendingMsgs));
       const privateMode = sessionPrivateMode(sid);
@@ -2974,14 +3302,17 @@ export default function ChatPanel() {
           resolution: turnTools.videoResolution,
           aspectRatio: turnTools.videoAspectRatio,
           generateAudio: turnTools.videoGenerateAudio,
+          assistantClientMessageId: videoAssistantId,
           onUpdate: (msgs) => updateSessionMessages(sid, msgs),
           getMessages: () => getSessionMessages(sid),
         });
         setChatError("");
-        deferSessionTitle(sid, videoModel.id, getSessionMessages(sid));
+        deferSessionTitle(sid, titleModelId, getSessionMessages(sid));
+        maybeNotifyMediaReady(sid, videoAssistantId);
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
-        void scheduleSessionTitle(sid, videoModel.id, getSessionMessages(sid));
+        setChatError(friendlyTurnError(err));
+        void scheduleSessionTitle(sid, titleModelId, getSessionMessages(sid));
       }
       return;
     }
@@ -3040,9 +3371,14 @@ export default function ChatPanel() {
         }
         return;
       }
+      const imageAssistantId = newClientMessageId();
       const pendingMsgs: ChatMessage[] = [
         ...historyForApi,
-        { role: "assistant", content: IMAGE_PENDING_MARKER, clientMessageId: newClientMessageId() },
+        {
+          role: "assistant",
+          content: IMAGE_PENDING_MARKER,
+          clientMessageId: imageAssistantId,
+        },
       ];
       flushSync(() => updateSessionMessages(sid, pendingMsgs));
       try {
@@ -3057,12 +3393,15 @@ export default function ChatPanel() {
           imageAspectPreset: turnTools.imageAspectRatio,
           imageCustomAspectRatio: turnTools.imageCustomAspectRatio,
           imageCustomSize: turnTools.imageCustomSize,
+          assistantClientMessageId: imageAssistantId,
         });
         setChatError("");
+        maybeNotifyMediaReady(sid, imageAssistantId);
+        const titleModelId = resolveSessionTitleModelId(turnModel.id);
         if (sessionPrivateMode(sid)) {
           const local = sessionsRef.current.find((s) => s.id === sid);
           if (local) {
-            deferSessionTitle(sid, turnModel.id, local.messages);
+            deferSessionTitle(sid, titleModelId, local.messages);
           }
         } else {
           const session = await fetchSessionWithMessages(sid);
@@ -3075,15 +3414,17 @@ export default function ChatPanel() {
                   ? local.messages
                   : session.messages;
             flushSync(() => updateSessionMessages(sid, msgs));
-            deferSessionTitle(sid, turnModel.id, msgs);
+            deferSessionTitle(sid, titleModelId, msgs);
           }
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
+        setChatError(friendlyTurnError(err));
+        const titleModelId = resolveSessionTitleModelId(turnModel.id);
         if (sessionPrivateMode(sid)) {
           const local = sessionsRef.current.find((s) => s.id === sid);
           if (local) {
-            void scheduleSessionTitle(sid, turnModel.id, local.messages);
+            void scheduleSessionTitle(sid, titleModelId, local.messages);
           }
         } else {
           const session = await fetchSessionWithMessages(sid);
@@ -3094,7 +3435,7 @@ export default function ChatPanel() {
               session.messages,
             );
             flushSync(() => updateSessionMessages(sid, msgs));
-            void scheduleSessionTitle(sid, turnModel.id, msgs);
+            void scheduleSessionTitle(sid, titleModelId, msgs);
           }
         }
       }
@@ -3130,7 +3471,11 @@ export default function ChatPanel() {
       userMsg,
     );
 
-    const patchAssistantInSession = (content: string, receivedAt?: number) => {
+    const patchAssistantInSession = (
+      content: string,
+      receivedAt?: number,
+      requestLogId?: number,
+    ) => {
       const current = getSessionMessages(sid);
       const idx = current.findIndex((m) => m.clientMessageId === assistantClientMessageId);
       const assistantMsg: ChatMessage = {
@@ -3140,6 +3485,7 @@ export default function ChatPanel() {
         modelId: primaryModel.id,
         modelName: primaryModel.name,
         ...(receivedAt != null ? { receivedAt } : {}),
+        ...(requestLogId != null ? { requestLogId } : {}),
       };
       if (idx >= 0) {
         const next = [...current];
@@ -3150,7 +3496,7 @@ export default function ChatPanel() {
     };
 
     const useServerPersist = !sessionPrivateMode(sid);
-    const assistant = await streamTextCompletion(
+    const streamed = await streamTextCompletion(
       primaryModel.id,
       apiHistory,
       primaryModel,
@@ -3173,9 +3519,10 @@ export default function ChatPanel() {
       sessionPrivateMode(sid),
     );
     const receivedAt = Date.now();
-    const finalContent = assistant.trim() ? assistant : emptyReply;
-    const finalMsgs = patchAssistantInSession(finalContent, receivedAt);
+    const finalContent = streamed.content.trim() ? streamed.content : emptyReply;
+    const finalMsgs = patchAssistantInSession(finalContent, receivedAt, streamed.requestLogId);
     applyMessages(sid, finalMsgs);
+    maybeNotifyReplyReady(sid, assistantClientMessageId, finalContent);
     if (useServerPersist && !options?.skipReconcile) {
       void fetchSessionWithMessages(sid).then((remote) => {
         if (!remote?.messages.length) return;
@@ -3280,6 +3627,54 @@ export default function ChatPanel() {
         setSelectedModelIds((prev) => (prev.length <= 1 ? prev : [primary]));
       }
     }
+    if (next.speechGeneration) {
+      const current = models.find((m) => m.id === model);
+      if (!current || !modelSupportsSpeech(current, models)) {
+        const fallback = findSpeechGenerationFallbackModel(models);
+        if (fallback) {
+          const remappedVoice = resolveSpeechVoiceForModel(fallback, next.speechVoice);
+          if (remappedVoice !== next.speechVoice) {
+            const withVoice = { ...next, speechVoice: remappedVoice };
+            setChatTools(withVoice);
+            if (sid) {
+              persistSessions(
+                (prev) =>
+                  prev.map((s) =>
+                    s.id === sid
+                      ? { ...s, tools: { ...withVoice }, toolsTouched: true, updatedAt: Date.now() }
+                      : s,
+                  ),
+                { debounce: false, metadataSessionIds: [sid] },
+              );
+            }
+          }
+          pickModel(fallback.id);
+          return;
+        }
+        setChatError("No speech-capable model is available. Enable one in Admin → Models.");
+      } else {
+        const remappedVoice = resolveSpeechVoiceForModel(current, next.speechVoice);
+        if (remappedVoice !== next.speechVoice) {
+          const withVoice = { ...next, speechVoice: remappedVoice };
+          setChatTools(withVoice);
+          if (sid) {
+            persistSessions(
+              (prev) =>
+                prev.map((s) =>
+                  s.id === sid
+                    ? { ...s, tools: { ...withVoice }, toolsTouched: true, updatedAt: Date.now() }
+                    : s,
+                ),
+              { debounce: false, metadataSessionIds: [sid] },
+            );
+          }
+        }
+      }
+      const primary = current?.id || model;
+      if (primary) {
+        setSelectedModelIds((prev) => (prev.length <= 1 ? prev : [primary]));
+      }
+    }
     if (next.codeInterpreter) {
       const current = models.find((m) => m.id === model);
       if (current && !modelSupportsCodeInterpreter(current)) {
@@ -3317,6 +3712,7 @@ export default function ChatPanel() {
     if (abortControllersRef.current[sessionId]) return false;
     if (isBackgroundImageRunning(sessionId)) return false;
     if (isBackgroundVideoRunning(sessionId)) return false;
+    if (isBackgroundSpeechRunning(sessionId)) return false;
     if (streamingSessionsRef.current[sessionId]) return false;
     return !sessionHasInFlightGeneration(sessionMessagesForQueue(sessionId));
   }
@@ -3325,6 +3721,7 @@ export default function ChatPanel() {
     if (abortControllersRef.current[sessionId]) return true;
     if (isBackgroundImageRunning(sessionId)) return true;
     if (isBackgroundVideoRunning(sessionId)) return true;
+    if (isBackgroundSpeechRunning(sessionId)) return true;
     if (streamingSessionsRef.current[sessionId]) return true;
     return sessionHasInFlightGeneration(sessionMessagesForQueue(sessionId));
   }
@@ -3334,6 +3731,7 @@ export default function ChatPanel() {
     if (abortControllersRef.current[sessionId]) return;
     if (isBackgroundImageRunning(sessionId)) return;
     if (isBackgroundVideoRunning(sessionId)) return;
+    if (isBackgroundSpeechRunning(sessionId)) return;
     if (sessionHasInFlightGeneration(sessionMessagesForQueue(sessionId))) return;
     setSessionStreaming(sessionId, false);
   }
@@ -3525,6 +3923,7 @@ export default function ChatPanel() {
 
     stopBackgroundImageGeneration(sid);
     stopBackgroundVideoGeneration(sid);
+    stopBackgroundSpeechGeneration(sid);
     const controller = abortControllersRef.current[sid];
     if (controller) {
       controller.abort();
@@ -3536,6 +3935,8 @@ export default function ChatPanel() {
       applyMessages(sid, buildStoppedImageMessages(localMsgs));
     } else if (localMsgs.some((m) => m.content === VIDEO_PENDING_MARKER)) {
       applyMessages(sid, buildStoppedVideoMessages(localMsgs));
+    } else if (localMsgs.some((m) => m.content === SPEECH_PENDING_MARKER)) {
+      applyMessages(sid, buildStoppedSpeechMessages(localMsgs));
     } else {
       let lastUserIdx = -1;
       for (let i = 0; i < localMsgs.length; i += 1) {
@@ -3558,6 +3959,7 @@ export default function ChatPanel() {
     if (!sessionPrivateMode(sid) && isChatSessionOnServer(sid)) {
       const hadPendingImage = localMsgs.some((m) => m.content === IMAGE_PENDING_MARKER);
       const hadPendingVideo = localMsgs.some((m) => m.content === VIDEO_PENDING_MARKER);
+      const hadPendingSpeech = localMsgs.some((m) => m.content === SPEECH_PENDING_MARKER);
       const refreshAfterStop = () => {
         void pollSessionMessagesFromServer(sid, { limit: 50 })
           .then(({ messages: remoteMsgs, revision }) => {
@@ -3587,10 +3989,12 @@ export default function ChatPanel() {
       void cancelStreamingReplyOnServer(sid)
         .catch((err) => reportSyncError(err, sid))
         .finally(() => {
-          if (hadPendingImage || hadPendingVideo) {
+          if (hadPendingImage || hadPendingVideo || hadPendingSpeech) {
             const stoppedText = hadPendingImage
               ? "Image generation stopped."
-              : "Video generation stopped.";
+              : hadPendingVideo
+              ? "Video generation stopped."
+              : "Speech generation stopped.";
             void patchLastSessionMessageOnServer(sid, stoppedText, {
               receivedAt: Date.now(),
             })
@@ -3692,12 +4096,15 @@ export default function ChatPanel() {
       prevMsgs,
     );
     const willRouteToVideo = willRoutePromptToVideoGeneration(toolsForTurn, validModel);
+    const willRouteToSpeech = willRoutePromptToSpeechGeneration(toolsForTurn, validModel);
     // Media generation is always single-model (primary only).
     const turnModels =
       willRouteToImage ||
       willRouteToVideo ||
+      willRouteToSpeech ||
       toolsForTurn.imageGeneration ||
-      toolsForTurn.videoGeneration
+      toolsForTurn.videoGeneration ||
+      toolsForTurn.speechGeneration
         ? [validModel]
         : resolveTurnModels(validModel);
     const controller = new AbortController();
@@ -3705,8 +4112,8 @@ export default function ChatPanel() {
     setSessionStreaming(sessionId, true);
     setTurnPhase(sessionId, toolsForTurn.webSearch ? "searching" : "preparing");
 
-    // Image and video generation stay primary-model only.
-    if (willRouteToImage || willRouteToVideo) {
+    // Image / video / speech generation stay primary-model only.
+    if (willRouteToImage || willRouteToVideo || willRouteToSpeech) {
       const assistantClientMessageId = newClientMessageId();
       const next: ChatMessage[] = [
         ...prevMsgs,
@@ -3995,6 +4402,39 @@ export default function ChatPanel() {
     }
   }
 
+  async function downloadSpeech(url: string, format = "mp3") {
+    const ext = (format || "mp3").replace(/[^a-z0-9]/gi, "") || "mp3";
+    const triggerDownload = (href: string) => {
+      const safeHref = safeBrowserUrl(href, "download");
+      if (!safeHref) throw new Error("Blocked unsafe audio URL.");
+      const a = document.createElement("a");
+      a.href = safeHref;
+      a.download = `alpha-router-generated-speech.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    };
+
+    try {
+      if (isPrivateBlobRef(url)) {
+        const blobUrl = await resolvePrivateBlobRef(url);
+        triggerDownload(blobUrl);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+        return;
+      }
+      if (isAlphaRouterMediaFileUrl(url)) {
+        const blob = await fetchAuthenticatedMediaBlob(url);
+        const blobUrl = URL.createObjectURL(blob);
+        triggerDownload(blobUrl);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+        return;
+      }
+      triggerDownload(url);
+    } catch (err) {
+      setChatError(formatApiError(err));
+    }
+  }
+
   async function openVideoFullSize(url: string) {
     const openByAnchor = (href: string) => {
       if (!openSafeUrlInNewTab(href, "media")) {
@@ -4096,11 +4536,13 @@ export default function ChatPanel() {
         routing: payload.routing,
         replaceIndex: msgIndex,
         fullMessages: messages,
+        assistantClientMessageId: messages[msgIndex]?.clientMessageId,
       });
       if (!sessionPrivateMode(sid)) {
         await syncSessionsFromServer(sid);
       }
       setChatError("");
+      maybeNotifyMediaReady(sid, messages[msgIndex]?.clientMessageId);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setChatError(message);
@@ -4159,8 +4601,10 @@ export default function ChatPanel() {
           routing: imageAfterPrompt.routing,
           replaceIndex: index + 1,
           fullMessages: messages,
+          assistantClientMessageId: messages[index + 1]?.clientMessageId,
         });
         if (!sessionPrivateMode(sid)) await syncSessionsFromServer(sid);
+        maybeNotifyMediaReady(sid, messages[index + 1]?.clientMessageId);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         setChatError(message);
@@ -4192,11 +4636,14 @@ export default function ChatPanel() {
       messages.slice(0, index),
     );
     const willRouteToVideo = willRoutePromptToVideoGeneration(toolsForRetry, validModel);
+    const willRouteToSpeech = willRoutePromptToSpeechGeneration(toolsForRetry, validModel);
     const turnModels =
       willRouteToImage ||
       willRouteToVideo ||
+      willRouteToSpeech ||
       toolsForRetry.imageGeneration ||
-      toolsForRetry.videoGeneration
+      toolsForRetry.videoGeneration ||
+      toolsForRetry.speechGeneration
         ? [validModel]
         : resolveTurnModels(validModel);
     const base = messages.slice(0, index);
@@ -4213,7 +4660,7 @@ export default function ChatPanel() {
     setSessionStreaming(sid, true);
     setChatError("");
 
-    if (willRouteToImage || willRouteToVideo) {
+    if (willRouteToImage || willRouteToVideo || willRouteToSpeech) {
       const assistantClientMessageId = newClientMessageId();
       const next: ChatMessage[] = [
         ...base,
@@ -4593,7 +5040,9 @@ export default function ChatPanel() {
     if (!validModel) return;
     // Video prompts want the same visual-prompt phrasing as image prompts.
     const assistContext =
-      chatTools.imageGeneration || chatTools.videoGeneration ? "image" : "chat";
+      chatTools.imageGeneration || chatTools.videoGeneration || chatTools.speechGeneration
+        ? "image"
+        : "chat";
     setTranslateToEngBusy(true);
     setChatError("");
     try {
@@ -4985,23 +5434,28 @@ export default function ChatPanel() {
             !models.length ||
             (!chatTools.imageGeneration &&
               !chatTools.videoGeneration &&
+              !chatTools.speechGeneration &&
               selectedModelIds.length >= MAX_MULTI_MODELS)
           }
           aria-label={
-            chatTools.videoGeneration
-              ? "Change video model"
-              : chatTools.imageGeneration
-                ? "Change image model"
-                : "Add model for multi-model response"
+            chatTools.speechGeneration
+              ? "Change speech model"
+              : chatTools.videoGeneration
+                ? "Change video model"
+                : chatTools.imageGeneration
+                  ? "Change image model"
+                  : "Add model for multi-model response"
           }
           title={
-            chatTools.videoGeneration
-              ? "Video Generation uses one model — picking another replaces it"
-              : chatTools.imageGeneration
-                ? "Image Generation uses one model — picking another replaces it"
-                : selectedModelIds.length >= MAX_MULTI_MODELS
-                  ? `Maximum ${MAX_MULTI_MODELS} models`
-                  : "Add model"
+            chatTools.speechGeneration
+              ? "Text to Speech uses one model — picking another replaces it"
+              : chatTools.videoGeneration
+                ? "Video Generation uses one model — picking another replaces it"
+                : chatTools.imageGeneration
+                  ? "Image Generation uses one model — picking another replaces it"
+                  : selectedModelIds.length >= MAX_MULTI_MODELS
+                    ? `Maximum ${MAX_MULTI_MODELS} models`
+                    : "Add model"
           }
         >
           <span aria-hidden>+</span>
@@ -5105,6 +5559,21 @@ export default function ChatPanel() {
                       </div>
                     );
                   }
+                  if (m.content === SPEECH_PENDING_MARKER) {
+                    return (
+                      <div className="alpha-router-generated-block alpha-router-generated-block--pending">
+                        <div
+                          className="alpha-router-generated-audio alpha-router-generated-audio--loading"
+                          role="status"
+                          aria-live="polite"
+                          aria-label="Generating audio"
+                        >
+                          <span className="alpha-router-image-loading__spinner" aria-hidden />
+                          <span className="alpha-router-image-loading__label">Generating speech…</span>
+                        </div>
+                      </div>
+                    );
+                  }
                   const imagePayload = readImageMessage(m.content);
                   if (imagePayload) {
                     return (
@@ -5125,6 +5594,23 @@ export default function ChatPanel() {
                           url={videoPayload.url}
                           className="alpha-router-generated-video"
                           title={videoPayload.prompt || "Generated video"}
+                        />
+                      </div>
+                    );
+                  }
+                  const speechPayload = readSpeechMessage(m.content);
+                  if (speechPayload) {
+                    return (
+                      <div className="alpha-router-generated-block">
+                        <AuthenticatedAudio
+                          url={speechPayload.url}
+                          title={speechPayload.prompt || "Generated speech"}
+                          meta={{
+                            voice: speechPayload.voice,
+                            format: speechPayload.format,
+                            durationSeconds: speechPayload.duration_seconds,
+                            characters: speechPayload.characters,
+                          }}
                         />
                       </div>
                     );
@@ -5173,7 +5659,20 @@ export default function ChatPanel() {
                 })()}
               </div>
               <div className="alpha-router-msg-actions">
-                <MessageInfoButton title={chatMessageInfoTitle(m, m.role, messages, i)} />
+                {m.role === "assistant" &&
+                typeof m.requestLogId === "number" &&
+                m.content !== IMAGE_PENDING_MARKER &&
+                m.content !== VIDEO_PENDING_MARKER &&
+                m.content !== SPEECH_PENDING_MARKER &&
+                !m.streaming &&
+                !(isSessionStreaming && i === messages.length - 1) ? (
+                  <MessageInfoButton
+                    title="Cost details"
+                    onClick={() => void openMessageCostDetails(m.requestLogId!)}
+                  />
+                ) : (
+                  <MessageInfoButton title={chatMessageInfoTitle(m, m.role, messages, i)} />
+                )}
                 {(() => {
                   const videoPayload = readVideoMessage(m.content);
                   if (!videoPayload?.url) return null;
@@ -5198,6 +5697,21 @@ export default function ChatPanel() {
                         <OpenFullSizeIcon />
                       </button>
                     </>
+                  );
+                })()}
+                {(() => {
+                  const speechPayload = readSpeechMessage(m.content);
+                  if (!speechPayload?.url) return null;
+                  return (
+                    <button
+                      type="button"
+                      className="alpha-router-msg-action-btn alpha-router-msg-action-btn--icon"
+                      title="Download"
+                      aria-label="Download audio"
+                      onClick={() => void downloadSpeech(speechPayload.url, speechPayload.format)}
+                    >
+                      <DownloadIcon />
+                    </button>
                   );
                 })()}
                 {(() => {
@@ -5280,6 +5794,7 @@ export default function ChatPanel() {
                     !activePrivateMode &&
                     m.content !== IMAGE_PENDING_MARKER &&
                     m.content !== VIDEO_PENDING_MARKER &&
+                    m.content !== SPEECH_PENDING_MARKER &&
                     !m.streaming &&
                     !(isSessionStreaming && i === messages.length - 1) ? (
                       <>
@@ -5495,6 +6010,7 @@ export default function ChatPanel() {
                     onPrivateModeChange={togglePrivateMode}
                     onClose={() => setToolsMenuOpen(false)}
                     videoCapabilities={selectedModels[0]}
+                    speechCapabilities={selectedModels[0]}
                   />
                   </div>
                   <button
@@ -5614,6 +6130,15 @@ export default function ChatPanel() {
         onMove={(folderId) => {
           if (movingSessionIds?.length) moveSessionsToFolder(movingSessionIds, folderId);
         }}
+      />
+
+      <RequestLogCostDetailsModal
+        open={!!costDetailsLog}
+        log={costDetailsLog}
+        details={costDetails}
+        loading={costDetailsLoading}
+        error={costDetailsError}
+        onClose={closeMessageCostDetails}
       />
 
     </div>

@@ -142,6 +142,16 @@ def estimate_metered_service_hold(service_type: str) -> float:
     return _clamp_hold(fallback, fallback)
 
 
+def estimate_speech_hold(ai_model: AIModel | None, *, characters: int = 1) -> float:
+    """Conservative hold for synchronous text-to-speech generation."""
+    del ai_model
+    settings = get_settings()
+    base = float(settings.budget_audio_fallback_hold_usd or 0.10)
+    # Scale linearly with character count; 1000 chars ~= one base unit.
+    factor = max(1.0, (max(1, int(characters or 1)) / 1000.0))
+    return _clamp_hold(base * factor, base)
+
+
 def reservation_key(body: dict, *, operation: str) -> str:
     explicit = (
         body.get("_idempotency_key")

@@ -159,6 +159,11 @@ class Settings(BaseSettings):
     cost_reconciliation_interval_minutes: int = 30
     cost_reconciliation_batch_size: int = 50
 
+    # Text-to-Speech generation (sync, like images)
+    audio_max_output_bytes: int = 50 * 1024 * 1024
+    speech_max_text_length: int = 5000
+    speech_request_timeout_seconds: int = 120
+
     # Model sync default interval (hours)
     model_sync_interval_hours: int = 6
 

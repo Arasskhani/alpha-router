@@ -44,6 +44,8 @@ class UserPrefsPatchIn(BaseModel):
     language: str | None = None
     voice_recording_language: str | None = None
     persian_font: str | None = None
+    reply_notify_away: bool | None = None
+    reply_notify_sound: bool | None = None
 
 
 class ChatSessionCreateIn(BaseModel):
@@ -96,6 +98,7 @@ class ChatMessageIn(BaseModel):
     sentAt: int | None = None
     receivedAt: int | None = None
     clientMessageId: str | None = None
+    requestLogId: int | None = None
 
 
 class ChatMessagesPostIn(BaseModel):

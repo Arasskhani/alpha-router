@@ -59,6 +59,19 @@ def video_output_limit() -> int:
     )
 
 
+def audio_output_limit() -> int:
+    """Hard ceiling for generated audio (TTS) downloads (bytes)."""
+    from app.config import get_settings
+    from app.services.bounded_io import clamp_limit
+
+    settings = get_settings()
+    return clamp_limit(
+        int(getattr(settings, "audio_max_output_bytes", 0) or (50 * 1024 * 1024)),
+        minimum=512 * 1024,
+        maximum=256 * 1024 * 1024,
+    )
+
+
 def _ext_from_mime(mime: str) -> str:
     m = (mime or "").lower()
     if "png" in m:

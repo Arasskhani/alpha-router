@@ -164,7 +164,7 @@ async def log_image_usage(
     operation: str = "generation",
     budget_reservation_id: str | None = None,
     quantity: int = 1,
-) -> None:
+) -> int | None:
     """Write RequestLog row and apply budget/key usage (same path as chat completions)."""
     model_id = (capture.model_id or "").strip() or "unknown"
     op = (operation or "generation").strip().lower()
@@ -235,7 +235,7 @@ async def log_image_usage(
         if event.quote.final_cost_usd is not None
     )
     client_app = f"{CHAT_CLIENT_APP} (image:{op})"
-    await log_usage(
+    return await log_usage(
         db,
         user_id=user.id,
         username=user.username,

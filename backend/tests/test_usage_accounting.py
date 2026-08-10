@@ -20,16 +20,21 @@ from app.services.provider_reconciliation_service import (
     automatic_reconciliation_providers,
 )
 from app.services.usage_accounting_service import (
+    CONFIDENCE_CALCULATED,
     CONFIDENCE_EXACT,
+    COST_SOURCE_CATALOG,
     COST_SOURCE_CONFIGURED,
     COST_SOURCE_PROVIDER,
+    COST_SOURCE_UNKNOWN,
     capture_usage_event,
     create_configured_pricing_snapshot,
     create_reconciliation_run,
     extract_normalized_usage,
     finish_reconciliation_run,
     persist_usage_operation,
+    quote_usage,
     reconcile_usage_event,
+    NormalizedUsage,
 )
 
 
@@ -459,3 +464,118 @@ async def _idempotent_log_replay_does_not_charge_twice() -> None:
 
 def test_idempotent_log_replay_does_not_charge_twice():
     asyncio.run(_idempotent_log_replay_does_not_charge_twice())
+
+
+def test_openrouter_speech_quotes_prompt_as_usd_per_character():
+    """OpenRouter TTS stores USD/character in pricing.prompt (not speech/audio)."""
+    model = _model(
+        external_id="x-ai/grok-voice-tts-1.0",
+        pricing_raw=json.dumps(
+            {
+                "id": "x-ai/grok-voice-tts-1.0",
+                "architecture": {"output_modalities": ["speech"]},
+                "pricing": {"prompt": "0.000015", "completion": "0"},
+                "supported_voices": ["eve", "ara"],
+            }
+        ),
+    )
+    event = capture_usage_event(
+        None,
+        ai_model=model,
+        provider_type="openrouter",
+        service_type="speech",
+        operation_name="speech:text_to_speech",
+        model_id=model.external_id,
+        quantity=100,
+        unit="character",
+    )
+    assert event.quote.final_cost_usd == pytest.approx(0.0015)
+    assert event.quote.cost_source == COST_SOURCE_CATALOG
+    assert event.quote.cost_confidence == CONFIDENCE_CALCULATED
+    assert any(item.category == "speech" for item in event.quote.line_items)
+
+
+def test_openrouter_video_quotes_cents_per_second_sku():
+    """OpenRouter video SKUs are cents/second and must convert to USD."""
+    model = _model(
+        external_id="runway/gen-4.5",
+        pricing_raw=json.dumps(
+            {
+                "id": "runway/gen-4.5",
+                "pricing": {"prompt": "0", "completion": "0"},
+                "video_generation": {
+                    "pricing_skus": {"cents_per_second_output": "12"},
+                },
+                "video_capabilities": {
+                    "pricing": {"cents_per_second_output": "12"},
+                },
+            }
+        ),
+    )
+    event = capture_usage_event(
+        None,
+        ai_model=model,
+        provider_type="openrouter",
+        service_type="video",
+        operation_name="video:generation",
+        model_id=model.external_id,
+        quantity=4,
+        unit="second",
+    )
+    assert event.quote.final_cost_usd == pytest.approx(0.48)
+    assert event.quote.cost_source == COST_SOURCE_CATALOG
+    assert any(item.category == "video" for item in event.quote.line_items)
+
+
+def test_speech_prompt_fallback_does_not_reprice_chat_tokens_as_characters():
+    """Chat must keep treating pricing.prompt as USD/token, not USD/character."""
+    model = _model(
+        pricing_raw=json.dumps(
+            {
+                "id": "provider/model",
+                "pricing": {"prompt": "0.000001", "completion": "0.000002"},
+            }
+        )
+    )
+    quote = quote_usage(
+        NormalizedUsage(prompt_tokens=1000, completion_tokens=500),
+        ai_model=model,
+        provider_type="openrouter",
+        service_type="llm",
+        model_id=model.external_id,
+    )
+    # Must not be 1000 characters * 0.000001 alone reinterpreted as speech.
+    assert quote.cost_source == COST_SOURCE_CATALOG
+    assert quote.final_cost_usd == pytest.approx(0.002)
+    assert not any(item.category == "speech" for item in quote.line_items)
+    assert any(item.category == "input_tokens" for item in quote.line_items)
+    assert any(item.category == "output_tokens" for item in quote.line_items)
+
+
+def test_image_catalog_pricing_unchanged_by_speech_video_fallbacks():
+    model = _model(
+        pricing_raw=json.dumps(
+            {
+                "id": "provider/image",
+                "pricing": {
+                    "prompt": "0.000015",
+                    "completion": "0",
+                    "image": "0.04",
+                },
+            }
+        )
+    )
+    event = capture_usage_event(
+        None,
+        ai_model=model,
+        provider_type="openrouter",
+        service_type="image",
+        operation_name="image:generation",
+        model_id=model.external_id,
+        quantity=1,
+        unit="image",
+    )
+    assert event.quote.final_cost_usd == pytest.approx(0.04)
+    assert event.quote.cost_source == COST_SOURCE_CATALOG
+    assert any(item.category == "image" for item in event.quote.line_items)
+    assert not any(item.category == "speech" for item in event.quote.line_items)

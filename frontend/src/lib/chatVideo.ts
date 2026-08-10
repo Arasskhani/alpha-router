@@ -35,6 +35,7 @@ type VideoJobResponse = {
   prompt?: string;
   error_message?: string;
   params?: Record<string, unknown>;
+  request_log_id?: number;
 };
 
 export const VIDEO_POLL_INTERVAL_MS = 2500;
@@ -135,6 +136,7 @@ export function buildVideoRequestBody(args: {
   resolution?: string;
   aspectRatio?: string;
   generateAudio?: boolean;
+  assistantClientMessageId?: string;
 }): Record<string, unknown> {
   const operation = args.referenceImage ? "img2vid" : "generation";
   return {
@@ -148,6 +150,9 @@ export function buildVideoRequestBody(args: {
     resolution: args.resolution ?? "720p",
     aspect_ratio: args.aspectRatio ?? "16:9",
     generate_audio: Boolean(args.generateAudio),
+    ...(args.assistantClientMessageId
+      ? { assistant_client_message_id: args.assistantClientMessageId }
+      : {}),
   };
 }
 
@@ -165,7 +170,21 @@ async function pollVideoJob(
     }
     const body = (await res.json()) as VideoJobResponse;
     const status = (body.status || "").toLowerCase();
-    if (status === "completed") return body;
+    if (status === "completed") {
+      // Billing may attach request_log_id a tick after status flips to completed.
+      if (typeof body.request_log_id === "number") return body;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      if (signal.aborted) throw new DOMException("The operation was aborted.", "AbortError");
+      const retry = await authFetch(`/api/videos/jobs/${jobId}`, { signal });
+      if (retry.ok) {
+        try {
+          return (await retry.json()) as VideoJobResponse;
+        } catch {
+          return body;
+        }
+      }
+      return body;
+    }
     if (status === "failed" || status === "cancelled") {
       throw new Error(body.error_message || `Video generation ${status}`);
     }
@@ -185,6 +204,7 @@ export async function runBackgroundVideoGeneration(args: {
   resolution?: string;
   aspectRatio?: string;
   generateAudio?: boolean;
+  assistantClientMessageId?: string;
   onUpdate: (messages: ChatMessage[]) => void;
   getMessages: () => ChatMessage[];
 }): Promise<void> {
@@ -199,6 +219,7 @@ export async function runBackgroundVideoGeneration(args: {
     resolution,
     aspectRatio,
     generateAudio,
+    assistantClientMessageId,
     onUpdate,
     getMessages,
   } = args;
@@ -228,6 +249,7 @@ export async function runBackgroundVideoGeneration(args: {
       resolution,
       aspectRatio,
       generateAudio,
+      assistantClientMessageId,
     });
 
     const res = await authFetch("/api/videos/generate", {
@@ -275,6 +297,10 @@ export async function runBackgroundVideoGeneration(args: {
           : aspectRatio,
     };
 
+    const requestLogId =
+      typeof finished.request_log_id === "number" && Number.isFinite(finished.request_log_id)
+        ? finished.request_log_id
+        : undefined;
     const messages = getMessages().slice();
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       if (messages[i].role === "assistant" && messages[i].content === VIDEO_PENDING_MARKER) {
@@ -284,6 +310,8 @@ export async function runBackgroundVideoGeneration(args: {
           modelId: payload.model,
           receivedAt: Date.now(),
           streaming: false,
+          ...(assistantClientMessageId ? { clientMessageId: assistantClientMessageId } : {}),
+          ...(requestLogId != null ? { requestLogId } : {}),
         };
         break;
       }
@@ -314,7 +342,8 @@ export async function runBackgroundVideoGeneration(args: {
       }
       return;
     }
-    const message = err instanceof Error ? err.message : "Video generation failed";
+    const detail = err instanceof Error ? err.message : "Video generation failed";
+    const message = detail.startsWith("Error:") ? detail : `Error: ${detail}`;
     const messages = getMessages().slice();
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       if (messages[i].role === "assistant" && messages[i].content === VIDEO_PENDING_MARKER) {
@@ -328,6 +357,13 @@ export async function runBackgroundVideoGeneration(args: {
       }
     }
     onUpdate(messages);
+    if (!privateMode) {
+      try {
+        await syncSessionMessages(sessionId, messages);
+      } catch {
+        /* keep local error even if sync fails */
+      }
+    }
     throw err;
   } finally {
     if (activeJobs.get(sessionId) === controller) {

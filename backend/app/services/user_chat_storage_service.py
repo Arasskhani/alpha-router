@@ -26,6 +26,8 @@ from app.services.chat_markers import (
     ATTACHMENT_MESSAGE_PREFIX,
     IMAGE_MESSAGE_PREFIX,
     IMAGE_PENDING_MARKER,
+    SPEECH_MESSAGE_PREFIX,
+    SPEECH_PENDING_MARKER,
     VIDEO_MESSAGE_PREFIX,
     VIDEO_PENDING_MARKER,
 )
@@ -97,7 +99,24 @@ def _default_prefs() -> dict[str, Any]:
         "voice_recording_language": "en",
         # Catalog id from frontend build (public/fonts); empty = system UI font.
         "persian_font": "",
+        # Opt-in: notify when a chat reply finishes while the user is away.
+        "reply_notify_away": False,
+        "reply_notify_sound": True,
     }
+
+
+def _coerce_bool(value: Any, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in ("1", "true", "yes", "on"):
+            return True
+        if token in ("0", "false", "no", "off", ""):
+            return False
+    return default
 
 
 def _normalize_timezone(value: Any) -> str:
@@ -163,6 +182,11 @@ def _normalize_prefs(raw: dict[str, Any] | None) -> dict[str, Any]:
                 # Allow only safe slug characters matching generated font ids.
                 cleaned = "".join(ch for ch in token.lower().replace("_", "-") if ch.isalnum() or ch == "-")
                 base["persian_font"] = cleaned[:64]
+
+    if "reply_notify_away" in raw:
+        base["reply_notify_away"] = _coerce_bool(raw.get("reply_notify_away"), default=False)
+    if "reply_notify_sound" in raw:
+        base["reply_notify_sound"] = _coerce_bool(raw.get("reply_notify_sound"), default=True)
     return base
 
 
@@ -203,6 +227,7 @@ def _message_meta_from_client(msg: dict[str, Any]) -> dict[str, Any]:
         ("sentAt", "sentAt"),
         ("receivedAt", "receivedAt"),
         ("streaming", "streaming"),
+        ("requestLogId", "requestLogId"),
     ):
         if msg.get(key) is not None:
             meta[out] = msg[key]
@@ -227,9 +252,61 @@ def _message_to_client(row: ChatMessage) -> dict[str, Any]:
         out["receivedAt"] = meta["receivedAt"]
     if meta.get("streaming") is not None:
         out["streaming"] = meta["streaming"]
+    request_log_id = meta.get("requestLogId")
+    if request_log_id is not None:
+        try:
+            out["requestLogId"] = int(request_log_id)
+        except (TypeError, ValueError):
+            pass
     if row.client_message_id:
         out["clientMessageId"] = row.client_message_id
     return out
+
+
+async def attach_request_log_id_to_chat_message(
+    db: AsyncSession,
+    user_id: int,
+    session_id: str | None,
+    request_log_id: int,
+    *,
+    client_message_id: str | None = None,
+) -> bool:
+    """Persist requestLogId on an owned assistant message (by client id or trailing row)."""
+    if not session_id or not request_log_id:
+        return False
+    session = await db.get(ChatSession, session_id)
+    if session is None or session.user_id != user_id:
+        return False
+
+    row: ChatMessage | None = None
+    cid = (client_message_id or "").strip()
+    if cid:
+        row = (
+            await db.execute(
+                select(ChatMessage).where(
+                    ChatMessage.session_id == session_id,
+                    ChatMessage.client_message_id == cid,
+                )
+            )
+        ).scalar_one_or_none()
+    if row is None:
+        row = (
+            await db.execute(
+                select(ChatMessage)
+                .where(ChatMessage.session_id == session_id)
+                .order_by(ChatMessage.sequence.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    if row is None or row.role != "assistant":
+        return False
+
+    merged = dict(row.meta) if isinstance(row.meta, dict) else {}
+    merged["requestLogId"] = int(request_log_id)
+    row.meta = merged
+    _bump_session_revision(session)
+    await db.flush()
+    return True
 
 
 def _session_to_client(row: ChatSession, *, include_messages: bool = False, messages: list[dict] | None = None) -> dict[str, Any]:
@@ -701,6 +778,7 @@ async def _try_reconcile_inflight_assistant(
     # when meta incorrectly carries receivedAt (orphan image placeholder).
     if meta.get("receivedAt") is not None and content not in (
         IMAGE_PENDING_MARKER,
+        SPEECH_PENDING_MARKER,
         VIDEO_PENDING_MARKER,
     ):
         return False
@@ -708,6 +786,9 @@ async def _try_reconcile_inflight_assistant(
     age = (dt.datetime.utcnow() - last.created_at).total_seconds()
     force = bool(meta.get("cancelRequested"))
     if content == IMAGE_PENDING_MARKER:
+        if meta.get("receivedAt") is not None or age >= _STALE_IMAGE_PENDING_SEC:
+            force = True
+    if content == SPEECH_PENDING_MARKER:
         if meta.get("receivedAt") is not None or age >= _STALE_IMAGE_PENDING_SEC:
             force = True
     if content == VIDEO_PENDING_MARKER:
@@ -725,7 +806,7 @@ async def _try_reconcile_inflight_assistant(
     if (
         not force
         and content.strip()
-        and content not in (IMAGE_PENDING_MARKER, VIDEO_PENDING_MARKER)
+        and content not in (IMAGE_PENDING_MARKER, SPEECH_PENDING_MARKER, VIDEO_PENDING_MARKER)
         and meta.get("receivedAt") is None
         and meta.get("streaming") is not True
     ):
@@ -735,6 +816,8 @@ async def _try_reconcile_inflight_assistant(
 
     if content == IMAGE_PENDING_MARKER:
         new_content = "Image generation stopped."
+    elif content == SPEECH_PENDING_MARKER:
+        new_content = "Speech generation stopped."
     elif content == VIDEO_PENDING_MARKER:
         new_content = "Video generation stopped."
     elif content.strip():
@@ -1072,6 +1155,83 @@ async def finalize_chat_session_video(
     return False
 
 
+def _build_speech_message(
+    url: str,
+    prompt: str,
+    model: str,
+    *,
+    params: dict[str, Any] | None = None,
+) -> str:
+    payload: dict[str, Any] = {"url": url, "prompt": prompt, "model": model}
+    if params:
+        payload.update({k: v for k, v in params.items() if v is not None})
+    return f"{SPEECH_MESSAGE_PREFIX}{json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}"
+
+
+async def finalize_chat_session_speech(
+    db: AsyncSession,
+    user_id: int,
+    session_id: str,
+    audio_url: str,
+    prompt: str,
+    model: str,
+    *,
+    params: dict[str, Any] | None = None,
+) -> bool:
+    """Replace trailing speech pending marker with the generated audio message (idempotent)."""
+    if not session_id or not audio_url:
+        return False
+
+    session = await db.get(ChatSession, session_id)
+    if session is None or session.user_id != user_id:
+        return False
+
+    last = (
+        await db.execute(
+            select(ChatMessage)
+            .where(ChatMessage.session_id == session_id)
+            .order_by(ChatMessage.sequence.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if last is None or last.role != "assistant":
+        return False
+
+    content = str(last.content or "")
+    speech_content = _build_speech_message(audio_url, prompt, model, params=params)
+    if content == SPEECH_PENDING_MARKER:
+        last.content = speech_content
+        last.meta = {
+            **(last.meta if isinstance(last.meta, dict) else {}),
+            "modelId": model,
+        }
+        session.last_message_at = dt.datetime.utcnow()
+        _bump_session_revision(session)
+        await db.flush()
+        return True
+    if content.startswith(SPEECH_MESSAGE_PREFIX):
+        return True
+    # Fallback (mirrors video): if the pending marker was lost during a refresh,
+    # append the completed speech after its user turn instead of orphaning it.
+    if last.role == "user":
+        await append_session_messages(
+            db,
+            user_id,
+            session_id,
+            [
+                {
+                    "role": "assistant",
+                    "content": speech_content,
+                    "clientMessageId": str(uuid.uuid4()),
+                    "receivedAt": int(time.time() * 1000),
+                    "modelId": model,
+                }
+            ],
+        )
+        return True
+    return False
+
+
 async def update_last_session_message(
     db: AsyncSession,
     user_id: int,
@@ -1132,11 +1292,17 @@ async def cancel_streaming_reply(
 
     meta = dict(last.meta) if isinstance(last.meta, dict) else {}
     content = str(last.content or "")
-    if meta.get("receivedAt") is not None and content != IMAGE_PENDING_MARKER:
+    if meta.get("receivedAt") is not None and content not in (
+        IMAGE_PENDING_MARKER,
+        SPEECH_PENDING_MARKER,
+        VIDEO_PENDING_MARKER,
+    ):
         return _session_to_client(session)
 
     if content == IMAGE_PENDING_MARKER:
         new_content = "Image generation stopped."
+    elif content == SPEECH_PENDING_MARKER:
+        new_content = "Speech generation stopped."
     elif content == VIDEO_PENDING_MARKER:
         new_content = "Video generation stopped."
     elif content.strip():

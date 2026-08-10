@@ -17,6 +17,7 @@ import {
 import { COMMON_TIMEZONES, detectBrowserTimezone } from "../lib/timezones";
 import { BROWSER_EVENT_NAMES } from "../lib/brand";
 import { broadcastChatRefresh } from "../lib/chatLeader";
+import { requestReplyNotifyPermission } from "../lib/replyReadyNotify";
 import Modal from "./Modal";
 import ThemeSegmentedControl from "./ThemeSegmentedControl";
 
@@ -137,6 +138,9 @@ function GeneralPanel({
   const [timezone, setTimezone] = useState("UTC");
   const [voiceLang, setVoiceLang] = useState("en");
   const [persianFont, setPersianFont] = useState("");
+  const [replyNotifyAway, setReplyNotifyAway] = useState(false);
+  const [replyNotifySound, setReplyNotifySound] = useState(true);
+  const [notifyPermissionHint, setNotifyPermissionHint] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -156,6 +160,17 @@ function GeneralPanel({
         setTimezone(tz);
         setVoiceLang(prefs.voice_recording_language === "fa" ? "fa" : "en");
         setPersianFont(normalizePersianFontId(prefs.persian_font));
+        setReplyNotifyAway(!!prefs.reply_notify_away);
+        setReplyNotifySound(prefs.reply_notify_sound !== false);
+        if (
+          prefs.reply_notify_away &&
+          typeof Notification !== "undefined" &&
+          Notification.permission === "denied"
+        ) {
+          setNotifyPermissionHint(
+            "Browser notifications are blocked. You’ll still get an in-app toast when another chat is open.",
+          );
+        }
       } catch (err) {
         if (!cancelled) setError(formatApiError(err));
       } finally {
@@ -166,6 +181,22 @@ function GeneralPanel({
       cancelled = true;
     };
   }, []);
+
+  async function onReplyNotifyAwayChange(checked: boolean) {
+    setReplyNotifyAway(checked);
+    setNotifyPermissionHint("");
+    if (!checked) return;
+    const permission = await requestReplyNotifyPermission();
+    if (permission === "denied") {
+      setNotifyPermissionHint(
+        "Browser notifications are blocked. You’ll still get an in-app toast when another chat is open.",
+      );
+    } else if (permission === "unsupported") {
+      setNotifyPermissionHint(
+        "This browser does not support OS notifications. In-app toasts still work when another chat is open.",
+      );
+    }
+  }
 
   async function onSave(e: FormEvent) {
     e.preventDefault();
@@ -179,6 +210,8 @@ function GeneralPanel({
         language: "en",
         voice_recording_language: voiceLang,
         persian_font: fontId,
+        reply_notify_away: replyNotifyAway,
+        reply_notify_sound: replyNotifySound,
       });
       applyPersianFontToChat(fontId);
       setMessage("Preferences saved.");
@@ -273,6 +306,36 @@ function GeneralPanel({
               </option>
             ))}
           </select>
+        </SettingsRow>
+
+        <SettingsRow
+          title="Chat notification"
+          hint="Only when the tab is in the background or you are in another chat"
+          detail={
+            <>
+              <label className="settings-inline-check">
+                <input
+                  type="checkbox"
+                  checked={replyNotifySound}
+                  disabled={!replyNotifyAway}
+                  onChange={(e) => setReplyNotifySound(e.target.checked)}
+                />
+                <span>Play sound</span>
+              </label>
+              {notifyPermissionHint ? (
+                <p className="settings-row__hint" style={{ margin: "0.45rem 0 0" }}>
+                  {notifyPermissionHint}
+                </p>
+              ) : null}
+            </>
+          }
+        >
+          <input
+            type="checkbox"
+            checked={replyNotifyAway}
+            onChange={(e) => void onReplyNotifyAwayChange(e.target.checked)}
+            aria-label="Notify when a chat finishes only when away"
+          />
         </SettingsRow>
 
         <SettingsRow title="Theme">

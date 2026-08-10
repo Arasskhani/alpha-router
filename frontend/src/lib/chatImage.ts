@@ -19,6 +19,10 @@ import {
 import {
   IMAGE_MESSAGE_PREFIX,
   IMAGE_PENDING_MARKER,
+  SPEECH_MESSAGE_PREFIX,
+  SPEECH_PENDING_MARKER,
+  VIDEO_MESSAGE_PREFIX,
+  VIDEO_PENDING_MARKER,
 } from "./chatMarkers";
 
 export { IMAGE_MESSAGE_PREFIX, IMAGE_PENDING_MARKER } from "./chatMarkers";
@@ -41,6 +45,7 @@ export type ImagePayload = {
 
 type ImageResponse = {
   data?: Array<{ url?: string; b64_json?: string }>;
+  request_log_id?: number;
   size?: string;
   aspect_ratio?: string;
   model?: string;
@@ -223,6 +228,21 @@ function lastAssistantContentLen(messages: ChatMessage[]): number {
 }
 
 /** Prefer the copy with more streamed assistant text when server DB lags behind the client. */
+function mergeRequestLogIds(preferred: ChatMessage[], other: ChatMessage[]): ChatMessage[] {
+  const byClient = new Map<string, number>();
+  for (const msg of [...other, ...preferred]) {
+    if (msg.clientMessageId && typeof msg.requestLogId === "number") {
+      byClient.set(msg.clientMessageId, msg.requestLogId);
+    }
+  }
+  if (!byClient.size) return preferred;
+  return preferred.map((msg) => {
+    if (typeof msg.requestLogId === "number" || !msg.clientMessageId) return msg;
+    const requestLogId = byClient.get(msg.clientMessageId);
+    return requestLogId != null ? { ...msg, requestLogId } : msg;
+  });
+}
+
 export function mergeChatMessagesPreferLocal(
   local: ChatMessage[],
   remote: ChatMessage[],
@@ -232,8 +252,12 @@ export function mergeChatMessagesPreferLocal(
   const cleanedRemote = stripOrphanImagePending(remote);
   if (!cleanedLocal.length) return cleanedRemote;
   if (!cleanedRemote.length) return cleanedLocal;
-  if (inFlight && cleanedLocal.length >= cleanedRemote.length) return cleanedLocal;
-  if (cleanedLocal.length > cleanedRemote.length) return cleanedLocal;
+  if (inFlight && cleanedLocal.length >= cleanedRemote.length) {
+    return mergeRequestLogIds(cleanedLocal, cleanedRemote);
+  }
+  if (cleanedLocal.length > cleanedRemote.length) {
+    return mergeRequestLogIds(cleanedLocal, cleanedRemote);
+  }
 
   const localTailLen = lastAssistantContentLen(cleanedLocal);
   const remoteTailLen = lastAssistantContentLen(cleanedRemote);
@@ -245,10 +269,12 @@ export function mergeChatMessagesPreferLocal(
   if (
     localLast?.role === "assistant" &&
     localLast.receivedAt != null &&
-    remoteLast?.content === IMAGE_PENDING_MARKER &&
+    (remoteLast?.content === IMAGE_PENDING_MARKER ||
+      remoteLast?.content === VIDEO_PENDING_MARKER ||
+      remoteLast?.content === SPEECH_PENDING_MARKER) &&
     cleanedLocal.length >= cleanedRemote.length
   ) {
-    return cleanedLocal;
+    return mergeRequestLogIds(cleanedLocal, cleanedRemote);
   }
   if (
     localLast?.role === "assistant" &&
@@ -256,16 +282,16 @@ export function mergeChatMessagesPreferLocal(
     localLast.receivedAt == null &&
     localTailLen > remoteTailLen
   ) {
-    return cleanedLocal;
+    return mergeRequestLogIds(cleanedLocal, cleanedRemote);
   }
   if (
     sessionHasIncompleteTextReply(cleanedRemote) &&
     cleanedLocal.length >= cleanedRemote.length &&
     localTailLen >= remoteTailLen
   ) {
-    return cleanedLocal;
+    return mergeRequestLogIds(cleanedLocal, cleanedRemote);
   }
-  return cleanedRemote;
+  return mergeRequestLogIds(cleanedRemote, cleanedLocal);
 }
 
 export function buildStoppedImageMessages(
@@ -281,9 +307,17 @@ export function buildStoppedImageMessages(
   ];
 }
 
-/** True while text stream or image placeholder is still open (server or local). */
+/** True while text stream or media placeholder is still open (server or local). */
 export function sessionHasInFlightGeneration(messages: ChatMessage[]): boolean {
-  if (sessionHasPendingImage(messages)) return true;
+  const last = messages.at(-1);
+  if (
+    last?.role === "assistant" &&
+    (last.content === IMAGE_PENDING_MARKER ||
+      last.content === VIDEO_PENDING_MARKER ||
+      last.content === SPEECH_PENDING_MARKER)
+  ) {
+    return true;
+  }
   return sessionHasIncompleteTextReply(messages);
 }
 
@@ -292,7 +326,11 @@ export function sessionHasIncompleteTextReply(messages: ChatMessage[]): boolean 
   const last = messages.at(-1);
   if (!last || last.role !== "assistant") return false;
   if (last.content === IMAGE_PENDING_MARKER) return false;
+  if (last.content === VIDEO_PENDING_MARKER) return false;
+  if (last.content === SPEECH_PENDING_MARKER) return false;
   if (parseImageMessage(last.content)) return false;
+  if (last.content.startsWith(VIDEO_MESSAGE_PREFIX)) return false;
+  if (last.content.startsWith(SPEECH_MESSAGE_PREFIX)) return false;
   if (last.streaming === true) return true;
   return last.receivedAt == null;
 }
@@ -316,6 +354,7 @@ export function buildImageRequestBody(opts: {
   sourceSize?: string;
   imageSizeTier?: string;
   routing?: Record<string, unknown>;
+  assistantClientMessageId?: string;
 }): Record<string, unknown> {
   const operation = opts.referenceImage ? "img2img" : "generation";
   const body: Record<string, unknown> = {
@@ -328,6 +367,9 @@ export function buildImageRequestBody(opts: {
   };
   if (opts.imageSizeTier) body.image_size_tier = opts.imageSizeTier;
   if (opts.routing) body.routing = opts.routing;
+  if (opts.assistantClientMessageId) {
+    body.assistant_client_message_id = opts.assistantClientMessageId;
+  }
   if (opts.referenceImage && opts.sourceSize) {
     body.size = opts.sourceSize;
   } else if (opts.aspectRatio) {
@@ -335,6 +377,8 @@ export function buildImageRequestBody(opts: {
   }
   return body;
 }
+
+type ImageApiResult = ImagePayload & { requestLogId?: number };
 
 async function requestImageApi(
   prompt: string,
@@ -348,7 +392,8 @@ async function requestImageApi(
   sourceSize: string | undefined,
   imageSizeTier: string | undefined,
   routing: Record<string, unknown> | undefined,
-): Promise<ImagePayload> {
+  assistantClientMessageId?: string,
+): Promise<ImageApiResult> {
   const resolvedReference = referenceImage
     ? await resolvePrivateMediaUrlForApi(referenceImage)
     : undefined;
@@ -362,6 +407,7 @@ async function requestImageApi(
     sourceSize,
     imageSizeTier,
     routing,
+    assistantClientMessageId,
   });
   const res = await authFetch("/api/images/generate", {
     method: "POST",
@@ -378,6 +424,10 @@ async function requestImageApi(
   if (!imageUrl) throw new Error("Image model returned no image URL.");
   const appliedAspect = imageResult.aspect_ratio || aspectRatio;
   const appliedPreset = presetFromAspectRatio(appliedAspect) ?? aspectPreset;
+  const requestLogId =
+    typeof imageResult.request_log_id === "number" && Number.isFinite(imageResult.request_log_id)
+      ? imageResult.request_log_id
+      : undefined;
   return {
     url: imageUrl,
     prompt,
@@ -388,6 +438,7 @@ async function requestImageApi(
     ...(imageResult.image_size_tier ? { imageSizeTier: imageResult.image_size_tier } : {}),
     ...(imageResult.routing ? { routing: imageResult.routing } : {}),
     ...(referenceImage ? { reference_image: referenceImage, operation: "img2img" as const } : { operation: "generation" as const }),
+    ...(requestLogId != null ? { requestLogId } : {}),
   };
 }
 
@@ -416,6 +467,7 @@ export async function runBackgroundImageGeneration(opts: {
   /** When set, pending/final image replace this index instead of appending. */
   replaceIndex?: number;
   fullMessages?: ChatMessage[];
+  assistantClientMessageId?: string;
 }): Promise<void> {
   const {
     sessionId,
@@ -431,11 +483,17 @@ export async function runBackgroundImageGeneration(opts: {
     imageCustomAspectRatio,
     imageCustomSize,
     regenerateFrom,
+    assistantClientMessageId,
   } = opts;
   const persist = !privateMode;
   const hasReference = Boolean(referenceImage?.trim());
   const localBase = localMessageBase ?? historyWithUser;
   const syncOpts = { forcePrivate: privateMode };
+  const resolvedAssistantId =
+    (assistantClientMessageId || "").trim() ||
+    (replaceIndex !== undefined && fullMessages
+      ? fullMessages[replaceIndex]?.clientMessageId
+      : undefined);
 
   const resolved = regenerateFrom
     ? resolveRegenerateImageGeneration({
@@ -464,9 +522,22 @@ export async function runBackgroundImageGeneration(opts: {
   const pendingMsgs: ChatMessage[] =
     replaceIndex !== undefined && fullMessages
       ? fullMessages.map((m, i) =>
-          i === replaceIndex ? { role: "assistant", content: IMAGE_PENDING_MARKER } : m,
+          i === replaceIndex
+            ? {
+                role: "assistant",
+                content: IMAGE_PENDING_MARKER,
+                ...(resolvedAssistantId ? { clientMessageId: resolvedAssistantId } : {}),
+              }
+            : m,
         )
-      : [...localBase, { role: "assistant", content: IMAGE_PENDING_MARKER }];
+      : [
+          ...localBase,
+          {
+            role: "assistant",
+            content: IMAGE_PENDING_MARKER,
+            ...(resolvedAssistantId ? { clientMessageId: resolvedAssistantId } : {}),
+          },
+        ];
 
   let timedOut = false;
   const deadlineTimer = globalThis.setTimeout(() => {
@@ -486,8 +557,7 @@ export async function runBackgroundImageGeneration(opts: {
     recordImageClientTiming("alpha-router:image:preparation", preparationStartedAt);
     notify(sessionId);
 
-    let generated: ImagePayload;
-    generated = await requestImageApi(
+    const generated = await requestImageApi(
       resolved.prompt,
       modelId,
       sessionId,
@@ -499,9 +569,16 @@ export async function runBackgroundImageGeneration(opts: {
       undefined,
       opts.imageSizeTier,
       opts.routing,
+      resolvedAssistantId,
     );
 
-    const imageMsg: ChatMessage = { role: "assistant", content: buildImageMessage(generated), receivedAt: Date.now() };
+    const imageMsg: ChatMessage = {
+      role: "assistant",
+      content: buildImageMessage(generated),
+      receivedAt: Date.now(),
+      ...(resolvedAssistantId ? { clientMessageId: resolvedAssistantId } : {}),
+      ...(generated.requestLogId != null ? { requestLogId: generated.requestLogId } : {}),
+    };
     if (replaceIndex !== undefined && fullMessages) {
       const next = [...fullMessages];
       next[replaceIndex] = imageMsg;

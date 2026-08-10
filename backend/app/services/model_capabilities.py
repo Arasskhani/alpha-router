@@ -344,6 +344,104 @@ _VISION_HEURISTIC_HINTS = (
 )
 
 
+def _speech_catalog_meta(pricing_raw: str | None) -> dict[str, Any]:
+    """OpenRouter speech-models snapshot fields embedded in pricing_raw.
+
+    OpenRouter does not expose a dedicated `/audio/models` endpoint; instead the
+    general `/models` catalog carries ``speech``/``audio`` pricing blocks and
+    ``architecture.output_modalities`` containing ``speech``. Those fields are
+    authoritative for classification. Voice lists are usually top-level
+    ``supported_voices`` on the model object (not nested under ``speech``).
+    """
+    raw = _catalog_raw(pricing_raw)
+    speech = raw.get("speech") or raw.get("audio")
+    if isinstance(speech, dict):
+        return speech
+    return {}
+
+
+def _coerce_str_list(value: Any) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+    out = [str(x).strip() for x in value if str(x).strip()]
+    return out or None
+
+
+def _coerce_float_pair(value: Any) -> tuple[float, float] | None:
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        try:
+            lo, hi = float(value[0]), float(value[1])
+            if lo <= hi:
+                return (lo, hi)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def speech_generation_capabilities(
+    *,
+    external_id: str,
+    is_speech_model: bool = False,
+    pricing_raw: str | None = None,
+) -> dict[str, Any]:
+    """Detect text-to-speech support and supported voices/formats/speeds.
+
+    Source of truth: provider catalog metadata (``architecture.output_modalities``
+    containing ``speech``), top-level ``supported_voices``, and optional nested
+    ``speech``/``audio`` blocks for formats/speeds/max length.
+    ID-based heuristics are a last-resort fallback.
+    """
+    ext = (external_id or "").lower()
+    raw = _catalog_raw(pricing_raw)
+    arch = _architecture_from_raw(pricing_raw)
+    _, outputs = _modalities(arch)
+    has_metadata = bool(outputs)
+    speech_meta = _speech_catalog_meta(pricing_raw)
+
+    supports_tts = False
+    if has_metadata:
+        supports_tts = "speech" in outputs
+    else:
+        supports_tts = is_speech_model or any(
+            x in ext for x in ("tts", "/speech", "text-to-speech")
+        )
+
+    # OpenRouter stores voices on the model root as ``supported_voices``.
+    voices = (
+        _coerce_str_list(speech_meta.get("voices"))
+        or _coerce_str_list(speech_meta.get("supported_voices"))
+        or _coerce_str_list(raw.get("supported_voices"))
+    )
+    # Product UI only exposes mp3; keep catalog formats if present, else mp3.
+    formats = _coerce_str_list(speech_meta.get("formats")) or (
+        ["mp3"] if supports_tts else None
+    )
+    if formats:
+        formats = [f for f in formats if f == "mp3"] or ["mp3"]
+    speeds = _coerce_float_pair(speech_meta.get("speeds")) or (
+        (0.5, 4.0) if supports_tts else None
+    )
+    sample_rates = _coerce_str_list(speech_meta.get("sample_rates"))
+    max_text = speech_meta.get("max_text_length")
+    if not isinstance(max_text, int) or max_text <= 0:
+        ctx = raw.get("context_length")
+        if isinstance(ctx, int) and ctx > 0:
+            max_text = ctx
+        else:
+            max_text = 5000 if supports_tts else None
+
+    return {
+        "supports_text_to_speech": supports_tts,
+        "supported_voices": voices,
+        "supported_formats": formats,
+        "supported_speeds": list(speeds) if speeds else None,
+        "supported_sample_rates": [int(r) for r in sample_rates] if sample_rates else None,
+        "supports_ssml": bool(speech_meta.get("supports_ssml")),
+        "supports_voice_clone": bool(speech_meta.get("supports_voice_clone")),
+        "max_text_length": max_text,
+    }
+
+
 def model_media_flags(
     *,
     external_id: str,
@@ -352,10 +450,11 @@ def model_media_flags(
     pricing_raw: str | None = None,
     provider_type: str | None = None,
 ) -> dict[str, bool]:
-    """Single source of truth for image/video classification.
+    """Single source of truth for image/video/speech classification.
 
     Both ``/api/chat/models`` and ``/api/admin/models`` call this helper so
-    the two endpoints can never diverge.
+    the two endpoints can never diverge. Speech is derived from
+    ``output_modalities`` (authoritative) rather than a dedicated endpoint.
     """
     auth_video = authoritative_video_model(
         provider_type=provider_type,
@@ -367,9 +466,15 @@ def model_media_flags(
         is_image_model=is_image_model,
         pricing_raw=pricing_raw,
     )
+    arch = _architecture_from_raw(pricing_raw)
+    _, outputs = _modalities(arch)
+    is_speech = "speech" in outputs if outputs else any(
+        x in (external_id or "").lower() for x in ("tts", "/speech", "text-to-speech")
+    )
     return {
         "is_image_model": auth_image,
         "is_video_model": auth_video,
+        "is_speech_model": is_speech,
     }
 
 

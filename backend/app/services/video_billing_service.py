@@ -80,7 +80,7 @@ async def log_video_usage(
     budget_reservation_id: str | None = None,
     duration_seconds: int | None = None,
     job_id: str | None = None,
-) -> None:
+) -> int | None:
     """Write RequestLog row and settle budget (same path as image/chat)."""
     model_id = (capture.model_id or "").strip() or "unknown"
     op = (operation or "generation").strip().lower()
@@ -141,7 +141,7 @@ async def log_video_usage(
         if event.quote.final_cost_usd is not None
     )
     client_app = f"{CHAT_CLIENT_APP} (video:{op})"
-    await log_usage(
+    return await log_usage(
         db,
         user_id=user.id,
         username=user.username,

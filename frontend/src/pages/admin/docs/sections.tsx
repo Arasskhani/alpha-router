@@ -1182,8 +1182,9 @@ export const docSections: DocSection[] = [
           </li>
         </ul>
         <Note>
-          Adding a sixth specialist is configuration work: create the Agent and its draft version, curate a Knowledge
-          Base and evaluation set, complete approvals, then publish. No application code change is required.
+          New Agents are configuration work in Agent Studio: create the Agent and its draft
+          version, curate a Knowledge Base and evaluation set, complete approvals, then publish.
+          No application code change is required.
         </Note>
       </>
     ),
@@ -1234,45 +1235,6 @@ export const docSections: DocSection[] = [
           Agent Activity counts chat-turn cost linked through <code>agent_runs</code>. It does not include Knowledge
           embedding or index-build jobs. For blocked-turn reasons, use <strong>Audit</strong>, not Activity.
         </Note>
-      </>
-    ),
-  },
-  {
-    id: "specialist-bootstrap",
-    title: "Built-in specialist bootstrap",
-    group: "Agents & Knowledge",
-    content: (
-      <>
-        <h2>Built-in specialist bootstrap</h2>
-        <p>
-          With <code>SEED_SPECIALIST_AGENTS_ENABLED=true</code>, startup idempotently prepares IT Helpdesk, HR
-          Assistant, Legal Consultant, Finance Consultant, and Marketing Consultant. Each receives an immutable initial
-          version, bounded policies, one empty domain Knowledge Base, a pending latest-release binding, and a 100-case
-          bilingual draft golden set. Choose the initial model with <code>SEED_AGENT_PRIMARY_MODEL_ID</code>. A
-          Knowledge reviewer must approve every seeded binding; HR, Legal, and Finance also require a different domain
-          approver. Final approval can safely enable the binding on an already-published system version.
-        </p>
-        <table className="docs-table">
-          <thead>
-            <tr>
-              <th>Specialist</th>
-              <th>Initial Agent / KB access</th>
-              <th>Knowledge sensitivity</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td>IT Helpdesk</td><td>Public / public</td><td>Internal</td></tr>
-            <tr><td>HR Assistant</td><td>Private / private</td><td>HR confidential</td></tr>
-            <tr><td>Legal Consultant</td><td>Private / private</td><td>Legal privileged</td></tr>
-            <tr><td>Finance Consultant</td><td>Private / private</td><td>Finance restricted</td></tr>
-            <tr><td>Marketing Consultant</td><td>Public / public</td><td>Internal</td></tr>
-          </tbody>
-        </table>
-        <Warn>
-          Seeded Knowledge Bases are empty by design. Do not activate a seeded golden set until every{" "}
-          <code>curate:</code> sentinel has been replaced with a real immutable document-version ID. Alpharouter rejects
-          activation while those curation sentinels remain.
-        </Warn>
       </>
     ),
   },

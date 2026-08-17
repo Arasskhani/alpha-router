@@ -247,9 +247,9 @@ export const userManualSections: DocSection[] = [
       <>
         <h2>Specialist Agents &amp; citations</h2>
         <p>
-          The brain button in the chat box can show IT Helpdesk, HR Assistant, Legal Consultant, Finance Consultant,
-          Marketing Consultant, and any specialists your organization publishes. Visibility depends on both Agent and
-          Knowledge access; a missing specialist may simply be restricted to another team.
+          The brain button in the chat box lists Agents your organization has published and that you
+          are allowed to use. Visibility depends on both Agent and Knowledge access; a missing Agent
+          may simply be restricted to another team. Create and publish Agents in Admin → Agent Studio.
         </p>
         <ul>
           <li>

@@ -123,49 +123,18 @@ Copy `.env.example` to `.env`. Important groups include:
 - **Public URLs** — `API_PUBLIC_URL` and `FRONTEND_URL`
 - **Sandbox** — broker URL, token, timeout, and resource limits
 - **Agents & Knowledge** — Qdrant, ClamAV, worker, retrieval, evaluation,
-  observability, and the built-in specialist bootstrap
+  and observability
 
 For production, set `ENVIRONMENT=production` and keep
 `PRODUCTION_GUARD_MODE=hard-fail`.
 
 ### Agents & Knowledge
 
-Alpharouter includes five system specialist Agents: IT Helpdesk, HR Assistant,
-Legal Consultant, Finance Consultant, and Marketing Consultant. Startup creates
-them idempotently with immutable initial versions, bounded policies, bilingual
-FA/EN routing hints and disclaimers, one domain Knowledge Base each, and a
-100-case draft golden evaluation dataset each.
-
-The Knowledge Bases are intentionally empty. System bootstrap never treats
-sample text as authoritative organization policy and never bypasses document
-review, release indexing, or evaluation approval. HR, Legal, and Finance Agents
-and their Knowledge Bases default to private; IT and Marketing default to
-public/internal. Configure the defaults with:
-
-```dotenv
-SEED_SPECIALIST_AGENTS_ENABLED=true
-SEED_AGENT_PRIMARY_MODEL_ID=openrouter/auto
-```
-
-Production activation workflow:
-
-1. Configure the Agent and Knowledge ACLs in **Admin → Agents & Knowledge**,
-   then complete Knowledge-owner and (for sensitive domains) independent domain
-   approval for the seeded binding.
-2. Upload authoritative documents; wait for malware, parser, and injection
-   checks; approve each revision with a different reviewer.
-3. Create a Knowledge release, submit it with a different publisher, and wait
-   for the Qdrant index to become active.
-4. Replace every `curate:` sentinel in the seeded golden set with real immutable
-   document-version IDs and review all prompts.
-5. Activate the dataset, execute the deterministic evaluation, complete human
-   review when required, and only then publish a replacement Agent version.
-
-Seeded bindings remain pending and cannot retrieve until their maker-checker
-approvals complete. If the bound Agent version is already active, the final
-approval publishes only the binding authorization; it does not bypass document
-review or release indexing. Active golden datasets become publish gates; draft
-seed datasets do not block initial bootstrap.
+Create Agents in **Admin → Agents & Knowledge → Agent Studio**. There is no
+built-in system Agent seed: every Agent, Knowledge Base, binding, and evaluation
+dataset is operator-owned. Publish immutable versions after maker-checker review,
+bind only approved Knowledge releases, and gate production with evaluation when
+your policy requires it.
 
 Operational endpoints:
 

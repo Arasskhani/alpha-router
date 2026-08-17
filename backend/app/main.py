@@ -641,14 +641,8 @@ async def lifespan(app: FastAPI):
         from app.services.model_tool_compatibility_service import (
             ensure_all_model_compatibility_rows,
         )
-        from app.services.specialist_agent_seed_service import (
-            seed_specialist_agents,
-        )
 
         await ensure_all_model_compatibility_rows(db)
-        if admin_user is None:
-            raise RuntimeError("Bootstrap administrator is unavailable for Agent seeding")
-        await seed_specialist_agents(db, actor_user_id=admin_user.id)
         await db.commit()
 
     start_scheduler()

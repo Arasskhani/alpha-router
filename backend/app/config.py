@@ -175,8 +175,6 @@ class Settings(BaseSettings):
     agent_guardrail_timeout_seconds: int = 5
     agent_turn_timeout_seconds: int = 180
     agent_max_system_prompt_characters: int = 100_000
-    seed_specialist_agents_enabled: bool = True
-    seed_agent_primary_model_id: str = "openrouter/auto"
     # Fleet observability. Metrics use fixed labels only; tracing is opt-in
     # because production must provide an authenticated internal OTLP endpoint.
     metrics_enabled: bool = True

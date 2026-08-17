@@ -1,4 +1,4 @@
-"""Report generation: 30 predefined reports — CSV, XLS, PDF."""
+"""Report generation: 31 predefined reports — CSV, XLS, PDF."""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ from fastapi import HTTPException
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.agent import Agent
+from app.models.agent_runtime import AgentRun
 from app.models.api_key import AlphaRouterApiKey
 from app.models.budget import BudgetPlan, PlanAssignment
 from app.models.logging import RequestLog
@@ -410,6 +412,53 @@ async def report_user_model_usage(
                 "cost_usd": round(float(r[2] or 0), 4),
                 "tokens": int(r[3] or 0),
                 "requests": int(r[4] or 0),
+            }
+            for r in rows
+        ]
+    )
+
+
+def _agent_usage_label(agent_id: str | None, name: str | None) -> str:
+    if not agent_id:
+        return "Unassigned"
+    return (name or "").strip() or "Unknown Agent"
+
+
+async def report_agent_usage(
+    db: AsyncSession,
+    start: datetime,
+    end: datetime,
+    agent_id: str | None = None,
+) -> pd.DataFrame:
+    columns = ["agent", "cost_usd", "turns", "tokens"]
+    q = (
+        select(
+            AgentRun.agent_id,
+            Agent.name,
+            func.coalesce(func.sum(AgentRun.total_cost_usd), 0),
+            func.count(AgentRun.id),
+            func.coalesce(
+                func.sum(AgentRun.prompt_tokens + AgentRun.completion_tokens),
+                0,
+            ),
+        )
+        .outerjoin(Agent, Agent.id == AgentRun.agent_id)
+        .where(AgentRun.created_at >= start, AgentRun.created_at <= end)
+        .group_by(AgentRun.agent_id, Agent.name)
+        .order_by(func.sum(AgentRun.total_cost_usd).desc())
+    )
+    if agent_id:
+        q = q.where(AgentRun.agent_id == agent_id)
+    rows = (await db.execute(q)).all()
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(
+        [
+            {
+                "agent": _agent_usage_label(r[0], r[1]),
+                "cost_usd": round(float(r[2] or 0), 6),
+                "turns": int(r[3] or 0),
+                "tokens": int(r[4] or 0),
             }
             for r in rows
         ]
@@ -1048,6 +1097,8 @@ async def build_report(db: AsyncSession, report_type: str, params: dict[str, Any
         return await report_top_models_by_spend(db, start, end, int(params.get("top_n") or 10))
     if report_type == "user_model_usage":
         return await report_user_model_usage(db, start, end, params.get("user_id"))
+    if report_type == "agent_usage":
+        return await report_agent_usage(db, start, end, params.get("agent_id"))
     if report_type == "usage_by_app":
         return await report_usage_by_app(db, start, end, params.get("app"))
     if report_type == "usage_by_api_source":

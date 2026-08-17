@@ -10,12 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_active_user, require_reports, require_reports_write
 from app.database import get_db
+from app.models.agent import Agent
 from app.models.api_key import AlphaRouterApiKey
 from app.models.budget import BudgetPlan
 from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel
 from app.models.system import ReportSchedule
 from app.models.user import User
+from app.services.agent_definition_service import is_purged_agent
 from app.services import reports_service
 from app.services.reports_catalog import CATEGORY_LABELS, REPORT_CATALOG
 
@@ -28,6 +30,7 @@ class ReportRequest(BaseModel):
     end_date: str | None = None
     format: str = "csv"
     user_id: int | None = None
+    agent_id: str | None = None
     plan_id: int | None = None
     department: str | None = None
     office: str | None = None
@@ -70,6 +73,7 @@ def _report_params(body: ReportRequest) -> dict:
 
     params: dict = {
         "user_id": body.user_id,
+        "agent_id": (body.agent_id or "").strip() or None,
         "plan_id": body.plan_id,
         "department": body.department,
         "office": body.office or None,
@@ -166,6 +170,9 @@ async def report_options(db: AsyncSession = Depends(get_db), _: User = Depends(r
             )
         )
     ).all()
+    agents = (
+        await db.execute(select(Agent).order_by(Agent.name, Agent.sort_order))
+    ).scalars().all()
 
     return {
         "plans": [{"id": p[0], "name": p[1]} for p in plans],
@@ -176,6 +183,11 @@ async def report_options(db: AsyncSession = Depends(get_db), _: User = Depends(r
         "providers": [str(r[0]) for r in provider_rows if r[0]],
         "models": [str(r[0]) for r in model_rows if r[0]],
         "alpha_router_api_keys": [{"id": k[0], "name": k[1]} for k in keys],
+        "agents": [
+            {"id": agent.id, "name": agent.name, "status": agent.status}
+            for agent in agents
+            if not is_purged_agent(agent)
+        ],
         "auth_providers": ["local", "ldap", "saml", "oidc", "openwebui"],
         "group_by_options": [
             {"value": "model", "label": "By model"},

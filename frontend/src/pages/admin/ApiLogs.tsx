@@ -12,6 +12,7 @@ import { formatLocalDateTime } from "../../lib/dateTime";
 import {
   confidenceLabel,
   fetchAdminRequestLogCostDetails,
+  isPersonalApiKeyLog,
   type CostDetails,
   type RequestLogSummary,
 } from "../../lib/requestLogCostDetails";
@@ -365,8 +366,8 @@ export default function ApiLogs({ apiKeyId }: Props) {
         </div>
         {exportError && !selectedLog && <p className="error api-logs-export-error">{exportError}</p>}
       </div>
-      <div className="table-wrap">
-        <table className="card data-table">
+      <div className="table-wrap table-wrap--api-logs">
+        <table className="card data-table data-table--api-logs">
           <thead>
             <tr>
               <th>Time</th>
@@ -439,7 +440,7 @@ export default function ApiLogs({ apiKeyId }: Props) {
                         </svg>
                         <span>{r.username}</span>
                       </span>
-                    ) : r.api_key_kind === "personal" ? (
+                    ) : isPersonalApiKeyLog(r) ? (
                       <span
                         className="api-log-identity"
                         title={

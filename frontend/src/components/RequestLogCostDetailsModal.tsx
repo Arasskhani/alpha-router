@@ -173,7 +173,7 @@ export default function RequestLogCostDetailsModal({
                           <dt>Source</dt>
                           <dd>{event.cost_source || "—"}</dd>
                         </div>
-                        <div>
+                        <div className="api-log-cost-event__full">
                           <dt>Tokens</dt>
                           <dd>
                             {fmt(event.prompt_tokens || 0)} in / {fmt(event.completion_tokens || 0)} out
@@ -184,45 +184,47 @@ export default function RequestLogCostDetailsModal({
                           </dd>
                         </div>
                         {event.upstream_request_id && (
-                          <div>
+                          <div className="api-log-cost-event__full">
                             <dt>Upstream ID</dt>
                             <dd>
-                              <code>{event.upstream_request_id}</code>
+                              <code className="api-log-cost-event__id">{event.upstream_request_id}</code>
                             </dd>
                           </div>
                         )}
                         {event.error_message && (
-                          <div>
+                          <div className="api-log-cost-event__full">
                             <dt>Error</dt>
                             <dd>{event.error_message}</dd>
                           </div>
                         )}
                       </dl>
                       {event.line_items.length > 0 && (
-                        <table className="api-log-cost-lines">
-                          <thead>
-                            <tr>
-                              <th>Category</th>
-                              <th>Qty</th>
-                              <th>Unit price</th>
-                              <th>Cost</th>
-                              <th>Pricing</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {event.line_items.map((line, idx) => (
-                              <tr key={`${event.id}-${line.category}-${idx}`}>
-                                <td>{line.category}</td>
-                                <td>
-                                  {fmt(line.quantity)} {line.unit}
-                                </td>
-                                <td>{money(line.unit_price_usd)}</td>
-                                <td>{money(line.cost_usd)}</td>
-                                <td>{line.pricing_source || "—"}</td>
+                        <div className="api-log-cost-lines-wrap">
+                          <table className="api-log-cost-lines">
+                            <thead>
+                              <tr>
+                                <th>Category</th>
+                                <th>Qty</th>
+                                <th>Unit price</th>
+                                <th>Cost</th>
+                                <th>Pricing</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {event.line_items.map((line, idx) => (
+                                <tr key={`${event.id}-${line.category}-${idx}`}>
+                                  <td>{line.category}</td>
+                                  <td>
+                                    {fmt(line.quantity)} {line.unit}
+                                  </td>
+                                  <td>{money(line.unit_price_usd)}</td>
+                                  <td>{money(line.cost_usd)}</td>
+                                  <td>{line.pricing_source || "—"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       )}
                     </article>
                   );

@@ -114,6 +114,7 @@ def test_database_naming_contracts():
     report_ids = {report["id"] for report in REPORT_CATALOG}
     assert "alpha_router_api_key_usage" in report_ids
     assert "alpha_router_api_keys_near_credit_limit" in report_ids
+    assert "agent_usage" in report_ids
 
 
 async def _test_fresh_database_schema_contracts() -> None:

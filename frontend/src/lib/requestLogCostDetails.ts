@@ -8,6 +8,8 @@ export type RequestLogSummary = {
   api_key_name?: string;
   api_key_kind?: "gateway" | "personal";
   api_key_prefix?: string;
+  user_api_key_id?: number;
+  alpha_router_api_key_id?: number;
   app?: string;
   source?: string;
   client_app?: string;
@@ -79,11 +81,17 @@ export type CostDetails = {
   total_cost_usd?: number;
 };
 
+export function isPersonalApiKeyLog(log: Pick<RequestLogSummary, "api_key_kind" | "source" | "user_api_key_id">): boolean {
+  if (log.api_key_kind === "personal") return true;
+  if (typeof log.user_api_key_id === "number" && log.user_api_key_id > 0) return true;
+  return (log.source || "").trim().toLowerCase() === "user_key";
+}
+
 export function logIdentityLabel(log: RequestLogSummary): string {
   if (log.identity_type === "api_key") {
     return `${log.api_key_name || log.username || "API key"} (Gateway API Key)`;
   }
-  if (log.api_key_kind === "personal") {
+  if (isPersonalApiKeyLog(log)) {
     const user = log.username || "unknown";
     const keyName = (log.api_key_name || "").trim();
     if (keyName && keyName.toLowerCase() !== user.toLowerCase()) {

@@ -94,9 +94,10 @@ def _log_row(
         app = format_app_source(r.source)
     else:
         app = (r.client_app or "").strip() or format_app_source(r.source)
+    is_personal_key = bool(r.user_api_key_id) or source_code == "user_key"
     if r.alpha_router_api_key_id:
         identity_type = "api_key"
-    elif r.user_api_key_id:
+    elif is_personal_key:
         identity_type = "user"
     elif source_code == "alpha_router_chat":
         identity_type = "chat"
@@ -140,6 +141,12 @@ def _log_row(
         row["api_key_prefix"] = user_key.key_prefix
         row["user_api_key_id"] = user_key.id
         row["api_key_kind"] = "personal"
+    elif is_personal_key:
+        # Key row may be missing (deleted → ON DELETE SET NULL), but the request
+        # was still authenticated with a personal API key.
+        row["api_key_kind"] = "personal"
+        if r.user_api_key_id:
+            row["user_api_key_id"] = r.user_api_key_id
     return row
 
 

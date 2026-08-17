@@ -2,7 +2,15 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
 import AdminPage from "../../components/AdminPage";
+import { formatRequests, formatSpend, formatTokens } from "../../components/activity/formatters";
 import { runtimeHealthHref } from "../../lib/agentActivity";
+
+type SpendLeader = {
+  id: string;
+  name: string;
+  cost_usd: number;
+  turns: number;
+};
 
 type OverviewPayload = {
   agents: { total: number; active: number; draft: number; in_review: number };
@@ -14,6 +22,13 @@ type OverviewPayload = {
   };
   tools: { total: number; active: number; in_review: number };
   runs_24h: { total: number; succeeded: number; blocked: number; failed: number };
+  spend_24h: {
+    cost_usd: number;
+    tokens: number;
+    turns: number;
+    billed_turns: number;
+    top_agents: SpendLeader[];
+  };
   pending_approvals: number;
 };
 
@@ -22,6 +37,7 @@ const emptyOverview: OverviewPayload = {
   knowledge: { bases: 0, documents: 0, review: 0, failed_jobs: 0 },
   tools: { total: 0, active: 0, in_review: 0 },
   runs_24h: { total: 0, succeeded: 0, blocked: 0, failed: 0 },
+  spend_24h: { cost_usd: 0, tokens: 0, turns: 0, billed_turns: 0, top_agents: [] },
   pending_approvals: 0,
 };
 
@@ -136,6 +152,54 @@ export default function AgentsOverview() {
           <span>Validate policy completeness and inspect production success signals.</span>
         </Link>
       </div>
+
+      <section className="agent-section-card">
+        <div className="agent-section-card__head">
+          <div>
+            <h2>Agent spend · last 24 hours</h2>
+            <p>
+              Chat-turn cost attributed to Agents. Knowledge ingest and embedding jobs are excluded.
+            </p>
+          </div>
+        </div>
+        <div className="agent-spend-strip">
+          <div className="agent-runtime-summary agent-runtime-summary--3">
+            <div>
+              <strong>{formatSpend(data.spend_24h.cost_usd)}</strong>
+              <span>Total spend</span>
+            </div>
+            <div>
+              <strong>{formatRequests(data.spend_24h.billed_turns)}</strong>
+              <span>Billed turns</span>
+            </div>
+            <div>
+              <strong>{formatTokens(data.spend_24h.tokens)}</strong>
+              <span>Token volume</span>
+            </div>
+          </div>
+          <div className="agent-spend-leaders">
+            <p>Top Agents</p>
+            {data.spend_24h.top_agents.length ? (
+              <ol>
+                {data.spend_24h.top_agents.map((agent) => (
+                  <li key={agent.id}>
+                    <Link to={`/admin/agents/${encodeURIComponent(agent.id)}/activity`}>
+                      <strong>{agent.name}</strong>
+                      <span>
+                        {formatSpend(agent.cost_usd)} · {formatRequests(agent.turns)} turns
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="agent-spend-leaders__empty">
+                No Agent-attributed spend in this window.
+              </p>
+            )}
+          </div>
+        </div>
+      </section>
     </AdminPage>
   );
 }

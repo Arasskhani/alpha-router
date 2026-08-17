@@ -21,6 +21,7 @@ type ReportOptions = {
   providers: string[];
   models: string[];
   alpha_router_api_keys: { id: number; name: string }[];
+  agents: { id: string; name: string; status: string }[];
   auth_providers: string[];
   group_by_options: { value: string; label: string }[];
 };
@@ -34,6 +35,7 @@ type ParamState = {
   office: string;
   group_id: string;
   alpha_router_api_key_id: string;
+  agent_id: string;
   app: string;
   model_id: string;
   provider: string;
@@ -52,6 +54,7 @@ const emptyParams: ParamState = {
   office: "",
   group_id: "",
   alpha_router_api_key_id: "",
+  agent_id: "",
   app: "",
   model_id: "",
   provider: "",
@@ -165,6 +168,7 @@ export default function Reports() {
     if (params.alpha_router_api_key_id) {
       body.alpha_router_api_key_id = Number(params.alpha_router_api_key_id);
     }
+    if (params.agent_id) body.agent_id = params.agent_id;
     if (params.app) body.app = params.app;
     if (params.model_id) body.model_id = params.model_id;
     if (params.provider) body.provider = params.provider;
@@ -317,6 +321,24 @@ export default function Reports() {
               <option value="">All keys</option>
               {options.alpha_router_api_keys.map((k) => (
                 <option key={k.id} value={String(k.id)}>{k.name}</option>
+              ))}
+            </select>
+          </div>
+        );
+      case "agent":
+        return (
+          <div key={name}>
+            <label>Agent (optional)</label>
+            <select
+              className="input-block"
+              value={params.agent_id}
+              onChange={(e) => setParams((p) => ({ ...p, agent_id: e.target.value }))}
+            >
+              <option value="">All Agents</option>
+              {(options.agents ?? []).map((agent) => (
+                <option key={agent.id} value={agent.id}>
+                  {agent.name}
+                </option>
               ))}
             </select>
           </div>

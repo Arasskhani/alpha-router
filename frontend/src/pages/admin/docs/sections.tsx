@@ -1151,7 +1151,9 @@ export const docSections: DocSection[] = [
             <strong>Overview</strong> — KPIs and last-24-hour runtime health. The Knowledge number counts live
             documents only (<code>draft</code>, <code>active</code>, <code>superseded</code>), not revoked or deleted
             rows. Runtime tiles for Turns, Guardrail blocked, and Failed open <strong>Audit</strong> with matching
-            Runtime filters; Success rate is a derived percentage and is not a link.
+            Runtime filters; Success rate is a derived percentage and is not a link. Below the quick-start cards,
+            <strong>Agent spend</strong> sums chat-turn cost for the same 24 hours (not Knowledge ingest). Top Agents
+            open that Agent’s Activity dashboard.
           </li>
           <li>
             <strong>Agent Studio</strong> — create or clone a draft, edit the operator policy form, bind Knowledge,
@@ -1851,7 +1853,9 @@ export const docSections: DocSection[] = [
         <h2>Reports</h2>
         <p>
           Path: <code>/admin/reports</code>. Catalog of operational and cost reports with preview (table) and download
-          (CSV / Excel / PDF). Parameters depend on the report (dates, user, plan, department, model, thresholds, …).
+          (CSV / Excel / PDF). Parameters depend on the report (dates, user, Agent, plan, department, model, thresholds,
+          …). <strong>Agent usage</strong> sums chat-turn spend, turns, and tokens from Agent runs for a date range;
+          the Agent filter is optional (all Agents when empty). Knowledge ingest cost is excluded.
         </p>
         <Note>
           Report generation is interactive from this page. Ensure SMTP is configured if you rely on email delivery

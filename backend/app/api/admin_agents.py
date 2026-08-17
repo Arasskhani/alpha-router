@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin import (
@@ -366,6 +366,59 @@ async def _scalar_count(db: AsyncSession, model, *conditions) -> int:
     return int((await db.execute(query)).scalar_one() or 0)
 
 
+async def _overview_spend_24h(
+    db: AsyncSession, since: datetime.datetime
+) -> dict[str, Any]:
+    """Chat-turn spend for Agent runs in the same 24h window as runtime health."""
+    window = AgentRun.created_at >= since
+    cost_usd, tokens, turns, billed_turns = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(AgentRun.total_cost_usd), 0),
+                func.coalesce(
+                    func.sum(AgentRun.prompt_tokens + AgentRun.completion_tokens),
+                    0,
+                ),
+                func.count(AgentRun.id),
+                func.coalesce(
+                    func.sum(case((AgentRun.total_cost_usd > 0, 1), else_=0)),
+                    0,
+                ),
+            ).where(window)
+        )
+    ).one()
+    top_rows = (
+        await db.execute(
+            select(
+                AgentRun.agent_id,
+                Agent.name,
+                func.coalesce(func.sum(AgentRun.total_cost_usd), 0).label("cost_usd"),
+                func.count(AgentRun.id).label("turns"),
+            )
+            .outerjoin(Agent, Agent.id == AgentRun.agent_id)
+            .where(window, AgentRun.agent_id.is_not(None))
+            .group_by(AgentRun.agent_id, Agent.name)
+            .order_by(func.sum(AgentRun.total_cost_usd).desc())
+            .limit(3)
+        )
+    ).all()
+    return {
+        "cost_usd": float(cost_usd or 0),
+        "tokens": int(tokens or 0),
+        "turns": int(turns or 0),
+        "billed_turns": int(billed_turns or 0),
+        "top_agents": [
+            {
+                "id": row.agent_id,
+                "name": row.name or "Unknown Agent",
+                "cost_usd": float(row.cost_usd or 0),
+                "turns": int(row.turns or 0),
+            }
+            for row in top_rows
+        ],
+    }
+
+
 async def _agent_or_404(db: AsyncSession, agent_id: str) -> Agent:
     agent = await db.get(Agent, agent_id)
     if agent is None or is_purged_agent(agent):
@@ -455,6 +508,7 @@ async def get_agents_overview(
                 AgentRun.status == "failed",
             ),
         },
+        "spend_24h": await _overview_spend_24h(db, since),
         "pending_approvals": (
             await _scalar_count(db, AgentVersion, AgentVersion.status == "review")
             + await _scalar_count(

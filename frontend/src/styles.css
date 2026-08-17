@@ -1659,6 +1659,83 @@ table.card tbody td:last-child {
   align-items: center;
 }
 
+.api-logs-toolbar__main > * {
+  flex: 1 1 9.5rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.api-logs-toolbar__main > .btn,
+.api-logs-toolbar__main > .api-logs-toolbar-btn {
+  flex: 0 0 auto;
+}
+
+/* Keep API Logs readable on narrow viewports: scroll horizontally instead of crushing cells.
+   Specificity must beat `.layout:not(.layout--chat) .content { overflow-x: hidden }`. */
+.layout:not(.layout--chat) .content:has(.data-table--api-logs),
+.layout:not(.layout--chat) .content:has(.table-wrap--api-logs),
+.content:has(.data-table--api-logs),
+.content:has(.table-wrap--api-logs) {
+  overflow-x: auto !important;
+}
+
+.admin-page:has(.table-wrap--api-logs) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.table-wrap--api-logs {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+.data-table--api-logs,
+table.data-table--api-logs {
+  width: max-content;
+  min-width: 72rem;
+  max-width: none;
+  table-layout: auto;
+}
+
+.data-table.data-table--api-logs th,
+.data-table.data-table--api-logs td,
+table.data-table--api-logs th,
+table.data-table--api-logs td {
+  white-space: nowrap !important;
+  word-break: keep-all !important;
+  overflow-wrap: normal !important;
+  vertical-align: middle;
+}
+
+.data-table.data-table--api-logs .model-name,
+.data-table.data-table--api-logs .model-name__text,
+.data-table.data-table--api-logs .api-log-identity,
+.data-table.data-table--api-logs .api-log-cost {
+  max-width: none;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.data-table.data-table--api-logs .api-log-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.data-table.data-table--api-logs .api-log-identity-icon {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
 .api-logs-toolbar-btn {
   display: inline-flex;
   align-items: center;
@@ -1729,13 +1806,36 @@ table.card tbody td:last-child {
 }
 
 .modal-panel--cost-details {
-  width: min(720px, calc(100vw - 2rem));
+  width: min(920px, calc(100vw - 2rem));
+  max-height: min(90vh, 920px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-panel--cost-details .modal-header {
+  flex: 0 0 auto;
+}
+
+.modal-panel--cost-details .modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.modal-panel--cost-details .api-log-cost-details {
+  min-width: 0;
 }
 
 .api-log-cost-details {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .api-log-cost-details__summary {
@@ -1749,8 +1849,9 @@ table.card tbody td:last-child {
 .api-log-cost-event dl > div {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  gap: 0.2rem;
   min-width: 0;
+  max-width: 100%;
 }
 
 .api-log-cost-details__summary span,
@@ -1764,7 +1865,10 @@ table.card tbody td:last-child {
   margin: 0;
   font-size: 0.875rem;
   font-weight: 600;
+  line-height: 1.45;
   overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
 }
 
 .api-log-cost-details h4 {
@@ -1776,14 +1880,19 @@ table.card tbody td:last-child {
 .api-log-cost-event dl {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.45rem 0.85rem;
+  gap: 0.55rem 0.85rem;
   margin: 0;
+}
+
+.api-log-cost-event__full {
+  grid-column: 1 / -1;
 }
 
 .api-log-cost-details__events {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  min-width: 0;
 }
 
 .api-log-cost-event {
@@ -1791,6 +1900,9 @@ table.card tbody td:last-child {
   border-radius: 8px;
   padding: 0.75rem 0.85rem;
   background: color-mix(in srgb, var(--bg, #f8fafc) 70%, transparent);
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .api-log-cost-event header {
@@ -1799,32 +1911,67 @@ table.card tbody td:last-child {
   justify-content: space-between;
   gap: 0.75rem;
   margin-bottom: 0.55rem;
+  min-width: 0;
 }
 
 .api-log-cost-event header > div {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  gap: 0.2rem;
   min-width: 0;
+  flex: 1 1 auto;
 }
 
-.api-log-cost-event code {
+.api-log-cost-event header > div > strong,
+.api-log-cost-event header > div > .muted {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.4;
+}
+
+.api-log-cost-event header .api-log-cost-quality {
+  flex: 0 0 auto;
+}
+
+.api-log-cost-event code,
+.api-log-cost-event__id {
+  display: block;
+  max-width: 100%;
   font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  white-space: normal;
+}
+
+.api-log-cost-lines-wrap {
+  width: 100%;
+  max-width: 100%;
+  margin-top: 0.65rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
 }
 
 .api-log-cost-lines {
-  width: 100%;
-  margin-top: 0.65rem;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
   font-size: 0.78rem;
+  table-layout: auto;
 }
 
 .api-log-cost-lines th,
 .api-log-cost-lines td {
   text-align: left;
-  padding: 0.3rem 0.35rem;
+  padding: 0.35rem 0.5rem;
   border-top: 1px solid var(--border);
-  vertical-align: top;
+  vertical-align: middle;
+  white-space: nowrap;
+  word-break: keep-all;
+  overflow-wrap: normal;
+  line-height: 1.35;
 }
 
 .api-log-cost-lines th {
@@ -1832,7 +1979,12 @@ table.card tbody td:last-child {
   font-weight: 600;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 720px) {
+  .modal-panel--cost-details {
+    width: calc(100vw - 1rem);
+    max-height: calc(100vh - 1rem);
+  }
+
   .api-log-cost-details__summary,
   .api-log-cost-details__operation dl,
   .api-log-cost-event dl {
@@ -11889,6 +12041,11 @@ body.login-route #root {
   margin-top: 0.8rem;
 }
 
+.agent-runtime-summary--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 0;
+}
+
 .agent-runtime-summary > div,
 .agent-runtime-summary > a {
   display: flex;
@@ -11926,6 +12083,71 @@ body.login-route #root {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.agent-spend-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 0.85rem;
+  margin-top: 0.8rem;
+  align-items: start;
+}
+
+.agent-spend-leaders > p {
+  margin: 0 0 0.45rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.045em;
+}
+
+.agent-spend-leaders ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.agent-spend-leaders a {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: inherit;
+  text-decoration: none;
+  background: color-mix(in srgb, var(--bg) 78%, var(--surface));
+  transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+
+.agent-spend-leaders a:hover {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--text) 7%, transparent);
+  transform: translateY(-1px);
+}
+
+.agent-spend-leaders a strong {
+  font-size: 0.82rem;
+}
+
+.agent-spend-leaders a span,
+.agent-spend-leaders__empty {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-spend-leaders__empty {
+  margin: 0;
+  padding: 0.55rem 0.65rem;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--bg) 78%, var(--surface));
 }
 
 .agent-quick-card {
@@ -12888,6 +13110,10 @@ body.login-route #root {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .agent-spend-strip {
+    grid-template-columns: 1fr;
+  }
+
   .agent-studio-layout,
   .knowledge-layout,
   .tool-registry-layout,
@@ -12909,6 +13135,7 @@ body.login-route #root {
   .agent-kpi-grid,
   .agent-quick-grid,
   .agent-runtime-summary,
+  .agent-spend-strip,
   .agent-governance-summary,
   .agent-modal-form--tool {
     grid-template-columns: 1fr;

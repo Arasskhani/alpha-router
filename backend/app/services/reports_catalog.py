@@ -1,4 +1,4 @@
-"""Predefined admin report catalog (30 reports)."""
+"""Predefined admin report catalog (31 reports)."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from app.branding import PRODUCT_NAME
 
 ParamKind = Literal[
     "user",
+    "agent",
     "plan",
     "department",
     "office",
@@ -106,6 +107,14 @@ REPORT_CATALOG: list[dict[str, Any]] = [
         "description": "Spend, tokens, and requests per user and model.",
         "needs_date": True,
         "params": ["user"],
+    },
+    {
+        "id": "agent_usage",
+        "category": "usage",
+        "title": "Agent usage",
+        "description": "Chat-turn spend, turns, and tokens per Agent. Knowledge ingest is excluded.",
+        "needs_date": True,
+        "params": ["agent"],
     },
     {
         "id": "usage_by_app",

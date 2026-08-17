@@ -4,6 +4,7 @@ import {
   type ChatMessage,
   cancelStreamingReplyOnServer,
   fetchSessionMessagesFromServer,
+  newChatId,
   syncSessionMessages,
 } from "./chatStorage";
 import { referenceImageFromUserContent, resolveReferenceImageFromUserContent } from "./chatAttachments";
@@ -256,7 +257,7 @@ export async function runBackgroundVideoGeneration(args: {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Idempotency-Key": crypto.randomUUID(),
+        "Idempotency-Key": newChatId(),
       },
       body: JSON.stringify(body),
       signal: controller.signal,

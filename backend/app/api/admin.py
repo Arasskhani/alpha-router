@@ -35,6 +35,7 @@ from app.models.budget import BudgetPlan, PlanAssignment
 from app.models.connection import Connection
 from app.models.cost_accounting import UsageEvent
 from app.models.media import MediaAsset
+from app.models.agent_runtime import AgentRun
 from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel, ModelToolCompatibilityEvent
 from app.models.user import User, UserGroup, UserRoleAssignment, user_group_members
@@ -94,6 +95,18 @@ from app.services.alpha_router_api_key_service import (
     compute_expires_at,
     key_to_dict,
     maybe_reset_key_period,
+)
+from app.services.api_key_connection_policy import (
+    connection_brief,
+    connection_policy_label,
+    map_allowed_connections,
+    replace_key_allowed_connections,
+)
+from app.services.api_key_model_policy import (
+    list_picker_models,
+    map_allowed_models,
+    model_policy_label,
+    replace_key_allowed_models,
 )
 from app.services.smtp_service import SmtpNotConfiguredError, SmtpSendError, send_email
 from app.services.username_norm import normalize_username, username_taken_ci
@@ -591,6 +604,10 @@ class ApiKeyCreate(BaseModel):
     credit_limit_usd: float = 0
     reset_period: Literal["daily", "weekly", "monthly"] = "monthly"
     expiration_days: int | None = None
+    restrict_connections: bool = False
+    allowed_connection_ids: list[int] = []
+    restrict_models: bool = False
+    allowed_model_ids: list[int] = []
 
 
 class ApiKeyPatch(BaseModel):
@@ -600,6 +617,10 @@ class ApiKeyPatch(BaseModel):
     reset_period: Literal["daily", "weekly", "monthly"] | None = None
     expiration_days: int | None = None
     expiration_never: bool | None = None
+    restrict_connections: bool | None = None
+    allowed_connection_ids: list[int] | None = None
+    restrict_models: bool | None = None
+    allowed_model_ids: list[int] | None = None
 
 
 @router.post("/api-keys")
@@ -630,14 +651,53 @@ async def create_alpha_router_key(
     )
     db.add(row)
     await db.flush()
-    await log_api_key_created(db, key=row, actor=admin, owner=owner)
+    restrict = bool(body.restrict_connections)
+    try:
+        names = await replace_key_allowed_connections(
+            db,
+            row,
+            restrict=restrict,
+            connection_ids=body.allowed_connection_ids if restrict else [],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    restrict_models = bool(body.restrict_models)
+    try:
+        model_labels = await replace_key_allowed_models(
+            db,
+            row,
+            restrict=restrict_models,
+            model_ids=body.allowed_model_ids if restrict_models else [],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await log_api_key_created(
+        db,
+        key=row,
+        actor=admin,
+        owner=owner,
+        allowed_connections_label=connection_policy_label(restrict, names),
+        allowed_models_label=model_policy_label(restrict_models, model_labels),
+    )
     await db.commit()
     await db.refresh(row)
+    conn_payload = (await map_allowed_connections(db, [row.id])).get(int(row.id), [])
+    model_payload = (await map_allowed_models(db, [row.id])).get(int(row.id), [])
+    owner_info = {
+        "email": owner.email,
+        "username": owner.username,
+        "display_name": owner.display_name,
+    }
     return {
         "name": row.name,
         "api_key": raw,
         "url": f"{__import__('app.config', fromlist=['get_settings']).get_settings().api_public_url}/v1",
-        "key": key_to_dict(row, {"email": owner.email, "username": owner.username, "display_name": owner.display_name}),
+        "key": key_to_dict(
+            row,
+            owner_info,
+            allowed_connections=conn_payload,
+            allowed_models=model_payload,
+        ),
         "owner_user_id": owner.id,
         "owner_email": owner.email,
     }
@@ -1123,6 +1183,43 @@ async def list_api_key_owner_users(
     return _owner_picker_payload(users)
 
 
+@router.get("/api-keys/connection-options")
+async def list_api_key_connection_options(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_api_keys),
+):
+    """Connection picker for API key allowlists (api_keys menu access only)."""
+    rows = (
+        (
+            await db.execute(
+                select(Connection).order_by(Connection.name.asc(), Connection.id.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {"items": [connection_brief(c) for c in rows]}
+
+
+@router.get("/api-keys/model-options")
+async def list_api_key_model_options(
+    owner_user_id: int = Query(..., ge=1),
+    connection_id: list[int] | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_api_keys),
+):
+    """Model picker for API key allowlists (filtered by owner ACL)."""
+    owner = await db.get(User, owner_user_id)
+    if not owner:
+        raise HTTPException(400, detail="Owner user not found")
+    items = await list_picker_models(
+        db,
+        owner_user_id=owner_user_id,
+        connection_ids=connection_id,
+    )
+    return {"items": items}
+
+
 @router.get("/api-keys")
 async def list_alpha_router_keys(
     q: str | None = Query(None, description="Search key name"),
@@ -1167,6 +1264,9 @@ async def list_alpha_router_keys(
         owner_rows = (await db.execute(select(User).where(User.id.in_(owner_ids)))).scalars().all()
         owners = {u.id: u for u in owner_rows}
 
+    conn_map = await map_allowed_connections(db, [k.id for k in rows])
+    model_map = await map_allowed_models(db, [k.id for k in rows])
+
     items = []
     for k in rows:
         u = owners.get(k.owner_user_id) if k.owner_user_id else None
@@ -1175,7 +1275,14 @@ async def list_alpha_router_keys(
         )
         apply_expiration(k)
         await maybe_reset_key_period(db, k)
-        items.append(key_to_dict(k, owner_info))
+        items.append(
+            key_to_dict(
+                k,
+                owner_info,
+                allowed_connections=conn_map.get(int(k.id), []),
+                allowed_models=model_map.get(int(k.id), []),
+            )
+        )
     await db.commit()
     return {
         "items": items,
@@ -1215,12 +1322,31 @@ async def patch_alpha_router_key(
     if not k:
         raise HTTPException(404)
 
+    before_conns = (
+        await map_allowed_connections(db, [k.id])
+    ).get(int(k.id), [])
+    before_models = (
+        await map_allowed_models(db, [k.id])
+    ).get(int(k.id), [])
     before = {
         "name": k.name,
         "owner_user_id": k.owner_user_id,
         "credit_limit_usd": k.credit_limit_usd,
         "reset_period": k.reset_period,
         "expires_at": k.expires_at,
+        "allowed_connections": connection_policy_label(
+            bool(k.restrict_connections),
+            [c["name"] for c in before_conns],
+        ),
+        "allowed_models": model_policy_label(
+            bool(k.restrict_models),
+            [
+                f"{m['display_name']} ({m['connection_name']})"
+                if m.get("connection_name")
+                else str(m.get("display_name") or m.get("external_id") or m["id"])
+                for m in before_models
+            ],
+        ),
     }
     patches: dict[str, object] = {}
 
@@ -1251,6 +1377,50 @@ async def patch_alpha_router_key(
         else:
             k.expires_at = compute_expires_at(k.created_at or datetime.utcnow(), body.expiration_days)
             patches["expires_at"] = k.expires_at
+
+    if body.restrict_connections is not None or body.allowed_connection_ids is not None:
+        restrict = (
+            bool(body.restrict_connections)
+            if body.restrict_connections is not None
+            else bool(k.restrict_connections)
+        )
+        ids = (
+            body.allowed_connection_ids
+            if body.allowed_connection_ids is not None
+            else [int(c["id"]) for c in before_conns]
+        )
+        try:
+            names = await replace_key_allowed_connections(
+                db,
+                k,
+                restrict=restrict,
+                connection_ids=ids if restrict else [],
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        patches["allowed_connections"] = connection_policy_label(restrict, names)
+
+    if body.restrict_models is not None or body.allowed_model_ids is not None:
+        restrict_models = (
+            bool(body.restrict_models)
+            if body.restrict_models is not None
+            else bool(k.restrict_models)
+        )
+        model_ids = (
+            body.allowed_model_ids
+            if body.allowed_model_ids is not None
+            else [int(m["id"]) for m in before_models]
+        )
+        try:
+            model_labels = await replace_key_allowed_models(
+                db,
+                k,
+                restrict=restrict_models,
+                model_ids=model_ids if restrict_models else [],
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        patches["allowed_models"] = model_policy_label(restrict_models, model_labels)
 
     if patches:
         touch_key_modified(k)
@@ -1905,6 +2075,7 @@ async def _fetch_logs_since(
     user_ids: list[int] | None = None,
     alpha_router_api_key_id: int | None = None,
     connection_id: int | None = None,
+    agent_id: str | None = None,
 ) -> list[RequestLog]:
     q = select(RequestLog).where(RequestLog.request_time >= since)
     if user_id is not None:
@@ -1924,6 +2095,23 @@ async def _fetch_logs_since(
         if not model_ids:
             return []
         q = q.where(RequestLog.model_id.in_(list(model_ids)))
+    if agent_id is not None:
+        q = q.where(
+            or_(
+                RequestLog.id.in_(
+                    select(AgentRun.request_log_id).where(
+                        AgentRun.agent_id == agent_id,
+                        AgentRun.request_log_id.is_not(None),
+                    )
+                ),
+                RequestLog.usage_operation_id.in_(
+                    select(AgentRun.usage_operation_id).where(
+                        AgentRun.agent_id == agent_id,
+                        AgentRun.usage_operation_id.is_not(None),
+                    )
+                ),
+            )
+        )
     return (await db.execute(q.order_by(RequestLog.request_time.asc()))).scalars().all()
 
 
@@ -1984,6 +2172,47 @@ async def _period_api_key_filter_options(db: AsyncSession, rows: list) -> list[d
     return out
 
 
+def activity_explore_opts(
+    explore_metric: str | None = Query(None, max_length=32),
+    explore_group: str | None = Query(None, max_length=32),
+    explore_subgroup: str | None = Query(None, max_length=32),
+    explore_rollup: str | None = Query(None, max_length=16),
+    explore_top_mode: str | None = Query(None, pattern="^(top|bottom)$"),
+    explore_top_n: int | None = Query(None, ge=1, le=30),
+    explore_rank_by: str | None = Query(None, pattern="^(metric|requests)$"),
+    explore_show_other: bool | None = Query(None),
+    explore_cumulative: bool | None = Query(None),
+    explore_chart_type: str | None = Query(None, pattern="^(bar|line|area)$"),
+) -> dict:
+    """Shared Explore query params for every Activity dashboard scope."""
+    return {
+        "metric": explore_metric or "total_usage",
+        "group": explore_group or "model",
+        "subgroup": explore_subgroup,
+        "rollup": explore_rollup or "daily",
+        "top_mode": explore_top_mode or "top",
+        "top_n": explore_top_n or 10,
+        "rank_by": explore_rank_by or "metric",
+        "show_other": True if explore_show_other is None else explore_show_other,
+        "cumulative": False if explore_cumulative is None else explore_cumulative,
+        "chart_type": explore_chart_type or "bar",
+    }
+
+
+async def _activity_options_and_meta(
+    db: AsyncSession, options_rows: list, group_by: str
+) -> tuple[dict, dict]:
+    options = activity_service.filter_options(options_rows, group_by)
+    options["available_api_keys"] = await _period_api_key_filter_options(db, options_rows)
+    options["group_by"] = group_by
+    api_key_meta = {
+        str(item["key"]): item
+        for item in options["available_api_keys"]
+        if item.get("key") is not None
+    }
+    return options, api_key_meta
+
+
 def _period_prev_since(period: str, now: datetime) -> tuple[datetime, datetime]:
     since = activity_service.activity_period_start(period, now)
     span = now - since
@@ -2002,6 +2231,7 @@ async def _load_activity_context(
     user_ids: list[int] | None = None,
     alpha_router_api_key_id: int | None = None,
     connection_id: int | None = None,
+    agent_id: str | None = None,
 ) -> tuple[list, list, list, list, datetime, datetime, list, list, datetime]:
     now = datetime.utcnow()
     prompts_period = prompts_period or period
@@ -2017,6 +2247,7 @@ async def _load_activity_context(
         user_ids=user_ids,
         alpha_router_api_key_id=alpha_router_api_key_id,
         connection_id=connection_id,
+        agent_id=agent_id,
     )
     period_rows = [r for r in all_rows if (r.request_time or now) >= since]
     options_rows = period_rows
@@ -2051,6 +2282,73 @@ async def _load_activity_context(
     )
 
 
+async def _build_scoped_activity(
+    db: AsyncSession,
+    *,
+    period: str,
+    prompts_period: str | None,
+    timezone: str,
+    filters: dict,
+    explore: dict,
+    group_by: str = "model",
+    user_id: int | None = None,
+    user_ids: list[int] | None = None,
+    alpha_router_api_key_id: int | None = None,
+    connection_id: int | None = None,
+    agent_id: str | None = None,
+) -> tuple[dict, dict, dict]:
+    pp = prompts_period or ("day" if period not in ("day", "week", "month") else period)
+    if pp not in ("day", "week", "month"):
+        pp = "week"
+    (
+        rows,
+        prev_rows,
+        heatmap_rows,
+        options_rows,
+        since,
+        now,
+        prompts_rows,
+        prompts_prev_rows,
+        since_prompts,
+    ) = await _load_activity_context(
+        db,
+        period=period,
+        prompts_period=pp,
+        group_by=group_by,
+        timezone=timezone,
+        filters=filters,
+        user_id=user_id,
+        user_ids=user_ids,
+        alpha_router_api_key_id=alpha_router_api_key_id,
+        connection_id=connection_id,
+        agent_id=agent_id,
+    )
+    options, api_key_meta = await _activity_options_and_meta(db, options_rows, group_by)
+    payload = activity_service.build_activity_payload(
+        rows,
+        period=period,
+        since=since,
+        group_by=group_by,
+        timezone=timezone,
+        now=now,
+        prev_rows=prev_rows,
+        heatmap_rows=heatmap_rows,
+        api_key_meta=api_key_meta,
+        explore=explore,
+    )
+    prompts_card = activity_service.build_prompts_card(
+        prompts_rows,
+        period=pp,
+        since=since_prompts,
+        group_by=group_by,
+        timezone=timezone,
+        now=now,
+        prev_rows=prompts_prev_rows,
+        heatmap_rows=heatmap_rows,
+    )
+    return payload, options, prompts_card
+
+
 async def _prepare_activity_export(
     db: AsyncSession,
     *,
@@ -2063,6 +2361,7 @@ async def _prepare_activity_export(
     user_ids: list[int] | None = None,
     alpha_router_api_key_id: int | None = None,
     connection_id: int | None = None,
+    agent_id: str | None = None,
 ) -> tuple[list, dict, dict, dict, datetime, datetime]:
     pp = prompts_period or ("day" if period not in ("day", "week", "month") else period)
     if pp not in ("day", "week", "month"):
@@ -2088,6 +2387,7 @@ async def _prepare_activity_export(
         user_ids=user_ids,
         alpha_router_api_key_id=alpha_router_api_key_id,
         connection_id=connection_id,
+        agent_id=agent_id,
     )
     payload = activity_service.build_activity_payload(
         rows,
@@ -2130,6 +2430,7 @@ async def _activity_export_response(
     group_id: int | None = None,
     alpha_router_api_key_id: int | None = None,
     connection_id: int | None = None,
+    agent_id: str | None = None,
 ) -> Response:
     if format == "pdf":
         try:
@@ -2149,6 +2450,7 @@ async def _activity_export_response(
                 group_id=group_id,
                 connection_id=connection_id,
                 api_key_id=alpha_router_api_key_id,
+                agent_id=agent_id,
             )
         except ActivityPdfError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -2170,6 +2472,7 @@ async def _activity_export_response(
         user_ids=user_ids,
         alpha_router_api_key_id=alpha_router_api_key_id,
         connection_id=connection_id,
+        agent_id=agent_id,
     )
     provider_map, key_map = await resolve_log_export_maps(db, rows)
     df = request_logs_to_export_dataframe(
@@ -2199,22 +2502,10 @@ async def dashboard_activity(
     app: str | None = Query(None, max_length=64),
     response_status: str | None = Query(None, pattern="^(success|fail)$"),
     api_key_id: int | None = Query(None, ge=1),
-    explore_metric: str | None = Query(None, max_length=32),
-    explore_group: str | None = Query(None, max_length=32),
-    explore_subgroup: str | None = Query(None, max_length=32),
-    explore_rollup: str | None = Query(None, max_length=16),
-    explore_top_mode: str | None = Query(None, pattern="^(top|bottom)$"),
-    explore_top_n: int | None = Query(None, ge=1, le=30),
-    explore_rank_by: str | None = Query(None, pattern="^(metric|requests)$"),
-    explore_show_other: bool | None = Query(None),
-    explore_cumulative: bool | None = Query(None),
-    explore_chart_type: str | None = Query(None, pattern="^(bar|line|area)$"),
+    explore: dict = Depends(activity_explore_opts),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_dashboard),
 ):
-    pp = prompts_period or ("day" if period not in ("day", "week", "month") else period)
-    if pp not in ("day", "week", "month"):
-        pp = "week"
     filters = _activity_query_filters(
         model_id=model_id,
         username=username,
@@ -2222,64 +2513,14 @@ async def dashboard_activity(
         response_status=response_status,
         api_key_id=api_key_id,
     )
-    (
-        rows,
-        prev_rows,
-        heatmap_rows,
-        options_rows,
-        since,
-        now,
-        prompts_rows,
-        prompts_prev_rows,
-        since_prompts,
-    ) = await _load_activity_context(
+    payload, options, prompts_card = await _build_scoped_activity(
         db,
         period=period,
-        prompts_period=pp,
-        group_by=group_by,
+        prompts_period=prompts_period,
         timezone=timezone,
         filters=filters,
-    )
-    # Filter pickers follow the selected time period (same rows as the dashboard window).
-    options = activity_service.filter_options(options_rows, group_by)
-    options["available_api_keys"] = await _period_api_key_filter_options(db, options_rows)
-    options["group_by"] = group_by
-    api_key_meta = {
-        str(item["key"]): item for item in options["available_api_keys"] if item.get("key") is not None
-    }
-    explore_opts = {
-        "metric": explore_metric or "total_usage",
-        "group": explore_group or "model",
-        "subgroup": explore_subgroup,
-        "rollup": explore_rollup or "daily",
-        "top_mode": explore_top_mode or "top",
-        "top_n": explore_top_n or 10,
-        "rank_by": explore_rank_by or "metric",
-        "show_other": True if explore_show_other is None else explore_show_other,
-        "cumulative": False if explore_cumulative is None else explore_cumulative,
-        "chart_type": explore_chart_type or "bar",
-    }
-    payload = activity_service.build_activity_payload(
-        rows,
-        period=period,
-        since=since,
+        explore=explore,
         group_by=group_by,
-        timezone=timezone,
-        now=now,
-        prev_rows=prev_rows,
-        heatmap_rows=heatmap_rows,
-        api_key_meta=api_key_meta,
-        explore=explore_opts,
-    )
-    prompts_card = activity_service.build_prompts_card(
-        prompts_rows,
-        period=pp,
-        since=since_prompts,
-        group_by=group_by,
-        timezone=timezone,
-        now=now,
-        prev_rows=prompts_prev_rows,
-        heatmap_rows=heatmap_rows,
     )
     return {
         **payload,
@@ -2334,56 +2575,27 @@ async def user_activity(
     period: str = Query("day", pattern=activity_service.ACTIVITY_PERIOD_PATTERN),
     prompts_period: str | None = Query(None, pattern=activity_service.PROMPTS_PERIOD_PATTERN),
     model_id: str | None = Query(None, max_length=256),
+    app: str | None = Query(None, max_length=64),
+    response_status: str | None = Query(None, pattern="^(success|fail)$"),
     timezone: str = Query("local", pattern="^(local|utc)$"),
+    explore: dict = Depends(activity_explore_opts),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_users),
 ):
-    pp = prompts_period or ("day" if period not in ("day", "week", "month") else period)
-    if pp not in ("day", "week", "month"):
-        pp = "week"
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, detail="User not found")
-    filters = _activity_query_filters(model_id=model_id, username=None, app=None, response_status=None)
-    (
-        rows,
-        prev_rows,
-        heatmap_rows,
-        options_rows,
-        since,
-        now,
-        prompts_rows,
-        prompts_prev_rows,
-        since_prompts,
-    ) = await _load_activity_context(
+    filters = _activity_query_filters(
+        model_id=model_id, username=None, app=app, response_status=response_status
+    )
+    payload, options, prompts_card = await _build_scoped_activity(
         db,
         period=period,
-        prompts_period=pp,
-        group_by="model",
+        prompts_period=prompts_period,
         timezone=timezone,
         filters=filters,
+        explore=explore,
         user_id=user_id,
-    )
-    options = activity_service.filter_options(options_rows, "model")
-    payload = activity_service.build_activity_payload(
-        rows,
-        period=period,
-        since=since,
-        group_by="model",
-        timezone=timezone,
-        now=now,
-        prev_rows=prev_rows,
-        heatmap_rows=heatmap_rows,
-    )
-    prompts_card = activity_service.build_prompts_card(
-        prompts_rows,
-        period=pp,
-        since=since_prompts,
-        group_by="model",
-        timezone=timezone,
-        now=now,
-        prev_rows=prompts_prev_rows,
-        heatmap_rows=heatmap_rows,
     )
     return {
         **payload,
@@ -2402,58 +2614,29 @@ async def api_key_activity(
     period: str = Query("day", pattern=activity_service.ACTIVITY_PERIOD_PATTERN),
     prompts_period: str | None = Query(None, pattern=activity_service.PROMPTS_PERIOD_PATTERN),
     model_id: str | None = Query(None, max_length=256),
+    app: str | None = Query(None, max_length=64),
+    response_status: str | None = Query(None, pattern="^(success|fail)$"),
     timezone: str = Query("local", pattern="^(local|utc)$"),
+    explore: dict = Depends(activity_explore_opts),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_api_keys),
 ):
-    pp = prompts_period or ("day" if period not in ("day", "week", "month") else period)
-    if pp not in ("day", "week", "month"):
-        pp = "week"
     key = await db.get(AlphaRouterApiKey, key_id)
     if not key:
         raise HTTPException(404, detail="API key not found")
-    filters = _activity_query_filters(model_id=model_id, username=None, app=None, response_status=None)
-    (
-        rows,
-        prev_rows,
-        heatmap_rows,
-        options_rows,
-        since,
-        now,
-        prompts_rows,
-        prompts_prev_rows,
-        since_prompts,
-    ) = await _load_activity_context(
+    filters = _activity_query_filters(
+        model_id=model_id, username=None, app=app, response_status=response_status
+    )
+    payload, options, prompts_card = await _build_scoped_activity(
         db,
         period=period,
-        prompts_period=pp,
-        group_by="model",
+        prompts_period=prompts_period,
         timezone=timezone,
         filters=filters,
+        explore=explore,
         alpha_router_api_key_id=key_id,
     )
-    options = activity_service.filter_options(options_rows, "model")
-    payload = activity_service.build_activity_payload(
-        rows,
-        period=period,
-        since=since,
-        group_by="model",
-        timezone=timezone,
-        now=now,
-        prev_rows=prev_rows,
-        heatmap_rows=heatmap_rows,
-    )
-    prompts_card = activity_service.build_prompts_card(
-        prompts_rows,
-        period=pp,
-        since=since_prompts,
-        group_by="model",
-        timezone=timezone,
-        now=now,
-        prev_rows=prompts_prev_rows,
-        heatmap_rows=heatmap_rows,
-    )
-    changelog = await fetch_api_key_changelog(db, key_id)  # full log on activity payload
+    changelog = await fetch_api_key_changelog(db, key_id)
     return {
         **payload,
         **options,
@@ -2473,6 +2656,8 @@ async def api_key_activity_export(
     period: str = Query("day", pattern=activity_service.ACTIVITY_PERIOD_PATTERN),
     prompts_period: str | None = Query(None, pattern=activity_service.PROMPTS_PERIOD_PATTERN),
     model_id: str | None = Query(None, max_length=256),
+    app: str | None = Query(None, max_length=64),
+    response_status: str | None = Query(None, pattern="^(success|fail)$"),
     timezone: str = Query("local", pattern="^(local|utc)$"),
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_api_keys),
@@ -2481,7 +2666,9 @@ async def api_key_activity_export(
     key = await db.get(AlphaRouterApiKey, key_id)
     if not key:
         raise HTTPException(404, detail="API key not found")
-    filters = _activity_query_filters(model_id=model_id, username=None, app=None, response_status=None)
+    filters = _activity_query_filters(
+        model_id=model_id, username=None, app=app, response_status=response_status
+    )
     return await _activity_export_response(
         db,
         format=format,
@@ -2533,56 +2720,33 @@ async def connection_activity(
     period: str = Query("day", pattern=activity_service.ACTIVITY_PERIOD_PATTERN),
     prompts_period: str | None = Query(None, pattern=activity_service.PROMPTS_PERIOD_PATTERN),
     model_id: str | None = Query(None, max_length=256),
+    username: str | None = Query(None, max_length=128),
+    app: str | None = Query(None, max_length=64),
+    response_status: str | None = Query(None, pattern="^(success|fail)$"),
+    api_key_id: int | None = Query(None, ge=1),
     timezone: str = Query("local", pattern="^(local|utc)$"),
+    explore: dict = Depends(activity_explore_opts),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_connections),
 ):
-    pp = prompts_period or ("day" if period not in ("day", "week", "month") else period)
-    if pp not in ("day", "week", "month"):
-        pp = "week"
     conn = await db.get(Connection, conn_id)
     if not conn:
         raise HTTPException(404, detail="Connection not found")
-    filters = _activity_query_filters(model_id=model_id, username=None, app=None, response_status=None)
-    (
-        rows,
-        prev_rows,
-        heatmap_rows,
-        options_rows,
-        since,
-        now,
-        prompts_rows,
-        prompts_prev_rows,
-        since_prompts,
-    ) = await _load_activity_context(
+    filters = _activity_query_filters(
+        model_id=model_id,
+        username=username,
+        app=app,
+        response_status=response_status,
+        api_key_id=api_key_id,
+    )
+    payload, options, prompts_card = await _build_scoped_activity(
         db,
         period=period,
-        prompts_period=pp,
-        group_by="model",
+        prompts_period=prompts_period,
         timezone=timezone,
         filters=filters,
+        explore=explore,
         connection_id=conn_id,
-    )
-    options = activity_service.filter_options(options_rows, "model")
-    payload = activity_service.build_activity_payload(
-        rows,
-        period=period,
-        since=since,
-        group_by="model",
-        timezone=timezone,
-        now=now,
-        prev_rows=prev_rows,
-        heatmap_rows=heatmap_rows,
-    )
-    prompts_card = activity_service.build_prompts_card(
-        prompts_rows,
-        period=pp,
-        since=since_prompts,
-        group_by="model",
-        timezone=timezone,
-        now=now,
-        prev_rows=prompts_prev_rows,
-        heatmap_rows=heatmap_rows,
     )
     changelog = await fetch_connection_changelog(db, conn_id)
     return {
@@ -2610,6 +2774,10 @@ async def connection_activity_export(
     period: str = Query("day", pattern=activity_service.ACTIVITY_PERIOD_PATTERN),
     prompts_period: str | None = Query(None, pattern=activity_service.PROMPTS_PERIOD_PATTERN),
     model_id: str | None = Query(None, max_length=256),
+    username: str | None = Query(None, max_length=128),
+    app: str | None = Query(None, max_length=64),
+    response_status: str | None = Query(None, pattern="^(success|fail)$"),
+    api_key_id: int | None = Query(None, ge=1),
     timezone: str = Query("local", pattern="^(local|utc)$"),
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_connections),
@@ -2618,7 +2786,13 @@ async def connection_activity_export(
     conn = await db.get(Connection, conn_id)
     if not conn:
         raise HTTPException(404, detail="Connection not found")
-    filters = _activity_query_filters(model_id=model_id, username=None, app=None, response_status=None)
+    filters = _activity_query_filters(
+        model_id=model_id,
+        username=username,
+        app=app,
+        response_status=response_status,
+        api_key_id=api_key_id,
+    )
     return await _activity_export_response(
         db,
         format=format,
@@ -2662,6 +2836,8 @@ async def user_activity_export(
     period: str = Query("day", pattern=activity_service.ACTIVITY_PERIOD_PATTERN),
     prompts_period: str | None = Query(None, pattern=activity_service.PROMPTS_PERIOD_PATTERN),
     model_id: str | None = Query(None, max_length=256),
+    app: str | None = Query(None, max_length=64),
+    response_status: str | None = Query(None, pattern="^(success|fail)$"),
     timezone: str = Query("local", pattern="^(local|utc)$"),
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_users),
@@ -2670,7 +2846,9 @@ async def user_activity_export(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, detail="User not found")
-    filters = _activity_query_filters(model_id=model_id, username=None, app=None, response_status=None)
+    filters = _activity_query_filters(
+        model_id=model_id, username=None, app=app, response_status=response_status
+    )
     return await _activity_export_response(
         db,
         format=format,

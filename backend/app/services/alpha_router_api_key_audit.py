@@ -19,6 +19,9 @@ FIELD_LABELS: dict[str, str] = {
     "reset_period": "Reset period",
     "expires_at": "Expiration",
     "is_active": "Active",
+    "restrict_connections": "Restrict connections",
+    "allowed_connections": "Allowed connections",
+    "allowed_models": "Allowed models",
 }
 
 
@@ -83,6 +86,8 @@ async def log_api_key_created(
     key: AlphaRouterApiKey,
     actor: User,
     owner: User,
+    allowed_connections_label: str | None = None,
+    allowed_models_label: str | None = None,
 ) -> None:
     owner_label = owner.email or owner.username
     changes = [
@@ -108,6 +113,22 @@ async def log_api_key_created(
             "new": _serialize_value("expires_at", key.expires_at),
         },
     ]
+    if allowed_connections_label is not None:
+        changes.append(
+            {
+                "field": "allowed_connections",
+                "label": FIELD_LABELS["allowed_connections"],
+                "new": allowed_connections_label,
+            }
+        )
+    if allowed_models_label is not None:
+        changes.append(
+            {
+                "field": "allowed_models",
+                "label": FIELD_LABELS["allowed_models"],
+                "new": allowed_models_label,
+            }
+        )
     await log_api_key_audit(db, key=key, actor=actor, action="created", changes=changes)
 
 

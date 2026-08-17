@@ -99,7 +99,13 @@ async def record_key_usage(db: AsyncSession, key: AlphaRouterApiKey, cost_usd: f
     )
 
 
-def key_to_dict(key: AlphaRouterApiKey, owner: dict | None = None) -> dict:
+def key_to_dict(
+    key: AlphaRouterApiKey,
+    owner: dict | None = None,
+    *,
+    allowed_connections: list[dict] | None = None,
+    allowed_models: list[dict] | None = None,
+) -> dict:
     expires = key.expires_at
     return {
         "id": key.id,
@@ -125,4 +131,8 @@ def key_to_dict(key: AlphaRouterApiKey, owner: dict | None = None) -> dict:
         "period_reserved_usd": float(key.period_reserved_usd or 0),
         "total_used_usd": float(key.total_used_usd or 0),
         "period_started_at": key.period_started_at.isoformat() if key.period_started_at else None,
+        "restrict_connections": bool(key.restrict_connections),
+        "allowed_connections": list(allowed_connections or []),
+        "restrict_models": bool(key.restrict_models),
+        "allowed_models": list(allowed_models or []),
     }

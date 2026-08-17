@@ -9,6 +9,7 @@ import ConnectionActivity from "./pages/admin/ConnectionActivity";
 import Models from "./pages/admin/Models";
 import AdminApiKeys from "./pages/admin/ApiKeys";
 import ApiKeyActivity from "./pages/admin/ApiKeyActivity";
+import ApiKeyLogs from "./pages/admin/ApiKeyLogs";
 import Plans from "./pages/admin/Plans";
 import Users from "./pages/admin/Users";
 import DeletedUsers from "./pages/admin/DeletedUsers";
@@ -37,6 +38,7 @@ import ToolRegistry from "./pages/admin/ToolRegistry";
 import AgentEvaluations from "./pages/admin/AgentEvaluations";
 import AgentApprovals from "./pages/admin/AgentApprovals";
 import AgentActivity from "./pages/admin/AgentActivity";
+import AgentUsageActivity from "./pages/admin/AgentUsageActivity";
 import { isAdminPanelRole } from "./lib/rbac";
 import { bootstrapSession, type SessionInfo } from "./api";
 
@@ -102,6 +104,7 @@ export default function App() {
         <Route path="models" element={<Models />} />
         <Route path="api-keys" element={<AdminApiKeys />} />
         <Route path="api-keys/:keyId/activity" element={<ApiKeyActivity />} />
+        <Route path="api-keys/:keyId/logs" element={<ApiKeyLogs />} />
         <Route path="plans" element={<Plans />} />
         <Route path="roles" element={<Roles />} />
         <Route path="users" element={<Users />} />
@@ -119,6 +122,7 @@ export default function App() {
         <Route path="database" element={<DatabaseMonitor />} />
         <Route path="agents" element={<AgentsOverview />} />
         <Route path="agents/studio" element={<AgentStudio />} />
+        <Route path="agents/:agentId/activity" element={<AgentUsageActivity />} />
         <Route path="knowledge" element={<KnowledgeBases />} />
         <Route path="agent-tools" element={<ToolRegistry />} />
         <Route path="agent-evaluations" element={<AgentEvaluations />} />

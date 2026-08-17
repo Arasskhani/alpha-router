@@ -15,6 +15,8 @@ type Props = {
   panelClassName?: string;
   /** Extra class on `.modal-body`. */
   bodyClassName?: string;
+  /** Extra controls in the header, before the close button. */
+  headerActions?: ReactNode;
 };
 
 export default function Modal({
@@ -27,6 +29,7 @@ export default function Modal({
   closeOnEscape = true,
   panelClassName = "",
   bodyClassName = "",
+  headerActions,
 }: Props) {
   useEffect(() => {
     if (!open || !closeOnEscape) return;
@@ -52,7 +55,10 @@ export default function Modal({
       >
         <div className={`modal-header${compactHeader ? " modal-header--compact" : ""}`}>
           {compactHeader || !title ? <span aria-hidden="true" /> : <h3>{title}</h3>}
-          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+          <div className="modal-header-end">
+            {headerActions}
+            <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+          </div>
         </div>
         <div className={`modal-body${bodyClassName ? ` ${bodyClassName}` : ""}`}>{children}</div>
       </div>

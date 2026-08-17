@@ -1,26 +1,42 @@
-import type { ActivityOverview, OverviewFocus } from "../types";
+import type { ActivityInsights, ActivityOverview, HeatmapMetric, OverviewFocus, TimezoneMode } from "../types";
+import ActivityHeatmap from "../ActivityHeatmap";
 import OverviewKpiRow from "./OverviewKpiRow";
 import OverviewStackedCard from "./OverviewStackedCard";
 import OverviewTopList from "./OverviewTopList";
 
 type Props = {
   overview: ActivityOverview;
+  insights?: ActivityInsights | null;
+  timezone?: TimezoneMode;
+  heatmapMetric?: HeatmapMetric;
+  onHeatmapMetricChange?: (m: HeatmapMetric) => void;
+  hideUsers?: boolean;
   onExplore: (focus: OverviewFocus) => void;
 };
 
-export default function ActivityOverviewPanel({ overview, onExplore }: Props) {
+export default function ActivityOverviewPanel({
+  overview,
+  insights,
+  timezone = "local",
+  heatmapMetric = "spend",
+  onHeatmapMetricChange,
+  hideUsers = false,
+  onExplore,
+}: Props) {
   return (
     <div className="activity-overview">
       <OverviewKpiRow kpis={overview.kpis} />
 
-      <div className="overview-lists-row">
-        <OverviewTopList
-          title="Top Users"
-          focus="users"
-          items={overview.top_users}
-          emptyLabel="No user usage in this period"
-          onExplore={onExplore}
-        />
+      <div className={`overview-lists-row${hideUsers ? " overview-lists-row--single" : ""}`}>
+        {hideUsers ? null : (
+          <OverviewTopList
+            title="Top Users"
+            focus="users"
+            items={overview.top_users}
+            emptyLabel="No user usage in this period"
+            onExplore={onExplore}
+          />
+        )}
         <OverviewTopList
           title="Top Apps"
           focus="apps"
@@ -65,6 +81,15 @@ export default function ActivityOverviewPanel({ overview, onExplore }: Props) {
           onExplore={onExplore}
         />
       </div>
+
+      {insights && onHeatmapMetricChange ? (
+        <ActivityHeatmap
+          insights={insights}
+          metric={heatmapMetric}
+          timezone={timezone}
+          onMetricChange={onHeatmapMetricChange}
+        />
+      ) : null}
     </div>
   );
 }

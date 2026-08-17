@@ -108,6 +108,8 @@ def test_database_naming_contracts():
     monitored_tables = {table for table, _ in TABLE_LABELS}
     assert "alpha_router_api_keys" in monitored_tables
     assert "alpha_router_api_key_audit_logs" in monitored_tables
+    assert "alpha_router_api_key_connections" in monitored_tables
+    assert "alpha_router_api_key_models" in monitored_tables
 
     report_ids = {report["id"] for report in REPORT_CATALOG}
     assert "alpha_router_api_key_usage" in report_ids
@@ -150,6 +152,8 @@ async def _test_fresh_database_schema_contracts() -> None:
 
     assert "alpha_router_api_keys" in tables
     assert "alpha_router_api_key_audit_logs" in tables
+    assert "alpha_router_api_key_connections" in tables
+    assert "alpha_router_api_key_models" in tables
     assert "pricing_snapshots" in tables
     assert "usage_operations" in tables
     assert "usage_events" in tables

@@ -8,7 +8,12 @@ from pydantic import BaseModel
 from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.admin import _activity_export_response, _activity_query_filters
+from app.api.admin import (
+    _activity_export_response,
+    _activity_query_filters,
+    _build_scoped_activity,
+    activity_explore_opts,
+)
 from app.api.deps import get_bearer_token, require_groups, require_groups_write
 from app.database import get_db
 from app.models.budget import PlanAssignment
@@ -232,59 +237,29 @@ async def group_activity(
     period: str = Query("day", pattern=activity_service.ACTIVITY_PERIOD_PATTERN),
     prompts_period: str | None = Query(None, pattern=activity_service.PROMPTS_PERIOD_PATTERN),
     model_id: str | None = Query(None, max_length=256),
+    username: str | None = Query(None, max_length=128),
+    app: str | None = Query(None, max_length=64),
+    response_status: str | None = Query(None, pattern="^(success|fail)$"),
     timezone: str = Query("local", pattern="^(local|utc)$"),
+    explore: dict = Depends(activity_explore_opts),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_groups),
 ):
-    from app.api.admin import _activity_query_filters, _load_activity_context
-
     group = await db.get(UserGroup, group_id)
     if not group:
         raise HTTPException(404, detail="Group not found")
     member_ids = await _group_member_ids(db, group_id)
-    pp = prompts_period or ("day" if period not in ("day", "week", "month") else period)
-    if pp not in ("day", "week", "month"):
-        pp = "week"
-    filters = _activity_query_filters(model_id=model_id, username=None, app=None, response_status=None)
-    (
-        rows,
-        prev_rows,
-        heatmap_rows,
-        options_rows,
-        since,
-        now,
-        prompts_rows,
-        prompts_prev_rows,
-        since_prompts,
-    ) = await _load_activity_context(
+    filters = _activity_query_filters(
+        model_id=model_id, username=username, app=app, response_status=response_status
+    )
+    payload, options, prompts_card = await _build_scoped_activity(
         db,
         period=period,
-        prompts_period=pp,
-        group_by="model",
+        prompts_period=prompts_period,
         timezone=timezone,
         filters=filters,
+        explore=explore,
         user_ids=member_ids,
-    )
-    options = activity_service.filter_options(options_rows, "model")
-    payload = activity_service.build_activity_payload(
-        rows,
-        period=period,
-        since=since,
-        group_by="model",
-        timezone=timezone,
-        now=now,
-        prev_rows=prev_rows,
-        heatmap_rows=heatmap_rows,
-    )
-    prompts_card = activity_service.build_prompts_card(
-        prompts_rows,
-        period=pp,
-        since=since_prompts,
-        group_by="model",
-        timezone=timezone,
-        now=now,
-        prev_rows=prompts_prev_rows,
-        heatmap_rows=heatmap_rows,
     )
     return {
         **payload,
@@ -324,6 +299,9 @@ async def group_activity_export(
     period: str = Query("day", pattern=activity_service.ACTIVITY_PERIOD_PATTERN),
     prompts_period: str | None = Query(None, pattern=activity_service.PROMPTS_PERIOD_PATTERN),
     model_id: str | None = Query(None, max_length=256),
+    username: str | None = Query(None, max_length=128),
+    app: str | None = Query(None, max_length=64),
+    response_status: str | None = Query(None, pattern="^(success|fail)$"),
     timezone: str = Query("local", pattern="^(local|utc)$"),
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_groups),
@@ -333,7 +311,9 @@ async def group_activity_export(
     if not group:
         raise HTTPException(404, detail="Group not found")
     member_ids = await _group_member_ids(db, group_id)
-    filters = _activity_query_filters(model_id=model_id, username=None, app=None, response_status=None)
+    filters = _activity_query_filters(
+        model_id=model_id, username=username, app=app, response_status=response_status
+    )
     return await _activity_export_response(
         db,
         format=format,

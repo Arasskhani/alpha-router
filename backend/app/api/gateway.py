@@ -17,6 +17,14 @@ from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
 from app.services.alpha_router_api_key_service import ensure_key_usable
+from app.services.api_key_connection_policy import (
+    allowed_connection_ids_for_key,
+    filter_models_for_connections,
+)
+from app.services.api_key_model_policy import (
+    allowed_model_ids_for_key,
+    filter_models_for_allowlist,
+)
 from app.services.model_access_service import (
     filter_models_for_subject,
     resolve_access_subject,
@@ -181,6 +189,14 @@ async def list_models(request: Request, db: AsyncSession = Depends(get_db)):
         source=auth_ctx.source,
     )
     rows = await filter_models_for_subject(db, list(rows), subject)
+    allowed_connection_ids = await allowed_connection_ids_for_key(
+        db, auth_ctx.alpha_router_api_key_id
+    )
+    rows = filter_models_for_connections(rows, allowed_connection_ids)
+    allowed_model_ids = await allowed_model_ids_for_key(
+        db, auth_ctx.alpha_router_api_key_id
+    )
+    rows = filter_models_for_allowlist(rows, allowed_model_ids)
     return {
         "object": "list",
         "data": [

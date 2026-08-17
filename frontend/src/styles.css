@@ -3472,6 +3472,73 @@ table.card tbody td:last-child {
   font-weight: 500;
 }
 
+.api-key-form__connections {
+  border: 0;
+  margin: 0 0 0.85rem;
+  padding: 0;
+}
+
+.api-key-form__connections legend {
+  padding: 0;
+  margin-bottom: 0.4rem;
+}
+
+.api-key-conn-picker {
+  margin-top: 0.55rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.api-key-conn-picker__list {
+  max-height: 11rem;
+  overflow: auto;
+  border: 1px solid var(--border, #d8dee6);
+  border-radius: 8px;
+  padding: 0.35rem 0.5rem;
+}
+
+.api-key-conn-picker__option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  font-weight: 500;
+  padding: 0.28rem 0;
+}
+
+.api-key-conn-picker__option.is-inactive {
+  opacity: 0.72;
+}
+
+.api-key-inspect-btns {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.api-key-inspect-btns__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.api-key-inspect-btns__btn--active {
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.api-logs-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.api-logs-key-banner {
+  margin: 0 0 0.85rem;
+}
+
 .user-owner-select {
   position: relative;
 }
@@ -6810,6 +6877,14 @@ table.card tbody td:last-child {
   justify-content: space-between;
   padding: 0.85rem 1.1rem;
   border-bottom: 1px solid var(--border);
+  gap: 0.75rem;
+}
+.modal-header-end {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 .modal-panel--settings .modal-header {
   padding: 0.55rem 0.85rem;

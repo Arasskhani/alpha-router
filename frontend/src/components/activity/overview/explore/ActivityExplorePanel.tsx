@@ -1,4 +1,4 @@
-import type { ActivityExplore, ExploreControls } from "../../types";
+import type { ActivityExplore, ExploreControls, ExploreGroup } from "../../types";
 import ExploreChartCard from "./ExploreChartCard";
 import ExploreTable from "./ExploreTable";
 import ExploreToolbar from "./ExploreToolbar";
@@ -6,6 +6,7 @@ import ExploreToolbar from "./ExploreToolbar";
 type Props = {
   explore: ActivityExplore;
   controls: ExploreControls;
+  hiddenGroups?: ExploreGroup[];
   onControlsChange: (patch: Partial<ExploreControls>, clearFocus?: boolean) => void;
   onDownloadPdf?: (mode: "current" | "summary") => void;
 };
@@ -13,12 +14,13 @@ type Props = {
 export default function ActivityExplorePanel({
   explore,
   controls,
+  hiddenGroups,
   onControlsChange,
   onDownloadPdf,
 }: Props) {
   return (
     <div className="activity-explore">
-      <ExploreToolbar controls={controls} onChange={onControlsChange} />
+      <ExploreToolbar controls={controls} hiddenGroups={hiddenGroups} onChange={onControlsChange} />
       <ExploreChartCard
         explore={explore}
         controls={controls}

@@ -98,6 +98,7 @@ def build_activity_frontend_url(
     group_id: int | None = None,
     connection_id: int | None = None,
     api_key_id: int | None = None,
+    agent_id: str | None = None,
 ) -> str:
     pp = prompts_period or ("day" if period not in ("day", "week", "month") else period)
     if pp not in ("day", "week", "month"):
@@ -111,16 +112,14 @@ def build_activity_frontend_url(
     }
     if scope == "service":
         params["groupBy"] = group_by
-        if model_id:
-            params["model"] = model_id
-        if username:
-            params["user"] = username
-        if app:
-            params["app"] = app
-        if response_status in ("success", "fail"):
-            params["status"] = response_status
-    elif model_id:
+    if model_id:
         params["model"] = model_id
+    if username:
+        params["user"] = username
+    if app:
+        params["app"] = app
+    if response_status in ("success", "fail"):
+        params["status"] = response_status
 
     if scope == "service":
         path = "/admin"
@@ -134,6 +133,8 @@ def build_activity_frontend_url(
         path = f"/admin/connections/{connection_id}/activity"
     elif scope == "api_key":
         path = f"/admin/api-keys/{api_key_id}/activity"
+    elif scope == "agent":
+        path = f"/admin/agents/{agent_id}/activity"
     else:
         raise ActivityPdfError(f"Unsupported activity scope: {scope}")
 
@@ -301,6 +302,7 @@ async def render_activity_page_pdf(
     group_id: int | None = None,
     connection_id: int | None = None,
     api_key_id: int | None = None,
+    agent_id: str | None = None,
 ) -> bytes:
     url = build_activity_frontend_url(
         scope=scope,
@@ -317,6 +319,7 @@ async def render_activity_page_pdf(
         group_id=group_id,
         connection_id=connection_id,
         api_key_id=api_key_id,
+        agent_id=agent_id,
     )
     try:
         # Run in a worker thread so uvicorn can serve the SPA/API while Chromium loads the page.

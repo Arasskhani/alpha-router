@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import AdminPage from "../../components/AdminPage";
 import LogFilterCombobox from "../../components/admin/LogFilterCombobox";
 import ModelName from "../../components/ModelName";
 import RequestLogCostDetailsModal from "../../components/RequestLogCostDetailsModal";
+import ApiKeyInspectButtons from "../../components/apiKeys/ApiKeyInspectButtons";
 import { api, authFetch, formatApiError } from "../../api";
 import { useConfirm } from "../../context/ConfirmContext";
 import { useAdminWriteLock } from "../../lib/adminWriteLock";
@@ -20,6 +21,17 @@ type Log = RequestLogSummary;
 type FilterOptions = {
   usernames: string[];
   models: string[];
+};
+
+type ApiKeyMeta = {
+  id: number;
+  name: string;
+  prefix?: string;
+};
+
+type Props = {
+  /** When set, this page is the API-key-scoped logs view. */
+  apiKeyId?: number;
 };
 
 async function downloadCsvExport(path: string): Promise<void> {
@@ -46,11 +58,15 @@ async function downloadCsvExport(path: string): Promise<void> {
   URL.revokeObjectURL(a.href);
 }
 
-export default function ApiLogs() {
+export default function ApiLogs({ apiKeyId }: Props) {
   const { confirm } = useConfirm();
   const writeLock = useAdminWriteLock();
   const [searchParams] = useSearchParams();
+  const fromKeyRoute = Number.isFinite(apiKeyId) && (apiKeyId as number) > 0;
+  const queryKeyId = Number(searchParams.get("api_key_id") || "") || undefined;
+  const scopedKeyId = fromKeyRoute ? (apiKeyId as number) : queryKeyId;
   const [items, setItems] = useState<Log[]>([]);
+  const [keyMeta, setKeyMeta] = useState<ApiKeyMeta | null>(null);
   const [username, setUsername] = useState("");
   const [model, setModel] = useState(searchParams.get("model_id") || searchParams.get("model") || "");
   const [responseStatus, setResponseStatus] = useState<"" | "success" | "fail">("");
@@ -78,10 +94,13 @@ export default function ApiLogs() {
       if (promptCache) q.set("prompt_cache", promptCache);
       if (start) q.set("start_date", start);
       if (end) q.set("end_date", end);
+      if (!fromKeyRoute && scopedKeyId) q.set("api_key_id", String(scopedKeyId));
       return q;
     },
-    [username, model, responseStatus, promptCache, start, end],
+    [username, model, responseStatus, promptCache, start, end, fromKeyRoute, scopedKeyId],
   );
+
+  const logsPath = fromKeyRoute ? `/api/admin/api-keys/${apiKeyId}/logs` : "/api/admin/logs";
 
   const loadFilterOptions = useCallback(async () => {
     setOptionsLoading(true);
@@ -95,23 +114,24 @@ export default function ApiLogs() {
     }
   }, []);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const q = buildFilterQuery("200");
     setLoading(true);
     try {
-      const d = await api<{ items: Log[] }>(`/api/admin/logs?${q}`);
+      const d = await api<{ items: Log[]; api_key?: ApiKeyMeta }>(`${logsPath}?${q}`);
       setItems(d.items);
+      setKeyMeta(d.api_key ?? null);
     } finally {
       setLoading(false);
     }
-  };
+  }, [buildFilterQuery, logsPath]);
 
   const exportFiltered = async () => {
     setExportError("");
     setExporting(true);
     try {
       const q = buildFilterQuery("5000");
-      await downloadCsvExport(`/api/admin/logs/export?${q}`);
+      await downloadCsvExport(`${logsPath}/export?${q}`);
     } catch (err) {
       setExportError(formatApiError(err));
     } finally {
@@ -226,21 +246,43 @@ export default function ApiLogs() {
   useEffect(() => {
     void load();
     void loadFilterOptions();
-  }, []);
+    // Refetch when the API key scope changes; Filter/Refresh still call load() directly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- avoid refetching on every filter keystroke
+  }, [scopedKeyId, fromKeyRoute]);
 
   return (
-    <AdminPage title="API Logs">
+    <AdminPage
+      title={keyMeta?.name ? `API Logs — ${keyMeta.name}` : "API Logs"}
+      actions={
+        scopedKeyId ? (
+          <div className="api-logs-page-actions">
+            <Link to="/admin/api-keys" className="btn btn-ghost activity-back">
+              API Keys
+            </Link>
+            <ApiKeyInspectButtons keyId={scopedKeyId} active="logs" />
+          </div>
+        ) : undefined
+      }
+    >
+      {keyMeta ? (
+        <p className="muted-text api-logs-key-banner">
+          Showing requests for gateway key <strong>{keyMeta.name}</strong>
+          {keyMeta.prefix ? ` (${keyMeta.prefix}…)` : ""}.
+        </p>
+      ) : null}
       <div className="card api-logs-toolbar">
         <div className="api-logs-toolbar__main">
-          <LogFilterCombobox
-            value={username}
-            onChange={setUsername}
-            options={filterOptions.usernames}
-            placeholder="User / API key"
-            loading={optionsLoading}
-            disabled={loading}
-            onOpen={() => void loadFilterOptions()}
-          />
+          {scopedKeyId ? null : (
+            <LogFilterCombobox
+              value={username}
+              onChange={setUsername}
+              options={filterOptions.usernames}
+              placeholder="User / API key"
+              loading={optionsLoading}
+              disabled={loading}
+              onOpen={() => void loadFilterOptions()}
+            />
+          )}
           <LogFilterCombobox
             value={model}
             onChange={setModel}
@@ -284,15 +326,17 @@ export default function ApiLogs() {
           >
             {exporting ? "Exporting…" : "Export"}
           </button>
-          <button
-            type="button"
-            className="btn btn-danger api-logs-toolbar-btn"
-            {...writeLock.writeLockProps}
-            onClick={() => void clearAllLogs()}
-            disabled={loading || writeLock.readOnly}
-          >
-            Clear All Logs
-          </button>
+          {scopedKeyId ? null : (
+            <button
+              type="button"
+              className="btn btn-danger api-logs-toolbar-btn"
+              {...writeLock.writeLockProps}
+              onClick={() => void clearAllLogs()}
+              disabled={loading || writeLock.readOnly}
+            >
+              Clear All Logs
+            </button>
+          )}
           <button
             type="button"
             className={`btn btn-readonly-ok api-logs-toolbar-btn${loading ? " api-logs-toolbar-btn--loading" : ""}`}

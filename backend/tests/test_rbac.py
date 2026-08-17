@@ -218,6 +218,7 @@ def test_agents_category_and_routes_are_single_menu_surface():
     assert MENU_GROUP_KEYS["agents"] == "agents_knowledge"
     assert MENUS_BY_CATEGORY["agents_knowledge"] == ("agents",)
     assert path_to_menu("/admin/agents") == "agents"
+    assert path_to_menu("/admin/agents/abc/activity") == "agents"
     assert path_to_menu("/admin/knowledge/kb-1/documents") == "agents"
     assert path_to_menu("/admin/agent-evaluations/runs") == "agents"
 

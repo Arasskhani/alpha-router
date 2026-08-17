@@ -20,7 +20,13 @@ from app.models.agent_tool import (
     AgentToolAuditEvent,
     AgentToolVersion,
 )
-from app.models.api_key import AlphaRouterApiKey, AlphaRouterApiKeyAuditLog, UserApiKey
+from app.models.api_key import (
+    AlphaRouterApiKey,
+    AlphaRouterApiKeyAuditLog,
+    UserApiKey,
+    alpha_router_api_key_connections,
+    alpha_router_api_key_models,
+)
 from app.models.auth_provider import AuthProviderConfig
 from app.models.budget import BudgetPlan, PlanAssignment
 from app.models.budget_reservation import BudgetReservation
@@ -101,6 +107,8 @@ __all__ = [
     "AgentVersion",
     "AlphaRouterApiKey",
     "AlphaRouterApiKeyAuditLog",
+    "alpha_router_api_key_connections",
+    "alpha_router_api_key_models",
     "AuthProviderConfig",
     "BudgetPlan",
     "BudgetReservation",
@@ -156,4 +164,6 @@ __all__ = [
     "UserRoleAssignment",
     "VideoGenerationJob",
     "user_group_members",
+    "alpha_router_api_key_connections",
+    "alpha_router_api_key_models",
 ]

@@ -9,7 +9,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_active_user, require_api_logs, require_api_logs_write
+from app.api.deps import (
+    get_current_user,
+    require_active_user,
+    require_api_keys,
+    require_api_logs,
+    require_api_logs_write,
+)
 from app.database import get_db
 from app.models.api_key import AlphaRouterApiKey
 from app.models.connection import Connection
@@ -32,6 +38,8 @@ from app.services.log_export_service import (
     resolve_log_export_maps,
 )
 from app.utils.display import format_app_source
+from app.services.rbac import user_can_access_menu, user_is_admin_panel
+from app.services.user_role_service import get_user_role_slugs
 from app.services.usage_accounting_service import (
     create_configured_pricing_snapshot,
     create_reconciliation_run,
@@ -135,7 +143,10 @@ def _apply_log_filters(
     prompt_cache: str | None,
     start_date: str | None,
     end_date: str | None,
+    api_key_id: int | None = None,
 ):
+    if api_key_id is not None:
+        q = q.where(RequestLog.alpha_router_api_key_id == api_key_id)
     if username:
         term = username.strip()
         key_match = select(AlphaRouterApiKey.id).where(
@@ -162,6 +173,191 @@ def _apply_log_filters(
     if end_date:
         q = q.where(RequestLog.request_time <= datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59))
     return q
+
+
+def _api_key_meta(key: AlphaRouterApiKey | None) -> dict | None:
+    if not key:
+        return None
+    return {"id": key.id, "name": key.name, "prefix": key.key_prefix}
+
+
+async def _require_gateway_key(db: AsyncSession, key_id: int) -> AlphaRouterApiKey:
+    key = await db.get(AlphaRouterApiKey, key_id)
+    if not key:
+        raise HTTPException(status_code=404, detail="API key not found")
+    return key
+
+
+async def _require_request_log_read(
+    db: AsyncSession,
+    user: User,
+    log_row: RequestLog,
+) -> None:
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="User inactive")
+    slugs = await get_user_role_slugs(db, user.id)
+    if not user_is_admin_panel(slugs):
+        raise HTTPException(status_code=403, detail="Insufficient permissions for this menu")
+    if user_can_access_menu(slugs, "api_logs"):
+        return
+    if log_row.alpha_router_api_key_id and user_can_access_menu(slugs, "api_keys"):
+        return
+    raise HTTPException(status_code=403, detail="Insufficient permissions for this menu")
+
+
+async def _filtered_log_rows(
+    db: AsyncSession,
+    *,
+    limit: int,
+    offset: int = 0,
+    username: str | None = None,
+    model_id: str | None = None,
+    response_status: str | None = None,
+    prompt_cache: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    api_key_id: int | None = None,
+):
+    q = select(RequestLog).order_by(RequestLog.request_time.desc())
+    q = _apply_log_filters(
+        q,
+        username=username,
+        model_id=model_id,
+        response_status=response_status,
+        prompt_cache=prompt_cache,
+        start_date=start_date,
+        end_date=end_date,
+        api_key_id=api_key_id,
+    )
+    if offset:
+        q = q.offset(offset)
+    return (await db.execute(q.limit(limit))).scalars().all()
+
+
+async def _serialize_log_rows(db: AsyncSession, rows: list[RequestLog]) -> list[dict]:
+    operation_ids = {r.usage_operation_id for r in rows if r.usage_operation_id}
+    operation_providers: dict[str, set[str]] = {}
+    if operation_ids:
+        provider_rows = (
+            await db.execute(
+                select(UsageEvent.operation_id, UsageEvent.provider_type)
+                .where(UsageEvent.operation_id.in_(operation_ids))
+                .distinct()
+            )
+        ).all()
+        for operation_id, provider in provider_rows:
+            if provider:
+                operation_providers.setdefault(str(operation_id), set()).add(str(provider))
+    model_ids = list({(r.model_id or "").strip() for r in rows if (r.model_id or "").strip()})
+    provider_map: dict[str, str] = {}
+    if model_ids:
+        model_rows = (
+            await db.execute(
+                select(AIModel.external_id, AIModel.provider_type)
+                .where(AIModel.external_id.in_(model_ids))
+                .order_by(AIModel.id.desc())
+            )
+        ).all()
+        for external_id, provider in model_rows:
+            if external_id and external_id not in provider_map:
+                provider_map[str(external_id)] = str(provider or "")
+
+    key_ids = {r.alpha_router_api_key_id for r in rows if r.alpha_router_api_key_id}
+    key_map: dict[int, AlphaRouterApiKey] = {}
+    if key_ids:
+        keys = (
+            await db.execute(select(AlphaRouterApiKey).where(AlphaRouterApiKey.id.in_(key_ids)))
+        ).scalars().all()
+        key_map = {k.id: k for k in keys}
+
+    items = []
+    for r in rows:
+        if r.usage_operation_id and len(operation_providers.get(r.usage_operation_id, set())) == 1:
+            provider = next(iter(operation_providers[r.usage_operation_id]))
+        elif r.usage_operation_id and operation_providers.get(r.usage_operation_id):
+            provider = "mixed"
+        else:
+            provider = provider_map.get((r.model_id or "").strip())
+        items.append(_log_row(r, provider, router_key=key_map.get(r.alpha_router_api_key_id)))
+    return items
+
+
+async def _logs_list_payload(
+    db: AsyncSession,
+    *,
+    limit: int,
+    offset: int = 0,
+    username: str | None = None,
+    model_id: str | None = None,
+    response_status: str | None = None,
+    prompt_cache: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    api_key_id: int | None = None,
+    api_key: AlphaRouterApiKey | None = None,
+) -> dict:
+    rows = await _filtered_log_rows(
+        db,
+        limit=limit,
+        offset=offset,
+        username=username,
+        model_id=model_id,
+        response_status=response_status,
+        prompt_cache=prompt_cache,
+        start_date=start_date,
+        end_date=end_date,
+        api_key_id=api_key_id,
+    )
+    payload: dict = {
+        "items": await _serialize_log_rows(db, rows),
+        "offset": offset,
+        "limit": limit,
+    }
+    meta = _api_key_meta(api_key)
+    if meta:
+        payload["api_key"] = meta
+    return payload
+
+
+async def _logs_export_response(
+    db: AsyncSession,
+    *,
+    limit: int,
+    timezone: str,
+    username: str | None = None,
+    model_id: str | None = None,
+    response_status: str | None = None,
+    prompt_cache: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    api_key_id: int | None = None,
+) -> Response:
+    rows = await _filtered_log_rows(
+        db,
+        limit=limit,
+        username=username,
+        model_id=model_id,
+        response_status=response_status,
+        prompt_cache=prompt_cache,
+        start_date=start_date,
+        end_date=end_date,
+        api_key_id=api_key_id,
+    )
+    provider_map, key_map = await resolve_log_export_maps(db, rows)
+    df = request_logs_to_export_dataframe(
+        rows,
+        tz_mode=timezone,
+        provider_map=provider_map,
+        key_map=key_map,
+    )
+    content = dataframe_to_csv_bytes(df)
+    stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    filename = f"alpharouter-api-logs-{stamp}.csv"
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/admin/logs/filter-options")
@@ -228,33 +424,20 @@ async def admin_logs_export(
     prompt_cache: str | None = Query(default=None, pattern="^(yes|no)$"),
     start_date: str | None = None,
     end_date: str | None = None,
+    api_key_id: int | None = Query(default=None, ge=1),
     timezone: str = Query("local", pattern="^(local|utc)$"),
 ):
-    q = select(RequestLog).order_by(RequestLog.request_time.desc())
-    q = _apply_log_filters(
-        q,
+    return await _logs_export_response(
+        db,
+        limit=limit,
+        timezone=timezone,
         username=username,
         model_id=model_id,
         response_status=response_status,
         prompt_cache=prompt_cache,
         start_date=start_date,
         end_date=end_date,
-    )
-    rows = (await db.execute(q.limit(limit))).scalars().all()
-    provider_map, key_map = await resolve_log_export_maps(db, rows)
-    df = request_logs_to_export_dataframe(
-        rows,
-        tz_mode=timezone,
-        provider_map=provider_map,
-        key_map=key_map,
-    )
-    content = dataframe_to_csv_bytes(df)
-    stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-    filename = f"alpharouter-api-logs-{stamp}.csv"
-    return Response(
-        content=content,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        api_key_id=api_key_id,
     )
 
 
@@ -270,89 +453,81 @@ async def admin_logs(
     prompt_cache: str | None = Query(default=None, pattern="^(yes|no)$"),
     start_date: str | None = None,
     end_date: str | None = None,
+    api_key_id: int | None = Query(default=None, ge=1),
 ):
-    q = select(RequestLog).order_by(RequestLog.request_time.desc())
-    q = _apply_log_filters(
-        q,
+    key = await db.get(AlphaRouterApiKey, api_key_id) if api_key_id else None
+    return await _logs_list_payload(
+        db,
+        limit=limit,
+        offset=offset,
         username=username,
         model_id=model_id,
         response_status=response_status,
         prompt_cache=prompt_cache,
         start_date=start_date,
         end_date=end_date,
+        api_key_id=api_key_id,
+        api_key=key,
     )
-    rows = (await db.execute(q.offset(offset).limit(limit))).scalars().all()
-    operation_ids = {
-        r.usage_operation_id
-        for r in rows
-        if r.usage_operation_id
-    }
-    operation_providers: dict[str, set[str]] = {}
-    if operation_ids:
-        provider_rows = (
-            await db.execute(
-                select(UsageEvent.operation_id, UsageEvent.provider_type)
-                .where(UsageEvent.operation_id.in_(operation_ids))
-                .distinct()
-            )
-        ).all()
-        for operation_id, provider in provider_rows:
-            if provider:
-                operation_providers.setdefault(str(operation_id), set()).add(
-                    str(provider)
-                )
-    model_ids = list({(r.model_id or "").strip() for r in rows if (r.model_id or "").strip()})
-    provider_map: dict[str, str] = {}
-    if model_ids:
-        model_rows = (
-            await db.execute(
-                select(AIModel.external_id, AIModel.provider_type)
-                .where(AIModel.external_id.in_(model_ids))
-                .order_by(AIModel.id.desc())
-            )
-        ).all()
-        for external_id, provider in model_rows:
-            if external_id and external_id not in provider_map:
-                provider_map[str(external_id)] = str(provider or "")
 
-    key_ids = {
-        r.alpha_router_api_key_id
-        for r in rows
-        if r.alpha_router_api_key_id
-    }
-    key_map: dict[int, AlphaRouterApiKey] = {}
-    if key_ids:
-        keys = (
-            await db.execute(
-                select(AlphaRouterApiKey).where(
-                    AlphaRouterApiKey.id.in_(key_ids)
-                )
-            )
-        ).scalars().all()
-        key_map = {k.id: k for k in keys}
 
-    return {
-        "items": [
-            _log_row(
-                r,
-                (
-                    next(iter(operation_providers[r.usage_operation_id]))
-                    if r.usage_operation_id
-                    and len(operation_providers.get(r.usage_operation_id, set())) == 1
-                    else (
-                        "mixed"
-                        if r.usage_operation_id
-                        and operation_providers.get(r.usage_operation_id)
-                        else provider_map.get((r.model_id or "").strip())
-                    )
-                ),
-                router_key=key_map.get(r.alpha_router_api_key_id),
-            )
-            for r in rows
-        ],
-        "offset": offset,
-        "limit": limit,
-    }
+@router.get("/admin/api-keys/{key_id}/logs/export")
+async def api_key_logs_export(
+    key_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_api_keys),
+    limit: int = Query(5000, ge=1, le=20000),
+    username: str | None = None,
+    model_id: str | None = None,
+    response_status: str | None = Query(default=None, pattern="^(success|fail)$"),
+    prompt_cache: str | None = Query(default=None, pattern="^(yes|no)$"),
+    start_date: str | None = None,
+    end_date: str | None = None,
+    timezone: str = Query("local", pattern="^(local|utc)$"),
+):
+    await _require_gateway_key(db, key_id)
+    return await _logs_export_response(
+        db,
+        limit=limit,
+        timezone=timezone,
+        username=username,
+        model_id=model_id,
+        response_status=response_status,
+        prompt_cache=prompt_cache,
+        start_date=start_date,
+        end_date=end_date,
+        api_key_id=key_id,
+    )
+
+
+@router.get("/admin/api-keys/{key_id}/logs")
+async def api_key_logs(
+    key_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_api_keys),
+    limit: int = Query(100, le=500),
+    offset: int = 0,
+    username: str | None = None,
+    model_id: str | None = None,
+    response_status: str | None = Query(default=None, pattern="^(success|fail)$"),
+    prompt_cache: str | None = Query(default=None, pattern="^(yes|no)$"),
+    start_date: str | None = None,
+    end_date: str | None = None,
+):
+    key = await _require_gateway_key(db, key_id)
+    return await _logs_list_payload(
+        db,
+        limit=limit,
+        offset=offset,
+        username=username,
+        model_id=model_id,
+        response_status=response_status,
+        prompt_cache=prompt_cache,
+        start_date=start_date,
+        end_date=end_date,
+        api_key_id=key_id,
+        api_key=key,
+    )
 
 
 @router.get("/admin/cost-accounting/pricing")
@@ -523,12 +698,13 @@ async def cost_accounting_summary(
 async def admin_log_export(
     log_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_api_logs),
+    user: User = Depends(get_current_user),
     timezone: str = Query("local", pattern="^(local|utc)$"),
 ):
     log_row = await db.get(RequestLog, log_id)
     if log_row is None:
         raise HTTPException(status_code=404, detail="Request log not found")
+    await _require_request_log_read(db, user, log_row)
 
     provider_map, key_map = await resolve_log_export_maps(db, [log_row])
     provider = provider_map.get((log_row.model_id or "").strip())
@@ -716,11 +892,12 @@ async def _cost_details_payload(db: AsyncSession, log_row: RequestLog) -> dict:
 async def admin_log_cost_details(
     log_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_api_logs),
+    user: User = Depends(get_current_user),
 ):
     log_row = await db.get(RequestLog, log_id)
     if log_row is None:
         raise HTTPException(status_code=404, detail="Request log not found")
+    await _require_request_log_read(db, user, log_row)
     return await _cost_details_payload(db, log_row)
 
 

@@ -250,11 +250,27 @@ def configure_litellm_cache() -> None:
 
 
 async def resolve_model_and_key(
-    db: AsyncSession, model_id: str
+    db: AsyncSession,
+    model_id: str,
+    *,
+    allowed_connection_ids: set[int] | None = None,
+    allowed_model_ids: set[int] | None = None,
 ) -> tuple[AIModel | None, str | None, str | None, str | None]:
     from sqlalchemy import select
 
     from app.models.connection import Connection
+
+    if allowed_connection_ids is not None and not allowed_connection_ids:
+        return None, None, None, None
+    if allowed_model_ids is not None and not allowed_model_ids:
+        return None, None, None, None
+
+    connection_filter = ()
+    if allowed_connection_ids is not None:
+        connection_filter = (AIModel.connection_id.in_(allowed_connection_ids),)
+    model_filter = ()
+    if allowed_model_ids is not None:
+        model_filter = (AIModel.id.in_(allowed_model_ids),)
 
     normalized_input = normalize_model_id(model_id)
     row: AIModel | None = None
@@ -267,9 +283,14 @@ async def resolve_model_and_key(
             row = (
                 (
                     await db.execute(
-                        select(AIModel).where(
-                            AIModel.id == model_pk, AIModel.is_enabled == True
-                        )  # noqa: E712
+                        select(AIModel)
+                        .where(
+                            AIModel.id == model_pk,
+                            AIModel.is_enabled == True,  # noqa: E712
+                            *connection_filter,
+                            *model_filter,
+                        )
+                        .order_by(AIModel.id.asc())
                     )
                 )
                 .scalars()
@@ -281,16 +302,30 @@ async def resolve_model_and_key(
             row = (
                 (
                     await db.execute(
-                        select(AIModel).where(
+                        select(AIModel)
+                        .where(
                             AIModel.external_id.in_(candidates),
                             AIModel.is_enabled == True,  # noqa: E712
+                            *connection_filter,
+                            *model_filter,
                         )
+                        .order_by(AIModel.id.asc())
                     )
                 )
                 .scalars()
                 .first()
             )
     if not row:
+        return None, None, None, None
+    if (
+        allowed_connection_ids is not None
+        and int(row.connection_id) not in allowed_connection_ids
+    ):
+        return None, None, None, None
+    if (
+        allowed_model_ids is not None
+        and int(row.id) not in allowed_model_ids
+    ):
         return None, None, None, None
     conn = await db.get(Connection, row.connection_id)
     if not conn or not conn.is_active:
@@ -828,6 +863,8 @@ async def preflight_stream_chat(
     client_app: str | None = None,
 ) -> ResolvedStreamContext:
     """Validate budget/key/model while the request DB session is still open."""
+    from app.services.api_key_connection_policy import allowed_connection_ids_for_key
+    from app.services.api_key_model_policy import allowed_model_ids_for_key
     from app.services.model_access_service import (
         resolve_access_subject,
         user_can_access_model,
@@ -896,8 +933,15 @@ async def preflight_stream_chat(
         body["model"] = selected_model
         if agent_turn.plan.policies is not None:
             body["max_tokens"] = agent_turn.plan.policies.model.max_output_tokens
+    allowed_connection_ids = await allowed_connection_ids_for_key(
+        db, alpha_router_api_key_id
+    )
+    allowed_model_ids = await allowed_model_ids_for_key(db, alpha_router_api_key_id)
     ai_model, api_key, base_url, provider_type = await resolve_model_and_key(
-        db, selected_model
+        db,
+        selected_model,
+        allowed_connection_ids=allowed_connection_ids,
+        allowed_model_ids=allowed_model_ids,
     )
     if not ai_model or not api_key:
         raise HTTPException(

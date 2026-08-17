@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ModelProviderIcon from "../ModelProviderIcon";
+import type { ActivityFilterKey } from "./activityScope";
 import type { ApiKeyFilterOption, FilterOption } from "./types";
 
-export type ActivityFilterKey = "user" | "model" | "apiKey" | "app" | "status";
+export type { ActivityFilterKey };
 
 type FilterValues = {
   model: string;
@@ -22,6 +23,7 @@ type Props = {
   users: FilterOption[];
   apps: FilterOption[];
   apiKeys: ApiKeyFilterOption[];
+  visibleKeys?: ActivityFilterKey[];
   onChange: (patch: Partial<FilterValues>) => void;
   onClear: () => void;
 };
@@ -92,6 +94,7 @@ export default function ActivityFilterMenu({
   users,
   apps,
   apiKeys,
+  visibleKeys,
   onChange,
   onClear,
 }: Props) {
@@ -102,7 +105,11 @@ export default function ActivityFilterMenu({
   const ref = useRef<HTMLDivElement>(null);
 
   const values: FilterValues = { model, user, app, status, apiKey };
-  const activeCount = [model, user, app, status, apiKey].filter(Boolean).length;
+  const visibleCategories = useMemo(
+    () => (visibleKeys?.length ? CATEGORIES.filter((c) => visibleKeys.includes(c.key)) : CATEGORIES),
+    [visibleKeys],
+  );
+  const activeCount = visibleCategories.reduce((n, c) => n + (values[c.key] ? 1 : 0), 0);
 
   useEffect(() => {
     if (!open) return;
@@ -117,7 +124,7 @@ export default function ActivityFilterMenu({
     if (!open) {
       setCategoryQuery("");
       setValueQuery("");
-      setActiveCategory("model");
+      setActiveCategory(visibleCategories[0]?.key ?? "model");
     }
   }, [open]);
 
@@ -127,9 +134,9 @@ export default function ActivityFilterMenu({
 
   const filteredCategories = useMemo(() => {
     const q = categoryQuery.trim().toLowerCase();
-    if (!q) return CATEGORIES;
-    return CATEGORIES.filter((c) => c.label.toLowerCase().includes(q));
-  }, [categoryQuery]);
+    if (!q) return visibleCategories;
+    return visibleCategories.filter((c) => c.label.toLowerCase().includes(q));
+  }, [categoryQuery, visibleCategories]);
 
   const optionsForCategory = useMemo((): FilterOption[] => {
     switch (activeCategory) {

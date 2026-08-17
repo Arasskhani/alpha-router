@@ -1,14 +1,55 @@
 """Alpharouter gateway keys (admin) and per-user keys."""
 
 import datetime
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Table, Text
 from sqlalchemy.orm import relationship
 
 from app.database import Base
 
+alpha_router_api_key_connections = Table(
+    "alpha_router_api_key_connections",
+    Base.metadata,
+    Column(
+        "alpha_router_api_key_id",
+        Integer,
+        ForeignKey("alpha_router_api_keys.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "connection_id",
+        Integer,
+        ForeignKey("connections.id", ondelete="CASCADE"),
+        primary_key=True,
+        index=True,
+    ),
+)
+
+alpha_router_api_key_models = Table(
+    "alpha_router_api_key_models",
+    Base.metadata,
+    Column(
+        "alpha_router_api_key_id",
+        Integer,
+        ForeignKey("alpha_router_api_keys.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "model_id",
+        Integer,
+        ForeignKey("ai_models.id", ondelete="CASCADE"),
+        primary_key=True,
+        index=True,
+    ),
+)
+
 
 class AlphaRouterApiKey(Base):
-    """Admin-created keys exposing all enabled models to Open WebUI / other clients."""
+    """Admin-created keys exposing enabled models to Open WebUI / other clients.
+
+    When restrict_connections is false the key may use every active connection
+    (subject to model ACL). When true it may only use the allowlisted
+    connections; an empty allowlist denies all provider traffic.
+    """
 
     __tablename__ = "alpha_router_api_keys"
 
@@ -29,6 +70,8 @@ class AlphaRouterApiKey(Base):
     period_reserved_usd = Column(Float, nullable=False, server_default="0", default=0.0)
     total_used_usd = Column(Float, default=0.0)
     period_started_at = Column(DateTime, nullable=True)
+    restrict_connections = Column(Boolean, default=False, nullable=False, server_default="0")
+    restrict_models = Column(Boolean, default=False, nullable=False, server_default="0")
 
     owner = relationship("User", foreign_keys=[owner_user_id])
     audit_logs = relationship(

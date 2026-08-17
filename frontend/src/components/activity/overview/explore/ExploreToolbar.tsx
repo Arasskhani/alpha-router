@@ -10,12 +10,16 @@ import {
 
 type Props = {
   controls: ExploreControls;
+  hiddenGroups?: ExploreGroup[];
   onChange: (patch: Partial<ExploreControls>, clearFocus?: boolean) => void;
 };
 
-export default function ExploreToolbar({ controls, onChange }: Props) {
-  const subgroupOptions = EXPLORE_GROUP_OPTIONS.filter(
-    (o) => o.value !== "none" && o.value !== controls.group
+export default function ExploreToolbar({ controls, hiddenGroups = [], onChange }: Props) {
+  const groupOptions = EXPLORE_GROUP_OPTIONS.filter(
+    (o) => o.value === controls.group || !hiddenGroups.includes(o.value),
+  );
+  const subgroupOptions = groupOptions.filter(
+    (o) => o.value !== "none" && o.value !== controls.group,
   );
 
   return (
@@ -32,7 +36,7 @@ export default function ExploreToolbar({ controls, onChange }: Props) {
         <span className="explore-toolbar__by">by</span>
         <ExploreMenu
           value={controls.group}
-          options={EXPLORE_GROUP_OPTIONS}
+          options={groupOptions}
           onChange={(v) => {
             const group = v as ExploreGroup;
             const patch: Partial<ExploreControls> = { group };

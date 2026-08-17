@@ -20,6 +20,8 @@ TABLE_LABELS: list[tuple[str, str]] = [
     ("connections", "Connections"),
     ("ai_models", "Models"),
     ("alpha_router_api_keys", "Gateway API keys"),
+    ("alpha_router_api_key_connections", "API key allowed connections"),
+    ("alpha_router_api_key_models", "API key allowed models"),
     ("alpha_router_api_key_audit_logs", "API key change log"),
     ("connection_audit_logs", "Connection change log"),
     ("user_api_keys", "User API keys"),

@@ -8,11 +8,18 @@ from collections.abc import Iterable
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_agent_permission, require_agents
+from app.api.admin import (
+    _activity_export_response,
+    _activity_query_filters,
+    _build_scoped_activity,
+    activity_explore_opts,
+)
+from app.api.deps import get_bearer_token, require_agent_permission, require_agents
 from app.database import get_db
 from app.models.agent import (
     Agent,
@@ -57,7 +64,8 @@ from app.services.agent_tool_registry_service import (
 )
 from app.services.resource_access_service import AccessGrant, set_agent_access
 from app.services.knowledge_retention_service import LIVE_KNOWLEDGE_DOCUMENT_STATUSES
-from app.services.user_role_service import user_bypasses_maker_checker
+from app.services.user_role_service import primary_role_for_user, user_bypasses_maker_checker
+from app.services import activity_service
 
 router = APIRouter(prefix="/api/admin/agents", tags=["admin-agents"])
 
@@ -1099,6 +1107,94 @@ async def get_agent(
         if binding.status not in {"revoked", "suspended"}
     ]
     return payload
+
+
+@router.get("/{agent_id}/activity")
+async def agent_usage_activity(
+    agent_id: str,
+    period: str = Query("day", pattern=activity_service.ACTIVITY_PERIOD_PATTERN),
+    prompts_period: str | None = Query(None, pattern=activity_service.PROMPTS_PERIOD_PATTERN),
+    model_id: str | None = Query(None, max_length=256),
+    username: str | None = Query(None, max_length=128),
+    app: str | None = Query(None, max_length=64),
+    response_status: str | None = Query(None, pattern="^(success|fail)$"),
+    api_key_id: int | None = Query(None, ge=1),
+    timezone: str = Query("local", pattern="^(local|utc)$"),
+    explore: dict = Depends(activity_explore_opts),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_agent_permission("agent.read")),
+):
+    agent = await _agent_or_404(db, agent_id)
+    filters = _activity_query_filters(
+        model_id=model_id,
+        username=username,
+        app=app,
+        response_status=response_status,
+        api_key_id=api_key_id,
+    )
+    payload, options, prompts_card = await _build_scoped_activity(
+        db,
+        period=period,
+        prompts_period=prompts_period,
+        timezone=timezone,
+        filters=filters,
+        explore=explore,
+        agent_id=agent.id,
+    )
+    return {
+        **payload,
+        **options,
+        "prompts": prompts_card,
+        "agent": {
+            "id": agent.id,
+            "name": agent.name,
+            "slug": agent.slug,
+            "status": agent.status,
+        },
+        "scope": "agent",
+        "model_id": filters["model_id"],
+        "filters": filters,
+    }
+
+
+@router.get("/{agent_id}/activity/export")
+async def agent_usage_activity_export(
+    agent_id: str,
+    format: str = Query("csv", pattern="^(csv|pdf)$"),
+    period: str = Query("day", pattern=activity_service.ACTIVITY_PERIOD_PATTERN),
+    prompts_period: str | None = Query(None, pattern=activity_service.PROMPTS_PERIOD_PATTERN),
+    model_id: str | None = Query(None, max_length=256),
+    username: str | None = Query(None, max_length=128),
+    app: str | None = Query(None, max_length=64),
+    response_status: str | None = Query(None, pattern="^(success|fail)$"),
+    api_key_id: int | None = Query(None, ge=1),
+    timezone: str = Query("local", pattern="^(local|utc)$"),
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_agent_permission("agent.read")),
+    jwt_token: str = Depends(get_bearer_token),
+):
+    agent = await _agent_or_404(db, agent_id)
+    filters = _activity_query_filters(
+        model_id=model_id,
+        username=username,
+        app=app,
+        response_status=response_status,
+        api_key_id=api_key_id,
+    )
+    return await _activity_export_response(
+        db,
+        format=format,
+        filename_stem=f"alpha-router-agent-{agent.slug}-activity-{period}",
+        scope="agent",
+        jwt_token=jwt_token,
+        user_role=await primary_role_for_user(db, admin.id),
+        period=period,
+        prompts_period=prompts_period,
+        group_by="model",
+        timezone=timezone,
+        filters=filters,
+        agent_id=agent.id,
+    )
 
 
 @router.patch("/{agent_id}")

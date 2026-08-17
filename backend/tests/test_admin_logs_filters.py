@@ -37,6 +37,23 @@ def test_apply_log_filters_prompt_cache_no():
     assert "cached_tokens" in sql
 
 
+def test_apply_log_filters_api_key_id():
+    q = select(RequestLog)
+    q = _apply_log_filters(
+        q,
+        username=None,
+        model_id=None,
+        response_status=None,
+        prompt_cache=None,
+        start_date=None,
+        end_date=None,
+        api_key_id=7,
+    )
+    sql = str(q.compile(compile_kwargs={"literal_binds": True}))
+    assert "alpha_router_api_key_id" in sql.lower()
+    assert "7" in sql
+
+
 def test_apply_log_filters_username_contains():
     q = select(RequestLog)
     q = _apply_log_filters(

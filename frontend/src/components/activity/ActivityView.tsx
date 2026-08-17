@@ -2,21 +2,18 @@ import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, authFetch } from "../../api";
 import { MY_USAGE_AND_ACTIVITY_LABEL, USAGE_AND_ACTIVITY_LABEL } from "../../lib/usageActivityLabel";
-import Modal from "../Modal";
 import ActivityGroupByMenu from "./ActivityGroupByMenu";
 import ActivityFilterMenu from "./ActivityFilterMenu";
-import ActivityHeatmap from "./ActivityHeatmap";
-import ActivityMetricCard from "./ActivityMetricCard";
+import { activityScopeConfig, type ActivityScope } from "./activityScope";
 import ActivityPeriodMenu, { parseActivityPeriod } from "./ActivityPeriodMenu";
 import ActivityTimezoneChip from "./ActivityTimezoneChip";
-import ActivityTopModels from "./ActivityTopModels";
 import ActivityExplorePanel from "./overview/explore/ActivityExplorePanel";
 import { DEFAULT_EXPLORE_CONTROLS, explorePresetFromFocus } from "./overview/explore/explorePresets";
 import ActivityOverviewPanel from "./overview/ActivityOverviewPanel";
 import ActivityTabs from "./overview/ActivityTabs";
 import ActivityTrendsPanel from "./overview/ActivityTrendsPanel";
-import { formatRequests, groupByLabel, periodLabel, promptsCardPeriodLabel } from "./formatters";
-import { resolveInsights, resolvePrompts } from "./insights";
+import { groupByLabel, periodLabel } from "./formatters";
+import { resolveInsights } from "./insights";
 import type {
   ActivityPayload,
   ActivityTab,
@@ -29,7 +26,6 @@ import type {
   ExploreTopMode,
   GroupBy,
   HeatmapMetric,
-  MetricKind,
   OverviewFocus,
   PromptsPeriod,
   TimezoneMode,
@@ -100,14 +96,13 @@ function parseExploreControls(params: URLSearchParams): ExploreControls {
   };
 }
 
-type Scope = "service" | "user" | "mine" | "api_key" | "connection" | "group";
-
 type Props = {
-  scope: Scope;
+  scope: ActivityScope;
   userId?: number;
   groupId?: number;
   apiKeyId?: number;
   connectionId?: number;
+  agentId?: string;
   title?: string;
   backLink?: { to: string; label: string };
   /** Rendered below all activity cards (e.g. API key change log). */
@@ -116,14 +111,13 @@ type Props = {
   onDataLoaded?: (data: ActivityPayload) => void;
 };
 
-type ExpandedCard = { kind: MetricKind; title: string } | null;
-
 export default function ActivityView({
   scope,
   userId,
   groupId,
   apiKeyId,
   connectionId,
+  agentId,
   title,
   backLink,
   footer,
@@ -135,7 +129,6 @@ export default function ActivityView({
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [expanded, setExpanded] = useState<ExpandedCard>(null);
   const [heatmapMetric, setHeatmapMetric] = useState<HeatmapMetric>("spend");
   const [exportingPdf, setExportingPdf] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
@@ -158,9 +151,11 @@ export default function ActivityView({
   const activityTab = parseActivityTab(searchParams.get("tab"));
   const exploreFocus = parseOverviewFocus(searchParams.get("focus"));
   const exploreControls = parseExploreControls(searchParams);
-
-  const isPersonalScope = scope === "user" || scope === "mine" || scope === "group";
-  const isAdminDashboard = scope === "service";
+  const cfg = activityScopeConfig(scope);
+  const allowUserFilter = cfg.filterKeys.includes("user");
+  const allowAppFilter = cfg.filterKeys.includes("app");
+  const allowStatusFilter = cfg.filterKeys.includes("status");
+  const allowApiKeyFilter = cfg.filterKeys.includes("apiKey");
 
   function buildQuery() {
     const q = new URLSearchParams({
@@ -168,26 +163,24 @@ export default function ActivityView({
       prompts_period: validPromptsPeriod,
       timezone: validTz,
     });
-    if (scope === "service") {
-      q.set("group_by", validGroupBy);
-      if (modelFilter) q.set("model_id", modelFilter);
-      if (userFilter) q.set("username", userFilter);
-      if (appFilter) q.set("app", appFilter);
-      if (statusFilter === "success" || statusFilter === "fail") q.set("response_status", statusFilter);
-      if (apiKeyFilter) q.set("api_key_id", apiKeyFilter);
-      q.set("explore_metric", exploreControls.metric);
-      q.set("explore_group", exploreControls.group);
-      if (exploreControls.subgroup) q.set("explore_subgroup", exploreControls.subgroup);
-      q.set("explore_rollup", exploreControls.rollup);
-      q.set("explore_top_mode", exploreControls.topMode);
-      q.set("explore_top_n", String(exploreControls.topN));
-      q.set("explore_rank_by", exploreControls.rankBy);
-      q.set("explore_show_other", exploreControls.showOther ? "true" : "false");
-      q.set("explore_cumulative", exploreControls.cumulative ? "true" : "false");
-      q.set("explore_chart_type", exploreControls.chartType);
-    } else if (modelFilter) {
-      q.set("model_id", modelFilter);
+    if (cfg.showGroupBy) q.set("group_by", validGroupBy);
+    if (modelFilter) q.set("model_id", modelFilter);
+    if (allowUserFilter && userFilter) q.set("username", userFilter);
+    if (allowAppFilter && appFilter) q.set("app", appFilter);
+    if (allowStatusFilter && (statusFilter === "success" || statusFilter === "fail")) {
+      q.set("response_status", statusFilter);
     }
+    if (allowApiKeyFilter && apiKeyFilter) q.set("api_key_id", apiKeyFilter);
+    q.set("explore_metric", exploreControls.metric);
+    q.set("explore_group", exploreControls.group);
+    if (exploreControls.subgroup) q.set("explore_subgroup", exploreControls.subgroup);
+    q.set("explore_rollup", exploreControls.rollup);
+    q.set("explore_top_mode", exploreControls.topMode);
+    q.set("explore_top_n", String(exploreControls.topN));
+    q.set("explore_rank_by", exploreControls.rankBy);
+    q.set("explore_show_other", exploreControls.showOther ? "true" : "false");
+    q.set("explore_cumulative", exploreControls.cumulative ? "true" : "false");
+    q.set("explore_chart_type", exploreControls.chartType);
     return q.toString();
   }
 
@@ -206,7 +199,7 @@ export default function ActivityView({
 
   function patchParams(patch: Record<string, string | undefined>) {
     const next: Record<string, string> = { period: validPeriod, promptsPeriod: validPromptsPeriod, tz: validTz };
-    if (scope === "service") next.groupBy = validGroupBy;
+    if (cfg.showGroupBy) next.groupBy = validGroupBy;
     const model = patch.model !== undefined ? patch.model : modelFilter;
     const user = patch.user !== undefined ? patch.user : userFilter;
     const app = patch.app !== undefined ? patch.app : appFilter;
@@ -216,40 +209,38 @@ export default function ActivityView({
     const promptsPeriodVal = patch.promptsPeriod ?? validPromptsPeriod;
     const groupVal = patch.groupBy ?? validGroupBy;
     const tzVal = patch.tz ?? validTz;
-    const tabVal = patch.tab !== undefined ? patch.tab : isAdminDashboard ? activityTab : undefined;
-    const focusVal = patch.focus !== undefined ? patch.focus : isAdminDashboard ? exploreFocus ?? "" : undefined;
+    const tabVal = patch.tab !== undefined ? patch.tab : activityTab;
+    const focusVal = patch.focus !== undefined ? patch.focus : exploreFocus ?? "";
     next.period = periodVal;
     next.promptsPeriod = promptsPeriodVal;
     next.tz = tzVal;
-    if (scope === "service") next.groupBy = groupVal;
+    if (cfg.showGroupBy) next.groupBy = groupVal;
     if (model) next.model = model;
-    if (scope === "service") {
-      if (user) next.user = user;
-      if (app) next.app = app;
-      if (status) next.status = status;
-      if (apiKey) next.apiKey = apiKey;
-      writeExploreToParams(next, {
-        metric: (patch.exploreMetric as ExploreMetric | undefined) ?? exploreControls.metric,
-        group: (patch.exploreGroup as ExploreGroup | undefined) ?? exploreControls.group,
-        subgroup: (patch.exploreSubgroup as ExploreGroup | "" | undefined) ?? exploreControls.subgroup,
-        rollup: (patch.exploreRollup as ExploreRollup | undefined) ?? exploreControls.rollup,
-        topMode: (patch.exploreTopMode as ExploreTopMode | undefined) ?? exploreControls.topMode,
-        topN: patch.exploreTopN !== undefined ? Number(patch.exploreTopN) : exploreControls.topN,
-        rankBy: (patch.exploreRankBy as ExploreRankBy | undefined) ?? exploreControls.rankBy,
-        showOther:
-          patch.exploreShowOther !== undefined ? patch.exploreShowOther !== "0" : exploreControls.showOther,
-        cumulative:
-          patch.exploreCumulative !== undefined
-            ? patch.exploreCumulative === "1"
-            : exploreControls.cumulative,
-        chartType: (patch.exploreChartType as ExploreChartType | undefined) ?? exploreControls.chartType,
-      });
-      if (patch.exploreSubgroup === "") delete next.exploreSubgroup;
-    }
-    if (isAdminDashboard && tabVal) next.tab = tabVal;
-    if (isAdminDashboard && focusVal) next.focus = focusVal;
-    if (isAdminDashboard && patch.tab === "overview") delete next.focus;
-    if (isAdminDashboard && patch.tab && patch.tab !== "explore" && patch.focus === undefined) {
+    if (allowUserFilter && user) next.user = user;
+    if (allowAppFilter && app) next.app = app;
+    if (allowStatusFilter && status) next.status = status;
+    if (allowApiKeyFilter && apiKey) next.apiKey = apiKey;
+    writeExploreToParams(next, {
+      metric: (patch.exploreMetric as ExploreMetric | undefined) ?? exploreControls.metric,
+      group: (patch.exploreGroup as ExploreGroup | undefined) ?? exploreControls.group,
+      subgroup: (patch.exploreSubgroup as ExploreGroup | "" | undefined) ?? exploreControls.subgroup,
+      rollup: (patch.exploreRollup as ExploreRollup | undefined) ?? exploreControls.rollup,
+      topMode: (patch.exploreTopMode as ExploreTopMode | undefined) ?? exploreControls.topMode,
+      topN: patch.exploreTopN !== undefined ? Number(patch.exploreTopN) : exploreControls.topN,
+      rankBy: (patch.exploreRankBy as ExploreRankBy | undefined) ?? exploreControls.rankBy,
+      showOther:
+        patch.exploreShowOther !== undefined ? patch.exploreShowOther !== "0" : exploreControls.showOther,
+      cumulative:
+        patch.exploreCumulative !== undefined
+          ? patch.exploreCumulative === "1"
+          : exploreControls.cumulative,
+      chartType: (patch.exploreChartType as ExploreChartType | undefined) ?? exploreControls.chartType,
+    });
+    if (patch.exploreSubgroup === "") delete next.exploreSubgroup;
+    if (tabVal) next.tab = tabVal;
+    if (focusVal) next.focus = focusVal;
+    if (patch.tab === "overview") delete next.focus;
+    if (patch.tab && patch.tab !== "explore" && patch.focus === undefined) {
       delete next.focus;
     }
     setSearchParams(next, { replace: true });
@@ -293,7 +284,9 @@ export default function ActivityView({
             ? `/api/admin/connections/${connectionId}/activity?${buildQuery()}`
             : scope === "group"
               ? `/api/admin/groups/${groupId}/activity?${buildQuery()}`
-              : `/api/admin/users/${userId}/activity?${buildQuery()}`;
+              : scope === "agent"
+                ? `/api/admin/agents/${encodeURIComponent(agentId || "")}/activity?${buildQuery()}`
+                : `/api/admin/users/${userId}/activity?${buildQuery()}`;
 
   useEffect(() => {
     if (!exportMode) return;
@@ -322,6 +315,11 @@ export default function ActivityView({
       setLoading(false);
       return;
     }
+    if (scope === "agent" && !agentId) {
+      setErr("Invalid Agent");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setErr("");
     api<ActivityPayload>(fetchPath)
@@ -331,7 +329,7 @@ export default function ActivityView({
       })
       .catch((e) => setErr(String(e)))
       .finally(() => setLoading(false));
-  }, [fetchPath, scope, userId, groupId, apiKeyId, connectionId, onDataLoaded]);
+  }, [fetchPath, scope, userId, groupId, apiKeyId, connectionId, agentId, onDataLoaded]);
 
   useEffect(() => {
     if (!settingsOpen) return;
@@ -388,6 +386,13 @@ export default function ActivityView({
         </>
       );
     }
+    if (scope === "agent" && data?.agent) {
+      return (
+        <>
+          Usage for Agent <strong>{data.agent.name}</strong>
+        </>
+      );
+    }
     return <>Service usage across models on Alpharouter</>;
   }, [scope, data]);
 
@@ -404,7 +409,9 @@ export default function ActivityView({
               ? `/api/admin/connections/${connectionId}/activity/export?${q}&format=${fmt}`
               : scope === "api_key"
                 ? `/api/admin/api-keys/${apiKeyId}/activity/export?${q}&format=${fmt}`
-                : `/api/admin/users/${userId}/activity/export?${q}&format=${fmt}`;
+                : scope === "agent"
+                  ? `/api/admin/agents/${encodeURIComponent(agentId || "")}/activity/export?${q}&format=${fmt}`
+                  : `/api/admin/users/${userId}/activity/export?${q}&format=${fmt}`;
 
     if (fmt === "pdf") {
       if (!data) {
@@ -443,14 +450,7 @@ export default function ActivityView({
     setSettingsOpen(false);
   }
 
-  const modelOptions = data?.available_models?.length
-    ? data.available_models
-    : modelFilter
-      ? [{ key: modelFilter, label: modelFilter }]
-      : [];
-
   const insights = data ? resolveInsights(data) : null;
-  const prompts = data ? resolvePrompts(data, validPromptsPeriod) : null;
 
   return (
     <div className="activity-page" data-activity-ready={!loading && data ? "1" : undefined}>
@@ -463,14 +463,15 @@ export default function ActivityView({
                 : scope === "user" ||
                     scope === "group" ||
                     scope === "connection" ||
-                    scope === "api_key"
+                    scope === "api_key" ||
+                    scope === "agent"
                   ? USAGE_AND_ACTIVITY_LABEL
                   : "Activity")}
           </h1>
           <p className="activity-subtitle">
             {subtitle}
             {data ? ` · ${periodLabel(data.period)}` : ""}
-            {scope === "service" && data ? ` · ${groupByLabel(data.group_by)}` : ""}
+            {cfg.showGroupBy && data ? ` · ${groupByLabel(data.group_by)}` : ""}
             {validTz === "utc" ? " · UTC" : " · Local time"}
           </p>
         </div>
@@ -482,7 +483,7 @@ export default function ActivityView({
           ) : null}
           {toolbarExtra}
           <ActivityTimezoneChip value={validTz} onChange={(tz) => patchParams({ tz })} />
-          {scope === "service" ? (
+          {cfg.filterKeys.length ? (
             <ActivityFilterMenu
               model={modelFilter}
               user={userFilter}
@@ -493,27 +494,22 @@ export default function ActivityView({
               users={data?.available_users ?? []}
               apps={data?.available_apps ?? []}
               apiKeys={data?.available_api_keys ?? []}
+              visibleKeys={cfg.filterKeys}
               onChange={(patch) => patchParams(patch)}
-              onClear={() => patchParams({ model: "", user: "", app: "", status: "", apiKey: "" })}
+              onClear={() =>
+                patchParams({
+                  model: "",
+                  user: allowUserFilter ? "" : undefined,
+                  app: allowAppFilter ? "" : undefined,
+                  status: allowStatusFilter ? "" : undefined,
+                  apiKey: allowApiKeyFilter ? "" : undefined,
+                })
+              }
             />
           ) : null}
           <ActivityPeriodMenu value={validPeriod} onChange={(p) => patchParams({ period: p })} />
-          {scope === "service" ? (
+          {cfg.showGroupBy ? (
             <ActivityGroupByMenu value={validGroupBy} onChange={(g) => patchParams({ groupBy: g })} />
-          ) : isPersonalScope ? (
-            <select
-              className="activity-select"
-              value={modelFilter}
-              onChange={(e) => patchParams({ model: e.target.value })}
-              aria-label="Filter by model"
-            >
-              <option value="">All models</option>
-              {modelOptions.map((m) => (
-                <option key={m.key} value={m.key}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
           ) : null}
           <div className="activity-menu-wrap" ref={settingsRef}>
             <button
@@ -548,135 +544,51 @@ export default function ActivityView({
       {err ? <p className="error">{err}</p> : null}
       {loading ? <p className="muted">Loading activity…</p> : null}
 
-      {isAdminDashboard ? (
-        <>
-          {!exportMode ? (
-            <ActivityTabs
-              value={activityTab}
-              onChange={(tab) => patchParams({ tab, focus: tab === "explore" ? exploreFocus ?? undefined : "" })}
-            />
-          ) : null}
-          {!loading && data && (exportMode || activityTab === "overview") ? (
-            data.overview ? (
-              <ActivityOverviewPanel overview={data.overview} onExplore={goExplore} />
-            ) : (
-              <p className="muted">Overview data is unavailable for this period.</p>
-            )
-          ) : null}
-          {!loading && data && (exportMode || activityTab === "trends") ? (
-            data.trends ? (
-              <ActivityTrendsPanel trends={data.trends} onExplore={goExplore} />
-            ) : (
-              <p className="muted">Trends data is unavailable for this period.</p>
-            )
-          ) : null}
-          {!loading && data && (exportMode || activityTab === "explore") ? (
-            data.explore ? (
-              <ActivityExplorePanel
-                explore={data.explore}
-                controls={exploreControls}
-                onControlsChange={patchExploreControls}
-                onDownloadPdf={() => void exportActivity("pdf")}
-              />
-            ) : (
-              <p className="muted">Explore data is unavailable for this period.</p>
-            )
-          ) : null}
-        </>
+      {!exportMode ? (
+        <ActivityTabs
+          value={activityTab}
+          onChange={(tab) => patchParams({ tab, focus: tab === "explore" ? exploreFocus ?? undefined : "" })}
+        />
       ) : null}
-
-      {!isAdminDashboard && !loading && data && insights && prompts && (
-        <>
-          <div className="activity-metrics-grid">
-            <ActivityMetricCard
-              title="Spend"
-              total={data.totals.spend}
-              kind="spend"
-              segments={data.models}
-              chartRows={data.chart}
-              onExpand={() => setExpanded({ kind: "spend", title: "Spend" })}
-            />
-            <ActivityMetricCard
-              title="Requests"
-              total={data.totals.requests}
-              kind="requests"
-              segments={data.models}
-              chartRows={data.chart}
-              onExpand={() => setExpanded({ kind: "requests", title: "Requests" })}
-            />
-            <ActivityMetricCard
-              title="Tokens"
-              total={data.totals.tokens}
-              kind="tokens"
-              segments={data.models}
-              chartRows={data.chart}
-              onExpand={() => setExpanded({ kind: "tokens", title: "Tokens" })}
-            />
-          </div>
-
-          <hr className="activity-section-divider" />
-
-          <ActivityMetricCard
-            className="activity-metric-card--hero"
-            title="Prompts"
-            total={prompts.total}
-            kind="requests"
-            segments={prompts.models}
-            chartRows={prompts.chart}
-            chartHeight={160}
-            changePct={prompts.change_pct}
-            streakDays={prompts.streak_days}
-            hideLegend
-            headerExtra={
-              <select
-                className="activity-select activity-select--sm"
-                value={validPromptsPeriod}
-                onChange={(e) => patchParams({ promptsPeriod: e.target.value })}
-                aria-label="Prompts time range"
-              >
-                <option value="day">{promptsCardPeriodLabel("day")}</option>
-                <option value="week">{promptsCardPeriodLabel("week")}</option>
-                <option value="month">{promptsCardPeriodLabel("month")}</option>
-              </select>
-            }
-            footerLeft={{ label: "Longest Streak", value: `${prompts.streak_days} days` }}
-            footerRight={{
-              label: prompts.period_footer_label,
-              value: `${formatRequests(prompts.period_prompts)} prompts`,
-            }}
-            onExpand={() => setExpanded({ kind: "requests", title: "Prompts" })}
-          />
-
-          <div className="activity-row-split">
-            <ActivityMetricCard
-              title="Tokens"
-              total={data.totals.tokens}
-              kind="tokens"
-              segments={data.models}
-              chartRows={data.chart}
-              chartHeight={160}
-              changePct={insights.change_pct.tokens}
-              totalInHeader
-              hideLegend
-              onExpand={() => setExpanded({ kind: "tokens", title: "Tokens" })}
-            />
-            <ActivityTopModels
-              models={data.top_models?.length ? data.top_models : data.models}
-              showExplore={false}
-            />
-          </div>
-
-          <ActivityHeatmap
+      {!loading && data && (exportMode || activityTab === "overview") ? (
+        data.overview ? (
+          <ActivityOverviewPanel
+            overview={data.overview}
             insights={insights}
-            metric={heatmapMetric}
             timezone={validTz}
-            onMetricChange={setHeatmapMetric}
+            heatmapMetric={heatmapMetric}
+            onHeatmapMetricChange={setHeatmapMetric}
+            hideUsers={cfg.hideOverviewUsers}
+            onExplore={goExplore}
           />
-        </>
-      )}
-
-      {!isAdminDashboard && !loading && !err && data && (!insights || !prompts) ? (
-        <p className="muted">Usage data loaded but charts could not be rendered. Try refreshing the page.</p>
+        ) : (
+          <p className="muted">Overview data is unavailable for this period.</p>
+        )
+      ) : null}
+      {!loading && data && (exportMode || activityTab === "trends") ? (
+        data.trends ? (
+          <ActivityTrendsPanel
+            trends={data.trends}
+            hideUsers={cfg.hideTrendsUsers}
+            hideApiKeys={cfg.hideTrendsApiKeys}
+            onExplore={goExplore}
+          />
+        ) : (
+          <p className="muted">Trends data is unavailable for this period.</p>
+        )
+      ) : null}
+      {!loading && data && (exportMode || activityTab === "explore") ? (
+        data.explore ? (
+          <ActivityExplorePanel
+            explore={data.explore}
+            controls={exploreControls}
+            hiddenGroups={cfg.hiddenExploreGroups}
+            onControlsChange={patchExploreControls}
+            onDownloadPdf={() => void exportActivity("pdf")}
+          />
+        ) : (
+          <p className="muted">Explore data is unavailable for this period.</p>
+        )
       ) : null}
 
       {!loading && !err && !data ? (
@@ -689,19 +601,6 @@ export default function ActivityView({
           {footer}
         </>
       ) : null}
-
-      <Modal open={!!expanded} title={expanded?.title ?? ""} onClose={() => setExpanded(null)}>
-        {expanded && data ? (
-          <ActivityMetricCard
-            title={expanded.title}
-            total={expanded.title === "Prompts" && prompts ? prompts.total : data.totals[expanded.kind]}
-            kind={expanded.kind}
-            segments={expanded.title === "Prompts" && prompts ? prompts.models : data.models}
-            chartRows={expanded.title === "Prompts" && prompts ? prompts.chart : data.chart}
-            chartHeight={280}
-          />
-        ) : null}
-      </Modal>
     </div>
   );
 }

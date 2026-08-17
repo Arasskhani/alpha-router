@@ -5,7 +5,12 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.admin import _activity_export_response, _activity_query_filters, _load_activity_context
+from app.api.admin import (
+    _activity_export_response,
+    _activity_query_filters,
+    _build_scoped_activity,
+    activity_explore_opts,
+)
 from app.api.deps import get_bearer_token, get_current_user, require_active_user
 from app.services import activity_service
 from app.database import get_db
@@ -72,54 +77,25 @@ async def my_activity(
     period: str = Query("day", pattern=activity_service.ACTIVITY_PERIOD_PATTERN),
     prompts_period: str | None = Query(None, pattern=activity_service.PROMPTS_PERIOD_PATTERN),
     model_id: str | None = Query(None, max_length=256),
+    app: str | None = Query(None, max_length=64),
+    response_status: str | None = Query(None, pattern="^(success|fail)$"),
     timezone: str = Query("local", pattern="^(local|utc)$"),
+    explore: dict = Depends(activity_explore_opts),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Activity dashboard for the signed-in user only (never another account)."""
-    pp = prompts_period or ("day" if period not in ("day", "week", "month") else period)
-    if pp not in ("day", "week", "month"):
-        pp = "week"
-    filters = _activity_query_filters(model_id=model_id, username=None, app=None, response_status=None)
-    (
-        rows,
-        prev_rows,
-        heatmap_rows,
-        options_rows,
-        since,
-        now,
-        prompts_rows,
-        prompts_prev_rows,
-        since_prompts,
-    ) = await _load_activity_context(
+    filters = _activity_query_filters(
+        model_id=model_id, username=None, app=app, response_status=response_status
+    )
+    payload, options, prompts_card = await _build_scoped_activity(
         db,
         period=period,
-        prompts_period=pp,
-        group_by="model",
+        prompts_period=prompts_period,
         timezone=timezone,
         filters=filters,
+        explore=explore,
         user_id=user.id,
-    )
-    options = activity_service.filter_options(options_rows, "model")
-    payload = activity_service.build_activity_payload(
-        rows,
-        period=period,
-        since=since,
-        group_by="model",
-        timezone=timezone,
-        now=now,
-        prev_rows=prev_rows,
-        heatmap_rows=heatmap_rows,
-    )
-    prompts_card = activity_service.build_prompts_card(
-        prompts_rows,
-        period=pp,
-        since=since_prompts,
-        group_by="model",
-        timezone=timezone,
-        now=now,
-        prev_rows=prompts_prev_rows,
-        heatmap_rows=heatmap_rows,
     )
     return {
         **payload,
@@ -138,13 +114,17 @@ async def my_activity_export(
     period: str = Query("day", pattern=activity_service.ACTIVITY_PERIOD_PATTERN),
     prompts_period: str | None = Query(None, pattern=activity_service.PROMPTS_PERIOD_PATTERN),
     model_id: str | None = Query(None, max_length=256),
+    app: str | None = Query(None, max_length=64),
+    response_status: str | None = Query(None, pattern="^(success|fail)$"),
     timezone: str = Query("local", pattern="^(local|utc)$"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     jwt_token: str = Depends(get_bearer_token),
 ):
     """Export activity for the signed-in user only."""
-    filters = _activity_query_filters(model_id=model_id, username=None, app=None, response_status=None)
+    filters = _activity_query_filters(
+        model_id=model_id, username=None, app=app, response_status=response_status
+    )
     return await _activity_export_response(
         db,
         format=format,

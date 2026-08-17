@@ -41,7 +41,7 @@ export const adminNavSections: NavSection[] = [
       { to: "/admin/agent-tools", label: "Tool Registry", menuKey: "agents" },
       { to: "/admin/agent-evaluations", label: "Evaluations", menuKey: "agents" },
       { to: "/admin/agent-approvals", label: "Approvals", menuKey: "agents" },
-      { to: "/admin/agent-activity", label: "Activity & Audit", menuKey: "agents" },
+      { to: "/admin/agent-activity", label: "Audit", menuKey: "agents" },
     ],
   },
   {

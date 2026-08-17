@@ -4,6 +4,7 @@ import { api } from "../../api";
 import AdminPage from "../../components/AdminPage";
 import ApiKeyFormModal, { type ApiKeyFormValues } from "../../components/apiKeys/ApiKeyFormModal";
 import ApiKeyCreatedModal from "../../components/apiKeys/ApiKeyCreatedModal";
+import ApiKeyInspectButtons from "../../components/apiKeys/ApiKeyInspectButtons";
 import Modal from "../../components/Modal";
 import RowActionsMenu from "../../components/RowActionsMenu";
 import { useConfirm } from "../../context/ConfirmContext";
@@ -16,6 +17,23 @@ type KeysListResponse = {
   page: number;
   page_size: number;
   total_pages: number;
+};
+
+type AllowedConnection = {
+  id: number;
+  name: string;
+  provider_type: string;
+  is_active: boolean;
+};
+
+type AllowedModel = {
+  id: number;
+  external_id: string;
+  display_name: string;
+  connection_id: number;
+  connection_name: string | null;
+  provider_type: string;
+  is_enabled: boolean;
 };
 
 type AlphaRouterKey = {
@@ -36,11 +54,33 @@ type AlphaRouterKey = {
   expiration_never: boolean;
   period_used_usd: number;
   total_used_usd: number;
+  restrict_connections: boolean;
+  allowed_connections: AllowedConnection[];
+  restrict_models: boolean;
+  allowed_models: AllowedModel[];
 };
 
 function formatExpire(k: AlphaRouterKey) {
   if (k.expiration_never || !k.expires_at) return "Never";
   return formatLocalDate(k.expires_at);
+}
+
+function formatConnections(k: AlphaRouterKey) {
+  if (!k.restrict_connections) return "All";
+  const names = (k.allowed_connections || []).map((c) => c.name);
+  if (names.length === 0) return "None";
+  if (names.length <= 2) return names.join(", ");
+  return `${names[0]}, ${names[1]} +${names.length - 2}`;
+}
+
+function formatModels(k: AlphaRouterKey) {
+  if (!k.restrict_models) return "All";
+  const labels = (k.allowed_models || []).map(
+    (m) => m.display_name || m.external_id,
+  );
+  if (labels.length === 0) return "None";
+  if (labels.length <= 2) return labels.join(", ");
+  return `${labels[0]}, ${labels[1]} +${labels.length - 2}`;
 }
 
 function formatDateTime(iso: string | null) {
@@ -137,6 +177,10 @@ export default function AdminApiKeys() {
         credit_limit_usd: values.credit_limit_usd ?? 0,
         reset_period: values.reset_period,
         expiration_days: values.expiration_never ? null : values.expiration_days,
+        restrict_connections: values.restrict_connections,
+        allowed_connection_ids: values.restrict_connections ? values.allowed_connection_ids : [],
+        restrict_models: values.restrict_models,
+        allowed_model_ids: values.restrict_models ? values.allowed_model_ids : [],
       }),
     });
     setCreated({
@@ -161,6 +205,10 @@ export default function AdminApiKeys() {
         reset_period: values.reset_period,
         expiration_days: values.expiration_never ? null : values.expiration_days,
         expiration_never: values.expiration_never,
+        restrict_connections: values.restrict_connections,
+        allowed_connection_ids: values.restrict_connections ? values.allowed_connection_ids : [],
+        restrict_models: values.restrict_models,
+        allowed_model_ids: values.restrict_models ? values.allowed_model_ids : [],
       }),
     });
     setMsg("API key updated.");
@@ -272,6 +320,8 @@ export default function AdminApiKeys() {
                 />
               </th>
               <th>Name</th>
+              <th className="col-md">Connections</th>
+              <th className="col-md">Models</th>
               <th className="col-lg">Date Created</th>
               <th className="col-lg">Date Modified</th>
               <th className="col-md">Expire</th>
@@ -284,7 +334,7 @@ export default function AdminApiKeys() {
           <tbody>
             {keys.length === 0 && (
               <tr>
-                <td colSpan={9} className="muted-text">
+                <td colSpan={11} className="muted-text">
                   No gateway keys yet. Create one with + New Key.
                 </td>
               </tr>
@@ -311,6 +361,12 @@ export default function AdminApiKeys() {
                         </span>
                       ) : null}
                     </div>
+                  </td>
+                  <td className="col-md" title={formatConnections(k)}>
+                    {formatConnections(k)}
+                  </td>
+                  <td className="col-md" title={formatModels(k)}>
+                    {formatModels(k)}
                   </td>
                   <td className="col-lg">{formatDateTime(k.created_at)}</td>
                   <td className="col-lg">{formatDateTime(k.updated_at)}</td>
@@ -341,6 +397,10 @@ export default function AdminApiKeys() {
                           label: USAGE_AND_ACTIVITY_LABEL,
                           menuWrap: true,
                           onClick: () => navigate(`/admin/api-keys/${k.id}/activity`),
+                        },
+                        {
+                          label: "Logs",
+                          onClick: () => navigate(`/admin/api-keys/${k.id}/logs`),
                         },
                         {
                           label: k.is_active ? "Disable" : "Enable",
@@ -411,6 +471,7 @@ export default function AdminApiKeys() {
       <ApiKeyFormModal
         open={!!editKey}
         title="Edit API Key"
+        headerActions={editKey ? <ApiKeyInspectButtons keyId={editKey.id} /> : undefined}
         initial={
           editKey
             ? {
@@ -430,6 +491,10 @@ export default function AdminApiKeys() {
                         ),
                       )
                     : 60,
+                restrict_connections: editKey.restrict_connections,
+                allowed_connection_ids: (editKey.allowed_connections || []).map((c) => c.id),
+                restrict_models: editKey.restrict_models,
+                allowed_model_ids: (editKey.allowed_models || []).map((m) => m.id),
               }
             : undefined
         }

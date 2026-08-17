@@ -247,4 +247,10 @@ export type ActivityPayload = {
     base_url?: string | null;
     is_active: boolean;
   };
+  agent?: {
+    id: string;
+    name: string;
+    slug?: string;
+    status?: string;
+  };
 };

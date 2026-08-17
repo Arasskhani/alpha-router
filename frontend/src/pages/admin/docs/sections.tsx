@@ -876,7 +876,7 @@ export const docSections: DocSection[] = [
             </tr>
             <tr>
               <td>Agents &amp; Knowledge</td>
-              <td>Overview, Agent Studio, Knowledge Bases, Tool Registry, Evaluations, Approvals, Activity</td>
+              <td>Overview, Agent Studio, Knowledge Bases, Tool Registry, Evaluations, Approvals, Audit</td>
             </tr>
             <tr>
               <td>Models &amp; API</td>
@@ -1020,7 +1020,7 @@ export const docSections: DocSection[] = [
             readiness.
           </li>
           <li>
-            <strong>Approvals</strong> and <strong>Activity</strong> — maker-checker queues, legal holds, retention,
+            <strong>Approvals</strong> and <strong>Audit</strong> — maker-checker queues, legal holds, retention,
             and tamper-evident governance history.
           </li>
         </ul>
@@ -1297,13 +1297,22 @@ export const docSections: DocSection[] = [
           <li>Name</li>
           <li>Credit limit (USD) and reset period: daily / weekly / monthly (empty or 0 = no cap)</li>
           <li>Expiration: never, or auto-deactivate after N days</li>
+          <li>
+            Allowed connections: optional allowlist. Unrestricted keys can use every active connection. Restricted keys
+            only use the selected connections; if those connections are later disabled or deleted, the key does not fall
+            back to all connections.
+          </li>
+          <li>
+            Allowed models: optional allowlist on top of connection policy and the owner&apos;s catalog access. Restricted
+            keys only see and call the selected models; an empty selection denies all model traffic.
+          </li>
         </ul>
         <p>
           The plaintext key is shown once at creation. Clients call <code>/v1/*</code> with{" "}
           <code>Authorization: Bearer &lt;key&gt;</code>. Usage debits the key’s credit pool (not a personal monthly
           budget) when the key is an alpharouter gateway key.
         </p>
-        <p>Row actions include edit, usage, enable/disable, delete, bulk actions, and changelog.</p>
+        <p>Row actions include edit, Activity, Logs, enable/disable, delete, and bulk actions. Edit also has Activity and Logs in the header. Activity is the Dashboard filtered to that key; Logs is API Logs filtered to that key.</p>
       </>
     ),
   },
@@ -1582,7 +1591,7 @@ export const docSections: DocSection[] = [
           Clearing request logs does not erase the cost ledger. Accounting entries are retained so budget totals and
           reconciliation adjustments remain auditable.
         </Note>
-        <p>Deep links from Operations (for example filtered by model) are supported via query parameters.</p>
+        <p>Deep links from Operations (for example filtered by model) are supported via query parameters. Gateway key row actions open <code>/admin/api-keys/&lt;id&gt;/logs</code>, the same table scoped to that key.</p>
       </>
     ),
   },

@@ -1,4 +1,5 @@
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../../api";
 import AdminPage from "../../components/AdminPage";
 import ResourceAccessEditor from "../../components/admin/ResourceAccessEditor";
@@ -24,6 +25,7 @@ import {
   splitExampleInput,
   splitKeywordInput,
 } from "../../lib/agentPolicyForm";
+import { USAGE_AND_ACTIVITY_LABEL } from "../../lib/usageActivityLabel";
 
 type ChatModel = { id: string; name: string; external_id?: string };
 
@@ -55,6 +57,7 @@ const defaultPolicies = (modelId: string) => ({
 });
 
 export default function AgentStudio() {
+  const navigate = useNavigate();
   const { confirm, prompt } = useConfirm();
   const [agents, setAgents] = useState<AgentRecord[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState("");
@@ -636,6 +639,11 @@ export default function AgentStudio() {
                 <div className="agent-studio-title-actions">
                   <RowActionsMenu
                     actions={[
+                      {
+                        label: USAGE_AND_ACTIVITY_LABEL,
+                        onClick: () =>
+                          navigate(`/admin/agents/${encodeURIComponent(detail.id)}/activity`),
+                      },
                       detail.status === "archived"
                         ? {
                             label: "Reactivate",

@@ -110,7 +110,7 @@ export default function AgentActivity() {
     try {
       await api(`/api/admin/agents/governance/holds/${encodeURIComponent(holdId)}/release`, {
         method: "POST",
-        body: JSON.stringify({ reason: "Released from Activity & Audit" }),
+        body: JSON.stringify({ reason: "Released from Audit" }),
       });
       await load();
     } catch (err) {
@@ -154,7 +154,7 @@ export default function AgentActivity() {
 
   return (
     <AdminPage
-      title="Activity & Audit"
+      title="Audit"
       actions={(
         <>
           <button type="button" className="btn btn-ghost" disabled={working} onClick={() => void runRetention()}>

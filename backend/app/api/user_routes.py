@@ -1,7 +1,7 @@
 """End-user panel API."""
 
-from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,28 +16,40 @@ from app.services import activity_service
 from app.database import get_db
 from app.models.api_key import UserApiKey
 from app.models.user import User
+from app.services.user_api_key_service import (
+    DEFAULT_PERSONAL_KEY_NAME,
+    ensure_can_create_personal_key,
+)
 from app.services.user_role_service import primary_role_for_user
 
 router = APIRouter(prefix="/api/user", tags=["user"])
+
+
+def _serialize_user_key(key: UserApiKey, *, base_url: str) -> dict:
+    return {
+        "id": key.id,
+        "name": key.name,
+        "prefix": key.key_prefix,
+        "url": f"{base_url}/v1",
+        "is_active": key.is_active,
+        "created_at": key.created_at.isoformat() if key.created_at else None,
+        "last_used_at": key.last_used_at.isoformat() + "Z" if key.last_used_at else None,
+    }
 
 
 @router.get("/api-keys/list")
 async def list_user_keys(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     from app.config import get_settings
 
-    rows = (await db.execute(select(UserApiKey).where(UserApiKey.user_id == user.id))).scalars().all()
+    rows = (
+        await db.execute(
+            select(UserApiKey)
+            .where(UserApiKey.user_id == user.id)
+            .order_by(UserApiKey.created_at.desc())
+        )
+    ).scalars().all()
     base = get_settings().api_public_url
-    return [
-        {
-            "id": k.id,
-            "name": k.name,
-            "prefix": k.key_prefix,
-            "url": f"{base}/v1",
-            "is_active": k.is_active,
-            "created_at": k.created_at.isoformat() if k.created_at else None,
-        }
-        for k in rows
-    ]
+    return [_serialize_user_key(k, base_url=base) for k in rows]
 
 
 @router.get("/budget")
@@ -55,21 +67,53 @@ async def user_budget(user: User = Depends(get_current_user), db: AsyncSession =
 
 
 class UserKeyIn(BaseModel):
-    name: str
+    name: str = Field(default=DEFAULT_PERSONAL_KEY_NAME, min_length=1, max_length=128)
 
 
 @router.post("/api-keys")
-async def create_user_key(body: UserKeyIn, user: User = Depends(require_active_user), db: AsyncSession = Depends(get_db)):
-    email_local = (user.email or user.username or "user").split("@")[0]
+async def create_user_key(
+    body: UserKeyIn,
+    user: User = Depends(require_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.config import get_settings
     from app.core.security import generate_api_key_for_user
 
+    await ensure_can_create_personal_key(db, user)
+    name = (body.name or DEFAULT_PERSONAL_KEY_NAME).strip() or DEFAULT_PERSONAL_KEY_NAME
+    email_local = (user.email or user.username or "user").split("@")[0]
     raw, prefix, key_hash = generate_api_key_for_user(email_local)
-    db.add(UserApiKey(user_id=user.id, name=body.name, key_prefix=prefix, key_hash=key_hash))
+    key = UserApiKey(
+        user_id=user.id,
+        name=name,
+        key_prefix=prefix,
+        key_hash=key_hash,
+    )
+    db.add(key)
     await db.commit()
-    from app.config import get_settings
-
+    await db.refresh(key)
     s = get_settings()
-    return {"name": body.name, "api_key": raw, "url": f"{s.api_public_url}/v1"}
+    return {
+        "id": key.id,
+        "name": name,
+        "api_key": raw,
+        "prefix": prefix,
+        "url": f"{s.api_public_url}/v1",
+    }
+
+
+@router.delete("/api-keys/{key_id}")
+async def delete_user_key(
+    key_id: int,
+    user: User = Depends(require_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    key = await db.get(UserApiKey, key_id)
+    if not key or key.user_id != user.id:
+        raise HTTPException(status_code=404, detail="API key not found")
+    await db.delete(key)
+    await db.commit()
+    return {"ok": True}
 
 
 @router.get("/activity")
@@ -79,14 +123,27 @@ async def my_activity(
     model_id: str | None = Query(None, max_length=256),
     app: str | None = Query(None, max_length=64),
     response_status: str | None = Query(None, pattern="^(success|fail)$"),
+    personal_api_key_only: bool = Query(False),
     timezone: str = Query("local", pattern="^(local|utc)$"),
     explore: dict = Depends(activity_explore_opts),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Activity dashboard for the signed-in user only (never another account)."""
+    user_api_key_id = None
+    if personal_api_key_only:
+        personal_key = (
+            await db.execute(
+                select(UserApiKey.id).where(UserApiKey.user_id == user.id).limit(1)
+            )
+        ).scalar_one_or_none()
+        user_api_key_id = int(personal_key) if personal_key else -1
     filters = _activity_query_filters(
-        model_id=model_id, username=None, app=app, response_status=response_status
+        model_id=model_id,
+        username=None,
+        app=app,
+        response_status=response_status,
+        user_api_key_id=user_api_key_id,
     )
     payload, options, prompts_card = await _build_scoped_activity(
         db,
@@ -116,14 +173,27 @@ async def my_activity_export(
     model_id: str | None = Query(None, max_length=256),
     app: str | None = Query(None, max_length=64),
     response_status: str | None = Query(None, pattern="^(success|fail)$"),
+    personal_api_key_only: bool = Query(False),
     timezone: str = Query("local", pattern="^(local|utc)$"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     jwt_token: str = Depends(get_bearer_token),
 ):
     """Export activity for the signed-in user only."""
+    user_api_key_id = None
+    if personal_api_key_only:
+        personal_key = (
+            await db.execute(
+                select(UserApiKey.id).where(UserApiKey.user_id == user.id).limit(1)
+            )
+        ).scalar_one_or_none()
+        user_api_key_id = int(personal_key) if personal_key else -1
     filters = _activity_query_filters(
-        model_id=model_id, username=None, app=app, response_status=response_status
+        model_id=model_id,
+        username=None,
+        app=app,
+        response_status=response_status,
+        user_api_key_id=user_api_key_id,
     )
     return await _activity_export_response(
         db,

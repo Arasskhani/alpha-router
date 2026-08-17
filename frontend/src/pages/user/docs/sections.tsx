@@ -40,7 +40,7 @@ export const userManualSections: DocSection[] = [
           </div>
           <div className="docs-card">
             <h3>Activity</h3>
-            <p>Your spend, tokens, models, and CSV/PDF export.</p>
+            <p>Your spend, tokens, models, heatmaps, trends, and CSV/PDF export.</p>
           </div>
         </div>
         <table className="docs-table">
@@ -262,6 +262,11 @@ export const userManualSections: DocSection[] = [
             effective version, and Knowledge Base details that you are authorized to see.
           </li>
           <li>
+            If the specialist cannot attach the required citations, you may see a short safe message in English or
+            Persian instead of an answer. That is expected: the platform refuses uncited claims rather than inventing
+            sources. Try rephrasing, or ask an administrator if the Knowledge Base is incomplete.
+          </li>
+          <li>
             Legal and Finance responses include a disclaimer. A citation supports the answer but does not replace
             professional approval.
           </li>
@@ -324,9 +329,10 @@ export const userManualSections: DocSection[] = [
       <>
         <h2>Models</h2>
         <p>
-          Only models your administrator enabled appear in the picker. Open the model picker from the chat chrome to
-          choose a default model for the session. Some deployments allow selecting multiple models for a turn (compare
-          replies); limits are enforced by the app.
+          Only models your administrator enabled appear in the picker. Some models may be <strong>Private</strong> —
+          visible only to users and groups your admin assigned. Open the model picker from the chat chrome to choose a
+          default model for the session. Some deployments allow selecting multiple models for a turn (compare replies);
+          limits are enforced by the app.
         </p>
         <ul>
           <li>Chat / reasoning models stream text replies.</li>
@@ -621,16 +627,36 @@ export const userManualSections: DocSection[] = [
         <h2>Activity</h2>
         <p>
           Path: <code>/app/my-activity</code>. Personal analytics for your account only (not the whole organization).
+          The same tabbed Activity experience administrators use is scoped to <strong>you</strong>: there is no user
+          filter and no organization-wide “top users” view.
         </p>
+        <h3>Tabs</h3>
         <ul>
-          <li>Choose a time period and explore spend, requests, tokens, and models.</li>
-          <li>Charts and tables help you see which models or days drive usage.</li>
-          <li>Export CSV or PDF for your own records.</li>
+          <li>
+            <strong>Overview</strong> — KPIs, usage and token charts, request heatmap, and breakdowns by model and app.
+          </li>
+          <li>
+            <strong>Trends</strong> — how your models and apps change over the selected period.
+          </li>
+          <li>
+            <strong>Explore</strong> — pick metric, grouping, rollup, and chart type; export a PDF snapshot.
+          </li>
+        </ul>
+        <h3>Toolbar</h3>
+        <ul>
+          <li>Period, timezone, filters (model, app, status), group-by, CSV/PDF export.</li>
         </ul>
         <p>
-          Your monthly budget remaining is also visible from the profile menu. Administrators see organization-wide
-          dashboards separately.
+          Your monthly budget remaining is also visible from the profile menu. Organization-wide dashboards and gateway
+          API key analytics are administrator-only.
         </p>
+        <Note>
+          If your administrator assigns you a <strong>gateway API key</strong> for an external tool (scripts, IDEs,
+          Kilo Code), that key&apos;s spend is tracked against the key&apos;s credit pool — not your personal monthly
+          budget. Your Activity page still shows requests attributed to your user when the key owner is you. Traffic from
+          your <strong>personal API key</strong> (Settings → API Key) appears in Activity and admin logs with your key
+          name.
+        </Note>
       </>
     ),
   },
@@ -681,6 +707,17 @@ export const userManualSections: DocSection[] = [
             LDAP / SAML / OIDC accounts: password and 2FA are managed at your identity provider
           </li>
         </ul>
+        <h3>API Key</h3>
+        <p>
+          Create one <strong>personal API key</strong> for OpenAI-compatible tools (scripts, IDEs, Kilo Code). Usage debits your monthly budget (same
+          pool as Chat). Revoke permanently from Settings when rotating credentials; create a new key only after
+          revoking the old one.
+        </p>
+        <ul>
+          <li>Base URL: your alpharouter <code>/v1</code> endpoint (shown after creation).</li>
+          <li>Header: <code>Authorization: Bearer &lt;your-key&gt;</code></li>
+          <li>The plaintext key is shown once at creation — store it securely.</li>
+        </ul>
       </>
     ),
   },
@@ -693,8 +730,9 @@ export const userManualSections: DocSection[] = [
         <h2>Budget, theme &amp; logout</h2>
         <ul>
           <li>
-            <strong>Budget</strong> — monthly USD allowance from your plan. Chat, images, and your personal API keys (if
-            any) consume it.
+            <strong>Budget</strong> — monthly USD allowance from your plan. Chat, images, tools, and your{" "}
+            <strong>personal API key</strong> (Settings → API Key) consume it.
+            Separate <strong>gateway API keys</strong> issued by administrators use their own credit pool.
           </li>
           <li>
             <strong>Theme</strong> — follows Settings; applied across the app.

@@ -30,9 +30,10 @@ import {
   type UserProfileContext,
 } from "../lib/userMemories";
 import Modal from "./Modal";
+import PersonalApiKeyPanel from "./PersonalApiKeyPanel";
 import ThemeSegmentedControl from "./ThemeSegmentedControl";
 
-type TabId = "general" | "personalization" | "data-control" | "security";
+type TabId = "general" | "personalization" | "data-control" | "security" | "api-keys";
 
 type SecurityStatus = {
   auth_provider: string;
@@ -60,6 +61,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "personalization", label: "Personalization" },
   { id: "data-control", label: "Data Control" },
   { id: "security", label: "Security" },
+  { id: "api-keys", label: "API Key" },
 ];
 
 const NAMED_THEME_OPTIONS: NamedTheme[] = ["default", "mint", "dark-mint"];
@@ -108,6 +110,7 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange }: P
           {tab === "personalization" && <PersonalizationPanel />}
           {tab === "data-control" && <DataControlPanel />}
           {tab === "security" && <SecurityPanel />}
+          {tab === "api-keys" && <PersonalApiKeyPanel />}
         </section>
       </div>
     </Modal>

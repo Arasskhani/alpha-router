@@ -178,10 +178,6 @@ export default function Users() {
   const [createOpen, setCreateOpen] = useState(false);
   const [flash, setFlash] = useState("");
   const [err, setErr] = useState("");
-  const [keyModalOpen, setKeyModalOpen] = useState(false);
-  const [keyModal, setKeyModal] = useState({ email: "", apiKey: "", url: "" });
-  const [keyLoading, setKeyLoading] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [editUser, setEditUser] = useState<U | null>(null);
   const [editForm, setEditForm] = useState<EditForm>(emptyEditForm);
   const [editSaving, setEditSaving] = useState(false);
@@ -362,21 +358,6 @@ export default function Users() {
     load();
   }
 
-  async function getApiKey(userId: number, email: string) {
-    setKeyLoading(true);
-    setCopied(false);
-    setKeyModalOpen(true);
-    setKeyModal({ email, apiKey: "Generating…", url: "" });
-    try {
-      const res = await api<{ api_key: string; url: string }>(`/api/admin/users/${userId}/api-keys`, { method: "POST" });
-      setKeyModal({ email, apiKey: res.api_key, url: res.url });
-    } catch (e) {
-      setKeyModal({ email, apiKey: `Error: ${e}`, url: "" });
-    } finally {
-      setKeyLoading(false);
-    }
-  }
-
   function openEditUser(u: U) {
     setEditUser(u);
     setEditForm({
@@ -528,24 +509,6 @@ export default function Users() {
     }
   }
 
-  async function copyKey() {
-    if (!keyModal.apiKey || keyModal.apiKey.startsWith("Error")) return;
-    try {
-      await navigator.clipboard.writeText(keyModal.apiKey);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      const ta = document.createElement("textarea");
-      ta.value = keyModal.apiKey;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  }
-
   const prov = (p: string) =>
     `badge badge-${
       p === "local" ? "local" : p === "ldap" ? "ldap" : p === "saml" ? "saml" : p === "oidc" ? "oidc" : "keycloak"
@@ -579,10 +542,7 @@ export default function Users() {
     if (u.auth_provider === "local") {
       items.push({ label: "Delete", onClick: () => void deleteLocalUser(u), danger: true });
     }
-    items.push(
-      { label: "Budget reset", onClick: () => budgetReset(u.id) },
-      { label: "Get API key", onClick: () => getApiKey(u.id, u.email) },
-    );
+    items.push({ label: "Budget reset", onClick: () => budgetReset(u.id) });
     return items;
   }
 
@@ -1045,32 +1005,6 @@ export default function Users() {
             </div>
           </form>
         )}
-      </Modal>
-
-      <Modal open={keyModalOpen} title="API Key" onClose={() => setKeyModalOpen(false)}>
-        <p className="muted-text">User: <strong>{keyModal.email}</strong></p>
-        <label>API Key</label>
-        <input readOnly value={keyModal.apiKey} className="input-block mono" />
-        {keyModal.url && (
-          <>
-            <label>Open WebUI URL</label>
-            <input readOnly value={keyModal.url} className="input-block mono" />
-          </>
-        )}
-        <p className="muted-text" style={{ marginTop: "0.75rem" }}>Store this key securely. It may not be shown again in full.</p>
-        <div className="dialog-actions">
-          <button
-            type="button"
-            className="btn"
-            onClick={copyKey}
-            disabled={keyLoading || keyModal.apiKey.startsWith("Error")}
-          >
-            {copied ? "Copied!" : "Copy"}
-          </button>
-          <button type="button" className="btn btn-ghost dialog-actions-cancel" onClick={() => setKeyModalOpen(false)}>
-            Close
-          </button>
-        </div>
       </Modal>
 
       <Modal

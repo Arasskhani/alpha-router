@@ -17,7 +17,7 @@ from app.api.deps import (
     require_api_logs_write,
 )
 from app.database import get_db
-from app.models.api_key import AlphaRouterApiKey
+from app.models.api_key import AlphaRouterApiKey, UserApiKey
 from app.models.connection import Connection
 from app.models.cost_accounting import (
     CostLineItem,
@@ -87,6 +87,7 @@ def _log_row(
     provider: str | None = None,
     *,
     router_key: AlphaRouterApiKey | None = None,
+    user_key: UserApiKey | None = None,
 ) -> dict:
     source_code = (r.source or "").strip().lower()
     if source_code == "alpha_router_chat":
@@ -95,6 +96,8 @@ def _log_row(
         app = (r.client_app or "").strip() or format_app_source(r.source)
     if r.alpha_router_api_key_id:
         identity_type = "api_key"
+    elif r.user_api_key_id:
+        identity_type = "user"
     elif source_code == "alpha_router_chat":
         identity_type = "chat"
     else:
@@ -131,6 +134,12 @@ def _log_row(
         row["api_key_name"] = router_key.name
         row["api_key_prefix"] = router_key.key_prefix
         row["alpha_router_api_key_id"] = router_key.id
+        row["api_key_kind"] = "gateway"
+    elif user_key:
+        row["api_key_name"] = user_key.name
+        row["api_key_prefix"] = user_key.key_prefix
+        row["user_api_key_id"] = user_key.id
+        row["api_key_kind"] = "personal"
     return row
 
 
@@ -144,18 +153,25 @@ def _apply_log_filters(
     start_date: str | None,
     end_date: str | None,
     api_key_id: int | None = None,
+    user_api_key_id: int | None = None,
 ):
     if api_key_id is not None:
         q = q.where(RequestLog.alpha_router_api_key_id == api_key_id)
+    if user_api_key_id is not None:
+        q = q.where(RequestLog.user_api_key_id == user_api_key_id)
     if username:
         term = username.strip()
         key_match = select(AlphaRouterApiKey.id).where(
             AlphaRouterApiKey.name.contains(term)
         )
+        personal_key_match = select(UserApiKey.id).where(
+            UserApiKey.name.contains(term)
+        )
         q = q.where(
             or_(
                 RequestLog.username.contains(term),
                 RequestLog.alpha_router_api_key_id.in_(key_match),
+                RequestLog.user_api_key_id.in_(personal_key_match),
             )
         )
     if model_id:
@@ -217,6 +233,7 @@ async def _filtered_log_rows(
     start_date: str | None = None,
     end_date: str | None = None,
     api_key_id: int | None = None,
+    user_api_key_id: int | None = None,
 ):
     q = select(RequestLog).order_by(RequestLog.request_time.desc())
     q = _apply_log_filters(
@@ -228,6 +245,7 @@ async def _filtered_log_rows(
         start_date=start_date,
         end_date=end_date,
         api_key_id=api_key_id,
+        user_api_key_id=user_api_key_id,
     )
     if offset:
         q = q.offset(offset)
@@ -270,6 +288,14 @@ async def _serialize_log_rows(db: AsyncSession, rows: list[RequestLog]) -> list[
         ).scalars().all()
         key_map = {k.id: k for k in keys}
 
+    user_key_ids = {r.user_api_key_id for r in rows if r.user_api_key_id}
+    user_key_map: dict[int, UserApiKey] = {}
+    if user_key_ids:
+        user_keys = (
+            await db.execute(select(UserApiKey).where(UserApiKey.id.in_(user_key_ids)))
+        ).scalars().all()
+        user_key_map = {k.id: k for k in user_keys}
+
     items = []
     for r in rows:
         if r.usage_operation_id and len(operation_providers.get(r.usage_operation_id, set())) == 1:
@@ -278,7 +304,14 @@ async def _serialize_log_rows(db: AsyncSession, rows: list[RequestLog]) -> list[
             provider = "mixed"
         else:
             provider = provider_map.get((r.model_id or "").strip())
-        items.append(_log_row(r, provider, router_key=key_map.get(r.alpha_router_api_key_id)))
+        items.append(
+            _log_row(
+                r,
+                provider,
+                router_key=key_map.get(r.alpha_router_api_key_id),
+                user_key=user_key_map.get(r.user_api_key_id),
+            )
+        )
     return items
 
 
@@ -294,6 +327,7 @@ async def _logs_list_payload(
     start_date: str | None = None,
     end_date: str | None = None,
     api_key_id: int | None = None,
+    user_api_key_id: int | None = None,
     api_key: AlphaRouterApiKey | None = None,
 ) -> dict:
     rows = await _filtered_log_rows(
@@ -307,6 +341,7 @@ async def _logs_list_payload(
         start_date=start_date,
         end_date=end_date,
         api_key_id=api_key_id,
+        user_api_key_id=user_api_key_id,
     )
     payload: dict = {
         "items": await _serialize_log_rows(db, rows),
@@ -331,6 +366,7 @@ async def _logs_export_response(
     start_date: str | None = None,
     end_date: str | None = None,
     api_key_id: int | None = None,
+    user_api_key_id: int | None = None,
 ) -> Response:
     rows = await _filtered_log_rows(
         db,
@@ -342,13 +378,15 @@ async def _logs_export_response(
         start_date=start_date,
         end_date=end_date,
         api_key_id=api_key_id,
+        user_api_key_id=user_api_key_id,
     )
-    provider_map, key_map = await resolve_log_export_maps(db, rows)
+    provider_map, key_map, user_key_map = await resolve_log_export_maps(db, rows)
     df = request_logs_to_export_dataframe(
         rows,
         tz_mode=timezone,
         provider_map=provider_map,
         key_map=key_map,
+        user_key_map=user_key_map,
     )
     content = dataframe_to_csv_bytes(df)
     stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
@@ -425,6 +463,7 @@ async def admin_logs_export(
     start_date: str | None = None,
     end_date: str | None = None,
     api_key_id: int | None = Query(default=None, ge=1),
+    user_api_key_id: int | None = Query(default=None, ge=1),
     timezone: str = Query("local", pattern="^(local|utc)$"),
 ):
     return await _logs_export_response(
@@ -438,6 +477,7 @@ async def admin_logs_export(
         start_date=start_date,
         end_date=end_date,
         api_key_id=api_key_id,
+        user_api_key_id=user_api_key_id,
     )
 
 
@@ -454,6 +494,7 @@ async def admin_logs(
     start_date: str | None = None,
     end_date: str | None = None,
     api_key_id: int | None = Query(default=None, ge=1),
+    user_api_key_id: int | None = Query(default=None, ge=1),
 ):
     key = await db.get(AlphaRouterApiKey, api_key_id) if api_key_id else None
     return await _logs_list_payload(
@@ -467,6 +508,7 @@ async def admin_logs(
         start_date=start_date,
         end_date=end_date,
         api_key_id=api_key_id,
+        user_api_key_id=user_api_key_id,
         api_key=key,
     )
 
@@ -706,11 +748,16 @@ async def admin_log_export(
         raise HTTPException(status_code=404, detail="Request log not found")
     await _require_request_log_read(db, user, log_row)
 
-    provider_map, key_map = await resolve_log_export_maps(db, [log_row])
+    provider_map, key_map, user_key_map = await resolve_log_export_maps(db, [log_row])
     provider = provider_map.get((log_row.model_id or "").strip())
     router_key = (
         key_map.get(log_row.alpha_router_api_key_id)
         if log_row.alpha_router_api_key_id
+        else None
+    )
+    user_key = (
+        user_key_map.get(log_row.user_api_key_id)
+        if log_row.user_api_key_id
         else None
     )
 

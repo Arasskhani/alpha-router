@@ -11,9 +11,12 @@ Covers:
 import asyncio
 import datetime
 import types
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -178,6 +181,7 @@ async def _test_user_api_key_resolves_owner_with_budget():
         assert auth.username == "alice"
         assert auth.skip_budget is False
         assert auth.alpha_router_api_key_id is None
+        assert auth.user_api_key_id is not None
         assert auth.user_id is not None
 
 
@@ -253,6 +257,61 @@ async def _test_chat_completions_no_key_short_circuits_before_body_parse():
         assert exc.value.status_code == 401
 
 
+class _ChatRequest(_FakeRequest):
+    def __init__(self, authorization: str, body: dict):
+        super().__init__(authorization)
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+
+async def _test_chat_completions_personal_key_preflight_and_stream():
+    """Personal API key chat must not pass user_api_key_id into preflight_stream_chat."""
+    _, sf = await _setup_db()
+    _, raw = await _seed_user_key(sf)
+    resolved = SimpleNamespace(
+        ai_model=SimpleNamespace(external_id="test-model"),
+        api_key="sk-test",
+        base_url="https://example.invalid",
+        provider_type="openai",
+        model_id="test-model",
+        budget_reservation_id=None,
+        code_interpreter_capacity_permit=None,
+        agent_turn=None,
+    )
+    stream_calls: list[dict] = []
+
+    async def _empty_stream():
+        if False:
+            yield b""
+
+    def fake_stream(*_args, **kwargs):
+        stream_calls.append(kwargs)
+        return _empty_stream()
+
+    preflight_mock = AsyncMock(return_value=resolved)
+    body = {
+        "model": "test-model",
+        "messages": [{"role": "user", "content": "hi"}],
+        "stream": True,
+    }
+    req = _ChatRequest(f"Bearer {raw}", body)
+
+    with (
+        patch.object(gateway, "preflight_stream_chat", preflight_mock),
+        patch.object(gateway, "stream_chat", fake_stream),
+    ):
+        async with sf() as db:
+            resp = await gateway.chat_completions(request=req, db=db)
+
+    assert isinstance(resp, StreamingResponse)
+    preflight_mock.assert_awaited_once()
+    assert "user_api_key_id" not in preflight_mock.await_args.kwargs
+    assert stream_calls
+    assert stream_calls[0]["user_api_key_id"] is not None
+
+
 # ---- sync wrappers ----
 
 def test_missing_authorization_raises_401():
@@ -301,3 +360,7 @@ def test_read_gate_accepts_user_key():
 
 def test_chat_completions_no_key_short_circuits_before_body_parse():
     asyncio.run(_test_chat_completions_no_key_short_circuits_before_body_parse())
+
+
+def test_chat_completions_personal_key_preflight_and_stream():
+    asyncio.run(_test_chat_completions_personal_key_preflight_and_stream())

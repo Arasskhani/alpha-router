@@ -31,6 +31,12 @@ class RequestLog(Base):
         index=True,
         nullable=True,
     )
+    user_api_key_id = Column(
+        Integer,
+        ForeignKey("user_api_keys.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
     budget_reservation_id = Column(String(36), index=True, unique=True, nullable=True)
 
     prompt_tokens = Column(Integer, default=0)

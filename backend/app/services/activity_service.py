@@ -156,6 +156,7 @@ def apply_activity_filters(
     app: str | None = None,
     response_status: str | None = None,
     alpha_router_api_key_id: int | None = None,
+    user_api_key_id: int | None = None,
 ) -> list[RequestLog]:
     out = rows
     model_filter = (model_id or "").strip()
@@ -173,6 +174,10 @@ def apply_activity_filters(
             for r in out
             if r.alpha_router_api_key_id == alpha_router_api_key_id
         ]
+    if user_api_key_id is not None:
+        if user_api_key_id < 0:
+            return []
+        out = [r for r in out if r.user_api_key_id == user_api_key_id]
     if response_status == "success":
         out = [r for r in out if r.success]
     elif response_status == "fail":

@@ -421,7 +421,7 @@ export default function ApiLogs({ apiKeyId }: Props) {
                           <path d="M12 15h9M16 15v3M20 15v2" />
                         </svg>
                         <span>{r.api_key_name || r.username}</span>
-                        <span className="api-log-identity-tag">(API Key)</span>
+                        <span className="api-log-identity-tag">(Gateway API Key)</span>
                       </span>
                     ) : r.identity_type === "chat" ? (
                       <span className="api-log-identity" title="Alpharouter web chat">
@@ -436,6 +436,30 @@ export default function ApiLogs({ apiKeyId }: Props) {
                           aria-hidden="true"
                         >
                           <path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z" />
+                        </svg>
+                        <span>{r.username}</span>
+                      </span>
+                    ) : r.api_key_kind === "personal" ? (
+                      <span
+                        className="api-log-identity"
+                        title={
+                          r.api_key_name
+                            ? `Personal API key: ${r.api_key_name}`
+                            : "Personal API key"
+                        }
+                      >
+                        <svg
+                          className="api-log-identity-icon"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                        >
+                          <circle cx="8" cy="15" r="4" />
+                          <path d="M12 15h9M16 15v3M20 15v2" />
                         </svg>
                         <span>{r.username}</span>
                       </span>

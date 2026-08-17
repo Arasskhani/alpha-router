@@ -1989,33 +1989,6 @@ async def reset_user_budget(user_id: int, db: AsyncSession = Depends(get_db), _:
     return {"ok": True, "budget_used_usd": 0.0}
 
 
-@router.post("/users/{user_id}/api-keys")
-async def create_user_api_key_admin(
-    user_id: int,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_users_write),
-):
-    from app.config import get_settings
-    from app.models.api_key import UserApiKey
-
-    user = await db.get(User, user_id)
-    if not user:
-        raise HTTPException(404)
-    email_local = (user.email or user.username or "user").split("@")[0]
-    raw, prefix, key_hash = generate_api_key_for_user(email_local)
-    db.add(
-        UserApiKey(
-            user_id=user.id,
-            name=f"{email_local}-key",
-            key_prefix=prefix,
-            key_hash=key_hash,
-        )
-    )
-    await db.flush()
-    s = get_settings()
-    return {"api_key": raw, "url": f"{s.api_public_url}/v1", "prefix": prefix}
-
-
 @router.patch("/users/{user_id}/plan")
 async def set_user_plan(
     user_id: int,
@@ -2074,6 +2047,7 @@ async def _fetch_logs_since(
     user_id: int | None = None,
     user_ids: list[int] | None = None,
     alpha_router_api_key_id: int | None = None,
+    user_api_key_id: int | None = None,
     connection_id: int | None = None,
     agent_id: str | None = None,
 ) -> list[RequestLog]:
@@ -2088,6 +2062,10 @@ async def _fetch_logs_since(
         q = q.where(
             RequestLog.alpha_router_api_key_id == alpha_router_api_key_id
         )
+    if user_api_key_id is not None:
+        if user_api_key_id < 0:
+            return []
+        q = q.where(RequestLog.user_api_key_id == user_api_key_id)
     if connection_id is not None:
         model_ids = (
             await db.execute(select(AIModel.external_id).where(AIModel.connection_id == connection_id))
@@ -2122,6 +2100,7 @@ def _activity_query_filters(
     app: str | None,
     response_status: str | None,
     api_key_id: int | None = None,
+    user_api_key_id: int | None = None,
 ) -> dict:
     return {
         "model_id": (model_id or "").strip() or None,
@@ -2131,6 +2110,7 @@ def _activity_query_filters(
         "alpha_router_api_key_id": (
             api_key_id if api_key_id and api_key_id > 0 else None
         ),
+        "user_api_key_id": user_api_key_id,
     }
 
 
@@ -2474,12 +2454,13 @@ async def _activity_export_response(
         connection_id=connection_id,
         agent_id=agent_id,
     )
-    provider_map, key_map = await resolve_log_export_maps(db, rows)
+    provider_map, key_map, user_key_map = await resolve_log_export_maps(db, rows)
     df = request_logs_to_export_dataframe(
         rows,
         tz_mode=timezone,
         provider_map=provider_map,
         key_map=key_map,
+        user_key_map=user_key_map,
     )
     content, media, ext_name = export_activity_logs_workbook(df)
     ext = ext_name.rsplit(".", 1)[-1]

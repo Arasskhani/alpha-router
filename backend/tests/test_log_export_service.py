@@ -84,8 +84,80 @@ def test_filtered_logs_csv_has_bom_and_header():
     raw = dataframe_to_csv_bytes(df)
     text = raw.decode("utf-8-sig")
     assert text.startswith("Id,Time,User,")
-    assert "ci-bot (API Key)" in text
+    assert "ci-bot (Gateway API Key)" in text
     assert "Duration ms" in text
+
+
+def test_personal_api_key_export_shows_username_not_key_name():
+    row = SimpleNamespace(
+        id=2,
+        request_time=datetime(2026, 8, 17, 12, 0, 0),
+        username="majid",
+        source="user_key",
+        client_app="Kilo Code",
+        alpha_router_api_key_id=None,
+        user_api_key_id=4,
+        model_id="gpt-4o-mini",
+        prompt_tokens=1,
+        completion_tokens=2,
+        cached_tokens=0,
+        total_cost_usd=0.1,
+        provider_cost_usd=None,
+        calculated_cost_usd=0.1,
+        cost_source="provider_catalog",
+        cost_confidence="calculated",
+        has_unpriced_usage=False,
+        response_time_ms=10,
+        success=True,
+        source_ip="10.0.0.1",
+        prompt_language="en",
+    )
+    user_key = SimpleNamespace(id=4, name="kilo", key_prefix="alpha_router_Maj")
+    exported = log_row_to_export(
+        row,
+        tz_mode="utc",
+        provider="openai",
+        router_key=None,
+        user_key=user_key,
+    )
+    assert exported["User"] == "majid · kilo (Personal API Key)"
+
+
+def test_log_row_personal_api_key_identity_is_user():
+    from app.api.logs import _log_row
+
+    row = SimpleNamespace(
+        id=3,
+        request_time=datetime(2026, 8, 17, 12, 0, 0),
+        username="majid",
+        source="user_key",
+        client_app="Kilo Code",
+        alpha_router_api_key_id=None,
+        user_api_key_id=4,
+        model_id="gpt-4o-mini",
+        prompt_tokens=1,
+        completion_tokens=2,
+        cached_tokens=0,
+        total_cost_usd=0.1,
+        provider_cost_usd=None,
+        calculated_cost_usd=0.1,
+        cost_source="provider_catalog",
+        cost_confidence="exact",
+        has_unpriced_usage=False,
+        response_time_ms=10,
+        success=True,
+        source_ip="10.0.0.1",
+        prompt_language="en",
+        error_message=None,
+        reconciled_at=None,
+        usage_operation_id=None,
+    )
+    user_key = SimpleNamespace(id=4, name="kilo", key_prefix="alpha_router_Maj")
+    payload = _log_row(row, provider="openai", user_key=user_key)
+    assert payload["identity_type"] == "user"
+    assert payload["username"] == "majid"
+    assert payload["api_key_name"] == "kilo"
+    assert payload["api_key_kind"] == "personal"
 
 
 def test_single_log_detail_export_includes_events_and_line_items():

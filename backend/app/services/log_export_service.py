@@ -10,7 +10,7 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.api_key import AlphaRouterApiKey
+from app.models.api_key import AlphaRouterApiKey, UserApiKey
 from app.models.cost_accounting import CostLineItem, UsageEvent, UsageOperation
 from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel
@@ -87,11 +87,21 @@ DETAIL_LOG_COLUMNS = [
 ]
 
 
-def _format_user(r: RequestLog, router_key: AlphaRouterApiKey | None) -> str:
+def _format_user(
+    r: RequestLog,
+    router_key: AlphaRouterApiKey | None,
+    user_key: UserApiKey | None = None,
+) -> str:
     source_code = (r.source or "").strip().lower()
-    if r.alpha_router_api_key_id:
+    if getattr(r, "alpha_router_api_key_id", None):
         name = (router_key.name if router_key else None) or r.username or "API key"
-        return f"{name} (API Key)"
+        return f"{name} (Gateway API Key)"
+    if getattr(r, "user_api_key_id", None):
+        username = (r.username or "unknown").strip() or "unknown"
+        key_name = (user_key.name if user_key else None) or ""
+        if key_name and key_name.strip().lower() != username.lower():
+            return f"{username} · {key_name.strip()} (Personal API Key)"
+        return f"{username} (Personal API Key)"
     if source_code == "alpha_router_chat":
         return f"{r.username or 'unknown'} (Chat)"
     return (r.username or "unknown").strip() or "unknown"
@@ -119,13 +129,14 @@ def log_row_to_export(
     tz_mode: str,
     provider: str | None = None,
     router_key: AlphaRouterApiKey | None = None,
+    user_key: UserApiKey | None = None,
 ) -> dict[str, Any]:
     dt = r.request_time
     time_str = _display_dt(dt, tz_mode).strftime("%Y-%m-%dT%H:%M:%S") if dt else ""
     return {
         "Id": int(r.id),
         "Time": time_str,
-        "User": _format_user(r, router_key),
+        "User": _format_user(r, router_key, user_key),
         "Model": r.model_id or "",
         "Provider": provider or "",
         "App": _format_app(r),
@@ -151,7 +162,7 @@ def log_row_to_export(
 async def resolve_log_export_maps(
     db: AsyncSession,
     rows: list[RequestLog],
-) -> tuple[dict[str, str], dict[int, AlphaRouterApiKey]]:
+) -> tuple[dict[str, str], dict[int, AlphaRouterApiKey], dict[int, UserApiKey]]:
     model_ids = list({(r.model_id or "").strip() for r in rows if (r.model_id or "").strip()})
     provider_map: dict[str, str] = {}
     if model_ids:
@@ -179,7 +190,16 @@ async def resolve_log_export_maps(
             )
         ).scalars().all()
         key_map = {k.id: k for k in keys}
-    return provider_map, key_map
+    user_key_ids = {r.user_api_key_id for r in rows if r.user_api_key_id}
+    user_key_map: dict[int, UserApiKey] = {}
+    if user_key_ids:
+        user_keys = (
+            await db.execute(
+                select(UserApiKey).where(UserApiKey.id.in_(user_key_ids))
+            )
+        ).scalars().all()
+        user_key_map = {k.id: k for k in user_keys}
+    return provider_map, key_map, user_key_map
 
 
 def request_logs_to_export_dataframe(
@@ -188,7 +208,9 @@ def request_logs_to_export_dataframe(
     tz_mode: str,
     provider_map: dict[str, str],
     key_map: dict[int, AlphaRouterApiKey],
+    user_key_map: dict[int, UserApiKey] | None = None,
 ) -> pd.DataFrame:
+    user_key_map = user_key_map or {}
     if not rows:
         return pd.DataFrame(columns=ACTIVITY_LOG_COLUMNS)
     sorted_rows = sorted(rows, key=lambda r: r.request_time or r.id, reverse=True)
@@ -200,6 +222,11 @@ def request_logs_to_export_dataframe(
             router_key=(
                 key_map.get(r.alpha_router_api_key_id)
                 if r.alpha_router_api_key_id
+                else None
+            ),
+            user_key=(
+                user_key_map.get(r.user_api_key_id)
+                if getattr(r, "user_api_key_id", None)
                 else None
             ),
         )

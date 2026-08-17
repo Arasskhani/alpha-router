@@ -106,6 +106,43 @@ function IconLiteLLM({ className }: IconProps) {
   );
 }
 
+function IconQdrant({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 32 32" fill="none" aria-hidden>
+      <circle cx="10" cy="12" r="2.2" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="22" cy="10" r="2.2" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="16" cy="21" r="2.2" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="24" cy="20" r="1.6" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M12 13l8-2M12 13.5l3.5 6M22 12l-4 8M22.5 12l1 6.5" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+  );
+}
+
+function IconClamav({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 32 32" fill="none" aria-hidden>
+      <path
+        d="M16 5l10 4v8c0 6-4.2 10.2-10 12-5.8-1.8-10-6-10-12V9l10-4z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <path d="M11 16.5l3.2 3.2L21 13" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function IconWorker({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 32 32" fill="none" aria-hidden>
+      <rect x="5" y="8" width="10" height="7" rx="1.4" stroke="currentColor" strokeWidth="1.5" />
+      <rect x="17" y="17" width="10" height="7" rx="1.4" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M10 15v3.5h7" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M22 17V13.5H15" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" opacity="0.55" />
+    </svg>
+  );
+}
+
 function IconProviders({ className }: IconProps) {
   return (
     <svg className={className} viewBox="0 0 32 32" fill="none" aria-hidden>
@@ -189,7 +226,7 @@ export default function AdminArchitectureDiagram() {
                 </li>
                 <li>
                   <code>POST /v1/chat/completions</code>
-                  <span className="docs-arch-muted"> · stream</span>
+                  <span className="docs-arch-muted"> · stream · optional Agent</span>
                 </li>
                 <li>
                   <code>POST /v1/embeddings</code>
@@ -204,7 +241,7 @@ export default function AdminArchitectureDiagram() {
               <ul className="docs-arch-route-list">
                 <li>
                   <code>POST /api/chat/completions</code>
-                  <span className="docs-arch-muted"> · persist during SSE</span>
+                  <span className="docs-arch-muted"> · persist during SSE · Agents</span>
                 </li>
                 <li>
                   <code>/api/user/chats/*</code>
@@ -214,7 +251,8 @@ export default function AdminArchitectureDiagram() {
                   <code>POST /api/images/generate</code>
                 </li>
                 <li>
-                  <code>/api/admin/*</code>
+                  <code>/api/admin/agents/*</code>
+                  <span className="docs-arch-muted"> · Studio, Knowledge, Audit</span>
                 </li>
               </ul>
             </ComponentCard>
@@ -246,10 +284,13 @@ export default function AdminArchitectureDiagram() {
                 Shared <code>stream_chat</code> pipeline → LiteLLM
               </li>
               <li>
+                Agent runtime: routing, Qdrant retrieval, citations, fail-closed guardrails
+              </li>
+              <li>
                 <code>ChatCompletionPersister</code> — server-owned writes during in-app SSE
               </li>
-              <li>Request logging · model catalog · Connections</li>
-              <li>Chat rows in PostgreSQL · media in SeaweedFS · code via sandbox-broker</li>
+              <li>Request logging · model catalog · Connections · Agent/Knowledge audit</li>
+              <li>Chat rows in PostgreSQL · blobs in SeaweedFS · code via sandbox-broker</li>
             </ul>
           </ComponentCard>
         </section>
@@ -266,8 +307,8 @@ export default function AdminArchitectureDiagram() {
               subtitle="Primary data store"
             >
               <p>
-                Users, Connections, catalog, chat rows, budgets, reservations, request logs. App uses transaction
-                pooling via PgBouncer.
+                Users, Connections, catalog, chat rows, budgets, Agent versions, Knowledge metadata, reservations,
+                request logs. App uses transaction pooling via PgBouncer.
               </p>
             </ComponentCard>
             <ComponentCard
@@ -277,7 +318,8 @@ export default function AdminArchitectureDiagram() {
               subtitle="Object storage"
             >
               <p>
-                S3 API for media blobs (hash dedup per user). Served only through authenticated Alpharouter media APIs.
+                S3 API for media and Knowledge source bytes (quarantine then governed objects). Served only through
+                authenticated Alpharouter APIs.
               </p>
             </ComponentCard>
             <ComponentCard
@@ -286,7 +328,10 @@ export default function AdminArchitectureDiagram() {
               title="Redis"
               subtitle="Cache &amp; state"
             >
-              <p>Rate limits, SSO/2FA pending state, LiteLLM cache; in-memory fallback when Redis is down.</p>
+              <p>
+                Rate limits, SSO/2FA pending state, LiteLLM cache, Knowledge job streams; in-memory fallback when Redis
+                is down.
+              </p>
             </ComponentCard>
             <ComponentCard
               iconCentered
@@ -297,6 +342,46 @@ export default function AdminArchitectureDiagram() {
               <p>
                 LiteLLM calls upstream providers from Connections. Code interpreter runs via internal sandbox-broker
                 (no public port).
+              </p>
+            </ComponentCard>
+          </div>
+        </section>
+
+        <FlowArrow />
+
+        <section className="docs-arch-zone">
+          <h4 className="docs-arch-zone-label">Agents &amp; Knowledge plane</h4>
+          <div className="docs-arch-zone-grid docs-arch-zone-grid--3">
+            <ComponentCard
+              iconCentered
+              icon={<IconQdrant className="docs-arch-icon" />}
+              title="Qdrant"
+              subtitle="Derived vector index"
+            >
+              <p>
+                Dense/sparse collections for published Knowledge releases. PostgreSQL remains source of truth; indexes
+                are rebuildable.
+              </p>
+            </ComponentCard>
+            <ComponentCard
+              iconCentered
+              icon={<IconClamav className="docs-arch-icon" />}
+              title="ClamAV"
+              subtitle="Malware scan"
+            >
+              <p>
+                Knowledge uploads are scanned in quarantine before parse/index. Unsafe bytes never enter retrieval.
+              </p>
+            </ComponentCard>
+            <ComponentCard
+              iconCentered
+              icon={<IconWorker className="docs-arch-icon" />}
+              title="Knowledge scheduler + worker"
+              subtitle="Same app image"
+            >
+              <p>
+                Scheduler enqueues ingest/retention jobs on Redis. Worker parses, scans, embeds, and writes Qdrant,
+                then switches the alias after validation.
               </p>
             </ComponentCard>
           </div>

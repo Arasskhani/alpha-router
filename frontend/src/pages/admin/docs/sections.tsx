@@ -84,7 +84,10 @@ export const docSections: DocSection[] = [
               <td>
                 <a href="#admin-dashboard">Overview / Models / People / …</a>
               </td>
-              <td>Every admin menu: purpose, UI actions, and operational notes</td>
+              <td>
+                Every admin menu: purpose, UI actions, and operational notes — including{" "}
+                <a href="#admin-activity-scopes">Activity scopes</a> and gateway API key policies
+              </td>
             </tr>
             <tr>
               <td>
@@ -145,8 +148,9 @@ export const docSections: DocSection[] = [
         <h2>Hardware &amp; software requirements</h2>
         <p>
           alpharouter ships as a Docker Compose stack. Plan the host from two independent drivers: the always-on
-          platform services (app, database, cache, object storage) and the Code Interpreter sandbox fleet, which is
-          sized from its concurrent-execution ceiling rather than from the number of signed-in users.
+          platform services (app, database, cache, object storage, Qdrant, ClamAV, Knowledge worker) and the Code
+          Interpreter sandbox fleet, which is sized from its concurrent-execution ceiling rather than from the number of
+          signed-in users.
         </p>
 
         <h3>Operating system &amp; platform</h3>
@@ -168,7 +172,8 @@ export const docSections: DocSection[] = [
           </li>
           <li>
             <strong>Networking:</strong> outbound HTTPS to your upstream LLM providers, and only the app port{" "}
-            <code>8080</code> exposed to clients. Keep Postgres, Redis, SeaweedFS, and the broker on internal networks.
+            <code>8080</code> exposed to clients. Keep Postgres, Redis, SeaweedFS, Qdrant, ClamAV, and the broker on
+            internal networks.
           </li>
         </ul>
 
@@ -207,14 +212,28 @@ export const docSections: DocSection[] = [
               <td>
                 <code>7</code> (alpine)
               </td>
-              <td>Rate limits, SSO/2FA state, Code Interpreter capacity leases, LiteLLM cache</td>
+              <td>Rate limits, SSO/2FA state, Code Interpreter capacity leases, LiteLLM cache, Knowledge job streams</td>
             </tr>
             <tr>
               <td>SeaweedFS</td>
               <td>
                 <code>4.40</code>
               </td>
-              <td>S3-compatible object storage for media blobs</td>
+              <td>S3-compatible object storage for media and Knowledge source bytes</td>
+            </tr>
+            <tr>
+              <td>Qdrant</td>
+              <td>
+                <code>v1.19.0</code>
+              </td>
+              <td>Derived vector/sparse index for published Knowledge releases</td>
+            </tr>
+            <tr>
+              <td>ClamAV</td>
+              <td>
+                <code>1.5.4</code>
+              </td>
+              <td>Malware scan for Knowledge ingest (internal; no public port)</td>
             </tr>
             <tr>
               <td>Application runtime</td>
@@ -277,9 +296,9 @@ export const docSections: DocSection[] = [
           </tbody>
         </table>
         <Note>
-          Disk grows with media (SeaweedFS), request logs, and the app <code>/tmp</code> tmpfs used to pack ZIP
-          downloads (Compose reserves up to <code>10g</code>). Provision RAM above the tmpfs sizes so heavy exports do
-          not compete with service memory.
+          Disk grows with media and Knowledge objects (SeaweedFS), Qdrant collections, request logs, and the app{" "}
+          <code>/tmp</code> tmpfs used to pack ZIP downloads (Compose reserves up to <code>10g</code>). Provision RAM
+          above the tmpfs sizes so heavy exports do not compete with service memory.
         </Note>
 
         <h3>Sizing the Code Interpreter fleet</h3>
@@ -357,30 +376,60 @@ export const docSections: DocSection[] = [
           <tbody>
             <tr>
               <td>
-                <strong>alpha-router</strong> (uvicorn; intended Stage 8 Compose name)
+                <strong>alpha-router</strong> (uvicorn)
               </td>
-              <td>FastAPI app, SPA static files, LiteLLM proxy, schedulers, billing</td>
+              <td>FastAPI app, SPA static files, LiteLLM proxy, schedulers, billing, Agent runtime</td>
             </tr>
             <tr>
               <td>
                 <strong>PostgreSQL</strong> + <strong>PgBouncer</strong>
               </td>
               <td>
-                Primary data store (users, catalog, chat rows, logs, reservations). App connects through PgBouncer in
-                transaction pooling mode.
+                Primary data store (users, catalog, chat rows, Agent/Knowledge records, logs, reservations). App
+                connects through PgBouncer in transaction pooling mode.
               </td>
             </tr>
             <tr>
               <td>
                 <strong>Redis</strong>
               </td>
-              <td>Rate limits, SSO/2FA pending state, LiteLLM cache (in-memory fallback if Redis is unavailable)</td>
+              <td>
+                Rate limits, SSO/2FA pending state, LiteLLM cache, Knowledge job streams (in-memory fallback if Redis is
+                unavailable)
+              </td>
             </tr>
             <tr>
               <td>
                 <strong>SeaweedFS</strong>
               </td>
-              <td>S3-compatible object storage for media blobs (authenticated access via alpharouter APIs only)</td>
+              <td>
+                S3-compatible object storage for media blobs and Knowledge source bytes (authenticated access via
+                alpharouter APIs only)
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <strong>Qdrant</strong>
+              </td>
+              <td>
+                Derived vector/sparse index for published Knowledge releases. Rebuild from PostgreSQL; never treat as
+                source of truth.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <strong>ClamAV</strong>
+              </td>
+              <td>Malware scan for Knowledge uploads in quarantine before parse and index</td>
+            </tr>
+            <tr>
+              <td>
+                <strong>alpha-router-knowledge-scheduler</strong> / <strong>-worker</strong>
+              </td>
+              <td>
+                Same app image. Scheduler enqueues ingest and retention jobs; worker parses, scans, embeds, and
+                publishes Qdrant aliases.
+              </td>
             </tr>
             <tr>
               <td>
@@ -400,7 +449,8 @@ export const docSections: DocSection[] = [
         <h3>LLM request path (summary)</h3>
         <ol>
           <li>
-            Client calls <code>POST /api/chat/completions</code> or <code>POST /v1/chat/completions</code>.
+            Client calls <code>POST /api/chat/completions</code> or <code>POST /v1/chat/completions</code>, optionally
+            with an explicit Agent or auto-route.
           </li>
           <li>
             alpharouter resolves an enabled model and Connection key. Code Interpreter requests validate their workspace
@@ -409,6 +459,12 @@ export const docSections: DocSection[] = [
           <li>
             Streaming goes through LiteLLM to the upstream provider. Optional tools: web search/fetch and code
             interpreter (via sandbox-broker).
+          </li>
+          <li>
+            When a specialist Agent is in play, the runtime plans the turn, retrieves from authorized published
+            Knowledge releases in Qdrant, requires citations when policy says so, and fail-closes to a localized safe
+            message if citation integrity fails. Turn metadata is stored on <code>agent_runs</code> without raw prompts
+            or provider output.
           </li>
           <li>
             Every upstream attempt is normalized into usage events and immutable ledger entries. The reservation is{" "}
@@ -434,9 +490,10 @@ export const docSections: DocSection[] = [
         <h2>Deployment overview</h2>
         <p>
           Production deployments typically use the repository <code>docker-compose.yml</code>: Postgres, PgBouncer,
-          Redis, SeaweedFS, sandbox-broker, and the intended Stage 8 <code>alpha-router</code> app service (port{" "}
-          <code>8080</code>). <code>docker compose up --build -d</code> prepares the disposable sandbox image through a
-          one-shot initializer; its <code>Exited (0)</code> status is expected. The long-running{" "}
+          Redis, SeaweedFS, Qdrant, ClamAV, sandbox-broker, a one-shot <code>db-init</code> Alembic migrate, Knowledge
+          scheduler/worker, and the <code>alpha-router</code> app service (port <code>8080</code>).{" "}
+          <code>docker compose up --build -d</code> prepares the disposable sandbox image through a one-shot
+          initializer; its <code>Exited (0)</code> status is expected. The long-running{" "}
           <code>alpha-router-sandbox-broker</code> smoke-tests the image at startup and creates a short-lived container
           for each execution, so operators must not start a persistent sandbox manually.
         </p>
@@ -451,7 +508,8 @@ export const docSections: DocSection[] = [
           </li>
           <li>
             <strong>Secrets</strong> — <code>SECRET_KEY</code>, <code>DATA_ENCRYPTION_KEY</code>, database/Redis/S3
-            credentials, <code>SANDBOX_BROKER_TOKEN</code> (≥32 characters), <code>GATEWAY_MASTER_KEY</code>.
+            credentials, <code>QDRANT_API_KEY</code>, <code>SANDBOX_BROKER_TOKEN</code> (≥32 characters),{" "}
+            <code>GATEWAY_MASTER_KEY</code>.
           </li>
           <li>
             <strong>URLs</strong> — <code>FRONTEND_URL</code>, <code>API_PUBLIC_URL</code> (used for SAML/OIDC
@@ -911,8 +969,9 @@ export const docSections: DocSection[] = [
       <>
         <h2>Dashboard</h2>
         <p>
-          Path: <code>/admin</code>. Service-wide Activity for administrators — spend, requests, tokens, and
-          exploration tools.
+          Path: <code>/admin</code>. Service-wide <strong>Activity</strong> for administrators — spend, requests,
+          tokens, heatmaps, trends, and exploration tools. The same tabbed Activity UI is reused wherever usage is scoped
+          (see <a href="#admin-activity-scopes">Activity scopes</a>).
         </p>
         <ul>
           <li>
@@ -920,18 +979,103 @@ export const docSections: DocSection[] = [
             status, API key), CSV/PDF export.
           </li>
           <li>
-            <strong>Overview</strong> — KPIs with sparklines, top users/apps, usage and token charts.
+            <strong>Overview</strong> — KPIs with sparklines, top users/apps, usage and token charts, request heatmap.
           </li>
           <li>
-            <strong>Trends</strong> — models, users, API keys, apps over time.
+            <strong>Trends</strong> — models, users, API keys, and apps over time.
           </li>
           <li>
             <strong>Explore</strong> — custom metric, grouping, rollup, ranking, chart type, and table; PDF download.
           </li>
         </ul>
         <Note>
-          Personal usage for any signed-in user (including admins) is under <strong>Activity</strong> in the
-          user panel (<code>/app/my-activity</code> or <code>/admin/my-activity</code>).
+          Personal usage for any signed-in user (including admins) is under <strong>Activity</strong> in the user panel
+          (<code>/app/my-activity</code> or <code>/admin/my-activity</code>). That view hides organization-wide
+          dimensions such as “top users” and cannot filter by user.
+        </Note>
+      </>
+    ),
+  },
+  {
+    id: "admin-activity-scopes",
+    title: "Activity scopes",
+    group: "Overview",
+    content: (
+      <>
+        <h2>Activity scopes</h2>
+        <p>
+          alpharouter uses one shared Activity experience (Overview · Trends · Explore) everywhere usage is analyzed.
+          Each scope fixes the dataset and hides filters that would be meaningless (for example an API-key page does not
+          offer an “API key” filter).
+        </p>
+        <table className="docs-table">
+          <thead>
+            <tr>
+              <th>Scope</th>
+              <th>Path</th>
+              <th>What it shows</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Service (Dashboard)</td>
+              <td>
+                <code>/admin</code>
+              </td>
+              <td>All organization traffic; full filters and Group-by</td>
+            </tr>
+            <tr>
+              <td>My Activity</td>
+              <td>
+                <code>/admin/my-activity</code>
+              </td>
+              <td>Signed-in user only; no user filter or user trends</td>
+            </tr>
+            <tr>
+              <td>User</td>
+              <td>
+                <code>/admin/users/&lt;id&gt;/activity</code>
+              </td>
+              <td>One user; no user filter</td>
+            </tr>
+            <tr>
+              <td>Gateway API key</td>
+              <td>
+                <code>/admin/api-keys/&lt;id&gt;/activity</code>
+              </td>
+              <td>One gateway key; no API-key filter or API-key trends</td>
+            </tr>
+            <tr>
+              <td>Connection</td>
+              <td>
+                <code>/admin/connections/&lt;id&gt;/activity</code>
+              </td>
+              <td>Models on that connection; Explore hides provider grouping</td>
+            </tr>
+            <tr>
+              <td>Group</td>
+              <td>
+                <code>/admin/groups/&lt;id&gt;/activity</code>
+              </td>
+              <td>Members of the group; standard user/model/app filters</td>
+            </tr>
+            <tr>
+              <td>Agent (usage)</td>
+              <td>
+                <code>/admin/agents/&lt;id&gt;/activity</code>
+              </td>
+              <td>Chat-turn spend linked to that Agent (not Knowledge jobs)</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          Gateway API key and User rows also link to scoped <strong>Logs</strong> (
+          <code>/admin/api-keys/&lt;id&gt;/logs</code>) — the same API Logs table with the key pre-selected. User-scoped
+          logs use query parameters on <code>/admin/logs</code>.
+        </p>
+        <Note>
+          <strong>Agent Audit</strong> (<code>/admin/agent-activity</code>) is separate: runtime guardrail and retrieval
+          metadata, not billing analytics.
         </Note>
       </>
     ),
@@ -1004,12 +1148,19 @@ export const docSections: DocSection[] = [
         </p>
         <ul>
           <li>
-            <strong>Agent Studio</strong> — create or clone a draft, configure model/retrieval/routing policies, bind
-            Knowledge, submit for review, publish, and roll back.
+            <strong>Overview</strong> — KPIs and last-24-hour runtime health. The Knowledge number counts live
+            documents only (<code>draft</code>, <code>active</code>, <code>superseded</code>), not revoked or deleted
+            rows. Runtime tiles for Turns, Guardrail blocked, and Failed open <strong>Audit</strong> with matching
+            Runtime filters; Success rate is a derived percentage and is not a link.
+          </li>
+          <li>
+            <strong>Agent Studio</strong> — create or clone a draft, edit the operator policy form, bind Knowledge,
+            submit for review, publish, and roll back. The Agent ⋮ menu includes the same <strong>Activity</strong>
+            usage dashboard as Users and Connections, scoped to that Agent’s chat turns.
           </li>
           <li>
             <strong>Knowledge Bases</strong> — upload and review documents, publish indexed releases, configure
-            connectors, and retry durable jobs.
+            connectors, and retry durable jobs. Removing a file from Documents is a <em>revoke</em>, not a hard delete.
           </li>
           <li>
             <strong>Tool Registry</strong> — versioned schemas, side-effect classification, approvals, and execution
@@ -1020,13 +1171,66 @@ export const docSections: DocSection[] = [
             readiness.
           </li>
           <li>
-            <strong>Approvals</strong> and <strong>Audit</strong> — maker-checker queues, legal holds, retention,
-            and tamper-evident governance history.
+            <strong>Approvals</strong> — maker-checker queues for Agent versions, Knowledge bindings, document
+            versions, and tools.
+          </li>
+          <li>
+            <strong>Audit</strong> — append-only lifecycle evidence, legal holds, retention, and metadata-only runtime
+            outcomes (blocked/failed turns). This is not the usage/spend Activity page.
           </li>
         </ul>
         <Note>
           Adding a sixth specialist is configuration work: create the Agent and its draft version, curate a Knowledge
           Base and evaluation set, complete approvals, then publish. No application code change is required.
+        </Note>
+      </>
+    ),
+  },
+  {
+    id: "agent-studio",
+    title: "Agent Studio",
+    group: "Agents & Knowledge",
+    content: (
+      <>
+        <h2>Agent Studio</h2>
+        <p>
+          Path: <code>/admin/agents/studio</code>. Published versions are immutable. Edit a <strong>draft</strong>, or
+          use <strong>Clone to draft</strong> on a published version, then publish the new version when review is
+          complete.
+        </p>
+        <h3>Policy form</h3>
+        <p>
+          The primary editor is an operator form: primary model, routing keywords (chip list), example questions,
+          English/Persian disclaimers, and retrieval toggles (enabled, require evidence, citations required). Raw policy
+          JSON stays under collapsed <strong>Advanced policy JSON</strong>. Do not use the form to weaken fail-closed
+          citation or guardrail hooks; those remain platform policy.
+        </p>
+        <h3>Knowledge bindings</h3>
+        <ul>
+          <li>
+            On a draft, <strong>+ Add knowledge</strong> opens a search-and-select modal. Already-bound Knowledge Bases
+            are hidden. Binding still requires Knowledge (and, for sensitive KBs, domain) approval unless Super Admin
+            break-glass auto-approves.
+          </li>
+          <li>
+            Draft chips include ×. Confirming sets the binding to <code>revoked</code> and writes audit; the row is not
+            hard-deleted (unique constraint on version + Knowledge Base). Adding the same KB later reactivates that row.
+          </li>
+          <li>
+            Published versions are read-only. Clone to draft, then add or remove bindings on the new draft. Clone copies
+            live bindings and skips revoked/suspended ones.
+          </li>
+        </ul>
+        <h3>Activity (usage)</h3>
+        <p>
+          The Agent ⋮ menu <strong>Activity</strong> item opens the same spend/requests/tokens dashboard used for Users,
+          Connections, API Keys, and Groups, filtered to this Agent’s chat turns. Path:{" "}
+          <code>/admin/agents/&lt;agent-id&gt;/activity</code>. Filters that still apply: user, model, API key, app, and
+          success/fail. Group-by is omitted because the page is already scoped to one Agent.
+        </p>
+        <Note>
+          Agent Activity counts chat-turn cost linked through <code>agent_runs</code>. It does not include Knowledge
+          embedding or index-build jobs. For blocked-turn reasons, use <strong>Audit</strong>, not Activity.
         </Note>
       </>
     ),
@@ -1096,6 +1300,12 @@ export const docSections: DocSection[] = [
             the release published.
           </li>
         </ol>
+        <p>
+          Removing a PDF from Documents is <strong>revoke</strong>: the document leaves retrieval immediately, but the
+          row remains for audit and retention. After the configured days, <strong>Run cleanup</strong> purges stored
+          files and vectors and marks the document <code>deleted</code> (hidden from the Documents list). The Overview
+          Knowledge KPI ignores both <code>revoked</code> and <code>deleted</code> so it matches live corpus size.
+        </p>
         <Warn>
           PostgreSQL is the source of truth and Qdrant is rebuildable derived state. Never mark a release or index active
           manually to work around a failed job. Fix the dependency, retry the durable job, and preserve its audit trail.
@@ -1140,6 +1350,13 @@ export const docSections: DocSection[] = [
     content: (
       <>
         <h2>Agent operations &amp; incidents</h2>
+        <p>
+          Path: <code>/admin/agent-activity</code> (<strong>Audit</strong> in the sidebar). Runtime health on Overview
+          deep-links here with <code>?source=runtime&amp;since_hours=24</code> and, for blocked or failed tiles,{" "}
+          <code>status=blocked</code> or <code>status=failed</code>. Events are metadata-only: Agent name, reason code
+          (for example <code>citation_validation_failed</code>), retrieval outcome, and guardrail evidence. Prompts and
+          provider output are not stored.
+        </p>
         <ul>
           <li>
             Scrape <code>/metrics</code> with its production Bearer token. Alert on failed Agent runs, retrieval failure,
@@ -1148,6 +1365,11 @@ export const docSections: DocSection[] = [
           <li>
             Correlate JSON logs with <code>x-request-id</code>, trace ID, and span ID. Prompts, retrieved text, secrets,
             and credentials are intentionally absent from telemetry.
+          </li>
+          <li>
+            When citation integrity fails closed, the user sees a localized safe message (English or Persian) instead of
+            the uncited model output. Do not relax fail-closed citation rules to make the KPI look healthier; fix
+            retrieval, the draft prompt, or the Knowledge binding.
           </li>
           <li>
             For bad knowledge, revoke the document, verify it leaves the active release/index, and rerun citation/ACL
@@ -1195,7 +1417,8 @@ export const docSections: DocSection[] = [
             <strong>Enable / Disable</strong> — toggles the connection and its models.
           </li>
           <li>
-            <strong>Activity</strong> / changelog — audit of connection changes and traffic.
+            <strong>Activity</strong> (<code>/admin/connections/&lt;id&gt;/activity</code>) / changelog — usage for
+            models on this connection and audit of connection changes.
           </li>
         </ul>
         <Warn>
@@ -1221,6 +1444,11 @@ export const docSections: DocSection[] = [
           <li>Browse (tiles) or table view; per-model enable toggle.</li>
           <li>
             Bulk edit: turn ON, OFF, or delete selected models.
+          </li>
+          <li>
+            <strong>Access</strong> — Public (all users) or Private (assigned users and/or groups only). Super admins
+            always see private models. Gateway keys inherit the owner&apos;s catalog access; they cannot widen access
+            beyond the owner through key settings.
           </li>
           <li>
             <strong>Code Interpreter</strong> column — measured compatibility per model, with probe history and manual
@@ -1289,30 +1517,102 @@ export const docSections: DocSection[] = [
         <h2>API Keys</h2>
         <p>
           Path: <code>/admin/api-keys</code>. Admin-issued <strong>gateway keys</strong> for OpenAI-compatible clients
-          (separate from per-user keys created on the Users page).
+          (Open WebUI, scripts, IDEs). These are separate from <strong>personal API keys</strong> that employees create in
+          Settings → API Key (one per user, debits that user&apos;s monthly budget).
         </p>
+        <table className="docs-table">
+          <thead>
+            <tr>
+              <th>Key type</th>
+              <th>Created on</th>
+              <th>Spend debited from</th>
+              <th>Typical use</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Gateway API key</td>
+              <td>API Keys</td>
+              <td>Key credit limit (period pool)</td>
+              <td>Integrations, shared service accounts</td>
+            </tr>
+            <tr>
+              <td>User API key</td>
+              <td>Users</td>
+              <td>That user&apos;s monthly plan budget</td>
+              <td>Personal automation for one employee</td>
+            </tr>
+          </tbody>
+        </table>
         <h3>Key settings</h3>
         <ul>
-          <li>Owner (optional user association for attribution)</li>
-          <li>Name</li>
-          <li>Credit limit (USD) and reset period: daily / weekly / monthly (empty or 0 = no cap)</li>
-          <li>Expiration: never, or auto-deactivate after N days</li>
           <li>
-            Allowed connections: optional allowlist. Unrestricted keys can use every active connection. Restricted keys
-            only use the selected connections; if those connections are later disabled or deleted, the key does not fall
-            back to all connections.
+            <strong>Owner</strong> (required) — attribution in logs and Activity; also defines which catalog models the
+            key may use through Public/Private ACL. Owner does <em>not</em> mean spend is taken from the owner&apos;s
+            personal monthly budget.
           </li>
           <li>
-            Allowed models: optional allowlist on top of connection policy and the owner&apos;s catalog access. Restricted
-            keys only see and call the selected models; an empty selection denies all model traffic.
+            <strong>Name</strong> — label in admin UI and exports.
+          </li>
+          <li>
+            <strong>Credit limit (USD)</strong> and <strong>reset period</strong> (daily / weekly / monthly). Empty or 0
+            = no cap on the key itself.
+          </li>
+          <li>
+            <strong>Expiration</strong> — never, or auto-deactivate after N days.
+          </li>
+          <li>
+            <strong>Allowed connections</strong> — optional multi-select allowlist. When enabled, the key may only call
+            models on those connections. When disabled, every active connection is eligible (subject to other rules
+            below). If a restricted key loses all of its connections (disabled or deleted), it does <em>not</em> fall
+            back to “all connections” — it stops working until you edit the key.
+          </li>
+          <li>
+            <strong>Allowed models</strong> — optional multi-select allowlist by catalog model ID. When enabled, the key
+            only sees and may call those models. The picker lists enabled models the owner can access, optionally
+            narrowed by the connection allowlist. An empty selection while restriction is on denies all model traffic.
+            Allowlist never grants models the owner cannot already access.
           </li>
         </ul>
+        <h3>Policy layers (gateway keys)</h3>
         <p>
-          The plaintext key is shown once at creation. Clients call <code>/v1/*</code> with{" "}
-          <code>Authorization: Bearer &lt;key&gt;</code>. Usage debits the key’s credit pool (not a personal monthly
-          budget) when the key is an alpharouter gateway key.
+          For <code>/v1/models</code> and all gateway completion paths, a model must pass <strong>every</strong> enabled
+          layer:
         </p>
-        <p>Row actions include edit, Activity, Logs, enable/disable, delete, and bulk actions. Edit also has Activity and Logs in the header. Activity is the Dashboard filtered to that key; Logs is API Logs filtered to that key.</p>
+        <ol>
+          <li>Model enabled on an active connection</li>
+          <li>Connection allowlist (if restricted)</li>
+          <li>Catalog Public/Private ACL evaluated for the key owner</li>
+          <li>Model allowlist (if restricted)</li>
+          <li>Key active, not expired, and within credit limit</li>
+        </ol>
+        <h3>Client usage</h3>
+        <p>
+          The plaintext key is shown once at creation (and can be emailed to the owner). Clients call{" "}
+          <code>/v1/*</code> with <code>Authorization: Bearer &lt;key&gt;</code>. See{" "}
+          <a href="#platform-api">Platform API (/v1)</a>.
+        </p>
+        <h3>Table &amp; row actions</h3>
+        <ul>
+          <li>
+            Columns include Connections and Models summaries (<strong>All</strong>, <strong>None</strong>, or named
+            entries).
+          </li>
+          <li>
+            <strong>Edit</strong> — change settings; header shortcuts to Activity and Logs.
+          </li>
+          <li>
+            <strong>Activity</strong> — <code>/admin/api-keys/&lt;id&gt;/activity</code> (scoped Dashboard).
+          </li>
+          <li>
+            <strong>Logs</strong> — <code>/admin/api-keys/&lt;id&gt;/logs</code> (scoped API Logs).
+          </li>
+          <li>Enable / disable, delete, bulk actions, change log on the Activity page footer.</li>
+        </ul>
+        <Warn>
+          Restricted keys with an empty connection or model selection are intentionally unusable until an administrator
+          adds at least one entry or turns restriction off.
+        </Warn>
       </>
     ),
   },
@@ -1356,14 +1656,15 @@ export const docSections: DocSection[] = [
             Inline edit of profile fields, multi-role assignment, and plan (direct / inherit from group / none).
           </li>
           <li>
-            Activate / deactivate, reset budget period usage, generate a <strong>per-user API key</strong> (debits the
-            user’s monthly budget).
+            Activate / deactivate, reset budget period usage. Personal API keys are self-service (Settings → API Key);
+            admins do not issue them from this page.
           </li>
           <li>
             Soft-delete local users (moves to Deleted Users). Directory-synced users follow LDAP/SSO lifecycle rules.
           </li>
           <li>
-            Per-user Activity and User Storage (admin view of that user’s media).
+            Per-user Activity (<code>/admin/users/&lt;id&gt;/activity</code>) and User Storage (admin view of that
+            user&apos;s media).
           </li>
           <li>Super Admin: disable TOTP for a local user from the edit modal.</li>
         </ul>
@@ -1404,7 +1705,11 @@ export const docSections: DocSection[] = [
           <li>
             <strong>Sync LDAP</strong> when AD sync is configured.
           </li>
-          <li>Show members (opens Users filtered), group activity, deactivate all members, delete group.</li>
+          <li>
+            Show members (opens Users filtered),{" "}
+            <strong>Activity</strong> (<code>/admin/groups/&lt;id&gt;/activity</code>), deactivate all members, delete
+            group.
+          </li>
           <li>Bulk assign plans or deactivate members.</li>
         </ul>
       </>
@@ -1567,7 +1872,12 @@ export const docSections: DocSection[] = [
           app, tokens, cache hit, cost, duration, success/failure.
         </p>
         <ul>
-          <li>Filters: user/key, model, status, prompt cache, date range.</li>
+          <li>Filters: user, gateway API key (<code>api_key_id</code>), model, status, prompt cache, date range.</li>
+          <li>
+            Open a gateway key from <strong>API Keys → Logs</strong> or{" "}
+            <code>/admin/api-keys/&lt;id&gt;/logs</code> — same table scoped to that key (username filter and Clear All
+            hidden; banner shows key name).
+          </li>
           <li>
             The badge next to Cost identifies its quality: <strong>Provider</strong>, <strong>Reconciled</strong>,{" "}
             <strong>Catalog</strong>, <strong>Estimated</strong>, or <strong>Unpriced</strong>. Hover it to compare the
@@ -1591,7 +1901,10 @@ export const docSections: DocSection[] = [
           Clearing request logs does not erase the cost ledger. Accounting entries are retained so budget totals and
           reconciliation adjustments remain auditable.
         </Note>
-        <p>Deep links from Operations (for example filtered by model) are supported via query parameters. Gateway key row actions open <code>/admin/api-keys/&lt;id&gt;/logs</code>, the same table scoped to that key.</p>
+        <p>
+          Deep links from Operations (for example filtered by model) are supported via query parameters. Export and
+          cost-details respect the active filters, including <code>api_key_id</code> when scoped to a gateway key.
+        </p>
       </>
     ),
   },
@@ -1647,7 +1960,9 @@ export const docSections: DocSection[] = [
               <td>
                 <code>GET /v1/models</code>
               </td>
-              <td>Enabled catalog models</td>
+              <td>
+                Enabled catalog models after connection allowlist, owner ACL, and model allowlist (gateway keys)
+              </td>
             </tr>
             <tr>
               <td>
@@ -1666,7 +1981,9 @@ export const docSections: DocSection[] = [
         <h3>Authentication modes</h3>
         <ul>
           <li>
-            <strong>alpharouter gateway API key</strong> — credits the key’s period limit; optional owner for attribution.
+            <strong>alpharouter gateway API key</strong> — debits the key&apos;s period credit pool (not the owner&apos;s
+            personal budget). Optional connection and model allowlists further restrict which providers and catalog
+            entries appear. Owner controls Private-model ACL inheritance.
           </li>
           <li>
             <strong>User API key</strong> — debits that user’s monthly budget; user must be active.

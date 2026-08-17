@@ -34,12 +34,15 @@ async def get_or_create_user_from_request(db: AsyncSession, identifier: str) -> 
 
 
 async def get_user_by_api_key(db: AsyncSession, raw_key: str):
-    """Resolve an Alpharouter or user API key."""
+    """Resolve a gateway or personal API key.
+
+    Returns (user, source, router_key, user_api_key).
+    """
     from app.core.security import hash_api_key
     from app.models.api_key import AlphaRouterApiKey, UserApiKey
 
     if not raw_key.startswith(API_KEY_PREFIX):
-        return None, "unknown", None
+        return None, "unknown", None, None
 
     h = hash_api_key(raw_key)
     router_key = (
@@ -48,9 +51,9 @@ async def get_user_by_api_key(db: AsyncSession, raw_key: str):
         )
     ).scalars().first()
     if router_key:
-        return None, "alpha_router_key", router_key
+        return None, "alpha_router_key", router_key, None
     uk = (await db.execute(select(UserApiKey).where(UserApiKey.key_hash == h, UserApiKey.is_active == True))).scalars().first()  # noqa: E712
     if uk:
         user = await db.get(User, uk.user_id)
-        return user, "user_key", None
-    return None, "unknown", None
+        return user, "user_key", None, uk
+    return None, "unknown", None, None

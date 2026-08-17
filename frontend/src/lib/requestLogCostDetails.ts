@@ -6,6 +6,7 @@ export type RequestLogSummary = {
   username: string;
   identity_type?: "user" | "api_key" | "chat";
   api_key_name?: string;
+  api_key_kind?: "gateway" | "personal";
   api_key_prefix?: string;
   app?: string;
   source?: string;
@@ -80,7 +81,15 @@ export type CostDetails = {
 
 export function logIdentityLabel(log: RequestLogSummary): string {
   if (log.identity_type === "api_key") {
-    return `${log.api_key_name || log.username || "API key"} (API Key)`;
+    return `${log.api_key_name || log.username || "API key"} (Gateway API Key)`;
+  }
+  if (log.api_key_kind === "personal") {
+    const user = log.username || "unknown";
+    const keyName = (log.api_key_name || "").trim();
+    if (keyName && keyName.toLowerCase() !== user.toLowerCase()) {
+      return `${user} · ${keyName} (Personal API Key)`;
+    }
+    return `${user} (Personal API Key)`;
   }
   if (log.identity_type === "chat") {
     return `${log.username || "unknown"} (Chat)`;

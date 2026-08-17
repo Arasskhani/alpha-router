@@ -1119,6 +1119,7 @@ async def log_usage(
     success: bool,
     error_message: str | None = None,
     alpha_router_api_key_id: int | None = None,
+    user_api_key_id: int | None = None,
     client_app: str | None = None,
     budget_reservation_id: str | None = None,
     usage_events: list[PendingUsageEvent] | None = None,
@@ -1153,6 +1154,7 @@ async def log_usage(
         success=success,
         error_message=error_message,
         alpha_router_api_key_id=alpha_router_api_key_id,
+        user_api_key_id=user_api_key_id,
         budget_reservation_id=budget_reservation_id,
     )
     db.add(log_row)
@@ -1205,6 +1207,9 @@ async def log_usage(
             await record_key_usage(db, key, total_cost_usd)
     elif not settled and user_id and total_cost_usd > 0:
         await _apply_cost_to_user(db, user_id, total_cost_usd)
+    from app.services.user_api_key_service import touch_user_key_last_used
+
+    await touch_user_key_last_used(db, user_api_key_id)
     await db.flush()
     return int(log_row.id) if log_row.id is not None else None
 
@@ -1353,6 +1358,7 @@ async def stream_chat(
     skip_budget: bool,
     client_app: str | None = None,
     alpha_router_api_key_id: int | None = None,
+    user_api_key_id: int | None = None,
     resolved: ResolvedStreamContext | None = None,
 ) -> AsyncIterator[bytes]:
     messages = list(body.get("messages", []))
@@ -2445,6 +2451,7 @@ async def stream_chat(
                                 success=success,
                                 error_message=error_message,
                                 alpha_router_api_key_id=alpha_router_api_key_id,
+                                user_api_key_id=user_api_key_id,
                                 client_app=client_app,
                                 budget_reservation_id=stream_reservation_id,
                                 usage_events=usage_events,
@@ -2616,6 +2623,7 @@ async def create_embedding(
     source: str,
     skip_budget: bool,
     alpha_router_api_key_id: int | None,
+    user_api_key_id: int | None,
     client_app: str | None,
     source_ip: str | None,
 ) -> dict:
@@ -2748,6 +2756,7 @@ async def create_embedding(
                     success=success,
                     error_message=error_message,
                     alpha_router_api_key_id=alpha_router_api_key_id,
+                    user_api_key_id=user_api_key_id,
                     client_app=client_app,
                     budget_reservation_id=getattr(
                         resolved,

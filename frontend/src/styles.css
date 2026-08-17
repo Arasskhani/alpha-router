@@ -7570,6 +7570,9 @@ body.alpha-router-dashboard-view {
 .docs-arch-zone-grid--2 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
+.docs-arch-zone-grid--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
 .docs-arch-zone-grid--4 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
@@ -7709,6 +7712,7 @@ body.alpha-router-dashboard-view {
 .docs-arch-core-list li { margin-bottom: 0.25rem; }
 @media (max-width: 900px) {
   .docs-arch-zone-grid--2,
+  .docs-arch-zone-grid--3,
   .docs-arch-zone-grid--4 {
     grid-template-columns: 1fr;
   }
@@ -11497,6 +11501,75 @@ body.login-route #root {
   padding: 0;
   min-width: 0;
 }
+
+/* Personal API Key tab — align with Settings controls (not admin api-key-created). */
+.personal-api-key-panel__budget {
+  margin-bottom: 0.65rem;
+}
+
+.personal-api-key-create {
+  padding: 0.65rem 0.7rem 0.7rem;
+  width: 100%;
+}
+
+.personal-api-key-create .settings-row__control,
+.personal-api-key-field__input {
+  width: 100%;
+  max-width: none;
+}
+
+.personal-api-key-field {
+  margin-bottom: 0;
+}
+
+.personal-api-key-field__row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+}
+
+.personal-api-key-field__input {
+  flex: 1;
+  min-width: 0;
+}
+
+.personal-api-key-field__copy {
+  flex-shrink: 0;
+  min-width: 26px;
+  padding: 0.15rem 0.4rem;
+  line-height: 1;
+}
+
+.personal-api-key-created-body {
+  padding: 0.65rem 0.85rem 0.85rem;
+}
+
+.personal-api-key-created {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.15rem;
+  text-align: start;
+}
+
+.personal-api-key-created__curl {
+  margin: 0.35rem 0 0;
+  word-break: break-all;
+}
+
+.modal-panel--settings .personal-api-key-field__input,
+.modal-panel--settings .personal-api-key-panel .personal-api-key-field__input {
+  min-height: var(--control-height-sm);
+  padding: 0.15rem 0.5rem;
+  font-size: 0.75rem;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  box-sizing: border-box;
+}
+
 .settings-label {
   font-size: 0.7rem;
   font-weight: 600;

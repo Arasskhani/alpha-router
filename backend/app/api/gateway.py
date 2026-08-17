@@ -84,6 +84,7 @@ class GatewayAuth:
     source: str
     skip_budget: bool
     alpha_router_api_key_id: int | None
+    user_api_key_id: int | None
     client_app: str | None
 
 
@@ -101,6 +102,7 @@ async def _resolve_gateway_auth(
     source = "openwebui"
     user_id = None
     alpha_router_api_key_id = None
+    user_api_key_id = None
     username = "gateway"
     client_app = detect_client_app(request)
 
@@ -117,7 +119,7 @@ async def _resolve_gateway_auth(
         username = user.username
         source = "master"
     else:
-        user, source, router_key = await get_user_by_api_key(db, raw_key)
+        user, source, router_key, user_api_key = await get_user_by_api_key(db, raw_key)
         if source == "alpha_router_key" and router_key:
             await ensure_key_usable(db, router_key)
             skip_budget = True
@@ -129,6 +131,8 @@ async def _resolve_gateway_auth(
                 raise HTTPException(status_code=403, detail="Account disabled")
             user_id = user.id
             username = user.username
+            if user_api_key is not None:
+                user_api_key_id = user_api_key.id
         else:
             raise HTTPException(status_code=401, detail="Invalid API key")
 
@@ -138,6 +142,7 @@ async def _resolve_gateway_auth(
         source=source,
         skip_budget=skip_budget,
         alpha_router_api_key_id=alpha_router_api_key_id,
+        user_api_key_id=user_api_key_id,
         client_app=client_app,
     )
 
@@ -157,7 +162,7 @@ async def _require_valid_gateway_key(
         raise HTTPException(status_code=401, detail="Missing API key")
     if raw_key == settings.gateway_master_key:
         return
-    user, source, router_key = await get_user_by_api_key(db, raw_key)
+    user, source, router_key, user_api_key = await get_user_by_api_key(db, raw_key)
     if source == "alpha_router_key" and router_key:
         await ensure_key_usable(db, router_key)
         return
@@ -247,6 +252,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             client_app=auth_ctx.client_app,
             skip_budget=auth_ctx.skip_budget,
             alpha_router_api_key_id=auth_ctx.alpha_router_api_key_id,
+            user_api_key_id=auth_ctx.user_api_key_id,
             resolved=resolved,
         )
         permit = getattr(resolved, "code_interpreter_capacity_permit", None)
@@ -286,6 +292,7 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
         source=auth_ctx.source,
         skip_budget=auth_ctx.skip_budget,
         alpha_router_api_key_id=auth_ctx.alpha_router_api_key_id,
+        user_api_key_id=auth_ctx.user_api_key_id,
         client_app=auth_ctx.client_app,
         source_ip=request.client.host if request.client else None,
     )

@@ -773,9 +773,9 @@ export const userManualSections: DocSection[] = [
     content: (
       <>
         <h2>Copyright</h2>
-        <p>© 2026 Majid Arasskhani. All rights reserved.</p>
+        <p>© 2026 Majid Arasskhani.</p>
         <p>alpharouter is designed and developed by Majid Arasskhani.</p>
-        <p>Unauthorized reproduction, distribution, or modification is prohibited.</p>
+        <p>Released under the MIT License. You may use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, subject to the license terms.</p>
         <div style={{ marginTop: "1rem" }}>
           <p style={{ margin: 0 }}>Contact: Majid.Arasskhani@Gmail.com</p>
         </div>

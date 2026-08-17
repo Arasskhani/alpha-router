@@ -1,20 +1,47 @@
-# Alpharouter — Organizational AI Control Plane
+# Alpharouter
+
+**One route. Every model.**
 
 Alpharouter is an organizational AI control plane with a built-in web UI. It
-connects teams to upstream LLM providers such as OpenRouter, OpenAI, Anthropic,
-Google, and xAI while enforcing budgets, RBAC, quotas, retention, and audit
-logging.
+sits between your people (and optional external tools) and upstream LLM
+providers such as OpenRouter, OpenAI, Anthropic, Google, and xAI. One platform
+enforces budgets, RBAC, quotas, retention, and audit logging while serving
+chat, media, activity, and an OpenAI-compatible gateway.
 
-The platform provides:
+The platform provides three surfaces in a single FastAPI process:
 
-- **User app** (`/app`) — chat, media library, and activity
+- **User app** (`/app`) — chat, specialist Agents, media library, and personal
+  activity
 - **Admin panel** (`/admin`) — identity, access, budgets, providers, models,
   reports, operations, storage, Agents, Knowledge, and evaluations
-- **OpenAI-compatible gateway** (`/v1`) — API-key access for external tools
+- **OpenAI-compatible gateway** (`/v1`) — Bearer-key access for IDEs, scripts,
   and automation
 
 Alpharouter is OS-independent. Develop on any host with Docker available, and
 run the same Compose stack on Linux or any other Docker-capable environment.
+
+## Features
+
+- **Chat** — streaming conversations, attachments, prompt queue, private mode,
+  and import/export (Alpharouter, ChatGPT, and Open WebUI JSON)
+- **Specialist Agents** — five seeded domain Agents (IT, HR, Legal, Finance,
+  Marketing) with Knowledge Bases, ACL, maker-checker approvals, and evaluation
+  publish gates
+- **Chat tools** — web search, web fetch (SSRF-guarded), image generation,
+  video generation, speech, and Code Interpreter
+- **Code Interpreter** — networkless disposable containers, measured
+  per-model compatibility, Redis admission leases, and cancel-on-Stop
+- **Media** — uploads and generated files (images, video, sandbox artifacts)
+  with ACL, quotas, and HTTP Range for video
+- **Identity** — local accounts with optional TOTP, plus LDAP/Active Directory,
+  SAML 2.0, and OIDC
+- **Spend control** — plans, monthly user budgets with reservation/settle,
+  admin-issued gateway key credits, and personal API keys that debit the
+  user’s plan
+- **Governance** — RBAC menus, model Public/Private ACL, retention, API logs,
+  Activity exports, and Prometheus metrics
+- **Knowledge** — document review, ClamAV malware scan, parser sandbox, Qdrant
+  indexing, and citation-backed retrieval
 
 ## Quick start with Docker
 
@@ -36,17 +63,19 @@ is required.
 |---|---|
 | UI and API | http://localhost:8080 |
 | Health | http://localhost:8080/health |
+| Readiness | http://localhost:8080/ready |
 | PostgreSQL | localhost:5432 (`alpha_router` / `alpha_router`) |
 | PgBouncer | localhost:6432 |
 | Redis | localhost:6379 |
+| Qdrant | http://localhost:6333 |
 | SeaweedFS S3 API | http://localhost:8333 |
 | SeaweedFS admin UI | http://localhost:23646 |
 
 Bootstrap administrator credentials come from `ADMIN_USERNAME` and
 `ADMIN_PASSWORD` in `.env`. Replace every example secret before production use,
 including `SECRET_KEY`, `DATA_ENCRYPTION_KEY`, `GATEWAY_MASTER_KEY`,
-`SANDBOX_BROKER_TOKEN`, database and Redis passwords, and S3/SeaweedFS
-credentials.
+`SANDBOX_BROKER_TOKEN`, `QDRANT_API_KEY`, database and Redis passwords, and
+S3/SeaweedFS credentials.
 
 ### Stop the stack
 
@@ -77,6 +106,7 @@ alpha-router/
 ├── deploy/           SeaweedFS support files
 ├── docker-compose.yml
 ├── Dockerfile
+├── LICENSE
 └── .env.example
 ```
 
@@ -88,12 +118,12 @@ Copy `.env.example` to `.env`. Important groups include:
   limits, worker count, rate limits, and `REDIS_URL`
 - **Authentication** — local accounts plus optional LDAP, SAML, OIDC, and TOTP
 - **Storage** — SeaweedFS through its S3-compatible API using `S3_*` settings
-- **Gateway** — `GATEWAY_MASTER_KEY` and administrator-issued
-  `alpha_router_...` API keys
+- **Gateway** — `GATEWAY_MASTER_KEY`, administrator-issued `alpha_router_...`
+  keys, and user-created personal API keys
 - **Public URLs** — `API_PUBLIC_URL` and `FRONTEND_URL`
 - **Sandbox** — broker URL, token, timeout, and resource limits
-- **Agents & Knowledge** — Qdrant, worker, retrieval, evaluation, observability,
-  and the built-in specialist bootstrap
+- **Agents & Knowledge** — Qdrant, ClamAV, worker, retrieval, evaluation,
+  observability, and the built-in specialist bootstrap
 
 For production, set `ENVIRONMENT=production` and keep
 `PRODUCTION_GUARD_MODE=hard-fail`.
@@ -148,34 +178,22 @@ Use private mode for non-persistent conversations. Private mode disables
 sensitive Knowledge retrieval and memory according to Agent policy; it is not a
 way to bypass ACL, budget, audit, or provider-egress controls.
 
-### Code Interpreter model compatibility
+### Code Interpreter
 
 Compatibility with the Code Interpreter tool is measured per connection and
 model instead of being hardcoded per vendor, so new models need no code change.
 A scheduled job probes due models in small claimed batches (Python block →
 sandbox execution → artifact → follow-up turn), and real chat turns feed the
 same registry. Repeated hard failures such as `MALFORMED_FUNCTION_CALL`
-quarantine a model, transient provider errors do not. Verified and blocked
-models also shape OpenRouter Auto Router constraints per request. Administrators
-can review evidence, probe on demand, or pin a decision from
+quarantine a model; transient provider errors do not. Verified and blocked
+models also shape OpenRouter Auto Router constraints per request.
+Administrators can review evidence, probe on demand, or pin a decision from
 Admin → Models → Code Interpreter.
 
-### Video generation
-
-Chat Tools → **Video Generation** runs OpenRouter async `/videos` jobs
-(`POST /api/videos/generate`, poll `GET /api/videos/jobs/{id}`). Text-to-video
-and image-to-video (first-frame reference) reuse the same auth, budget hold,
-SSRF, and media ACL path as image generation. Provider polling URLs stay
-server-side; completed clips are stored as `MediaAsset` (`kind=video`) and
-served with HTTP Range support.
-
-### Code Interpreter capacity and workspace
-
-Code Interpreter turns use a Redis-backed lease shared by all API workers.
-The default admission ceiling is 200 end-to-end turns, with a separate
-per-user/API-key ceiling. Requests above capacity are rejected before provider
-or budget reservation work with HTTP `429` and `Retry-After`; Redis outages fail
-closed for this feature.
+Turns use a Redis-backed lease shared by all API workers. The default admission
+ceiling is 200 end-to-end turns, with a separate per-user/API-key ceiling.
+Requests above capacity are rejected before provider or budget reservation work
+with HTTP `429` and `Retry-After`; Redis outages fail closed for this feature.
 Operators can lower the live global/per-subject ceilings and Retry-After value
 from Admin → Operations; the environment value remains the non-bypassable hard
 ceiling.
@@ -201,12 +219,38 @@ argument-looking names, and names over the character/UTF-8 byte budget. What a
 file is allowed to be is still decided by the extension allowlist and the
 per-artifact content validation.
 
+### Image, video, and speech
+
+Chat Tools can enable **image generation**, **video generation**, and **speech**
+when the selected model and Connection support them. Image and video jobs reuse
+the same auth, budget hold, SSRF, and media ACL path. Video runs as OpenRouter
+async `/videos` work (`POST /api/videos/generate`, poll
+`GET /api/videos/jobs/{id}`) for text-to-video and image-to-video (first-frame
+reference). Provider polling URLs stay server-side; completed clips are stored
+as `MediaAsset` (`kind=video`) and served with HTTP Range support.
+
 ## External clients
 
-Alpharouter exposes `/v1` for clients that use the OpenAI API contract:
+Alpharouter exposes `/v1` for clients that use the OpenAI API contract.
+Chat completions are streaming-first: `POST /v1/chat/completions` requires
+`stream=true`. Also available: `GET /v1/models` and `POST /v1/embeddings`.
 
 - **Base URL:** `http://<alpha-router-host>:8080/v1`
-- **API key:** an `alpha_router_...` key created under Admin → API Keys
+- **Header:** `Authorization: Bearer <key>`
+
+Two key types (plus an optional master key):
+
+| Key | Created in | Spend | Typical use |
+|---|---|---|---|
+| Gateway API key (`alpha_router_...`) | Admin → API Keys | That key’s credit pool | Shared integrations, service accounts |
+| Personal API key | Settings → API Key | The user’s monthly plan budget | One key per user for IDEs and scripts |
+| Gateway master key | `GATEWAY_MASTER_KEY` in `.env` | The `gateway-service` account plan | Break-glass / platform automation |
+
+Personal keys are self-service: one active key per user, shown in plaintext
+only at creation, and visible in Activity and admin logs. Revoke before
+rotating. Gateway keys may add connection and model allowlists; they inherit
+the owner’s Public/Private catalog ACL and do not debit the owner’s personal
+monthly budget.
 
 Standard routes `/api` and `/v1` remain unchanged.
 
@@ -220,7 +264,7 @@ environment. For a host-side backend/frontend loop:
 ```bash
 cd backend
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8080
 ```
@@ -287,4 +331,9 @@ dependency audits, and container-image scanning.
 
 ## License
 
-Internal IT project; apply the license required by your organization.
+Alpharouter is released under the [MIT License](LICENSE).
+
+Copyright © 2026 Majid Arasskhani.
+
+Designed and developed by Majid Arasskhani.
+Contact: Majid.Arasskhani@Gmail.com

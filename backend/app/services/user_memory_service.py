@@ -223,16 +223,27 @@ async def delete_all_memories(db: AsyncSession, user_id: int) -> int:
     return int(result.rowcount or 0)
 
 
-async def load_injectable_memories(db: AsyncSession, user_id: int) -> list[str]:
+async def load_injectable_memories(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    max_items: int | None = None,
+) -> list[str]:
     prefs = await load_user_prefs(db, user_id)
     if not prefs.get("memory_enabled", True):
+        return []
+    item_limit = min(
+        MAX_INJECT_ITEMS,
+        max(0, int(max_items)) if max_items is not None else MAX_INJECT_ITEMS,
+    )
+    if item_limit == 0:
         return []
     rows = (
         await db.execute(
             select(UserMemory)
             .where(UserMemory.user_id == user_id, UserMemory.enabled.is_(True))
             .order_by(UserMemory.updated_at.desc(), UserMemory.id.desc())
-            .limit(MAX_INJECT_ITEMS)
+            .limit(item_limit)
         )
     ).scalars().all()
     facts: list[str] = []

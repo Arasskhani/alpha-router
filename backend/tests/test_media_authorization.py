@@ -140,6 +140,7 @@ def test_chat_file_route_applies_shared_object_authorization() -> None:
         ):
             await chat.media_file(
                 7,
+                request=SimpleNamespace(headers={}),
                 user=SimpleNamespace(id=20),
                 db=FakeDb(_asset()),
             )

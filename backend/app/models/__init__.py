@@ -1,29 +1,29 @@
 """ORM models — import all for Alembic metadata."""
 
-from app.models.user import User, UserGroup, user_group_members
-from app.models.connection import Connection, ConnectionAuditLog
-from app.models.model_catalog import (
-    AIModel,
-    ModelAccessAssignment,
-    ModelToolCompatibility,
-    ModelToolCompatibilityEvent,
+from app.models.agent import (
+    Agent,
+    AgentAccessAssignment,
+    AgentAuditEvent,
+    AgentHandoffEvent,
+    AgentKnowledgeBinding,
+    AgentVersion,
+)
+from app.models.agent_runtime import (
+    AgentCitation,
+    AgentEscalationCase,
+    AgentRetrievalTrace,
+    AgentRun,
+    AgentToolRun,
+)
+from app.models.agent_tool import (
+    AgentTool,
+    AgentToolAuditEvent,
+    AgentToolVersion,
 )
 from app.models.api_key import AlphaRouterApiKey, AlphaRouterApiKeyAuditLog, UserApiKey
-from app.models.budget import BudgetPlan, PlanAssignment
-from app.models.logging import ImageGenerationAttempt, RequestLog
-from app.models.budget_reservation import BudgetReservation
-from app.models.cost_accounting import (
-    CostLineItem,
-    LedgerEntry,
-    PricingSnapshot,
-    ReconciliationRun,
-    UsageEvent,
-    UsageOperation,
-)
-from app.models.system import SmtpSettings, ReportSchedule, SystemMetricSnapshot, SystemSetting
 from app.models.auth_provider import AuthProviderConfig
-from app.models.media import MediaAsset
-from app.models.video import VideoGenerationJob
+from app.models.budget import BudgetPlan, PlanAssignment
+from app.models.budget_reservation import BudgetReservation
 from app.models.chat import (
     ChatFolder,
     ChatMessage,
@@ -32,42 +32,128 @@ from app.models.chat import (
     UserChatPrefs,
     UserMemory,
 )
+from app.models.connection import Connection, ConnectionAuditLog
+from app.models.cost_accounting import (
+    CostLineItem,
+    LedgerEntry,
+    PricingSnapshot,
+    ReconciliationRun,
+    UsageEvent,
+    UsageOperation,
+)
+from app.models.evaluation import (
+    EvaluationCase,
+    EvaluationDataset,
+    EvaluationResult,
+    EvaluationRun,
+)
+from app.models.governance import GovernanceAuditEvent
+from app.models.knowledge import (
+    ConnectorSyncRun,
+    DeletionTombstone,
+    IngestionJob,
+    KnowledgeAuditEvent,
+    KnowledgeBase,
+    KnowledgeBaseAccessAssignment,
+    KnowledgeChunk,
+    KnowledgeConnector,
+    KnowledgeDocument,
+    KnowledgeDocumentAccessAssignment,
+    KnowledgeDocumentVersion,
+    KnowledgeIndexVersion,
+    KnowledgeRelease,
+    KnowledgeReleaseDocument,
+    LegalHold,
+    OutboxEvent,
+)
+from app.models.logging import ImageGenerationAttempt, RequestLog
+from app.models.media import MediaAsset
+from app.models.model_catalog import (
+    AIModel,
+    ModelAccessAssignment,
+    ModelToolCompatibility,
+    ModelToolCompatibilityEvent,
+)
+from app.models.system import (
+    ReportSchedule,
+    SmtpSettings,
+    SystemMetricSnapshot,
+    SystemSetting,
+)
+from app.models.user import User, UserGroup, UserRoleAssignment, user_group_members
+from app.models.video import VideoGenerationJob
 
 __all__ = [
-    "User",
-    "UserGroup",
-    "user_group_members",
-    "Connection",
-    "ConnectionAuditLog",
     "AIModel",
-    "ModelAccessAssignment",
-    "ModelToolCompatibility",
-    "ModelToolCompatibilityEvent",
+    "Agent",
+    "AgentAccessAssignment",
+    "AgentAuditEvent",
+    "AgentCitation",
+    "AgentEscalationCase",
+    "AgentHandoffEvent",
+    "AgentKnowledgeBinding",
+    "AgentRetrievalTrace",
+    "AgentRun",
+    "AgentTool",
+    "AgentToolAuditEvent",
+    "AgentToolRun",
+    "AgentToolVersion",
+    "AgentVersion",
     "AlphaRouterApiKey",
     "AlphaRouterApiKeyAuditLog",
-    "UserApiKey",
-    "BudgetPlan",
-    "PlanAssignment",
-    "RequestLog",
-    "ImageGenerationAttempt",
-    "BudgetReservation",
-    "PricingSnapshot",
-    "UsageOperation",
-    "UsageEvent",
-    "CostLineItem",
-    "LedgerEntry",
-    "ReconciliationRun",
-    "SmtpSettings",
-    "ReportSchedule",
-    "SystemSetting",
-    "SystemMetricSnapshot",
     "AuthProviderConfig",
-    "MediaAsset",
-    "VideoGenerationJob",
+    "BudgetPlan",
+    "BudgetReservation",
     "ChatFolder",
     "ChatMessage",
     "ChatMessageFeedback",
     "ChatSession",
+    "Connection",
+    "ConnectionAuditLog",
+    "ConnectorSyncRun",
+    "CostLineItem",
+    "DeletionTombstone",
+    "EvaluationCase",
+    "EvaluationDataset",
+    "EvaluationResult",
+    "EvaluationRun",
+    "GovernanceAuditEvent",
+    "ImageGenerationAttempt",
+    "IngestionJob",
+    "KnowledgeAuditEvent",
+    "KnowledgeBase",
+    "KnowledgeBaseAccessAssignment",
+    "KnowledgeChunk",
+    "KnowledgeConnector",
+    "KnowledgeDocument",
+    "KnowledgeDocumentAccessAssignment",
+    "KnowledgeDocumentVersion",
+    "KnowledgeIndexVersion",
+    "KnowledgeRelease",
+    "KnowledgeReleaseDocument",
+    "LedgerEntry",
+    "LegalHold",
+    "MediaAsset",
+    "ModelAccessAssignment",
+    "ModelToolCompatibility",
+    "ModelToolCompatibilityEvent",
+    "OutboxEvent",
+    "PlanAssignment",
+    "PricingSnapshot",
+    "ReconciliationRun",
+    "ReportSchedule",
+    "RequestLog",
+    "SmtpSettings",
+    "SystemMetricSnapshot",
+    "SystemSetting",
+    "UsageEvent",
+    "UsageOperation",
+    "User",
+    "UserApiKey",
     "UserChatPrefs",
+    "UserGroup",
     "UserMemory",
+    "UserRoleAssignment",
+    "VideoGenerationJob",
+    "user_group_members",
 ]

@@ -10,7 +10,6 @@ from sqlalchemy import (
     Index,
     Integer,
     SmallInteger,
-    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -27,7 +26,9 @@ class ChatFolder(Base):
     __tablename__ = "chat_folders"
 
     id = Column(String(36), primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
     name = Column(String(255), nullable=False)
     color = Column(String(32), nullable=True)
     sort_order = Column(Integer, nullable=False, default=0)
@@ -39,10 +40,27 @@ class ChatSession(Base):
     __tablename__ = "chat_sessions"
 
     id = Column(String(36), primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
     title = Column(String(512), nullable=False, default="New chat")
-    folder_id = Column(String(36), ForeignKey("chat_folders.id", ondelete="SET NULL"), nullable=True)
+    folder_id = Column(
+        String(36), ForeignKey("chat_folders.id", ondelete="SET NULL"), nullable=True
+    )
     model_id = Column(String(512), nullable=False, default="")
+    current_agent_id = Column(
+        String(36),
+        ForeignKey("agents.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    current_agent_version_id = Column(
+        String(36),
+        ForeignKey("agent_versions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    agent_selected_at = Column(DateTime, nullable=True)
     tools = Column(JsonDocument, nullable=False, default=dict)
     private_mode = Column(Boolean, nullable=False, default=False)
     title_locked = Column(Boolean, nullable=False, default=False)
@@ -55,9 +73,7 @@ class ChatSession(Base):
     archived_at = Column(DateTime, nullable=True)
     last_message_at = Column(DateTime, nullable=True)
 
-    __table_args__ = (
-        Index("ix_chat_sessions_user_updated", "user_id", "updated_at"),
-    )
+    __table_args__ = (Index("ix_chat_sessions_user_updated", "user_id", "updated_at"),)
 
 
 class ChatMessage(Base):
@@ -70,17 +86,29 @@ class ChatMessage(Base):
         index=True,
         nullable=False,
     )
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
     role = Column(String(16), nullable=False)
     content = Column(Text, nullable=False, default="")
     sequence = Column(Integer, nullable=False)
     client_message_id = Column(String(64), nullable=True)
+    agent_run_id = Column(
+        String(36),
+        ForeignKey("agent_runs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     meta = Column(JsonDocument, nullable=False, default=dict)
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("session_id", "sequence", name="ux_chat_messages_session_sequence"),
-        UniqueConstraint("session_id", "client_message_id", name="ux_chat_messages_client_id"),
+        UniqueConstraint(
+            "session_id", "sequence", name="ux_chat_messages_session_sequence"
+        ),
+        UniqueConstraint(
+            "session_id", "client_message_id", name="ux_chat_messages_client_id"
+        ),
         Index("ix_chat_messages_session_sequence", "session_id", "sequence"),
         Index("ix_chat_messages_created_at", "created_at"),
     )
@@ -102,7 +130,9 @@ class ChatMessageFeedback(Base):
         index=True,
         nullable=False,
     )
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
     rating = Column(SmallInteger, nullable=False)
     reason = Column(String(64), nullable=True)
     output_kind = Column(String(16), nullable=False)
@@ -119,7 +149,9 @@ class ChatMessageFeedback(Base):
 class UserChatPrefs(Base):
     __tablename__ = "user_chat_prefs"
 
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
     prefs = Column(JsonDocument, nullable=False, default=dict)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
 
@@ -130,7 +162,9 @@ class UserMemory(Base):
     __tablename__ = "user_memories"
 
     id = Column(String(36), primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
     content = Column(Text, nullable=False)
     enabled = Column(Boolean, nullable=False, default=True)
     source_session_id = Column(

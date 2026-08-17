@@ -31,6 +31,10 @@ from app.services.chat_markers import (
     VIDEO_MESSAGE_PREFIX,
     VIDEO_PENDING_MARKER,
 )
+from app.services.private_mode_service import (
+    PrivateModePersistenceError,
+    assert_session_persistence_allowed,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -68,7 +72,9 @@ def _compact_attachment_content_for_storage(content: str) -> str:
         else:
             compact.append(item)
     payload["attachments"] = compact
-    return ATTACHMENT_MESSAGE_PREFIX + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return ATTACHMENT_MESSAGE_PREFIX + json.dumps(
+        payload, ensure_ascii=False, separators=(",", ":")
+    )
 
 
 def _compact_message_content_for_storage(content: str, role: str) -> str:
@@ -169,7 +175,9 @@ def _normalize_prefs(raw: dict[str, Any] | None) -> dict[str, Any]:
 
     # Voice recording language: drives Web Speech API locale and Whisper `language`.
     vrl = str(raw.get("voice_recording_language") or "en").strip().lower()
-    base["voice_recording_language"] = "fa" if vrl in ("fa", "fas", "persian", "farsi") else "en"
+    base["voice_recording_language"] = (
+        "fa" if vrl in ("fa", "fas", "persian", "farsi") else "en"
+    )
 
     # Persian chat font preference (frontend validates against build-time catalog).
     if "persian_font" in raw:
@@ -182,13 +190,21 @@ def _normalize_prefs(raw: dict[str, Any] | None) -> dict[str, Any]:
                 base["persian_font"] = ""
             else:
                 # Allow only safe slug characters matching generated font ids.
-                cleaned = "".join(ch for ch in token.lower().replace("_", "-") if ch.isalnum() or ch == "-")
+                cleaned = "".join(
+                    ch
+                    for ch in token.lower().replace("_", "-")
+                    if ch.isalnum() or ch == "-"
+                )
                 base["persian_font"] = cleaned[:64]
 
     if "reply_notify_away" in raw:
-        base["reply_notify_away"] = _coerce_bool(raw.get("reply_notify_away"), default=False)
+        base["reply_notify_away"] = _coerce_bool(
+            raw.get("reply_notify_away"), default=False
+        )
     if "reply_notify_sound" in raw:
-        base["reply_notify_sound"] = _coerce_bool(raw.get("reply_notify_sound"), default=True)
+        base["reply_notify_sound"] = _coerce_bool(
+            raw.get("reply_notify_sound"), default=True
+        )
     if "memory_enabled" in raw:
         base["memory_enabled"] = _coerce_bool(raw.get("memory_enabled"), default=True)
     return base
@@ -238,6 +254,20 @@ def _message_meta_from_client(msg: dict[str, Any]) -> dict[str, Any]:
     return meta
 
 
+_SERVER_OWNED_AGENT_META_KEYS = frozenset(
+    {
+        "agentRunId",
+        "agentId",
+        "agentVersionId",
+        "agentName",
+        "agentStatus",
+        "routingOutcome",
+        "completionReasonCode",
+        "citations",
+    }
+)
+
+
 def _message_to_client(row: ChatMessage) -> dict[str, Any]:
     meta = row.meta if isinstance(row.meta, dict) else {}
     out: dict[str, Any] = {
@@ -262,8 +292,23 @@ def _message_to_client(row: ChatMessage) -> dict[str, Any]:
             out["requestLogId"] = int(request_log_id)
         except (TypeError, ValueError):
             pass
+    for key in (
+        "agentId",
+        "agentVersionId",
+        "agentName",
+        "agentStatus",
+        "routingOutcome",
+        "completionReasonCode",
+        "citations",
+    ):
+        if meta.get(key) is not None:
+            out[key] = meta[key]
     if row.client_message_id:
         out["clientMessageId"] = row.client_message_id
+    if row.agent_run_id:
+        out["agentRunId"] = row.agent_run_id
+    elif meta.get("agentRunId"):
+        out["agentRunId"] = meta["agentRunId"]
     return out
 
 
@@ -313,7 +358,12 @@ async def attach_request_log_id_to_chat_message(
     return True
 
 
-def _session_to_client(row: ChatSession, *, include_messages: bool = False, messages: list[dict] | None = None) -> dict[str, Any]:
+def _session_to_client(
+    row: ChatSession,
+    *,
+    include_messages: bool = False,
+    messages: list[dict] | None = None,
+) -> dict[str, Any]:
     tools = row.tools if isinstance(row.tools, dict) else {}
     out: dict[str, Any] = {
         "id": row.id,
@@ -322,6 +372,11 @@ def _session_to_client(row: ChatSession, *, include_messages: bool = False, mess
         "titleGenerated": bool(row.title_generated),
         "folderId": row.folder_id,
         "model": row.model_id or "",
+        "currentAgentId": row.current_agent_id,
+        "currentAgentVersionId": row.current_agent_version_id,
+        "agentSelectedAt": (
+            _dt_to_ms(row.agent_selected_at) if row.agent_selected_at else None
+        ),
         "tools": tools,
         "toolsTouched": bool(row.tools_touched),
         "privateMode": bool(row.private_mode),
@@ -329,7 +384,9 @@ def _session_to_client(row: ChatSession, *, include_messages: bool = False, mess
         "revision": int(row.revision or 1),
         "createdAt": _dt_to_ms(row.created_at),
         "updatedAt": _dt_to_ms(row.updated_at),
-        "lastMessageAt": _dt_to_ms(row.last_message_at) if row.last_message_at else None,
+        "lastMessageAt": _dt_to_ms(row.last_message_at)
+        if row.last_message_at
+        else None,
     }
     if include_messages:
         out["messages"] = messages or []
@@ -400,7 +457,9 @@ async def load_user_prefs(db: AsyncSession, user_id: int) -> dict[str, Any]:
     return _normalize_prefs(row.prefs if isinstance(row.prefs, dict) else {})
 
 
-async def save_user_prefs(db: AsyncSession, user_id: int, updates: dict[str, Any]) -> dict[str, Any]:
+async def save_user_prefs(
+    db: AsyncSession, user_id: int, updates: dict[str, Any]
+) -> dict[str, Any]:
     row = await ensure_user_chat_prefs(db, user_id)
     current = _normalize_prefs(row.prefs if isinstance(row.prefs, dict) else {})
     merged = _normalize_prefs({**current, **updates})
@@ -413,16 +472,22 @@ async def save_user_prefs(db: AsyncSession, user_id: int, updates: dict[str, Any
 
 async def list_chat_folders(db: AsyncSession, user_id: int) -> list[dict[str, Any]]:
     rows = (
-        await db.execute(
-            select(ChatFolder)
-            .where(ChatFolder.user_id == user_id)
-            .order_by(ChatFolder.sort_order.asc(), ChatFolder.name.asc())
+        (
+            await db.execute(
+                select(ChatFolder)
+                .where(ChatFolder.user_id == user_id)
+                .order_by(ChatFolder.sort_order.asc(), ChatFolder.name.asc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [_folder_to_client(r) for r in rows]
 
 
-async def create_chat_folder(db: AsyncSession, user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+async def create_chat_folder(
+    db: AsyncSession, user_id: int, payload: dict[str, Any]
+) -> dict[str, Any]:
     folder_id = str(payload.get("id") or uuid.uuid4())
     now = dt.datetime.utcnow()
     row = ChatFolder(
@@ -431,15 +496,21 @@ async def create_chat_folder(db: AsyncSession, user_id: int, payload: dict[str, 
         name=str(payload.get("name") or "Folder")[:255],
         color=payload.get("color"),
         sort_order=int(payload.get("sort_order") or 0),
-        created_at=_ms_to_dt(payload.get("createdAt")) if payload.get("createdAt") else now,
-        updated_at=_ms_to_dt(payload.get("updatedAt")) if payload.get("updatedAt") else now,
+        created_at=_ms_to_dt(payload.get("createdAt"))
+        if payload.get("createdAt")
+        else now,
+        updated_at=_ms_to_dt(payload.get("updatedAt"))
+        if payload.get("updatedAt")
+        else now,
     )
     db.add(row)
     await db.flush()
     return _folder_to_client(row)
 
 
-async def update_chat_folder(db: AsyncSession, user_id: int, folder_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
+async def update_chat_folder(
+    db: AsyncSession, user_id: int, folder_id: str, updates: dict[str, Any]
+) -> dict[str, Any] | None:
     row = await db.get(ChatFolder, folder_id)
     if row is None or row.user_id != user_id:
         return None
@@ -459,10 +530,16 @@ async def delete_chat_folder(db: AsyncSession, user_id: int, folder_id: str) -> 
     if row is None or row.user_id != user_id:
         return False
     sessions = (
-        await db.execute(
-            select(ChatSession).where(ChatSession.folder_id == folder_id, ChatSession.user_id == user_id)
+        (
+            await db.execute(
+                select(ChatSession).where(
+                    ChatSession.folder_id == folder_id, ChatSession.user_id == user_id
+                )
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     for s in sessions:
         s.folder_id = None
     await db.delete(row)
@@ -506,7 +583,11 @@ async def list_chat_sessions(
     activity = _session_activity_expr()
 
     base = select(ChatSession).where(ChatSession.user_id == user_id)
-    count_q = select(func.count()).select_from(ChatSession).where(ChatSession.user_id == user_id)
+    count_q = (
+        select(func.count())
+        .select_from(ChatSession)
+        .where(ChatSession.user_id == user_id)
+    )
 
     visible = None
     if exclude_empty_old:
@@ -548,7 +629,11 @@ async def list_chat_sessions(
     older_total: int | None = None
     if min_activity_ms is not None and not search and since_ms is None:
         older_cutoff = _ms_to_dt(min_activity_ms)
-        older_q = select(func.count()).select_from(ChatSession).where(ChatSession.user_id == user_id)
+        older_q = (
+            select(func.count())
+            .select_from(ChatSession)
+            .where(ChatSession.user_id == user_id)
+        )
         if visible is not None:
             older_q = older_q.where(visible)
         older_total = int(
@@ -557,12 +642,16 @@ async def list_chat_sessions(
 
     total = (await db.execute(count_q)).scalar_one()
     rows = (
-        await db.execute(
-            base.order_by(activity.desc(), ChatSession.created_at.desc())
-            .limit(limit)
-            .offset(offset)
+        (
+            await db.execute(
+                base.order_by(activity.desc(), ChatSession.created_at.desc())
+                .limit(limit)
+                .offset(offset)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [_session_to_client(r) for r in rows], int(total), older_total
 
 
@@ -582,9 +671,10 @@ async def search_chat_messages(
 
     if dialect == "postgresql":
         rows = (
-            await db.execute(
-                text(
-                    """
+            (
+                await db.execute(
+                    text(
+                        """
                     SELECT m.id, m.session_id, m.role, m.content, m.sequence, m.created_at,
                            s.title AS session_title
                     FROM chat_messages m
@@ -595,10 +685,13 @@ async def search_chat_messages(
                     ORDER BY m.created_at DESC
                     LIMIT :lim
                     """
-                ),
-                {"uid": user_id, "q": term, "lim": limit},
+                    ),
+                    {"uid": user_id, "q": term, "lim": limit},
+                )
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
     else:
         pattern = f"%{term.lower()}%"
         rows = (
@@ -651,7 +744,9 @@ async def get_chat_session(
     return _session_to_client(row)
 
 
-async def create_chat_session(db: AsyncSession, user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+async def create_chat_session(
+    db: AsyncSession, user_id: int, payload: dict[str, Any]
+) -> dict[str, Any]:
     session_id = str(payload.get("id") or uuid.uuid4())
     existing = await db.get(ChatSession, session_id)
     if existing is not None:
@@ -676,12 +771,18 @@ async def create_chat_session(db: AsyncSession, user_id: int, payload: dict[str,
         tools=tools,
         private_mode=bool(payload.get("privateMode") or payload.get("private_mode")),
         title_locked=bool(payload.get("titleLocked") or payload.get("title_locked")),
-        title_generated=bool(payload.get("titleGenerated") or payload.get("title_generated")),
+        title_generated=bool(
+            payload.get("titleGenerated") or payload.get("title_generated")
+        ),
         tools_touched=bool(payload.get("toolsTouched") or payload.get("tools_touched")),
         message_count=0,
         revision=1,
-        created_at=_ms_to_dt(payload.get("createdAt")) if payload.get("createdAt") else now,
-        updated_at=_ms_to_dt(payload.get("updatedAt")) if payload.get("updatedAt") else now,
+        created_at=_ms_to_dt(payload.get("createdAt"))
+        if payload.get("createdAt")
+        else now,
+        updated_at=_ms_to_dt(payload.get("updatedAt"))
+        if payload.get("updatedAt")
+        else now,
     )
     try:
         async with db.begin_nested():
@@ -707,6 +808,20 @@ async def update_chat_session(
     if row is None or row.user_id != user_id:
         return None
     _check_expected_revision(row, expected_revision)
+    requested_private = updates.get(
+        "privateMode",
+        updates.get("private_mode"),
+    )
+    if requested_private is not None:
+        next_private = bool(requested_private)
+        if row.private_mode and not next_private:
+            raise PrivateModePersistenceError(
+                "Private Mode is permanent for a session; create a new chat instead"
+            )
+        if not row.private_mode and next_private and int(row.message_count or 0) > 0:
+            raise PrivateModePersistenceError(
+                "A persisted chat with messages cannot be converted to Private Mode"
+            )
 
     field_map = {
         "title": "title",
@@ -810,7 +925,8 @@ async def _try_reconcile_inflight_assistant(
     if (
         not force
         and content.strip()
-        and content not in (IMAGE_PENDING_MARKER, SPEECH_PENDING_MARKER, VIDEO_PENDING_MARKER)
+        and content
+        not in (IMAGE_PENDING_MARKER, SPEECH_PENDING_MARKER, VIDEO_PENDING_MARKER)
         and meta.get("receivedAt") is None
         and meta.get("streaming") is not True
     ):
@@ -868,13 +984,17 @@ async def list_session_messages(
     message_ids = [row.id for row in rows]
     if message_ids:
         feedback_rows = (
-            await db.execute(
-                select(ChatMessageFeedback).where(
-                    ChatMessageFeedback.user_id == user_id,
-                    ChatMessageFeedback.message_id.in_(message_ids),
+            (
+                await db.execute(
+                    select(ChatMessageFeedback).where(
+                        ChatMessageFeedback.user_id == user_id,
+                        ChatMessageFeedback.message_id.in_(message_ids),
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         feedback_by_message = {row.message_id: row for row in feedback_rows}
         for payload, row in zip(messages, rows):
             feedback = feedback_by_message.get(row.id)
@@ -889,7 +1009,9 @@ async def list_session_messages(
 async def _next_sequence(db: AsyncSession, session_id: str) -> int:
     current = (
         await db.execute(
-            select(func.max(ChatMessage.sequence)).where(ChatMessage.session_id == session_id)
+            select(func.max(ChatMessage.sequence)).where(
+                ChatMessage.session_id == session_id
+            )
         )
     ).scalar_one()
     return int(current or 0) + 1
@@ -919,6 +1041,7 @@ async def append_session_messages(
     session = await db.get(ChatSession, session_id)
     if session is None or session.user_id != user_id:
         return None
+    assert_session_persistence_allowed(session)
     _check_expected_revision(session, expected_revision)
     if not messages:
         return []
@@ -942,7 +1065,9 @@ async def append_session_messages(
                 inserted.append(existing)
                 continue
 
-        content = _compact_message_content_for_storage(str(msg.get("content") or ""), str(msg.get("role") or "user"))
+        content = _compact_message_content_for_storage(
+            str(msg.get("content") or ""), str(msg.get("role") or "user")
+        )
         if len(content.encode("utf-8")) > _MAX_MESSAGE_BYTES:
             raise ValueError("Message content exceeds storage limit")
 
@@ -965,7 +1090,9 @@ async def append_session_messages(
 
     await db.flush()
     if new_count:
-        await _touch_session_messages(db, session, added=new_count, last_at=last_created)
+        await _touch_session_messages(
+            db, session, added=new_count, last_at=last_created
+        )
         await db.flush()
     return [_message_to_client(r) for r in inserted]
 
@@ -981,8 +1108,24 @@ async def replace_session_messages(
     session = await db.get(ChatSession, session_id)
     if session is None or session.user_id != user_id:
         return None
+    assert_session_persistence_allowed(session)
     _check_expected_revision(session, expected_revision)
 
+    existing_rows = (
+        (
+            await db.execute(
+                select(ChatMessage).where(ChatMessage.session_id == session_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    existing_by_client_id = {
+        row.client_message_id: row
+        for row in existing_rows
+        if row.client_message_id
+    }
+    existing_by_id = {row.id: row for row in existing_rows}
     await db.execute(delete(ChatMessage).where(ChatMessage.session_id == session_id))
     await db.flush()
 
@@ -997,10 +1140,31 @@ async def replace_session_messages(
     last_created = dt.datetime.utcnow()
     for idx, msg in enumerate(messages, start=1):
         role = str(msg.get("role") or "user")
-        content = _compact_message_content_for_storage(str(msg.get("content") or ""), role)
+        content = _compact_message_content_for_storage(
+            str(msg.get("content") or ""), role
+        )
         if len(content.encode("utf-8")) > _MAX_MESSAGE_BYTES:
             raise ValueError("Message content exceeds storage limit")
         last_created = dt.datetime.utcnow()
+        client_message_id = (
+            str(msg.get("clientMessageId") or msg.get("client_message_id") or "")
+            or None
+        )
+        previous = (
+            existing_by_client_id.get(client_message_id)
+            if client_message_id
+            else existing_by_id.get(str(msg.get("id") or ""))
+        )
+        message_meta = _message_meta_from_client(msg)
+        agent_run_id = None
+        if previous is not None and role == "assistant":
+            previous_meta = (
+                previous.meta if isinstance(previous.meta, dict) else {}
+            )
+            for key in _SERVER_OWNED_AGENT_META_KEYS:
+                if previous_meta.get(key) is not None:
+                    message_meta[key] = previous_meta[key]
+            agent_run_id = previous.agent_run_id
         row = ChatMessage(
             id=str(msg.get("id") or uuid.uuid4()),
             session_id=session_id,
@@ -1008,8 +1172,9 @@ async def replace_session_messages(
             role=role[:16],
             content=content,
             sequence=idx,
-            client_message_id=str(msg.get("clientMessageId") or msg.get("client_message_id") or "") or None,
-            meta=_message_meta_from_client(msg),
+            client_message_id=client_message_id,
+            agent_run_id=agent_run_id,
+            meta=message_meta,
             created_at=last_created,
         )
         db.add(row)
@@ -1050,6 +1215,7 @@ async def finalize_chat_session_image(
     session = await db.get(ChatSession, session_id)
     if session is None or session.user_id != user_id:
         return False
+    assert_session_persistence_allowed(session)
 
     last = (
         await db.execute(
@@ -1110,6 +1276,7 @@ async def finalize_chat_session_video(
     session = await db.get(ChatSession, session_id)
     if session is None or session.user_id != user_id:
         return False
+    assert_session_persistence_allowed(session)
 
     last = (
         await db.execute(
@@ -1189,6 +1356,7 @@ async def finalize_chat_session_speech(
     session = await db.get(ChatSession, session_id)
     if session is None or session.user_id != user_id:
         return False
+    assert_session_persistence_allowed(session)
 
     last = (
         await db.execute(
@@ -1249,6 +1417,7 @@ async def update_last_session_message(
     session = await db.get(ChatSession, session_id)
     if session is None or session.user_id != user_id:
         return None
+    assert_session_persistence_allowed(session)
     _check_expected_revision(session, expected_revision)
 
     last = (
@@ -1282,6 +1451,7 @@ async def cancel_streaming_reply(
     session = await db.get(ChatSession, session_id)
     if session is None or session.user_id != user_id:
         return None
+    assert_session_persistence_allowed(session)
 
     last = (
         await db.execute(

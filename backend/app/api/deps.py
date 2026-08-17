@@ -14,6 +14,7 @@ from app.models.user import User
 from app.services.rbac import (
     MenuKey,
     user_can_access_menu,
+    user_has_agent_permission,
     user_can_write_menu,
     user_is_admin_panel,
 )
@@ -86,6 +87,25 @@ def require_rbac_menu(menu: MenuKey, *, write: bool = False) -> Callable:
     return _check
 
 
+def require_agent_permission(permission: str) -> Callable:
+    """Require one action-level permission inside Agents & Knowledge."""
+
+    async def _check(
+        user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+    ) -> User:
+        if not user.is_active:
+            raise _forbidden("User inactive")
+        slugs = await get_user_role_slugs(db, user.id)
+        if not user_can_access_menu(slugs, "agents"):
+            raise _forbidden("Insufficient permissions for Agents & Knowledge")
+        if not user_has_agent_permission(slugs, permission):
+            raise _forbidden(f"Missing Agent Platform permission: {permission}")
+        return user
+
+    return _check
+
+
 async def require_admin(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> User:
     if not user.is_active:
         raise _forbidden("User inactive")
@@ -148,6 +168,7 @@ require_reports, require_reports_write = _menu_requires("reports")
 require_api_logs, require_api_logs_write = _menu_requires("api_logs")
 require_operations, require_operations_write = _menu_requires("operations")
 require_database, require_database_write = _menu_requires("database")
+require_agents, require_agents_write = _menu_requires("agents")
 require_admin_guide, require_admin_guide_write = _menu_requires("admin_guide")
 require_user_manual, require_user_manual_write = _menu_requires("user_manual")
 

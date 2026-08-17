@@ -5,10 +5,21 @@ from sqlalchemy.schema import CreateIndex
 
 from app.config import get_settings
 from app.database import Base, engine
+from app.schema_registry import AGENT_PLATFORM_TABLE_NAMES
 
 
-def _ensure_missing_indexes(connection, table, inspector) -> None:
-    """Create ORM indexes absent from an existing table."""
+def _ensure_missing_indexes(
+    connection,
+    table,
+    inspector,
+    *,
+    available_columns: set[str],
+) -> None:
+    """Create ORM indexes whose backing columns already exist.
+
+    Columns owned by Alembic may be absent while the legacy schema bootstrap
+    runs, so their indexes must be deferred to the versioned migration.
+    """
     existing = {
         index["name"]
         for index in inspector.get_indexes(table.name)
@@ -16,6 +27,8 @@ def _ensure_missing_indexes(connection, table, inspector) -> None:
     }
     for index in table.indexes:
         if not index.name or index.name in existing:
+            continue
+        if any(column.name not in available_columns for column in index.columns):
             continue
         connection.execute(CreateIndex(index))
 
@@ -32,6 +45,16 @@ async def apply_schema_column_patches() -> None:
     retired_columns: dict[str, frozenset[str]] = {
         "users": frozenset({"role"}),
     }
+    versioned_columns: dict[str, frozenset[str]] = {
+        "chat_sessions": frozenset(
+            {
+                "current_agent_id",
+                "current_agent_version_id",
+                "agent_selected_at",
+            }
+        ),
+        "chat_messages": frozenset({"agent_run_id"}),
+    }
     # Tables removed from the ORM (feature retired).
     retired_tables: frozenset[str] = frozenset({"user_connectors"})
 
@@ -46,7 +69,9 @@ async def apply_schema_column_patches() -> None:
                 if retired_table not in tables:
                     continue
                 try:
-                    connection.execute(text(f"DROP TABLE IF EXISTS {retired_table} CASCADE"))
+                    connection.execute(
+                        text(f"DROP TABLE IF EXISTS {retired_table} CASCADE")
+                    )
                 except Exception as exc:
                     message = str(exc).lower()
                     if "does not exist" in message or "no such table" in message:
@@ -55,12 +80,16 @@ async def apply_schema_column_patches() -> None:
             inspector = inspect(connection)
             tables = set(inspector.get_table_names())
             for table in Base.metadata.sorted_tables:
+                if table.name in AGENT_PLATFORM_TABLE_NAMES:
+                    continue
                 if table.name not in tables:
                     continue
                 existing = {
                     column["name"] for column in inspector.get_columns(table.name)
                 }
                 for column in table.columns:
+                    if column.name in versioned_columns.get(table.name, ()):
+                        continue
                     if column.name in existing:
                         continue
                     ddl = column.type.compile(dialect=connection.dialect)
@@ -71,12 +100,11 @@ async def apply_schema_column_patches() -> None:
                                 f"ADD COLUMN {column.name} {ddl}"
                             )
                         )
+                        existing.add(column.name)
                     except Exception as exc:
                         message = str(exc).lower()
-                        if (
-                            "already exists" in message
-                            or "duplicate column" in message
-                        ):
+                        if "already exists" in message or "duplicate column" in message:
+                            existing.add(column.name)
                             continue
                         raise
                 for retired in retired_columns.get(table.name, ()):
@@ -86,14 +114,167 @@ async def apply_schema_column_patches() -> None:
                         connection.execute(
                             text(f"ALTER TABLE {table.name} DROP COLUMN {retired}")
                         )
+                        existing.discard(retired)
                     except Exception as exc:
                         message = str(exc).lower()
                         if "does not exist" in message or "no such column" in message:
+                            existing.discard(retired)
                             continue
                         raise
-                _ensure_missing_indexes(connection, table, inspector)
+                _ensure_missing_indexes(
+                    connection,
+                    table,
+                    inspector,
+                    available_columns=existing,
+                )
 
         await conn.run_sync(patch)
+
+
+async def validate_agent_platform_schema() -> None:
+    """Fail startup when the versioned Agent Platform migration was not applied."""
+
+    required = {
+        "agents": {"slug", "status", "access_type", "acl_version"},
+        "agent_versions": {
+            "agent_id",
+            "version_number",
+            "fingerprint",
+            "active_scope_key",
+        },
+        "agent_access_assignments": {"agent_id", "effect"},
+        "agent_handoff_events": {
+            "session_id",
+            "turn_id",
+            "turn_ordinal",
+            "status",
+            "context_payload",
+        },
+        "agent_tools": {"slug", "status"},
+        "agent_tool_versions": {
+            "tool_id",
+            "version_number",
+            "fingerprint",
+            "active_scope_key",
+            "input_schema",
+            "output_schema",
+            "handler_key",
+            "effect_type",
+            "approval_mode",
+            "last_modified_by_user_id",
+            "submitted_by_user_id",
+        },
+        "agent_tool_audit_events": {"tool_id", "event_type", "created_at"},
+        "agent_runs": {
+            "correlation_id",
+            "agent_version_id",
+            "routing_outcome",
+            "retrieval_outcome",
+            "guardrail_events",
+            "egress_manifest",
+            "total_cost_usd",
+            "private_mode",
+        },
+        "agent_retrieval_traces": {
+            "agent_run_id",
+            "query_sha256",
+            "outcome",
+            "results",
+        },
+        "agent_citations": {
+            "agent_run_id",
+            "citation_id",
+            "document_version_id",
+        },
+        "agent_tool_runs": {
+            "agent_run_id",
+            "tool_version_id",
+            "arguments_sha256",
+            "status",
+        },
+        "agent_escalation_cases": {"agent_run_id", "status", "reason_code"},
+        "chat_sessions": {
+            "current_agent_id",
+            "current_agent_version_id",
+            "agent_selected_at",
+        },
+        "chat_messages": {"agent_run_id"},
+        "knowledge_bases": {"slug", "sensitivity", "access_type", "acl_version"},
+        "knowledge_documents": {"knowledge_base_id", "canonical_key", "status"},
+        "knowledge_document_versions": {"document_id", "sha256", "storage_key"},
+        "knowledge_releases": {"knowledge_base_id", "fingerprint", "active_scope_key"},
+        "knowledge_chunks": {"document_version_id", "content_hash", "content"},
+        "knowledge_index_versions": {
+            "knowledge_base_id",
+            "embedding_fingerprint",
+            "collection_name",
+        },
+        "ingestion_jobs": {"idempotency_key", "status", "lease_until"},
+        "outbox_events": {"idempotency_key", "event_type", "status"},
+        "governance_audit_events": {
+            "event_type",
+            "resource_type",
+            "payload_json",
+            "previous_event_hash",
+            "event_hash",
+            "created_at",
+        },
+        "evaluation_datasets": {
+            "agent_id",
+            "slug",
+            "version_number",
+            "status",
+            "thresholds_json",
+            "is_publish_gate",
+        },
+        "evaluation_cases": {
+            "dataset_id",
+            "case_key",
+            "category",
+            "language",
+            "expected_json",
+        },
+        "evaluation_runs": {
+            "dataset_id",
+            "agent_version_id",
+            "dataset_snapshot_hash",
+            "status",
+            "metrics_json",
+        },
+        "evaluation_results": {
+            "run_id",
+            "case_id",
+            "status",
+            "metrics_json",
+            "failure_codes_json",
+        },
+    }
+
+    async with engine.connect() as conn:
+
+        def validate(connection) -> list[str]:
+            inspector = inspect(connection)
+            tables = set(inspector.get_table_names())
+            missing: list[str] = []
+            for table_name, expected_columns in required.items():
+                if table_name not in tables:
+                    missing.append(f"table:{table_name}")
+                    continue
+                present = {
+                    column["name"] for column in inspector.get_columns(table_name)
+                }
+                missing.extend(
+                    f"column:{table_name}.{column}"
+                    for column in sorted(expected_columns - present)
+                )
+            return missing
+
+        missing = await conn.run_sync(validate)
+    if missing:
+        raise RuntimeError(
+            "Agent Platform schema is incomplete; run `python -m app.migrate` "
+            "before starting Alpharouter. Missing: " + ", ".join(missing)
+        )
 
 
 async def validate_accounting_schema() -> None:
@@ -135,6 +316,7 @@ async def validate_accounting_schema() -> None:
     }
 
     async with engine.connect() as conn:
+
         def validate(connection) -> list[str]:
             inspector = inspect(connection)
             tables = set(inspector.get_table_names())
@@ -144,8 +326,7 @@ async def validate_accounting_schema() -> None:
                     missing.append(f"table:{table_name}")
                     continue
                 present = {
-                    column["name"]
-                    for column in inspector.get_columns(table_name)
+                    column["name"] for column in inspector.get_columns(table_name)
                 }
                 missing.extend(
                     f"column:{table_name}.{column}"
@@ -155,9 +336,7 @@ async def validate_accounting_schema() -> None:
 
         missing = await conn.run_sync(validate)
     if missing:
-        raise RuntimeError(
-            "Accounting schema is incomplete: " + ", ".join(missing)
-        )
+        raise RuntimeError("Accounting schema is incomplete: " + ", ".join(missing))
 
 
 async def apply_sqlite_schema_patches() -> None:

@@ -1,7 +1,7 @@
 {
   "plugins": {
     "postman": {
-      "enabled": true
+      "enabled": false
     },
     "figma": {
       "enabled": true

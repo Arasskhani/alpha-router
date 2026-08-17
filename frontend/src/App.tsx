@@ -30,6 +30,13 @@ import MyActivity from "./pages/MyActivity";
 import MediaLibrary from "./pages/MediaLibrary";
 import UserManual from "./pages/user/UserManual";
 import Roles from "./pages/admin/Roles";
+import AgentsOverview from "./pages/admin/AgentsOverview";
+import AgentStudio from "./pages/admin/AgentStudio";
+import KnowledgeBases from "./pages/admin/KnowledgeBases";
+import ToolRegistry from "./pages/admin/ToolRegistry";
+import AgentEvaluations from "./pages/admin/AgentEvaluations";
+import AgentApprovals from "./pages/admin/AgentApprovals";
+import AgentActivity from "./pages/admin/AgentActivity";
 import { isAdminPanelRole } from "./lib/rbac";
 import { bootstrapSession, type SessionInfo } from "./api";
 
@@ -110,6 +117,13 @@ export default function App() {
         <Route path="operations" element={<Operations />} />
         <Route path="debug" element={<Operations />} />
         <Route path="database" element={<DatabaseMonitor />} />
+        <Route path="agents" element={<AgentsOverview />} />
+        <Route path="agents/studio" element={<AgentStudio />} />
+        <Route path="knowledge" element={<KnowledgeBases />} />
+        <Route path="agent-tools" element={<ToolRegistry />} />
+        <Route path="agent-evaluations" element={<AgentEvaluations />} />
+        <Route path="agent-approvals" element={<AgentApprovals />} />
+        <Route path="agent-activity" element={<AgentActivity />} />
         <Route path="docs" element={<Docs />} />
       </Route>
       <Route

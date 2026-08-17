@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 type Props = {
@@ -11,7 +11,11 @@ type Props = {
   cancelLabel?: string;
   secondaryLabel?: string;
   danger?: boolean;
-  onConfirm: () => void;
+  promptLabel?: string;
+  promptDefault?: string;
+  promptRequired?: boolean;
+  promptExactMatch?: string;
+  onConfirm: (promptValue?: string) => void;
   onCancel: () => void;
   onSecondary?: () => void;
 };
@@ -26,10 +30,20 @@ export default function ConfirmModal({
   cancelLabel = "No",
   secondaryLabel,
   danger = false,
+  promptLabel,
+  promptDefault = "",
+  promptRequired = false,
+  promptExactMatch,
   onConfirm,
   onCancel,
   onSecondary,
 }: Props) {
+  const [promptValue, setPromptValue] = useState(promptDefault);
+
+  useEffect(() => {
+    if (open) setPromptValue(promptDefault);
+  }, [open, promptDefault]);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -53,6 +67,10 @@ export default function ConfirmModal({
     ) : (
       message
     );
+  const trimmed = promptValue.trim();
+  const confirmDisabled = promptExactMatch
+    ? trimmed !== promptExactMatch
+    : Boolean(promptLabel && promptRequired && !trimmed);
 
   return createPortal(
     <div className="modal-overlay modal-overlay-confirm" onClick={onCancel} role="presentation">
@@ -62,12 +80,30 @@ export default function ConfirmModal({
         </div>
         <div className="modal-body">
           <p className="confirm-message">{renderedMessage}</p>
+          {promptLabel ? (
+            <label className="confirm-prompt">
+              <span>{promptLabel}</span>
+              <input
+                type="text"
+                value={promptValue}
+                onChange={(e) => setPromptValue(e.target.value)}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !confirmDisabled) {
+                    e.preventDefault();
+                    onConfirm(trimmed);
+                  }
+                }}
+              />
+            </label>
+          ) : null}
           <div className={`dialog-actions${secondaryLabel ? " dialog-actions-three" : ""}`}>
             <button
               type="button"
               className={danger ? "btn btn-danger" : "btn"}
-              onClick={onConfirm}
-              autoFocus
+              onClick={() => onConfirm(promptLabel ? trimmed : undefined)}
+              disabled={confirmDisabled}
+              autoFocus={!promptLabel}
             >
               {confirmLabel}
             </button>

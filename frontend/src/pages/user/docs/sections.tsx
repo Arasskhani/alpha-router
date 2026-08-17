@@ -32,7 +32,7 @@ export const userManualSections: DocSection[] = [
         <div className="docs-cards">
           <div className="docs-card">
             <h3>Chat</h3>
-            <p>Sessions, folders, tools, voice, images, private mode, export, and a prompt queue.</p>
+            <p>General chat, specialist Agents, citations, tools, private mode, export, and a prompt queue.</p>
           </div>
           <div className="docs-card">
             <h3>Media</h3>
@@ -201,11 +201,14 @@ export const userManualSections: DocSection[] = [
       <>
         <h2>Chat overview</h2>
         <p>
-          Path: <code>/app/chat</code>. Create multiple sessions, organize them into folders, pick models your admin
-          enabled, and stream replies. Your chats sync to the server (except <a href="#private-mode">Private mode</a>
-          ).
+          Path: <code>/app/chat</code>. Create multiple sessions, organize them into folders, choose general chat or an
+          approved specialist Agent, and stream replies. Your chats sync to the server (except{" "}
+          <a href="#private-mode">Private mode</a>).
         </p>
         <ul>
+          <li>
+            <a href="#user-agents">Specialist Agents &amp; citations</a>
+          </li>
           <li>
             <a href="#chat-sessions">Sessions &amp; folders</a>
           </li>
@@ -233,6 +236,52 @@ export const userManualSections: DocSection[] = [
             <a href="#chat-export">Export &amp; feedback</a>
           </li>
         </ul>
+      </>
+    ),
+  },
+  {
+    id: "user-agents",
+    title: "Specialist Agents & citations",
+    group: "Chat",
+    content: (
+      <>
+        <h2>Specialist Agents &amp; citations</h2>
+        <p>
+          The brain button in the chat box can show IT Helpdesk, HR Assistant, Legal Consultant, Finance Consultant,
+          Marketing Consultant, and any specialists your organization publishes. Visibility depends on both Agent and
+          Knowledge access; a missing specialist may simply be restricted to another team.
+        </p>
+        <ul>
+          <li>
+            Chats start with no Agent. Switch one on when the domain matters; only one Agent runs at a time, switching
+            it off returns the chat to the plain model, and the choice stays with that chat only. A tinted outline
+            around the chat box marks Agent turns, and an Agent may still propose a handoff for your consent.
+          </li>
+          <li>
+            Organization-specific answers show citations. Open a citation to inspect its document, section/page,
+            effective version, and Knowledge Base details that you are authorized to see.
+          </li>
+          <li>
+            Legal and Finance responses include a disclaimer. A citation supports the answer but does not replace
+            professional approval.
+          </li>
+          <li>
+            If evidence is missing, expired, conflicting, or outside your permissions, a safe specialist should abstain
+            or escalate instead of inventing policy.
+          </li>
+          <li>
+            A handoff transfers only bounded conversation context. Review the target Agent and approve the transfer when
+            prompted.
+          </li>
+        </ul>
+        <Warn>
+          Treat citations as evidence, not instructions. Never share passwords, one-time codes, recovery secrets, or
+          another person&apos;s confidential information with an Agent.
+        </Warn>
+        <Note>
+          Private mode does not persist the conversation and disables sensitive retrieval/memory according to policy. It
+          does not grant extra access or bypass organization controls.
+        </Note>
       </>
     ),
   },

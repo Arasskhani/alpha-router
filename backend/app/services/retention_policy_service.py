@@ -6,11 +6,13 @@ import datetime as dt
 import logging
 from typing import Any
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import and_, delete, exists, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chat import ChatMessage, ChatSession
+from app.models.knowledge import LegalHold
 from app.models.system import SystemSetting
+from app.services.agent_governance_service import append_governance_audit_event
 from app.services.schedule_timezone import server_timezone_label
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,40 @@ _CHAT_SETTING_KEYS = (
 )
 
 _PURGE_BATCH_SIZE = 5000
+
+
+def _chat_message_has_active_legal_hold():
+    direct_session_hold = exists(
+        select(LegalHold.id).where(
+            LegalHold.resource_type == "chat_session",
+            LegalHold.resource_id == ChatMessage.session_id,
+            LegalHold.status == "active",
+        )
+    )
+    held_agent_id = (
+        select(ChatSession.current_agent_id)
+        .where(ChatSession.id == ChatMessage.session_id)
+        .correlate(ChatMessage)
+        .scalar_subquery()
+    )
+    agent_hold = exists(
+        select(LegalHold.id).where(
+            LegalHold.resource_type == "agent",
+            LegalHold.resource_id == held_agent_id,
+            LegalHold.status == "active",
+        )
+    )
+    agent_run_hold = and_(
+        ChatMessage.agent_run_id.is_not(None),
+        exists(
+            select(LegalHold.id).where(
+                LegalHold.resource_type == "agent_run",
+                LegalHold.resource_id == ChatMessage.agent_run_id,
+                LegalHold.status == "active",
+            )
+        ),
+    )
+    return or_(direct_session_hold, agent_hold, agent_run_hold)
 
 
 def _parse_bool(raw: str | None, default: bool = False) -> bool:
@@ -97,17 +133,35 @@ async def chat_retention_stats(db: AsyncSession) -> dict[str, int]:
     ).scalar() or 0
     settings_data = await get_chat_retention_settings(db)
     expired_messages = 0
+    held_expired_messages = 0
     if settings_data["retention_enabled"]:
         cutoff = dt.datetime.utcnow() - dt.timedelta(days=int(settings_data["retention_days"]))
+        active_hold = _chat_message_has_active_legal_hold()
         expired_messages = (
             await db.execute(
-                select(func.count()).select_from(ChatMessage).where(ChatMessage.created_at < cutoff)
+                select(func.count())
+                .select_from(ChatMessage)
+                .where(
+                    ChatMessage.created_at < cutoff,
+                    ~active_hold,
+                )
+            )
+        ).scalar() or 0
+        held_expired_messages = (
+            await db.execute(
+                select(func.count())
+                .select_from(ChatMessage)
+                .where(
+                    ChatMessage.created_at < cutoff,
+                    active_hold,
+                )
             )
         ).scalar() or 0
     return {
         "total_sessions": int(session_count),
         "total_messages": int(message_count),
         "expired_messages": int(expired_messages),
+        "held_expired_messages": int(held_expired_messages),
     }
 
 
@@ -212,12 +266,16 @@ async def purge_expired_chat_messages(
     cutoff = dt.datetime.utcnow() - dt.timedelta(days=days)
     removed = 0
     affected: set[str] = set()
+    active_hold = _chat_message_has_active_legal_hold()
 
     while True:
         batch_ids = (
             await db.execute(
                 select(ChatMessage.id, ChatMessage.session_id)
-                .where(ChatMessage.created_at < cutoff)
+                .where(
+                    ChatMessage.created_at < cutoff,
+                    ~active_hold,
+                )
                 .limit(_PURGE_BATCH_SIZE)
             )
         ).all()
@@ -235,6 +293,18 @@ async def purge_expired_chat_messages(
     if affected:
         await _sync_affected_session_stats(db, affected)
     removed_empty = await cleanup_empty_sessions_after_purge(db, affected)
+    if removed or removed_empty:
+        await append_governance_audit_event(
+            db,
+            event_type="governance.retention.chat.purged",
+            resource_type="chat",
+            outcome="success",
+            payload={
+                "retention_days": days,
+                "removed_messages": removed,
+                "removed_empty_sessions": removed_empty,
+            },
+        )
     logger.info(
         "Chat retention purge removed %s messages older than %s days; removed %s empty sessions",
         removed,

@@ -12,6 +12,7 @@ from botocore.exceptions import ClientError, EndpointConnectionError
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+_READ_CHUNK_BYTES = 64 * 1024
 
 
 class ObjectNotFoundError(FileNotFoundError):
@@ -108,6 +109,37 @@ def get_object_bytes(key: str) -> bytes:
             raise ObjectNotFoundError(_normalize_key(key)) from exc
         raise
     return resp["Body"].read()
+
+
+def get_object_bytes_bounded(key: str, *, max_bytes: int) -> bytes:
+    """Read an object without trusting its declared length."""
+
+    if max_bytes <= 0:
+        raise ValueError("max_bytes must be positive")
+    settings = get_settings()
+    try:
+        resp = _client().get_object(Bucket=settings.s3_bucket, Key=_normalize_key(key))
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in ("NoSuchKey", "404", "NotFound"):
+            raise ObjectNotFoundError(_normalize_key(key)) from exc
+        raise
+    declared = int(resp.get("ContentLength") or 0)
+    body = resp["Body"]
+    try:
+        if declared > max_bytes:
+            raise ValueError("Stored object exceeds the allowed limit")
+        output = bytearray()
+        while True:
+            chunk = body.read(_READ_CHUNK_BYTES)
+            if not chunk:
+                break
+            output.extend(chunk)
+            if len(output) > max_bytes:
+                raise ValueError("Stored object exceeds the allowed limit")
+        return bytes(output)
+    finally:
+        body.close()
 
 
 def object_exists(key: str) -> bool:

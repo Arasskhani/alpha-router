@@ -2,7 +2,7 @@
 
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,14 +12,17 @@ from app.config import get_settings
 from app.database import get_db, get_read_db
 from app.models.user import User
 from app.services.chat_feedback_service import feedback_payload, set_message_feedback
+from app.services.private_mode_service import PrivateModePersistenceError
 from app.services.rate_limit import check_rate_limit
 from app.services.user_chat_storage_service import (
     RevisionConflictError,
     append_session_messages,
+    cancel_streaming_reply,
     create_chat_folder,
     create_chat_session,
     delete_chat_folder,
     delete_chat_session,
+    get_chat_session,
     list_chat_folders,
     list_chat_sessions,
     list_session_messages,
@@ -27,8 +30,6 @@ from app.services.user_chat_storage_service import (
     replace_session_messages,
     save_user_prefs,
     search_chat_messages,
-    get_chat_session,
-    cancel_streaming_reply,
     update_chat_folder,
     update_chat_session,
     update_last_session_message,
@@ -130,6 +131,10 @@ def _revision_conflict(exc: RevisionConflictError) -> HTTPException:
         status_code=409,
         detail={"message": "Session revision conflict", "revision": exc.current_revision},
     )
+
+
+def _private_mode_conflict(exc: PrivateModePersistenceError) -> HTTPException:
+    return HTTPException(status_code=409, detail=str(exc))
 
 
 @router.get("")
@@ -276,6 +281,9 @@ async def patch_chat_session(
     except RevisionConflictError as exc:
         await db.rollback()
         raise _revision_conflict(exc) from exc
+    except PrivateModePersistenceError as exc:
+        await db.rollback()
+        raise _private_mode_conflict(exc) from exc
     except ValueError as exc:
         await db.rollback()
         raise HTTPException(status_code=413, detail=str(exc)) from exc
@@ -339,6 +347,9 @@ async def post_session_messages(
     except RevisionConflictError as exc:
         await db.rollback()
         raise _revision_conflict(exc) from exc
+    except PrivateModePersistenceError as exc:
+        await db.rollback()
+        raise _private_mode_conflict(exc) from exc
     except ValueError as exc:
         await db.rollback()
         raise HTTPException(status_code=413, detail=str(exc)) from exc
@@ -371,6 +382,9 @@ async def put_session_messages(
     except RevisionConflictError as exc:
         await db.rollback()
         raise _revision_conflict(exc) from exc
+    except PrivateModePersistenceError as exc:
+        await db.rollback()
+        raise _private_mode_conflict(exc) from exc
     except ValueError as exc:
         await db.rollback()
         raise HTTPException(status_code=413, detail=str(exc)) from exc
@@ -406,6 +420,9 @@ async def patch_last_session_message(
     except RevisionConflictError as exc:
         await db.rollback()
         raise _revision_conflict(exc) from exc
+    except PrivateModePersistenceError as exc:
+        await db.rollback()
+        raise _private_mode_conflict(exc) from exc
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     await db.commit()
@@ -446,7 +463,11 @@ async def cancel_session_stream(
     db: AsyncSession = Depends(get_db),
 ):
     """Signal an in-flight server-owned completion to stop (works after page refresh)."""
-    session = await cancel_streaming_reply(db, user.id, session_id)
+    try:
+        session = await cancel_streaming_reply(db, user.id, session_id)
+    except PrivateModePersistenceError as exc:
+        await db.rollback()
+        raise _private_mode_conflict(exc) from exc
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found or nothing to cancel")
     await db.commit()

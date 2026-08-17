@@ -101,6 +101,7 @@ import ChatAudioMessage from "./chat/ChatAudioMessage";
 import ServerToolsMenu from "./chat/ServerToolsMenu";
 import ChatModelPickerModal from "./chat/ChatModelPickerModal";
 import {
+  ComposerAgentIcon,
   ComposerToolsIcon,
   ComposerTranslateIcon,
 } from "./chat/ComposerControlIcons";
@@ -245,6 +246,25 @@ import {
   isReturningChatUser,
   shouldShowWelcomeComposerPrompt,
 } from "../lib/chatWelcome";
+import {
+  NO_AGENT_SELECTION,
+  agentCompletionMetadataFromSse,
+  agentRequestFields,
+  decideAgentHandoff,
+  fetchAgentCatalog,
+  fetchPendingAgentHandoffs,
+  formatAgentAnswerForDisplay,
+  nextAgentSelection,
+  resolveAgentSelection,
+  type AgentCatalogItem,
+  type AgentCompletionMetadata,
+  type AgentHandoff,
+} from "../lib/agentChat";
+import {
+  AgentCitationList,
+  AgentHandoffBanner,
+} from "./chat/AgentExperience";
+import AgentMenu from "./chat/AgentMenu";
 
 type Model = {
   id: string;
@@ -584,6 +604,10 @@ export default function ChatPanel() {
   const [models, setModels] = useState<Model[]>([]);
   const [modelsError, setModelsError] = useState("");
   const [model, setModel] = useState("");
+  const [agentCatalog, setAgentCatalog] = useState<AgentCatalogItem[]>([]);
+  const [agentMenuOpen, setAgentMenuOpen] = useState(false);
+  const [pendingHandoffs, setPendingHandoffs] = useState<AgentHandoff[]>([]);
+  const [handoffBusyId, setHandoffBusyId] = useState<string | null>(null);
   /** Multi-model selection; send fans out to each id in order (primary = first). */
   const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
   const selectedModelIdsRef = useRef<string[]>([]);
@@ -659,6 +683,8 @@ export default function ChatPanel() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const toolsMenuRef = useRef<HTMLDivElement>(null);
   const toolsTriggerRef = useRef<HTMLButtonElement>(null);
+  const agentMenuRef = useRef<HTMLDivElement>(null);
+  const agentTriggerRef = useRef<HTMLButtonElement>(null);
   const activeIdRef = useRef<string | null>(null);
   const lastSyncedActiveIdRef = useRef<string | null>(null);
   const serverSaveTimerRef = useRef<number | null>(null);
@@ -817,6 +843,15 @@ export default function ChatPanel() {
 
   const activeSession = activeId ? sessions.find((s) => s.id === activeId) : null;
   const activePrivateMode = isPrivateChat(activeSession);
+  const activeSessionAgent = activeSession?.currentAgentId
+    ? agentCatalog.find((agent) => agent.id === activeSession.currentAgentId)
+    : undefined;
+  const activeAgentSelection = activeId
+    ? resolveAgentSelection(activeSession?.selectedAgentSlug, activeSessionAgent?.slug)
+    : NO_AGENT_SELECTION;
+  const agentModeActive = activeAgentSelection !== NO_AGENT_SELECTION;
+  const activeAgentName =
+    agentCatalog.find((agent) => agent.slug === activeAgentSelection)?.name || "";
 
   const activeToolCount = useMemo(() => {
     let n = 0;
@@ -941,6 +976,100 @@ export default function ChatPanel() {
 
   function sessionPrivateMode(sessionId: string): boolean {
     return isPrivateChat(sessionsRef.current.find((s) => s.id === sessionId));
+  }
+
+  function agentSelectionForSession(sessionId: string): string {
+    const session = sessionsRef.current.find((item) => item.id === sessionId);
+    const bound = session?.currentAgentId
+      ? agentCatalog.find((agent) => agent.id === session.currentAgentId)
+      : undefined;
+    return resolveAgentSelection(session?.selectedAgentSlug, bound?.slug);
+  }
+
+  /** Agents are mutually exclusive per chat; picking the active one turns it off. */
+  function toggleAgentForActiveSession(slug: string) {
+    const sessionId = activeIdRef.current || ensureActiveSession();
+    if (!sessionId) return;
+    const selection = nextAgentSelection(agentSelectionForSession(sessionId), slug);
+    const cleared = selection === NO_AGENT_SELECTION;
+    persistSessions(
+      (prev) =>
+        prev.map((s) =>
+          s.id === sessionId
+            ? {
+                ...s,
+                selectedAgentSlug: cleared ? null : selection,
+                // Drop the sticky binding so handoff polling and the next turn
+                // both follow the user's choice to run without an Agent.
+                ...(cleared
+                  ? { currentAgentId: null, currentAgentVersionId: null }
+                  : {}),
+              }
+            : s,
+        ),
+      { debounce: false },
+    );
+    if (!cleared) {
+      const primary = selectedModelIdsRef.current[0] || model;
+      if (primary) setSelectedModelIds([primary]);
+    }
+  }
+
+  function applyAgentMetadataToSession(
+    sessionId: string,
+    metadata?: AgentCompletionMetadata,
+  ) {
+    if (!metadata?.agentId) return;
+    const selected = agentCatalog.find((agent) => agent.id === metadata.agentId);
+    const next = sessionsRef.current.map((session) =>
+      session.id === sessionId
+        ? {
+            ...session,
+            currentAgentId: metadata.agentId,
+            currentAgentVersionId: metadata.agentVersionId ?? session.currentAgentVersionId,
+            selectedAgentSlug: selected?.slug ?? session.selectedAgentSlug,
+            agentSelectedAt: Date.now(),
+          }
+        : session,
+    );
+    sessionsRef.current = next;
+    setSessions(next);
+  }
+
+  async function handleAgentHandoff(
+    handoff: AgentHandoff,
+    decision: "accept" | "decline",
+  ) {
+    setHandoffBusyId(handoff.id);
+    setChatError("");
+    try {
+      const result = await decideAgentHandoff(handoff.id, decision);
+      setPendingHandoffs((prev) => prev.filter((item) => item.id !== handoff.id));
+      if (
+        decision === "accept"
+        && activeIdRef.current
+        && result.agent_id
+        && result.agent_slug
+      ) {
+        const sessionId = activeIdRef.current;
+        const next = sessionsRef.current.map((session) =>
+          session.id === sessionId
+            ? {
+                ...session,
+                currentAgentId: result.agent_id,
+                selectedAgentSlug: result.agent_slug,
+                agentSelectedAt: Date.now(),
+              }
+            : session,
+        );
+        sessionsRef.current = next;
+        setSessions(next);
+      }
+    } catch (error) {
+      reportUserFacingApiError(error);
+    } finally {
+      setHandoffBusyId(null);
+    }
   }
 
   /** Speech > video > image when multiple legacy flags survive a session payload. */
@@ -1378,6 +1507,66 @@ export default function ChatPanel() {
       cancelled = true;
     };
   }, [readOnly, defaultModel, userPrefsReady]);
+
+  useEffect(() => {
+    if (readOnly || !sessionUsername) {
+      setAgentCatalog([]);
+      return;
+    }
+    let cancelled = false;
+    void fetchAgentCatalog()
+      .then((catalog) => {
+        if (cancelled) return;
+        setAgentCatalog(Array.isArray(catalog.items) ? catalog.items : []);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAgentCatalog([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [readOnly, sessionUsername]);
+
+  useEffect(() => {
+    if (
+      readOnly
+      || !activeId
+      || activePrivateMode
+      || (
+        activeAgentSelection === NO_AGENT_SELECTION
+        && !activeSession?.currentAgentId
+      )
+    ) {
+      setPendingHandoffs([]);
+      return;
+    }
+    const sessionId = activeId;
+    let cancelled = false;
+    const load = () => {
+      void fetchPendingAgentHandoffs(sessionId)
+        .then((items) => {
+          if (!cancelled && activeIdRef.current === sessionId) {
+            setPendingHandoffs(items);
+          }
+        })
+        .catch(() => {
+          // A new chat may not exist on the server until its first turn.
+        });
+    };
+    load();
+    const timer = window.setInterval(load, 10_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [
+    activeAgentSelection,
+    activeId,
+    activePrivateMode,
+    activeSession?.currentAgentId,
+    readOnly,
+  ]);
 
   useEffect(() => {
     if (!models.length || !activeId || !chatsHydrated) return;
@@ -2164,6 +2353,22 @@ export default function ChatPanel() {
     return () => document.removeEventListener("mousedown", onDoc);
   }, [toolsMenuOpen]);
 
+  useEffect(() => {
+    if (!agentMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (agentMenuRef.current?.contains(target)) return;
+      if (target instanceof Element && target.closest(".alpha-router-agent-menu")) return;
+      setAgentMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [agentMenuOpen]);
+
+  useEffect(() => {
+    setAgentMenuOpen(false);
+  }, [activeId]);
+
   // Reset pills when switching chats. Same-session multi-select is owned by
   // replace/append/remove helpers (Search replaces; Add Model appends).
   const selectionSessionRef = useRef<string | null>(null);
@@ -2251,12 +2456,18 @@ export default function ChatPanel() {
   ) {
     const toolsPayload = toolsToApiPayload(tools);
     const includeUser = persist?.includeUserMessage !== false && persist?.userMessage;
+    const sessionId = persist?.sessionId || activeIdRef.current;
+    const agentFields =
+      !privateMode && sessionId
+        ? agentRequestFields(agentSelectionForSession(sessionId))
+        : {};
     return {
       model: modelId,
       messages: await apiMessages(history, forModel, privateMode),
       stream: true,
       private_mode: !!privateMode,
       ...toolsPayload,
+      ...agentFields,
       ...(persist
         ? {
             chat_session_id: persist.sessionId,
@@ -3027,7 +3238,11 @@ export default function ChatPanel() {
       includeUserMessage?: boolean;
     },
     privateMode = false,
-  ): Promise<{ content: string; requestLogId?: number }> {
+  ): Promise<{
+    content: string;
+    requestLogId?: number;
+    agentMetadata?: AgentCompletionMetadata;
+  }> {
     const res = await authFetch("/api/chat/completions", {
       method: "POST",
       headers: {
@@ -3058,6 +3273,7 @@ export default function ChatPanel() {
     let assistant = "";
     let buffer = "";
     let requestLogId: number | undefined;
+    let agentMetadata: AgentCompletionMetadata | undefined;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -3083,6 +3299,15 @@ export default function ChatPanel() {
           if (typeof metaLogId === "number" && Number.isFinite(metaLogId)) {
             requestLogId = metaLogId;
           }
+          const nextAgentMetadata = agentCompletionMetadataFromSse(
+            json?.alpha_router,
+          );
+          if (Object.keys(nextAgentMetadata).length) {
+            agentMetadata = {
+              ...(agentMetadata || {}),
+              ...nextAgentMetadata,
+            };
+          }
           const delta = json.choices?.[0]?.delta?.content;
           if (delta) {
             assistant += delta;
@@ -3094,7 +3319,11 @@ export default function ChatPanel() {
         }
       }
     }
-    return { content: assistant, ...(requestLogId != null ? { requestLogId } : {}) };
+    return {
+      content: assistant,
+      ...(requestLogId != null ? { requestLogId } : {}),
+      ...(agentMetadata ? { agentMetadata } : {}),
+    };
   }
 
   async function openMessageCostDetails(requestLogId: number) {
@@ -3280,8 +3509,14 @@ export default function ChatPanel() {
     const emptyReply =
       "No response from model. Check Connections and enable the model in Admin → Models.";
     const turnSession = sessionsRef.current.find((s) => s.id === sid);
-    const turnTools =
-      sid === activeIdRef.current ? chatToolsRef.current : sessionTools(turnSession);
+    const specialistTurn =
+      !sessionPrivateMode(sid)
+      && agentSelectionForSession(sid) !== NO_AGENT_SELECTION;
+    const turnTools = specialistTurn
+      ? copyFreshChatTools()
+      : sid === activeIdRef.current
+        ? chatToolsRef.current
+        : sessionTools(turnSession);
 
     const historyForApi = historyForCompletionApi(historyWithUser);
     const scopedHistory = historyForModelRequest(historyForApi);
@@ -3538,6 +3773,7 @@ export default function ChatPanel() {
       content: string,
       receivedAt?: number,
       requestLogId?: number,
+      agentMetadata?: AgentCompletionMetadata,
     ) => {
       const current = getSessionMessages(sid);
       const idx = current.findIndex((m) => m.clientMessageId === assistantClientMessageId);
@@ -3549,6 +3785,7 @@ export default function ChatPanel() {
         modelName: primaryModel.name,
         ...(receivedAt != null ? { receivedAt } : {}),
         ...(requestLogId != null ? { requestLogId } : {}),
+        ...(agentMetadata || {}),
       };
       if (idx >= 0) {
         const next = [...current];
@@ -3583,8 +3820,14 @@ export default function ChatPanel() {
     );
     const receivedAt = Date.now();
     const finalContent = streamed.content.trim() ? streamed.content : emptyReply;
-    const finalMsgs = patchAssistantInSession(finalContent, receivedAt, streamed.requestLogId);
+    const finalMsgs = patchAssistantInSession(
+      finalContent,
+      receivedAt,
+      streamed.requestLogId,
+      streamed.agentMetadata,
+    );
     applyMessages(sid, finalMsgs);
+    applyAgentMetadataToSession(sid, streamed.agentMetadata);
     maybeNotifyReplyReady(sid, assistantClientMessageId, finalContent);
     if (useServerPersist && !options?.skipReconcile) {
       void fetchSessionWithMessages(sid).then((remote) => {
@@ -3598,6 +3841,13 @@ export default function ChatPanel() {
         );
         applyMessages(sid, reconciled);
       });
+    }
+    if (streamed.agentMetadata?.agentRunId) {
+      void fetchPendingAgentHandoffs(sid)
+        .then((items) => {
+          if (activeIdRef.current === sid) setPendingHandoffs(items);
+        })
+        .catch(() => {});
     }
     patchDefaultTitleFromMessages(sid, finalMsgs);
     if (!options?.skipTitle) {
@@ -4152,16 +4402,22 @@ export default function ChatPanel() {
     const turnSession = sessionsRef.current.find((s) => s.id === sessionId);
     const toolsForTurn =
       sessionId === activeIdRef.current ? chatToolsRef.current : sessionTools(turnSession);
-    const willRouteToImage = willRoutePromptToImageGeneration(
+    const specialistTurn =
+      !sessionPrivateMode(sessionId)
+      && agentSelectionForSession(sessionId) !== NO_AGENT_SELECTION;
+    const willRouteToImage = !specialistTurn && willRoutePromptToImageGeneration(
       userMsg.content,
       toolsForTurn,
       validModel,
       prevMsgs,
     );
-    const willRouteToVideo = willRoutePromptToVideoGeneration(toolsForTurn, validModel);
-    const willRouteToSpeech = willRoutePromptToSpeechGeneration(toolsForTurn, validModel);
+    const willRouteToVideo =
+      !specialistTurn && willRoutePromptToVideoGeneration(toolsForTurn, validModel);
+    const willRouteToSpeech =
+      !specialistTurn && willRoutePromptToSpeechGeneration(toolsForTurn, validModel);
     // Media generation is always single-model (primary only).
     const turnModels =
+      specialistTurn ||
       willRouteToImage ||
       willRouteToVideo ||
       willRouteToSpeech ||
@@ -5561,6 +5817,15 @@ export default function ChatPanel() {
         {readOnly && <ReadOnlyBanner className="readonly-account-banner--chat" />}
         {chatError && <div className="alpha-router-banner">{chatError}</div>}
         {modelsError && !chatError && <div className="alpha-router-banner alpha-router-banner-warn">{modelsError}</div>}
+        {pendingHandoffs.map((handoff) => (
+          <AgentHandoffBanner
+            key={handoff.id}
+            handoff={handoff}
+            busy={handoffBusyId === handoff.id}
+            onAccept={() => void handleAgentHandoff(handoff, "accept")}
+            onDecline={() => void handleAgentHandoff(handoff, "decline")}
+          />
+        ))}
 
         <div className="alpha-router-messages" ref={messagesScrollRef}>
           {messagesLoadingOlder ? (
@@ -5576,6 +5841,15 @@ export default function ChatPanel() {
               key={`${activeId}-${i}`}
               className={`alpha-router-msg alpha-router-msg-${m.role}${m.modelId ? " alpha-router-msg-multi" : ""}`}
             >
+              {m.role === "assistant" && m.agentName ? (
+                <div
+                  className="alpha-router-msg-agent-label"
+                  title={m.agentId ? `Agent ${m.agentId}` : "Specialist Agent"}
+                >
+                  <span aria-hidden />
+                  {m.agentName}
+                </div>
+              ) : null}
               {m.role === "assistant" && m.modelName ? (
                 <div className="alpha-router-msg-model-label" title={m.modelId}>
                   <ModelName
@@ -5707,6 +5981,10 @@ export default function ChatPanel() {
                       isSessionStreaming && i === messages.length - 1;
                     const showTurnStatus =
                       streamingThisMessage && !m.content?.trim() && activeTurnPhase;
+                    const displayContent = formatAgentAnswerForDisplay(
+                      fallback,
+                      m.citations,
+                    );
                     return (
                       <>
                         {showTurnStatus ? (
@@ -5724,7 +6002,7 @@ export default function ChatPanel() {
                         ) : null}
                         {m.content?.trim() || !showTurnStatus ? (
                           <MarkdownContent
-                            content={fallback}
+                            content={displayContent}
                             className={`alpha-router-markdown${streamingThisMessage ? " alpha-router-markdown--streaming" : ""}`}
                             streaming={streamingThisMessage}
                           />
@@ -5736,6 +6014,13 @@ export default function ChatPanel() {
                   return plain;
                 })()}
               </div>
+              {m.role === "assistant" ? (
+                <AgentCitationList
+                  runId={m.agentRunId}
+                  citations={m.citations}
+                  onError={reportUserFacingApiError}
+                />
+              ) : null}
               <div className="alpha-router-msg-actions">
                 {m.role === "assistant" &&
                 typeof m.requestLogId === "number" &&
@@ -5992,7 +6277,9 @@ export default function ChatPanel() {
                 </svg>
               </button>
             ) : null}
-            <div className="alpha-router-composer-box">
+            <div
+              className={`alpha-router-composer-box${agentModeActive ? " is-agent-active" : ""}`}
+            >
               <input
                 ref={fileInputRef}
                 type="file"
@@ -6102,6 +6389,47 @@ export default function ChatPanel() {
                     videoCapabilities={selectedModels[0]}
                     speechCapabilities={selectedModels[0]}
                   />
+                  </div>
+                  <div className="alpha-router-tools-picker" ref={agentMenuRef}>
+                    <button
+                      ref={agentTriggerRef}
+                      type="button"
+                      className={`alpha-router-composer-ctrl alpha-router-agent-ctrl${agentModeActive ? " is-active" : ""}`}
+                      onClick={() => {
+                        setModelPickerMode(null);
+                        setToolsMenuOpen(false);
+                        setAgentMenuOpen((o) => !o);
+                      }}
+                      disabled={readOnly || activePrivateMode || !agentCatalog.length}
+                      aria-expanded={agentMenuOpen}
+                      aria-haspopup="menu"
+                      aria-label="Agents"
+                      title={
+                        activePrivateMode
+                          ? "Agents are unavailable in Private Mode because Agent runs and citations require server-side evidence."
+                          : agentModeActive
+                            ? `${activeAgentName || "Agent"} is on for this chat`
+                            : "Turn on a governed specialist Agent for this chat"
+                      }
+                    >
+                      <span className="alpha-router-composer-ctrl__icon" aria-hidden>
+                        <ComposerAgentIcon />
+                      </span>
+                    </button>
+                    <AgentMenu
+                      open={agentMenuOpen}
+                      anchorRef={agentTriggerRef}
+                      agents={agentCatalog}
+                      selection={activeAgentSelection}
+                      disabled={readOnly || isSessionStreaming}
+                      disabledReason={
+                        isSessionStreaming
+                          ? "Wait for the current answer to finish before changing Agents."
+                          : undefined
+                      }
+                      onToggle={toggleAgentForActiveSession}
+                      onClose={() => setAgentMenuOpen(false)}
+                    />
                   </div>
                   <button
                     type="button"

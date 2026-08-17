@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
-from app.models.chat import ChatSession
+from app.models.chat import ChatMessage, ChatSession
 from app.models.user import User
 from app.services.user_chat_storage_service import (
     RevisionConflictError,
@@ -101,13 +101,67 @@ async def _run_roundtrip() -> None:
             user.id,
             "s1",
             [
-                {"role": "user", "content": "Hi"},
-                {"role": "assistant", "content": "Hello"},
+                {
+                    "role": "user",
+                    "content": "Hi",
+                    "clientMessageId": "replace-user",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Hello",
+                    "clientMessageId": "replace-assistant",
+                },
             ],
             expected_revision=2,
         )
         msgs, _ = await list_session_messages(session, user.id, "s1")
         assert len(msgs) == 2
+
+        assistant_row = (
+            await session.execute(
+                select(ChatMessage).where(
+                    ChatMessage.session_id == "s1",
+                    ChatMessage.client_message_id == "replace-assistant",
+                )
+            )
+        ).scalar_one()
+        assistant_row.agent_run_id = "run-1"
+        assistant_row.meta = {
+            **(assistant_row.meta or {}),
+            "agentName": "Legal Consultant",
+            "agentStatus": "succeeded",
+            "citations": [{"citation_id": "cite-1", "title": "Policy"}],
+        }
+        await session.flush()
+        msgs, _ = await list_session_messages(session, user.id, "s1")
+        assert msgs[-1]["agentRunId"] == "run-1"
+        assert msgs[-1]["agentName"] == "Legal Consultant"
+        assert msgs[-1]["citations"][0]["citation_id"] == "cite-1"
+
+        row = await session.get(ChatSession, "s1")
+        assert row is not None
+        await replace_session_messages(
+            session,
+            user.id,
+            "s1",
+            [
+                {
+                    "role": "user",
+                    "content": "Hi",
+                    "clientMessageId": "replace-user",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Edited",
+                    "clientMessageId": "replace-assistant",
+                },
+            ],
+            expected_revision=row.revision,
+        )
+        msgs, _ = await list_session_messages(session, user.id, "s1")
+        assert msgs[-1]["agentRunId"] == "run-1"
+        assert msgs[-1]["agentName"] == "Legal Consultant"
+        assert msgs[-1]["citations"][0]["citation_id"] == "cite-1"
 
         defaults = await load_user_prefs(session, user.id)
         assert defaults["default_model"] == "gpt-4"

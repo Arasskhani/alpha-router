@@ -24,6 +24,7 @@ MenuKey = Literal[
     "api_logs",
     "operations",
     "database",
+    "agents",
     "admin_guide",
     "user_manual",
 ]
@@ -35,6 +36,7 @@ CategoryKey = Literal[
     "people_access",
     "integrations",
     "data_reports",
+    "agents_knowledge",
     "developer",
 ]
 
@@ -50,6 +52,16 @@ SUPER_ADMIN_SLUG = "super_admin"
 API_KEY_ADMIN_SLUG = "api_keys_full_administrator"
 DASHBOARD_VIEW_SLUG = "dashboard_read_only_administrator"
 REPORTS_ACCESS_SLUG = "reports_full_administrator"
+AGENTS_ADMIN_SLUG = "agents_administrator"
+AGENT_DESIGNER_SLUG = "agent_designer"
+AGENT_PUBLISHER_SLUG = "agent_publisher"
+KNOWLEDGE_ADMIN_SLUG = "knowledge_administrator"
+KNOWLEDGE_CURATOR_SLUG = "knowledge_curator"
+KNOWLEDGE_PUBLISHER_SLUG = "knowledge_publisher"
+DOMAIN_APPROVER_SLUG = "agent_domain_approver"
+TOOL_ADMIN_SLUG = "agent_tool_administrator"
+AGENT_OPERATIONS_ADMIN_SLUG = "agent_operations_administrator"
+AGENT_AUDITOR_SLUG = "agent_auditor"
 
 # Explicitly re-enabled scoped roles (must stay assignable; not section-bundle generated).
 REENABLED_SCOPED_ROLE_SLUGS: frozenset[str] = frozenset(
@@ -75,6 +87,7 @@ MENU_DEFINITIONS: tuple[tuple[MenuKey, str, CategoryKey], ...] = (
     ("storage", "Storage", "data_reports"),
     ("reports", "Reports", "data_reports"),
     ("api_logs", "API Logs", "data_reports"),
+    ("agents", "Agents & Knowledge", "agents_knowledge"),
     ("admin_guide", "Admin Guide", "developer"),
     ("user_manual", "User Manual", "developer"),
 )
@@ -136,6 +149,7 @@ CATEGORY_LABELS: dict[CategoryKey, str] = {
     "people_access": "People & access",
     "integrations": "Integrations",
     "data_reports": "Data & reports",
+    "agents_knowledge": "Agents & Knowledge",
     "developer": "Developer",
 }
 
@@ -158,6 +172,14 @@ MENU_PATH_PREFIXES: dict[MenuKey, tuple[str, ...]] = {
     "api_logs": ("/admin/logs",),
     "operations": ("/admin/operations", "/admin/debug"),
     "database": ("/admin/database",),
+    "agents": (
+        "/admin/agents",
+        "/admin/knowledge",
+        "/admin/agent-tools",
+        "/admin/agent-evaluations",
+        "/admin/agent-approvals",
+        "/admin/agent-activity",
+    ),
     "admin_guide": ("/admin/docs",),
     "user_manual": ("/admin/manual",),
 }
@@ -267,12 +289,237 @@ def _build_role_catalog() -> tuple[RoleDefinition, ...]:
             menu_key="reports",
             read_only=False,
         ),
+        RoleDefinition(
+            slug=AGENTS_ADMIN_SLUG,
+            name="Agents Administrator",
+            description="Manage the full Agents & Knowledge domain without bypassing required approvals.",
+            category=CATEGORY_LABELS["agents_knowledge"],
+            menu_key="agents",
+            read_only=False,
+        ),
+        RoleDefinition(
+            slug=AGENT_DESIGNER_SLUG,
+            name="Agent Designer",
+            description="Create, clone, edit, test, and submit Agent drafts without publishing.",
+            category=CATEGORY_LABELS["agents_knowledge"],
+            menu_key="agents",
+            read_only=False,
+        ),
+        RoleDefinition(
+            slug=AGENT_PUBLISHER_SLUG,
+            name="Agent Publisher",
+            description="Review, publish, archive, and roll back Agent versions.",
+            category=CATEGORY_LABELS["agents_knowledge"],
+            menu_key="agents",
+            read_only=False,
+        ),
+        RoleDefinition(
+            slug=KNOWLEDGE_ADMIN_SLUG,
+            name="Knowledge Administrator",
+            description="Manage Knowledge Bases, ACLs, retrieval policy, and Agent bindings.",
+            category=CATEGORY_LABELS["agents_knowledge"],
+            menu_key="agents",
+            read_only=False,
+        ),
+        RoleDefinition(
+            slug=KNOWLEDGE_CURATOR_SLUG,
+            name="Knowledge Curator",
+            description="Manage documents, metadata, sources, connectors, and ingestion drafts.",
+            category=CATEGORY_LABELS["agents_knowledge"],
+            menu_key="agents",
+            read_only=False,
+        ),
+        RoleDefinition(
+            slug=KNOWLEDGE_PUBLISHER_SLUG,
+            name="Knowledge Publisher",
+            description="Review, publish, archive, and roll back Knowledge releases.",
+            category=CATEGORY_LABELS["agents_knowledge"],
+            menu_key="agents",
+            read_only=False,
+        ),
+        RoleDefinition(
+            slug=DOMAIN_APPROVER_SLUG,
+            name="Agent Domain Approver",
+            description="Approve sensitive HR, Legal, and Finance changes and bindings.",
+            category=CATEGORY_LABELS["agents_knowledge"],
+            menu_key="agents",
+            read_only=False,
+        ),
+        RoleDefinition(
+            slug=TOOL_ADMIN_SLUG,
+            name="Agent Tool Administrator",
+            description="Register and govern Agent tools, permissions, and compatibility.",
+            category=CATEGORY_LABELS["agents_knowledge"],
+            menu_key="agents",
+            read_only=False,
+        ),
+        RoleDefinition(
+            slug=AGENT_OPERATIONS_ADMIN_SLUG,
+            name="Agent Operations Administrator",
+            description="Operate ingestion jobs, dead-letter queues, indexes, and reconciliation.",
+            category=CATEGORY_LABELS["agents_knowledge"],
+            menu_key="agents",
+            read_only=False,
+        ),
+        RoleDefinition(
+            slug=AGENT_AUDITOR_SLUG,
+            name="Agent Auditor",
+            description="Read-only access to Agent evaluation, activity, and audit evidence.",
+            category=CATEGORY_LABELS["agents_knowledge"],
+            menu_key="agents",
+            read_only=True,
+        ),
     )
 
 
 ROLE_CATALOG: tuple[RoleDefinition, ...] = _build_role_catalog()
 ROLE_BY_SLUG: dict[str, RoleDefinition] = {r.slug: r for r in ROLE_CATALOG}
 VALID_ROLE_SLUGS: frozenset[str] = frozenset(ROLE_BY_SLUG.keys()) | LEGACY_SUPER_ADMIN_SLUGS
+
+AGENT_DOMAIN_PERMISSIONS: frozenset[str] = frozenset(
+    {
+        "agent.read",
+        "agent.create",
+        "agent.edit",
+        "agent.test",
+        "agent.submit",
+        "agent.review",
+        "agent.publish",
+        "agent.rollback",
+        "agent.archive",
+        "agent.access.manage",
+        "agent.knowledge.bind",
+        "knowledge.read",
+        "knowledge.create",
+        "knowledge.edit",
+        "knowledge.access.manage",
+        "knowledge.documents.write",
+        "knowledge.connectors.manage",
+        "knowledge.sync.run",
+        "knowledge.review",
+        "knowledge.publish",
+        "knowledge.rollback",
+        "knowledge.purge",
+        "tool.read",
+        "tool.manage",
+        "evaluation.read",
+        "evaluation.run",
+        "evaluation.manage",
+        "approval.read",
+        "approval.approve",
+        "activity.read",
+        "governance.read",
+        "governance.hold.manage",
+        "governance.retention.run",
+        "operations.read",
+        "operations.retry",
+        "operations.reindex",
+    }
+)
+
+AGENT_ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
+    AGENTS_ADMIN_SLUG: AGENT_DOMAIN_PERMISSIONS,
+    AGENT_DESIGNER_SLUG: frozenset(
+        {
+            "agent.read",
+            "agent.create",
+            "agent.edit",
+            "agent.test",
+            "agent.submit",
+            "knowledge.read",
+            "tool.read",
+            "evaluation.read",
+            "evaluation.run",
+        }
+    ),
+    AGENT_PUBLISHER_SLUG: frozenset(
+        {
+            "agent.read",
+            "agent.review",
+            "agent.publish",
+            "agent.rollback",
+            "agent.archive",
+            "knowledge.read",
+            "evaluation.read",
+            "approval.read",
+        }
+    ),
+    KNOWLEDGE_ADMIN_SLUG: frozenset(
+        {
+            "agent.read",
+            "agent.knowledge.bind",
+            "knowledge.read",
+            "knowledge.create",
+            "knowledge.edit",
+            "knowledge.access.manage",
+            "knowledge.documents.write",
+            "knowledge.connectors.manage",
+            "knowledge.sync.run",
+            "knowledge.purge",
+            "operations.read",
+        }
+    ),
+    KNOWLEDGE_CURATOR_SLUG: frozenset(
+        {
+            "knowledge.read",
+            "knowledge.edit",
+            "knowledge.documents.write",
+            "knowledge.connectors.manage",
+            "knowledge.sync.run",
+            "operations.read",
+        }
+    ),
+    KNOWLEDGE_PUBLISHER_SLUG: frozenset(
+        {
+            "knowledge.read",
+            "knowledge.review",
+            "knowledge.publish",
+            "knowledge.rollback",
+            "approval.read",
+        }
+    ),
+    DOMAIN_APPROVER_SLUG: frozenset(
+        {
+            "agent.read",
+            "knowledge.read",
+            "approval.read",
+            "approval.approve",
+            "activity.read",
+        }
+    ),
+    TOOL_ADMIN_SLUG: frozenset(
+        {
+            "agent.read",
+            "tool.read",
+            "tool.manage",
+            "activity.read",
+        }
+    ),
+    AGENT_OPERATIONS_ADMIN_SLUG: frozenset(
+        {
+            "knowledge.read",
+            "operations.read",
+            "operations.retry",
+            "operations.reindex",
+            "activity.read",
+            "governance.read",
+            "governance.hold.manage",
+            "governance.retention.run",
+        }
+    ),
+    AGENT_AUDITOR_SLUG: frozenset(
+        {
+            "agent.read",
+            "knowledge.read",
+            "tool.read",
+            "evaluation.read",
+            "approval.read",
+            "activity.read",
+            "governance.read",
+            "operations.read",
+        }
+    ),
+}
 
 # Legacy section-scoped slugs removed after migration (still recognized for remap).
 LEGACY_SECTION_ROLE_PREFIXES: tuple[str, ...] = tuple(CATEGORY_LABELS.keys())
@@ -341,6 +588,26 @@ def list_roles() -> list[dict]:
 
 def is_valid_role_slug(role: str | None) -> bool:
     return is_assignable_role_slug(role)
+
+
+def agent_permissions_for_slugs(slugs: list[str]) -> frozenset[str]:
+    """Union action-level permissions for the Agents & Knowledge domain."""
+
+    normalized = {normalize_role_slug(slug) for slug in slugs if slug}
+    if any(user_has_super_admin_access([slug]) for slug in normalized):
+        return AGENT_DOMAIN_PERMISSIONS
+    permissions: set[str] = set()
+    for slug in normalized:
+        permissions.update(AGENT_ROLE_PERMISSIONS.get(slug, ()))
+    return frozenset(permissions)
+
+
+def user_has_agent_permission(slugs: list[str], permission: str) -> bool:
+    normalized_permission = (permission or "").strip().lower()
+    return (
+        normalized_permission in AGENT_DOMAIN_PERMISSIONS
+        and normalized_permission in agent_permissions_for_slugs(slugs)
+    )
 
 
 def is_admin_panel_role(role: str | None) -> bool:

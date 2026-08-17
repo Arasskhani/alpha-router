@@ -10,9 +10,12 @@ FROM python:3.12-slim AS runtime
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HOME=/home/alpha_router
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
         build-essential curl ca-certificates pkg-config \
         libxml2-dev libxmlsec1-dev libxmlsec1-openssl \
+        tesseract-ocr tesseract-ocr-eng tesseract-ocr-fas \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt .
@@ -24,6 +27,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=120000 playwright install --with-deps chromium
 
+COPY backend/alembic.ini ./alembic.ini
+COPY backend/alembic ./alembic
 COPY backend/app ./app
 COPY --from=frontend-build /fe/dist ./frontend/dist
 RUN groupadd --system --gid 10001 alpha_router \

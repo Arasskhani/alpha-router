@@ -4,6 +4,7 @@ export type CategoryKey =
   | "people_access"
   | "integrations"
   | "data_reports"
+  | "agents_knowledge"
   | "developer";
 
 
@@ -45,6 +46,8 @@ export type MenuKey =
   | "operations"
 
   | "database"
+
+  | "agents"
 
   | "admin_guide"
 

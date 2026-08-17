@@ -10,7 +10,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
+from app.models.agent_runtime import AgentRun
 from app.models.chat import ChatMessage, ChatSession
+from app.services.private_mode_service import (
+    PrivateModePersistenceError,
+    effective_private_mode,
+)
 from app.services.user_chat_storage_service import (
     append_session_messages,
     create_chat_session,
@@ -73,7 +78,7 @@ async def _read_cancel_flag(db: AsyncSession, session_id: str) -> bool:
 
 
 class ChatCompletionPersister:
-    """Append user + assistant placeholder, then PATCH assistant content while streaming."""
+    """Persist a placeholder and update assistant content during streaming."""
 
     def __init__(
         self,
@@ -85,6 +90,7 @@ class ChatCompletionPersister:
         model_name: str | None = None,
         user_message: dict[str, Any] | None = None,
         assistant_client_message_id: str | None = None,
+        agent_run_id: str | None = None,
     ) -> None:
         self.db = db
         self.user_id = user_id
@@ -92,7 +98,11 @@ class ChatCompletionPersister:
         self.model_id = model_id
         self.model_name = model_name
         self.user_message = user_message
-        self.assistant_client_message_id = assistant_client_message_id or str(uuid.uuid4())
+        self.assistant_client_message_id = assistant_client_message_id or str(
+            uuid.uuid4()
+        )
+        self.agent_run_id = agent_run_id
+        self._completion_metadata: dict[str, Any] = {}
         self._content = ""
         self._last_persist_len = 0
         self._last_persist_at = 0.0
@@ -113,6 +123,23 @@ class ChatCompletionPersister:
         """
         self._last_persist_len = 0
         self._last_persist_at = 0.0
+
+    def set_completion_metadata(self, metadata: dict[str, Any] | None) -> None:
+        """Attach server-owned Agent metadata only to the completed message."""
+
+        if not isinstance(metadata, dict):
+            return
+        reserved = {
+            "streaming",
+            "receivedAt",
+            "cancelRequested",
+            "modelId",
+            "modelName",
+        }
+        for key, value in metadata.items():
+            clean_key = str(key).strip()
+            if clean_key and clean_key not in reserved:
+                self._completion_metadata[clean_key] = value
 
     async def _ensure_chat_session(self) -> None:
         existing = await get_chat_session(self.db, self.user_id, self.session_id)
@@ -137,7 +164,9 @@ class ChatCompletionPersister:
         if self.user_message and self.user_message.get("content") is not None:
             um = dict(self.user_message)
             um.setdefault("role", "user")
-            um.setdefault("clientMessageId", um.get("clientMessageId") or str(uuid.uuid4()))
+            um.setdefault(
+                "clientMessageId", um.get("clientMessageId") or str(uuid.uuid4())
+            )
             to_append.append(um)
 
         assistant: dict[str, Any] = {
@@ -152,7 +181,36 @@ class ChatCompletionPersister:
             assistant["modelName"] = self.model_name
         to_append.append(assistant)
 
-        await append_session_messages(self.db, self.user_id, self.session_id, to_append)
+        appended = await append_session_messages(
+            self.db,
+            self.user_id,
+            self.session_id,
+            to_append,
+        )
+        if self.agent_run_id and appended is not None:
+            run = await self.db.get(AgentRun, self.agent_run_id)
+            if run is None or run.user_id != self.user_id:
+                raise ValueError("Agent run is unavailable for chat persistence")
+            client_ids = {
+                str(message.get("clientMessageId") or "")
+                for message in to_append
+                if message.get("clientMessageId")
+            }
+            rows = (
+                (
+                    await self.db.execute(
+                        select(ChatMessage).where(
+                            ChatMessage.session_id == self.session_id,
+                            ChatMessage.user_id == self.user_id,
+                            ChatMessage.client_message_id.in_(client_ids),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for row in rows:
+                row.agent_run_id = self.agent_run_id
         await self.db.commit()
         self._prepared = True
 
@@ -162,7 +220,10 @@ class ChatCompletionPersister:
         self._content = content
         now = time.monotonic()
         delta_chars = len(content) - self._last_persist_len
-        if delta_chars < _STREAM_PERSIST_MIN_CHARS and now - self._last_persist_at < _STREAM_PERSIST_INTERVAL_SEC:
+        if (
+            delta_chars < _STREAM_PERSIST_MIN_CHARS
+            and now - self._last_persist_at < _STREAM_PERSIST_INTERVAL_SEC
+        ):
             return
         await self._flush(content, partial=True)
 
@@ -182,7 +243,9 @@ class ChatCompletionPersister:
             self._cancel_requested = False
         return self._cancel_requested
 
-    async def finalize(self, *, success: bool, error_message: str | None = None) -> None:
+    async def finalize(
+        self, *, success: bool, error_message: str | None = None
+    ) -> None:
         if not self._prepared:
             return
         cancelled = await self.is_cancel_requested(force=True)
@@ -225,7 +288,8 @@ class ChatCompletionPersister:
                 await self.db.rollback()
 
     async def _flush(self, content: str, *, partial: bool) -> None:
-        meta: dict[str, Any] = {"streaming": partial}
+        meta: dict[str, Any] = dict(self._completion_metadata) if not partial else {}
+        meta["streaming"] = partial
         if self.model_id:
             meta["modelId"] = self.model_id
         if self.model_name:
@@ -256,6 +320,10 @@ def persister_from_body(
 ) -> ChatCompletionPersister | None:
     if not body.get("persist_chat"):
         return None
+    if effective_private_mode(body):
+        raise PrivateModePersistenceError(
+            "Private Mode conversations cannot be persisted on the server"
+        )
     session_id = body.get("chat_session_id")
     if not isinstance(session_id, str) or not session_id.strip():
         return None
@@ -273,4 +341,7 @@ def persister_from_body(
         model_name=model_name,
         user_message=user_message,
         assistant_client_message_id=assistant_id,
+        agent_run_id=(
+            str(body.get("_agent_run_id")) if body.get("_agent_run_id") else None
+        ),
     )

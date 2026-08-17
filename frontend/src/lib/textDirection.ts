@@ -17,6 +17,8 @@ function stripMarkdownForDirection(text: string): string {
   return text
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/`[^`]+`/g, " ")
+    // Long agent citation markers are LTR noise and must not flip RTL majority.
+    .replace(/\[\[cite:[A-Za-z0-9._:-]{1,128}\]\]/g, " ")
     .replace(/!\[[^\]]*\]\([^)]+\)/g, " ")
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
     .replace(/^#{1,6}\s+/gm, "")

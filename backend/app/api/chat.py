@@ -3,11 +3,11 @@
 import asyncio
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, Response, StreamingResponse
-from starlette.background import BackgroundTask
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.background import BackgroundTask
 
 from app.api.deps import get_current_user, require_active_user
 from app.branding import CHAT_CLIENT_APP
@@ -16,22 +16,6 @@ from app.database import get_db
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
-from app.services.budget_service import (
-    budget_request_blocked,
-    ensure_budget_period,
-    get_user_budget_state,
-    resolve_monthly_budget,
-)
-from app.services.bounded_io import BoundedIOError, clamp_limit, read_upload_bounded
-from app.services.model_capabilities import (
-    image_generation_capabilities,
-    model_kinds,
-    model_media_flags,
-    speech_generation_capabilities,
-    supports_vision,
-    video_generation_capabilities,
-)
-from app.services.media_authorization_service import MediaAccessAction, load_authorized_media_asset
 from app.services.attachment_extract import processed_attachment_payload
 from app.services.attachment_policy import (
     AttachmentPolicyError,
@@ -40,15 +24,21 @@ from app.services.attachment_policy import (
     validate_attachment_filename,
     validate_attachment_size,
 )
-from app.services.chat_title_service import generate_chat_title
+from app.services.bounded_io import BoundedIOError, clamp_limit, read_upload_bounded
+from app.services.budget_service import (
+    budget_request_blocked,
+    ensure_budget_period,
+    get_user_budget_state,
+)
+from app.services.chat_docx_service import ChatExportError as DocxExportError
+from app.services.chat_docx_service import render_chat_docx
 from app.services.chat_export_service import (
     ChatExportError,
     build_download_content_disposition,
     build_pdf_content_disposition,
     render_chat_pdf,
 )
-from app.services.chat_docx_service import ChatExportError as DocxExportError
-from app.services.chat_docx_service import render_chat_docx
+from app.services.chat_title_service import generate_chat_title
 from app.services.chat_xlsx_service import ChatExportError as XlsxExportError
 from app.services.chat_xlsx_service import render_chat_xlsx
 from app.services.image_prompt_service import (
@@ -58,16 +48,33 @@ from app.services.image_prompt_service import (
     enhance_image_generation_prompt,
     enhance_user_prompt,
 )
-from app.services.model_access_service import filter_models_for_subject, resolve_access_subject
+from app.services.media_authorization_service import (
+    MediaAccessAction,
+    load_authorized_media_asset,
+)
+from app.services.model_access_service import (
+    filter_models_for_subject,
+    resolve_access_subject,
+)
+from app.services.model_capabilities import (
+    image_generation_capabilities,
+    model_kinds,
+    model_media_flags,
+    speech_generation_capabilities,
+    supports_vision,
+    video_generation_capabilities,
+)
 from app.services.model_tool_compatibility_service import (
     compatibility_map_for_models,
     compatibility_payload,
     is_auto_router_model_id,
     is_code_interpreter_candidate,
 )
-from app.services.proxy_service import STREAM_SSE_HEADERS, preflight_stream_chat, stream_chat
-from app.services.transcription_service import transcribe_audio_bytes
-from app.services.voice_refine_service import refine_voice_transcript
+from app.services.proxy_service import (
+    STREAM_SSE_HEADERS,
+    preflight_stream_chat,
+    stream_chat,
+)
 from app.services.storage_service import (
     list_user_media,
     media_public_url,
@@ -77,23 +84,35 @@ from app.services.storage_service import (
     store_generated_media,
     unlink_storage_if_unreferenced,
 )
+from app.services.transcription_service import transcribe_audio_bytes
+from app.services.voice_refine_service import refine_voice_transcript
+
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
+
 @router.get("/models")
-async def chat_models(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    conn_count = (await db.execute(select(func.count()).select_from(Connection))).scalar() or 0
+async def chat_models(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
+    conn_count = (
+        await db.execute(select(func.count()).select_from(Connection))
+    ).scalar() or 0
     if conn_count == 0:
         await db.execute(delete(AIModel))
         await db.commit()
         return []
 
     rows = (
-        await db.execute(
-            select(AIModel)
-            .join(Connection, Connection.id == AIModel.connection_id)
-            .where(AIModel.is_enabled == True, Connection.is_active == True)  # noqa: E712
+        (
+            await db.execute(
+                select(AIModel)
+                .join(Connection, Connection.id == AIModel.connection_id)
+                .where(AIModel.is_enabled == True, Connection.is_active == True)  # noqa: E712
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     subject = await resolve_access_subject(db, user_id=user.id)
     rows = await filter_models_for_subject(db, list(rows), subject)
     compatibility = await compatibility_map_for_models(db, rows)
@@ -160,7 +179,7 @@ class ChatToolsIn(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    model: str
+    model: str | None = None
     messages: list[dict]
     stream: bool = True
     web_search: bool = False
@@ -170,6 +189,12 @@ class ChatRequest(BaseModel):
     private_mode: bool = False
     user_message: dict | None = None
     assistant_client_message_id: str | None = None
+    alpharouter: dict | None = None
+    agent_id: str | None = None
+    agent_slug: str | None = None
+    agent_version_id: str | None = None
+    agent_auto_route: bool | None = None
+    include_citations: bool | None = None
 
 
 class ChatTitleIn(BaseModel):
@@ -242,7 +267,9 @@ async def enhance_image_prompt(
     if body.mode not in ENHANCE_MODES:
         raise HTTPException(status_code=400, detail="Invalid enhancement mode")
     try:
-        text = await enhance_image_generation_prompt(db, user, body.model, body.prompt, body.mode)
+        text = await enhance_image_generation_prompt(
+            db, user, body.model, body.prompt, body.mode
+        )
     except PromptEnhanceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"prompt": text}
@@ -269,11 +296,24 @@ async def chat_completions(
         "user_message": body.user_message,
         "assistant_client_message_id": body.assistant_client_message_id,
     }
+    for key in (
+        "alpharouter",
+        "agent_id",
+        "agent_slug",
+        "agent_version_id",
+        "agent_auto_route",
+        "include_citations",
+    ):
+        value = getattr(body, key)
+        if value is not None:
+            payload[key] = value
     resolved = await preflight_stream_chat(
         db,
         payload,
         user_id=user.id,
         skip_budget=False,
+        source="alpha_router_chat",
+        client_app=CHAT_CLIENT_APP,
     )
     try:
         await db.commit()
@@ -310,7 +350,9 @@ async def chat_completions(
         gen,
         media_type="text/event-stream",
         headers=STREAM_SSE_HEADERS,
-        background=BackgroundTask(release_capacity_fallback) if permit is not None else None,
+        background=BackgroundTask(release_capacity_fallback)
+        if permit is not None
+        else None,
     )
 
 
@@ -359,7 +401,9 @@ async def voice_message(
         import logging
 
         logging.getLogger("app.api.chat").exception("Transcription failed")
-        raise HTTPException(status_code=502, detail="Transcription failed. Please try again.") from exc
+        raise HTTPException(
+            status_code=502, detail="Transcription failed. Please try again."
+        ) from exc
 
     try:
         asset = await store_generated_blob(
@@ -376,7 +420,9 @@ async def voice_message(
             metadata={"transcript": transcript},
         )
     except ValueError as exc:
-        status_code = 413 if "limit" in str(exc).lower() or "quota" in str(exc).lower() else 400
+        status_code = (
+            413 if "limit" in str(exc).lower() or "quota" in str(exc).lower() else 400
+        )
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     return {
         "id": asset.id,
@@ -403,7 +449,9 @@ async def refine_voice_message(
     if not transcript:
         return {"transcript": ""}
     model_ref = (body.model or "").strip() or None
-    refined = await refine_voice_transcript(db, user, model_ref, transcript, body.context)
+    refined = await refine_voice_transcript(
+        db, user, model_ref, transcript, body.context
+    )
     return {"transcript": refined}
 
 
@@ -413,7 +461,10 @@ async def get_attachment_limits(
     db: AsyncSession = Depends(get_db),
 ):
     """Public transfer limits needed by the chat composer."""
-    from app.services.transfer_limits_service import get_transfer_limits, transfer_limits_public_view
+    from app.services.transfer_limits_service import (
+        get_transfer_limits,
+        transfer_limits_public_view,
+    )
 
     return transfer_limits_public_view(await get_transfer_limits(db))
 
@@ -492,7 +543,11 @@ async def process_attachments(
                 metadata={"attachment": True},
             )
         except ValueError as exc:
-            status_code = 413 if "limit" in str(exc).lower() or "quota" in str(exc).lower() else 400
+            status_code = (
+                413
+                if "limit" in str(exc).lower() or "quota" in str(exc).lower()
+                else 400
+            )
             raise HTTPException(status_code=status_code, detail=str(exc)) from exc
         out.append(
             processed_attachment_payload(
@@ -529,7 +584,11 @@ async def store_media(
         )
     except ValueError as exc:
         detail = str(exc)
-        if "quota" in detail.lower() or "limit" in detail.lower() or "too large" in detail.lower():
+        if (
+            "quota" in detail.lower()
+            or "limit" in detail.lower()
+            or "too large" in detail.lower()
+        ):
             raise HTTPException(status_code=413, detail=str(exc)) from exc
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
@@ -722,7 +781,9 @@ async def export_chat_docx(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={
-            "Content-Disposition": build_download_content_disposition(payload.title, "docx"),
+            "Content-Disposition": build_download_content_disposition(
+                payload.title, "docx"
+            ),
             "Cache-Control": "no-store",
         },
     )
@@ -755,7 +816,9 @@ async def export_chat_xlsx(
         content=xlsx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
-            "Content-Disposition": build_download_content_disposition(payload.title, "xlsx"),
+            "Content-Disposition": build_download_content_disposition(
+                payload.title, "xlsx"
+            ),
             "Cache-Control": "no-store",
         },
     )

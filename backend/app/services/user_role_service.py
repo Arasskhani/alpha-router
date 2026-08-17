@@ -89,6 +89,12 @@ async def user_has_full_administrator(db: AsyncSession, user_id: int) -> bool:
     return user_has_super_admin_access(slugs)
 
 
+async def user_bypasses_maker_checker(db: AsyncSession, user_id: int) -> bool:
+    """Super Admin may complete both maker and checker steps (break-glass)."""
+
+    return await user_has_full_administrator(db, user_id)
+
+
 async def count_full_administrators(db: AsyncSession) -> int:
     user_ids = (await db.execute(select(User.id))).scalars().all()
     total = 0

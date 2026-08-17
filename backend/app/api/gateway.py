@@ -1,21 +1,26 @@
 """OpenAI-compatible gateway for Open WebUI and Alpharouter API keys."""
 
-from dataclasses import dataclass
 import secrets
+from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from starlette.background import BackgroundTask
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.background import BackgroundTask
 
 from app.branding import INTERNAL_DOMAIN
 from app.config import get_settings
+from app.core.security import hash_password
 from app.database import get_db
+from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
-from app.core.security import hash_password
-from app.models.connection import Connection
+from app.services.alpha_router_api_key_service import ensure_key_usable
+from app.services.model_access_service import (
+    filter_models_for_subject,
+    resolve_access_subject,
+)
 from app.services.proxy_service import (
     STREAM_SSE_HEADERS,
     configure_litellm_cache,
@@ -23,8 +28,6 @@ from app.services.proxy_service import (
     preflight_stream_chat,
     stream_chat,
 )
-from app.services.alpha_router_api_key_service import ensure_key_usable
-from app.services.model_access_service import filter_models_for_subject, resolve_access_subject
 from app.services.user_service import get_user_by_api_key
 from app.utils.app_attribution import detect_client_app
 
@@ -43,8 +46,14 @@ async def _get_or_create_gateway_service_user(db: AsyncSession) -> User:
     The account carries an unknown random password so it cannot log in via the UI.
     """
     user = (
-        await db.execute(select(User).where(User.username == GATEWAY_SERVICE_USERNAME))
-    ).scalars().first()
+        (
+            await db.execute(
+                select(User).where(User.username == GATEWAY_SERVICE_USERNAME)
+            )
+        )
+        .scalars()
+        .first()
+    )
     if user:
         return user
     user = User(
@@ -93,7 +102,9 @@ async def _resolve_gateway_auth(
         # the key is denied (402) until an admin assigns a budget plan to it.
         user = await _get_or_create_gateway_service_user(db)
         if not user.is_active:
-            raise HTTPException(status_code=403, detail="Gateway service account disabled")
+            raise HTTPException(
+                status_code=403, detail="Gateway service account disabled"
+            )
         user_id = user.id
         username = user.username
         source = "master"
@@ -153,12 +164,16 @@ async def _require_valid_gateway_key(
 async def list_models(request: Request, db: AsyncSession = Depends(get_db)):
     auth_ctx = await _resolve_gateway_auth(request, db)
     rows = (
-        await db.execute(
-            select(AIModel)
-            .join(Connection, Connection.id == AIModel.connection_id)
-            .where(AIModel.is_enabled == True, Connection.is_active == True)  # noqa: E712
+        (
+            await db.execute(
+                select(AIModel)
+                .join(Connection, Connection.id == AIModel.connection_id)
+                .where(AIModel.is_enabled == True, Connection.is_active == True)  # noqa: E712
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     subject = await resolve_access_subject(
         db,
         user_id=auth_ctx.user_id,
@@ -194,6 +209,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             skip_budget=auth_ctx.skip_budget,
             alpha_router_api_key_id=auth_ctx.alpha_router_api_key_id,
             source=auth_ctx.source,
+            client_app=auth_ctx.client_app,
         )
         try:
             await db.commit()

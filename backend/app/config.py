@@ -48,7 +48,9 @@ DEFAULT_CSP_REPORT_ONLY = (
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
     app_name: str = PRODUCT_NAME
     debug: bool = False
@@ -79,20 +81,111 @@ class Settings(BaseSettings):
     service_admin_password: str = "changeme"
 
     database_url: str = "postgresql+asyncpg://alpha_router:changeme@postgres:5432/alpha_router"  # env: DATABASE_URL
-    database_read_url: str = ""  # env: DATABASE_READ_URL — optional read replica for GET chat routes
-    db_pool_size: int = 12  # env: DB_POOL_SIZE — per worker behind PgBouncer (5k concurrent profile)
+    database_read_url: str = (
+        ""  # env: DATABASE_READ_URL — optional read replica for GET chat routes
+    )
+    db_pool_size: int = (
+        12  # env: DB_POOL_SIZE — per worker behind PgBouncer (5k concurrent profile)
+    )
     db_max_overflow: int = 20  # env: DB_MAX_OVERFLOW
     db_pool_timeout: int = 45  # env: DB_POOL_TIMEOUT
     chat_empty_session_hide_days: int = 30  # env: CHAT_EMPTY_SESSION_HIDE_DAYS
     chat_list_rate_limit_per_min: int = 200  # env: CHAT_LIST_RATE_LIMIT_PER_MIN
-    chat_list_since_rate_limit_per_min: int = 600  # env: CHAT_LIST_SINCE_RATE_LIMIT_PER_MIN
+    chat_list_since_rate_limit_per_min: int = (
+        600  # env: CHAT_LIST_SINCE_RATE_LIMIT_PER_MIN
+    )
     chat_search_rate_limit_per_min: int = 45  # env: CHAT_SEARCH_RATE_LIMIT_PER_MIN
-    chat_message_search_rate_limit_per_min: int = 45  # env: CHAT_MESSAGE_SEARCH_RATE_LIMIT_PER_MIN
-    uvicorn_workers: int = 4  # env: UVICORN_WORKERS — process count in Docker/production
+    chat_message_search_rate_limit_per_min: int = (
+        45  # env: CHAT_MESSAGE_SEARCH_RATE_LIMIT_PER_MIN
+    )
+    uvicorn_workers: int = (
+        4  # env: UVICORN_WORKERS — process count in Docker/production
+    )
     redis_url: str = "redis://redis:6379/0"  # env: REDIS_URL
     # Phase 9: Redis auth. When set, the connection URL is rebuilt with this
     # password so rate-limit and OIDC state caches authenticate to Redis.
     redis_password: str = ""  # env: REDIS_PASSWORD
+    # Agent Knowledge data plane. Qdrant stores derived vectors only; PostgreSQL
+    # remains authoritative for content, releases, ACLs, and job state.
+    qdrant_url: str = "http://qdrant:6333"  # env: QDRANT_URL
+    qdrant_api_key: str = ""  # env: QDRANT_API_KEY
+    qdrant_timeout_seconds: float = 10.0
+    qdrant_collection_prefix: str = "alpharouter-knowledge"
+    qdrant_replication_factor: int = 1
+    knowledge_stream_name: str = "alpharouter:knowledge:jobs"
+    knowledge_dead_letter_stream_name: str = "alpharouter:knowledge:dead"
+    knowledge_consumer_group: str = "alpharouter-knowledge-workers"
+    knowledge_worker_block_ms: int = 5000
+    knowledge_worker_batch_size: int = 10
+    knowledge_job_lease_seconds: int = 120
+    knowledge_job_max_attempts: int = 5
+    knowledge_retry_base_seconds: int = 5
+    outbox_batch_size: int = 100
+    outbox_lease_seconds: int = 60
+    outbox_poll_interval_seconds: float = 0.5
+    knowledge_reaper_interval_seconds: int = 30
+    knowledge_connector_poll_interval_seconds: int = 60
+    knowledge_retention_poll_interval_seconds: int = 3600
+    knowledge_retention_batch_size: int = 100
+    knowledge_max_upload_bytes: int = 50 * 1024 * 1024
+    knowledge_max_archive_entries: int = 10_000
+    knowledge_max_archive_uncompressed_bytes: int = 250 * 1024 * 1024
+    knowledge_max_archive_ratio: int = 100
+    knowledge_max_document_characters: int = 20_000_000
+    knowledge_max_pdf_pages: int = 5_000
+    knowledge_quarantine_prefix: str = "private/knowledge/quarantine"
+    knowledge_object_prefix: str = "private/knowledge/documents"
+    clamav_host: str = "clamav"
+    clamav_port: int = 3310
+    clamav_scan_timeout_seconds: int = 120
+    clamav_required: bool = True
+    knowledge_ocr_required: bool = True
+    knowledge_ocr_languages: str = "fas+eng"
+    knowledge_ocr_dpi: int = 200
+    knowledge_ocr_page_timeout_seconds: int = 45
+    knowledge_ocr_max_pages: int = 500
+    knowledge_ocr_min_text_characters: int = 40
+    knowledge_parser_timeout_seconds: int = 300
+    # Scanned PDF OCR (MuPDF render + Tesseract) routinely needs >1 GiB RSS.
+    knowledge_parser_memory_bytes: int = 1536 * 1024 * 1024
+    knowledge_parser_cpu_seconds: int = 240
+    knowledge_parser_max_output_bytes: int = 96 * 1024 * 1024
+    knowledge_embedding_batch_size: int = 32
+    knowledge_embedding_max_input_characters: int = 16_000
+    knowledge_embedding_timeout_seconds: float = 60.0
+    knowledge_index_upsert_batch_size: int = 128
+    knowledge_retrieval_max_query_characters: int = 8_000
+    knowledge_retrieval_candidate_limit: int = 40
+    knowledge_retrieval_final_limit: int = 8
+    knowledge_retrieval_rrf_k: int = 60
+    knowledge_retrieval_max_chunks_per_document: int = 3
+    knowledge_retrieval_context_token_budget: int = 6_000
+    knowledge_retrieval_dense_score_threshold: float = 0.05
+    knowledge_retrieval_sparse_score_threshold: float = 0.01
+    # Bounded specialist Agent runtime. Per-version policies may lower these
+    # values, but cannot exceed the hard ceilings enforced by the services.
+    agent_router_max_candidates: int = 64
+    agent_router_minimum_confidence: float = 0.30
+    agent_router_minimum_margin: float = 0.10
+    agent_max_handoffs_per_turn: int = 2
+    agent_max_tool_calls_per_turn: int = 8
+    agent_max_tool_hops_per_turn: int = 3
+    agent_tool_default_timeout_seconds: int = 20
+    agent_tool_max_output_bytes: int = 256 * 1024
+    agent_guardrail_timeout_seconds: int = 5
+    agent_turn_timeout_seconds: int = 180
+    agent_max_system_prompt_characters: int = 100_000
+    seed_specialist_agents_enabled: bool = True
+    seed_agent_primary_model_id: str = "openrouter/auto"
+    # Fleet observability. Metrics use fixed labels only; tracing is opt-in
+    # because production must provide an authenticated internal OTLP endpoint.
+    metrics_enabled: bool = True
+    metrics_bearer_token: str = ""
+    json_logging_enabled: bool = True
+    otel_enabled: bool = False
+    otel_service_name: str = "alpharouter"
+    otel_exporter_otlp_endpoint: str = ""
+    otel_trace_sample_ratio: float = 0.10
     # Dedicated data-at-rest encryption key. Production rejects this bundled
     # development placeholder; no alternate key or historical salt is tried.
     data_encryption_key: str = "change-me-in-production"  # env: DATA_ENCRYPTION_KEY
@@ -113,16 +206,28 @@ class Settings(BaseSettings):
     # Explicit development-only escape hatch. Production always fails closed.
     allow_insecure_code_subprocess: bool = False
     # Retained only to detect and reject a legacy image-only configuration.
-    code_sandbox_image: str = ""  # env: CODE_SANDBOX_IMAGE (e.g. alpha-router-sandbox:latest)
+    code_sandbox_image: str = (
+        ""  # env: CODE_SANDBOX_IMAGE (e.g. alpha-router-sandbox:latest)
+    )
     code_sandbox_timeout_seconds: int = 20  # env: CODE_SANDBOX_TIMEOUT_SECONDS
     # Cross-worker Code Interpreter turn admission (Redis leased semaphore).
     # Global hard ceiling for concurrent CI turns; request over capacity is
     # rejected immediately (no queue) with HTTP 429 + Retry-After.
-    code_interpreter_capacity_global_max: int = 200  # env: CODE_INTERPRETER_CAPACITY_GLOBAL_MAX
-    code_interpreter_capacity_per_subject_max: int = 2  # env: CODE_INTERPRETER_CAPACITY_PER_SUBJECT_MAX
-    code_interpreter_capacity_lease_ttl_seconds: int = 900  # env: CODE_INTERPRETER_CAPACITY_LEASE_TTL_SECONDS
-    code_interpreter_capacity_heartbeat_seconds: int = 30  # env: CODE_INTERPRETER_CAPACITY_HEARTBEAT_SECONDS
-    code_interpreter_capacity_retry_after_seconds: int = 30  # env: CODE_INTERPRETER_CAPACITY_RETRY_AFTER_SECONDS
+    code_interpreter_capacity_global_max: int = (
+        200  # env: CODE_INTERPRETER_CAPACITY_GLOBAL_MAX
+    )
+    code_interpreter_capacity_per_subject_max: int = (
+        2  # env: CODE_INTERPRETER_CAPACITY_PER_SUBJECT_MAX
+    )
+    code_interpreter_capacity_lease_ttl_seconds: int = (
+        900  # env: CODE_INTERPRETER_CAPACITY_LEASE_TTL_SECONDS
+    )
+    code_interpreter_capacity_heartbeat_seconds: int = (
+        30  # env: CODE_INTERPRETER_CAPACITY_HEARTBEAT_SECONDS
+    )
+    code_interpreter_capacity_retry_after_seconds: int = (
+        30  # env: CODE_INTERPRETER_CAPACITY_RETRY_AFTER_SECONDS
+    )
 
     # Bounded I/O defaults. Callers clamp overrides to hard safety ceilings.
     max_request_body_bytes: int = 64 * 1024 * 1024
@@ -262,7 +367,9 @@ def build_redis_url(redis_url: str, redis_password: str) -> str:
     netloc = f"{userinfo}{host}"
     if parsed.port:
         netloc += f":{parsed.port}"
-    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+    return urlunsplit(
+        (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
+    )
 
 
 def effective_redis_url() -> str:

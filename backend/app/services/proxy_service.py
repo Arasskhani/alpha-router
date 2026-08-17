@@ -4,13 +4,13 @@ Costs are taken from provider usage objects — never adjusted by Alpharouter.
 """
 
 import asyncio
+import datetime
 import json
 import logging
 import time
-import datetime
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import AsyncIterator
 
 import httpx
 import litellm
@@ -20,11 +20,39 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import effective_redis_url, get_settings
-from app.database import AsyncSessionLocal
 from app.core.language_detect import detect_prompt_language
-from app.models.logging import RequestLog
+from app.database import AsyncSessionLocal
 from app.models.chat import ChatSession
+from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel
+from app.services.agent_chat_integration_service import (
+    AgentRequestError,
+    PreparedAgentTurn,
+    parse_agent_request,
+    prepare_agent_turn,
+)
+from app.services.agent_policy_service import AgentPolicyValidationError
+from app.services.agent_routing_service import (
+    AgentAccessDenied,
+    AgentNotFound,
+    AgentRoutingError,
+)
+from app.services.agent_run_service import (
+    finalize_agent_run,
+    mark_agent_run_started,
+)
+from app.services.agent_runtime_service import (
+    AgentCompletionReview,
+    AgentModelUnavailable,
+    AgentRuntimeDenied,
+    AgentRuntimeError,
+    AgentRuntimeUnavailable,
+    finalize_agent_completion,
+)
+from app.services.agent_tool_registry_service import (
+    ToolPolicyDenied,
+    ToolRegistryError,
+)
 from app.services.budget_reservation_service import (
     estimate_chat_hold,
     estimate_embedding_hold,
@@ -33,10 +61,20 @@ from app.services.budget_reservation_service import (
     reserve,
     settle,
 )
-from app.services.prompt_cache_service import apply_prompt_cache_breakpoints
-from app.services.chat_tools_service import augment_messages_with_tools, parse_tools_config
-from app.services.user_memory_service import augment_messages_with_memory
-from app.services.user_profile_context_service import augment_messages_with_profile
+from app.services.chat_completion_persistence import persister_from_body
+from app.services.chat_tools_service import (
+    augment_messages_with_tools,
+    parse_tools_config,
+)
+from app.services.code_interpreter_capacity_service import (
+    CapacityPermit,
+    acquire_code_interpreter_turn,
+    heartbeat_code_interpreter_turn,
+    release_code_interpreter_turn,
+    subject_for_api_key,
+    subject_for_system,
+    subject_for_user,
+)
 from app.services.code_interpreter_service import (
     DEFAULT_MAX_WORKSPACE_FILES,
     DEFAULT_MAX_WORKSPACE_TOTAL_BYTES,
@@ -52,16 +90,6 @@ from app.services.code_interpreter_service import (
     run_python_sandbox,
     workspace_files_from_messages,
 )
-from app.services.chat_completion_persistence import persister_from_body
-from app.services.code_interpreter_capacity_service import (
-    CapacityPermit,
-    acquire_code_interpreter_turn,
-    heartbeat_code_interpreter_turn,
-    release_code_interpreter_turn,
-    subject_for_api_key,
-    subject_for_system,
-    subject_for_user,
-)
 from app.services.llm_providers import (
     external_id_lookup_candidates,
     litellm_model_for_provider,
@@ -76,16 +104,26 @@ from app.services.model_tool_compatibility_service import (
     openrouter_auto_plugin,
     record_compatibility_result,
 )
+from app.services.observability import increment
+from app.services.private_mode_service import (
+    PrivateModePersistenceError,
+    effective_private_mode,
+    resolve_private_mode,
+)
+from app.services.prompt_cache_service import apply_prompt_cache_breakpoints
+from app.services.resource_access_service import resolve_resource_access_subject
 from app.services.secret_crypto import decrypt_secret
 from app.services.storage_service import media_public_url, store_generated_blob
 from app.services.usage_accounting_service import (
+    NormalizedUsage,
     PendingUsageEvent,
     capture_usage_event,
     legacy_usage_event,
     persist_usage_operation,
     quote_usage,
-    NormalizedUsage,
 )
+from app.services.user_memory_service import augment_messages_with_memory
+from app.services.user_profile_context_service import augment_messages_with_profile
 
 logger = logging.getLogger("app.services.proxy_service")
 
@@ -101,8 +139,13 @@ STREAM_SSE_HEADERS = {
     "X-Accel-Buffering": "no",
 }
 
-def _apply_litellm_provider_kwargs(kwargs: dict, provider_type: str | None, model_id: str) -> str:
-    litellm_model = litellm_model_for_provider(normalize_model_id(model_id), provider_type)
+
+def _apply_litellm_provider_kwargs(
+    kwargs: dict, provider_type: str | None, model_id: str
+) -> str:
+    litellm_model = litellm_model_for_provider(
+        normalize_model_id(model_id), provider_type
+    )
     kwargs["model"] = litellm_model
     llm_provider = resolve_litellm_provider(provider_type)
     if llm_provider:
@@ -112,14 +155,15 @@ def _apply_litellm_provider_kwargs(kwargs: dict, provider_type: str | None, mode
 
 @dataclass
 class ResolvedStreamContext:
-    ai_model: AIModel
-    api_key: str
+    ai_model: AIModel | None
+    api_key: str | None
     base_url: str
     provider_type: str
     model_id: str
     budget_reservation_id: str | None = None
     code_interpreter_workspace_files: dict[str, str] | None = None
     code_interpreter_capacity_permit: CapacityPermit | None = None
+    agent_turn: PreparedAgentTurn | None = None
 
 
 @dataclass(frozen=True)
@@ -209,6 +253,7 @@ async def resolve_model_and_key(
     db: AsyncSession, model_id: str
 ) -> tuple[AIModel | None, str | None, str | None, str | None]:
     from sqlalchemy import select
+
     from app.models.connection import Connection
 
     normalized_input = normalize_model_id(model_id)
@@ -220,27 +265,42 @@ async def resolve_model_and_key(
             model_pk = None
         if model_pk is not None:
             row = (
-                await db.execute(
-                    select(AIModel).where(AIModel.id == model_pk, AIModel.is_enabled == True)  # noqa: E712
+                (
+                    await db.execute(
+                        select(AIModel).where(
+                            AIModel.id == model_pk, AIModel.is_enabled == True
+                        )  # noqa: E712
+                    )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
     if not row:
         candidates = external_id_lookup_candidates(normalized_input)
         if candidates:
             row = (
-                await db.execute(
-                    select(AIModel).where(
-                        AIModel.external_id.in_(candidates),
-                        AIModel.is_enabled == True,  # noqa: E712
+                (
+                    await db.execute(
+                        select(AIModel).where(
+                            AIModel.external_id.in_(candidates),
+                            AIModel.is_enabled == True,  # noqa: E712
+                        )
                     )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
     if not row:
         return None, None, None, None
     conn = await db.get(Connection, row.connection_id)
     if not conn or not conn.is_active:
         return None, None, None, None
-    return row, decrypt_secret(conn.api_key_encrypted), conn.base_url, conn.provider_type
+    return (
+        row,
+        decrypt_secret(conn.api_key_encrypted),
+        conn.base_url,
+        conn.provider_type,
+    )
 
 
 def assert_model_supports_text_chat(ai_model: AIModel) -> None:
@@ -314,7 +374,11 @@ def _format_provider_error(exc: Exception, provider: str) -> str:
         return msg
     for attr in ("message", "body", "text"):
         val = getattr(exc, attr, None)
-        if isinstance(val, str) and val.strip() and not _message_has_stream_body_read_error(val):
+        if (
+            isinstance(val, str)
+            and val.strip()
+            and not _message_has_stream_body_read_error(val)
+        ):
             return val.strip()
     if _is_stream_body_read_error(exc):
         return "OpenRouter request failed. Check model availability, context size, and API key."
@@ -330,7 +394,11 @@ def _cached_tokens_from_usage(usage) -> int:
             cached = details.get("cached_tokens") or 0
         else:
             cached = getattr(details, "cached_tokens", None) or 0
-        for key in ("cache_read_input_tokens", "prompt_cache_hit_tokens", "cached_tokens"):
+        for key in (
+            "cache_read_input_tokens",
+            "prompt_cache_hit_tokens",
+            "cached_tokens",
+        ):
             if usage.get(key):
                 cached = cached or usage.get(key) or 0
         return int(cached or 0)
@@ -408,6 +476,59 @@ def _usage_from_response(response) -> tuple[int, int, int]:
 def _sse_delta_chunk(content: str) -> bytes:
     payload = {"choices": [{"delta": {"content": content}}]}
     return f"data: {json.dumps(payload)}\n\n".encode()
+
+
+def _agent_citation_metadata(
+    agent_turn: PreparedAgentTurn,
+    review: AgentCompletionReview | None,
+) -> list[dict[str, object]]:
+    verification = review.citation_verification if review is not None else None
+    if (
+        not getattr(agent_turn.options, "include_citations", True)
+        or verification is None
+        or not verification.valid
+        or agent_turn.plan.retrieval is None
+    ):
+        return []
+    by_id = {
+        citation.citation_id: citation
+        for citation in agent_turn.plan.retrieval.context.citations
+    }
+    payloads: list[dict[str, object]] = []
+    for citation_id in verification.cited_ids:
+        citation = by_id.get(citation_id)
+        if citation is None:
+            continue
+        payloads.append(
+            {
+                "citation_id": citation.citation_id,
+                "marker": citation.marker,
+                "title": citation.title,
+                "file_name": citation.file_name,
+                "mime_type": citation.mime_type,
+                "page_number": citation.page_number,
+                "section": citation.section,
+                "authority": citation.authority,
+                "effective_from": citation.effective_from,
+                "effective_to": citation.effective_to,
+                "document_version_id": citation.document_version_id,
+            }
+        )
+    return payloads
+
+
+def _agent_identity_metadata(agent_turn: PreparedAgentTurn) -> dict[str, object]:
+    plan = agent_turn.plan
+    target = getattr(plan, "target", None)
+    agent = getattr(target, "agent", None)
+    version = getattr(target, "version", None)
+    return {
+        "agent_id": getattr(plan, "selected_agent_id", None)
+        or getattr(agent, "id", None),
+        "agent_version_id": getattr(plan, "selected_agent_version_id", None)
+        or getattr(version, "id", None),
+        "agent_name": getattr(agent, "name", None),
+    }
 
 
 def _serialize_stream_chunk(chunk) -> str:
@@ -621,9 +742,7 @@ async def _record_code_interpreter_failure(
     target = _usage_event_model_id(event)
     evidence: dict | None = None
     upstream_id = event.usage.upstream_request_id if event is not None else None
-    if provider == "openrouter" and (
-        not target or is_auto_router_model_id(target)
-    ):
+    if provider == "openrouter" and (not target or is_auto_router_model_id(target)):
         evidence = await _openrouter_generation_outcome(
             base_url=base_url,
             api_key=api_key,
@@ -684,9 +803,8 @@ def _code_interpreter_capacity_subject(
 
 
 def _code_interpreter_capacity_lease_id(body: dict, subject: str) -> str | None:
-    request_key = (
-        body.get("_idempotency_key")
-        or body.get("assistant_client_message_id")
+    request_key = body.get("_idempotency_key") or body.get(
+        "assistant_client_message_id"
     )
     if not request_key:
         return None
@@ -707,14 +825,84 @@ async def preflight_stream_chat(
     alpha_router_api_key_id: int | None = None,
     operation: str = "chat",
     source: str | None = None,
+    client_app: str | None = None,
 ) -> ResolvedStreamContext:
     """Validate budget/key/model while the request DB session is still open."""
-    from app.services.model_access_service import resolve_access_subject, user_can_access_model
+    from app.services.model_access_service import (
+        resolve_access_subject,
+        user_can_access_model,
+    )
 
-    selected_model = body.get("model")
-    ai_model, api_key, base_url, provider_type = await resolve_model_and_key(db, selected_model)
+    agent_turn: PreparedAgentTurn | None = None
+    try:
+        private_mode = False
+        if operation == "chat":
+            private_mode = (
+                await resolve_private_mode(
+                    db,
+                    body,
+                    user_id=user_id,
+                    source=source or "unknown",
+                )
+            ).effective
+        agent_options = parse_agent_request(body) if operation == "chat" else None
+        if agent_options is not None:
+            agent_turn = await prepare_agent_turn(
+                db,
+                body=body,
+                options=agent_options,
+                user_id=user_id,
+                alpha_router_api_key_id=alpha_router_api_key_id,
+                source=source or "unknown",
+                client_app=client_app,
+                private_mode=private_mode,
+            )
+    except PrivateModePersistenceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AgentRequestError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (AgentAccessDenied, AgentNotFound) as exc:
+        raise HTTPException(status_code=404, detail="Agent not available") from exc
+    except (AgentRoutingError, ToolRegistryError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (AgentRuntimeDenied, ToolPolicyDenied) as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except (AgentModelUnavailable, AgentRuntimeUnavailable) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except AgentPolicyValidationError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Published Agent policy is invalid",
+        ) from exc
+    except AgentRuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if agent_turn is not None and agent_turn.plan.status != "ready":
+        return ResolvedStreamContext(
+            ai_model=None,
+            api_key=None,
+            base_url="",
+            provider_type="",
+            model_id="",
+            agent_turn=agent_turn,
+        )
+
+    selected_model = (
+        f"model::{agent_turn.plan.model.id}"
+        if agent_turn is not None and agent_turn.plan.model is not None
+        else body.get("model")
+    )
+    if agent_turn is not None:
+        body["model"] = selected_model
+        if agent_turn.plan.policies is not None:
+            body["max_tokens"] = agent_turn.plan.policies.model.max_output_tokens
+    ai_model, api_key, base_url, provider_type = await resolve_model_and_key(
+        db, selected_model
+    )
     if not ai_model or not api_key:
-        raise HTTPException(status_code=404, detail=f"Model not enabled: {selected_model}")
+        raise HTTPException(
+            status_code=404, detail=f"Model not enabled: {selected_model}"
+        )
     assert_model_supports_text_chat(ai_model)
     subject = await resolve_access_subject(
         db,
@@ -723,8 +911,10 @@ async def preflight_stream_chat(
         source=source,
     )
     if not await user_can_access_model(db, ai_model, subject):
-        raise HTTPException(status_code=404, detail=f"Model not enabled: {selected_model}")
-    tools = parse_tools_config(body)
+        raise HTTPException(
+            status_code=404, detail=f"Model not enabled: {selected_model}"
+        )
+    tools = parse_tools_config({} if agent_turn is not None else body)
     workspace_files: dict[str, str] | None = None
     capacity_permit: CapacityPermit | None = None
     if tools.code_interpreter:
@@ -790,10 +980,13 @@ async def preflight_stream_chat(
         api_key=api_key,
         base_url=base_url or "",
         provider_type=provider_type or ai_model.provider_type or "",
-        model_id=litellm_model_for_provider(ai_model.external_id, provider_type or ai_model.provider_type),
+        model_id=litellm_model_for_provider(
+            ai_model.external_id, provider_type or ai_model.provider_type
+        ),
         budget_reservation_id=hold.id if hold else None,
         code_interpreter_workspace_files=workspace_files,
         code_interpreter_capacity_permit=capacity_permit,
+        agent_turn=agent_turn,
     )
 
 
@@ -814,7 +1007,9 @@ async def _apply_cost_to_user(db: AsyncSession, user_id: int, cost: float) -> No
     # lost. The single UPDATE statement is atomic at the row level under both
     # PostgreSQL (row lock) and SQLite (database lock), so no lost updates.
     await db.execute(
-        text("UPDATE users SET budget_used_usd = COALESCE(budget_used_usd, 0) + :cost WHERE id = :uid"),
+        text(
+            "UPDATE users SET budget_used_usd = COALESCE(budget_used_usd, 0) + :cost WHERE id = :uid"
+        ),
         {"cost": float(cost), "uid": user_id},
     )
 
@@ -1091,18 +1286,17 @@ async def _resolve_private_mode_for_memory(
     *,
     user_id: int | None,
 ) -> bool:
-    """Skip memory inject when the client or owned session is private."""
-    if bool(body.get("private_mode") or body.get("privateMode")):
-        return True
-    if user_id is None:
-        return False
-    session_id = str(body.get("chat_session_id") or "").strip()
-    if not session_id:
-        return False
-    row = await db.get(ChatSession, session_id)
-    if row is None or row.user_id != user_id:
-        return False
-    return bool(row.private_mode)
+    """Return the server-owned preflight decision for legacy chat augmentation."""
+    if isinstance(body.get("_effective_private_mode"), bool):
+        return effective_private_mode(body)
+    return (
+        await resolve_private_mode(
+            db,
+            body,
+            user_id=user_id,
+            source="alpha_router_chat",
+        )
+    ).effective
 
 
 async def stream_chat(
@@ -1118,7 +1312,6 @@ async def stream_chat(
     resolved: ResolvedStreamContext | None = None,
 ) -> AsyncIterator[bytes]:
     messages = list(body.get("messages", []))
-    tools = parse_tools_config(body)
     prompt_lang = detect_prompt_language(_extract_prompt_text(messages))
     success = True
     error_message = None
@@ -1132,6 +1325,8 @@ async def stream_chat(
                 user_id=user_id,
                 skip_budget=skip_budget,
                 alpha_router_api_key_id=alpha_router_api_key_id,
+                source=source,
+                client_app=client_app,
             )
             try:
                 await db.commit()
@@ -1141,7 +1336,101 @@ async def stream_chat(
                     await release_code_interpreter_turn(permit)
                 raise
 
+        agent_turn = getattr(resolved, "agent_turn", None)
+        if agent_turn is not None:
+            body["_agent_run_id"] = agent_turn.run_id
+            if agent_turn.plan.status != "ready":
+                safe_response = (
+                    agent_turn.plan.safe_response
+                    or "This Agent turn could not be completed safely."
+                )
+                persister = None
+                if source == "alpha_router_chat" and user_id:
+                    persister = persister_from_body(
+                        db,
+                        user_id=user_id,
+                        body=body,
+                        model_id=(
+                            str(agent_turn.plan.selected_model_id)
+                            if agent_turn.plan.selected_model_id is not None
+                            else None
+                        ),
+                        model_name=(
+                            agent_turn.plan.target.agent.name
+                            if agent_turn.plan.target is not None
+                            else "Alpharouter"
+                        ),
+                    )
+                if persister is not None:
+                    try:
+                        persister.set_completion_metadata(
+                            {
+                                "agentRunId": agent_turn.run_id,
+                                "agentId": agent_turn.plan.selected_agent_id,
+                                "agentVersionId": (
+                                    agent_turn.plan.selected_agent_version_id
+                                ),
+                                "agentStatus": agent_turn.plan.status,
+                                "routingOutcome": agent_turn.plan.routing_outcome,
+                            }
+                        )
+                        await persister.prepare()
+                        await persister.on_content(safe_response)
+                        await persister.finalize(success=True)
+                    except Exception:
+                        await db.rollback()
+                        logger.exception(
+                            "Failed to persist non-generating Agent response run=%s",
+                            agent_turn.run_id,
+                        )
+                await finalize_agent_run(
+                    db,
+                    run_id=agent_turn.run_id,
+                    status=agent_turn.plan.status,
+                    provider_latency_ms=0,
+                    total_latency_ms=agent_turn.plan.total_planning_latency_ms,
+                    output_displayed=True,
+                )
+                await db.commit()
+                yield _sse_delta_chunk(safe_response)
+                meta_payload = json.dumps(
+                    {
+                        "alpha_router": {
+                            "agent_run_id": agent_turn.run_id,
+                            **_agent_identity_metadata(agent_turn),
+                            "agent_status": agent_turn.plan.status,
+                            "routing_outcome": agent_turn.plan.routing_outcome,
+                        }
+                    },
+                    separators=(",", ":"),
+                )
+                yield f"data: {meta_payload}\n\n".encode()
+                yield b"data: [DONE]\n\n"
+                return
+
+            if agent_turn.plan.prompt is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Agent prompt plan is unavailable",
+                )
+            messages = [dict(message) for message in agent_turn.plan.prompt.messages]
+            await mark_agent_run_started(db, agent_turn.run_id)
+            await db.commit()
+
+        agent_resource_subject = (
+            await resolve_resource_access_subject(
+                db,
+                user_id=user_id,
+                alpha_router_api_key_id=alpha_router_api_key_id,
+                source=source,
+            )
+            if agent_turn is not None
+            else None
+        )
+        tools = parse_tools_config({} if agent_turn is not None else body)
         ai_model = resolved.ai_model
+        if ai_model is None:
+            raise HTTPException(status_code=503, detail="Resolved model is unavailable")
         api_key = resolved.api_key
         base_url = resolved.base_url
         provider_type = resolved.provider_type
@@ -1191,9 +1480,7 @@ async def stream_chat(
                     return
 
         if capacity_permit is not None:
-            capacity_heartbeat_task = asyncio.create_task(
-                _capacity_heartbeat_loop()
-            )
+            capacity_heartbeat_task = asyncio.create_task(_capacity_heartbeat_loop())
 
         completion_kwargs: dict = {
             "messages": messages,
@@ -1202,6 +1489,14 @@ async def stream_chat(
             "base_url": base_url,
             "caching": True,
         }
+        if agent_turn is not None and agent_turn.plan.policies is not None:
+            completion_kwargs["max_tokens"] = (
+                agent_turn.plan.policies.model.max_output_tokens
+            )
+            if agent_turn.plan.policies.model.temperature is not None:
+                completion_kwargs["temperature"] = (
+                    agent_turn.plan.policies.model.temperature
+                )
         model = _apply_litellm_provider_kwargs(completion_kwargs, provider_type, model)
         provider = (provider_type or ai_model.provider_type or "").lower()
         if (
@@ -1215,48 +1510,54 @@ async def stream_chat(
         if provider in ("openai", "azure", "openrouter", "anthropic", "xai"):
             completion_kwargs["stream_options"] = {"include_usage": True}
 
-        try:
-            messages = await augment_messages_with_tools(
-                db,
-                messages,
-                tools,
-                user_id=user_id,
-                alpha_router_api_key_id=alpha_router_api_key_id,
-                username=username,
-                reserve_budget=not skip_budget,
-            )
-        except BaseException:
+        if agent_turn is None:
             try:
-                await asyncio.shield(_release_stream_reservation())
-            except Exception:
-                logger.exception("Failed to release chat reservation after tool setup error")
-            if capacity_heartbeat_task is not None:
-                capacity_heartbeat_task.cancel()
-            await asyncio.shield(_release_capacity_permit())
-            raise
+                messages = await augment_messages_with_tools(
+                    db,
+                    messages,
+                    tools,
+                    user_id=user_id,
+                    alpha_router_api_key_id=alpha_router_api_key_id,
+                    username=username,
+                    reserve_budget=not skip_budget,
+                )
+            except BaseException:
+                try:
+                    await asyncio.shield(_release_stream_reservation())
+                except Exception:
+                    logger.exception(
+                        "Failed to release chat reservation after tool setup error"
+                    )
+                if capacity_heartbeat_task is not None:
+                    capacity_heartbeat_task.cancel()
+                await asyncio.shield(_release_capacity_permit())
+                raise
         private_mode = await _resolve_private_mode_for_memory(db, body, user_id=user_id)
-        try:
-            messages = await augment_messages_with_profile(
-                db,
-                messages,
-                user_id=user_id,
-                private_mode=private_mode,
-            )
-            messages = await augment_messages_with_memory(
-                db,
-                messages,
-                user_id=user_id,
-                private_mode=private_mode,
-            )
-        except BaseException:
+        if agent_turn is None:
             try:
-                await asyncio.shield(_release_stream_reservation())
-            except Exception:
-                logger.exception("Failed to release chat reservation after memory setup error")
-            if capacity_heartbeat_task is not None:
-                capacity_heartbeat_task.cancel()
-            await asyncio.shield(_release_capacity_permit())
-            raise
+                messages = await augment_messages_with_profile(
+                    db,
+                    messages,
+                    user_id=user_id,
+                    private_mode=private_mode,
+                )
+                messages = await augment_messages_with_memory(
+                    db,
+                    messages,
+                    user_id=user_id,
+                    private_mode=private_mode,
+                )
+            except BaseException:
+                try:
+                    await asyncio.shield(_release_stream_reservation())
+                except Exception:
+                    logger.exception(
+                        "Failed to release chat reservation after memory setup error"
+                    )
+                if capacity_heartbeat_task is not None:
+                    capacity_heartbeat_task.cancel()
+                await asyncio.shield(_release_capacity_permit())
+                raise
         messages = apply_prompt_cache_breakpoints(messages)
         original_messages = list(body.get("messages", []))
         resolved_workspace_files = getattr(
@@ -1277,8 +1578,10 @@ async def stream_chat(
             inventory = code_interpreter_workspace_message(workspace_files)
             if inventory:
                 messages = list(messages)
-                if messages and messages[0].get("role") == "system" and isinstance(
-                    messages[0].get("content"), str
+                if (
+                    messages
+                    and messages[0].get("role") == "system"
+                    and isinstance(messages[0].get("content"), str)
                 ):
                     messages[0] = {
                         "role": "system",
@@ -1312,6 +1615,22 @@ async def stream_chat(
             )
             if persister:
                 try:
+                    if agent_turn is not None:
+                        persister.set_completion_metadata(
+                            {
+                                "agentRunId": agent_turn.run_id,
+                                "agentId": agent_turn.plan.selected_agent_id,
+                                "agentVersionId": (
+                                    agent_turn.plan.selected_agent_version_id
+                                ),
+                                "agentName": (
+                                    agent_turn.plan.target.agent.name
+                                    if agent_turn.plan.target is not None
+                                    else None
+                                ),
+                                "routingOutcome": agent_turn.plan.routing_outcome,
+                            }
+                        )
                     await persister.prepare()
                 except Exception:
                     await db.rollback()
@@ -1330,9 +1649,14 @@ async def stream_chat(
             if prompt_tokens == 0 and collected_content:
                 try:
                     tc_kwargs: dict = {"messages": msgs_for_count}
-                    litellm_model = _apply_litellm_provider_kwargs(tc_kwargs, provider_type, model)
+                    litellm_model = _apply_litellm_provider_kwargs(
+                        tc_kwargs, provider_type, model
+                    )
                     prompt_tokens = litellm.token_counter(**tc_kwargs)
-                    ct_kwargs: dict = {"model": litellm_model, "text": collected_content}
+                    ct_kwargs: dict = {
+                        "model": litellm_model,
+                        "text": collected_content,
+                    }
                     llm_provider = resolve_litellm_provider(provider_type)
                     if llm_provider:
                         ct_kwargs["custom_llm_provider"] = llm_provider
@@ -1351,6 +1675,8 @@ async def stream_chat(
             )
 
         was_cancelled = False
+        agent_review: AgentCompletionReview | None = None
+        agent_output_displayed = False
         # Sticky for the whole request: once the user presses Stop (or the client
         # goes away), later Code Interpreter iterations must not resume work.
         client_disconnected = False
@@ -1439,7 +1765,11 @@ async def stream_chat(
                     )
                     if pt or ct or cache or chunk_usage is not None:
                         active_last_chunk = chunk
-                    active_prompt_tokens, active_completion_tokens, active_cached_tokens = _merge_stream_usage(
+                    (
+                        active_prompt_tokens,
+                        active_completion_tokens,
+                        active_cached_tokens,
+                    ) = _merge_stream_usage(
                         active_prompt_tokens,
                         active_completion_tokens,
                         active_cached_tokens,
@@ -1453,23 +1783,25 @@ async def stream_chat(
                         collected_content += delta
                         # A partial flush after Stop would re-mark the message as
                         # streaming, so the UI would show it as still generating.
-                        if persister and not client_disconnected:
+                        if persister and agent_turn is None and not client_disconnected:
                             try:
                                 await persister.on_content(collected_content)
                             except Exception:
                                 await db.rollback()
                                 persister.reset_persist_state()
-                    if not client_disconnected:
+                    if not client_disconnected and agent_turn is None:
                         yield f"data: {_serialize_stream_chunk(chunk)}\n\n".encode()
 
                 pt, ct, cache = _usage_from_stream_wrapper(response)
-                active_prompt_tokens, active_completion_tokens, active_cached_tokens = _merge_stream_usage(
-                    active_prompt_tokens,
-                    active_completion_tokens,
-                    active_cached_tokens,
-                    pt,
-                    ct,
-                    cache,
+                active_prompt_tokens, active_completion_tokens, active_cached_tokens = (
+                    _merge_stream_usage(
+                        active_prompt_tokens,
+                        active_completion_tokens,
+                        active_cached_tokens,
+                        pt,
+                        ct,
+                        cache,
+                    )
                 )
                 if active_prompt_tokens == 0 and iteration_content:
                     try:
@@ -1488,14 +1820,11 @@ async def stream_chat(
                         }
                         llm_provider = resolve_litellm_provider(provider_type)
                         if llm_provider:
-                            completion_kwargs_for_count[
-                                "custom_llm_provider"
-                            ] = llm_provider
-                        active_completion_tokens = int(
-                            litellm.token_counter(
-                                **completion_kwargs_for_count
+                            completion_kwargs_for_count["custom_llm_provider"] = (
+                                llm_provider
                             )
-                            or 0
+                        active_completion_tokens = int(
+                            litellm.token_counter(**completion_kwargs_for_count) or 0
                         )
                     except Exception:
                         pass
@@ -1526,9 +1855,7 @@ async def stream_chat(
                 )
                 usage_events.append(active_event)
                 observed_model_id = _usage_event_model_id(active_event)
-                if observed_model_id and not is_auto_router_model_id(
-                    observed_model_id
-                ):
+                if observed_model_id and not is_auto_router_model_id(observed_model_id):
                     observed_compatibility_models.add(observed_model_id)
                 prompt_tokens += active_prompt_tokens
                 completion_tokens += active_completion_tokens
@@ -1631,7 +1958,9 @@ async def stream_chat(
                     break
 
                 try:
-                    exec_result = await _run_sandbox_until_stopped(code, workspace_files)
+                    exec_result = await _run_sandbox_until_stopped(
+                        code, workspace_files
+                    )
                 except ValueError as exc:
                     exec_result = SandboxExecutionResult(
                         output=f"Code interpreter error: {exc}",
@@ -1673,29 +2002,36 @@ async def stream_chat(
                     )
                     if can_persist_artifacts:
                         try:
-                            stored_artifacts = await _persist_code_interpreter_artifacts(
-                                exec_result.artifacts,
-                                user_id=int(user_id),
-                                username=username,
-                                chat_session_id=str(body["chat_session_id"]),
-                                model_id=model,
-                                source_prompt=_extract_prompt_text(messages),
+                            stored_artifacts = (
+                                await _persist_code_interpreter_artifacts(
+                                    exec_result.artifacts,
+                                    user_id=int(user_id),
+                                    username=username,
+                                    chat_session_id=str(body["chat_session_id"]),
+                                    model_id=model,
+                                    source_prompt=_extract_prompt_text(messages),
+                                )
                             )
                             new_artifacts = [
                                 item
                                 for item in stored_artifacts
                                 if item.asset_id not in emitted_artifact_ids
                             ]
-                            emitted_artifact_ids.update(item.asset_id for item in new_artifacts)
+                            emitted_artifact_ids.update(
+                                item.asset_id for item in new_artifacts
+                            )
                             formatted += _artifact_links_markdown(new_artifacts)
                             artifact_context = (
                                 "Platform-stored artifacts (use only these exact download links):\n"
                                 + "\n".join(
-                                    f"- {item.name}: {item.url}" for item in stored_artifacts
+                                    f"- {item.name}: {item.url}"
+                                    for item in stored_artifacts
                                 )
                             )
                         except Exception:
-                            logger.exception("Failed to persist code interpreter artifacts")
+                            logger.exception(
+                                "Failed to persist code interpreter artifacts"
+                            )
                             artifact_context = (
                                 "The generated files could not be stored in Media. "
                                 "Do not invent download links."
@@ -1753,6 +2089,46 @@ async def stream_chat(
                 code_iterations += 1
 
             await _compute_cost()
+            if agent_turn is not None and not client_disconnected and success:
+                if agent_resource_subject is None:
+                    raise AgentRuntimeUnavailable(
+                        "Agent authorization context is unavailable"
+                    )
+                agent_review = await finalize_agent_completion(
+                    plan=agent_turn.plan,
+                    output_text=collected_content,
+                    resource_subject=agent_resource_subject,
+                )
+                reviewed_content = (
+                    agent_review.display_text
+                    if agent_review.status == "ready"
+                    else agent_review.safe_response
+                )
+                collected_content = reviewed_content or (
+                    "This Agent response could not be displayed safely."
+                )
+                if persister:
+                    persister.set_completion_metadata(
+                        {
+                            "agentStatus": (
+                                "succeeded"
+                                if agent_review.status == "ready"
+                                else "blocked"
+                            ),
+                            "completionReasonCode": agent_review.reason_code,
+                            "citations": _agent_citation_metadata(
+                                agent_turn,
+                                agent_review,
+                            ),
+                        }
+                    )
+                    try:
+                        await persister.on_content(collected_content)
+                    except Exception:
+                        await db.rollback()
+                        persister.reset_persist_state()
+                yield _sse_delta_chunk(collected_content)
+                agent_output_displayed = True
         except asyncio.CancelledError as exc:
             was_cancelled = True
             success = False
@@ -1837,7 +2213,9 @@ async def stream_chat(
                     retry_kwargs.pop("stream_options", None)
                     retry_response = await acompletion(**retry_kwargs)
                     stream_end_at = time.perf_counter()
-                    content, (pt, ct, cache) = _extract_non_stream_content(retry_response)
+                    content, (pt, ct, cache) = _extract_non_stream_content(
+                        retry_response
+                    )
                     collected_content = content
                     if pt == 0 and content:
                         try:
@@ -1856,12 +2234,11 @@ async def stream_chat(
                             }
                             llm_provider = resolve_litellm_provider(provider_type)
                             if llm_provider:
-                                completion_count_kwargs[
-                                    "custom_llm_provider"
-                                ] = llm_provider
+                                completion_count_kwargs["custom_llm_provider"] = (
+                                    llm_provider
+                                )
                             ct = int(
-                                litellm.token_counter(**completion_count_kwargs)
-                                or 0
+                                litellm.token_counter(**completion_count_kwargs) or 0
                             )
                         except Exception:
                             pass
@@ -1887,15 +2264,55 @@ async def stream_chat(
                     prompt_tokens += pt
                     completion_tokens += ct
                     cached_tokens += cache
-                    if content:
+                    if content and agent_turn is None:
                         yield _sse_delta_chunk(content)
-                    if persister and content:
+                    if persister and content and agent_turn is None:
                         try:
                             await persister.on_content(collected_content)
                         except Exception:
                             await db.rollback()
                             persister.reset_persist_state()
                     await _compute_cost()
+                    if agent_turn is not None:
+                        if agent_resource_subject is None:
+                            raise AgentRuntimeUnavailable(
+                                "Agent authorization context is unavailable"
+                            )
+                        agent_review = await finalize_agent_completion(
+                            plan=agent_turn.plan,
+                            output_text=collected_content,
+                            resource_subject=agent_resource_subject,
+                        )
+                        reviewed_content = (
+                            agent_review.display_text
+                            if agent_review.status == "ready"
+                            else agent_review.safe_response
+                        )
+                        collected_content = reviewed_content or (
+                            "This Agent response could not be displayed safely."
+                        )
+                        if persister:
+                            persister.set_completion_metadata(
+                                {
+                                    "agentStatus": (
+                                        "succeeded"
+                                        if agent_review.status == "ready"
+                                        else "blocked"
+                                    ),
+                                    "completionReasonCode": agent_review.reason_code,
+                                    "citations": _agent_citation_metadata(
+                                        agent_turn,
+                                        agent_review,
+                                    ),
+                                }
+                            )
+                            try:
+                                await persister.on_content(collected_content)
+                            except Exception:
+                                await db.rollback()
+                                persister.reset_persist_state()
+                        yield _sse_delta_chunk(collected_content)
+                        agent_output_displayed = True
                 except Exception as retry_exc:
                     usage_events.append(
                         capture_usage_event(
@@ -1956,9 +2373,7 @@ async def stream_chat(
                 f"chat:{stream_reservation_id}"
                 if stream_reservation_id
                 else (
-                    f"chat:{usage_events[0].idempotency_key}"
-                    if usage_events
-                    else None
+                    f"chat:{usage_events[0].idempotency_key}" if usage_events else None
                 )
             )
 
@@ -1979,7 +2394,9 @@ async def stream_chat(
                                 total_cost_usd=total_cost,
                                 response_time_ms=elapsed_ms,
                                 prompt_language=prompt_lang,
-                                source_ip=request.client.host if request.client else None,
+                                source_ip=request.client.host
+                                if request.client
+                                else None,
                                 source=source,
                                 success=success,
                                 error_message=error_message,
@@ -1990,7 +2407,9 @@ async def stream_chat(
                                 operation_type="chat",
                                 operation_idempotency_key=accounting_key,
                             )
-                            chat_session_id = str(body.get("chat_session_id") or "").strip()
+                            chat_session_id = str(
+                                body.get("chat_session_id") or ""
+                            ).strip()
                             assistant_cid = str(
                                 body.get("assistant_client_message_id") or ""
                             ).strip()
@@ -2025,17 +2444,104 @@ async def stream_chat(
                 return None
 
             stream_request_log_id = await asyncio.shield(_persist_stream_usage())
+            agent_terminal_status: str | None = None
+            if agent_turn is not None:
+                if was_cancelled or client_disconnected:
+                    agent_terminal_status = "cancelled"
+                elif not success:
+                    agent_terminal_status = "failed"
+                elif agent_review is not None and agent_review.status == "blocked":
+                    agent_terminal_status = "blocked"
+                else:
+                    agent_terminal_status = "succeeded"
+
+                async def _persist_agent_finalization() -> None:
+                    for attempt in range(3):
+                        try:
+                            async with AsyncSessionLocal() as agent_db:
+                                await finalize_agent_run(
+                                    agent_db,
+                                    run_id=agent_turn.run_id,
+                                    status=agent_terminal_status or "failed",
+                                    review=agent_review,
+                                    request_log_id=stream_request_log_id,
+                                    prompt_tokens=prompt_tokens,
+                                    completion_tokens=completion_tokens,
+                                    cached_tokens=cached_tokens,
+                                    total_cost_usd=total_cost,
+                                    provider_latency_ms=max(0, int(elapsed_ms)),
+                                    total_latency_ms=max(
+                                        0,
+                                        int(
+                                            elapsed_ms
+                                            + agent_turn.plan.total_planning_latency_ms
+                                        ),
+                                    ),
+                                    output_displayed=agent_output_displayed,
+                                    error_code=(
+                                        agent_review.reason_code
+                                        if agent_terminal_status == "blocked"
+                                        and agent_review is not None
+                                        else (
+                                            "client_disconnected"
+                                            if agent_terminal_status == "cancelled"
+                                            else (
+                                                "provider_error"
+                                                if agent_terminal_status == "failed"
+                                                else None
+                                            )
+                                        )
+                                    ),
+                                    error_message=(
+                                        error_message
+                                        if agent_terminal_status
+                                        in {"failed", "cancelled"}
+                                        else None
+                                    ),
+                                )
+                                await agent_db.commit()
+                            return
+                        except Exception:
+                            if attempt < 2:
+                                await asyncio.sleep(0.1 * (attempt + 1))
+                                continue
+                            logger.exception(
+                                "Agent run finalization failed after retries run=%s",
+                                agent_turn.run_id,
+                            )
+
+                await asyncio.shield(_persist_agent_finalization())
+
+            response_metadata: dict[str, object] = {}
             if (
                 not was_cancelled
                 and success
                 and stream_request_log_id
                 and source == "alpha_router_chat"
             ):
+                response_metadata["request_log_id"] = int(stream_request_log_id)
+            if agent_turn is not None and not was_cancelled:
+                response_metadata.update(
+                    {
+                        "agent_run_id": agent_turn.run_id,
+                        **_agent_identity_metadata(agent_turn),
+                        "agent_status": agent_terminal_status,
+                        "routing_outcome": agent_turn.plan.routing_outcome,
+                    }
+                )
+                if agent_review is not None:
+                    response_metadata["completion_reason_code"] = (
+                        agent_review.reason_code
+                    )
+                    citations = _agent_citation_metadata(agent_turn, agent_review)
+                    if citations:
+                        response_metadata["citations"] = citations
+            if response_metadata:
                 meta_payload = json.dumps(
-                    {"alpha_router": {"request_log_id": int(stream_request_log_id)}},
+                    {"alpha_router": response_metadata},
                     separators=(",", ":"),
                 )
-                yield f"data: {meta_payload}\n\n".encode("utf-8")
+                yield f"data: {meta_payload}\n\n".encode()
             if not was_cancelled:
                 yield b"data: [DONE]\n\n"
 

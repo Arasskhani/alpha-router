@@ -71,6 +71,38 @@ services:
       - alpha_router_redis:/data
     networks:
       - alpha_router_app
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli $${REDIS_PASSWORD:+-a $$REDIS_PASSWORD} ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  clamav:
+    image: clamav/clamav:1.5.4-debian13-slim
+    restart: unless-stopped
+    volumes:
+      - alpha_router_clamav:/var/lib/clamav
+    networks:
+      - alpha_router_app
+
+  qdrant:
+    image: qdrant/qdrant:v1.19.0
+    restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?QDRANT_API_KEY must be set in .env}
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - alpha_router_qdrant:/qdrant/storage
+    networks:
+      - alpha_router_app
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
 
   # Primary object storage (SeaweedFS weed mini). S3 API :8333, Admin UI :23646.
   # Pin version via deploy/seaweedfs/VERSION (currently 4.40).
@@ -174,6 +206,88 @@ services:
       retries: 5
       start_period: 45s
 
+  # One-shot schema bootstrap + Alembic upgrade. App/workers wait on success.
+  db-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: alpha-router:latest
+    env_file:
+      - .env
+    command: ["python", "-m", "app.migrate"]
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m
+      - /home/alpha_router:rw,nosuid,nodev,size=16m,uid=10001,gid=10001,mode=700
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - alpha_router_app
+
+  alpha-router-knowledge-scheduler:
+    image: alpha-router:latest
+    env_file:
+      - .env
+    command: ["python", "-m", "app.knowledge_scheduler"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m
+      - /home/alpha_router:rw,nosuid,nodev,size=16m,uid=10001,gid=10001,mode=700
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    networks:
+      - alpha_router_app
+
+  alpha-router-knowledge-worker:
+    image: alpha-router:latest
+    env_file:
+      - .env
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:?QDRANT_API_KEY must be set in .env}
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: "3310"
+      KNOWLEDGE_PARSER_MEMORY_BYTES: ${KNOWLEDGE_PARSER_MEMORY_BYTES:-1610612736}
+    command: ["python", "-m", "app.knowledge_worker"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=768m
+      - /home/alpha_router:rw,nosuid,nodev,size=32m,uid=10001,gid=10001,mode=700
+    mem_limit: 3g
+    pids_limit: 128
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+    networks:
+      - alpha_router_app
+
   alpha-router:
     build:
       context: .
@@ -189,6 +303,10 @@ services:
       CODE_SANDBOX_BROKER_TOKEN: ${SANDBOX_BROKER_TOKEN:?SANDBOX_BROKER_TOKEN must be set in .env}
       # Object storage (SeaweedFS S3 API). Overrides .env hostnames for Compose DNS.
       S3_ENDPOINT_URL: http://seaweedfs:8333
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:?QDRANT_API_KEY must be set in .env}
+      # Shared tmpfs-backed Prometheus files aggregate all Uvicorn workers.
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
       # Never set these to true here. Keep false in .env unless you have a written
       # lab-only exception (see .env.example "DANGEROUS OPT-IN FLAGS"):
       #   ALLOW_LEGACY_BEARER_AUTH, ALLOW_SSRF_PRIVATE_RANGES,
@@ -205,19 +323,22 @@ services:
       - /home/alpha_router:rw,nosuid,nodev,size=64m,uid=10001,gid=10001,mode=700
       - /app/app/storage:rw,nosuid,nodev,size=256m,uid=10001,gid=10001,mode=700
     command:
-      - uvicorn
-      - app.main:app
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8080"
-      - --workers
-      - "${UVICORN_WORKERS:-4}"
+      - /bin/sh
+      - -c
+      - >-
+        rm -rf /tmp/prometheus &&
+        mkdir -p /tmp/prometheus &&
+        exec uvicorn app.main:app --host 0.0.0.0 --port 8080
+        --workers ${UVICORN_WORKERS:-4}
     depends_on:
+      db-init:
+        condition: service_completed_successfully
       pgbouncer:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
       seaweedfs:
         condition: service_healthy
       alpha-router-sandbox-broker:
@@ -231,8 +352,12 @@ volumes:
     name: alpha_router_pg
   alpha_router_redis:
     name: alpha_router_redis
+  alpha_router_qdrant:
+    name: alpha_router_qdrant
   alpha_router_seaweedfs:
     name: alpha_router_seaweedfs
+  alpha_router_clamav:
+    name: alpha_router_clamav
 
 networks:
   alpha_router_app:

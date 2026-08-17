@@ -1,16 +1,27 @@
 """Tests for RBAC role definitions and permission checks."""
 
 from app.services.rbac import (
+    AGENT_AUDITOR_SLUG,
+    AGENT_DESIGNER_SLUG,
+    AGENT_OPERATIONS_ADMIN_SLUG,
+    AGENT_PUBLISHER_SLUG,
+    AGENTS_ADMIN_SLUG,
     API_KEY_ADMIN_SLUG,
     CATEGORY_LABELS,
     DASHBOARD_VIEW_SLUG,
+    DOMAIN_APPROVER_SLUG,
     FULL_ADMIN_SLUG,
+    KNOWLEDGE_ADMIN_SLUG,
+    KNOWLEDGE_CURATOR_SLUG,
+    KNOWLEDGE_PUBLISHER_SLUG,
     MENU_GROUP_KEYS,
     MENUS_BY_CATEGORY,
     READ_ONLY_FULL_ADMIN_SLUG,
     REPORTS_ACCESS_SLUG,
     SUPER_ADMIN_SLUG,
+    TOOL_ADMIN_SLUG,
     USER_SLUG,
+    agent_permissions_for_slugs,
     actor_may_assign_roles,
     bootstrap_super_admin_role_slugs,
     can_access_menu,
@@ -26,6 +37,7 @@ from app.services.rbac import (
     session_payload_for_slugs,
     user_can_access_menu,
     user_can_write_menu,
+    user_has_agent_permission,
     user_has_super_admin_access,
     user_has_super_read_only_access,
     user_is_read_only_admin,
@@ -64,6 +76,16 @@ def test_role_catalog_keeps_existing_roles_and_adds_scoped_views():
         API_KEY_ADMIN_SLUG,
         DASHBOARD_VIEW_SLUG,
         REPORTS_ACCESS_SLUG,
+        AGENTS_ADMIN_SLUG,
+        AGENT_DESIGNER_SLUG,
+        AGENT_PUBLISHER_SLUG,
+        KNOWLEDGE_ADMIN_SLUG,
+        KNOWLEDGE_CURATOR_SLUG,
+        KNOWLEDGE_PUBLISHER_SLUG,
+        DOMAIN_APPROVER_SLUG,
+        TOOL_ADMIN_SLUG,
+        AGENT_OPERATIONS_ADMIN_SLUG,
+        AGENT_AUDITOR_SLUG,
     }
     assert FULL_ADMIN_SLUG not in by_slug
     assert READ_ONLY_FULL_ADMIN_SLUG not in by_slug
@@ -73,6 +95,8 @@ def test_role_catalog_keeps_existing_roles_and_adds_scoped_views():
     assert "dashboard_full_administrator" not in by_slug
     assert "storage_full_administrator" not in by_slug
     assert "reports_read_only_administrator" not in by_slug
+    assert by_slug[AGENT_DESIGNER_SLUG]["menu_key"] == "agents"
+    assert by_slug[AGENT_AUDITOR_SLUG]["read_only"] is True
 
 
 def test_super_admin_role_has_full_access():
@@ -187,3 +211,36 @@ def test_operations_and_database_live_under_overview():
     assert overview[:3] == ("dashboard", "operations", "database")
     assert "operations" in overview
     assert "database" in overview
+
+
+def test_agents_category_and_routes_are_single_menu_surface():
+    assert CATEGORY_LABELS["agents_knowledge"] == "Agents & Knowledge"
+    assert MENU_GROUP_KEYS["agents"] == "agents_knowledge"
+    assert MENUS_BY_CATEGORY["agents_knowledge"] == ("agents",)
+    assert path_to_menu("/admin/agents") == "agents"
+    assert path_to_menu("/admin/knowledge/kb-1/documents") == "agents"
+    assert path_to_menu("/admin/agent-evaluations/runs") == "agents"
+
+
+def test_agent_roles_use_action_level_permissions():
+    assert user_can_access_menu([AGENT_DESIGNER_SLUG], "agents")
+    assert user_has_agent_permission([AGENT_DESIGNER_SLUG], "agent.create")
+    assert user_has_agent_permission([AGENT_DESIGNER_SLUG], "agent.test")
+    assert not user_has_agent_permission([AGENT_DESIGNER_SLUG], "agent.publish")
+
+    assert user_has_agent_permission([AGENT_PUBLISHER_SLUG], "agent.publish")
+    assert not user_has_agent_permission([AGENT_PUBLISHER_SLUG], "agent.edit")
+    assert user_has_agent_permission([KNOWLEDGE_CURATOR_SLUG], "knowledge.documents.write")
+    assert not user_has_agent_permission([KNOWLEDGE_CURATOR_SLUG], "knowledge.publish")
+    assert user_has_agent_permission([DOMAIN_APPROVER_SLUG], "approval.approve")
+    assert user_has_agent_permission([SUPER_ADMIN_SLUG], "operations.reindex")
+    assert not user_has_agent_permission([USER_SLUG], "agent.read")
+
+
+def test_agent_permission_union_is_composable():
+    permissions = agent_permissions_for_slugs(
+        [AGENT_DESIGNER_SLUG, KNOWLEDGE_PUBLISHER_SLUG]
+    )
+    assert "agent.edit" in permissions
+    assert "knowledge.publish" in permissions
+    assert "tool.manage" not in permissions

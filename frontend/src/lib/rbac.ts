@@ -32,6 +32,18 @@ const SUPER_ADMIN = "super_admin";
 const LEGACY_READ_ONLY_ADMIN = "read_only_administrator";
 const USER = "user";
 const LEGACY_ADMIN = "admin";
+const AGENT_PLATFORM_ROLES = new Set([
+  "agents_administrator",
+  "agent_designer",
+  "agent_publisher",
+  "knowledge_administrator",
+  "knowledge_curator",
+  "knowledge_publisher",
+  "agent_domain_approver",
+  "agent_tool_administrator",
+  "agent_operations_administrator",
+  "agent_auditor",
+]);
 
 /** End-user features — not gated by scoped admin read-only roles. */
 export const USER_APP_MENUS: MenuKey[] = ["chat", "media", "user_manual"];
@@ -91,6 +103,14 @@ const MENU_PATH_PREFIXES: Record<MenuKey, string[]> = {
   api_logs: ["/admin/logs"],
   operations: ["/admin/operations", "/admin/debug"],
   database: ["/admin/database"],
+  agents: [
+    "/admin/agents",
+    "/admin/knowledge",
+    "/admin/agent-tools",
+    "/admin/agent-evaluations",
+    "/admin/agent-approvals",
+    "/admin/agent-activity",
+  ],
   admin_guide: ["/admin/docs"],
   user_manual: ["/admin/manual"],
 };
@@ -114,6 +134,7 @@ const MENU_TO_CATEGORY: Record<MenuKey, CategoryKey> = {
   api_logs: "data_reports",
   operations: "overview",
   database: "overview",
+  agents: "agents_knowledge",
   admin_guide: "developer",
   user_manual: "developer",
 };
@@ -152,6 +173,7 @@ export function isAdminUserFeaturePath(pathname: string): boolean {
 export function accessibleMenuKeys(role: string | undefined | null): MenuKey[] | null {
   const slug = normalizeRole(role);
   if (slug === FULL_ADMIN || slug === READ_ONLY_FULL_ADMIN || slug === SUPER_ADMIN) return null;
+  if (AGENT_PLATFORM_ROLES.has(slug)) return ["agents"];
   const match = slug.match(
     /^([a-z_]+)_(full|read_only)_administrator$/,
   );

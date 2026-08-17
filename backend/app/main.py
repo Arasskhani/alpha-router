@@ -2,18 +2,44 @@
 
 import asyncio
 import logging
-import os
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
-from app.api import admin, auth, authentication, chat, gateway, groups, images, logs, operations, plans, reports, smtp, speech, user_chats, user_media, user_memories, user_routes, user_settings, videos
+import app.models  # Register every ORM table before schema startup.
+from app.api import (
+    admin,
+    admin_agent_evaluations,
+    admin_agent_governance,
+    admin_agents,
+    admin_knowledge,
+    agents,
+    auth,
+    authentication,
+    chat,
+    gateway,
+    groups,
+    images,
+    logs,
+    operations,
+    plans,
+    reports,
+    smtp,
+    speech,
+    user_chats,
+    user_media,
+    user_memories,
+    user_routes,
+    user_settings,
+    videos,
+)
 from app.branding import (
     APPLICATION_TITLE,
     CSRF_COOKIE_NAME,
@@ -27,30 +53,42 @@ from app.branding import (
 from app.config import INSECURE_DEFAULTS, get_settings
 from app.core.security import hash_password
 from app.database import AsyncSessionLocal, Base, engine
-from app.db_migrate import apply_schema_column_patches, validate_accounting_schema
+from app.db_migrate import (
+    apply_schema_column_patches,
+    validate_accounting_schema,
+    validate_agent_platform_schema,
+)
 from app.legacy_brand_denylist import (
     LEGACY_CSRF_COOKIE_NAMES,
     LEGACY_DATABASE_URLS,
     LEGACY_SESSION_COOKIE_NAMES,
 )
 from app.models.user import User
+from app.schema_registry import legacy_metadata_tables
+from app.services import object_storage_service as oss
 from app.services.auth_sync_scheduler import refresh_auth_sync_schedules
 from app.services.bounded_io import RequestBodyLimitMiddleware
 from app.services.csrf_protection import CsrfProtectionMiddleware
+from app.services.docs_guard import OpenApiDocsGuardMiddleware
+from app.services.observability import (
+    ObservabilityMiddleware,
+    configure_json_logging,
+    configure_telemetry,
+    increment,
+    prometheus_payload,
+    shutdown_telemetry,
+)
+from app.services.openrouter_image_service import close_openrouter_http_client
+from app.services.proxy_service import configure_litellm_cache
 from app.services.scheduler import (
     refresh_chat_retention_cleanup_schedule,
     refresh_storage_cleanup_schedule,
     start_scheduler,
     stop_scheduler,
 )
-from app.services.video_job_service import start_video_worker, stop_video_worker
 from app.services.security_headers import SecurityHeadersMiddleware
-from app.services.docs_guard import OpenApiDocsGuardMiddleware
-from app.services.observability import increment
-from app.services import object_storage_service as oss
-from app.services.openrouter_image_service import close_openrouter_http_client
-from app.services.proxy_service import configure_litellm_cache
 from app.services.user_chat_storage_service import ensure_user_chat_store
+from app.services.video_job_service import start_video_worker, stop_video_worker
 
 settings = get_settings()
 
@@ -113,8 +151,27 @@ def _assert_production_safe() -> None:
         allow_legacy_bearer_auth=settings.allow_legacy_bearer_auth,
         session_cookie_name=settings.session_cookie_name,
         csrf_cookie_name=settings.csrf_cookie_name,
+        clamav_required=settings.clamav_required,
+        knowledge_ocr_required=settings.knowledge_ocr_required,
         guard_mode=settings.production_guard_mode,
     )
+    if (
+        settings.environment == "production"
+        and settings.metrics_enabled
+        and (
+            not settings.metrics_bearer_token.strip()
+            or settings.metrics_bearer_token in INSECURE_DEFAULTS
+        )
+    ):
+        message = (
+            "METRICS_BEARER_TOKEN must be a non-placeholder secret when "
+            "METRICS_ENABLED=true in production"
+        )
+        if settings.production_guard_mode == "warning":
+            increment("production_guard_warning")
+            _PRODUCTION_GUARD_LOG.warning(message)
+        else:
+            raise RuntimeError(message)
 
 
 def collect_dangerous_opt_in_flags(
@@ -133,24 +190,30 @@ def collect_dangerous_opt_in_flags(
         enabled.append(
             (
                 "ALLOW_LEGACY_BEARER_AUTH",
-                "browser Bearer JWT bypasses the HttpOnly session cookie + CSRF path; "
-                "use /v1 API keys for machine clients instead",
+                (
+                    "browser Bearer JWT bypasses the HttpOnly session cookie + CSRF "
+                    "path; use /v1 API keys for machine clients instead"
+                ),
             )
         )
     if allow_ssrf_private_ranges:
         enabled.append(
             (
                 "ALLOW_SSRF_PRIVATE_RANGES",
-                "ssrf_guard allows private/loopback/metadata targets; prefer SAML "
-                "Metadata XML upload or a public proxy URL for internal resources",
+                (
+                    "ssrf_guard allows private/loopback/metadata targets; prefer SAML "
+                    "Metadata XML upload or a public proxy URL for internal resources"
+                ),
             )
         )
     if allow_insecure_code_subprocess:
         enabled.append(
             (
                 "ALLOW_INSECURE_CODE_SUBPROCESS",
-                "code interpreter may run on the API host via subprocess in development; "
-                "prefer CODE_SANDBOX_BROKER_URL + SANDBOX_BROKER_TOKEN",
+                (
+                    "code interpreter may run on the API host via subprocess in "
+                    "development; prefer CODE_SANDBOX_BROKER_URL + SANDBOX_BROKER_TOKEN"
+                ),
             )
         )
     return enabled
@@ -262,6 +325,8 @@ def _collect_production_insecurities(
     allow_legacy_bearer_auth: bool = False,
     session_cookie_name: str = SESSION_COOKIE_NAME,
     csrf_cookie_name: str = CSRF_COOKIE_NAME,
+    clamav_required: bool = True,
+    knowledge_ocr_required: bool = True,
 ) -> list[str]:
     """Pure collector used by the startup guard and by tests.
 
@@ -303,8 +368,10 @@ def _collect_production_insecurities(
     ):
         insecure.append("DATABASE_URL")
     # SAML ACS/metadata are derived from api_public_url; require HTTPS when enabled.
-    if saml_enabled and api_public_url.strip() and (
-        not _url_uses_tls(api_public_url) and not _url_is_loopback(api_public_url)
+    if (
+        saml_enabled
+        and api_public_url.strip()
+        and (not _url_uses_tls(api_public_url) and not _url_is_loopback(api_public_url))
     ):
         insecure.append("SAML_TLS")
     if oidc_enabled and (
@@ -352,6 +419,10 @@ def _collect_production_insecurities(
         insecure.append("SESSION_COOKIE_NAME")
     if csrf_cookie_name in LEGACY_CSRF_COOKIE_NAMES:
         insecure.append("CSRF_COOKIE_NAME")
+    if not clamav_required:
+        insecure.append("CLAMAV_REQUIRED")
+    if not knowledge_ocr_required:
+        insecure.append("KNOWLEDGE_OCR_REQUIRED")
     return insecure
 
 
@@ -385,6 +456,8 @@ def _check_production_safe(
     allow_legacy_bearer_auth: bool = False,
     session_cookie_name: str = SESSION_COOKIE_NAME,
     csrf_cookie_name: str = CSRF_COOKIE_NAME,
+    clamav_required: bool = True,
+    knowledge_ocr_required: bool = True,
     guard_mode: str = "hard-fail",
 ) -> None:
     """Pure check used by the startup guard and by tests.
@@ -423,6 +496,8 @@ def _check_production_safe(
         allow_legacy_bearer_auth=allow_legacy_bearer_auth,
         session_cookie_name=session_cookie_name,
         csrf_cookie_name=csrf_cookie_name,
+        clamav_required=clamav_required,
+        knowledge_ocr_required=knowledge_ocr_required,
     )
     if not insecure:
         return
@@ -445,6 +520,13 @@ _PRODUCTION_GUARD_LOG = logging.getLogger(f"{LOGGER_NAMESPACE}.production_guard"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_json_logging(settings.json_logging_enabled)
+    configure_telemetry(
+        enabled=settings.otel_enabled,
+        service_name=settings.otel_service_name,
+        endpoint=settings.otel_exporter_otlp_endpoint,
+        sample_ratio=settings.otel_trace_sample_ratio,
+    )
     _assert_production_safe()
     _warn_dangerous_opt_in_flags()
     async with engine.begin() as conn:
@@ -453,27 +535,43 @@ async def lifespan(app: FastAPI):
         # PostgreSQL's type catalog and abort worker startup.
         if conn.dialect.name == "postgresql":
             await conn.execute(text("SELECT pg_advisory_xact_lock(56023113)"))
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(
+            Base.metadata.create_all,
+            tables=legacy_metadata_tables(Base.metadata),
+        )
     await apply_schema_column_patches()
+    await validate_agent_platform_schema()
     await validate_accounting_schema()
 
     async with AsyncSessionLocal() as db:
-        from app.services.username_norm import find_user_by_username_ci, normalize_username
+        from app.services.username_norm import (
+            find_user_by_username_ci,
+            normalize_username,
+        )
 
         # Every Uvicorn worker enters lifespan concurrently. Serialize the
         # check-and-create bootstrap transaction so a fresh database cannot
         # race on the unique username/email indexes.
         if db.get_bind().dialect.name == "postgresql":
             await db.execute(text("SELECT pg_advisory_xact_lock(56023114)"))
-        admin_username = normalize_username(settings.admin_username) or settings.admin_username.strip()
+        admin_username = (
+            normalize_username(settings.admin_username)
+            or settings.admin_username.strip()
+        )
         admin_user = await find_user_by_username_ci(db, admin_username)
         if not admin_user:
             # A seed admin may already exist under a previous ADMIN_USERNAME.
             # Reuse it by current or legacy bootstrap email instead of creating
             # a duplicate administrator.
             admin_user = (
-                await db.execute(select(User).where(User.email == DEFAULT_ADMIN_EMAIL))
-            ).scalars().first()
+                (
+                    await db.execute(
+                        select(User).where(User.email == DEFAULT_ADMIN_EMAIL)
+                    )
+                )
+                .scalars()
+                .first()
+            )
         if not admin_user:
             legacy_admin_emails = (
                 "alpharouter@alpharouter.ent",
@@ -481,8 +579,14 @@ async def lifespan(app: FastAPI):
             )
             for legacy_admin_email in legacy_admin_emails:
                 admin_user = (
-                    await db.execute(select(User).where(User.email == legacy_admin_email))
-                ).scalars().first()
+                    (
+                        await db.execute(
+                            select(User).where(User.email == legacy_admin_email)
+                        )
+                    )
+                    .scalars()
+                    .first()
+                )
                 if admin_user:
                     admin_user.email = DEFAULT_ADMIN_EMAIL
                     break
@@ -513,7 +617,9 @@ async def lifespan(app: FastAPI):
         from app.services.user_role_service import ensure_super_admin_roles
 
         for row in (await db.execute(select(User))).scalars().all():
-            await ensure_super_admin_roles(db, row, admin_username=settings.admin_username)
+            await ensure_super_admin_roles(
+                db, row, admin_username=settings.admin_username
+            )
             await ensure_user_chat_store(db, row.id)  # ensures user_chat_prefs row
         await db.commit()
 
@@ -535,8 +641,14 @@ async def lifespan(app: FastAPI):
         from app.services.model_tool_compatibility_service import (
             ensure_all_model_compatibility_rows,
         )
+        from app.services.specialist_agent_seed_service import (
+            seed_specialist_agents,
+        )
 
         await ensure_all_model_compatibility_rows(db)
+        if admin_user is None:
+            raise RuntimeError("Bootstrap administrator is unavailable for Agent seeding")
+        await seed_specialist_agents(db, actor_user_id=admin_user.id)
         await db.commit()
 
     start_scheduler()
@@ -550,6 +662,7 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
     await close_openrouter_http_client()
     await engine.dispose()
+    shutdown_telemetry()
 
 
 _DOCS_LOCKED = bool(settings.openapi_admin_only)
@@ -568,7 +681,8 @@ app = FastAPI(
 
 if _DOCS_LOCKED:
     from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
-    from fastapi.responses import HTMLResponse, JSONResponse as _JSONResponse
+    from fastapi.responses import HTMLResponse
+    from fastapi.responses import JSONResponse as _JSONResponse
 
     @app.get("/api/openapi.json", include_in_schema=False)
     async def _protected_openapi_json():
@@ -596,7 +710,11 @@ app.add_middleware(OpenApiDocsGuardMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_url, "http://127.0.0.1:8080", "http://localhost:8080"],
+    allow_origins=[
+        settings.frontend_url,
+        "http://127.0.0.1:8080",
+        "http://localhost:8080",
+    ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=[
@@ -608,10 +726,16 @@ app.add_middleware(
     ],
 )
 app.add_middleware(CsrfProtectionMiddleware)
+app.add_middleware(ObservabilityMiddleware)
 
 app.include_router(auth.router)
 app.include_router(gateway.router)
 app.include_router(admin.router)
+app.include_router(admin_agent_evaluations.router)
+app.include_router(admin_agent_governance.router)
+app.include_router(admin_agents.router)
+app.include_router(admin_knowledge.router)
+app.include_router(agents.router)
 app.include_router(user_routes.router)
 app.include_router(user_media.router)
 app.include_router(user_chats.router)
@@ -645,6 +769,30 @@ def health_payload() -> dict[str, str]:
 @app.get("/health", include_in_schema=False)
 async def health():
     return health_payload()
+
+
+if settings.metrics_enabled:
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics(request: Request):
+        configured_token = settings.metrics_bearer_token.strip()
+        if configured_token:
+            authorization = request.headers.get("authorization", "")
+            supplied_token = (
+                authorization[7:].strip()
+                if authorization.lower().startswith("bearer ")
+                else ""
+            )
+            if not secrets.compare_digest(supplied_token, configured_token):
+                raise HTTPException(401, "Metrics authentication required")
+        body, content_type = prometheus_payload()
+        return Response(
+            content=body,
+            headers={
+                "Content-Type": content_type,
+                "Cache-Control": "no-store",
+            },
+        )
 
 
 def _fallback_html() -> str:
@@ -694,14 +842,18 @@ async def root():
 
 # Static assets (JS/CSS) — must be after explicit routes like /health
 if _FRONTEND_DIST.is_dir():
-    app.mount("/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="assets")
+    app.mount(
+        "/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="assets"
+    )
 
     @app.get("/{full_path:path}")
     async def spa_fallback(full_path: str):
         """React Router: serve index.html for client-side routes (never shadow /api — those are separate routes)."""
         # Never let the SPA mask unmatched API/gateway paths — return JSON 404
         # so API clients get a predictable error instead of the HTML shell.
-        if full_path.startswith(("api/", "v1/", "health", "docs", "openapi.json", "redoc")):
+        if full_path.startswith(
+            ("api/", "v1/", "health", "docs", "openapi.json", "redoc")
+        ):
             return JSONResponse(
                 status_code=404,
                 content={"detail": "Not Found", "path": f"/{full_path}"},

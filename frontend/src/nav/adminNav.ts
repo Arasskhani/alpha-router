@@ -32,6 +32,19 @@ export const adminNavSections: NavSection[] = [
     ],
   },
   {
+    title: "Agents & Knowledge",
+    categoryKey: "agents_knowledge",
+    items: [
+      { to: "/admin/agents", label: "Overview", menuKey: "agents" },
+      { to: "/admin/agents/studio", label: "Agent Studio", menuKey: "agents" },
+      { to: "/admin/knowledge", label: "Knowledge Bases", menuKey: "agents" },
+      { to: "/admin/agent-tools", label: "Tool Registry", menuKey: "agents" },
+      { to: "/admin/agent-evaluations", label: "Evaluations", menuKey: "agents" },
+      { to: "/admin/agent-approvals", label: "Approvals", menuKey: "agents" },
+      { to: "/admin/agent-activity", label: "Activity & Audit", menuKey: "agents" },
+    ],
+  },
+  {
     title: "People & access",
     categoryKey: "people_access",
     items: [

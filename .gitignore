@@ -20,6 +20,7 @@ __pycache__/
 venv/
 env/
 .pytest_cache/
+.pytest-tmp*/
 .mypy_cache/
 .ruff_cache/
 htmlcov/

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
@@ -15,6 +17,12 @@ _PROFILE_FIELDS: tuple[tuple[str, str], ...] = (
     ("job_title", "Job title"),
     ("reporting_to", "Report to"),
 )
+_AGENT_PROFILE_FIELDS: dict[str, tuple[str, str]] = {
+    "display_name": ("display_name", "Display name"),
+    "department": ("department", "Department"),
+    "job_title": ("job_title", "Job title"),
+    "location": ("office", "Location"),
+}
 
 
 def _clean_field(value: str | None) -> str | None:
@@ -35,6 +43,37 @@ def profile_facts_from_user(user: User | None) -> list[tuple[str, str]]:
         cleaned = _clean_field(getattr(user, attr, None))
         if cleaned:
             facts.append((label, cleaned))
+    return facts
+
+
+async def load_agent_profile_facts(
+    db: AsyncSession,
+    *,
+    user_id: int | None,
+    allowed_fields: Collection[str],
+) -> list[tuple[str, str]]:
+    """Load only the directory fields approved by an Agent version."""
+
+    if user_id is None:
+        return []
+    user = await db.get(User, user_id)
+    if user is None:
+        return []
+    allowed = {str(field).strip() for field in allowed_fields}
+    facts: list[tuple[str, str]] = []
+    for policy_name, (attribute, label) in _AGENT_PROFILE_FIELDS.items():
+        if policy_name not in allowed:
+            continue
+        cleaned = _clean_field(getattr(user, attribute, None))
+        if cleaned:
+            facts.append((label, cleaned))
+    if "preferred_language" in allowed:
+        from app.services.user_chat_storage_service import load_user_prefs
+
+        prefs = await load_user_prefs(db, user_id)
+        language = _clean_field(str(prefs.get("language") or ""))
+        if language:
+            facts.append(("Preferred language", language))
     return facts
 
 

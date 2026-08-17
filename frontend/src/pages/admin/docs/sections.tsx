@@ -875,6 +875,10 @@ export const docSections: DocSection[] = [
               <td>Dashboard, Operations, Database</td>
             </tr>
             <tr>
+              <td>Agents &amp; Knowledge</td>
+              <td>Overview, Agent Studio, Knowledge Bases, Tool Registry, Evaluations, Approvals, Activity</td>
+            </tr>
+            <tr>
               <td>Models &amp; API</td>
               <td>Connections, Models, API Keys</td>
             </tr>
@@ -982,6 +986,182 @@ export const docSections: DocSection[] = [
           Path: <code>/admin/database</code>. Read-only monitor: connection status, engine, host CPU/RAM, DB size, ping,
           alpharouter process RSS/CPU, and table row counts. Use <strong>Refresh</strong> to reload.
         </p>
+      </>
+    ),
+  },
+
+  // ── Agents & Knowledge ────────────────────────────────────────────────────
+  {
+    id: "agents-knowledge-overview",
+    title: "Agents & Knowledge overview",
+    group: "Agents & Knowledge",
+    content: (
+      <>
+        <h2>Agents &amp; Knowledge overview</h2>
+        <p>
+          Path: <code>/admin/agents</code>. This area governs specialist behavior, immutable configuration versions,
+          authorized Knowledge releases, Tool contracts, evaluation gates, and runtime evidence.
+        </p>
+        <ul>
+          <li>
+            <strong>Agent Studio</strong> — create or clone a draft, configure model/retrieval/routing policies, bind
+            Knowledge, submit for review, publish, and roll back.
+          </li>
+          <li>
+            <strong>Knowledge Bases</strong> — upload and review documents, publish indexed releases, configure
+            connectors, and retry durable jobs.
+          </li>
+          <li>
+            <strong>Tool Registry</strong> — versioned schemas, side-effect classification, approvals, and execution
+            limits.
+          </li>
+          <li>
+            <strong>Evaluations</strong> — versioned FA/EN golden datasets, deterministic scorecards, and publish-gate
+            readiness.
+          </li>
+          <li>
+            <strong>Approvals</strong> and <strong>Activity</strong> — maker-checker queues, legal holds, retention,
+            and tamper-evident governance history.
+          </li>
+        </ul>
+        <Note>
+          Adding a sixth specialist is configuration work: create the Agent and its draft version, curate a Knowledge
+          Base and evaluation set, complete approvals, then publish. No application code change is required.
+        </Note>
+      </>
+    ),
+  },
+  {
+    id: "specialist-bootstrap",
+    title: "Built-in specialist bootstrap",
+    group: "Agents & Knowledge",
+    content: (
+      <>
+        <h2>Built-in specialist bootstrap</h2>
+        <p>
+          With <code>SEED_SPECIALIST_AGENTS_ENABLED=true</code>, startup idempotently prepares IT Helpdesk, HR
+          Assistant, Legal Consultant, Finance Consultant, and Marketing Consultant. Each receives an immutable initial
+          version, bounded policies, one empty domain Knowledge Base, a pending latest-release binding, and a 100-case
+          bilingual draft golden set. Choose the initial model with <code>SEED_AGENT_PRIMARY_MODEL_ID</code>. A
+          Knowledge reviewer must approve every seeded binding; HR, Legal, and Finance also require a different domain
+          approver. Final approval can safely enable the binding on an already-published system version.
+        </p>
+        <table className="docs-table">
+          <thead>
+            <tr>
+              <th>Specialist</th>
+              <th>Initial Agent / KB access</th>
+              <th>Knowledge sensitivity</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>IT Helpdesk</td><td>Public / public</td><td>Internal</td></tr>
+            <tr><td>HR Assistant</td><td>Private / private</td><td>HR confidential</td></tr>
+            <tr><td>Legal Consultant</td><td>Private / private</td><td>Legal privileged</td></tr>
+            <tr><td>Finance Consultant</td><td>Private / private</td><td>Finance restricted</td></tr>
+            <tr><td>Marketing Consultant</td><td>Public / public</td><td>Internal</td></tr>
+          </tbody>
+        </table>
+        <Warn>
+          Seeded Knowledge Bases are empty by design. Do not activate a seeded golden set until every{" "}
+          <code>curate:</code> sentinel has been replaced with a real immutable document-version ID. Alpharouter rejects
+          activation while those curation sentinels remain.
+        </Warn>
+      </>
+    ),
+  },
+  {
+    id: "knowledge-release-workflow",
+    title: "Knowledge release workflow",
+    group: "Agents & Knowledge",
+    content: (
+      <>
+        <h2>Knowledge release workflow</h2>
+        <ol>
+          <li>Set the Knowledge Base owner, sensitivity, retention, and explicit ACL. Deny always wins.</li>
+          <li>Upload an authoritative revision or configure a connector. Source bytes enter encrypted quarantine.</li>
+          <li>
+            Wait for malware, format, parser, OCR (when required), and prompt-injection checks. Failed jobs are visible
+            and retriable; unsafe content remains unavailable.
+          </li>
+          <li>
+            A reviewer other than the uploader approves the immutable document version. Blocked injection findings need
+            an explicit recorded override.
+          </li>
+          <li>
+            Create a release from reviewed versions. A different publisher submits the release for dense/sparse indexing.
+          </li>
+          <li>
+            The worker builds and validates a blue/green Qdrant index, switches the alias atomically, and only then marks
+            the release published.
+          </li>
+        </ol>
+        <Warn>
+          PostgreSQL is the source of truth and Qdrant is rebuildable derived state. Never mark a release or index active
+          manually to work around a failed job. Fix the dependency, retry the durable job, and preserve its audit trail.
+        </Warn>
+      </>
+    ),
+  },
+  {
+    id: "agent-evaluation-workflow",
+    title: "Evaluation and publish gates",
+    group: "Agents & Knowledge",
+    content: (
+      <>
+        <h2>Evaluation and publish gates</h2>
+        <p>
+          Path: <code>/admin/agent-evaluations</code>. Publish-gate datasets must include Persian and English cases
+          covering routing, retrieval, citation, abstention, ACL, and prompt injection. Active datasets are immutable;
+          create a new dataset version to change expectations.
+        </p>
+        <ol>
+          <li>Import or replace cases while the dataset is a draft and review every expected document-version ID.</li>
+          <li>Activate the curated dataset to freeze its snapshot.</li>
+          <li>Run the exact Agent version and upload observations for every enabled case.</li>
+          <li>
+            Confirm retrieval recall@10, routing accuracy, abstention, citation integrity, injection resistance, case
+            pass rate, and zero ACL leaks meet the configured thresholds.
+          </li>
+          <li>Complete independent human review when required. A passing run applies only to that immutable snapshot and
+            Agent-version fingerprint.</li>
+        </ol>
+        <Note>
+          Publishing or rolling back an Agent version fails closed when any active publish-gate dataset lacks a passing,
+          current evaluation.
+        </Note>
+      </>
+    ),
+  },
+  {
+    id: "agent-operations",
+    title: "Agent operations & incidents",
+    group: "Agents & Knowledge",
+    content: (
+      <>
+        <h2>Agent operations &amp; incidents</h2>
+        <ul>
+          <li>
+            Scrape <code>/metrics</code> with its production Bearer token. Alert on failed Agent runs, retrieval failure,
+            queue backlog/dead letters, ACL denials, and latency/error-budget burn.
+          </li>
+          <li>
+            Correlate JSON logs with <code>x-request-id</code>, trace ID, and span ID. Prompts, retrieved text, secrets,
+            and credentials are intentionally absent from telemetry.
+          </li>
+          <li>
+            For bad knowledge, revoke the document, verify it leaves the active release/index, and rerun citation/ACL
+            evaluations. Apply a legal hold before retention when evidence must be preserved.
+          </li>
+          <li>
+            For a bad Agent version, stop new publication, roll back only to a version that passes all current active
+            gates, and verify UI plus <code>/v1/chat/completions</code>.
+          </li>
+          <li>
+            Restore PostgreSQL, SeaweedFS, Redis durability as applicable, then rebuild Qdrant indexes from authoritative
+            releases. Validate aliases and point counts before reopening traffic.
+          </li>
+        </ul>
       </>
     ),
   },

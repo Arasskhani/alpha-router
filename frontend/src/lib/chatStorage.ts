@@ -18,6 +18,7 @@ import { isQuotaExceededError, PrivateChatStorageError } from "./privateMediaSto
 import { broadcastChatRefresh, isChatLeader, initChatLeader } from "./chatLeader";
 import { getSessionUser } from "./session";
 import { isCachedTheme, loadCachedTheme, saveCachedTheme, type CachedTheme } from "./themeCache";
+import type { AgentCitation } from "./agentChat";
 import {
   anyChatToolEnabled,
   copyFreshChatTools,
@@ -70,6 +71,15 @@ export type ChatMessage = {
   sequence?: number;
   /** Owned RequestLog id for Cost details (chat info button). */
   requestLogId?: number;
+  /** Server-owned Agent execution metadata. */
+  agentRunId?: string;
+  agentId?: string;
+  agentVersionId?: string;
+  agentName?: string;
+  agentStatus?: string;
+  routingOutcome?: string;
+  completionReasonCode?: string;
+  citations?: AgentCitation[];
   feedback?: {
     rating: -1 | 1;
     reason?: string | null;
@@ -260,6 +270,11 @@ export type ChatSession = {
   titleGenerated?: boolean;
   folderId?: string | null;
   model: string;
+  currentAgentId?: string | null;
+  currentAgentVersionId?: string | null;
+  agentSelectedAt?: number | null;
+  /** Agent enabled for this chat only. Browser-local; the server owns currentAgentId. */
+  selectedAgentSlug?: string | null;
   tools?: ChatToolsState;
   /** Set when the user toggles tools in this chat; new chats stay false so tools start off. */
   toolsTouched?: boolean;
@@ -561,6 +576,9 @@ export function mergeRemoteChatSessions(
         ...l,
         title: pickMergedTitle(l, r),
         messages: l.messages,
+        currentAgentId: r.currentAgentId,
+        currentAgentVersionId: r.currentAgentVersionId,
+        agentSelectedAt: r.agentSelectedAt,
         updatedAt: Math.max(l.updatedAt ?? 0, r.updatedAt ?? 0),
         lastMessageAt: Math.max(
           l.lastMessageAt ?? sessionActivityAt(l),
@@ -573,11 +591,35 @@ export function mergeRemoteChatSessions(
     const messages = pickMergedMessages(l, r);
 
     if (localUpdated > remoteUpdated) {
-      merged.push({ ...r, ...l, title, messages });
+      merged.push({
+        ...r,
+        ...l,
+        title,
+        messages,
+        currentAgentId: r.currentAgentId,
+        currentAgentVersionId: r.currentAgentVersionId,
+        agentSelectedAt: r.agentSelectedAt,
+      });
     } else if (remoteUpdated > localUpdated) {
-      merged.push({ ...r, ...l, title, messages });
+      merged.push({
+        ...r,
+        ...l,
+        title,
+        messages,
+        currentAgentId: r.currentAgentId,
+        currentAgentVersionId: r.currentAgentVersionId,
+        agentSelectedAt: r.agentSelectedAt,
+      });
     } else {
-      merged.push({ ...r, ...l, title, messages });
+      merged.push({
+        ...r,
+        ...l,
+        title,
+        messages,
+        currentAgentId: r.currentAgentId,
+        currentAgentVersionId: r.currentAgentVersionId,
+        agentSelectedAt: r.agentSelectedAt,
+      });
     }
   }
 
@@ -623,6 +665,21 @@ function mapApiMessage(raw: Record<string, unknown>): ChatMessage {
     streaming: typeof raw.streaming === "boolean" ? raw.streaming : undefined,
     sequence: typeof raw.sequence === "number" ? raw.sequence : undefined,
     ...(requestLogId != null ? { requestLogId } : {}),
+    agentRunId: typeof raw.agentRunId === "string" ? raw.agentRunId : undefined,
+    agentId: typeof raw.agentId === "string" ? raw.agentId : undefined,
+    agentVersionId:
+      typeof raw.agentVersionId === "string" ? raw.agentVersionId : undefined,
+    agentName: typeof raw.agentName === "string" ? raw.agentName : undefined,
+    agentStatus: typeof raw.agentStatus === "string" ? raw.agentStatus : undefined,
+    routingOutcome:
+      typeof raw.routingOutcome === "string" ? raw.routingOutcome : undefined,
+    completionReasonCode:
+      typeof raw.completionReasonCode === "string"
+        ? raw.completionReasonCode
+        : undefined,
+    citations: Array.isArray(raw.citations)
+      ? (raw.citations as AgentCitation[])
+      : undefined,
     feedback:
       raw.feedback &&
       typeof raw.feedback === "object" &&
@@ -649,6 +706,14 @@ function mapApiSession(raw: Record<string, unknown>, messages: ChatMessage[] = [
     titleGenerated: !!raw.titleGenerated,
     folderId: (raw.folderId as string | null | undefined) ?? null,
     model: String(raw.model || ""),
+    currentAgentId:
+      typeof raw.currentAgentId === "string" ? raw.currentAgentId : null,
+    currentAgentVersionId:
+      typeof raw.currentAgentVersionId === "string"
+        ? raw.currentAgentVersionId
+        : null,
+    agentSelectedAt:
+      typeof raw.agentSelectedAt === "number" ? raw.agentSelectedAt : null,
     tools: toolsTouched ? tools : copyFreshChatTools(),
     toolsTouched,
     privateMode: !!raw.privateMode,

@@ -52,6 +52,7 @@ from app.services.media_authorization_service import (
     MediaAccessAction,
     load_authorized_media_asset,
 )
+from app.services.global_default_chat_model import get_global_default_model_id
 from app.services.model_access_service import (
     filter_models_for_subject,
     resolve_access_subject,
@@ -116,11 +117,13 @@ async def chat_models(
     subject = await resolve_access_subject(db, user_id=user.id)
     rows = await filter_models_for_subject(db, list(rows), subject)
     compatibility = await compatibility_map_for_models(db, rows)
+    default_id = await get_global_default_model_id(db)
     return [
         {
             "id": f"model::{m.id}",
             "name": m.display_name or m.external_id,
             "external_id": m.external_id,
+            "is_system_default": default_id is not None and int(m.id) == int(default_id),
             "code_interpreter": compatibility_payload(
                 compatibility.get((int(m.connection_id), m.external_id)),
                 static_candidate=is_code_interpreter_candidate(m),

@@ -23,6 +23,7 @@ import {
   type ModelEnabledFilter,
   type ModelKind,
 } from "../../lib/modelCatalog";
+import { modelSupportsTextChat } from "../../lib/chatModels";
 
 type ViewMode = "table" | "browse";
 type BulkAction = "on" | "off" | "delete" | "public" | "private";
@@ -67,6 +68,37 @@ export default function Models() {
   const accessFilterCounts = useMemo(() => accessCounts(allModels), [allModels]);
   const accessModel = allModels.find((m) => m.id === accessModelId) || null;
   const compatModel = allModels.find((m) => m.id === compatModelId) || null;
+  const selectedDefaultTarget = selectedIds.length === 1
+    ? allModels.find((m) => m.id === selectedIds[0]) || null
+    : null;
+  const canSetDefault = Boolean(
+    selectedDefaultTarget
+    && selectedDefaultTarget.enabled
+    && !selectedDefaultTarget.admin_disabled
+    && (selectedDefaultTarget.access_type || "public") === "public"
+    && modelSupportsTextChat({
+      id: String(selectedDefaultTarget.id),
+      name: selectedDefaultTarget.display_name || selectedDefaultTarget.external_id,
+      external_id: selectedDefaultTarget.external_id,
+      kinds: selectedDefaultTarget.kinds,
+    })
+    && !selectedDefaultTarget.is_system_default,
+  );
+  const setDefaultTitle = !selectedDefaultTarget
+    ? "Select exactly one model"
+    : selectedDefaultTarget.is_system_default
+      ? "Already the system default"
+      : !selectedDefaultTarget.enabled || selectedDefaultTarget.admin_disabled
+        ? "Model must be enabled"
+        : (selectedDefaultTarget.access_type || "public") === "private"
+          ? "Model must be public"
+          : !modelSupportsTextChat({
+              id: String(selectedDefaultTarget.id),
+              external_id: selectedDefaultTarget.external_id,
+              kinds: selectedDefaultTarget.kinds,
+            })
+            ? "Model must support text chat"
+            : "System default for new chats. Does not change users who already picked their own.";
 
   useEffect(() => {
     loadModels().then(setAllModels).catch(() => setAllModels([]));
@@ -115,6 +147,29 @@ export default function Models() {
   async function toggle(id: number, enabled: boolean) {
     await api(`/api/admin/models/${id}/toggle?enabled=${!enabled}`, { method: "PATCH" });
     setAllModels(await loadModels());
+  }
+
+  async function setSystemDefault() {
+    if (!selectedDefaultTarget || !canSetDefault) return;
+    const ok = await confirm({
+      title: "Set Default",
+      message:
+        "New chats will start with this model when a user has not chosen their own default. Existing personal defaults are not changed.",
+      confirmLabel: "Set Default",
+    });
+    if (!ok) return;
+    setMsg("");
+    try {
+      await api("/api/admin/models/default", {
+        method: "PUT",
+        body: JSON.stringify({ model_id: selectedDefaultTarget.id }),
+      });
+      setMsg(`Set ${selectedDefaultTarget.external_id} as the system default for new chats.`);
+      setSelectedIds([]);
+      setAllModels(await loadModels());
+    } catch (e) {
+      setMsg(String(e));
+    }
   }
 
   async function runBulk(action: BulkAction) {
@@ -224,6 +279,15 @@ export default function Models() {
                 );
               })}
             </div>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={!canSetDefault}
+              onClick={() => void setSystemDefault()}
+              title={setDefaultTitle}
+            >
+              Set Default
+            </button>
             <button
               type="button"
               className="btn btn-ghost"
@@ -359,6 +423,14 @@ export default function Models() {
                         {m.admin_disabled ? (
                           <span className="model-admin-off-badge" title="Disabled by admin — sync will not re-enable">
                             Admin off
+                          </span>
+                        ) : null}
+                        {m.is_system_default ? (
+                          <span
+                            className="model-default-badge"
+                            title="System default for new chats. Does not change users who already picked their own."
+                          >
+                            Default
                           </span>
                         ) : null}
                       </div>

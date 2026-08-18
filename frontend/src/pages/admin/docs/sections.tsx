@@ -1410,6 +1410,10 @@ export const docSections: DocSection[] = [
             Bulk edit: turn ON, OFF, or delete selected models.
           </li>
           <li>
+            <strong>Set Default</strong> — select one public, enabled, text-capable model. New chats use it only when
+            the user has not chosen a personal default. Existing user defaults are never overwritten.
+          </li>
+          <li>
             <strong>Access</strong> — Public (all users) or Private (assigned users and/or groups only). Super admins
             always see private models. Gateway keys inherit the owner&apos;s catalog access; they cannot widen access
             beyond the owner through key settings.

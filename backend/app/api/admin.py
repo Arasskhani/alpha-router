@@ -62,6 +62,13 @@ from app.services.model_tool_compatibility_service import (
     is_code_interpreter_candidate,
     set_manual_override,
 )
+from app.services.global_default_chat_model import (
+    GlobalDefaultModelError,
+    clear_global_default_if_ids,
+    drop_unusable_global_default,
+    get_global_default_model_id,
+    set_global_default_model,
+)
 from app.services.model_sync import (
     disable_models_for_connection,
     enable_models_for_connection,
@@ -340,12 +347,14 @@ async def list_admin_models(
     rows = (await db.execute(stmt)).scalars().all()
     counts = await list_assignment_counts(db, [m.id for m in rows])
     compatibility = await compatibility_map_for_models(db, rows)
+    default_id = await get_global_default_model_id(db)
     return [
         {
             "id": m.id,
             "external_id": m.external_id,
             "display_name": m.display_name,
             "enabled": m.is_enabled,
+            "is_system_default": default_id is not None and int(m.id) == int(default_id),
             "admin_disabled": bool(m.admin_disabled),
             "access_type": (m.access_type or "public").strip().lower(),
             "assignment_counts": counts.get(m.id, {"users": 0, "groups": 0}),
@@ -389,6 +398,33 @@ async def list_admin_models(
             )
         ]
     ]
+
+
+class GlobalDefaultModelIn(BaseModel):
+    model_id: int
+
+
+@router.get("/models/default")
+async def get_models_system_default(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_models),
+):
+    model_id = await get_global_default_model_id(db)
+    return {"model_id": model_id}
+
+
+@router.put("/models/default")
+async def put_models_system_default(
+    body: GlobalDefaultModelIn,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_models_write),
+):
+    try:
+        model = await set_global_default_model(db, body.model_id)
+    except GlobalDefaultModelError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await db.commit()
+    return {"ok": True, "model_id": int(model.id)}
 
 
 class ModelCompatibilityOverrideIn(BaseModel):
@@ -521,6 +557,9 @@ async def toggle_model(model_id: int, enabled: bool, db: AsyncSession = Depends(
     if not m:
         raise HTTPException(404)
     await set_model_admin_enabled(db, m, enabled)
+    if not enabled:
+        await clear_global_default_if_ids(db, [model_id])
+    await drop_unusable_global_default(db)
     await db.commit()
     return {"ok": True}
 
@@ -563,6 +602,9 @@ async def put_model_access(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if body.access_type.strip().lower() == "private":
+        await clear_global_default_if_ids(db, [model_id])
+    await drop_unusable_global_default(db)
     await db.commit()
     detail = await get_model_access_detail(db, model_id)
     return {"ok": True, **(detail or {})}
@@ -583,17 +625,24 @@ async def bulk_models(
         raise HTTPException(status_code=400, detail="No models selected")
     ids = list(dict.fromkeys(body.ids))
     if action == "delete":
+        await clear_global_default_if_ids(db, ids)
         result = await db.execute(delete(AIModel).where(AIModel.id.in_(ids)))
         await db.commit()
         return {"ok": True, "count": result.rowcount or 0}
     if action in ("public", "private"):
         count = await bulk_set_access_type(db, ids, action)
+        if action == "private":
+            await clear_global_default_if_ids(db, ids)
+        await drop_unusable_global_default(db)
         await db.commit()
         return {"ok": True, "count": count}
     enabled = action == "on"
     rows = (await db.execute(select(AIModel).where(AIModel.id.in_(ids)))).scalars().all()
     for m in rows:
         await set_model_admin_enabled(db, m, enabled)
+    if not enabled:
+        await clear_global_default_if_ids(db, ids)
+    await drop_unusable_global_default(db)
     await db.commit()
     return {"ok": True, "count": len(rows)}
 
@@ -1149,6 +1198,10 @@ async def update_connection(
             await enable_models_for_connection(db, conn_id)
         else:
             await disable_models_for_connection(db, conn_id)
+            disabled_ids = (
+                await db.execute(select(AIModel.id).where(AIModel.connection_id == conn_id))
+            ).scalars().all()
+            await clear_global_default_if_ids(db, list(disabled_ids))
     if patches:
         touch_connection_modified(conn)
         await log_connection_updated(db, conn=conn, actor=admin, before=before, after_patches=patches)
@@ -1162,6 +1215,10 @@ async def delete_connection(conn_id: int, db: AsyncSession = Depends(get_db), _:
     if not conn:
         raise HTTPException(404)
     # Explicit cleanup for DBs/environments where FK cascade may be disabled.
+    catalog_ids = (
+        await db.execute(select(AIModel.id).where(AIModel.connection_id == conn_id))
+    ).scalars().all()
+    await clear_global_default_if_ids(db, list(catalog_ids))
     await db.execute(delete(AIModel).where(AIModel.connection_id == conn_id))
     await db.delete(conn)
     remaining = (await db.execute(select(func.count()).select_from(Connection))).scalar() or 0

@@ -4,6 +4,7 @@ import {
   modelSupportsTextChat,
   resolvePromptAssistModel,
 } from "./chatModels";
+import { resolveNewChatModel } from "./chatStorage";
 
 describe("modelSupportsTextChat", () => {
   it("accepts text models and Auto Router", () => {
@@ -76,5 +77,30 @@ describe("resolvePromptAssistModel", () => {
       { id: "text-1", kinds: ["text"] },
     ];
     expect(resolvePromptAssistModel(models, "img")?.id).toBe("text-1");
+  });
+});
+
+describe("resolveNewChatModel system default", () => {
+  const catalog = [
+    { id: "model::1", external_id: "openai/first" },
+    { id: "model::2", external_id: "openai/user-pick" },
+    { id: "model::3", external_id: "openai/system", is_system_default: true },
+  ];
+
+  it("uses the user default when set and never falls through to system default", () => {
+    expect(resolveNewChatModel(catalog, "model::1", "model::2")).toBe("model::2");
+  });
+
+  it("uses the admin system default only when the user has no personal default", () => {
+    expect(resolveNewChatModel(catalog, "model::1", "")).toBe("model::3");
+    expect(resolveNewChatModel(catalog, "model::1", null)).toBe("model::3");
+  });
+
+  it("does not treat a missing system default as a write to user preference", () => {
+    const noFlag = [
+      { id: "model::1", external_id: "openai/first" },
+      { id: "model::2", external_id: "openai/second" },
+    ];
+    expect(resolveNewChatModel(noFlag, undefined, "")).toBe("model::1");
   });
 });

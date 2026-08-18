@@ -270,6 +270,7 @@ type Model = {
   id: string;
   name: string;
   external_id?: string;
+  is_system_default?: boolean;
   kinds?: string[];
   is_image_model?: boolean;
   supports_text_to_image?: boolean;
@@ -3437,7 +3438,12 @@ export default function ChatPanel() {
   }
 
   function resolveSessionTitleModelId(mediaModelId?: string): string {
-    const preferred = resolveDefaultModelPreference(models, defaultModel);
+    const preferred =
+      resolveDefaultModelPreference(models, defaultModel) ||
+      resolveDefaultModelPreference(
+        models,
+        models.find((m) => m.is_system_default)?.id,
+      );
     if (preferred) {
       const preferredModel = models.find((m) => m.id === preferred);
       if (preferredModel && !isDedicatedMediaModel(preferredModel)) return preferred;

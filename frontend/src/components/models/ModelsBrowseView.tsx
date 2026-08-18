@@ -81,6 +81,14 @@ export default function ModelsBrowseView({
                     Admin off
                   </span>
                 ) : null}
+                {m.is_system_default ? (
+                  <span
+                    className="model-default-badge"
+                    title="System default for new chats. Does not change users who already picked their own."
+                  >
+                    Default
+                  </span>
+                ) : null}
               </div>
             </div>
 

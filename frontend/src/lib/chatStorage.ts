@@ -1974,16 +1974,24 @@ export function saveChatFolders(_folders: ChatFolder[]) {
 }
 
 /**
- * Pick a model for a new chat. Order: user preferred default → caller fallback →
- * first catalog entry. No specific model id/name is hardcoded.
+ * Pick a model for a new chat. Order: user preferred default → admin system
+ * default → caller fallback → first catalog entry.
+ * The admin system default is never written into user prefs.
  */
 export function resolveNewChatModel(
-  models: { id: string; name?: string; external_id?: string }[],
+  models: {
+    id: string;
+    name?: string;
+    external_id?: string;
+    is_system_default?: boolean;
+  }[],
   fallback?: string,
   preferredDefault?: string | null,
 ): string {
   const preferred = preferredDefault?.trim() || "";
   if (preferred && models.some((m) => m.id === preferred)) return preferred;
+  const system = models.find((m) => m.is_system_default)?.id?.trim() || "";
+  if (system && models.some((m) => m.id === system)) return system;
   const fb = fallback?.trim() || "";
   if (fb && models.some((m) => m.id === fb)) return fb;
   return models[0]?.id || "";

@@ -8,6 +8,7 @@
 *.env.local
 .env.bak
 *.bak
+docker-compose.override.yml
 
 # =============================================================================
 # Python — bytecode, caches, virtualenvs

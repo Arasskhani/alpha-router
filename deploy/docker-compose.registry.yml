@@ -1,0 +1,36 @@
+# Pull pre-built Alpharouter images from a container registry (no local build).
+#
+# Set in .env (or export before install):
+#   ALPHAROUTER_REGISTRY=registry.gitlab.com/your-group/alpha-router
+#   ALPHAROUTER_IMAGE_TAG=latest
+#
+# Used automatically by: ./scripts/install.sh --from-registry
+
+services:
+  alpha-router-sandbox:
+    image: ${ALPHAROUTER_REGISTRY:?Set ALPHAROUTER_REGISTRY in .env}/alpha-router-sandbox:${ALPHAROUTER_IMAGE_TAG:-latest}
+    build: !reset null
+    pull_policy: always
+
+  alpha-router-sandbox-broker:
+    image: ${ALPHAROUTER_REGISTRY}/alpha-router-sandbox-broker:${ALPHAROUTER_IMAGE_TAG:-latest}
+    build: !reset null
+    pull_policy: always
+
+  db-init:
+    image: ${ALPHAROUTER_REGISTRY}/alpha-router:${ALPHAROUTER_IMAGE_TAG:-latest}
+    build: !reset null
+    pull_policy: always
+
+  alpha-router-knowledge-scheduler:
+    image: ${ALPHAROUTER_REGISTRY}/alpha-router:${ALPHAROUTER_IMAGE_TAG:-latest}
+    pull_policy: always
+
+  alpha-router-knowledge-worker:
+    image: ${ALPHAROUTER_REGISTRY}/alpha-router:${ALPHAROUTER_IMAGE_TAG:-latest}
+    pull_policy: always
+
+  alpha-router:
+    image: ${ALPHAROUTER_REGISTRY}/alpha-router:${ALPHAROUTER_IMAGE_TAG:-latest}
+    build: !reset null
+    pull_policy: always

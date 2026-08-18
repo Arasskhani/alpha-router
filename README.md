@@ -45,6 +45,46 @@ run the same Compose stack on Linux or any other Docker-capable environment.
 
 ## Quick start with Docker
 
+### Automated install (recommended)
+
+From a full source tree on any Docker host:
+
+```bash
+cd alpha-router
+chmod +x scripts/install.sh
+./scripts/install.sh --from-source --dev
+```
+
+Production-oriented secrets and preflight:
+
+```bash
+./scripts/install.sh --from-source --prod
+```
+
+After CI publishes images to your GitLab Container Registry:
+
+```bash
+# In .env: ALPHAROUTER_REGISTRY=registry.gitlab.com/your-group/alpha-router
+./scripts/install.sh --from-registry --image-tag latest
+```
+
+Upgrade after copying a newer source tree (keeps existing `.env` secrets):
+
+```bash
+./scripts/install.sh --from-source --upgrade --dev
+```
+
+Production guard check only:
+
+```bash
+./scripts/preflight-prod.sh
+```
+
+The installer creates or patches `.env`, detects the host `docker.sock` group for
+Code Interpreter, writes `docker-compose.override.yml`, and waits for `/health`.
+
+### Manual quick start
+
 ```bash
 cd alpha-router
 cp .env.example .env
@@ -63,7 +103,6 @@ is required.
 |---|---|
 | UI and API | http://localhost:8080 |
 | Health | http://localhost:8080/health |
-| Readiness | http://localhost:8080/ready |
 | PostgreSQL | localhost:5432 (`alpha_router` / `alpha_router`) |
 | PgBouncer | localhost:6432 |
 | Redis | localhost:6379 |
@@ -103,12 +142,43 @@ alpha-router/
 ├── frontend/         React and Vite single-page application
 ├── sandbox/          Isolated code-interpreter image
 ├── sandbox-broker/   Internal Docker sandbox controller
-├── deploy/           SeaweedFS support files
+├── deploy/           SeaweedFS support, registry compose overlay
+├── scripts/          install.sh and deploy helpers
 ├── docker-compose.yml
 ├── Dockerfile
 ├── LICENSE
 └── .env.example
 ```
+
+## Deployment
+
+Two supported paths:
+
+| Path | When to use | Command |
+|------|-------------|---------|
+| **Source copy** | rsync/scp/tar onto the server; build on host | `./scripts/install.sh --from-source --dev` |
+| **Registry pull** | After GitLab CI `publish-images` | `./scripts/install.sh --from-registry --image-tag TAG` |
+
+**Source bundle** (minimum files to copy):
+
+`docker-compose.yml`, `Dockerfile`, `.env.example`, `backend/`, `frontend/`
+(including `package-lock.json`), `sandbox/`, `sandbox-broker/`, `deploy/`,
+`scripts/`.
+
+**Registry bundle** (lighter; no app source required):
+
+`docker-compose.yml`, `deploy/docker-compose.registry.yml`,
+`deploy/seaweedfs/`, `.env.example`, `scripts/`.
+
+Set `ALPHAROUTER_REGISTRY` in `.env` to your registry path (for GitLab,
+`$CI_REGISTRY_IMAGE`). Optional `REGISTRY_USER` / `REGISTRY_PASSWORD` for
+`docker login` during install.
+
+`--prod` generates strong secrets and runs the production guard preflight.
+For public HTTPS deployments, set `FRONTEND_URL`, `API_PUBLIC_URL`, and
+`ENABLE_HSTS` in `.env` after install.
+
+Machine-specific files (never commit): `.env`, `docker-compose.override.yml`.
 
 ## Configuration
 

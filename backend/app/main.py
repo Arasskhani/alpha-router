@@ -559,6 +559,7 @@ async def lifespan(app: FastAPI):
             or settings.admin_username.strip()
         )
         admin_user = await find_user_by_username_ci(db, admin_username)
+        bootstrap_admin_created = False
         if not admin_user:
             # A seed admin may already exist under a previous ADMIN_USERNAME.
             # Reuse it by current or legacy bootstrap email instead of creating
@@ -610,7 +611,17 @@ async def lifespan(app: FastAPI):
 
                 for slug in bootstrap_roles:
                     db.add(UserRoleAssignment(user_id=admin_user.id, role_slug=slug))
+                from app.services.bootstrap_admin_log import (
+                    log_bootstrap_admin_credentials,
+                )
+
+                bootstrap_admin_created = True
         await db.commit()
+        if bootstrap_admin_created:
+            log_bootstrap_admin_credentials(
+                username=admin_username,
+                password=settings.admin_password,
+            )
 
     async with AsyncSessionLocal() as db:
         await asyncio.to_thread(oss.ensure_bucket)

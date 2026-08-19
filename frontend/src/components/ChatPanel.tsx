@@ -7,7 +7,6 @@ import AuthenticatedVideo from "./AuthenticatedVideo";
 import AuthenticatedAudio from "./AuthenticatedAudio";
 import MarkdownContent from "./MarkdownContent";
 import ModelName from "./ModelName";
-import ModelProviderIcon from "./ModelProviderIcon";
 import ReadOnlyBanner from "./ReadOnlyBanner";
 import { useReadOnly } from "../context/ReadOnlyContext";
 import { useShellMenu } from "../context/ShellMenuContext";
@@ -107,7 +106,6 @@ import {
 } from "./chat/ComposerControlIcons";
 import {
   MAX_MULTI_MODELS,
-  shortcutModKey,
 } from "../lib/chatModelPresets";
 import {
   DownloadIcon,
@@ -618,7 +616,6 @@ export default function ChatPanel() {
   const sessionUser = getSessionUser();
   const sessionUsername = sessionUser?.username ?? "";
   const welcomeName = sessionUser?.display_name || sessionUsername;
-  const modKey = useMemo(() => shortcutModKey(), []);
   const [chatTools, setChatTools] = useState<ChatToolsState>(() => copyFreshChatTools());
   const chatToolsRef = useRef(chatTools);
   chatToolsRef.current = chatTools;
@@ -2414,16 +2411,58 @@ export default function ChatPanel() {
   }, []);
 
   useEffect(() => {
+    const mediaToolsOn = Boolean(
+      chatTools.imageGeneration || chatTools.videoGeneration || chatTools.speechGeneration,
+    );
+    const addModelDisabled =
+      !models.length ||
+      (!mediaToolsOn && selectedModelIds.length >= MAX_MULTI_MODELS);
+    const addModelTitle = chatTools.speechGeneration
+      ? "Text to Speech uses one model — picking another replaces it"
+      : chatTools.videoGeneration
+        ? "Video Generation uses one model — picking another replaces it"
+        : chatTools.imageGeneration
+          ? "Image Generation uses one model — picking another replaces it"
+          : selectedModelIds.length >= MAX_MULTI_MODELS
+            ? `Maximum ${MAX_MULTI_MODELS} models`
+            : "Add model";
+    const addModelAriaLabel = chatTools.speechGeneration
+      ? "Change speech model"
+      : chatTools.videoGeneration
+        ? "Change video model"
+        : chatTools.imageGeneration
+          ? "Change image model"
+          : "Add model for multi-model response";
     registerModelChrome({
       openReplacePicker: () => {
         setToolsMenuOpen(false);
         setModelPickerMode("replace");
       },
+      openAppendPicker: () => {
+        setToolsMenuOpen(false);
+        setModelPickerMode("append");
+      },
       modelsReady: models.length > 0,
-      modKey,
+      addModelDisabled,
+      addModelTitle,
+      addModelAriaLabel,
+      selectedModels: selectedModels.map((m) => ({
+        id: m.id,
+        name: m.name,
+        external_id: m.external_id,
+      })),
+      onRemoveModel: removeSelectedModel,
     });
     return () => registerModelChrome(null);
-  }, [registerModelChrome, models.length, modKey]);
+  }, [
+    registerModelChrome,
+    models.length,
+    selectedModels,
+    selectedModelIds.length,
+    chatTools.imageGeneration,
+    chatTools.videoGeneration,
+    chatTools.speechGeneration,
+  ]);
 
   async function apiMessages(
     history: ChatMessage[],
@@ -5755,69 +5794,6 @@ export default function ChatPanel() {
       </aside>
 
       <div className="alpha-router-main-column">
-      <div className="alpha-router-model-bar">
-        <button
-          type="button"
-          className="alpha-router-add-model-btn"
-          onClick={() => {
-            setToolsMenuOpen(false);
-            setModelPickerMode("append");
-          }}
-          disabled={
-            !models.length ||
-            (!chatTools.imageGeneration &&
-              !chatTools.videoGeneration &&
-              !chatTools.speechGeneration &&
-              selectedModelIds.length >= MAX_MULTI_MODELS)
-          }
-          aria-label={
-            chatTools.speechGeneration
-              ? "Change speech model"
-              : chatTools.videoGeneration
-                ? "Change video model"
-                : chatTools.imageGeneration
-                  ? "Change image model"
-                  : "Add model for multi-model response"
-          }
-          title={
-            chatTools.speechGeneration
-              ? "Text to Speech uses one model — picking another replaces it"
-              : chatTools.videoGeneration
-                ? "Video Generation uses one model — picking another replaces it"
-                : chatTools.imageGeneration
-                  ? "Image Generation uses one model — picking another replaces it"
-                  : selectedModelIds.length >= MAX_MULTI_MODELS
-                    ? `Maximum ${MAX_MULTI_MODELS} models`
-                    : "Add model"
-          }
-        >
-          <span aria-hidden>+</span>
-          <span className="alpha-router-add-model-btn__label">Add Model</span>
-          <span className="alpha-router-shortcut-keys" aria-hidden>
-            <kbd className="alpha-router-kbd">{modKey === "⌘" ? "⌘" : "Ctrl"}</kbd>
-            <kbd className="alpha-router-kbd">J</kbd>
-          </span>
-        </button>
-        <div className="alpha-router-selected-models">
-          {selectedModels.map((m) => (
-            <span key={m.id} className="alpha-router-model-pill">
-              <ModelProviderIcon modelId={m.external_id || m.id} size={14} />
-              <span className="alpha-router-model-pill__name" title={m.name}>
-                {shortModelName(m.name, m.id)}
-              </span>
-              <button
-                type="button"
-                className="alpha-router-model-pill__remove"
-                onClick={() => removeSelectedModel(m.id)}
-                aria-label={`Remove ${m.name}`}
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-      </div>
-
       <section className={`alpha-router-main${activePrivateMode ? " alpha-router-main--private" : ""}`}>
         {activePrivateMode ? <PrivateModeStrip /> : null}
         {readOnly && <ReadOnlyBanner className="readonly-account-banner--chat" />}

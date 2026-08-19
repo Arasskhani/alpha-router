@@ -767,46 +767,98 @@ body:not(.login-route) {
   border-bottom: 1px solid var(--border);
 }
 
-.topbar-model-search {
-  /* Align start with the chat sidebar’s right edge (after Alpharouter brand). */
+.topbar-model-chrome {
   position: absolute;
   left: var(--alpha-router-sidebar-width, 260px);
-  transform: none;
-  display: inline-flex;
+  right: 14rem;
+  display: flex;
   align-items: center;
-  gap: 0.4rem;
-  /* ~30% shorter than the previous pill width; squared corners like Add Model / New chat. */
-  width: min(15.4rem, 29.4vw);
-  max-width: calc(100% - var(--alpha-router-sidebar-width, 260px) - 14rem);
-  height: 1.85rem;
-  padding: 0.35rem 0.55rem;
-  border: 1px solid var(--border);
-  border-radius: 0.55rem;
-  background: var(--bg);
-  color: var(--muted);
-  font: inherit;
-  font-size: 0.8rem;
-  cursor: pointer;
+  gap: 0.45rem;
+  min-width: 0;
+  height: 100%;
+  padding-right: 0.5rem;
   z-index: 1;
   box-sizing: border-box;
 }
 
-.topbar-model-search:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
-  color: var(--text);
+.topbar-model-search {
+  position: static;
+  transform: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  width: min(16.5rem, 32vw);
+  flex: 0 1 16.5rem;
+  max-width: none;
+  height: 1.85rem;
+  padding: 0 0.2rem 0 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: var(--bg);
+  color: var(--muted);
+  box-sizing: border-box;
 }
 
-.topbar-model-search:disabled {
+.topbar-model-search:hover {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+}
+
+.topbar-model-search__field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.topbar-model-search__field:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
-.topbar-model-search > span:first-of-type {
+.topbar-model-search__field > span {
   flex: 1;
   text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.topbar-model-search__add {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.45rem;
+  height: 1.45rem;
+  padding: 0;
+  border: none;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.topbar-model-search__add:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.topbar-model-search__add:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .topbar-nav {
@@ -4781,16 +4833,17 @@ table.data-table--api-logs td {
 }
 
 @media (max-width: 640px) {
+  .topbar-model-chrome {
+    right: 7.5rem;
+  }
+
   .topbar-model-search {
-    width: min(7.7rem, 25vw);
-    padding: 0.35rem 0.4rem;
+    width: min(9.4rem, 32vw);
+    flex-basis: min(9.4rem, 32vw);
+    padding: 0 0.15rem 0 0.35rem;
   }
 
-  .topbar-model-search > span:first-of-type {
-    display: none;
-  }
-
-  .alpha-router-add-model-btn__label {
+  .topbar-model-search__field > span {
     display: none;
   }
 }
@@ -13484,10 +13537,6 @@ body.login-route #root {
 }
 
 @media (max-width: 760px) {
-  .alpha-router-model-bar {
-    flex-wrap: wrap;
-  }
-
   .alpha-router-handoff {
     grid-template-columns: auto minmax(0, 1fr);
   }

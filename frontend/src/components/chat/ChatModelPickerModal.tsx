@@ -113,7 +113,7 @@ export default function ChatModelPickerModal({
           <input
             ref={inputRef}
             type="search"
-            placeholder="Search…"
+            placeholder="Search Models"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             aria-label="Search models"

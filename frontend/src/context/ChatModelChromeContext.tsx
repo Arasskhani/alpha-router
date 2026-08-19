@@ -1,9 +1,20 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 
+export type ChatModelChromeSelection = {
+  id: string;
+  name: string;
+  external_id?: string;
+};
+
 export type ChatModelChromeApi = {
   openReplacePicker: () => void;
+  openAppendPicker: () => void;
   modelsReady: boolean;
-  modKey: string;
+  addModelDisabled: boolean;
+  addModelTitle: string;
+  addModelAriaLabel: string;
+  selectedModels: ChatModelChromeSelection[];
+  onRemoveModel: (id: string) => void;
 };
 
 type ChromeContextValue = {

@@ -12,6 +12,7 @@ import {
   useChatModelChromeApi,
 } from "../context/ChatModelChromeContext";
 import { PAGE_TITLE } from "../lib/brand";
+import { isProjectWorkspacePath } from "../lib/userPanelNav";
 import {
   applyThemeToDocument,
   followsSystemPreference,
@@ -32,6 +33,8 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
 
   const path = loc.pathname.replace(/\/$/, "") || "/";
   const isChat = path.endsWith("/chat");
+  const isProjectWorkspace = isProjectWorkspacePath(path);
+  const isChatLayout = isChat || isProjectWorkspace;
   const isDocs = path.endsWith("/docs") || path.endsWith("/manual");
   const home = path.startsWith("/admin") ? "/admin" : "/app";
 
@@ -77,7 +80,7 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
     setNavPeek(false);
   }, [path]);
 
-  const contentClass = isChat
+  const contentClass = isChatLayout
     ? " content--chat"
     : isDocs
       ? " content--docs"
@@ -85,7 +88,11 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
         ? " content--dashboard"
         : "";
 
-  const layoutClass = isChat ? " layout--chat" : path === "/admin" || path === "/app" ? " layout--dashboard" : "";
+  const layoutClass = isChatLayout
+    ? " layout--chat"
+    : path === "/admin" || path === "/app"
+      ? " layout--dashboard"
+      : "";
 
   const readOnly = useReadOnly();
 
@@ -113,7 +120,7 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
             <Link to={home} className="topbar-brand">
               <AlphaRouterLogo size={24} showMark joined className="alpha-router-logo--topbar" />
             </Link>
-            {isChat ? <TopbarModelChrome /> : null}
+            {isChat || isProjectWorkspace ? <TopbarModelChrome always={isChat} /> : null}
             <TopbarNav theme={theme} onThemeChange={setTheme} />
           </header>
 
@@ -136,12 +143,12 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
                   {sidebarInner}
                 </aside>
               </div>
-            ) : (
+            ) : isProjectWorkspace ? null : (
               <aside className="sidebar">{sidebarInner}</aside>
             )}
 
             <div className="main-column">
-              {readOnly && !isChat && <ReadOnlyBanner />}
+              {readOnly && !isChatLayout && <ReadOnlyBanner />}
               <main className={`content${contentClass}${readOnly && path.startsWith("/admin") ? " admin-write-locked" : ""}`}>
                 <Outlet context={{ theme, setTheme }} />
               </main>
@@ -159,8 +166,9 @@ function shortTopbarModelName(name: string, id: string) {
 }
 
 /** Search Models, Add Model, and selected model chips — one topbar row. */
-function TopbarModelChrome() {
+function TopbarModelChrome({ always = false }: { always?: boolean }) {
   const api = useChatModelChromeApi();
+  if (!always && !api) return null;
   return (
     <div className="topbar-model-chrome">
       <div className="topbar-model-search">

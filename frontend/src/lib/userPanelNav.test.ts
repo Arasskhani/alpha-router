@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionRbac } from "./rbac";
-import { topbarShortcutsForSession } from "./userPanelNav";
+import { topbarShortcutsForSession, isProjectWorkspacePath } from "./userPanelNav";
 
 function session(overrides: Partial<SessionRbac> = {}): SessionRbac {
   return {
@@ -21,6 +21,7 @@ describe("topbar admin shortcut", () => {
 
     expect(shortcuts.map((item) => item.label)).toEqual([
       "Chat",
+      "Projects",
       "Media",
       "Activity",
       "User Manual",
@@ -40,6 +41,7 @@ describe("topbar admin shortcut", () => {
 
     expect(shortcuts.map((item) => item.label)).toEqual([
       "Chat",
+      "Projects",
       "Media",
       "Activity",
       "User Manual",
@@ -61,5 +63,19 @@ describe("topbar admin shortcut", () => {
     expect(shortcuts.find((item) => item.label === "Administration")?.to).toBe(
       "/admin/api-keys",
     );
+  });
+});
+
+describe("isProjectWorkspacePath", () => {
+  it("matches app and admin project workspaces", () => {
+    expect(isProjectWorkspacePath("/app/projects/abc")).toBe(true);
+    expect(isProjectWorkspacePath("/admin/projects/abc/")).toBe(true);
+  });
+
+  it("ignores the projects list and invite page", () => {
+    expect(isProjectWorkspacePath("/app/projects")).toBe(false);
+    expect(isProjectWorkspacePath("/app/projects/invite")).toBe(false);
+    expect(isProjectWorkspacePath("/app/projects/abc/activity")).toBe(false);
+    expect(isProjectWorkspacePath("/app/chat")).toBe(false);
   });
 });

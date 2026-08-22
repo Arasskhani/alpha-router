@@ -780,6 +780,27 @@ async def rollback_tool_version_endpoint(
     return _tool_version_payload(version)
 
 
+async def _submitter_labels(
+    db: AsyncSession,
+    user_ids: Iterable[int | None],
+) -> dict[int, dict[str, str | None]]:
+    ids = sorted({int(uid) for uid in user_ids if uid is not None})
+    if not ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(User.id, User.username, User.display_name).where(User.id.in_(ids))
+        )
+    ).all()
+    return {
+        int(row.id): {
+            "submitted_by_username": row.username,
+            "submitted_by_display_name": row.display_name,
+        }
+        for row in rows
+    }
+
+
 @router.get("/approvals")
 async def list_approvals(
     limit: int = Query(default=200, ge=1, le=500),
@@ -891,6 +912,14 @@ async def list_approvals(
     items.sort(
         key=lambda item: item["created_at"] or datetime.datetime.min, reverse=True
     )
+    labels = await _submitter_labels(
+        db, (item.get("submitted_by_user_id") for item in items)
+    )
+    for item in items:
+        uid = item.get("submitted_by_user_id")
+        extra = labels.get(int(uid)) if uid is not None else None
+        if extra:
+            item.update(extra)
     return {"items": items[:limit], "total": len(items)}
 
 

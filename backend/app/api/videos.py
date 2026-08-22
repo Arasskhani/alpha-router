@@ -44,6 +44,8 @@ from app.services.video_job_service import (
 )
 from app.services import object_storage_service as oss
 from app.services.video_providers import get_video_adapter
+from app.services.chat_channel_guard import assert_session_allows_model_generation
+from app.services.project_billing_service import resolve_project_id_for_request
 
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 
@@ -54,6 +56,7 @@ class VideoRequest(BaseModel):
     operation: str = "generation"  # generation | img2vid
     reference_image: str | None = None
     chat_session_id: str | None = None
+    project_id: str | None = None
     persist: bool = True
     duration: int | None = 4
     resolution: str | None = "720p"
@@ -145,6 +148,7 @@ async def generate_video(
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await assert_session_allows_model_generation(db, body.chat_session_id)
     settings = get_settings()
     prompt = strip_nul((body.prompt or "").strip())
     if not prompt:
@@ -235,6 +239,12 @@ async def generate_video(
         reference_image = await resolve_reference_image_for_upstream(db, user, body.reference_image)
 
     try:
+        project_id_for_billing = await resolve_project_id_for_request(
+            db,
+            user=user,
+            chat_session_id=body.chat_session_id,
+            project_id=body.project_id,
+        )
         job = await create_video_job(
             db,
             user=user,
@@ -261,6 +271,7 @@ async def generate_video(
             provider_type=provider_type or "unknown",
             adapter_key=adapter_key,
             capability_snapshot=caps,
+            project_id=project_id_for_billing,
         )
     except PermissionError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc

@@ -6,6 +6,8 @@ import { useConfirm } from "../../context/ConfirmContext";
 type StorageSettings = {
   user_media_quota_gb?: number;
   user_media_quota_bytes?: number;
+  project_media_quota_gb?: number;
+  project_media_quota_bytes?: number;
   max_upload_file_mb?: number;
   max_chat_attachments_total_mb?: number;
   max_media_zip_download_mb?: number;
@@ -20,6 +22,7 @@ type StorageOverview = {
   expired_files: number;
   settings: StorageSettings;
   users_over_quota?: number;
+  projects_over_quota?: number;
   by_kind?: Array<{ kind: string; count: number; size_bytes: number }>;
 };
 
@@ -38,6 +41,7 @@ export default function StorageManagement() {
   const { confirm } = useConfirm();
   const [stats, setStats] = useState<StorageOverview | null>(null);
   const [quotaGb, setQuotaGb] = useState(1);
+  const [projectQuotaGb, setProjectQuotaGb] = useState(1);
   const [uploadMb, setUploadMb] = useState(25);
   const [chatTotalMb, setChatTotalMb] = useState(36);
   const [zipMb, setZipMb] = useState(256);
@@ -57,6 +61,8 @@ export default function StorageManagement() {
       setStats(data);
       const gb = data.settings?.user_media_quota_gb;
       if (typeof gb === "number" && gb >= 1) setQuotaGb(gb);
+      const projectGb = data.settings?.project_media_quota_gb;
+      if (typeof projectGb === "number" && projectGb >= 1) setProjectQuotaGb(projectGb);
       if (typeof data.settings?.max_upload_file_mb === "number") {
         setUploadMb(data.settings.max_upload_file_mb);
       }
@@ -96,13 +102,27 @@ export default function StorageManagement() {
   async function saveQuotaSettings(e: FormEvent) {
     e.preventDefault();
     const nextGb = Math.max(1, Math.min(100, Math.round(Number(quotaGb) || 1)));
+    const nextProjectGb = Math.max(1, Math.min(100, Math.round(Number(projectQuotaGb) || 1)));
     const currentGb = stats?.settings?.user_media_quota_gb ?? 1;
+    const currentProjectGb = stats?.settings?.project_media_quota_gb ?? 1;
     if (nextGb < currentGb && (stats?.users_over_quota ?? 0) > 0) {
       const ok = await confirm({
-        title: "Lower storage quota?",
+        title: "Lower per-user storage quota?",
         message:
           `${stats?.users_over_quota ?? 0} user(s) already use more than ${nextGb} GB. ` +
           "They will not be able to upload new files until they free space. Existing files are not deleted. Continue?",
+        confirmLabel: "Apply lower quota",
+        cancelLabel: "Cancel",
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    if (nextProjectGb < currentProjectGb && (stats?.projects_over_quota ?? 0) > 0) {
+      const ok = await confirm({
+        title: "Lower per-project storage quota?",
+        message:
+          `${stats?.projects_over_quota ?? 0} project(s) already use more than ${nextProjectGb} GB of Media. ` +
+          "Members will not be able to upload new project files until space is freed. Existing files are not deleted. Continue?",
         confirmLabel: "Apply lower quota",
         cancelLabel: "Cancel",
         danger: true,
@@ -115,9 +135,14 @@ export default function StorageManagement() {
     try {
       await api("/api/admin/storage/settings", {
         method: "PATCH",
-        body: JSON.stringify({ user_media_quota_gb: nextGb }),
+        body: JSON.stringify({
+          user_media_quota_gb: nextGb,
+          project_media_quota_gb: nextProjectGb,
+        }),
       });
-      setFlash(`Per-user media quota set to ${nextGb} GB for all users.`);
+      setFlash(
+        `Per-user media quota set to ${nextGb} GB. Per-project media quota set to ${nextProjectGb} GB.`,
+      );
       await load();
     } catch (e) {
       setError(String(e));
@@ -220,7 +245,7 @@ export default function StorageManagement() {
   return (
     <AdminPage title="Storage Management">
       <p className="muted-text" style={{ marginTop: "-0.25rem", marginBottom: "1rem" }}>
-        Platform media usage, per-user storage limits, and global transfer size limits.
+        Platform media usage, per-user and per-project storage limits, and global transfer size limits.
       </p>
       {flash && <p className="alert alert-success">{flash}</p>}
       {error && <p className="alert alert-error">{error}</p>}
@@ -294,9 +319,32 @@ export default function StorageManagement() {
             ? ` · ${stats?.users_over_quota} user(s) over the current limit`
             : ""}
         </p>
+
+        <h3 style={{ marginTop: "1.25rem" }}>Per-project storage quota</h3>
+        <p className="muted-text">
+          Maximum Media library size for every project. Applies globally — changing this updates the limit for all
+          projects.
+        </p>
+        <label htmlFor="project-media-quota-gb">Storage per project (GB)</label>
+        <input
+          id="project-media-quota-gb"
+          type="number"
+          min={1}
+          max={100}
+          step={1}
+          className="input-block"
+          value={projectQuotaGb}
+          onChange={(e) => setProjectQuotaGb(Number(e.target.value || 1))}
+        />
+        <p className="muted-text" style={{ marginTop: "0.5rem" }}>
+          Current: {stats?.settings?.project_media_quota_gb ?? 1} GB per project
+          {(stats?.projects_over_quota ?? 0) > 0
+            ? ` · ${stats?.projects_over_quota} project(s) over the current limit`
+            : ""}
+        </p>
         <div className="dialog-actions">
           <button type="submit" className="btn" disabled={savingQuota}>
-            {savingQuota ? "Saving…" : "Save quota"}
+            {savingQuota ? "Saving…" : "Save quotas"}
           </button>
         </div>
       </form>

@@ -39,6 +39,19 @@ AGENT_PLATFORM_TABLE_NAMES: frozenset[str] = frozenset(
         "legal_holds",
         "governance_audit_events",
         "knowledge_audit_events",
+        "projects",
+        "project_members",
+        "project_invitations",
+        "project_config_versions",
+        "project_memories",
+        "project_memory_grants",
+        "project_chat_pins",
+        "project_user_prefs",
+        "project_chat_composer_prefs",
+        "project_audit_events",
+        "project_resources",
+        "project_media_assets",
+        "project_room_handoffs",
     }
 )
 

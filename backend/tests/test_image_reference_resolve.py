@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.api import images
-from app.api.images import parse_alpha_router_media_asset_id
+from app.api.images import parse_alpha_router_media_asset_id, parse_project_media_ref
 
 
 def test_parse_alpha_router_media_asset_id_relative():
@@ -23,6 +23,26 @@ def test_parse_alpha_router_media_asset_id_with_query():
 def test_parse_alpha_router_media_asset_id_rejects_other_urls():
     assert parse_alpha_router_media_asset_id("https://cdn.example.com/a.png") is None
     assert parse_alpha_router_media_asset_id("data:image/png;base64,abc") is None
+
+
+def test_parse_project_media_ref_relative():
+    assert parse_project_media_ref("/api/projects/proj-abc/media/7/download") == ("proj-abc", 7)
+
+
+def test_parse_project_media_ref_absolute():
+    assert parse_project_media_ref("http://localhost:8080/api/projects/proj-abc/media/42/download") == (
+        "proj-abc",
+        42,
+    )
+
+
+def test_parse_project_media_ref_with_query():
+    assert parse_project_media_ref("/api/projects/proj-abc/media/7/download?token=x") == ("proj-abc", 7)
+
+
+def test_parse_project_media_ref_rejects_other_urls():
+    assert parse_project_media_ref("/api/chat/media/3/file") is None
+    assert parse_project_media_ref("https://cdn.example.com/a.png") is None
 
 
 def test_remote_reference_is_fetched_by_alpha_router_not_forwarded_to_provider():

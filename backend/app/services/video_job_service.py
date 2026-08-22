@@ -30,9 +30,9 @@ from app.services.video_providers import NormalizedVideoRequest, ProviderJobRef,
 from app.services.storage_service import (
     media_content_hash,
     media_public_url,
-    store_media_from_blob,
 )
 from app.services.user_chat_storage_service import finalize_chat_session_video
+from app.services.project_media_service import collect_personal_media_ids, persist_scoped_chat_media
 from app.services.video_billing_service import VideoBillingCapture, log_video_usage
 from app.services.observability import increment
 
@@ -59,6 +59,10 @@ def serialize_job(job: VideoGenerationJob, *, include_provider: bool = False) ->
     media_url = None
     if job.media_asset_id:
         media_url = media_public_url(int(job.media_asset_id))
+    if not media_url:
+        stored = params.get("result_media_url")
+        if isinstance(stored, str) and stored.strip():
+            media_url = stored.strip()
     out: dict[str, Any] = {
         "id": job.id,
         "status": job.status,
@@ -115,6 +119,7 @@ async def create_video_job(
     provider_type: str = "openrouter",
     adapter_key: str | None = None,
     capability_snapshot: dict[str, Any] | None = None,
+    project_id: str | None = None,
 ) -> VideoGenerationJob:
     settings = get_settings()
     if idempotency_key:
@@ -167,6 +172,7 @@ async def create_video_job(
     job = VideoGenerationJob(
         id=job_id,
         user_id=user.id,
+        project_id=(project_id or "").strip() or None,
         chat_session_id=(chat_session_id or "").strip() or None,
         model_id=model_id,
         catalog_model_id=catalog_model_id,
@@ -348,6 +354,7 @@ async def reclaim_stale_video_jobs() -> int:
                         operation=job.operation,
                         budget_reservation_id=job.budget_reservation_id,
                         job_id=job.id,
+                        project_id=job.project_id,
                     )
             except Exception:
                 _LOG.exception("Failed settling reclaimed video job %s", job.id)
@@ -540,22 +547,24 @@ async def _run_video_job(job_id: str) -> None:
 
             media_url: str | None = None
             if int(job.persist or 0) == 1:
-                storage_blob, storage_mime, digest = media_content_hash(blob, mime, "video")
-                asset = await store_media_from_blob(
+                storage_blob, storage_mime, _digest = media_content_hash(blob, mime, "video")
+                media_url = await persist_scoped_chat_media(
                     db,
-                    user_id=user.id,
+                    user=user,
+                    project_id=job.project_id,
                     kind="video",
                     blob=storage_blob,
                     mime=storage_mime,
-                    content_hash=digest,
+                    file_name="generated.mp4",
                     source_model=job.model_id,
                     source_prompt=job.prompt,
                     chat_session_id=job.chat_session_id,
-                    file_name_hint="generated.mp4",
                     metadata={"operation": job.operation, "duration": duration},
                 )
-                job.media_asset_id = asset.id
-                media_url = media_public_url(asset.id)
+                personal_ids = collect_personal_media_ids(media_url)
+                job.media_asset_id = next(iter(personal_ids), None)
+                params["result_media_url"] = media_url
+                job.params_json = json.dumps(params)
                 if job.chat_session_id:
                     await finalize_chat_session_video(
                         db,
@@ -633,6 +642,7 @@ async def _run_video_job(job_id: str) -> None:
                     budget_reservation_id=job.budget_reservation_id,
                     duration_seconds=duration,
                     job_id=job.id,
+                    project_id=job.project_id,
                 )
                 if log_id and success:
                     job_params: dict[str, Any] = {}

@@ -1,6 +1,6 @@
 import type { ExploreGroup } from "./types";
 
-export type ActivityScope = "service" | "user" | "mine" | "api_key" | "connection" | "group" | "agent";
+export type ActivityScope = "service" | "user" | "mine" | "api_key" | "connection" | "group" | "agent" | "project";
 
 export type ActivityFilterKey = "user" | "model" | "apiKey" | "app" | "status";
 
@@ -44,6 +44,15 @@ export function activityScopeConfig(scope: ActivityScope): ActivityScopeConfig {
         hideTrendsUsers: false,
         hideTrendsApiKeys: false,
         hiddenExploreGroups: [],
+      };
+    case "project":
+      return {
+        filterKeys: ["user", "model", "app", "status"],
+        showGroupBy: false,
+        hideOverviewUsers: false,
+        hideTrendsUsers: false,
+        hideTrendsApiKeys: true,
+        hiddenExploreGroups: ["api_key"],
       };
     case "connection":
       return {

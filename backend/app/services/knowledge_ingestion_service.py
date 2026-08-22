@@ -617,6 +617,9 @@ async def approve_document_version(
     document = await db.get(KnowledgeDocument, version.document_id)
     if document is not None and document.status == "draft":
         document.status = "active"
+    from app.services.project_resource_service import sync_project_resources_for_document
+
+    await sync_project_resources_for_document(db, document_id=version.document_id)
     await record_knowledge_audit(
         db,
         knowledge_base_id=document.knowledge_base_id if document else None,

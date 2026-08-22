@@ -311,9 +311,26 @@ export default function ApiLogs({ apiKeyId }: Props) {
             <option value="yes">Cache hit</option>
             <option value="no">No cache</option>
           </select>
-          <input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
-          <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
-          <button type="button" className="btn btn-readonly-ok api-logs-toolbar-btn" onClick={() => void load()} disabled={loading}>
+          <input
+            className="api-logs-toolbar__date"
+            type="date"
+            value={start}
+            onChange={(e) => setStart(e.target.value)}
+            aria-label="Start date"
+          />
+          <input
+            className="api-logs-toolbar__date"
+            type="date"
+            value={end}
+            onChange={(e) => setEnd(e.target.value)}
+            aria-label="End date"
+          />
+          <button
+            type="button"
+            className="btn btn-readonly-ok api-logs-toolbar-btn api-logs-toolbar__filter-btn"
+            onClick={() => void load()}
+            disabled={loading}
+          >
             Filter
           </button>
         </div>
@@ -370,19 +387,22 @@ export default function ApiLogs({ apiKeyId }: Props) {
         <table className="card data-table data-table--api-logs">
           <thead>
             <tr>
-              <th>Time</th>
-              <th>User</th>
-              <th>Model</th>
-              <th>Provider</th>
-              <th>App</th>
-              <th>Input</th>
-              <th>Output</th>
-              <th>Prompt Cache</th>
-              <th>Cost $</th>
-              <th title="Total provider streaming time from first model chunk to last chunk (not time-to-first-token)">
+              <th className="api-log-col--time">Time</th>
+              <th className="api-log-col--user">User</th>
+              <th className="api-log-col--model">Model</th>
+              <th className="api-log-col--secondary">Provider</th>
+              <th className="api-log-col--secondary">App</th>
+              <th className="api-log-col--tokens">Input</th>
+              <th className="api-log-col--tokens">Output</th>
+              <th className="api-log-col--secondary api-log-col--cache">Prompt Cache</th>
+              <th className="api-log-col--cost">Cost $</th>
+              <th
+                className="api-log-col--secondary api-log-col--duration"
+                title="Total provider streaming time from first model chunk to last chunk (not time-to-first-token)"
+              >
                 Duration ms
               </th>
-              <th>Response Status</th>
+              <th className="api-log-col--status">Response Status</th>
             </tr>
           </thead>
           <tbody>
@@ -404,10 +424,23 @@ export default function ApiLogs({ apiKeyId }: Props) {
                   role="button"
                   aria-label={`Open cost details for request ${r.id}`}
                 >
-                  <td>{formatLocalDateTime(r.request_time)}</td>
-                  <td>
+                  <td className="api-log-col--time">{formatLocalDateTime(r.request_time)}</td>
+                  <td
+                    className="api-log-col--user"
+                    title={
+                      r.identity_type === "api_key"
+                        ? `Alpharouter API key: ${r.api_key_name || r.username}`
+                        : r.identity_type === "chat"
+                          ? `Alpharouter web chat: ${r.username}`
+                          : isPersonalApiKeyLog(r)
+                            ? r.api_key_name
+                              ? `Personal API key: ${r.api_key_name}`
+                              : `Personal API key: ${r.username}`
+                            : r.username
+                    }
+                  >
                     {r.identity_type === "api_key" ? (
-                      <span className="api-log-identity" title="Alpharouter API key">
+                      <span className="api-log-identity">
                         <svg
                           className="api-log-identity-icon"
                           viewBox="0 0 24 24"
@@ -421,11 +454,11 @@ export default function ApiLogs({ apiKeyId }: Props) {
                           <circle cx="8" cy="15" r="4" />
                           <path d="M12 15h9M16 15v3M20 15v2" />
                         </svg>
-                        <span>{r.api_key_name || r.username}</span>
+                        <span className="api-log-identity__name">{r.api_key_name || r.username}</span>
                         <span className="api-log-identity-tag">(Gateway API Key)</span>
                       </span>
                     ) : r.identity_type === "chat" ? (
-                      <span className="api-log-identity" title="Alpharouter web chat">
+                      <span className="api-log-identity">
                         <svg
                           className="api-log-identity-icon"
                           viewBox="0 0 24 24"
@@ -438,17 +471,10 @@ export default function ApiLogs({ apiKeyId }: Props) {
                         >
                           <path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z" />
                         </svg>
-                        <span>{r.username}</span>
+                        <span className="api-log-identity__name">{r.username}</span>
                       </span>
                     ) : isPersonalApiKeyLog(r) ? (
-                      <span
-                        className="api-log-identity"
-                        title={
-                          r.api_key_name
-                            ? `Personal API key: ${r.api_key_name}`
-                            : "Personal API key"
-                        }
-                      >
+                      <span className="api-log-identity">
                         <svg
                           className="api-log-identity-icon"
                           viewBox="0 0 24 24"
@@ -462,17 +488,20 @@ export default function ApiLogs({ apiKeyId }: Props) {
                           <circle cx="8" cy="15" r="4" />
                           <path d="M12 15h9M16 15v3M20 15v2" />
                         </svg>
-                        <span>{r.username}</span>
+                        <span className="api-log-identity__name">{r.username}</span>
                       </span>
                     ) : (
-                      r.username
+                      <span className="api-log-identity">
+                        <span className="api-log-identity__name">{r.username}</span>
+                      </span>
                     )}
                   </td>
-                  <td>
+                  <td className="api-log-col--model" title={r.model_id}>
                     <ModelName modelId={r.model_id} label={r.model_id} size={14} />
                   </td>
-                  <td>{r.provider || "-"}</td>
+                  <td className="api-log-col--secondary">{r.provider || "-"}</td>
                   <td
+                    className="api-log-col--secondary"
                     title={
                       r.client_app
                         ? `Client: ${r.client_app}${r.source ? ` · Auth: ${r.source}` : ""}`
@@ -483,9 +512,9 @@ export default function ApiLogs({ apiKeyId }: Props) {
                   >
                     {r.app || "Unknown"}
                   </td>
-                  <td>{tok(r.prompt_tokens || 0)}</td>
-                  <td>{tok(r.completion_tokens || 0)}</td>
-                  <td>
+                  <td className="api-log-col--tokens">{tok(r.prompt_tokens || 0)}</td>
+                  <td className="api-log-col--tokens">{tok(r.completion_tokens || 0)}</td>
+                  <td className="api-log-col--secondary api-log-col--cache">
                     <span
                       className={`api-log-prompt-cache api-log-prompt-cache--${cached ? "yes" : "no"}`}
                       title={cacheHint(r.cached_tokens || 0, r.prompt_tokens || 0)}
@@ -502,7 +531,7 @@ export default function ApiLogs({ apiKeyId }: Props) {
                       )}
                     </span>
                   </td>
-                  <td>
+                  <td className="api-log-col--cost">
                     <span className="api-log-cost" title={cost.title}>
                       <span>{r.total_cost_usd?.toFixed(5)}</span>
                       <span className={`api-log-cost-quality api-log-cost-quality--${cost.key}`}>
@@ -510,10 +539,13 @@ export default function ApiLogs({ apiKeyId }: Props) {
                       </span>
                     </span>
                   </td>
-                  <td title={`${Math.round(r.response_time_ms)} ms total stream · ${tok(r.completion_tokens || 0)} output`}>
+                  <td
+                    className="api-log-col--secondary api-log-col--duration"
+                    title={`${Math.round(r.response_time_ms)} ms total stream · ${tok(r.completion_tokens || 0)} output`}
+                  >
                     {Math.round(r.response_time_ms)}
                   </td>
-                  <td>{r.success ? "Success" : "Fail"}</td>
+                  <td className="api-log-col--status">{r.success ? "Success" : "Fail"}</td>
                 </tr>
               );
             })}

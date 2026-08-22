@@ -46,6 +46,59 @@ _MAX_MESSAGES_PAGE = 500
 _MAX_SEARCH_RESULTS = 20
 _PURGE_BATCH_SIZE = 5000
 
+
+def _personal_session_filter():
+    """Personal /app/chat threads only — project workspaces have their own list API."""
+    return ChatSession.project_id.is_(None)
+
+
+async def _owned_or_project_session(
+    db: AsyncSession,
+    session: ChatSession | None,
+    user_id: int,
+    *,
+    write: bool,
+) -> ChatSession | None:
+    """Authorize a chat session as the owner or as a project member.
+
+    Project threads are stored with ``user_id`` of the creator. Other members
+    must pass ACL: any visible member may read; ``chat.write`` is required to
+    mutate. Private Mode rows in a project are treated as inaccessible.
+    """
+    if session is None:
+        return None
+    if session.project_id:
+        from app.models.user import User
+        from app.services.project_access_service import resolve_project_access
+
+        user = await db.get(User, user_id)
+        if user is None:
+            return None
+        access = await resolve_project_access(
+            db, project_id=session.project_id, user=user
+        )
+        if access is None:
+            return None
+        if write and not access.can("chat.write"):
+            return None
+        if session.private_mode:
+            return None
+        return session
+    if session.user_id != user_id:
+        return None
+    return session
+
+
+async def _project_author_display_name(
+    db: AsyncSession, user_id: int
+) -> str | None:
+    from app.models.user import User
+
+    user = await db.get(User, user_id)
+    if user is None:
+        return None
+    return user.display_name or user.username or None
+
 # Orphan placeholders (container restart / dead stream) — reconcile on read after this age.
 # Must exceed the OpenRouter read timeout (180s) plus the frontend client timeout (240s)
 # margin, so a slow-but-alive generation is never finalized as "stopped" mid-flight.
@@ -305,6 +358,8 @@ def _message_to_client(row: ChatMessage) -> dict[str, Any]:
             out[key] = meta[key]
     if row.client_message_id:
         out["clientMessageId"] = row.client_message_id
+    if row.author_display_name:
+        out["authorDisplayName"] = row.author_display_name
     if row.agent_run_id:
         out["agentRunId"] = row.agent_run_id
     elif meta.get("agentRunId"):
@@ -324,7 +379,8 @@ async def attach_request_log_id_to_chat_message(
     if not session_id or not request_log_id:
         return False
     session = await db.get(ChatSession, session_id)
-    if session is None or session.user_id != user_id:
+    session = await _owned_or_project_session(db, session, user_id, write=True)
+    if session is None:
         return False
 
     row: ChatMessage | None = None
@@ -582,11 +638,12 @@ async def list_chat_sessions(
     offset = max(0, offset)
     activity = _session_activity_expr()
 
-    base = select(ChatSession).where(ChatSession.user_id == user_id)
+    personal = _personal_session_filter()
+    base = select(ChatSession).where(ChatSession.user_id == user_id, personal)
     count_q = (
         select(func.count())
         .select_from(ChatSession)
-        .where(ChatSession.user_id == user_id)
+        .where(ChatSession.user_id == user_id, personal)
     )
 
     visible = None
@@ -632,7 +689,7 @@ async def list_chat_sessions(
         older_q = (
             select(func.count())
             .select_from(ChatSession)
-            .where(ChatSession.user_id == user_id)
+            .where(ChatSession.user_id == user_id, personal)
         )
         if visible is not None:
             older_q = older_q.where(visible)
@@ -680,6 +737,7 @@ async def search_chat_messages(
                     FROM chat_messages m
                     JOIN chat_sessions s ON s.id = m.session_id
                     WHERE m.user_id = :uid
+                      AND s.project_id IS NULL
                       AND to_tsvector('simple', coalesce(m.content, ''))
                           @@ plainto_tsquery('simple', :q)
                     ORDER BY m.created_at DESC
@@ -699,6 +757,7 @@ async def search_chat_messages(
                 select(ChatMessage, ChatSession.title)
                 .join(ChatSession, ChatSession.id == ChatMessage.session_id)
                 .where(ChatMessage.user_id == user_id)
+                .where(ChatSession.project_id.is_(None))
                 .where(func.lower(ChatMessage.content).like(pattern))
                 .order_by(ChatMessage.created_at.desc())
                 .limit(limit)
@@ -739,7 +798,8 @@ async def get_chat_session(
     db: AsyncSession, user_id: int, session_id: str
 ) -> dict[str, Any] | None:
     row = await db.get(ChatSession, session_id)
-    if row is None or row.user_id != user_id:
+    row = await _owned_or_project_session(db, row, user_id, write=False)
+    if row is None:
         return None
     return _session_to_client(row)
 
@@ -748,11 +808,73 @@ async def create_chat_session(
     db: AsyncSession, user_id: int, payload: dict[str, Any]
 ) -> dict[str, Any]:
     session_id = str(payload.get("id") or uuid.uuid4())
+    project_id_raw = payload.get("projectId") or payload.get("project_id")
+    project_id = str(project_id_raw).strip() if project_id_raw else ""
     existing = await db.get(ChatSession, session_id)
     if existing is not None:
-        if existing.user_id != user_id:
+        if existing.project_id:
+            accessed = await _owned_or_project_session(
+                db, existing, user_id, write=True
+            )
+            if accessed is None:
+                raise ValueError("Session id already in use")
+            if project_id and existing.project_id != project_id:
+                raise ValueError("Session id already in use")
+            return _session_to_client(existing)
+        if existing.user_id != user_id or project_id:
             raise ValueError("Session id already in use")
         return _session_to_client(existing)
+
+    if project_id:
+        from app.models.user import User
+        from app.services.project_access_service import resolve_project_access
+
+        user = await db.get(User, user_id)
+        if user is None:
+            raise ValueError("User not found")
+        access = await resolve_project_access(
+            db, project_id=project_id, user=user
+        )
+        if access is None or not access.can("chat.write"):
+            raise ValueError("Project chat is unavailable")
+        now = dt.datetime.utcnow()
+        row = ChatSession(
+            id=session_id,
+            user_id=user_id,
+            project_id=project_id,
+            created_by_user_id=user_id,
+            channel_kind="ai",
+            title=str(payload.get("title") or "New chat")[:512],
+            model_id=str(payload.get("model") or payload.get("model_id") or "")[:512],
+            tools={},
+            private_mode=False,
+            title_locked=bool(payload.get("titleLocked") or payload.get("title_locked")),
+            title_generated=bool(
+                payload.get("titleGenerated") or payload.get("title_generated")
+            ),
+            tools_touched=False,
+            message_count=0,
+            revision=1,
+            created_at=_ms_to_dt(payload.get("createdAt"))
+            if payload.get("createdAt")
+            else now,
+            updated_at=_ms_to_dt(payload.get("updatedAt"))
+            if payload.get("updatedAt")
+            else now,
+        )
+        try:
+            async with db.begin_nested():
+                db.add(row)
+                await db.flush()
+        except IntegrityError:
+            raced = await db.get(ChatSession, session_id)
+            accessed = await _owned_or_project_session(
+                db, raced, user_id, write=True
+            )
+            if accessed is None:
+                raise
+            return _session_to_client(accessed)
+        return _session_to_client(row)
 
     folder_id = payload.get("folderId") or payload.get("folder_id")
     if folder_id:
@@ -805,13 +927,18 @@ async def update_chat_session(
     expected_revision: int | None = None,
 ) -> dict[str, Any] | None:
     row = await db.get(ChatSession, session_id)
-    if row is None or row.user_id != user_id:
+    row = await _owned_or_project_session(db, row, user_id, write=True)
+    if row is None:
         return None
     _check_expected_revision(row, expected_revision)
     requested_private = updates.get(
         "privateMode",
         updates.get("private_mode"),
     )
+    if row.project_id and requested_private is True:
+        raise PrivateModePersistenceError(
+            "Private Mode is not allowed in project chats"
+        )
     if requested_private is not None:
         next_private = bool(requested_private)
         if row.private_mode and not next_private:
@@ -841,6 +968,14 @@ async def update_chat_session(
     }
     for src, dest in field_map.items():
         if src in updates:
+            if row.project_id and dest in (
+                "folder_id",
+                "private_mode",
+                "tools",
+                "tools_touched",
+                "model_id",
+            ):
+                continue
             value = updates[src]
             if dest == "title" and value is not None:
                 row.title = str(value)[:512]
@@ -863,7 +998,8 @@ async def update_chat_session(
 
 async def delete_chat_session(db: AsyncSession, user_id: int, session_id: str) -> bool:
     row = await db.get(ChatSession, session_id)
-    if row is None or row.user_id != user_id:
+    row = await _owned_or_project_session(db, row, user_id, write=True)
+    if row is None:
         return False
     await db.delete(row)
     await db.flush()
@@ -877,7 +1013,8 @@ async def _try_reconcile_inflight_assistant(
 ) -> bool:
     """Finalize a trailing assistant placeholder left open by a killed stream or image job."""
     session = await db.get(ChatSession, session_id)
-    if session is None or session.user_id != user_id:
+    session = await _owned_or_project_session(db, session, user_id, write=True)
+    if session is None:
         return False
 
     last = (
@@ -965,7 +1102,8 @@ async def list_session_messages(
     before: int | None = None,
 ) -> tuple[list[dict[str, Any]], bool]:
     session = await db.get(ChatSession, session_id)
-    if session is None or session.user_id != user_id:
+    session = await _owned_or_project_session(db, session, user_id, write=False)
+    if session is None:
         return [], False
 
     if before is None:
@@ -981,6 +1119,12 @@ async def list_session_messages(
     rows = rows[:limit]
     rows.reverse()
     messages = [_message_to_client(r) for r in rows]
+    if session.project_id:
+        from app.services.project_media_service import rewrite_personal_media_urls_in_messages
+
+        messages = await rewrite_personal_media_urls_in_messages(
+            db, project_id=session.project_id, messages=messages
+        )
     message_ids = [row.id for row in rows]
     if message_ids:
         feedback_rows = (
@@ -1039,7 +1183,8 @@ async def append_session_messages(
     expected_revision: int | None = None,
 ) -> list[dict[str, Any]] | None:
     session = await db.get(ChatSession, session_id)
-    if session is None or session.user_id != user_id:
+    session = await _owned_or_project_session(db, session, user_id, write=True)
+    if session is None:
         return None
     assert_session_persistence_allowed(session)
     _check_expected_revision(session, expected_revision)
@@ -1050,6 +1195,11 @@ async def append_session_messages(
     new_count = 0
     seq = await _next_sequence(db, session_id)
     last_created = dt.datetime.utcnow()
+    author_name = (
+        await _project_author_display_name(db, user_id)
+        if session.project_id
+        else None
+    )
     for msg in messages:
         client_id = msg.get("clientMessageId") or msg.get("client_message_id")
         if client_id:
@@ -1076,6 +1226,7 @@ async def append_session_messages(
             id=str(msg.get("id") or uuid.uuid4()),
             session_id=session_id,
             user_id=user_id,
+            author_display_name=author_name,
             role=str(msg.get("role") or "user")[:16],
             content=content,
             sequence=seq,
@@ -1106,7 +1257,8 @@ async def replace_session_messages(
     expected_revision: int | None = None,
 ) -> list[dict[str, Any]] | None:
     session = await db.get(ChatSession, session_id)
-    if session is None or session.user_id != user_id:
+    session = await _owned_or_project_session(db, session, user_id, write=True)
+    if session is None:
         return None
     assert_session_persistence_allowed(session)
     _check_expected_revision(session, expected_revision)
@@ -1213,7 +1365,8 @@ async def finalize_chat_session_image(
         return False
 
     session = await db.get(ChatSession, session_id)
-    if session is None or session.user_id != user_id:
+    session = await _owned_or_project_session(db, session, user_id, write=True)
+    if session is None:
         return False
     assert_session_persistence_allowed(session)
 
@@ -1274,7 +1427,8 @@ async def finalize_chat_session_video(
         return False
 
     session = await db.get(ChatSession, session_id)
-    if session is None or session.user_id != user_id:
+    session = await _owned_or_project_session(db, session, user_id, write=True)
+    if session is None:
         return False
     assert_session_persistence_allowed(session)
 
@@ -1354,7 +1508,8 @@ async def finalize_chat_session_speech(
         return False
 
     session = await db.get(ChatSession, session_id)
-    if session is None or session.user_id != user_id:
+    session = await _owned_or_project_session(db, session, user_id, write=True)
+    if session is None:
         return False
     assert_session_persistence_allowed(session)
 
@@ -1415,7 +1570,8 @@ async def update_last_session_message(
 ) -> dict[str, Any] | None:
     """Update the last message in a session (streaming / image finalize)."""
     session = await db.get(ChatSession, session_id)
-    if session is None or session.user_id != user_id:
+    session = await _owned_or_project_session(db, session, user_id, write=True)
+    if session is None:
         return None
     assert_session_persistence_allowed(session)
     _check_expected_revision(session, expected_revision)
@@ -1449,7 +1605,8 @@ async def cancel_streaming_reply(
 ) -> dict[str, Any] | None:
     """Stop and finalize the trailing assistant placeholder (live stream or orphan)."""
     session = await db.get(ChatSession, session_id)
-    if session is None or session.user_id != user_id:
+    session = await _owned_or_project_session(db, session, user_id, write=True)
+    if session is None:
         return None
     assert_session_persistence_allowed(session)
 

@@ -45,6 +45,7 @@ class ReportRequest(BaseModel):
     inactive_days: int = Field(default=30, ge=1, le=365)
     auth_provider: str | None = None
     group_by: str = "model"
+    project_id: str | None = None
 
 
 def _parse_dates(start: str | None, end: str | None) -> tuple[datetime, datetime]:
@@ -88,6 +89,7 @@ def _report_params(body: ReportRequest) -> dict:
         "inactive_days": body.inactive_days,
         "auth_provider": body.auth_provider or None,
         "group_by": body.group_by if body.group_by in ("model", "app", "user") else "model",
+        "project_id": (body.project_id or "").strip() or None,
     }
 
     if meta["needs_date"]:
@@ -107,6 +109,13 @@ def _report_params(body: ReportRequest) -> dict:
         raise HTTPException(400, "department required")
     if "group" in meta["params"] and body.report_type == "group_members_usage" and not body.group_id:
         raise HTTPException(400, "group_id required")
+    if "project" in meta["params"] and body.report_type in {
+        "project_usage_summary",
+        "project_usage_by_model",
+        "project_usage_by_member",
+        "project_media_usage_summary",
+    } and not body.project_id:
+        raise HTTPException(400, "project_id required")
 
     return params
 
@@ -174,6 +183,16 @@ async def report_options(db: AsyncSession = Depends(get_db), _: User = Depends(r
         await db.execute(select(Agent).order_by(Agent.name, Agent.sort_order))
     ).scalars().all()
 
+    from app.models.project import Project
+
+    project_rows = (
+        await db.execute(
+            select(Project.id, Project.name)
+            .where(Project.status != "deletion_pending")
+            .order_by(Project.name)
+        )
+    ).all()
+
     return {
         "plans": [{"id": p[0], "name": p[1]} for p in plans],
         "groups": [{"id": g[0], "name": g[1], "source": g[2]} for g in groups],
@@ -194,6 +213,7 @@ async def report_options(db: AsyncSession = Depends(get_db), _: User = Depends(r
             {"value": "app", "label": "By app"},
             {"value": "user", "label": "By user"},
         ],
+        "projects": [{"id": p[0], "name": p[1]} for p in project_rows],
     }
 
 

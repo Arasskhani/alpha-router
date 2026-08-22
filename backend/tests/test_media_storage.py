@@ -3,13 +3,19 @@
 import io
 
 from app.api.images import _collect_openrouter_images
-from app.services.object_storage_service import media_object_key
+from app.services.object_storage_service import media_object_key, project_media_object_key
 from app.services.storage_service import media_content_hash
 
 
 def test_media_object_key_uses_username_slug():
     key = media_object_key("jdoe", "abc123", ".png")
     assert key == "cdn/u/jdoe/abc123.png"
+
+
+def test_project_media_object_key_uses_project_prefix():
+    key = project_media_object_key("proj-1", "abc123", ".png")
+    assert key == "cdn/p/proj-1/abc123.png"
+    assert "/u/" not in key
 
 
 def test_media_content_hash_stable_for_identical_bytes():

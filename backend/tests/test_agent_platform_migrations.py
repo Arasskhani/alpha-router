@@ -53,7 +53,7 @@ def test_agent_platform_migration_is_complete_and_idempotent():
         finally:
             connection.close()
 
-        assert revision == ("f2a8c5d91b34",)
+            assert revision == ("d0e1f2a3b4c5",)
         assert {
             "users",
             "chat_sessions",
@@ -78,6 +78,19 @@ def test_agent_platform_migration_is_complete_and_idempotent():
             "knowledge_index_versions",
             "ingestion_jobs",
             "outbox_events",
+            "projects",
+            "project_members",
+            "project_invitations",
+            "project_config_versions",
+            "project_memories",
+            "project_memory_grants",
+            "project_chat_pins",
+            "project_user_prefs",
+            "project_chat_composer_prefs",
+            "project_audit_events",
+            "project_resources",
+            "project_media_assets",
+            "project_room_handoffs",
         }.issubset(tables)
     finally:
         database_path.unlink(missing_ok=True)

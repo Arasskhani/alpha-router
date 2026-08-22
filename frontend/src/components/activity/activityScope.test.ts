@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { activityScopeConfig, type ActivityScope } from "./activityScope";
 
 describe("activityScopeConfig", () => {
-  const scopes: ActivityScope[] = ["service", "user", "mine", "api_key", "connection", "group", "agent"];
+  const scopes: ActivityScope[] = ["service", "user", "mine", "api_key", "connection", "group", "agent", "project"];
 
   it("keeps Dashboard as the full filter set with group-by", () => {
     const cfg = activityScopeConfig("service");
@@ -35,6 +35,13 @@ describe("activityScopeConfig", () => {
     expect(cfg.filterKeys).toEqual(["user", "model", "apiKey", "app", "status"]);
     expect(cfg.hideOverviewUsers).toBe(false);
     expect(cfg.hiddenExploreGroups).toEqual([]);
+  });
+
+  it("scopes project activity to members without API-key filters", () => {
+    const cfg = activityScopeConfig("project");
+    expect(cfg.filterKeys).toEqual(["user", "model", "app", "status"]);
+    expect(cfg.hiddenExploreGroups).toContain("api_key");
+    expect(cfg.hideTrendsApiKeys).toBe(true);
   });
 
   it("covers every activity scope", () => {

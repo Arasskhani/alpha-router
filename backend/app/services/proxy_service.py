@@ -122,6 +122,7 @@ from app.services.usage_accounting_service import (
     persist_usage_operation,
     quote_usage,
 )
+from app.services.project_turn_planner import augment_messages_with_project_context
 from app.services.user_memory_service import augment_messages_with_memory
 from app.services.user_profile_context_service import augment_messages_with_profile
 
@@ -863,11 +864,16 @@ async def preflight_stream_chat(
     client_app: str | None = None,
 ) -> ResolvedStreamContext:
     """Validate budget/key/model while the request DB session is still open."""
+    from app.services.chat_channel_guard import assert_session_allows_model_generation
     from app.services.api_key_connection_policy import allowed_connection_ids_for_key
     from app.services.api_key_model_policy import allowed_model_ids_for_key
     from app.services.model_access_service import (
         resolve_access_subject,
         user_can_access_model,
+    )
+
+    await assert_session_allows_model_generation(
+        db, str(body.get("chat_session_id") or "").strip() or None
     )
 
     agent_turn: PreparedAgentTurn | None = None
@@ -1125,6 +1131,7 @@ async def log_usage(
     usage_events: list[PendingUsageEvent] | None = None,
     operation_type: str = "chat",
     operation_idempotency_key: str | None = None,
+    project_id: str | None = None,
 ) -> int | None:
     events = list(usage_events or [])
     if not events:
@@ -1156,6 +1163,7 @@ async def log_usage(
         alpha_router_api_key_id=alpha_router_api_key_id,
         user_api_key_id=user_api_key_id,
         budget_reservation_id=budget_reservation_id,
+        project_id=project_id,
     )
     db.add(log_row)
     await db.flush()
@@ -1368,6 +1376,20 @@ async def stream_chat(
     model = body.get("model") or ""
 
     async with AsyncSessionLocal() as db:
+        chat_session_id_for_billing = str(body.get("chat_session_id") or "").strip()
+        project_id_for_billing: str | None = None
+        if chat_session_id_for_billing:
+            from app.models.chat import ChatSession
+
+            sess_row = (
+                await db.execute(
+                    select(ChatSession.id, ChatSession.project_id).where(
+                        ChatSession.id == chat_session_id_for_billing
+                    )
+                )
+            ).first()
+            if sess_row is not None:
+                project_id_for_billing = sess_row[1]
         if resolved is None:
             resolved = await preflight_stream_chat(
                 db,
@@ -1597,6 +1619,17 @@ async def stream_chat(
                     user_id=user_id,
                     private_mode=private_mode,
                 )
+                messages = await augment_messages_with_project_context(
+                    db,
+                    messages,
+                    user_id=user_id,
+                    chat_session_id=str(body.get("chat_session_id") or "").strip()
+                    or None,
+                    client_project_id=str(
+                        body.get("project_id") or body.get("projectId") or ""
+                    ).strip()
+                    or None,
+                )
             except BaseException:
                 try:
                     await asyncio.shield(_release_stream_reservation())
@@ -1801,12 +1834,11 @@ async def stream_chat(
                         client_disconnected = True
                     if not client_disconnected and await request.is_disconnected():
                         client_disconnected = True
-                    if (
-                        not client_disconnected
-                        and persister
-                        and await persister.is_cancel_requested()
-                    ):
-                        client_disconnected = True
+                    if not client_disconnected and persister:
+                        if persister.peek_cancel_requested():
+                            client_disconnected = True
+                        else:
+                            persister.schedule_cancel_poll()
                     pt, ct, cache = _usage_from_chunk(chunk)
                     chunk_usage = (
                         chunk.get("usage")
@@ -1831,16 +1863,19 @@ async def stream_chat(
                         delta = chunk.choices[0].delta.content
                         iteration_content += delta
                         collected_content += delta
-                        # A partial flush after Stop would re-mark the message as
-                        # streaming, so the UI would show it as still generating.
-                        if persister and agent_turn is None and not client_disconnected:
-                            try:
-                                await persister.on_content(collected_content)
-                            except Exception:
-                                await db.rollback()
-                                persister.reset_persist_state()
                     if not client_disconnected and agent_turn is None:
                         yield f"data: {_serialize_stream_chunk(chunk)}\n\n".encode()
+                    # Persist after yield and without awaiting DB: token printing
+                    # must not wait on commit. A partial flush after Stop would
+                    # re-mark the message as streaming, so skip once cancelled.
+                    if (
+                        chunk.choices
+                        and chunk.choices[0].delta.content
+                        and persister
+                        and agent_turn is None
+                        and not client_disconnected
+                    ):
+                        persister.schedule_content(collected_content)
 
                 pt, ct, cache = _usage_from_stream_wrapper(response)
                 active_prompt_tokens, active_completion_tokens, active_cached_tokens = (
@@ -2457,6 +2492,7 @@ async def stream_chat(
                                 usage_events=usage_events,
                                 operation_type="chat",
                                 operation_idempotency_key=accounting_key,
+                                project_id=project_id_for_billing,
                             )
                             chat_session_id = str(
                                 body.get("chat_session_id") or ""

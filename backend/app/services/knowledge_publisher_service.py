@@ -388,6 +388,9 @@ async def activate_release_after_index(
         document = await db.get(KnowledgeDocument, version.document_id)
         if document is not None:
             document.status = "active"
+        from app.services.project_resource_service import sync_project_resources_for_document
+
+        await sync_project_resources_for_document(db, document_id=version.document_id)
 
     release.status = "published"
     release.active_scope_key = scope_key

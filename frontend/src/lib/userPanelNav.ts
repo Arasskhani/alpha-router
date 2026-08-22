@@ -10,10 +10,19 @@ import { MY_USAGE_AND_ACTIVITY_LABEL } from "./usageActivityLabel";
 /** User panel left sidebar (non-admin accounts). */
 export const USER_SIDEBAR_NAV: NavItem[] = [
   { to: "/app/chat", label: "Chat", icon: "chat" },
+  { to: "/app/projects", label: "Projects", icon: "projects" },
   { to: "/app/media", label: "Media", icon: "media" },
   { to: "/app/my-activity", label: MY_USAGE_AND_ACTIVITY_LABEL, icon: "activity" },
   { to: "/app/manual", label: "User Manual", icon: "manual" },
 ];
+
+/** True for `/app/projects/:id` and `/admin/projects/:id`, not the list or invite page. */
+export function isProjectWorkspacePath(pathname: string): boolean {
+  const path = pathname.replace(/\/$/, "") || "/";
+  const match = path.match(/^\/(app|admin)\/projects\/([^/]+)$/);
+  if (!match) return false;
+  return match[2] !== "invite";
+}
 
 /** Topbar shortcuts, with the caller's first permitted admin page as the final item. */
 export function topbarShortcutsForSession(session: SessionRbac | null): NavItem[] {
@@ -31,6 +40,7 @@ export function topbarShortcutsForSession(session: SessionRbac | null): NavItem[
 /** Routes allowed for disabled (read-only) users besides direct URL blocking. */
 export const USER_READ_ONLY_PATHS = [
   "/app/chat",
+  "/app/projects",
   "/app/media",
   "/app/my-activity",
   "/app/manual",

@@ -4,6 +4,7 @@ import AdminPage from "../../components/AdminPage";
 import Modal from "../../components/Modal";
 import ModelName from "../../components/ModelName";
 import ModelsFilterBar from "../../components/models/ModelsFilterBar";
+import ModelsNewFilterMenu from "../../components/models/ModelsNewFilterMenu";
 import ModelsBrowseView from "../../components/models/ModelsBrowseView";
 import ModelAccessModal from "../../components/models/ModelAccessModal";
 import ModelCodeInterpreterModal from "../../components/models/ModelCodeInterpreterModal";
@@ -18,10 +19,12 @@ import {
   codeInterpreterLabel,
   enabledCounts,
   filterCatalogModels,
+  newWindowCounts,
   type CatalogModel,
   type ModelAccessFilter,
   type ModelEnabledFilter,
   type ModelKind,
+  type ModelNewFilter,
 } from "../../lib/modelCatalog";
 import { modelSupportsTextChat } from "../../lib/chatModels";
 
@@ -46,6 +49,7 @@ export default function Models() {
   const [activeKind, setActiveKind] = useState<ModelKind | null>(null);
   const [enabledFilter, setEnabledFilter] = useState<ModelEnabledFilter | null>(null);
   const [accessFilter, setAccessFilter] = useState<ModelAccessFilter | null>(null);
+  const [newFilter, setNewFilter] = useState<ModelNewFilter | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>(loadViewMode);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -61,11 +65,19 @@ export default function Models() {
 
   const models = useMemo(
     () =>
-      filterCatalogModels(allModels, debouncedSearch, activeKind, enabledFilter, accessFilter),
-    [allModels, debouncedSearch, activeKind, enabledFilter, accessFilter],
+      filterCatalogModels(
+        allModels,
+        debouncedSearch,
+        activeKind,
+        enabledFilter,
+        accessFilter,
+        newFilter,
+      ),
+    [allModels, debouncedSearch, activeKind, enabledFilter, accessFilter, newFilter],
   );
   const statusCounts = useMemo(() => enabledCounts(allModels), [allModels]);
   const accessFilterCounts = useMemo(() => accessCounts(allModels), [allModels]);
+  const newFilterCounts = useMemo(() => newWindowCounts(allModels), [allModels]);
   const accessModel = allModels.find((m) => m.id === accessModelId) || null;
   const compatModel = allModels.find((m) => m.id === compatModelId) || null;
   const selectedDefaultTarget = selectedIds.length === 1
@@ -279,6 +291,11 @@ export default function Models() {
                 );
               })}
             </div>
+            <ModelsNewFilterMenu
+              value={newFilter}
+              counts={newFilterCounts}
+              onChange={setNewFilter}
+            />
             <button
               type="button"
               className="btn btn-ghost"

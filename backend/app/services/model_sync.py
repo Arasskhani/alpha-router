@@ -292,6 +292,28 @@ async def set_model_admin_enabled(db: AsyncSession, model: AIModel, enabled: boo
     model.is_enabled = bool(conn.is_active) if conn is not None else False
 
 
+def _upsert_catalog_model(
+    db: AsyncSession,
+    existing: AIModel | None,
+    payload: dict,
+    *,
+    new_enabled: bool,
+) -> None:
+    """Update an existing catalog row, or insert with a sticky first-seen time."""
+    if existing:
+        for key, value in payload.items():
+            setattr(existing, key, value)
+        return
+    db.add(
+        AIModel(
+            **payload,
+            is_enabled=new_enabled,
+            admin_disabled=False,
+            first_seen_at=payload.get("last_synced_at") or datetime.utcnow(),
+        )
+    )
+
+
 async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: str) -> int:
     """Upsert models for a connection; pricing copied verbatim from provider response.
 
@@ -342,17 +364,7 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
                 "is_video_model": bool(video_meta),
                 "last_synced_at": datetime.utcnow(),
             }
-            if existing:
-                for k, v in payload.items():
-                    setattr(existing, k, v)
-            else:
-                db.add(
-                    AIModel(
-                        **payload,
-                        is_enabled=new_enabled,
-                        admin_disabled=False,
-                    )
-                )
+            _upsert_catalog_model(db, existing, payload, new_enabled=new_enabled)
             synced += 1
 
         # Upsert video-only catalog entries that appear on /videos/models but not /models.
@@ -416,17 +428,7 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
                 "is_video_model": True,
                 "last_synced_at": datetime.utcnow(),
             }
-            if existing:
-                for k, v in video_only_payload.items():
-                    setattr(existing, k, v)
-            else:
-                db.add(
-                    AIModel(
-                        **video_only_payload,
-                        is_enabled=new_enabled,
-                        admin_disabled=False,
-                    )
-                )
+            _upsert_catalog_model(db, existing, video_only_payload, new_enabled=new_enabled)
             synced += 1
 
         # A fresh provider catalog is authoritative. Models that disappeared
@@ -465,17 +467,7 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
                 "is_video_model": _guess_is_video_model(ext_id, m if isinstance(m, dict) else None),
                 "last_synced_at": datetime.utcnow(),
             }
-            if existing:
-                for k, v in payload.items():
-                    setattr(existing, k, v)
-            else:
-                db.add(
-                    AIModel(
-                        **payload,
-                        is_enabled=new_enabled,
-                        admin_disabled=False,
-                    )
-                )
+            _upsert_catalog_model(db, existing, payload, new_enabled=new_enabled)
             synced += 1
 
     conn.last_sync_at = datetime.utcnow()

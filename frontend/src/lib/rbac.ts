@@ -99,7 +99,7 @@ const MENU_PATH_PREFIXES: Record<MenuKey, string[]> = {
   authentication: ["/admin/authentication"],
   smtp: ["/admin/smtp"],
   storage: ["/admin/storage-management", "/admin/retention-policy", "/admin/storage"],
-  reports: ["/admin/reports"],
+  reports: ["/admin/reports", "/admin/project-usage"],
   api_logs: ["/admin/logs"],
   operations: ["/admin/operations", "/admin/debug"],
   database: ["/admin/database"],

@@ -103,6 +103,7 @@ type Props = {
   apiKeyId?: number;
   connectionId?: number;
   agentId?: string;
+  projectId?: string;
   title?: string;
   backLink?: { to: string; label: string };
   /** Rendered below all activity cards (e.g. API key change log). */
@@ -118,6 +119,7 @@ export default function ActivityView({
   apiKeyId,
   connectionId,
   agentId,
+  projectId,
   title,
   backLink,
   footer,
@@ -286,6 +288,8 @@ export default function ActivityView({
               ? `/api/admin/groups/${groupId}/activity?${buildQuery()}`
               : scope === "agent"
                 ? `/api/admin/agents/${encodeURIComponent(agentId || "")}/activity?${buildQuery()}`
+                : scope === "project"
+                  ? `/api/projects/${encodeURIComponent(projectId || "")}/activity?${buildQuery()}`
                 : `/api/admin/users/${userId}/activity?${buildQuery()}`;
 
   useEffect(() => {
@@ -320,6 +324,11 @@ export default function ActivityView({
       setLoading(false);
       return;
     }
+    if (scope === "project" && !projectId) {
+      setErr("Invalid project");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setErr("");
     api<ActivityPayload>(fetchPath)
@@ -329,7 +338,7 @@ export default function ActivityView({
       })
       .catch((e) => setErr(String(e)))
       .finally(() => setLoading(false));
-  }, [fetchPath, scope, userId, groupId, apiKeyId, connectionId, agentId, onDataLoaded]);
+  }, [fetchPath, scope, userId, groupId, apiKeyId, connectionId, agentId, projectId, onDataLoaded]);
 
   useEffect(() => {
     if (!settingsOpen) return;
@@ -393,6 +402,13 @@ export default function ActivityView({
         </>
       );
     }
+    if (scope === "project" && data?.project) {
+      return (
+        <>
+          Usage for project <strong>{data.project.name}</strong>
+        </>
+      );
+    }
     return <>Service usage across models on Alpharouter</>;
   }, [scope, data]);
 
@@ -411,6 +427,8 @@ export default function ActivityView({
                 ? `/api/admin/api-keys/${apiKeyId}/activity/export?${q}&format=${fmt}`
                 : scope === "agent"
                   ? `/api/admin/agents/${encodeURIComponent(agentId || "")}/activity/export?${q}&format=${fmt}`
+                  : scope === "project"
+                    ? `/api/projects/${encodeURIComponent(projectId || "")}/activity/export?${q}&format=${fmt}`
                   : `/api/admin/users/${userId}/activity/export?${q}&format=${fmt}`;
 
     if (fmt === "pdf") {
@@ -464,7 +482,8 @@ export default function ActivityView({
                     scope === "group" ||
                     scope === "connection" ||
                     scope === "api_key" ||
-                    scope === "agent"
+                    scope === "agent" ||
+                    scope === "project"
                   ? USAGE_AND_ACTIVITY_LABEL
                   : "Activity")}
           </h1>

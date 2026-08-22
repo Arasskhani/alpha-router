@@ -25,6 +25,13 @@ import {
   normalizeChatTools,
   type ChatToolsState,
 } from "./chatTools";
+import {
+  createProjectChat,
+  deleteProjectChat,
+  getProjectChat,
+  listProjectChats,
+  syncProjectChats,
+} from "./projectsApi";
 
 export type UserTheme = CachedTheme;
 
@@ -50,6 +57,32 @@ export type UserChatsPayload = {
   prefs?: UserPrefs;
   updated_at?: number;
 };
+
+let projectChatScopeId: string | null = null;
+
+/** Scope chat HTTP to a project workspace. Null restores personal /app/chat. */
+export function setProjectChatScope(projectId: string | null) {
+  const next = projectId ? String(projectId).trim() : "";
+  projectChatScopeId = next || null;
+}
+
+export function getProjectChatScope(): string | null {
+  return projectChatScopeId;
+}
+
+function parseApiTime(value: unknown, fallback = Date.now()): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const trimmed = value.trim();
+    if (!trimmed.includes("-") && !trimmed.includes("T") && !trimmed.includes(":")) {
+      const asNum = Number(trimmed);
+      if (Number.isFinite(asNum)) return asNum;
+    }
+    const ms = Date.parse(trimmed);
+    if (!Number.isNaN(ms)) return ms;
+  }
+  return fallback;
+}
 
 export type ChatMessage = {
   /** Stable server id; required for persisted feedback. */
@@ -79,6 +112,8 @@ export type ChatMessage = {
   agentStatus?: string;
   routingOutcome?: string;
   completionReasonCode?: string;
+  /** Display name of the member who sent this prompt in a project chat. */
+  authorDisplayName?: string;
   citations?: AgentCitation[];
   feedback?: {
     rating: -1 | 1;
@@ -289,6 +324,8 @@ export type ChatSession = {
   updatedAt: number;
   /** Last message activity (server); used for sidebar sort and Recent/Older split. */
   lastMessageAt?: number | null;
+  /** Project-wide pin (project chats only). */
+  pinned?: boolean;
 };
 
 export type ChatFolder = {
@@ -677,6 +714,10 @@ function mapApiMessage(raw: Record<string, unknown>): ChatMessage {
       typeof raw.completionReasonCode === "string"
         ? raw.completionReasonCode
         : undefined,
+    authorDisplayName:
+      typeof raw.authorDisplayName === "string" && raw.authorDisplayName.trim()
+        ? raw.authorDisplayName.trim()
+        : undefined,
     citations: Array.isArray(raw.citations)
       ? (raw.citations as AgentCitation[])
       : undefined,
@@ -720,14 +761,11 @@ function mapApiSession(raw: Record<string, unknown>, messages: ChatMessage[] = [
     messages,
     messageCount: typeof raw.messageCount === "number" ? raw.messageCount : messages.length,
     revision: typeof raw.revision === "number" ? raw.revision : 1,
-    createdAt: Number(raw.createdAt) || Date.now(),
-    updatedAt: Number(raw.updatedAt) || Date.now(),
+    createdAt: parseApiTime(raw.createdAt),
+    updatedAt: parseApiTime(raw.updatedAt),
     lastMessageAt:
-      typeof raw.lastMessageAt === "number"
-        ? raw.lastMessageAt
-        : raw.lastMessageAt === null
-          ? null
-          : undefined,
+      raw.lastMessageAt == null ? (raw.lastMessageAt as null | undefined) : parseApiTime(raw.lastMessageAt),
+    pinned: !!raw.pinned,
   };
 }
 
@@ -741,6 +779,7 @@ export async function fetchSessionMessagesFromServer(
   const data = await api<{
     messages: Record<string, unknown>[];
     has_more?: boolean;
+    hasMore?: boolean;
     revision?: number;
   }>(`/api/user/chat-sessions/${encodeURIComponent(sessionId)}/messages?${params}`, {
     signal: opts?.signal,
@@ -748,7 +787,7 @@ export async function fetchSessionMessagesFromServer(
   const messages = (data.messages || []).map(mapApiMessage);
   return {
     messages,
-    hasMore: !!data.has_more,
+    hasMore: !!(data.has_more ?? data.hasMore),
     revision: typeof data.revision === "number" ? data.revision : undefined,
   };
 }
@@ -1071,23 +1110,38 @@ async function createSessionOnServerIfMissing(
     // Re-read live session at POST time so a model change during an in-flight
     // create is not persisted as the previous (e.g. default) model.
     const live = chatSessionsProvider().find((s) => s.id === session.id) || session;
-    const createPayload = {
-      id: live.id,
-      title: live.title,
-      folderId: live.folderId,
-      model: live.model,
-      tools: live.tools,
-      titleLocked: live.titleLocked,
-      titleGenerated: live.titleGenerated,
-      toolsTouched: live.toolsTouched,
-      createdAt: live.createdAt,
-      updatedAt: live.updatedAt,
-    };
+    const projectId = getProjectChatScope();
     try {
-      await api("/api/user/chats/sessions", {
-        method: "POST",
-        body: JSON.stringify(createPayload),
-      });
+      if (projectId) {
+        await createProjectChat(projectId, {
+          id: live.id,
+          title: live.title,
+          model: live.model,
+        });
+      } else {
+        const createPayload = {
+          id: live.id,
+          title: live.title,
+          folderId: live.folderId,
+          model: live.model,
+          tools: live.tools,
+          titleLocked: live.titleLocked,
+          titleGenerated: live.titleGenerated,
+          toolsTouched: live.toolsTouched,
+          createdAt: live.createdAt,
+          updatedAt: live.updatedAt,
+        };
+        try {
+          await api("/api/user/chats/sessions", {
+            method: "POST",
+            body: JSON.stringify(createPayload),
+          });
+        } catch (err) {
+          const status =
+            err && typeof err === "object" ? (err as { status?: number }).status : undefined;
+          if (status !== 409) throw err;
+        }
+      }
     } catch (err) {
       const status =
         err && typeof err === "object" ? (err as { status?: number }).status : undefined;
@@ -1112,20 +1166,30 @@ async function createSessionOnServerIfMissing(
 async function patchSessionMetadataOnServer(session: ChatSession): Promise<ChatSession | null> {
   const known = await ensureServerSessionKnown(session);
   if (!known) return null;
+  const projectScoped = Boolean(getProjectChatScope());
   const data = await api<Record<string, unknown>>(
     `/api/user/chats/sessions/${encodeURIComponent(session.id)}`,
     {
       method: "PATCH",
-      body: JSON.stringify({
-        title: session.title,
-        folderId: session.folderId,
-        model: session.model,
-        tools: session.tools,
-        titleLocked: session.titleLocked,
-        titleGenerated: session.titleGenerated,
-        toolsTouched: session.toolsTouched,
-        updatedAt: session.updatedAt,
-      }),
+      body: JSON.stringify(
+        projectScoped
+          ? {
+              title: session.title,
+              titleLocked: session.titleLocked,
+              titleGenerated: session.titleGenerated,
+              updatedAt: session.updatedAt,
+            }
+          : {
+              title: session.title,
+              folderId: session.folderId,
+              model: session.model,
+              tools: session.tools,
+              titleLocked: session.titleLocked,
+              titleGenerated: session.titleGenerated,
+              toolsTouched: session.toolsTouched,
+              updatedAt: session.updatedAt,
+            },
+      ),
     },
   );
   return mapApiSession(data);
@@ -1191,7 +1255,12 @@ async function syncFoldersToServer(folders: ChatFolder[]): Promise<void> {
 export async function deleteChatSessionOnServer(sessionId: string): Promise<void> {
   markPendingDelete(sessionId);
   try {
-    await api(`/api/user/chats/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+    const projectId = getProjectChatScope();
+    if (projectId) {
+      await deleteProjectChat(projectId, sessionId);
+    } else {
+      await api(`/api/user/chats/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+    }
     serverSessionIds.delete(sessionId);
     clearPendingDelete(sessionId);
   } catch (err) {
@@ -1356,7 +1425,39 @@ export type FetchChatsOptions = {
 
 export async function fetchUserChatsFromServer(
   opts?: FetchChatsOptions,
-): Promise<UserChatsPayload & { total?: number; older_total?: number }> {
+): Promise<UserChatsPayload & { total?: number; older_total?: number; lastOpenedSessionId?: string | null }> {
+  const projectId = getProjectChatScope();
+  if (projectId) {
+    const data = await listProjectChats(projectId, {
+      limit: opts?.limit ?? 40,
+      offset: opts?.offset,
+      q: opts?.q,
+    });
+    if (!opts?.since) {
+      serverSessionIds.clear();
+      for (const s of data.sessions || []) {
+        const id = String(s.id);
+        if (!isPendingDelete(id)) serverSessionIds.add(id);
+      }
+      serverFolderIds = new Set();
+    }
+    const serverSessions = (data.sessions || [])
+      .map((s) => mapApiSession(s))
+      .filter((s) => !isPendingDelete(s.id));
+    serverSessions.sort((a, b) => {
+      const pin = Number(!!b.pinned) - Number(!!a.pinned);
+      if (pin) return pin;
+      return (b.lastMessageAt ?? b.updatedAt) - (a.lastMessageAt ?? a.updatedAt);
+    });
+    return {
+      sessions: normalizeChatSessions(serverSessions),
+      folders: [],
+      total: data.total,
+      older_total: 0,
+      lastOpenedSessionId: data.lastOpenedSessionId ?? null,
+    };
+  }
+
   const params = new URLSearchParams();
   const limit = opts?.limit ?? 40;
   params.set("limit", String(limit));
@@ -1398,6 +1499,30 @@ export async function fetchUserChatsFromServer(
   };
 }
 
+export async function fetchProjectChatById(
+  projectId: string,
+  sessionId: string,
+): Promise<ChatSession | null> {
+  try {
+    const raw = await getProjectChat(projectId, sessionId);
+    return mapApiSession(raw);
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchProjectChatSync(
+  projectId: string,
+  opts?: { since?: number; sessionId?: string | null; afterSequence?: number | null },
+) {
+  const data = await syncProjectChats(projectId, opts);
+  return {
+    ...data,
+    sessions: (data.sessions || []).map((row) => mapApiSession(row)),
+    messages: (data.messages || []).map(mapApiMessage),
+  };
+}
+
 export async function searchChatMessagesOnServer(q: string): Promise<
   Array<{
     messageId: string;
@@ -1408,6 +1533,7 @@ export async function searchChatMessagesOnServer(q: string): Promise<
     createdAt: number;
   }>
 > {
+  if (getProjectChatScope()) return [];
   const data = await api<{ results: Array<Record<string, unknown>> }>(
     `/api/user/chats/search-messages?q=${encodeURIComponent(q)}`,
   );
@@ -1845,7 +1971,7 @@ export async function syncChatsToServer(sessions: ChatSession[], folders: ChatFo
     const normalized = normalizeChatSessions(merged);
     await savePrivateChatSessions(normalized);
 
-    if (isChatLeader()) {
+    if (isChatLeader() && !getProjectChatScope()) {
       await syncFoldersToServer(folders);
     }
     await syncDirtySessionsToServer(normalized);

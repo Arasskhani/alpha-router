@@ -178,6 +178,20 @@ async def job_chat_retention_cleanup():
         await db.commit()
 
 
+async def job_purge_deleted_projects():
+    async with AsyncSessionLocal() as db:
+        from app.services.project_service import purge_expired_deleted_projects
+
+        try:
+            n = await purge_expired_deleted_projects(db)
+            await db.commit()
+            if n:
+                logger.info("Purged %s deletion-pending projects", n)
+        except Exception:
+            await db.rollback()
+            logger.exception("Project deletion-pending purge failed")
+
+
 async def refresh_storage_cleanup_schedule() -> None:
     async with AsyncSessionLocal() as db:
         settings = await get_storage_settings(db)
@@ -273,6 +287,14 @@ def start_scheduler():
         minute=0,
         timezone=get_server_timezone(),
         id="chat_retention_cleanup",
+    )
+    scheduler.add_job(
+        job_purge_deleted_projects,
+        "cron",
+        hour=4,
+        minute=20,
+        timezone=get_server_timezone(),
+        id="project_deletion_purge",
     )
     scheduler.add_job(job_chat_stats_reconcile, "cron", hour=3, minute=30, id="chat_stats_reconcile")
     scheduler.add_job(job_user_media_cleanup, "cron", hour="*", minute=0, id="user_media_cleanup")

@@ -51,9 +51,14 @@ async def apply_schema_column_patches() -> None:
                 "current_agent_id",
                 "current_agent_version_id",
                 "agent_selected_at",
+                "project_id",
+                "created_by_user_id",
+                "channel_kind",
             }
         ),
-        "chat_messages": frozenset({"agent_run_id"}),
+        "chat_messages": frozenset({"agent_run_id", "author_display_name"}),
+        "image_generation_attempts": frozenset({"project_id"}),
+        "video_generation_jobs": frozenset({"project_id"}),
     }
     # Tables removed from the ORM (feature retired).
     retired_tables: frozenset[str] = frozenset({"user_connectors"})
@@ -197,6 +202,13 @@ async def validate_agent_platform_schema() -> None:
             "current_agent_id",
             "current_agent_version_id",
             "agent_selected_at",
+            "channel_kind",
+        },
+        "project_room_handoffs": {
+            "source_session_id",
+            "target_session_id",
+            "brief",
+            "created_by_user_id",
         },
         "chat_messages": {"agent_run_id"},
         "knowledge_bases": {"slug", "sensitivity", "access_type", "acl_version"},
@@ -247,6 +259,69 @@ async def validate_agent_platform_schema() -> None:
             "status",
             "metrics_json",
             "failure_codes_json",
+        },
+        "projects": {
+            "name",
+            "status",
+            "visibility",
+            "created_by_user_id",
+            "active_config_version_id",
+            "knowledge_base_id",
+            "revision",
+            "acl_version",
+        },
+        "project_members": {"project_id", "user_id", "role"},
+        "project_invitations": {
+            "project_id",
+            "role",
+            "token_hash",
+            "max_uses",
+            "use_count",
+            "expires_at",
+        },
+        "project_config_versions": {
+            "project_id",
+            "revision",
+            "memory_enabled",
+            "grounding_policy",
+        },
+        "project_memories": {
+            "project_id",
+            "content",
+            "content_hash",
+            "source_type",
+            "authority",
+            "enabled",
+        },
+        "project_memory_grants": {
+            "consumer_project_id",
+            "source_project_id",
+            "status",
+            "revision",
+        },
+        "project_chat_pins": {"project_id", "session_id", "pinned_by_user_id"},
+        "project_chat_composer_prefs": {
+            "project_id",
+            "session_id",
+            "user_id",
+            "tools",
+            "tools_touched",
+        },
+        "project_audit_events": {
+            "event_type",
+            "actor_user_id",
+            "outcome",
+            "payload_json",
+            "created_at",
+        },
+        "project_resources": {
+            "project_id",
+            "document_id",
+            "title",
+            "status",
+            "uploaded_by_user_id",
+            "created_at",
+            "updated_at",
         },
     }
 
@@ -312,6 +387,7 @@ async def validate_accounting_schema() -> None:
             "cost_source",
             "cost_confidence",
             "has_unpriced_usage",
+            "project_id",
         },
     }
 

@@ -11,7 +11,8 @@ export function isAlphaRouterMediaFileUrl(url: string): boolean {
     return (
       parsed.origin === new URL(base).origin &&
       (/^\/api\/chat\/media\/\d+\/file$/.test(parsed.pathname) ||
-        /^\/api\/videos\/jobs\/[0-9a-f-]{36}\/private-file$/.test(parsed.pathname))
+        /^\/api\/videos\/jobs\/[0-9a-f-]{36}\/private-file$/.test(parsed.pathname) ||
+        /^\/api\/projects\/[^/]+\/media\/\d+\/download$/.test(parsed.pathname))
     );
   } catch {
     return false;

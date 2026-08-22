@@ -67,6 +67,11 @@ def test_parse_agent_request_supports_gateway_extension_and_rejects_conflicts():
         )
 
 
+def test_parse_agent_request_explicit_opt_out_skips_agent_path():
+    assert parse_agent_request({"agent_auto_route": False}) is None
+    assert parse_agent_request({}) is None
+
+
 def test_agent_citation_metadata_only_exposes_verified_citations():
     citation = KnowledgeCitation(
         citation_id="citation-1",

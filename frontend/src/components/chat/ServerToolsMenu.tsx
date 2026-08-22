@@ -18,6 +18,7 @@ type Props = {
   onChange: (next: ChatToolsState) => void;
   onPrivateModeChange: (next: boolean) => void;
   onClose: () => void;
+  allowPrivateMode?: boolean;
   videoCapabilities?: {
     supported_durations?: number[];
     supported_resolutions?: string[];
@@ -113,6 +114,7 @@ export default function ServerToolsMenu({
   onChange,
   onPrivateModeChange,
   onClose,
+  allowPrivateMode = true,
   videoCapabilities,
   speechCapabilities,
 }: Props) {
@@ -479,6 +481,7 @@ export default function ServerToolsMenu({
         onToggle={() => patch({ codeInterpreter: !tools.codeInterpreter })}
       />
 
+      {allowPrivateMode ? (
       <ToolRow
         icon={
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -497,6 +500,7 @@ export default function ServerToolsMenu({
         disabled={privateMode}
         disabledTitle="Private Mode cannot be turned off for this chat. Start a new chat to use normal mode."
       />
+      ) : null}
 
       <footer className="alpha-router-server-tools-menu__foot">
         <button

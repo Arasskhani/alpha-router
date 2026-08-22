@@ -31,6 +31,11 @@ import MyActivity from "./pages/MyActivity";
 import MediaLibrary from "./pages/MediaLibrary";
 import UserManual from "./pages/user/UserManual";
 import Roles from "./pages/admin/Roles";
+import ProjectsPage from "./pages/Projects";
+import ProjectWorkspacePage from "./pages/ProjectWorkspace";
+import ProjectInviteClaimPage from "./pages/ProjectInviteClaim";
+import ProjectActivity, { AdminProjectActivityRedirect } from "./pages/ProjectActivity";
+import ProjectUsage from "./pages/admin/ProjectUsage";
 import AgentsOverview from "./pages/admin/AgentsOverview";
 import AgentStudio from "./pages/admin/AgentStudio";
 import KnowledgeBases from "./pages/admin/KnowledgeBases";
@@ -93,6 +98,9 @@ export default function App() {
       >
         <Route index element={<AdminDashboard />} />
         <Route path="chat" element={<ChatPanel />} />
+        <Route path="projects" element={<ProjectsPage />} />
+        <Route path="projects/:projectId/activity" element={<AdminProjectActivityRedirect />} />
+        <Route path="projects/:projectId" element={<ProjectWorkspacePage />} />
         <Route path="media" element={<MediaLibrary />} />
         <Route path="manual" element={<UserManual />} />
         <Route path="authentication" element={<Authentication />} />
@@ -116,6 +124,7 @@ export default function App() {
         <Route path="retention-policy" element={<RetentionPolicy />} />
         <Route path="storage" element={<Navigate to="/admin/storage-management" replace />} />
         <Route path="reports" element={<Reports />} />
+        <Route path="project-usage" element={<ProjectUsage />} />
         <Route path="logs" element={<ApiLogs />} />
         <Route path="operations" element={<Operations />} />
         <Route path="debug" element={<Operations />} />
@@ -140,6 +149,10 @@ export default function App() {
       >
         <Route index element={<Navigate to="chat" replace />} />
         <Route path="chat" element={<ChatPanel />} />
+        <Route path="projects" element={<ProjectsPage />} />
+        <Route path="projects/invite" element={<ProjectInviteClaimPage />} />
+        <Route path="projects/:projectId/activity" element={<ProjectActivity />} />
+        <Route path="projects/:projectId" element={<ProjectWorkspacePage />} />
         <Route path="media" element={<MediaLibrary />} />
         <Route path="my-activity" element={<MyActivity />} />
         <Route path="manual" element={<UserManual />} />

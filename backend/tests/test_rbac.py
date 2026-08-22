@@ -195,6 +195,7 @@ def test_storage_menu_super_admin_only():
 
 def test_path_to_menu():
     assert path_to_menu("/admin/api-keys") == "api_keys"
+    assert path_to_menu("/admin/project-usage") == "reports"
     assert path_to_menu("/admin/users/5/activity") == "users"
     assert path_to_menu("/admin") == "dashboard"
     assert path_to_menu("/admin/connections/1/activity") == "connections"

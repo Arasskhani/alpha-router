@@ -19,6 +19,7 @@ from app.api.deps import (
     require_database,
     require_models,
     require_models_write,
+    require_reports,
     require_role_catalog,
     require_storage,
     require_storage_write,
@@ -160,6 +161,12 @@ from app.services.user_media_service import (
     set_user_media_quota_gb,
     stream_media_zip,
     user_media_quota_summary,
+)
+from app.services.project_media_service import (
+    count_projects_over_media_quota,
+    get_project_media_quota_bytes,
+    get_project_media_quota_gb,
+    set_project_media_quota_gb,
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -380,6 +387,7 @@ async def list_admin_models(
                 static_candidate=is_code_interpreter_candidate(m),
                 auto_router=is_auto_router_model_id(m.external_id),
             ),
+            "first_seen_at": f"{m.first_seen_at.isoformat()}Z" if m.first_seen_at else None,
             **model_catalog_meta(
                 external_id=m.external_id,
                 display_name=m.display_name,
@@ -2107,6 +2115,7 @@ async def _fetch_logs_since(
     user_api_key_id: int | None = None,
     connection_id: int | None = None,
     agent_id: str | None = None,
+    project_id: str | None = None,
 ) -> list[RequestLog]:
     q = select(RequestLog).where(RequestLog.request_time >= since)
     if user_id is not None:
@@ -2147,6 +2156,8 @@ async def _fetch_logs_since(
                 ),
             )
         )
+    if project_id is not None:
+        q = q.where(RequestLog.project_id == project_id)
     return (await db.execute(q.order_by(RequestLog.request_time.asc()))).scalars().all()
 
 
@@ -2269,6 +2280,7 @@ async def _load_activity_context(
     alpha_router_api_key_id: int | None = None,
     connection_id: int | None = None,
     agent_id: str | None = None,
+    project_id: str | None = None,
 ) -> tuple[list, list, list, list, datetime, datetime, list, list, datetime]:
     now = datetime.utcnow()
     prompts_period = prompts_period or period
@@ -2285,6 +2297,7 @@ async def _load_activity_context(
         alpha_router_api_key_id=alpha_router_api_key_id,
         connection_id=connection_id,
         agent_id=agent_id,
+        project_id=project_id,
     )
     period_rows = [r for r in all_rows if (r.request_time or now) >= since]
     options_rows = period_rows
@@ -2333,6 +2346,7 @@ async def _build_scoped_activity(
     alpha_router_api_key_id: int | None = None,
     connection_id: int | None = None,
     agent_id: str | None = None,
+    project_id: str | None = None,
 ) -> tuple[dict, dict, dict]:
     pp = prompts_period or ("day" if period not in ("day", "week", "month") else period)
     if pp not in ("day", "week", "month"):
@@ -2359,6 +2373,7 @@ async def _build_scoped_activity(
         alpha_router_api_key_id=alpha_router_api_key_id,
         connection_id=connection_id,
         agent_id=agent_id,
+        project_id=project_id,
     )
     options, api_key_meta = await _activity_options_and_meta(db, options_rows, group_by)
     payload = activity_service.build_activity_payload(
@@ -2399,6 +2414,7 @@ async def _prepare_activity_export(
     alpha_router_api_key_id: int | None = None,
     connection_id: int | None = None,
     agent_id: str | None = None,
+    project_id: str | None = None,
 ) -> tuple[list, dict, dict, dict, datetime, datetime]:
     pp = prompts_period or ("day" if period not in ("day", "week", "month") else period)
     if pp not in ("day", "week", "month"):
@@ -2425,6 +2441,7 @@ async def _prepare_activity_export(
         alpha_router_api_key_id=alpha_router_api_key_id,
         connection_id=connection_id,
         agent_id=agent_id,
+        project_id=project_id,
     )
     payload = activity_service.build_activity_payload(
         rows,
@@ -2468,6 +2485,7 @@ async def _activity_export_response(
     alpha_router_api_key_id: int | None = None,
     connection_id: int | None = None,
     agent_id: str | None = None,
+    project_id: str | None = None,
 ) -> Response:
     if format == "pdf":
         try:
@@ -2488,6 +2506,7 @@ async def _activity_export_response(
                 connection_id=connection_id,
                 api_key_id=alpha_router_api_key_id,
                 agent_id=agent_id,
+                project_id=project_id,
             )
         except ActivityPdfError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -2510,6 +2529,7 @@ async def _activity_export_response(
         alpha_router_api_key_id=alpha_router_api_key_id,
         connection_id=connection_id,
         agent_id=agent_id,
+        project_id=project_id,
     )
     provider_map, key_map, user_key_map = await resolve_log_export_maps(db, rows)
     df = request_logs_to_export_dataframe(
@@ -2605,6 +2625,20 @@ async def dashboard_activity_export(
         timezone=timezone,
         filters=filters,
     )
+
+
+@router.get("/project-usage")
+async def project_usage_overview(
+    period: str = Query("month", pattern=activity_service.ACTIVITY_PERIOD_PATTERN),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_reports),
+):
+    from app.services.project_billing_service import list_projects_usage_overview
+
+    now = datetime.utcnow()
+    since = activity_service.activity_period_start(period, now)
+    projects = await list_projects_usage_overview(db, since, now)
+    return {"period": period, "start": since.isoformat() + "Z", "end": now.isoformat() + "Z", "projects": projects}
 
 
 @router.get("/users/{user_id}/activity")
@@ -2909,6 +2943,7 @@ class StorageSettingsPatch(BaseModel):
     clear_schedule_hour: int | None = None
     clear_schedule_minute: int | None = None
     user_media_quota_gb: int | None = None
+    project_media_quota_gb: int | None = None
     max_upload_file_mb: int | None = None
     max_chat_attachments_total_mb: int | None = None
     max_media_zip_download_mb: int | None = None
@@ -2947,10 +2982,14 @@ async def get_storage_overview(db: AsyncSession = Depends(get_db), _: User = Dep
     quota_gb = await get_user_media_quota_gb(db)
     stats["settings"]["user_media_quota_gb"] = quota_gb
     stats["settings"]["user_media_quota_bytes"] = await get_user_media_quota_bytes(db)
+    project_quota_gb = await get_project_media_quota_gb(db)
+    stats["settings"]["project_media_quota_gb"] = project_quota_gb
+    stats["settings"]["project_media_quota_bytes"] = await get_project_media_quota_bytes(db)
     from app.services.transfer_limits_service import get_transfer_limits, transfer_limits_public_view
 
     stats["settings"].update(transfer_limits_public_view(await get_transfer_limits(db)))
     stats["users_over_quota"] = await count_users_over_media_quota(db)
+    stats["projects_over_quota"] = await count_projects_over_media_quota(db)
     return stats
 
 
@@ -2970,6 +3009,13 @@ async def patch_storage_settings(
     if body.user_media_quota_gb is not None:
         quota_gb = await set_user_media_quota_gb(db, body.user_media_quota_gb)
         settings = {**settings, "user_media_quota_gb": quota_gb, "user_media_quota_bytes": quota_gb * 1024 * 1024 * 1024}
+    if body.project_media_quota_gb is not None:
+        project_quota_gb = await set_project_media_quota_gb(db, body.project_media_quota_gb)
+        settings = {
+            **settings,
+            "project_media_quota_gb": project_quota_gb,
+            "project_media_quota_bytes": project_quota_gb * 1024 * 1024 * 1024,
+        }
     transfer_fields = (
         body.max_upload_file_mb is not None
         or body.max_chat_attachments_total_mb is not None

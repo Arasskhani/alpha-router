@@ -23,7 +23,11 @@ from app.services.knowledge_rerank_service import DeterministicKnowledgeReranker
 from app.services.model_access_service import resolve_access_subject
 from app.services.qdrant_service import QdrantVectorService
 from app.services.resource_access_service import resolve_resource_access_subject
-from app.services.user_chat_storage_service import create_chat_session
+from app.services.project_turn_planner import augment_messages_with_project_context
+from app.services.user_chat_storage_service import (
+    _owned_or_project_session,
+    create_chat_session,
+)
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -134,6 +138,8 @@ def parse_agent_request(body: dict[str, Any]) -> AgentRequestOptions | None:
         raise AgentRequestError(
             "agent_auto_route cannot be combined with an explicit Agent"
         )
+    if not agent_id and not agent_slug and not auto_route:
+        return None
     include_citations = _strict_bool(
         body.get("include_citations", extension.get("include_citations")),
         label="include_citations",
@@ -175,20 +181,27 @@ async def _owned_or_new_chat_session(
         )
     ).scalar_one_or_none()
     if session is not None:
-        if int(session.user_id) != int(user_id):
+        authorized = await _owned_or_project_session(
+            db, session, user_id, write=True
+        )
+        if authorized is None:
             raise AgentRequestError("Chat session is unavailable")
-        return session
+        return authorized
     if not bool(body.get("persist_chat")):
         return None
-    created = await create_chat_session(
-        db,
-        user_id,
-        {
-            "id": session_id,
-            "title": "New chat",
-            "model": str(body.get("model") or ""),
-        },
-    )
+    try:
+        created = await create_chat_session(
+            db,
+            user_id,
+            {
+                "id": session_id,
+                "title": "New chat",
+                "model": str(body.get("model") or ""),
+                "project_id": body.get("project_id") or body.get("projectId"),
+            },
+        )
+    except ValueError as exc:
+        raise AgentRequestError("Chat session is unavailable") from exc
     if created is None:
         raise AgentRequestError("Chat session could not be created")
     await db.flush()
@@ -214,12 +227,25 @@ async def prepare_agent_turn(
         user_id=user_id,
         source=source,
     )
+    messages = list(body.get("messages") or [])
+    if session is not None and session.project_id:
+        messages = await augment_messages_with_project_context(
+            db,
+            messages,
+            user_id=user_id,
+            chat_session_id=session.id,
+            client_project_id=str(
+                body.get("project_id") or body.get("projectId") or ""
+            ).strip()
+            or None,
+        )
     agent_id = options.agent_id
     agent_slug = options.agent_slug
     pinned_version_id = options.pinned_version_id
     if (
         options.auto_route
         and session is not None
+        and not session.project_id
         and session.current_agent_id
         and session.current_agent_version_id
     ):
@@ -242,7 +268,7 @@ async def prepare_agent_turn(
     try:
         plan = await plan_agent_turn(
             db,
-            messages=list(body.get("messages") or []),
+            messages=messages,
             resource_subject=resource_subject,
             model_subject=model_subject,
             agent_id=agent_id,

@@ -253,4 +253,9 @@ export type ActivityPayload = {
     slug?: string;
     status?: string;
   };
+  project?: {
+    id: string;
+    name: string;
+    status?: string;
+  };
 };

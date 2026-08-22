@@ -6,6 +6,7 @@ import {
   buildImageRequestBody,
   ImagePreparationTimeoutError,
   isBackgroundImageRunning,
+  mergeChatMessagesPreferLocal,
   parseImageMessage,
   runBackgroundImageGeneration,
   sessionHasIncompleteTextReply,
@@ -66,6 +67,19 @@ describe("image retry request identity", () => {
         { role: "assistant", content: "I cannot draw that.", receivedAt: Date.now() },
       ]),
     ).toBe(false);
+  });
+
+  it("does not replace a full local thread with a shorter remote tail", () => {
+    const local = [
+      { role: "user" as const, content: "hi", sequence: 1, receivedAt: 1 },
+      { role: "assistant" as const, content: "old", sequence: 2, receivedAt: 2 },
+    ];
+    const remoteTail = [
+      { role: "assistant" as const, content: "new reply", sequence: 4 },
+    ];
+    const merged = mergeChatMessagesPreferLocal(local, remoteTail);
+    expect(merged).toHaveLength(2);
+    expect(merged[1]?.content).toBe("old");
   });
 });
 

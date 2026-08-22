@@ -26,13 +26,17 @@ export const userManualSections: DocSection[] = [
         <h1>User Manual</h1>
         <p className="docs-lead">
           Welcome to alpharouter — your organization’s AI workspace. Use approved models in Chat, keep generated files in
-          Media, and track your own spend under Activity. Administrators configure models, budgets, and
+          Media, collaborate in Projects, and track your own spend under Activity. Administrators configure models, budgets, and
           sign-in; this manual covers what you can do in the <strong>/app</strong> panel after you sign in.
         </p>
         <div className="docs-cards">
           <div className="docs-card">
             <h3>Chat</h3>
             <p>General chat, specialist Agents, citations, tools, private mode, export, and a prompt queue.</p>
+          </div>
+          <div className="docs-card">
+            <h3>Projects</h3>
+            <p>Shared workspaces with members, rooms, chats, knowledge resources, and project media.</p>
           </div>
           <div className="docs-card">
             <h3>Media</h3>
@@ -65,10 +69,16 @@ export const userManualSections: DocSection[] = [
             </tr>
             <tr>
               <td>
+                <a href="#user-projects">Projects</a>
+              </td>
+              <td>Shared workspaces, roles, chats, resources vs media, invitations</td>
+            </tr>
+            <tr>
+              <td>
                 <a href="#user-media">Media</a> · <a href="#user-activity">Activity</a> ·{" "}
                 <a href="#user-settings">Settings</a>
               </td>
-              <td>Library, activity, account preferences and security</td>
+              <td>Personal library, activity, account preferences and security</td>
             </tr>
           </tbody>
         </table>
@@ -129,6 +139,14 @@ export const userManualSections: DocSection[] = [
               </td>
               <td>
                 <code>/app/chat</code> — conversations with AI models
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <strong>Projects</strong>
+              </td>
+              <td>
+                <code>/app/projects</code> — shared workspaces you own or join
               </td>
             </tr>
             <tr>
@@ -582,6 +600,122 @@ export const userManualSections: DocSection[] = [
         </p>
         <h3>Regenerate</h3>
         <p>Where offered, regenerate requests a new assistant reply for the same user turn (additional usage applies).</p>
+      </>
+    ),
+  },
+
+  // ── Projects ──────────────────────────────────────────────────────────────
+  {
+    id: "user-projects",
+    title: "Projects",
+    group: "Projects",
+    content: (
+      <>
+        <h2>Projects</h2>
+        <p>
+          Path: <code>/app/projects</code>. A project is a shared workspace: members, rooms, chats, knowledge files, and media
+          belong to the project — not to one person&apos;s private Chat or Media library.
+        </p>
+        <h3>My projects and Explore</h3>
+        <ul>
+          <li>
+            <strong>My projects</strong> lists workspaces you belong to. Archived and pending-deletion projects appear
+            in their own sections so they stay out of the active list.
+          </li>
+          <li>
+            <strong>Explore</strong> lists <em>public</em> projects visible to every signed-in user. Private projects
+            never appear here.
+          </li>
+        </ul>
+        <h3>Roles</h3>
+        <table className="docs-table">
+          <thead>
+            <tr>
+              <th>Role</th>
+              <th>What you can do</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Primary Owner</td>
+              <td>
+                The person who created the project. Same management as Owner, plus changing Owner
+                access and archive, restore, delete, and purge. There is exactly one Primary Owner;
+                they cannot leave or be demoted.
+              </td>
+            </tr>
+            <tr>
+              <td>Owner</td>
+              <td>
+                Manage members (Contributor and Viewer), settings, Activity, and project files. Cannot
+                archive or delete the project, and cannot change another Owner&apos;s access. Extra
+                Owners may leave.
+              </td>
+            </tr>
+            <tr>
+              <td>Contributor</td>
+              <td>Rooms, Chat, upload resources and media, and use project settings that Contributors are allowed to edit.</td>
+            </tr>
+            <tr>
+              <td>Viewer</td>
+              <td>Read rooms, chats, resources, and media. Viewers cannot send messages or change membership.</td>
+            </tr>
+          </tbody>
+        </table>
+        <h3>Rooms vs Chats</h3>
+        <p>
+          <strong>Rooms</strong> are member-only human threads. There is no model, no tools, no Agent, and no AI spend.
+          Public visitors who are not project members do not see the Rooms tab. Room text is not copied into project
+          memory and is not sent to the model.
+        </p>
+        <p>
+          When a room reaches a decision, Owners and Contributors can use <strong>Send decision to Chat</strong>. Only
+          the edited brief is placed in the new chat box so you can review it and press Send — it is not sent to the
+          model automatically, and the full room transcript is not copied.
+        </p>
+        <h3>Shared chat</h3>
+        <p>
+          Project chats live under the workspace <strong>Chats</strong> tab. They are shared with members of that
+          project. They are not copies of your personal <code>/app/chat</code> sessions, and Private Mode is not
+          available in a project chat. Tools, model, and Agent in the composer are yours alone — other members of the
+          same thread keep their own composer settings. Owners and Contributors can pin a thread for everyone in the project, and can
+          copy a link with <code>?session=</code> to open that chat directly — even if it is older than the first page
+          of the sidebar. Re-entering a project restores the last thread you had open. Pins and new messages appear for
+          every member without a refresh. Each user prompt shows the sender&apos;s name. Making a project{" "}
+          <strong>Public</strong> requires typing <code>PUBLIC</code>. The Overview tab shows member/chat/file counts;
+          spend for the last 30 days is visible only to Owners and the Primary Owner (and reports admins). Full charts stay on Activity.
+        </p>
+        <h3>Activity</h3>
+        <p>
+          The Primary Owner and Owners can open the <strong>Activity</strong> tab in the workspace (or{" "}
+          <code>/app/projects/&lt;id&gt;/activity</code>) to see spend, tokens, and charts for that project only.
+          Contributors and Viewers do not have this tab.
+        </p>
+        <h3>Resources vs Media</h3>
+        <ul>
+          <li>
+            <strong>Resources</strong> are documents used as knowledge grounding for project chats (text the model can
+            draw on). Owners and Contributors can upload up to 20 files at a time. Until a file is{" "}
+            <strong>Published</strong>, members see <strong>Waiting for Admin Approval</strong>. Chat can use it only
+            after an admin publishes it.
+          </li>
+          <li>
+            <strong>Media</strong> are binary files (images, video, uploads) stored in the project library. Images and
+            files generated or attached in a project chat are stored here (not in your personal Media library) so every
+            member can open them. If the project is over quota, the file is kept only for the sender.
+          </li>
+        </ul>
+        <h3>Invitations</h3>
+        <p>
+          The Primary Owner and Owners create a link (Contributor or Viewer only — never Owner or Primary Owner). Share
+          the link, or optionally email it to an existing alpharouter user when SMTP is configured. If email is
+          unavailable, the invitation is still created: copy the link from the dialog. Claim invitations at{" "}
+          <code>/app/projects/invite</code>.
+        </p>
+        <Note>
+          Personal Chat and personal Media stay private to you. Project content is visible to project members according
+          to their role.
+        </Note>
       </>
     ),
   },

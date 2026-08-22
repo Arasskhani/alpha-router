@@ -30,6 +30,15 @@ class _FakePersister:
     async def on_content(self, content: str) -> None:
         self.contents.append(content)
 
+    def schedule_content(self, content: str) -> None:
+        self.contents.append(content)
+
+    def peek_cancel_requested(self) -> bool:
+        return self.cancel_when.is_set()
+
+    def schedule_cancel_poll(self) -> None:
+        return None
+
     async def is_cancel_requested(self, *, force: bool = False) -> bool:
         del force
         return self.cancel_when.is_set()

@@ -30,6 +30,7 @@ from app.api import (
     logs,
     operations,
     plans,
+    projects,
     reports,
     smtp,
     speech,
@@ -758,6 +759,7 @@ app.include_router(authentication.router)
 app.include_router(smtp.router)
 app.include_router(groups.router)
 app.include_router(chat.router)
+app.include_router(projects.router)
 
 
 def health_payload() -> dict[str, str]:

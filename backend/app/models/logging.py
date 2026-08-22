@@ -50,6 +50,7 @@ class RequestLog(Base):
     has_unpriced_usage = Column(Boolean, nullable=True, default=False, index=True)
     usage_operation_id = Column(String(36), nullable=True, index=True)
     reconciled_at = Column(DateTime, nullable=True)
+    project_id = Column(String(36), nullable=True, index=True)
 
     request_time = Column(DateTime, default=datetime.datetime.utcnow, index=True)
     response_time_ms = Column(Float, default=0.0)
@@ -74,6 +75,7 @@ class ImageGenerationAttempt(Base):
     id = Column(Integer, primary_key=True)
     request_id = Column(String(36), index=True, nullable=False)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+    project_id = Column(String(36), nullable=True, index=True)
     requested_model = Column(String(512), nullable=False)
     model_id = Column(String(512), index=True, nullable=False)
     operation = Column(String(32), nullable=False, default="generation")

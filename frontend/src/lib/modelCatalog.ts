@@ -46,6 +46,8 @@ export type CatalogModel = {
   context_length?: number | null;
   provider_author?: string;
   released_at?: string | null;
+  /** First time this model was listed in Alpha Router. Null for pre-existing catalog rows. */
+  first_seen_at?: string | null;
   code_interpreter?: CodeInterpreterCompatibilityInfo | null;
 };
 
@@ -103,6 +105,20 @@ export const MODEL_KIND_LABELS: Record<ModelKind, string> = {
 
 export type ModelEnabledFilter = "on" | "off";
 export type ModelAccessFilter = ModelAccessType;
+export const MODEL_NEW_WINDOWS = [1, 3, 7, 14, 30] as const;
+export type ModelNewFilter = (typeof MODEL_NEW_WINDOWS)[number];
+export const MODEL_NEW_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+export function isNewlyListedModel(
+  model: CatalogModel,
+  days: ModelNewFilter,
+  nowMs: number = Date.now(),
+): boolean {
+  if (!model.first_seen_at) return false;
+  const seen = Date.parse(model.first_seen_at);
+  if (Number.isNaN(seen)) return false;
+  return seen >= nowMs - days * MODEL_NEW_WINDOW_MS;
+}
 
 export function kindCounts(models: CatalogModel[]): Record<ModelKind, number> {
   const counts = Object.fromEntries(MODEL_KIND_ORDER.map((k) => [k, 0])) as Record<ModelKind, number>;
@@ -135,6 +151,20 @@ export function accessCounts(models: CatalogModel[]): Record<ModelAccessFilter, 
   return { public: pub, private: priv };
 }
 
+export function newWindowCounts(
+  models: CatalogModel[],
+  nowMs: number = Date.now(),
+): Record<ModelNewFilter, number> {
+  const counts = Object.fromEntries(MODEL_NEW_WINDOWS.map((days) => [days, 0])) as Record<
+    ModelNewFilter,
+    number
+  >;
+  for (const days of MODEL_NEW_WINDOWS) {
+    counts[days] = models.filter((m) => isNewlyListedModel(m, days, nowMs)).length;
+  }
+  return counts;
+}
+
 export function accessTypeLabel(m: CatalogModel): string {
   const access = m.access_type || "public";
   if (access !== "private") return "Public";
@@ -150,6 +180,8 @@ export function filterCatalogModels(
   activeKind: ModelKind | null,
   enabledFilter: ModelEnabledFilter | null = null,
   accessFilter: ModelAccessFilter | null = null,
+  newFilter: ModelNewFilter | null = null,
+  nowMs: number = Date.now(),
 ): CatalogModel[] {
   const q = search.trim().toLowerCase();
   return models.filter((m) => {
@@ -161,6 +193,7 @@ export function filterCatalogModels(
     if (enabledFilter === "off" && m.enabled) return false;
     const access = m.access_type || "public";
     if (accessFilter && access !== accessFilter) return false;
+    if (newFilter && !isNewlyListedModel(m, newFilter, nowMs)) return false;
     if (!q) return true;
     const name = (m.display_name || m.title || "").toLowerCase();
     const desc = (m.description || "").toLowerCase();

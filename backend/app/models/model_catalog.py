@@ -50,6 +50,8 @@ class AIModel(Base):
 
     context_length = Column(Integer, nullable=True)
     last_synced_at = Column(DateTime, default=datetime.datetime.utcnow)
+    # First catalog insert in Alpha Router. Re-sync must not overwrite this.
+    first_seen_at = Column(DateTime, nullable=True, index=True)
 
     connection = relationship("Connection")
     access_assignments = relationship(

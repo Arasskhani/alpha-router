@@ -125,6 +125,12 @@ type U = {
   monthly_budget_usd: number;
   budget_used_usd: number;
 };
+
+function userLabel(u: { username?: string; display_name?: string } | null | undefined): string {
+  if (!u) return "user";
+  return (u.display_name || u.username || "").trim() || "user";
+}
+
 type Plan = { id: number; name: string };
 type GroupOption = { id: number; name: string };
 
@@ -267,7 +273,7 @@ export default function Users() {
       method: "POST",
       body: JSON.stringify(body),
     });
-    setFlash("User created.");
+    setFlash(`User "${userLabel({ username: values.username, display_name: values.display_name })}" created.`);
     load();
   }
 
@@ -298,7 +304,7 @@ export default function Users() {
         saved.length === 1
           ? roleLabel(roleCatalog, saved[0])
           : `${saved.length} roles`;
-      setFlash(`Roles updated (${label}).`);
+      setFlash(`Roles updated for "${userLabel(previousUser)}" (${label}).`);
       await loadUsers();
     } catch (e) {
       setUsers((list) =>
@@ -354,7 +360,8 @@ export default function Users() {
 
   async function budgetReset(userId: number) {
     await api(`/api/admin/users/${userId}/budget-reset`, { method: "POST" });
-    setFlash(`Budget reset for user #${userId}`);
+    const target = users.find((u) => u.id === userId);
+    setFlash(`Budget reset for "${userLabel(target)}".`);
     load();
   }
 
@@ -422,7 +429,11 @@ export default function Users() {
             : u,
         ),
       );
-      setFlash(wantsPassword ? "User updated and password reset." : "User updated.");
+      setFlash(
+        wantsPassword
+          ? `User "${userLabel(editUser)}" updated and password reset.`
+          : `User "${userLabel({ ...editUser, display_name: editForm.display_name })}" updated.`,
+      );
       setEditUser(null);
       setEditForm(emptyEditForm);
       await loadUsers();

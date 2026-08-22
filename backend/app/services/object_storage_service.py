@@ -48,6 +48,15 @@ def media_object_key(user_slug: str, content_hash: str, ext: str) -> str:
     return f"{prefix}/u/{slug}/{safe_hash}{safe_ext}"
 
 
+def project_media_object_key(project_id: str, content_hash: str, ext: str) -> str:
+    """CDN layout: cdn/p/{project_id}/{sha256}{ext}"""
+    prefix = get_settings().media_cdn_prefix.strip("/")
+    slug = (project_id or "").strip() or "unknown"
+    safe_hash = (content_hash or "").strip() or "unknown"
+    safe_ext = ext if ext.startswith(".") else f".{ext}" if ext else ".bin"
+    return f"{prefix}/p/{slug}/{safe_hash}{safe_ext}"
+
+
 def is_cdn_object_key(storage_path: str) -> bool:
     prefix = get_settings().media_cdn_prefix.strip("/")
     normalized = (storage_path or "").replace("\\", "/").lstrip("/")

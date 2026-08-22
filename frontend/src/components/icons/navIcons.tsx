@@ -88,6 +88,17 @@ export function IconFolder({ className = "" }: IconProps) {
   );
 }
 
+export function IconProjects({ className = "" }: IconProps) {
+  return (
+    <svg {...svgProps} className={className}>
+      <path d="M9 11H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2z" />
+      <path d="M19 11h-4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2z" />
+      <path d="M9 21H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2z" />
+      <path d="M19 21h-4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2z" />
+    </svg>
+  );
+}
+
 export function IconLogout({ className = "" }: IconProps) {
   return (
     <svg {...svgProps} className={className}>
@@ -105,6 +116,7 @@ const NAV_ICONS = {
   manual: IconManual,
   admin: IconAdmin,
   folder: IconFolder,
+  projects: IconProjects,
 } as const;
 
 export function NavIcon({ name, className = "nav-icon" }: { name: NavIconKey; className?: string }) {

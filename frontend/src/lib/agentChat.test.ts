@@ -12,9 +12,9 @@ import {
 } from "./agentChat";
 
 describe("agentRequestFields", () => {
-  it("sends no Agent fields when no Agent is enabled", () => {
-    expect(agentRequestFields(NO_AGENT_SELECTION)).toEqual({});
-    expect(agentRequestFields("")).toEqual({});
+  it("explicitly opts out of Agent routing when no Agent is enabled", () => {
+    expect(agentRequestFields(NO_AGENT_SELECTION)).toEqual({ agent_auto_route: false });
+    expect(agentRequestFields("")).toEqual({ agent_auto_route: false });
   });
 
   it("builds an auto-routing request", () => {

@@ -42,6 +42,7 @@ async def record_image_attempt(
     success: bool,
     outcome: str,
     error_message: str | None = None,
+    project_id: str | None = None,
 ) -> None:
     """Persist telemetry independently; telemetry failure must never fail generation."""
     try:
@@ -51,6 +52,7 @@ async def record_image_attempt(
                     ImageGenerationAttempt(
                         request_id=request_id,
                         user_id=user_id,
+                        project_id=project_id,
                         requested_model=requested_model,
                         model_id=model_id,
                         operation=operation,

@@ -139,7 +139,7 @@ export function agentRequestFields(selection: string): Record<string, unknown> {
       include_citations: true,
     };
   }
-  return {};
+  return { agent_auto_route: false };
 }
 
 export async function fetchAgentCatalog(): Promise<AgentCatalog> {

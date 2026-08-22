@@ -4,6 +4,7 @@ import datetime
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
@@ -13,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    or_,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import JSON
@@ -20,6 +22,29 @@ from sqlalchemy.types import JSON
 from app.database import Base
 
 JsonDocument = JSON().with_variant(JSONB(), "postgresql")
+
+CHANNEL_KIND_AI = "ai"
+CHANNEL_KIND_MEMBER = "member"
+CHANNEL_KINDS = (CHANNEL_KIND_AI, CHANNEL_KIND_MEMBER)
+
+
+def normalize_channel_kind(value: str | None) -> str:
+    kind = (value or CHANNEL_KIND_AI).strip().lower()
+    return kind if kind == CHANNEL_KIND_MEMBER else CHANNEL_KIND_AI
+
+
+def is_member_channel(session: "ChatSession | None") -> bool:
+    if session is None:
+        return False
+    return normalize_channel_kind(getattr(session, "channel_kind", None)) == CHANNEL_KIND_MEMBER
+
+
+def ai_channel_filter():
+    """Treat NULL as AI so rows from before the column still belong to Chats."""
+    return or_(
+        ChatSession.channel_kind == CHANNEL_KIND_AI,
+        ChatSession.channel_kind.is_(None),
+    )
 
 
 class ChatFolder(Base):
@@ -50,13 +75,11 @@ class ChatSession(Base):
     model_id = Column(String(512), nullable=False, default="")
     current_agent_id = Column(
         String(36),
-        ForeignKey("agents.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
     current_agent_version_id = Column(
         String(36),
-        ForeignKey("agent_versions.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -68,12 +91,42 @@ class ChatSession(Base):
     tools_touched = Column(Boolean, nullable=False, default=False)
     message_count = Column(Integer, nullable=False, default=0)
     revision = Column(Integer, nullable=False, default=1)
+    project_id = Column(
+        String(36),
+        nullable=True,
+        index=True,
+    )
+    channel_kind = Column(
+        String(16),
+        nullable=False,
+        default=CHANNEL_KIND_AI,
+        server_default=CHANNEL_KIND_AI,
+    )
+    created_by_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
     archived_at = Column(DateTime, nullable=True)
     last_message_at = Column(DateTime, nullable=True)
 
-    __table_args__ = (Index("ix_chat_sessions_user_updated", "user_id", "updated_at"),)
+    __table_args__ = (
+        CheckConstraint(
+            "channel_kind IN ('ai', 'member')",
+            name="chk_chat_sessions_channel_kind",
+        ),
+        Index("ix_chat_sessions_user_updated", "user_id", "updated_at"),
+        Index("ix_chat_sessions_project_updated", "project_id", "updated_at"),
+        Index(
+            "ix_chat_sessions_project_channel_updated",
+            "project_id",
+            "channel_kind",
+            "updated_at",
+        ),
+    )
 
 
 class ChatMessage(Base):
@@ -87,15 +140,15 @@ class ChatMessage(Base):
         nullable=False,
     )
     user_id = Column(
-        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True
     )
+    author_display_name = Column(String(255), nullable=True)
     role = Column(String(16), nullable=False)
     content = Column(Text, nullable=False, default="")
     sequence = Column(Integer, nullable=False)
     client_message_id = Column(String(64), nullable=True)
     agent_run_id = Column(
         String(36),
-        ForeignKey("agent_runs.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )

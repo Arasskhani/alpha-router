@@ -80,6 +80,7 @@ async def log_video_usage(
     budget_reservation_id: str | None = None,
     duration_seconds: int | None = None,
     job_id: str | None = None,
+    project_id: str | None = None,
 ) -> int | None:
     """Write RequestLog row and settle budget (same path as image/chat)."""
     model_id = (capture.model_id or "").strip() or "unknown"
@@ -161,4 +162,5 @@ async def log_video_usage(
         usage_events=usage_events,
         operation_type="video",
         operation_idempotency_key=f"video:{job_id}" if job_id else None,
+        project_id=project_id,
     )

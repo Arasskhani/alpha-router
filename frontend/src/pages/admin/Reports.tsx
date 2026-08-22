@@ -22,6 +22,7 @@ type ReportOptions = {
   models: string[];
   alpha_router_api_keys: { id: number; name: string }[];
   agents: { id: string; name: string; status: string }[];
+  projects: { id: string; name: string }[];
   auth_providers: string[];
   group_by_options: { value: string; label: string }[];
 };
@@ -36,6 +37,7 @@ type ParamState = {
   group_id: string;
   alpha_router_api_key_id: string;
   agent_id: string;
+  project_id: string;
   app: string;
   model_id: string;
   provider: string;
@@ -55,6 +57,7 @@ const emptyParams: ParamState = {
   group_id: "",
   alpha_router_api_key_id: "",
   agent_id: "",
+  project_id: "",
   app: "",
   model_id: "",
   provider: "",
@@ -169,6 +172,7 @@ export default function Reports() {
       body.alpha_router_api_key_id = Number(params.alpha_router_api_key_id);
     }
     if (params.agent_id) body.agent_id = params.agent_id;
+    if (params.project_id) body.project_id = params.project_id;
     if (params.app) body.app = params.app;
     if (params.model_id) body.model_id = params.model_id;
     if (params.provider) body.provider = params.provider;
@@ -338,6 +342,25 @@ export default function Reports() {
               {(options.agents ?? []).map((agent) => (
                 <option key={agent.id} value={agent.id}>
                   {agent.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        );
+      case "project":
+        return (
+          <div key={name}>
+            <label>Project *</label>
+            <select
+              className="input-block"
+              value={params.project_id}
+              onChange={(e) => setParams((p) => ({ ...p, project_id: e.target.value }))}
+              required
+            >
+              <option value="">Select project…</option>
+              {(options.projects ?? []).map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
                 </option>
               ))}
             </select>

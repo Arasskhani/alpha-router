@@ -35,6 +35,7 @@ from app.services.storage_service import (
     media_public_url,
     store_media_from_blob,
 )
+from app.services.chat_channel_guard import assert_session_allows_model_generation
 from app.services.user_chat_storage_service import finalize_chat_session_speech
 
 router = APIRouter(prefix="/api/speech", tags=["speech"])
@@ -228,6 +229,7 @@ async def generate_speech(
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    await assert_session_allows_model_generation(db, body.chat_session_id)
     generation_start = time.perf_counter()
     settings = get_settings()
     # Capture identity primitives before any commit/rollback expires the ORM user.

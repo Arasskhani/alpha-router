@@ -1152,6 +1152,28 @@ async def build_report(db: AsyncSession, report_type: str, params: dict[str, Any
             float(params.get("threshold_pct") or 80),
         )
 
+    # Projects (Data & Reports → Projects)
+    from app.services import project_billing_service as _pbs
+
+    if report_type == "all_projects_usage":
+        return await _pbs.report_all_projects_usage(db, start, end)
+    if report_type == "project_usage_summary":
+        if not params.get("project_id"):
+            raise HTTPException(400, "project_id required")
+        return await _pbs.report_project_usage_summary(db, params["project_id"], start, end)
+    if report_type == "project_usage_by_model":
+        if not params.get("project_id"):
+            raise HTTPException(400, "project_id required")
+        return await _pbs.report_project_usage_by_model(db, params["project_id"], start, end)
+    if report_type == "project_usage_by_member":
+        if not params.get("project_id"):
+            raise HTTPException(400, "project_id required")
+        return await _pbs.report_project_usage_by_member(db, params["project_id"], start, end)
+    if report_type == "project_media_usage_summary":
+        if not params.get("project_id"):
+            raise HTTPException(400, "project_id required")
+        return await _pbs.report_project_media_usage_summary(db, params["project_id"], start, end)
+
     raise HTTPException(400, f"Unknown report_type: {report_type}")
 
 

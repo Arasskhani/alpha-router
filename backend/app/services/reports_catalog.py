@@ -23,6 +23,7 @@ ParamKind = Literal[
     "inactive_days",
     "auth_provider",
     "group_by",
+    "project",
 ]
 
 REPORT_CATALOG: list[dict[str, Any]] = [
@@ -279,6 +280,47 @@ REPORT_CATALOG: list[dict[str, Any]] = [
         "needs_date": False,
         "params": ["threshold_pct"],
     },
+    # Projects (Data & Reports → Projects)
+    {
+        "id": "all_projects_usage",
+        "category": "projects",
+        "title": "All projects usage",
+        "description": "Per-project cost, requests, and tokens across the organization.",
+        "needs_date": True,
+        "params": [],
+    },
+    {
+        "id": "project_usage_summary",
+        "category": "projects",
+        "title": "Project usage summary",
+        "description": "Total spend, requests, and tokens for a single project.",
+        "needs_date": True,
+        "params": ["project"],
+    },
+    {
+        "id": "project_usage_by_model",
+        "category": "projects",
+        "title": "Project usage by model",
+        "description": "Per-model cost and token breakdown for a single project.",
+        "needs_date": True,
+        "params": ["project"],
+    },
+    {
+        "id": "project_usage_by_member",
+        "category": "projects",
+        "title": "Project usage by member",
+        "description": "Per-member cost and token breakdown within a project.",
+        "needs_date": True,
+        "params": ["project"],
+    },
+    {
+        "id": "project_media_usage_summary",
+        "category": "projects",
+        "title": "Project media usage",
+        "description": "Image and video generation cost for a single project.",
+        "needs_date": True,
+        "params": ["project"],
+    },
 ]
 
 REPORT_IDS = frozenset(r["id"] for r in REPORT_CATALOG)
@@ -290,4 +332,5 @@ CATEGORY_LABELS = {
     "users": "Users & access",
     "groups": "Groups & plans",
     "api_keys": "API keys",
+    "projects": "Projects",
 }

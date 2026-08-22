@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
 import uuid
 from typing import Any
@@ -28,6 +30,8 @@ _STREAM_PERSIST_INTERVAL_SEC = 0.45
 _STREAM_PERSIST_MIN_CHARS = 64
 _CANCEL_POLL_INTERVAL_SEC = 0.25
 
+logger = logging.getLogger(__name__)
+
 
 async def _maybe_set_fallback_session_title(
     db: AsyncSession,
@@ -39,7 +43,7 @@ async def _maybe_set_fallback_session_title(
     from app.services.chat_title_service import _fallback_title, _sanitize_title
 
     row = await db.get(ChatSession, session_id)
-    if row is None or row.user_id != user_id:
+    if row is None:
         return
     if row.title_locked or row.title_generated:
         return
@@ -91,6 +95,7 @@ class ChatCompletionPersister:
         user_message: dict[str, Any] | None = None,
         assistant_client_message_id: str | None = None,
         agent_run_id: str | None = None,
+        project_id: str | None = None,
     ) -> None:
         self.db = db
         self.user_id = user_id
@@ -102,6 +107,7 @@ class ChatCompletionPersister:
             uuid.uuid4()
         )
         self.agent_run_id = agent_run_id
+        self.project_id = (project_id or "").strip() or None
         self._completion_metadata: dict[str, Any] = {}
         self._content = ""
         self._last_persist_len = 0
@@ -109,6 +115,8 @@ class ChatCompletionPersister:
         self._last_cancel_poll_at = 0.0
         self._cancel_requested = False
         self._prepared = False
+        self._bg_flush_task: asyncio.Task[None] | None = None
+        self._bg_cancel_task: asyncio.Task[None] | None = None
 
     def reset_persist_state(self) -> None:
         """Reset incremental-flush tracking after the DB session is rolled back.
@@ -145,14 +153,17 @@ class ChatCompletionPersister:
         existing = await get_chat_session(self.db, self.user_id, self.session_id)
         if existing is not None:
             return
+        payload: dict[str, Any] = {
+            "id": self.session_id,
+            "title": "New chat",
+            "model": self.model_id or "",
+        }
+        if self.project_id:
+            payload["project_id"] = self.project_id
         await create_chat_session(
             self.db,
             self.user_id,
-            {
-                "id": self.session_id,
-                "title": "New chat",
-                "model": self.model_id or "",
-            },
+            payload,
         )
         await self.db.flush()
 
@@ -214,18 +225,101 @@ class ChatCompletionPersister:
         await self.db.commit()
         self._prepared = True
 
-    async def on_content(self, content: str) -> None:
+    def _should_partial_flush(self) -> bool:
         if not self._prepared:
-            return
-        self._content = content
+            return False
+        delta_chars = len(self._content) - self._last_persist_len
+        if delta_chars <= 0:
+            return False
         now = time.monotonic()
-        delta_chars = len(content) - self._last_persist_len
         if (
             delta_chars < _STREAM_PERSIST_MIN_CHARS
             and now - self._last_persist_at < _STREAM_PERSIST_INTERVAL_SEC
         ):
+            return False
+        return True
+
+    def schedule_content(self, content: str) -> None:
+        """Store the latest assistant text and flush later, off the SSE path.
+
+        Callers must not await this. A background task writes to a dedicated
+        DB session so token yield is not blocked on commit latency.
+        """
+        if not self._prepared:
+            return
+        self._content = content
+        if self._bg_flush_task is not None and not self._bg_flush_task.done():
+            return
+        if not self._should_partial_flush():
+            return
+        try:
+            self._bg_flush_task = asyncio.get_running_loop().create_task(
+                self._background_partial_flush()
+            )
+        except RuntimeError:
+            return
+
+    async def _background_partial_flush(self) -> None:
+        while self._should_partial_flush():
+            content = self._content
+            try:
+                async with AsyncSessionLocal() as db:
+                    await self._flush_on(db, content, partial=True)
+            except Exception:
+                logger.exception(
+                    "Background stream persist failed session=%s", self.session_id
+                )
+                self.reset_persist_state()
+                return
+            if content == self._content:
+                return
+
+    async def drain_background(self) -> None:
+        """Wait for in-flight persist/cancel tasks before a request-session write."""
+        tasks = [
+            task
+            for task in (self._bg_flush_task, self._bg_cancel_task)
+            if task is not None and not task.done()
+        ]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._bg_flush_task = None
+        self._bg_cancel_task = None
+
+    async def on_content(self, content: str) -> None:
+        if not self._prepared:
+            return
+        self._content = content
+        if not self._should_partial_flush():
             return
         await self._flush(content, partial=True)
+
+    def peek_cancel_requested(self) -> bool:
+        return self._cancel_requested
+
+    def schedule_cancel_poll(self) -> None:
+        """Kick a non-blocking cancel-flag read; the next token checks the result."""
+        if not self.session_id or self._cancel_requested:
+            return
+        now = time.monotonic()
+        if now - self._last_cancel_poll_at < _CANCEL_POLL_INTERVAL_SEC:
+            return
+        if self._bg_cancel_task is not None and not self._bg_cancel_task.done():
+            return
+        self._last_cancel_poll_at = now
+        try:
+            self._bg_cancel_task = asyncio.get_running_loop().create_task(
+                self._background_cancel_poll()
+            )
+        except RuntimeError:
+            return
+
+    async def _background_cancel_poll(self) -> None:
+        try:
+            async with AsyncSessionLocal() as db:
+                self._cancel_requested = await _read_cancel_flag(db, self.session_id)
+        except Exception:
+            self._cancel_requested = False
 
     async def is_cancel_requested(self, *, force: bool = False) -> bool:
         if not self.session_id:
@@ -246,6 +340,7 @@ class ChatCompletionPersister:
     async def finalize(
         self, *, success: bool, error_message: str | None = None
     ) -> None:
+        await self.drain_background()
         if not self._prepared:
             return
         cancelled = await self.is_cancel_requested(force=True)
@@ -288,6 +383,11 @@ class ChatCompletionPersister:
                 await self.db.rollback()
 
     async def _flush(self, content: str, *, partial: bool) -> None:
+        await self._flush_on(self.db, content, partial=partial)
+
+    async def _flush_on(
+        self, db: AsyncSession, content: str, *, partial: bool
+    ) -> None:
         meta: dict[str, Any] = dict(self._completion_metadata) if not partial else {}
         meta["streaming"] = partial
         if self.model_id:
@@ -299,13 +399,13 @@ class ChatCompletionPersister:
             meta["receivedAt"] = int(time.time() * 1000)
             meta["cancelRequested"] = False
         await update_last_session_message(
-            self.db,
+            db,
             self.user_id,
             self.session_id,
             content,
             meta=meta or None,
         )
-        await self.db.commit()
+        await db.commit()
         self._last_persist_len = len(content)
         self._last_persist_at = time.monotonic()
 
@@ -333,6 +433,11 @@ def persister_from_body(
     assistant_id = body.get("assistant_client_message_id")
     if assistant_id is not None:
         assistant_id = str(assistant_id)
+    project_id = body.get("project_id") or body.get("projectId")
+    if not isinstance(project_id, str) or not project_id.strip():
+        project_id = None
+    else:
+        project_id = project_id.strip()
     return ChatCompletionPersister(
         db,
         user_id=user_id,
@@ -344,4 +449,5 @@ def persister_from_body(
         agent_run_id=(
             str(body.get("_agent_run_id")) if body.get("_agent_run_id") else None
         ),
+        project_id=project_id,
     )

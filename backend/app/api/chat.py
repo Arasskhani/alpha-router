@@ -13,6 +13,7 @@ from app.api.deps import get_current_user, require_active_user
 from app.branding import CHAT_CLIENT_APP
 from app.config import get_settings
 from app.database import get_db
+from app.models.chat import ChatSession
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
@@ -84,6 +85,10 @@ from app.services.storage_service import (
     store_generated_blob,
     store_generated_media,
     unlink_storage_if_unreferenced,
+)
+from app.services.project_media_service import (
+    ProjectMediaValidationError,
+    persist_scoped_chat_media,
 )
 from app.services.transcription_service import transcribe_audio_bytes
 from app.services.voice_refine_service import refine_voice_transcript
@@ -190,6 +195,7 @@ class ChatRequest(BaseModel):
     chat_session_id: str | None = None
     persist_chat: bool = False
     private_mode: bool = False
+    project_id: str | None = None
     user_message: dict | None = None
     assistant_client_message_id: str | None = None
     alpharouter: dict | None = None
@@ -295,7 +301,8 @@ async def chat_completions(
         "user": user.email or user.username,
         "chat_session_id": body.chat_session_id,
         "persist_chat": body.persist_chat,
-        "private_mode": bool(body.private_mode),
+        "private_mode": bool(body.private_mode) and not body.project_id,
+        "project_id": body.project_id,
         "user_message": body.user_message,
         "assistant_client_message_id": body.assistant_client_message_id,
     }
@@ -476,6 +483,7 @@ async def get_attachment_limits(
 async def process_attachments(
     files: list[UploadFile] = File(...),
     chat_session_id: str | None = Form(None),
+    project_id: str | None = Form(None),
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -483,6 +491,12 @@ async def process_attachments(
     await ensure_budget_period(db, user)
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded.")
+
+    scoped_project_id = (project_id or "").strip() or None
+    if not scoped_project_id and chat_session_id:
+        session = await db.get(ChatSession, chat_session_id)
+        if session is not None and session.project_id:
+            scoped_project_id = session.project_id
 
     out: list[dict] = []
     total_bytes = 0
@@ -532,19 +546,20 @@ async def process_attachments(
             client_mime=upload.content_type,
         )
         try:
-            asset = await store_generated_blob(
+            url = await persist_scoped_chat_media(
                 db,
-                user_id=user.id,
-                username=user.username,
+                user=user,
+                project_id=scoped_project_id,
                 kind=kind,
                 blob=raw,
                 mime=mime,
-                source_model=None,
+                file_name=filename,
                 source_prompt=filename,
                 chat_session_id=chat_session_id,
-                file_name_hint=filename,
                 metadata={"attachment": True},
             )
+        except ProjectMediaValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except ValueError as exc:
             status_code = (
                 413
@@ -556,8 +571,8 @@ async def process_attachments(
             processed_attachment_payload(
                 filename=filename,
                 kind=kind,
-                mime_type=asset.mime_type,
-                url=media_public_url(asset.id),
+                mime_type=mime,
+                url=url,
                 raw=raw,
             )
         )

@@ -86,7 +86,7 @@ export const docSections: DocSection[] = [
               </td>
               <td>
                 Every admin menu: purpose, UI actions, and operational notes — including{" "}
-                <a href="#admin-activity-scopes">Activity scopes</a> and gateway API key policies
+                <a href="#admin-activity-scopes">Activity scopes</a>, <a href="#admin-projects">Projects</a>, and gateway API key policies
               </td>
             </tr>
             <tr>
@@ -950,7 +950,7 @@ export const docSections: DocSection[] = [
             </tr>
             <tr>
               <td>Data &amp; reports</td>
-              <td>Storage Management, Retention Policy, Reports, API Logs</td>
+              <td>Storage Management, Retention Policy, Reports, Projects, API Logs</td>
             </tr>
             <tr>
               <td>Developer</td>
@@ -1060,11 +1060,14 @@ export const docSections: DocSection[] = [
               <td>Members of the group; standard user/model/app filters</td>
             </tr>
             <tr>
-              <td>Agent (usage)</td>
+              <td>Project</td>
               <td>
-                <code>/admin/agents/&lt;id&gt;/activity</code>
+                <code>/app/projects/&lt;id&gt;/activity</code>
               </td>
-              <td>Chat-turn spend linked to that Agent (not Knowledge jobs)</td>
+              <td>
+                One project&apos;s spend (Owner, or Reports admin). Admin list:{" "}
+                <code>/admin/project-usage</code>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -1174,7 +1177,7 @@ export const docSections: DocSection[] = [
           </li>
           <li>
             <strong>Approvals</strong> — maker-checker queues for Agent versions, Knowledge bindings, document
-            versions, and tools.
+            versions, and tools. Each card shows the submitter&apos;s name (display name or username), not a user id.
           </li>
           <li>
             <strong>Audit</strong> — append-only lifecycle evidence, legal holds, retention, and metadata-only runtime
@@ -1405,6 +1408,11 @@ export const docSections: DocSection[] = [
         </p>
         <ul>
           <li>Search and kind filters (chat, image, …).</li>
+          <li>
+            <strong>New</strong> — dropdown of <code>1d</code> / <code>3d</code> / <code>7d</code> /{" "}
+            <code>14d</code> / <code>30d</code> shows models first listed in Alpha Router in that
+            window. Existing catalog rows without a first-seen time stay hidden from this filter.
+          </li>
           <li>Browse (tiles) or table view; per-model enable toggle.</li>
           <li>
             Bulk edit: turn ON, OFF, or delete selected models.
@@ -1764,14 +1772,18 @@ export const docSections: DocSection[] = [
       <>
         <h2>Storage Management</h2>
         <p>
-          Path: <code>/admin/storage-management</code>. Object-storage usage for user media.
+          Path: <code>/admin/storage-management</code>. Object-storage usage for user and project media.
         </p>
         <ul>
           <li>Total size/files, expired count, breakdown by kind; refresh.</li>
           <li>
             <strong>DELETE ALL MEDIA</strong> — destructive, multi-step confirm.
           </li>
-          <li>Per-user quota (GB).</li>
+          <li>Per-user quota (GB) for each user&apos;s personal Media library.</li>
+          <li>
+            Per-project quota (GB) for each project&apos;s Media library (1–100 GB, default 1 GB). Lowering the limit
+            does not delete existing files; projects over quota cannot upload until they free space.
+          </li>
           <li>
             Global transfer limits: max upload (MB), max chat attachments total per message (MB), maximum files per
             upload, max ZIP download (MB).
@@ -1819,14 +1831,68 @@ export const docSections: DocSection[] = [
         <h2>Reports</h2>
         <p>
           Path: <code>/admin/reports</code>. Catalog of operational and cost reports with preview (table) and download
-          (CSV / Excel / PDF). Parameters depend on the report (dates, user, Agent, plan, department, model, thresholds,
-          …). <strong>Agent usage</strong> sums chat-turn spend, turns, and tokens from Agent runs for a date range;
+          (CSV / Excel / PDF). Parameters depend on the report (dates, user, Agent, plan, department, model, project,
+          thresholds, …). <strong>Agent usage</strong> sums chat-turn spend, turns, and tokens from Agent runs for a date range;
           the Agent filter is optional (all Agents when empty). Knowledge ingest cost is excluded.
+        </p>
+        <h3>Project reports</h3>
+        <p>
+          Under the Projects category: <strong>All projects usage</strong> has no project picker (organization-wide).
+          Single-project reports (<strong>usage summary</strong>, <strong>by model</strong>, <strong>by member</strong>,{" "}
+          <strong>media usage</strong>) require a project from the catalog dropdown. Cost is attributed from the
+          chat session&apos;s project — clients cannot spoof another project&apos;s <code>project_id</code> on the
+          request.
         </p>
         <Note>
           Report generation is interactive from this page. Ensure SMTP is configured if you rely on email delivery
           elsewhere in your process.
         </Note>
+      </>
+    ),
+  },
+  {
+    id: "admin-projects",
+    title: "Projects",
+    group: "Data & reports",
+    content: (
+      <>
+        <h2>Projects (admin)</h2>
+        <p>
+          Employees create and join projects in <code>/app/projects</code>. Administrators do not manage day-to-day
+          membership here; they report on spend and understand lifecycle. See the User Manual{" "}
+          <a href="/app/manual#user-projects">Projects</a> section for roles and workspace UI.
+        </p>
+        <h3>Lifecycle</h3>
+        <ul>
+          <li>
+            <strong>Archive</strong> hides a project from Explore and the active My list. Only the Primary Owner can
+            archive or restore.
+          </li>
+          <li>
+            <strong>Delete</strong> marks the project <code>deletion_pending</code>. Members still see it until purge.
+            Only the Primary Owner can delete.
+          </li>
+          <li>
+            <strong>Purge</strong> (Primary Owner, on pending deletion) permanently removes rows and object storage. A daily
+            job also purges projects that stay pending past the retention window (
+            <code>PROJECT_DELETION_RETENTION_DAYS</code>, default 30).
+          </li>
+        </ul>
+        <h3>Billing and access</h3>
+        <p>
+          Path: <code>/admin/project-usage</code> (Data &amp; reports → Projects). Lists organization projects with
+          period spend; <strong>Activity</strong> opens the shared page{" "}
+          <code>/app/projects/&lt;id&gt;/activity</code> (same Overview / Trends / Explore as User or Group Activity).
+          The Primary Owner and Owners of a project can open the same charts from the workspace <strong>Activity</strong> tab.
+          Contributors and Viewers cannot.           Request cost is
+          charged from <code>ChatSession.project_id</code> (server-side) for AI chats only. Member rooms
+          (<code>channel_kind=member</code>) cannot call completions or media generation. A client cannot attach another project&apos;s
+          id to a personal chat to steal budget or reports. Deleting a user account reassigns remaining project chat
+          sessions to another Owner (or member) so shared threads are not CASCADE-deleted with the account.
+        </p>
+        <Warn>
+          Purge is irreversible. Confirm the project is no longer needed before running Purge now.
+        </Warn>
       </>
     ),
   },
@@ -1843,6 +1909,10 @@ export const docSections: DocSection[] = [
         </p>
         <ul>
           <li>Filters: user, gateway API key (<code>api_key_id</code>), model, status, prompt cache, date range.</li>
+          <li>
+            The table stays inside the page: narrower widths hide secondary columns (Provider, App, cache, duration,
+            then tokens) and ellipsize long user/model names. Full values remain on hover; click a row for Cost details.
+          </li>
           <li>
             Open a gateway key from <strong>API Keys → Logs</strong> or{" "}
             <code>/admin/api-keys/&lt;id&gt;/logs</code> — same table scoped to that key (username filter and Clear All
@@ -1888,7 +1958,7 @@ export const docSections: DocSection[] = [
       <>
         <h2>User panel</h2>
         <p>
-          Employees use <code>/app</code>: Chat, Media, Activity, and the User Manual. Admins with panel
+          Employees use <code>/app</code>: Chat, Projects, Media, Activity, and the User Manual. Admins with panel
           access can open the same Chat/Media experiences from the admin sidebar shortcuts, plus the full admin menus.
         </p>
         <p>
@@ -1897,6 +1967,7 @@ export const docSections: DocSection[] = [
         </p>
         <ul>
           <li>Chat with enabled models, tools, voice, images, private mode, export.</li>
+          <li>Projects: shared workspaces, membership, resources, and project media.</li>
           <li>Media library with quota and optional personal cleanup schedule.</li>
           <li>Personal Activity with CSV/PDF export.</li>
           <li>Settings: theme, font, voice language, chat import/export, password/2FA.</li>

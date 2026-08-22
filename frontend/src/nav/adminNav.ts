@@ -8,6 +8,7 @@ export const adminNavSections: NavSection[] = [
     categoryKey: "overview",
     items: [
       { to: "/app/chat", label: "Chat", icon: "chat" },
+      { to: "/app/projects", label: "Projects", icon: "projects" },
       { to: "/app/media", label: "Media", icon: "media" },
       { to: "/app/my-activity", label: MY_USAGE_AND_ACTIVITY_LABEL, icon: "activity" },
       { to: "/app/manual", label: "User Manual", icon: "manual" },
@@ -70,6 +71,7 @@ export const adminNavSections: NavSection[] = [
       { to: "/admin/storage-management", label: "Storage Management", menuKey: "storage" },
       { to: "/admin/retention-policy", label: "Retention Policy", menuKey: "storage" },
       { to: "/admin/reports", label: "Reports", menuKey: "reports" },
+      { to: "/admin/project-usage", label: "Projects", menuKey: "reports" },
       { to: "/admin/logs", label: "API Logs", menuKey: "api_logs" },
     ],
   },

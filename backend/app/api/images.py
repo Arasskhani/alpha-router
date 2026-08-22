@@ -57,14 +57,15 @@ from app.services.openrouter_image_service import (
 from app.services.storage_service import (
     media_input_limit,
     media_content_hash,
-    media_public_url,
     read_media_bytes,
     resolve_media_blob,
-    store_media_from_blob,
 )
 from app.services.user_chat_storage_service import finalize_chat_session_image
 from app.services.image_billing_service import ImageBillingCapture, log_image_usage
 from app.services.image_attempt_service import image_attempt_outcome, record_image_attempt
+from app.services.chat_channel_guard import assert_session_allows_model_generation
+from app.services.project_billing_service import resolve_project_id_for_request
+from app.services.project_media_service import persist_scoped_chat_media
 from app.services.llm_providers import (
     external_id_lookup_candidates,
     litellm_model_for_provider,
@@ -76,6 +77,9 @@ from app.services.usage_accounting_service import configured_metered_cost
 
 router = APIRouter(prefix="/api/images", tags=["images"])
 _ALPHA_ROUTER_MEDIA_PATH = re.compile(r"/api/chat/media/(\d+)/file/?(?:\?.*)?$")
+_PROJECT_MEDIA_PATH = re.compile(
+    r"/api/projects/([^/]+)/media/(\d+)/download/?(?:\?.*)?$"
+)
 _AUTO_ROUTER_TOTAL_TIMEOUT_SECONDS = 45.0
 _AUTO_ROUTER_MODEL_TIMEOUT_SECONDS = 20.0
 
@@ -131,6 +135,21 @@ def parse_alpha_router_media_asset_id(reference: str) -> int | None:
         return None
 
 
+def parse_project_media_ref(reference: str) -> tuple[str, int] | None:
+    """Extract project id and media id from project download URLs."""
+    ref = (reference or "").strip()
+    if not ref:
+        return None
+    path = urlparse(ref).path if ref.startswith(("http://", "https://")) else ref.split("?")[0]
+    match = _PROJECT_MEDIA_PATH.search(path)
+    if not match:
+        return None
+    try:
+        return match.group(1), int(match.group(2))
+    except (TypeError, ValueError):
+        return None
+
+
 async def resolve_reference_image_for_upstream(
     db: AsyncSession,
     user: User,
@@ -179,6 +198,27 @@ async def resolve_reference_image_for_upstream(
         encoded = base64.b64encode(data).decode("ascii")
         return f"data:{mime};base64,{encoded}"
 
+    project_ref = parse_project_media_ref(ref)
+    if project_ref is not None:
+        from app.services.project_media_service import read_project_media_bytes
+
+        project_id, media_id = project_ref
+        loaded = await read_project_media_bytes(
+            db, project_id=project_id, media_id=media_id, user=user
+        )
+        if loaded is None:
+            raise HTTPException(status_code=404, detail="Reference image not found")
+        row, data = loaded
+        mime = (row.mime_type or "image/png").split(";")[0].strip() or "image/png"
+        try:
+            from app.services.image_decode_policy import image_dimensions
+
+            await asyncio.to_thread(image_dimensions, data)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Reference image is invalid or unsafe") from exc
+        encoded = base64.b64encode(data).decode("ascii")
+        return f"data:{mime};base64,{encoded}"
+
     if ref.startswith("http://") or ref.startswith("https://"):
         try:
             data, mime = await resolve_media_blob(source_url=ref)
@@ -217,6 +257,7 @@ class ImageRequest(BaseModel):
     operation: str = "generation"  # generation | img2img | imagine | outpaint
     reference_image: str | None = None  # data URL or http(s) URL for image-to-image
     chat_session_id: str | None = None
+    project_id: str | None = None
     persist: bool = True
     image_size_tier: str | None = None
     routing: dict[str, object] | None = None
@@ -482,6 +523,7 @@ async def _persist_image_data_items(
     prompt: str,
     chat_session_id: str | None,
     max_items: int = 1,
+    project_id: str | None = None,
 ) -> list[dict]:
     out: list[dict] = []
     seen_hashes: set[str] = set()
@@ -502,19 +544,19 @@ async def _persist_image_data_items(
         if max_items > 0 and len(out) >= max_items:
             break
 
-        asset = await store_media_from_blob(
+        url = await persist_scoped_chat_media(
             db,
-            user_id=user.id,
-            username=user.username,
+            user=user,
+            project_id=project_id,
             kind="image",
             blob=blob,
             mime=mime,
-            content_hash=content_hash,
+            file_name="generated.png",
             source_model=model,
             source_prompt=prompt,
             chat_session_id=chat_session_id,
         )
-        out.append({"url": media_public_url(asset.id)})
+        out.append({"url": url})
     return out
 
 
@@ -528,6 +570,12 @@ async def _finalize_image_response(
     routing: dict[str, object] | None = None,
 ) -> dict:
     if body.persist and items:
+        project_id = await resolve_project_id_for_request(
+            db,
+            user=user,
+            chat_session_id=body.chat_session_id,
+            project_id=body.project_id,
+        )
         items = await _persist_image_data_items(
             db,
             user=user,
@@ -536,6 +584,7 @@ async def _finalize_image_response(
             prompt=body.prompt,
             chat_session_id=body.chat_session_id,
             max_items=max(1, min(4, int(body.n or 1))),
+            project_id=project_id,
         )
         if body.chat_session_id and items:
             url = items[0].get("url") if isinstance(items[0], dict) else None
@@ -790,6 +839,7 @@ async def generate_image(
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await assert_session_allows_model_generation(db, body.chat_session_id)
     generation_start = time.perf_counter()
     billing = ImageBillingCapture(model_id=_normalize_model_id(body.model))
     budget_reservation_id: str | None = None
@@ -800,6 +850,16 @@ async def generate_image(
     current_attempt_started_at: datetime.datetime | None = None
     current_attempt_source_count = 0
     response_out: dict | None = None
+
+    project_id_for_billing = await resolve_project_id_for_request(
+        db,
+        user=user,
+        chat_session_id=body.chat_session_id,
+        project_id=body.project_id,
+    )
+
+    async def _record(**kwargs):
+        await record_image_attempt(project_id=project_id_for_billing, **kwargs)
 
     async def _ok_response(
         items: list[dict],
@@ -1397,7 +1457,7 @@ async def generate_image(
                     request=request,
                     timeout_seconds=timeout_seconds,
                 )
-                await record_image_attempt(
+                await _record(
                     request_id=image_request_id,
                     user_id=user.id,
                     requested_model=requested_model,
@@ -1418,7 +1478,7 @@ async def generate_image(
                         success=False,
                         error_message="Client disconnected",
                     )
-                await record_image_attempt(
+                await _record(
                     request_id=image_request_id,
                     user_id=user.id,
                     requested_model=requested_model,
@@ -1447,7 +1507,7 @@ async def generate_image(
                         success=False,
                         error_message=str(wrapped.detail),
                     )
-                await record_image_attempt(
+                await _record(
                     request_id=image_request_id,
                     user_id=user.id,
                     requested_model=requested_model,
@@ -1476,7 +1536,7 @@ async def generate_image(
                         success=False,
                         error_message=str(attempt_exc.detail),
                     )
-                await record_image_attempt(
+                await _record(
                     request_id=image_request_id,
                     user_id=user.id,
                     requested_model=requested_model,
@@ -1513,7 +1573,7 @@ async def generate_image(
                         success=False,
                         error_message=detail,
                     )
-                await record_image_attempt(
+                await _record(
                     request_id=image_request_id,
                     user_id=user.id,
                     requested_model=requested_model,
@@ -1618,6 +1678,7 @@ async def generate_image(
                             operation=body.operation,
                             budget_reservation_id=budget_reservation_id,
                             quantity=body.n,
+                            project_id=project_id_for_billing,
                         )
                         if log_id and success and body.chat_session_id:
                             from app.services.user_chat_storage_service import (

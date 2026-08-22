@@ -1,5 +1,6 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { api, authFetch, formatApiError, getCachedSession, isApiAuthError } from "../api";
 import { chatModelsEmptyMessage, normalizeChatModelsError } from "../lib/chatMessages";
 import AuthenticatedImage from "./AuthenticatedImage";
@@ -34,6 +35,8 @@ import {
   clearLocalChatStorage,
   DEFAULT_CHAT_TITLE,
   fetchUserChatsFromServer,
+  fetchProjectChatById,
+  fetchProjectChatSync,
   hydrateUserPrefsFromServer,
   fetchSessionWithMessages,
   isDefaultChatTitle,
@@ -75,6 +78,7 @@ import {
   isChatSessionOnServer,
   pushSessionMetadataToServer,
   markSessionMetadataDirty,
+  setProjectChatScope,
   enhancePrompt,
   sessionActivityAt,
   withSessionMessagesActivity,
@@ -82,6 +86,22 @@ import {
   sidebarOlderThan3DaysCutoffMs,
   sidebarHydrateMinActivityMs,
 } from "../lib/chatStorage";
+import {
+  PROJECT_MEDIA_ATTACH_EVENT,
+  clearQueuedProjectMediaAttach,
+  getProjectChatComposerPrefs,
+  pinProjectChat,
+  putProjectChatComposerPrefs,
+  putProjectPrefs,
+  readQueuedProjectMediaAttach,
+  unpinProjectChat,
+} from "../lib/projectsApi";
+import {
+  emptyProjectChatComposerPrefs,
+  overlayComposerPrefsOnSession,
+  type ProjectChatComposerPrefs,
+} from "../lib/projectChatComposer";
+import { applyProjectChatSync, sortProjectSessions } from "../lib/projectChatSync";
 import {
   CHAT_REFRESH_EVENT_NAME,
   isChatLeader,
@@ -94,7 +114,7 @@ import {
   REPLY_READY_FOCUS_EVENT,
 } from "../lib/replyReadyNotify";
 import { getSessionUser, isSessionActive, logout } from "../lib/session";
-import { copyFreshChatTools, toolsToApiPayload, type ChatToolsState } from "../lib/chatTools";
+import { copyFreshChatTools, anyChatToolEnabled, toolsToApiPayload, type ChatToolsState } from "../lib/chatTools";
 import ChatAttachmentMessage from "./chat/ChatAttachmentMessage";
 import ChatAudioMessage from "./chat/ChatAudioMessage";
 import ServerToolsMenu from "./chat/ServerToolsMenu";
@@ -225,7 +245,7 @@ import {
 import { applyPersianFontToChat, normalizePersianFontId } from "../lib/persianFonts";
 import { copyTextToClipboard } from "../lib/clipboard";
 import { downloadCsv, downloadTxt, exportMessagePdf, exportMessageDocx } from "../lib/chatExport";
-import { isNearScrollBottom, scrollContainerToBottom } from "../lib/chatScroll";
+import { chatScrollJumpButtonVisible, scrollContainerToBottom, scrollPinFromViewport } from "../lib/chatScroll";
 import {
   clearComposerDraft,
   cloneComposerAttachments,
@@ -595,8 +615,34 @@ class ChatCompletionApiError extends Error {
   }
 }
 
-export default function ChatPanel() {
-  const readOnly = useReadOnly();
+type ChatPanelProps = {
+  projectId?: string;
+  projectReadOnly?: boolean;
+  projectSidebarHeader?: ReactNode;
+  projectToolbar?: ReactNode;
+  projectBanner?: ReactNode;
+  mainOverride?: ReactNode;
+  enableModelChrome?: boolean;
+  hideChatSidebar?: boolean;
+  onProjectChatFocus?: () => void;
+};
+
+export default function ChatPanel({
+  projectId,
+  projectReadOnly = false,
+  projectSidebarHeader,
+  projectToolbar,
+  projectBanner,
+  mainOverride,
+  enableModelChrome = true,
+  hideChatSidebar = false,
+  onProjectChatFocus,
+}: ChatPanelProps = {}) {
+  const accountReadOnly = useReadOnly();
+  const readOnly = accountReadOnly || projectReadOnly;
+  const isProjectChat = !!projectId;
+  const navigate = useNavigate();
+  const location = useLocation();
   const shellMenu = useShellMenu();
   const registerModelChrome = useChatModelChromeRegister();
   const { confirm } = useConfirm();
@@ -611,14 +657,23 @@ export default function ChatPanel() {
   const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
   const selectedModelIdsRef = useRef<string[]>([]);
   selectedModelIdsRef.current = selectedModelIds;
+  const selectedModelRef = useRef(model);
+  selectedModelRef.current = model;
+  const modelBeforeMediaToolsRef = useRef<Record<string, string>>({});
   const [modelPickerMode, setModelPickerMode] = useState<"replace" | "append" | null>(null);
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const sessionUser = getSessionUser();
   const sessionUsername = sessionUser?.username ?? "";
   const welcomeName = sessionUser?.display_name || sessionUsername;
+  const projectAuthorDisplayName = isProjectChat
+    ? (sessionUser?.display_name || sessionUsername || "").trim() || undefined
+    : undefined;
   const [chatTools, setChatTools] = useState<ChatToolsState>(() => copyFreshChatTools());
   const chatToolsRef = useRef(chatTools);
   chatToolsRef.current = chatTools;
+  const composerPrefCacheRef = useRef<Map<string, ProjectChatComposerPrefs>>(new Map());
+  const composerHydrateGenRef = useRef(0);
+  const composerPrefSaveTimerRef = useRef<number | null>(null);
   const [translateToEngBusy, setTranslateToEngBusy] = useState(false);
   const [defaultModel, setDefaultModel] = useState("");
   const [voiceRecordingLang, setVoiceRecordingLang] = useState("en");
@@ -758,29 +813,14 @@ export default function ChatPanel() {
     endRef.current?.scrollIntoView({ behavior });
   }, []);
 
-  const maybeScrollChatToBottom = useCallback(
-    (behavior: ScrollBehavior = "auto") => {
-      if (!pinScrollToBottomRef.current) return;
-      scrollChatToBottom(behavior);
-    },
-    [scrollChatToBottom],
-  );
-
   const syncScrollPinFromContainer = useCallback(() => {
     const el = messagesScrollRef.current;
     if (!el) {
       setShowScrollToBottomBtn(false);
       return;
     }
-    if (el.scrollTop > 80) {
-      pinScrollToBottomRef.current = false;
-    }
-    const near = isNearScrollBottom(el);
-    if (near) {
-      pinScrollToBottomRef.current = true;
-    }
-    const scrollable = el.scrollHeight > el.clientHeight + 24;
-    setShowScrollToBottomBtn(scrollable && !near);
+    pinScrollToBottomRef.current = scrollPinFromViewport(el);
+    setShowScrollToBottomBtn(chatScrollJumpButtonVisible(el));
   }, []);
 
   const jumpToChatBottom = useCallback(() => {
@@ -789,7 +829,7 @@ export default function ChatPanel() {
     scrollChatToBottom("smooth");
   }, [scrollChatToBottom]);
 
-  /** Scroll after user message is painted; streaming skips the messages effect. */
+  /** Scroll after the user bubble is painted so the turn stays in view. */
   const scrollAfterNewTurn = useCallback(
     (sessionId: string) => {
       if (sessionId !== activeIdRef.current) return;
@@ -1007,6 +1047,7 @@ export default function ChatPanel() {
         ),
       { debounce: false },
     );
+    if (isProjectChat) scheduleComposerPrefSave(sessionId);
     if (!cleared) {
       const primary = selectedModelIdsRef.current[0] || model;
       if (primary) setSelectedModelIds([primary]);
@@ -1092,8 +1133,9 @@ export default function ChatPanel() {
           prev.map((s) =>
             s.id === sessionId ? { ...s, model: modelId } : s,
           ),
-      { debounce: false, metadataSessionIds: [sessionId] },
+      { debounce: false, metadataSessionIds: isProjectChat ? [] : [sessionId] },
     );
+    if (isProjectChat) return;
     if (!sessionPrivateMode(sessionId)) {
       void pushSessionMetadataToServer(sessionId).catch(() => {});
     }
@@ -1219,6 +1261,100 @@ export default function ChatPanel() {
     [scheduleServerChatSave],
   );
 
+  function writeComposerOverlayLocal(overlaid: ChatSession) {
+    const next = sessionsRef.current.map((row) =>
+      row.id === overlaid.id
+        ? {
+            ...row,
+            tools: overlaid.tools,
+            toolsTouched: overlaid.toolsTouched,
+            model: overlaid.model,
+            selectedAgentSlug: overlaid.selectedAgentSlug,
+            currentAgentId: overlaid.currentAgentId,
+            currentAgentVersionId: overlaid.currentAgentVersionId,
+          }
+        : row,
+    );
+    sessionsRef.current = next;
+    setSessions(next);
+  }
+
+  function scheduleComposerPrefSave(sessionId: string) {
+    if (!isProjectChat || !projectId || readOnly) return;
+    if (composerPrefSaveTimerRef.current) {
+      window.clearTimeout(composerPrefSaveTimerRef.current);
+    }
+    composerPrefSaveTimerRef.current = window.setTimeout(() => {
+      composerPrefSaveTimerRef.current = null;
+      const session = sessionsRef.current.find((row) => row.id === sessionId);
+      if (!session) return;
+      const tools =
+        sessionId === activeIdRef.current ? chatToolsRef.current : sessionTools(session);
+      const prefs: ProjectChatComposerPrefs = {
+        tools,
+        toolsTouched: !!session.toolsTouched || anyChatToolEnabled(tools),
+        model:
+          (sessionId === activeIdRef.current
+            ? selectedModelRef.current || session.model
+            : session.model) || "",
+        selectedAgentSlug: session.selectedAgentSlug ?? null,
+      };
+      composerPrefCacheRef.current.set(sessionId, prefs);
+      void putProjectChatComposerPrefs(projectId, sessionId, {
+        tools: prefs.tools,
+        toolsTouched: prefs.toolsTouched,
+        model: prefs.model,
+        selectedAgentSlug: prefs.selectedAgentSlug ?? NO_AGENT_SELECTION,
+      }).catch(() => {});
+    }, 300);
+  }
+
+  function seedProjectComposerCache(session: ChatSession, tools: ChatToolsState) {
+    if (!isProjectChat) return;
+    composerPrefCacheRef.current.set(session.id, {
+      tools: { ...tools },
+      toolsTouched: !!session.toolsTouched,
+      model: session.model || "",
+      selectedAgentSlug: session.selectedAgentSlug ?? null,
+    });
+    scheduleComposerPrefSave(session.id);
+  }
+
+  function applyComposerFromSession(session: ChatSession) {
+    if (!isProjectChat || !projectId) {
+      applyModelFromSession(session);
+      setChatTools(sessionTools(session));
+      return;
+    }
+    const cached = composerPrefCacheRef.current.get(session.id);
+    const overlaid = overlayComposerPrefsOnSession(
+      session,
+      cached ?? emptyProjectChatComposerPrefs(),
+    );
+    if (cached) writeComposerOverlayLocal(overlaid);
+    applyModelFromSession(overlaid);
+    setChatTools(sessionTools(overlaid));
+    if (!cached) {
+      const gen = ++composerHydrateGenRef.current;
+      const sid = session.id;
+      void getProjectChatComposerPrefs(projectId, sid)
+        .then((prefs) => {
+          if (gen !== composerHydrateGenRef.current) return;
+          composerPrefCacheRef.current.set(sid, prefs);
+          if (activeIdRef.current !== sid) return;
+          const live = sessionsRef.current.find((row) => row.id === sid) || session;
+          const next = overlayComposerPrefsOnSession(live, prefs);
+          writeComposerOverlayLocal(next);
+          applyModelFromSession(next);
+          setChatTools(sessionTools(next));
+        })
+        .catch(() => {
+          if (gen !== composerHydrateGenRef.current) return;
+          composerPrefCacheRef.current.set(sid, emptyProjectChatComposerPrefs());
+        });
+    }
+  }
+
   const patchDefaultTitleFromMessages = useCallback(
     (sid: string, msgs: ChatMessage[]) => {
       const session = sessionsRef.current.find((s) => s.id === sid);
@@ -1289,10 +1425,6 @@ export default function ChatPanel() {
     );
     sessionsRef.current = nextSessions;
     setSessions(nextSessions);
-    if (pinScrollToBottomRef.current) {
-      const el = messagesScrollRef.current;
-      if (el) scrollContainerToBottom(el, "auto");
-    }
   }, []);
   const scheduleSessionTitle = useCallback(
     async (sid: string, modelId: string, msgs: ChatMessage[]) => {
@@ -1777,6 +1909,12 @@ export default function ChatPanel() {
   ]);
 
   useEffect(() => {
+    setProjectChatScope(projectId || null);
+    composerPrefCacheRef.current = new Map();
+    return () => setProjectChatScope(null);
+  }, [projectId]);
+
+  useEffect(() => {
     const gen = ++hydrateGenRef.current;
     (async () => {
       try {
@@ -1785,14 +1923,19 @@ export default function ChatPanel() {
           min_activity_ms: sidebarHydrateMinActivityMs(),
         });
         if (gen !== hydrateGenRef.current) return;
-        const localSessions = loadChatSessionsLocal();
-        const localFolders = loadChatFoldersLocal();
+        const localSessions = isProjectChat ? [] : loadChatSessionsLocal();
+        const localFolders = isProjectChat ? [] : loadChatFoldersLocal();
         let nextSessions = remote.sessions;
         let nextFolders = remote.folders;
         let recentTotal = remote.total ?? remote.sessions.length;
         let olderTotalValue = remote.older_total ?? 0;
+        const lastOpenedSessionId =
+          isProjectChat && typeof remote.lastOpenedSessionId === "string"
+            ? remote.lastOpenedSessionId
+            : null;
         const readOnlyNow = !isSessionActive();
         if (
+          !isProjectChat &&
           !readOnlyNow &&
           !nextSessions.length &&
           (localSessions.length || localFolders.length)
@@ -1824,29 +1967,64 @@ export default function ChatPanel() {
         setChatsHydrated(true);
         setHydrateOutcome(nextSessions.length > 0 ? "ok" : "empty");
         setChatError("");
-        if (nextSessions.length > 0) {
-          const first = nextSessions[0];
-          activeIdRef.current = first.id;
-          pinScrollToBottomRef.current = true;
-          setActiveId(first.id);
-          applyModelFromSession(first);
-          setChatTools(sessionTools(first));
-          if (!first.privateMode && !first.messages.length && (first.messageCount ?? 0) > 0) {
-            void loadSessionMessagesIfNeeded(first, { limit: 50 }).then((loaded) => {
-              if (gen !== hydrateGenRef.current || activeIdRef.current !== first.id) return;
-              setMessages(loaded.messages);
-              setMessagesHasOlder((loaded.messageCount ?? 0) > loaded.messages.length);
-              if (sessionHasIncompleteTextReply(loaded.messages)) {
-                setSessionStreaming(first.id, true);
-              }
-              applyLoadedSessionMessages(first.id, loaded);
-            });
+        const wantedParam = isProjectChat
+          ? new URLSearchParams(window.location.search).get("session")
+          : null;
+        const wantedSessionId = (wantedParam || lastOpenedSessionId || "").trim() || null;
+        if (nextSessions.length > 0 || (isProjectChat && wantedSessionId)) {
+          let first =
+            (wantedSessionId && nextSessions.find((row) => row.id === wantedSessionId)) || null;
+          if (wantedSessionId && !first && projectId) {
+            const fetched = await fetchProjectChatById(projectId, wantedSessionId);
+            if (gen !== hydrateGenRef.current) return;
+            if (fetched) {
+              nextSessions = sortProjectSessions([
+                fetched,
+                ...nextSessions.filter((row) => row.id !== fetched.id),
+              ]);
+              sessionsRef.current = nextSessions;
+              commitServerListSync(nextSessions);
+              setSessions(nextSessions);
+              setSessionsTotal(Math.max(recentTotal, nextSessions.length));
+              first = fetched;
+            }
+          }
+          if (!first) first = nextSessions[0] || null;
+          if (!first) {
+            setHydrateOutcome("empty");
           } else {
-            setMessages(first.messages);
+            if (nextSessions.length) setHydrateOutcome("ok");
+            activeIdRef.current = first.id;
+            pinScrollToBottomRef.current = true;
+            setActiveId(first.id);
+            applyComposerFromSession(first);
+            if (!first.privateMode && !first.messages.length && (first.messageCount ?? 0) > 0) {
+              void loadSessionMessagesIfNeeded(first, { limit: 50 }).then((loaded) => {
+                if (gen !== hydrateGenRef.current || activeIdRef.current !== first.id) return;
+                setMessages(loaded.messages);
+                setMessagesHasOlder((loaded.messageCount ?? 0) > loaded.messages.length);
+                if (sessionHasIncompleteTextReply(loaded.messages)) {
+                  setSessionStreaming(first.id, true);
+                }
+                applyLoadedSessionMessages(first.id, loaded);
+              });
+            } else {
+              setMessages(first.messages);
+            }
           }
         }
       } catch (err) {
         if (gen !== hydrateGenRef.current) return;
+        if (isProjectChat) {
+          setHydrateOutcome("error");
+          setChatError(
+            err instanceof Error
+              ? err.message
+              : "Could not load project chats.",
+          );
+          setChatsHydrated(true);
+          return;
+        }
         const localSessions = loadChatSessionsLocal();
         const localFolders = loadChatFoldersLocal();
         if (localSessions.length || localFolders.length) {
@@ -1872,7 +2050,7 @@ export default function ChatPanel() {
         setChatsHydrated(true);
       }
     })();
-  }, []);
+  }, [isProjectChat, projectId]);
 
   useEffect(() => {
     let debounceTimer: number | undefined;
@@ -1903,6 +2081,124 @@ export default function ChatPanel() {
       window.removeEventListener(CHAT_REFRESH_EVENT_NAME, onRefresh);
     };
   }, []);
+
+  useEffect(() => {
+    if (!isProjectChat || !projectId || !chatsHydrated) return;
+    const sid = activeId;
+    if (!sid) return;
+    const timer = window.setTimeout(() => {
+      void putProjectPrefs(projectId, { lastOpenedSessionId: sid }).catch(() => {});
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [isProjectChat, projectId, activeId, chatsHydrated]);
+
+  useEffect(() => {
+    if (!isProjectChat || !projectId || !chatsHydrated) return;
+    let cancelled = false;
+    let inflight = false;
+    let since: number | undefined;
+    let previousSessionIds = sessionsRef.current.map((row) => row.id);
+    const maxSequence = (msgs: ChatMessage[]) => {
+      let max: number | null = null;
+      for (const msg of msgs) {
+        if (typeof msg.sequence === "number") {
+          max = max == null ? msg.sequence : Math.max(max, msg.sequence);
+        }
+      }
+      return max;
+    };
+    const tick = async () => {
+      if (cancelled || inflight || document.hidden) return;
+      inflight = true;
+      try {
+        const sid = activeIdRef.current;
+        const localMsgs =
+          sid && sid === activeIdRef.current
+            ? (messagesRef.current.length
+                ? messagesRef.current
+                : sessionsRef.current.find((row) => row.id === sid)?.messages ?? [])
+            : [];
+        const lastSeq = sid ? maxSequence(localMsgs) : null;
+        const skipMessages = !!(sid && isLocalWorkInFlight(sid));
+        const remote = await fetchProjectChatSync(projectId, {
+          since,
+          sessionId: skipMessages ? null : sid,
+          afterSequence: skipMessages ? null : lastSeq,
+        });
+        if (cancelled) return;
+        since = remote.serverTimeMs;
+        // Protect only this tab's in-flight work. The streaming *display* flag is
+        // also set for other members watching a live reply; gating on it deadlocks
+        // observers so they never receive assistant patches.
+        const protectedIds = new Set<string>(getBackgroundImageSessionIds());
+        if (sid && isLocalWorkInFlight(sid)) protectedIds.add(sid);
+        const { sessions: merged, activeMessages } = applyProjectChatSync(
+          sessionsRef.current,
+          remote,
+          {
+            previousSessionIds,
+            protectedIds,
+            activeSessionId: sid,
+            incrementalMessages: lastSeq != null,
+            activeLocalMessages: localMsgs,
+          },
+        );
+        previousSessionIds = remote.sessionIds;
+        let nextSessions = merged;
+        if (sid && !merged.some((row) => row.id === sid)) {
+          sessionsRef.current = merged;
+          setSessions(merged);
+          const fallback = merged[0];
+          if (fallback) {
+            activeIdRef.current = fallback.id;
+            setActiveId(fallback.id);
+            setMessages(fallback.messages);
+          }
+          return;
+        }
+        if (
+          sid &&
+          activeMessages &&
+          sid === activeIdRef.current &&
+          !isLocalWorkInFlight(sid)
+        ) {
+          const preferred = preferLocalMessagesOverRemote(sid, activeMessages);
+          setMessages(preferred);
+          if (!sessionHasInFlightGeneration(preferred)) {
+            setSessionStreaming(sid, false);
+          }
+          if (preferred !== activeMessages) {
+            nextSessions = merged.map((row) =>
+              row.id === sid
+                ? {
+                    ...row,
+                    messages: preferred,
+                    messageCount: Math.max(row.messageCount ?? 0, preferred.length),
+                  }
+                : row,
+            );
+          }
+        }
+        sessionsRef.current = nextSessions;
+        setSessions(nextSessions);
+      } catch {
+        /* keep last good snapshot */
+      } finally {
+        inflight = false;
+      }
+    };
+    void tick();
+    const id = window.setInterval(() => void tick(), 2000);
+    const onVis = () => {
+      if (!document.hidden) void tick();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [isProjectChat, projectId, chatsHydrated]);
 
   const loadMoreSessions = useCallback(async () => {
     if (!inSearchMode || sessionsLoadingMore || sessions.length >= sessionsTotal) return;
@@ -2203,6 +2499,7 @@ export default function ChatPanel() {
     setModel(s.model);
     setMessages([]);
     setChatTools(freshTools);
+    seedProjectComposerCache(s, freshTools);
   }, [
     hydrateOutcome,
     chatsHydrated,
@@ -2284,8 +2581,7 @@ export default function ChatPanel() {
     if (!switched) return;
     pinScrollToBottomRef.current = true;
     setShowScrollToBottomBtn(false);
-    applyModelFromSession(s);
-    setChatTools(sessionTools(s));
+    applyComposerFromSession(s);
     requestAnimationFrame(() => {
       scrollChatToBottom("auto");
       syncScrollPinFromContainer();
@@ -2308,19 +2604,35 @@ export default function ChatPanel() {
     }
   }, [activeId, sessions, scrollChatToBottom, applyLoadedSessionMessages, syncScrollPinFromContainer]);
 
-  useEffect(() => {
-    const id = requestAnimationFrame(() => syncScrollPinFromContainer());
-    return () => cancelAnimationFrame(id);
-  }, [messages, activeId, syncScrollPinFromContainer]);
+  useLayoutEffect(() => {
+    if (pinScrollToBottomRef.current) {
+      scrollChatToBottom("auto");
+      setShowScrollToBottomBtn(false);
+      return;
+    }
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    setShowScrollToBottomBtn(chatScrollJumpButtonVisible(el));
+  }, [messages, activeId, isSessionStreaming, scrollChatToBottom]);
 
   useEffect(() => {
-    if (isSessionStreaming) return;
-    const behavior: ScrollBehavior = "smooth";
-    const id = requestAnimationFrame(() => {
-      maybeScrollChatToBottom(behavior);
-    });
-    return () => cancelAnimationFrame(id);
-  }, [messages, isSessionStreaming, maybeScrollChatToBottom]);
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    const followResize = () => {
+      if (!pinScrollToBottomRef.current) {
+        setShowScrollToBottomBtn(chatScrollJumpButtonVisible(el));
+        return;
+      }
+      scrollContainerToBottom(el, "auto");
+      setShowScrollToBottomBtn(false);
+    };
+    const observer = new ResizeObserver(followResize);
+    observer.observe(el);
+    for (const child of Array.from(el.children)) {
+      observer.observe(child);
+    }
+    return () => observer.disconnect();
+  }, [messages, activeId]);
 
   useEffect(() => {
     return () => cancelStreamingMessagesFlush();
@@ -2433,6 +2745,10 @@ export default function ChatPanel() {
         : chatTools.imageGeneration
           ? "Change image model"
           : "Add model for multi-model response";
+    if (!enableModelChrome) {
+      registerModelChrome(null);
+      return () => registerModelChrome(null);
+    }
     registerModelChrome({
       openReplacePicker: () => {
         setToolsMenuOpen(false);
@@ -2462,6 +2778,7 @@ export default function ChatPanel() {
     chatTools.imageGeneration,
     chatTools.videoGeneration,
     chatTools.speechGeneration,
+    enableModelChrome,
   ]);
 
   async function apiMessages(
@@ -2505,7 +2822,8 @@ export default function ChatPanel() {
       model: modelId,
       messages: await apiMessages(history, forModel, privateMode),
       stream: true,
-      private_mode: !!privateMode,
+      private_mode: !!(privateMode && !isProjectChat),
+      ...(isProjectChat && projectId ? { project_id: projectId } : {}),
       ...toolsPayload,
       ...agentFields,
       ...(persist
@@ -2544,6 +2862,7 @@ export default function ChatPanel() {
       setMessages(s.messages);
       setChatTools(freshTools);
     });
+    seedProjectComposerCache(s, freshTools);
     return s.id;
   }
 
@@ -2566,8 +2885,7 @@ export default function ChatPanel() {
     activeIdRef.current = id;
     pinScrollToBottomRef.current = true;
     setActiveId(id);
-    applyModelFromSession(s);
-    setChatTools(sessionTools(s));
+    applyComposerFromSession(s);
     setChatError("");
     if (!s.privateMode && !s.messages.length && (s.messageCount ?? 0) > 0) {
       void loadSessionMessagesIfNeeded(s, { limit: 50 }).then((loaded) => {
@@ -2583,8 +2901,43 @@ export default function ChatPanel() {
     requestAnimationFrame(() => scrollChatToBottom("auto"));
   }
 
+  function syncProjectSessionQuery(id: string) {
+    if (!isProjectChat) return;
+    const params = new URLSearchParams(location.search);
+    if (params.get("session") === id) return;
+    params.set("session", id);
+    navigate({ pathname: location.pathname, search: `?${params.toString()}` }, { replace: true });
+  }
+
   function selectSession(id: string) {
+    onProjectChatFocus?.();
     activateSessionFromRef(id);
+    syncProjectSessionQuery(id);
+  }
+
+  async function togglePinSession(session: ChatSession) {
+    if (!projectId) return;
+    try {
+      if (session.pinned) await unpinProjectChat(projectId, session.id);
+      else await pinProjectChat(projectId, session.id);
+      persistSessions((prev) => {
+        const next = prev.map((row) =>
+          row.id === session.id ? { ...row, pinned: !session.pinned } : row,
+        );
+        return sortProjectSessions(next);
+      });
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : "Could not update pin.");
+    }
+  }
+
+  async function copyProjectChatLink(sessionId: string) {
+    const url = `${window.location.origin}${location.pathname}?session=${encodeURIComponent(sessionId)}`;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      setChatError("Could not copy chat link.");
+    }
   }
 
   useEffect(() => {
@@ -2597,6 +2950,28 @@ export default function ChatPanel() {
     window.addEventListener(REPLY_READY_FOCUS_EVENT, onReplyReadyFocus as EventListener);
     return () => window.removeEventListener(REPLY_READY_FOCUS_EVENT, onReplyReadyFocus as EventListener);
   }, []);
+
+  useEffect(() => {
+    if (!isProjectChat || !chatsHydrated || !projectId) return;
+    const wanted = new URLSearchParams(location.search).get("session");
+    if (!wanted || wanted === activeIdRef.current) return;
+    if (sessionsRef.current.some((row) => row.id === wanted)) {
+      activateSessionFromRef(wanted);
+      return;
+    }
+    let cancelled = false;
+    void fetchProjectChatById(projectId, wanted).then((fetched) => {
+      if (cancelled || !fetched) return;
+      persistSessions(
+        (prev) => sortProjectSessions([fetched, ...prev.filter((row) => row.id !== fetched.id)]),
+        { debounce: false, metadataSessionIds: [fetched.id] },
+      );
+      activateSessionFromRef(wanted);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [chatsHydrated, isProjectChat, location.search, persistSessions, projectId]);
 
   function isSuccessfulNotifyContent(content: string): boolean {
     const text = (content || "").trim();
@@ -2676,6 +3051,7 @@ export default function ChatPanel() {
 
   function startNewChat() {
     if (readOnly) return;
+    onProjectChatFocus?.();
     const m = resolveNewChatModel(models, model, defaultModel);
     if (!m) {
       setChatError("No model available.");
@@ -2692,6 +3068,7 @@ export default function ChatPanel() {
       setMessages([]);
       setChatTools(freshTools);
     });
+    seedProjectComposerCache(s, freshTools);
     clearChatSelection();
     setToolsMenuOpen(false);
     setChatError("");
@@ -3068,6 +3445,13 @@ export default function ChatPanel() {
                 <PrivateModeLockIcon className="alpha-router-history-item__lock-icon" size={14} />
               </span>
             ) : null}
+            {s.pinned ? (
+              <span className="alpha-router-history-item__pin" title="Pinned" aria-hidden>
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
+                  <path d="M14.5 3.5 20.5 9.5 13 17l-1.5-1.5L9 18l-3-3 2.5-2.5L7 11l7.5-7.5Z" />
+                </svg>
+              </span>
+            ) : null}
             {streamingSessions[s.id] || isBackgroundImageRunning(s.id) || isBackgroundVideoRunning(s.id) || isBackgroundSpeechRunning(s.id) ? (
               <span className="alpha-router-history-item__busy" title="Generating…" aria-hidden />
             ) : null}
@@ -3094,15 +3478,34 @@ export default function ChatPanel() {
             <RowActionsMenu
               label="⋯"
               menuClassName="row-actions-menu--sidebar"
-              actions={[
-                { label: "Rename", onClick: () => startRenameSession(s) },
-                { label: "Move", onClick: () => setMovingSessionIds([s.id]) },
-                {
-                  label: "Delete",
-                  onClick: () => void deleteSession(s.id),
-                  danger: true,
-                },
-              ]}
+              actions={
+                isProjectChat
+                  ? [
+                      { label: "Rename", onClick: () => startRenameSession(s) },
+                      {
+                        label: s.pinned ? "Unpin" : "Pin",
+                        onClick: () => void togglePinSession(s),
+                      },
+                      {
+                        label: "Copy link",
+                        onClick: () => void copyProjectChatLink(s.id),
+                      },
+                      {
+                        label: "Delete",
+                        onClick: () => void deleteSession(s.id),
+                        danger: true,
+                      },
+                    ]
+                  : [
+                      { label: "Rename", onClick: () => startRenameSession(s) },
+                      { label: "Move", onClick: () => setMovingSessionIds([s.id]) },
+                      {
+                        label: "Delete",
+                        onClick: () => void deleteSession(s.id),
+                        danger: true,
+                      },
+                    ]
+              }
             />
           </div>
         ) : null}
@@ -3140,8 +3543,12 @@ export default function ChatPanel() {
     if (!sid) return;
     persistSessions(
       (prev) => prev.map((s) => (s.id === sid ? { ...s, model: id } : s)),
-      { debounce: false, metadataSessionIds: [sid] },
+      { debounce: false, metadataSessionIds: isProjectChat ? [] : [sid] },
     );
+    if (isProjectChat) {
+      scheduleComposerPrefSave(sid);
+      return;
+    }
     if (!sessionPrivateMode(sid)) {
       void pushSessionMetadataToServer(sid).catch(() => {});
     }
@@ -3901,6 +4308,7 @@ export default function ChatPanel() {
   }
 
   async function togglePrivateMode(next: boolean) {
+    if (isProjectChat) return;
     const sid = activeIdRef.current;
     if (!sid) return;
     if (next) {
@@ -3940,18 +4348,40 @@ export default function ChatPanel() {
   }
 
   function updateChatTools(next: ChatToolsState) {
+    const prev = chatToolsRef.current;
+    chatToolsRef.current = next;
     setChatTools(next);
     const sid = activeIdRef.current;
     if (sid) {
       persistSessions(
-        (prev) =>
-          prev.map((s) =>
+        (prevSessions) =>
+          prevSessions.map((s) =>
             s.id === sid ? { ...s, tools: { ...next }, toolsTouched: true, updatedAt: Date.now() } : s,
           ),
-        { debounce: false, metadataSessionIds: [sid] },
+        { debounce: false, metadataSessionIds: isProjectChat ? [] : [sid] },
       );
-      if (!sessionPrivateMode(sid)) {
+      if (isProjectChat) {
+        scheduleComposerPrefSave(sid);
+      } else if (!sessionPrivateMode(sid)) {
         void pushSessionMetadataToServer(sid).catch(() => {});
+      }
+    }
+    const prevMedia = prev.imageGeneration || prev.videoGeneration || prev.speechGeneration;
+    const nextMedia = next.imageGeneration || next.videoGeneration || next.speechGeneration;
+    if (!prevMedia && nextMedia && sid) {
+      const currentId = selectedModelRef.current || model;
+      if (currentId && !modelBeforeMediaToolsRef.current[sid]) {
+        modelBeforeMediaToolsRef.current[sid] = currentId;
+      }
+    }
+    if (prevMedia && !nextMedia) {
+      const saved = sid ? modelBeforeMediaToolsRef.current[sid] : "";
+      if (sid) delete modelBeforeMediaToolsRef.current[sid];
+      const restoreId = (saved || defaultModel || "").trim();
+      const found = restoreId ? models.find((m) => m.id === restoreId) : undefined;
+      const fallbackId = found?.id || resolveNewChatModel(models, undefined, defaultModel);
+      if (fallbackId && fallbackId !== (selectedModelRef.current || model)) {
+        pickModel(fallbackId);
       }
     }
     if (next.imageGeneration) {
@@ -3993,6 +4423,7 @@ export default function ChatPanel() {
           const remappedVoice = resolveSpeechVoiceForModel(fallback, next.speechVoice);
           if (remappedVoice !== next.speechVoice) {
             const withVoice = { ...next, speechVoice: remappedVoice };
+            chatToolsRef.current = withVoice;
             setChatTools(withVoice);
             if (sid) {
               persistSessions(
@@ -4002,7 +4433,7 @@ export default function ChatPanel() {
                       ? { ...s, tools: { ...withVoice }, toolsTouched: true, updatedAt: Date.now() }
                       : s,
                   ),
-                { debounce: false, metadataSessionIds: [sid] },
+                { debounce: false, metadataSessionIds: isProjectChat ? [] : [sid] },
               );
             }
           }
@@ -4014,6 +4445,7 @@ export default function ChatPanel() {
         const remappedVoice = resolveSpeechVoiceForModel(current, next.speechVoice);
         if (remappedVoice !== next.speechVoice) {
           const withVoice = { ...next, speechVoice: remappedVoice };
+          chatToolsRef.current = withVoice;
           setChatTools(withVoice);
           if (sid) {
             persistSessions(
@@ -4023,7 +4455,7 @@ export default function ChatPanel() {
                     ? { ...s, tools: { ...withVoice }, toolsTouched: true, updatedAt: Date.now() }
                     : s,
                 ),
-              { debounce: false, metadataSessionIds: [sid] },
+              { debounce: false, metadataSessionIds: isProjectChat ? [] : [sid] },
             );
           }
         }
@@ -4439,8 +4871,15 @@ export default function ChatPanel() {
           }),
           sentAt,
           clientMessageId: newClientMessageId(),
+          ...(projectAuthorDisplayName ? { authorDisplayName: projectAuthorDisplayName } : {}),
         }
-      : { role: "user", content: userText.trim(), sentAt, clientMessageId: newClientMessageId() };
+      : {
+          role: "user",
+          content: userText.trim(),
+          sentAt,
+          clientMessageId: newClientMessageId(),
+          ...(projectAuthorDisplayName ? { authorDisplayName: projectAuthorDisplayName } : {}),
+        };
     const prevMsgs = getSessionMessages(sessionId);
     const turnBaseCount = prevMsgs.length;
     pinScrollToBottomRef.current = true;
@@ -5017,6 +5456,7 @@ export default function ChatPanel() {
       content: target.content,
       sentAt: Date.now(),
       clientMessageId: newClientMessageId(),
+      ...(projectAuthorDisplayName ? { authorDisplayName: projectAuthorDisplayName } : {}),
     };
     pinScrollToBottomRef.current = true;
     const controller = new AbortController();
@@ -5326,11 +5766,10 @@ export default function ChatPanel() {
     fileInputRef.current?.click();
   }
 
-  async function onAttachmentFilesSelected(list: FileList | null) {
-    if (!list?.length) return;
+  async function processPendingAttachmentFiles(files: File[]) {
+    if (!files.length) return;
     const sid = ensureActiveSession();
-    const files = Array.from(list);
-    if (pendingAttachments.length + files.length > maxAttachments) {
+    if (pendingAttachmentsRef.current.length + files.length > maxAttachments) {
       setChatError(`You can attach up to ${maxAttachments} files at once.`);
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
@@ -5349,6 +5788,7 @@ export default function ChatPanel() {
         const fd = new FormData();
         for (const file of files) fd.append("files", file);
         if (sid) fd.append("chat_session_id", sid);
+        if (isProjectChat && projectId) fd.append("project_id", projectId);
         const res = await authFetch("/api/chat/attachments/process", {
           method: "POST",
           body: fd,
@@ -5364,6 +5804,49 @@ export default function ChatPanel() {
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
+
+  async function onAttachmentFilesSelected(list: FileList | null) {
+    if (!list?.length) return;
+    await processPendingAttachmentFiles(Array.from(list));
+  }
+
+  async function consumeQueuedProjectMedia() {
+    if (!isProjectChat || !projectId || readOnly || attachUploading) return;
+    const payload = readQueuedProjectMediaAttach();
+    if (!payload || payload.projectId !== projectId) return;
+    const mime = (payload.mimeType || "").toLowerCase();
+    if (payload.kind === "video" || mime.startsWith("video/")) {
+      clearQueuedProjectMediaAttach();
+      setChatError("Video files cannot be attached to chat. Use an image or a document.");
+      return;
+    }
+    try {
+      const blob = await fetchAuthenticatedMediaBlob(payload.url);
+      let name = payload.fileName || "attachment";
+      if (!name.includes(".")) {
+        const ext = mime.split("/")[1]?.split("+")[0];
+        if (ext) name = `${name}.${ext}`;
+      }
+      const file = new File([blob], name, {
+        type: payload.mimeType || blob.type || "application/octet-stream",
+      });
+      await processPendingAttachmentFiles([file]);
+      clearQueuedProjectMediaAttach();
+    } catch (err) {
+      clearQueuedProjectMediaAttach();
+      reportUserFacingApiError(err);
+    }
+  }
+
+  useEffect(() => {
+    if (!isProjectChat || !projectId || readOnly) return;
+    void consumeQueuedProjectMedia();
+    const onQueued = () => {
+      void consumeQueuedProjectMedia();
+    };
+    window.addEventListener(PROJECT_MEDIA_ATTACH_EVENT, onQueued);
+    return () => window.removeEventListener(PROJECT_MEDIA_ATTACH_EVENT, onQueued);
+  }, [isProjectChat, projectId, readOnly, attachUploading]);
 
   async function send(e?: FormEvent) {
     e?.preventDefault();
@@ -5480,7 +5963,7 @@ export default function ChatPanel() {
   }
 
   return (
-    <div className="alpha-router-app" data-persian-font={persianFont || undefined}>
+    <div className={`alpha-router-app${isProjectChat ? " alpha-router-app--project" : ""}${hideChatSidebar ? " alpha-router-app--hide-chat-sidebar" : ""}`} data-persian-font={persianFont || undefined}>
       <ChatModelPickerModal
         open={modelPickerMode != null}
         mode={modelPickerMode || "replace"}
@@ -5495,8 +5978,11 @@ export default function ChatPanel() {
       />
 
       <div className="alpha-router-workspace">
+      {!hideChatSidebar ? (
       <aside className={`alpha-router-sidebar${selectedChatIds.size > 0 ? " is-selecting" : ""}`}>
+        {isProjectChat && projectSidebarHeader ? projectSidebarHeader : null}
         <div className="alpha-router-sidebar-top">
+          {!isProjectChat ? (
           <button
             type="button"
             className="alpha-router-icon-btn alpha-router-menu-btn"
@@ -5507,7 +5993,8 @@ export default function ChatPanel() {
           >
             ☰
           </button>
-          <button type="button" className="alpha-router-new-chat" onClick={startNewChat} disabled={readOnly} title={readOnly ? "Read-only account" : undefined}>
+          ) : null}
+          <button type="button" className="alpha-router-new-chat" onClick={startNewChat} disabled={readOnly} title={accountReadOnly ? "Read-only account" : projectReadOnly ? "Viewers cannot start a chat" : undefined}>
             <span className="alpha-router-new-chat-icon">+</span>
             New chat
           </button>
@@ -5526,6 +6013,7 @@ export default function ChatPanel() {
                 <span className="alpha-router-bulk-bar__count">
                   {selectedChatIds.size} selected
                 </span>
+                {!isProjectChat ? (
                 <button
                   type="button"
                   className="alpha-router-bulk-bar__btn"
@@ -5533,6 +6021,7 @@ export default function ChatPanel() {
                 >
                   Move
                 </button>
+                ) : null}
                 <button
                   type="button"
                   className="alpha-router-bulk-bar__btn alpha-router-bulk-bar__btn--danger"
@@ -5562,7 +6051,7 @@ export default function ChatPanel() {
                 </div>
               </div>
             ) : null}
-            {!readOnly && (
+            {!readOnly && !isProjectChat && (
             <div className="alpha-router-folder-create">
               <input
                 type="text"
@@ -5582,6 +6071,7 @@ export default function ChatPanel() {
             </div>
             )}
 
+            {!isProjectChat ? (
             <div className="alpha-router-folder-group">
               {folders.map((f) => (
                 <div
@@ -5674,6 +6164,7 @@ export default function ChatPanel() {
                 </div>
               ))}
             </div>
+            ) : null}
             {messageSearchHits.length > 0 && historySearch.trim().length >= 2 ? (
               <ul className="alpha-router-history alpha-router-history-search-hits">
                 {messageSearchHits.map((hit) => (
@@ -5792,11 +6283,17 @@ export default function ChatPanel() {
           </>
         </div>
       </aside>
+      ) : null}
 
       <div className="alpha-router-main-column">
+      {projectToolbar}
+      {mainOverride ? (
+        <div className="project-main-override">{mainOverride}</div>
+      ) : (
       <section className={`alpha-router-main${activePrivateMode ? " alpha-router-main--private" : ""}`}>
+        {projectBanner}
         {activePrivateMode ? <PrivateModeStrip /> : null}
-        {readOnly && <ReadOnlyBanner className="readonly-account-banner--chat" />}
+        {accountReadOnly && <ReadOnlyBanner className="readonly-account-banner--chat" />}
         {chatError && <div className="alpha-router-banner">{chatError}</div>}
         {modelsError && !chatError && <div className="alpha-router-banner alpha-router-banner-warn">{modelsError}</div>}
         {pendingHandoffs.map((handoff) => (
@@ -5840,6 +6337,9 @@ export default function ChatPanel() {
                     size={13}
                   />
                 </div>
+              ) : null}
+              {isProjectChat && m.role === "user" && m.authorDisplayName ? (
+                <div className="alpha-router-msg-author-label">{m.authorDisplayName}</div>
               ) : null}
               <div
                 className="alpha-router-msg-inner"
@@ -6365,6 +6865,7 @@ export default function ChatPanel() {
                     anchorRef={toolsTriggerRef}
                     tools={chatTools}
                     privateMode={activePrivateMode}
+                    allowPrivateMode={!isProjectChat}
                     onChange={updateChatTools}
                     onPrivateModeChange={togglePrivateMode}
                     onClose={() => setToolsMenuOpen(false)}
@@ -6505,6 +7006,7 @@ export default function ChatPanel() {
           <p className="alpha-router-disclaimer">{PRODUCT_NAME} can make mistakes. Check important info.</p>
         </footer>
       </section>
+      )}
       </div>
       </div>
 

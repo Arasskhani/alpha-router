@@ -14,8 +14,17 @@ type ApprovalItem = {
   title: string;
   status: string;
   submitted_by_user_id?: number | null;
+  submitted_by_username?: string | null;
+  submitted_by_display_name?: string | null;
   created_at: string;
 };
+
+function submittedByLabel(item: ApprovalItem): string {
+  const name = (item.submitted_by_display_name || item.submitted_by_username || "").trim();
+  if (name) return name;
+  if (item.submitted_by_user_id) return `User #${item.submitted_by_user_id}`;
+  return "";
+}
 
 export default function AgentApprovals() {
   const { confirm, prompt } = useConfirm();
@@ -146,7 +155,7 @@ export default function AgentApprovals() {
               <h2>{item.title}</h2>
               <p>
                 Submitted {readableDate(item.created_at)}
-                {item.submitted_by_user_id ? ` · user ${item.submitted_by_user_id}` : ""}
+                {submittedByLabel(item) ? ` · ${submittedByLabel(item)}` : ""}
               </p>
             </div>
             <div className="approval-card__actions">

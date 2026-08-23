@@ -68,9 +68,11 @@ function ProjectsShortcut({
       <NavLink
         to={to}
         className={`topbar-shortcut${active ? " topbar-shortcut--active" : ""}`}
+        title={label}
+        aria-label={label}
       >
         <NavIcon name="projects" />
-        <span>{label}</span>
+        <span className="topbar-shortcut__label">{label}</span>
       </NavLink>
       <button
         type="button"
@@ -160,13 +162,15 @@ export default function TopbarNav({ theme, onThemeChange }: Props) {
             <NavLink
               key={item.to}
               to={item.to}
+              title={item.label}
+              aria-label={item.label}
               className={({ isActive }) => {
                 const chatActive = item.icon === "chat" && inProjectWorkspace ? false : isActive;
                 return `topbar-shortcut${chatActive ? " topbar-shortcut--active" : ""}`;
               }}
             >
               {item.icon ? <NavIcon name={item.icon} /> : null}
-              <span>{item.label}</span>
+              <span className="topbar-shortcut__label">{item.label}</span>
             </NavLink>
           );
         })}

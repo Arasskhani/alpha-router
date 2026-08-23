@@ -615,7 +615,7 @@ body:not(.login-route) {
   }
 
   .layout:not(.layout--chat) .app-topbar {
-    padding: 0 1rem;
+    padding: 0 var(--topbar-inline-pad, 1rem);
   }
 }
 
@@ -626,10 +626,28 @@ body:not(.login-route) {
   }
 }
 
+@media (max-width: 1024px) {
+  .topbar-shortcut__label {
+    display: none;
+  }
+
+  .topbar-shortcut {
+    padding: 0.3rem 0.4rem;
+  }
+
+  .topbar-nav {
+    gap: 0.45rem;
+  }
+}
+
 @media (max-width: 900px) {
   .topbar-shortcut {
-    padding: 0.28rem 0.4rem;
+    padding: 0.28rem 0.32rem;
     font-size: 0.75rem;
+  }
+
+  .topbar-shortcut[href$="/manual"] {
+    display: none;
   }
 }
 
@@ -753,38 +771,52 @@ body:not(.login-route) {
 }
 
 .app-topbar {
+  --topbar-inline-pad: 1rem;
   flex-shrink: 0;
   position: relative;
   z-index: 150;
   width: 100%;
+  min-width: 0;
   height: var(--app-topbar-height);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0 1rem;
+  gap: 0.75rem;
+  padding: 0 var(--topbar-inline-pad);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
 
-.topbar-model-chrome {
-  position: absolute;
-  left: var(--alpha-router-sidebar-width, 260px);
-  right: 14rem;
+.topbar-left {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.5rem;
+  flex: 0 0 auto;
   min-width: 0;
   height: 100%;
-  padding-right: 0.5rem;
-  z-index: 1;
-  box-sizing: border-box;
-  /* Empty strip must not steal clicks from topbar shortcuts underneath. */
-  pointer-events: none;
 }
 
-.topbar-model-chrome > * {
-  pointer-events: auto;
+.topbar-left:has(.topbar-model-search) {
+  box-sizing: border-box;
+  width: max(
+    calc(var(--alpha-router-sidebar-width, 260px) - var(--topbar-inline-pad)),
+    min-content
+  );
+}
+
+.topbar-left .topbar-brand {
+  min-width: auto;
+}
+
+.topbar-selected-models {
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.topbar-selected-models .alpha-router-model-pill {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(14rem, 100%);
 }
 
 .topbar-model-search {
@@ -793,8 +825,9 @@ body:not(.login-route) {
   display: inline-flex;
   align-items: center;
   gap: 0.15rem;
-  width: min(16.5rem, 32vw);
-  flex: 0 1 16.5rem;
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 8rem;
   max-width: none;
   height: 1.85rem;
   padding: 0 0.2rem 0 0.45rem;
@@ -874,6 +907,7 @@ body:not(.login-route) {
   align-items: center;
   justify-content: flex-end;
   gap: 0.85rem;
+  flex: 0 0 auto;
   min-width: 0;
   margin-left: auto;
 }
@@ -882,7 +916,7 @@ body:not(.login-route) {
   display: flex;
   align-items: center;
   gap: 0.15rem;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
   min-width: 0;
 }
@@ -4708,6 +4742,12 @@ table.data-table--api-logs {
   padding: 3rem 1rem 1.5rem;
 }
 
+.alpha-router-messages__inner {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 .alpha-router-welcome {
   text-align: center;
   margin-top: 8vh;
@@ -4991,18 +5031,24 @@ table.data-table--api-logs {
 }
 
 @media (max-width: 640px) {
-  .topbar-model-chrome {
-    right: 7.5rem;
+  .topbar-left:has(.topbar-model-search) {
+    width: auto;
   }
 
   .topbar-model-search {
-    width: min(9.4rem, 32vw);
-    flex-basis: min(9.4rem, 32vw);
-    padding: 0 0.15rem 0 0.35rem;
+    flex: 0 0 2.8rem;
+    width: 2.8rem;
+    min-width: 2.8rem;
+    max-width: 2.8rem;
+    padding: 0 0.1rem 0 0.25rem;
   }
 
   .topbar-model-search__field > span {
     display: none;
+  }
+
+  .topbar-selected-models .alpha-router-model-pill {
+    max-width: 7.5rem;
   }
 }
 
@@ -14079,6 +14125,31 @@ body.login-route #root {
 
 .alpha-router-app--project .alpha-router-sidebar-top {
   padding-top: 0.55rem;
+}
+
+/* Same conversation column as personal chat: 46rem, centered in the main pane. */
+.alpha-router-app--project .alpha-router-messages {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.alpha-router-app--project .alpha-router-messages__inner {
+  width: min(46rem, 100%);
+  max-width: 46rem;
+}
+
+.alpha-router-app--project .alpha-router-msg {
+  max-width: none;
+  width: 100%;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.alpha-router-app--project .alpha-router-composer {
+  max-width: 46rem;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .project-overview {

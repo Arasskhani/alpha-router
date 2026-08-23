@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   chatScrollJumpButtonVisible,
   isNearScrollBottom,
+  pinAfterScrollEvent,
   scrollPinFromViewport,
 } from "./chatScroll";
 
@@ -34,5 +35,16 @@ describe("scrollPinFromViewport", () => {
     const el = box({ scrollTop: 0 });
     expect(scrollPinFromViewport(el)).toBe(false);
     expect(chatScrollJumpButtonVisible(el)).toBe(true);
+  });
+});
+
+describe("pinAfterScrollEvent", () => {
+  it("keeps the pin when content grows without a user gesture", () => {
+    expect(pinAfterScrollEvent(true, false, false)).toBe(true);
+  });
+
+  it("clears the pin only when the user scrolls away", () => {
+    expect(pinAfterScrollEvent(true, true, false)).toBe(false);
+    expect(pinAfterScrollEvent(true, true, true)).toBe(true);
   });
 });

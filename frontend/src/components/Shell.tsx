@@ -117,10 +117,13 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
       >
         <div className={`layout${layoutClass}`}>
           <header className="app-topbar">
-            <Link to={home} className="topbar-brand">
-              <AlphaRouterLogo size={24} showMark joined className="alpha-router-logo--topbar" />
-            </Link>
-            {isChat || isProjectWorkspace ? <TopbarModelChrome always={isChat} /> : null}
+            <div className="topbar-left">
+              <Link to={home} className="topbar-brand">
+                <AlphaRouterLogo size={24} showMark joined className="alpha-router-logo--topbar" />
+              </Link>
+              {isChat || isProjectWorkspace ? <TopbarModelSearch always={isChat} /> : null}
+            </div>
+            {isChat || isProjectWorkspace ? <TopbarSelectedModels always={isChat} /> : null}
             <TopbarNav theme={theme} onThemeChange={setTheme} />
           </header>
 
@@ -165,58 +168,61 @@ function shortTopbarModelName(name: string, id: string) {
   return n.length > 28 ? `${n.slice(0, 26)}…` : n;
 }
 
-/** Search Models, Add Model, and selected model chips — one topbar row. */
-function TopbarModelChrome({ always = false }: { always?: boolean }) {
+function TopbarModelSearch({ always = false }: { always?: boolean }) {
   const api = useChatModelChromeApi();
   if (!always && !api) return null;
   return (
-    <div className="topbar-model-chrome">
-      <div className="topbar-model-search">
-        <button
-          type="button"
-          className="topbar-model-search__field"
-          onClick={() => api?.openReplacePicker()}
-          disabled={!api?.modelsReady}
-          aria-label="Search models"
-          title="Search models"
-        >
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-            <circle cx="11" cy="11" r="7" />
-            <path d="M20 20l-3.5-3.5" strokeLinecap="round" />
-          </svg>
-          <span>Search Models</span>
-        </button>
-        <button
-          type="button"
-          className="topbar-model-search__add"
-          onClick={() => api?.openAppendPicker()}
-          disabled={!api || api.addModelDisabled}
-          aria-label={api?.addModelAriaLabel || "Add model"}
-          title={api?.addModelTitle || "Add model"}
-        >
-          +
-        </button>
-      </div>
-      {api?.selectedModels.length ? (
-        <div className="alpha-router-selected-models topbar-selected-models">
-          {api.selectedModels.map((m) => (
-            <span key={m.id} className="alpha-router-model-pill">
-              <ModelProviderIcon modelId={m.external_id || m.id} size={14} />
-              <span className="alpha-router-model-pill__name" title={m.name}>
-                {shortTopbarModelName(m.name, m.id)}
-              </span>
-              <button
-                type="button"
-                className="alpha-router-model-pill__remove"
-                onClick={() => api.onRemoveModel(m.id)}
-                aria-label={`Remove ${m.name}`}
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-      ) : null}
+    <div className="topbar-model-search">
+      <button
+        type="button"
+        className="topbar-model-search__field"
+        onClick={() => api?.openReplacePicker()}
+        disabled={!api?.modelsReady}
+        aria-label="Search models"
+        title="Search models"
+      >
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+          <circle cx="11" cy="11" r="7" />
+          <path d="M20 20l-3.5-3.5" strokeLinecap="round" />
+        </svg>
+        <span>Search Models</span>
+      </button>
+      <button
+        type="button"
+        className="topbar-model-search__add"
+        onClick={() => api?.openAppendPicker()}
+        disabled={!api || api.addModelDisabled}
+        aria-label={api?.addModelAriaLabel || "Add model"}
+        title={api?.addModelTitle || "Add model"}
+      >
+        +
+      </button>
+    </div>
+  );
+}
+
+function TopbarSelectedModels({ always = false }: { always?: boolean }) {
+  const api = useChatModelChromeApi();
+  if (!always && !api) return null;
+  if (!api?.selectedModels.length) return null;
+  return (
+    <div className="alpha-router-selected-models topbar-selected-models">
+      {api.selectedModels.map((m) => (
+        <span key={m.id} className="alpha-router-model-pill">
+          <ModelProviderIcon modelId={m.external_id || m.id} size={14} />
+          <span className="alpha-router-model-pill__name" title={m.name}>
+            {shortTopbarModelName(m.name, m.id)}
+          </span>
+          <button
+            type="button"
+            className="alpha-router-model-pill__remove"
+            onClick={() => api.onRemoveModel(m.id)}
+            aria-label={`Remove ${m.name}`}
+          >
+            ×
+          </button>
+        </span>
+      ))}
     </div>
   );
 }

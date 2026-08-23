@@ -245,7 +245,12 @@ import {
 import { applyPersianFontToChat, normalizePersianFontId } from "../lib/persianFonts";
 import { copyTextToClipboard } from "../lib/clipboard";
 import { downloadCsv, downloadTxt, exportMessagePdf, exportMessageDocx } from "../lib/chatExport";
-import { chatScrollJumpButtonVisible, scrollContainerToBottom, scrollPinFromViewport } from "../lib/chatScroll";
+import {
+  chatScrollJumpButtonVisible,
+  pinAfterScrollEvent,
+  scrollContainerToBottom,
+  scrollPinFromViewport,
+} from "../lib/chatScroll";
 import {
   clearComposerDraft,
   cloneComposerAttachments,
@@ -731,7 +736,9 @@ export default function ChatPanel({
   const [dropFolderId, setDropFolderId] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
+  const messagesInnerRef = useRef<HTMLDivElement>(null);
   const pinScrollToBottomRef = useRef(true);
+  const userScrolledRef = useRef(false);
   const [showScrollToBottomBtn, setShowScrollToBottomBtn] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const toolsMenuRef = useRef<HTMLDivElement>(null);
@@ -2287,8 +2294,18 @@ export default function ChatPanel({
   useEffect(() => {
     const el = messagesScrollRef.current;
     if (!el) return;
+    const markUserScroll = () => {
+      userScrolledRef.current = true;
+    };
     const onScroll = () => {
-      syncScrollPinFromContainer();
+      const userInitiated = userScrolledRef.current;
+      userScrolledRef.current = false;
+      pinScrollToBottomRef.current = pinAfterScrollEvent(
+        pinScrollToBottomRef.current,
+        userInitiated,
+        scrollPinFromViewport(el),
+      );
+      setShowScrollToBottomBtn(chatScrollJumpButtonVisible(el));
       if (el.scrollTop <= 4 && messagesHasOlder && !messagesLoadingOlder && activeIdRef.current) {
         const sid = activeIdRef.current;
         const session = sessionsRef.current.find((s) => s.id === sid);
@@ -2309,7 +2326,18 @@ export default function ChatPanel({
     };
     syncScrollPinFromContainer();
     el.addEventListener("scroll", onScroll, { passive: true });
-    return () => el.removeEventListener("scroll", onScroll);
+    el.addEventListener("wheel", markUserScroll, { passive: true });
+    el.addEventListener("touchmove", markUserScroll, { passive: true });
+    const onMouseDown = (event: MouseEvent) => {
+      if (event.offsetX >= el.clientWidth) markUserScroll();
+    };
+    el.addEventListener("mousedown", onMouseDown);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      el.removeEventListener("wheel", markUserScroll);
+      el.removeEventListener("touchmove", markUserScroll);
+      el.removeEventListener("mousedown", onMouseDown);
+    };
   }, [messagesHasOlder, messagesLoadingOlder, persistSessions, syncScrollPinFromContainer]);
 
   useEffect(() => {
@@ -2617,8 +2645,9 @@ export default function ChatPanel({
 
   useEffect(() => {
     const el = messagesScrollRef.current;
+    const inner = messagesInnerRef.current;
     if (!el) return;
-    const followResize = () => {
+    const stickIfPinned = () => {
       if (!pinScrollToBottomRef.current) {
         setShowScrollToBottomBtn(chatScrollJumpButtonVisible(el));
         return;
@@ -2626,12 +2655,16 @@ export default function ChatPanel({
       scrollContainerToBottom(el, "auto");
       setShowScrollToBottomBtn(false);
     };
-    const observer = new ResizeObserver(followResize);
-    observer.observe(el);
-    for (const child of Array.from(el.children)) {
-      observer.observe(child);
-    }
-    return () => observer.disconnect();
+    const observer = new ResizeObserver(stickIfPinned);
+    if (inner) observer.observe(inner);
+    else observer.observe(el);
+    el.addEventListener("load", stickIfPinned, true);
+    el.addEventListener("loadeddata", stickIfPinned, true);
+    return () => {
+      observer.disconnect();
+      el.removeEventListener("load", stickIfPinned, true);
+      el.removeEventListener("loadeddata", stickIfPinned, true);
+    };
   }, [messages, activeId]);
 
   useEffect(() => {
@@ -6307,6 +6340,7 @@ export default function ChatPanel({
         ))}
 
         <div className="alpha-router-messages" ref={messagesScrollRef}>
+          <div className="alpha-router-messages__inner" ref={messagesInnerRef}>
           {messagesLoadingOlder ? (
             <div className="alpha-router-banner alpha-router-banner-warn">Loading older messages…</div>
           ) : null}
@@ -6735,6 +6769,7 @@ export default function ChatPanel({
             </article>
           ))}
           <div ref={endRef} />
+          </div>
         </div>
 
         <footer className="alpha-router-footer">

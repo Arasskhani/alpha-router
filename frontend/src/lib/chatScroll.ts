@@ -40,3 +40,12 @@ export function scrollContainerToBottom(el: HTMLElement, behavior: ScrollBehavio
   }
   el.scrollTo({ top, behavior });
 }
+
+/**
+ * Layout/image growth can fire `scroll` without a user gesture and must not
+ * clear the pin; otherwise the thread stays mid-page after a tall media load.
+ */
+export function pinAfterScrollEvent(pinned: boolean, userInitiated: boolean, nearBottom: boolean): boolean {
+  if (userInitiated) return nearBottom;
+  return pinned;
+}

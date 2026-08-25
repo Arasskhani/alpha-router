@@ -36,7 +36,7 @@ export const userManualSections: DocSection[] = [
           </div>
           <div className="docs-card">
             <h3>Projects</h3>
-            <p>Shared workspaces with members, rooms, chats, knowledge resources, and project media.</p>
+            <p>Shared workspaces with members, rooms, chats, files, and project media.</p>
           </div>
           <div className="docs-card">
             <h3>Media</h3>
@@ -71,7 +71,7 @@ export const userManualSections: DocSection[] = [
               <td>
                 <a href="#user-projects">Projects</a>
               </td>
-              <td>Shared workspaces, roles, chats, resources vs media, invitations</td>
+              <td>Shared workspaces, roles, rooms vs chats, files, media, invitations</td>
             </tr>
             <tr>
               <td>
@@ -613,7 +613,7 @@ export const userManualSections: DocSection[] = [
       <>
         <h2>Projects</h2>
         <p>
-          Path: <code>/app/projects</code>. A project is a shared workspace: members, rooms, chats, knowledge files, and media
+          Path: <code>/app/projects</code>. A project is a shared workspace: members, rooms, chats, files, and media
           belong to the project — not to one person&apos;s private Chat or Media library.
         </p>
         <h3>My projects and Explore</h3>
@@ -625,6 +625,34 @@ export const userManualSections: DocSection[] = [
           <li>
             <strong>Explore</strong> lists <em>public</em> projects visible to every signed-in user. Private projects
             never appear here.
+          </li>
+        </ul>
+        <h3>Workspace tabs</h3>
+        <p>
+          Opening a project lands on <strong>Chats</strong>. Tabs from left to right:
+        </p>
+        <ul>
+          <li>
+            <strong>Chats</strong> — shared AI threads for this project.
+          </li>
+          <li>
+            <strong>Rooms</strong> — member-only human discussion (hidden from public visitors who are not members).
+          </li>
+          <li>
+            <strong>Resources</strong> — documents submitted for Knowledge review.
+          </li>
+          <li>
+            <strong>Media</strong> — the project file library.
+          </li>
+          <li>
+            <strong>Overview</strong> — member, chat, and file counts. Spend for the last 30 days is visible only to
+            Owners, the Primary Owner, and reports admins.
+          </li>
+          <li>
+            <strong>Activity</strong> — full spend and usage charts (Owners and Primary Owner only).
+          </li>
+          <li>
+            <strong>Members</strong> then <strong>Settings</strong> — people, then project configuration.
           </li>
         </ul>
         <h3>Roles</h3>
@@ -654,7 +682,10 @@ export const userManualSections: DocSection[] = [
             </tr>
             <tr>
               <td>Contributor</td>
-              <td>Rooms, Chat, upload resources and media, and use project settings that Contributors are allowed to edit.</td>
+              <td>
+                Rooms, Chat, upload resources and media, and edit project settings that Contributors are allowed to
+                change. Cannot open Activity.
+              </td>
             </tr>
             <tr>
               <td>Viewer</td>
@@ -662,16 +693,29 @@ export const userManualSections: DocSection[] = [
             </tr>
           </tbody>
         </table>
-        <h3>Rooms vs Chats</h3>
+        <h3>Rooms</h3>
         <p>
           <strong>Rooms</strong> are member-only human threads. There is no model, no tools, no Agent, and no AI spend.
-          Public visitors who are not project members do not see the Rooms tab. Room text is not copied into project
-          memory and is not sent to the model.
+          While you are on the Rooms tab, the AI chat sidebar is hidden so only the room list is on the left. Public
+          visitors who are not project members do not see the Rooms tab. Room text is not copied into project memory and
+          is not sent to the model.
         </p>
+        <ul>
+          <li>
+            Owners and Contributors can create rooms, write, reply, and (for their own messages) edit or delete. Reply
+            and the message actions use the same control style as Chat.
+          </li>
+          <li>
+            Hover a room in the list to show the × control, then confirm — the same pattern as deleting a chat.
+          </li>
+          <li>
+            Viewers can read rooms but cannot write, reply, or hand off to Chat.
+          </li>
+        </ul>
         <p>
           When a room reaches a decision, Owners and Contributors can use <strong>Send decision to Chat</strong>. Only
           the edited brief is placed in the new chat box so you can review it and press Send — it is not sent to the
-          model automatically, and the full room transcript is not copied.
+          model automatically, and the full room transcript is not copied. The workspace then opens that new chat.
         </p>
         <h3>Shared chat</h3>
         <p>
@@ -682,8 +726,7 @@ export const userManualSections: DocSection[] = [
           copy a link with <code>?session=</code> to open that chat directly — even if it is older than the first page
           of the sidebar. Re-entering a project restores the last thread you had open. Pins and new messages appear for
           every member without a refresh. Each user prompt shows the sender&apos;s name. Making a project{" "}
-          <strong>Public</strong> requires typing <code>PUBLIC</code>. The Overview tab shows member/chat/file counts;
-          spend for the last 30 days is visible only to Owners and the Primary Owner (and reports admins). Full charts stay on Activity.
+          <strong>Public</strong> requires typing <code>PUBLIC</code>.
         </p>
         <h3>Activity</h3>
         <p>
@@ -694,10 +737,15 @@ export const userManualSections: DocSection[] = [
         <h3>Resources vs Media</h3>
         <ul>
           <li>
-            <strong>Resources</strong> are documents used as knowledge grounding for project chats (text the model can
-            draw on). Owners and Contributors can upload up to 20 files at a time. Until a file is{" "}
-            <strong>Published</strong>, members see <strong>Waiting for Admin Approval</strong>. Chat can use it only
-            after an admin publishes it.
+            <strong>Resources</strong> are documents submitted through the Knowledge pipeline (malware scan, text
+            extraction, review). Owners and Contributors can upload up to 20 files at a time. Allowed types:{" "}
+            <code>.pdf</code>, <code>.docx</code>, <code>.pptx</code>, <code>.xlsx</code>, <code>.txt</code>,{" "}
+            <code>.md</code> / <code>.markdown</code>, <code>.html</code> / <code>.htm</code>, <code>.csv</code>,{" "}
+            <code>.json</code>. Until a file is <strong>Published</strong>, members see{" "}
+            <strong>Waiting for Admin Approval</strong>. After an admin publishes the version, project chat may inject
+            short excerpts from that file when Settings allows it (Owners: <strong>Use project resources</strong>). That
+            is not the same as Agent Knowledge retrieval: publishing a Knowledge <em>release</em> and building the vector
+            index is for Agents bound to that Knowledge Base, not for ordinary project chat.
           </li>
           <li>
             <strong>Media</strong> are binary files (images, video, uploads) stored in the project library. Images and
@@ -705,6 +753,12 @@ export const userManualSections: DocSection[] = [
             member can open them. If the project is over quota, the file is kept only for the sender.
           </li>
         </ul>
+        <h3>Memory and grounding</h3>
+        <p>
+          Owners can add short project memory facts in Settings and optionally allow granted memory from other projects.
+          Room messages never become memory. Resource excerpts and memory are injected only into AI chats of this
+          project — never into Rooms, and never into your personal <code>/app/chat</code> sessions.
+        </p>
         <h3>Invitations</h3>
         <p>
           The Primary Owner and Owners create a link (Contributor or Viewer only — never Owner or Primary Owner). Share

@@ -1065,7 +1065,7 @@ export const docSections: DocSection[] = [
                 <code>/app/projects/&lt;id&gt;/activity</code>
               </td>
               <td>
-                One project&apos;s spend (Owner, or Reports admin). Admin list:{" "}
+                One project&apos;s spend (Primary Owner, Owner, or Reports admin). Admin list:{" "}
                 <code>/admin/project-usage</code>
               </td>
             </tr>
@@ -1177,7 +1177,8 @@ export const docSections: DocSection[] = [
           </li>
           <li>
             <strong>Approvals</strong> — maker-checker queues for Agent versions, Knowledge bindings, document
-            versions, and tools. Each card shows the submitter&apos;s name (display name or username), not a user id.
+            versions (including project Resource uploads), and tools. Each card shows the submitter&apos;s name (display
+            name or username), not a user id.
           </li>
           <li>
             <strong>Audit</strong> — append-only lifecycle evidence, legal holds, retention, and metadata-only runtime
@@ -1273,6 +1274,12 @@ export const docSections: DocSection[] = [
           files and vectors and marks the document <code>deleted</code> (hidden from the Documents list). The Overview
           Knowledge KPI ignores both <code>revoked</code> and <code>deleted</code> so it matches live corpus size.
         </p>
+        <Note>
+          Project <strong>Resources</strong> uploads use the same scan/extract/review path, stored on a private internal
+          Knowledge Base per project. Approving the document version (Published) is what project members wait for.
+          Ordinary project chat may then inject short PostgreSQL excerpts; it does <em>not</em> query the Qdrant release
+          index. Bind that Knowledge Base to an Agent and publish a release only when specialist retrieval should use it.
+        </Note>
         <Warn>
           PostgreSQL is the source of truth and Qdrant is rebuildable derived state. Never mark a release or index active
           manually to work around a failed job. Fix the dependency, retry the durable job, and preserve its audit trail.
@@ -1883,12 +1890,21 @@ export const docSections: DocSection[] = [
           Path: <code>/admin/project-usage</code> (Data &amp; reports → Projects). Lists organization projects with
           period spend; <strong>Activity</strong> opens the shared page{" "}
           <code>/app/projects/&lt;id&gt;/activity</code> (same Overview / Trends / Explore as User or Group Activity).
-          The Primary Owner and Owners of a project can open the same charts from the workspace <strong>Activity</strong> tab.
-          Contributors and Viewers cannot.           Request cost is
-          charged from <code>ChatSession.project_id</code> (server-side) for AI chats only. Member rooms
-          (<code>channel_kind=member</code>) cannot call completions or media generation. A client cannot attach another project&apos;s
-          id to a personal chat to steal budget or reports. Deleting a user account reassigns remaining project chat
-          sessions to another Owner (or member) so shared threads are not CASCADE-deleted with the account.
+          The Primary Owner and Owners of a project can open the same charts from the workspace <strong>Activity</strong>{" "}
+          tab. Contributors and Viewers cannot. Request cost is charged from <code>ChatSession.project_id</code>{" "}
+          (server-side) for AI chats only. Member rooms (<code>channel_kind=member</code>) cannot call completions or
+          media generation, so they never appear as project spend. A client cannot attach another project&apos;s id to a
+          personal chat to steal budget or reports. Deleting a user account reassigns remaining project chat sessions to
+          another Owner (or member) so shared threads are not CASCADE-deleted with the account.
+        </p>
+        <h3>Rooms vs Knowledge</h3>
+        <p>
+          Rooms are human-only (<code>channel_kind=member</code>). Completions, image/video/speech generation, turn
+          planning, and project memory extraction skip them. <strong>Send decision to Chat</strong> creates an empty AI
+          session and puts the edited brief in the composer only — it does not send the brief to the model or copy the
+          room transcript. Project resource files still need Knowledge review (same maker-checker as other documents)
+          before they are Published; that is not the Agent release/index workflow. See{" "}
+          <a href="#knowledge-release-workflow">Knowledge release workflow</a>.
         </p>
         <Warn>
           Purge is irreversible. Confirm the project is no longer needed before running Purge now.
@@ -1967,7 +1983,7 @@ export const docSections: DocSection[] = [
         </p>
         <ul>
           <li>Chat with enabled models, tools, voice, images, private mode, export.</li>
-          <li>Projects: shared workspaces, membership, resources, and project media.</li>
+          <li>Projects: shared workspaces, rooms vs chats, membership, resources, and project media.</li>
           <li>Media library with quota and optional personal cleanup schedule.</li>
           <li>Personal Activity with CSV/PDF export.</li>
           <li>Settings: theme, font, voice language, chat import/export, password/2FA.</li>

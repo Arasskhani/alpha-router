@@ -229,6 +229,8 @@ async def prepare_agent_turn(
     )
     messages = list(body.get("messages") or [])
     if session is not None and session.project_id:
+        from app.services.user_memory_service import extract_query_text
+
         messages = await augment_messages_with_project_context(
             db,
             messages,
@@ -238,6 +240,7 @@ async def prepare_agent_turn(
                 body.get("project_id") or body.get("projectId") or ""
             ).strip()
             or None,
+            query=extract_query_text(messages),
         )
     agent_id = options.agent_id
     agent_slug = options.agent_slug
@@ -275,6 +278,9 @@ async def prepare_agent_turn(
             agent_slug=agent_slug,
             pinned_version_id=pinned_version_id,
             private_mode=private_mode,
+            # Project threads are shared with teammates: they get project memory
+            # only, never the requesting member's personal facts.
+            personal_memory_allowed=not (session is not None and session.project_id),
             knowledge_retriever=QdrantAgentKnowledgeRetriever(
                 qdrant=qdrant,
                 embedding_backend=CatalogKnowledgeEmbeddingBackend(),

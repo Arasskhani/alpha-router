@@ -59,6 +59,45 @@ async def apply_schema_column_patches() -> None:
         "chat_messages": frozenset({"agent_run_id", "author_display_name"}),
         "image_generation_attempts": frozenset({"project_id"}),
         "video_generation_jobs": frozenset({"project_id"}),
+        "project_config_versions": frozenset({"memory_auto_capture"}),
+        "project_memories": frozenset(
+            {
+                "category",
+                "sensitivity",
+                "confidence",
+                "salience",
+                "expires_at",
+                "last_used_at",
+                "use_count",
+                "source_session_id",
+                "source_message_id",
+                "supersedes_id",
+                "embedding_status",
+                "embedding_model",
+                "embedding_dims",
+                "indexed_at",
+                "deleted_at",
+            }
+        ),
+        "user_memories": frozenset(
+            {
+                "origin",
+                "category",
+                "sensitivity",
+                "confidence",
+                "salience",
+                "expires_at",
+                "last_used_at",
+                "use_count",
+                "source_message_id",
+                "supersedes_id",
+                "embedding_status",
+                "embedding_model",
+                "embedding_dims",
+                "indexed_at",
+                "deleted_at",
+            }
+        ),
     }
     # Tables removed from the ORM (feature retired).
     retired_tables: frozenset[str] = frozenset({"user_connectors"})
@@ -322,6 +361,32 @@ async def validate_agent_platform_schema() -> None:
             "uploaded_by_user_id",
             "created_at",
             "updated_at",
+        },
+        "user_memories": {
+            "origin",
+            "category",
+            "sensitivity",
+            "salience",
+            "embedding_status",
+            "content_hash",
+        },
+        "user_memory_jobs": {
+            "user_id",
+            "session_id",
+            "status",
+            "watermark_sequence",
+            "extracted_sequence",
+            "run_after",
+        },
+        "user_memory_events": {
+            "user_id",
+            "event_type",
+            "actor",
+            "created_at",
+        },
+        "user_memory_suppressions": {
+            "user_id",
+            "content_hash",
         },
     }
 

@@ -15,6 +15,7 @@ import {
   createInvitation,
   createMemoryGrant,
   createProjectMemory,
+  deleteAllAutoProjectMemories,
   deleteProject,
   deleteProjectMedia,
   deleteProjectMemory,
@@ -74,6 +75,7 @@ import {
   type ProjectRole,
   type ProjectVisibility,
 } from "../lib/projectsApi";
+import { useConfirm } from "../context/ConfirmContext";
 import { agentStatusTone } from "../lib/agentPlatform";
 import { formatLocalDate, formatLocalDateTime } from "../lib/dateTime";
 
@@ -85,6 +87,14 @@ const MEDIA_KIND_FILTERS: Array<{ id: "" | ProjectMediaKind; label: string }> = 
   { id: "video", label: "Videos" },
   { id: "document", label: "Documents" },
   { id: "other", label: "Other" },
+];
+
+const MEMORY_PAGE_SIZE = 100;
+
+const MEMORY_ORIGIN_FILTERS: Array<{ id: "" | "manual" | "auto"; label: string }> = [
+  { id: "", label: "All" },
+  { id: "manual", label: "Manual" },
+  { id: "auto", label: "Learned" },
 ];
 
 export default function ProjectWorkspacePage() {
@@ -1132,8 +1142,11 @@ function MediaTab({
 
 
 function SettingsTab({ projectId, canEdit }: { projectId: string; canEdit: boolean }) {
+  const { confirm } = useConfirm();
   const [config, setConfig] = useState<ProjectConfig | null>(null);
   const [memories, setMemories] = useState<ProjectMemory[]>([]);
+  const [memoryTotal, setMemoryTotal] = useState(0);
+  const [memoryFilter, setMemoryFilter] = useState<"" | "manual" | "auto">("");
   const [grants, setGrants] = useState<MemoryGrant[]>([]);
   const [versions, setVersions] = useState<ProjectConfigVersion[]>([]);
   const [ownedProjects, setOwnedProjects] = useState<ProjectRecord[]>([]);
@@ -1142,6 +1155,7 @@ function SettingsTab({ projectId, canEdit }: { projectId: string; canEdit: boole
   const [error, setError] = useState("");
   const [customPrompt, setCustomPrompt] = useState("");
   const [memoryEnabled, setMemoryEnabled] = useState(true);
+  const [memoryAutoCapture, setMemoryAutoCapture] = useState(true);
   const [useProjectResources, setUseProjectResources] = useState(true);
   const [useGrantedMemory, setUseGrantedMemory] = useState(true);
   const [newMemory, setNewMemory] = useState("");
@@ -1153,16 +1167,21 @@ function SettingsTab({ projectId, canEdit }: { projectId: string; canEdit: boole
     try {
       const [cfg, memRes, grantRes] = await Promise.all([
         getProjectConfig(projectId),
-        listProjectMemories(projectId),
+        listProjectMemories(projectId, {
+          origin: memoryFilter || undefined,
+          limit: MEMORY_PAGE_SIZE,
+        }),
         listMemoryGrants(projectId),
       ]);
       setConfig(cfg);
       setCustomPrompt(cfg.customPrompt ?? "");
       setMemoryEnabled(cfg.memoryEnabled);
+      setMemoryAutoCapture(cfg.memoryAutoCapture);
       const toggles = groundingTogglesFromPolicy(cfg.groundingPolicy);
       setUseProjectResources(toggles.useProjectResources);
       setUseGrantedMemory(toggles.useGrantedMemory);
       setMemories(memRes.memories);
+      setMemoryTotal(memRes.total);
       setGrants(grantRes.grants);
       if (canEdit) {
         const [verRes, mine] = await Promise.all([
@@ -1180,7 +1199,7 @@ function SettingsTab({ projectId, canEdit }: { projectId: string; canEdit: boole
     } finally {
       setLoading(false);
     }
-  }, [projectId, canEdit]);
+  }, [projectId, canEdit, memoryFilter]);
 
   useEffect(() => {
     void load();
@@ -1197,6 +1216,7 @@ function SettingsTab({ projectId, canEdit }: { projectId: string; canEdit: boole
       await updateProjectConfig(projectId, {
         customPrompt: customPrompt.trim() || null,
         memoryEnabled,
+        memoryAutoCapture,
         groundingPolicy: groundingPolicyFromToggles({ useProjectResources, useGrantedMemory }),
       });
       await load();
@@ -1235,8 +1255,30 @@ function SettingsTab({ projectId, canEdit }: { projectId: string; canEdit: boole
     try {
       await deleteProjectMemory(projectId, id);
       setMemories((prev) => prev.filter((m) => m.id !== id));
+      setMemoryTotal((prev) => Math.max(0, prev - 1));
     } catch (err) {
       setError(formatApiError(err));
+    }
+  }
+
+  async function deleteAllLearned() {
+    const ok = await confirm({
+      title: "Delete all learned facts",
+      message:
+        "Every fact learned automatically from this project's chats will be deleted for all members, and will not be learned again from those chats. Facts you added by hand are kept.",
+      confirmLabel: "Delete learned facts",
+      danger: true,
+    });
+    if (ok !== true) return;
+    setBusy(true);
+    setError("");
+    try {
+      await deleteAllAutoProjectMemories(projectId);
+      await load();
+    } catch (err) {
+      setError(formatApiError(err));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -1271,6 +1313,7 @@ function SettingsTab({ projectId, canEdit }: { projectId: string; canEdit: boole
       await updateProjectConfig(projectId, {
         customPrompt: version.customPrompt ?? null,
         memoryEnabled: version.memoryEnabled,
+        memoryAutoCapture: version.memoryAutoCapture,
         groundingPolicy: version.groundingPolicy ?? {},
       });
       await load();
@@ -1309,8 +1352,36 @@ function SettingsTab({ projectId, canEdit }: { projectId: string; canEdit: boole
           />
           <span>Enable project memory (scoped to this project's chats and resources)</span>
         </label>
+        <label className="form-field form-field--inline">
+          <input
+            type="checkbox"
+            checked={memoryAutoCapture}
+            onChange={(e) => setMemoryAutoCapture(e.target.checked)}
+            disabled={!canEdit || !memoryEnabled}
+          />
+          <span>Automatically learn from project chats</span>
+        </label>
+        <p className="form-hint">
+          Learned facts are shared with every member of this project. Personal memory
+          is never used in project chats, and personal or sensitive details are never
+          captured here.
+        </p>
 
-        <h4>Memory items</h4>
+        <div className="memory-toolbar">
+          <h4>Memory items{memoryTotal ? ` (${memoryTotal})` : ""}</h4>
+          <div className="memory-filters">
+            {MEMORY_ORIGIN_FILTERS.map((filter) => (
+              <button
+                key={filter.id}
+                type="button"
+                className={`settings-row__action${memoryFilter === filter.id ? " is-active" : ""}`}
+                onClick={() => setMemoryFilter(filter.id)}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
+        </div>
         {canEdit ? (
           <div className="memory-add">
             <input
@@ -1319,31 +1390,72 @@ function SettingsTab({ projectId, canEdit }: { projectId: string; canEdit: boole
               onChange={(e) => setNewMemory(e.target.value)}
               maxLength={500}
               placeholder="Add a memory item…"
-              className="input"
             />
             <button type="button" className="btn btn-primary" disabled={busy || !newMemory.trim()} onClick={() => void addMemory()}>
               Add
             </button>
           </div>
         ) : null}
-        <ul className="memory-list">
-          {memories.map((m) => (
-            <li key={m.id} className="memory-item">
-              <span className={m.enabled ? "" : "memory-item--disabled"}>{m.content}</span>
-              {canEdit ? (
-                <span className="memory-item-actions">
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => void toggleMemory(m)}>
-                    {m.enabled ? "Disable" : "Enable"}
-                  </button>
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => void deleteMemory(m.id)}>
-                    Delete
-                  </button>
-                </span>
-              ) : null}
-            </li>
-          ))}
-          {memories.length === 0 ? <li className="empty-state">No memory items.</li> : null}
-        </ul>
+        <div className="settings-list">
+          {memories.length === 0 ? (
+            <div className="settings-row">
+              <span className="settings-row__hint">No memory items.</span>
+            </div>
+          ) : (
+            memories.map((m) => {
+              const learned = m.origin === "auto_chat";
+              return (
+                <div key={m.id} className={`settings-row-block${m.enabled ? "" : " is-dimmed"} settings-row-block--stacked`}>
+                  <div className="settings-row">
+                    <div className="settings-row__meta">
+                      <span className="settings-row__title">{m.content}</span>
+                      <span className="settings-row__hint">
+                        <span className="settings-memory-chip">{learned ? "learned" : "manual"}</span>
+                        {learned && m.category ? <span className="settings-memory-chip">{m.category}</span> : null}
+                        {learned && m.sourceSessionId ? (
+                          <Link to={`/projects/${encodeURIComponent(projectId)}?session=${encodeURIComponent(m.sourceSessionId)}`}>
+                            {m.sourceSessionTitle || "Source chat"}
+                          </Link>
+                        ) : null}
+                      </span>
+                    </div>
+                    {canEdit ? (
+                      <div className="settings-row__trail">
+                        <button type="button" className="settings-row__action" onClick={() => void toggleMemory(m)}>
+                          {m.enabled ? "Disable" : "Enable"}
+                        </button>
+                        <button
+                          type="button"
+                          className="settings-row__action settings-row__action--danger"
+                          onClick={() => void deleteMemory(m.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+        {memoryTotal > memories.length ? (
+          <p className="form-hint">
+            Showing the {memories.length} most recently updated of {memoryTotal} facts.
+          </p>
+        ) : null}
+        {canEdit ? (
+          <div className="memory-danger-actions">
+            <button
+              type="button"
+              className="settings-row__action settings-row__action--danger"
+              disabled={busy}
+              onClick={() => void deleteAllLearned()}
+            >
+              Delete all learned facts
+            </button>
+          </div>
+        ) : null}
       </section>
 
       <section className="settings-section">

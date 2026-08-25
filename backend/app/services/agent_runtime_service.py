@@ -57,7 +57,7 @@ from app.services.qdrant_service import QdrantVectorService
 from app.services.resource_access_service import ResourceAccessSubject
 from app.services.user_memory_service import (
     format_memory_system_block,
-    load_injectable_memories,
+    retrieve_memories,
 )
 from app.services.user_profile_context_service import (
     format_profile_system_block,
@@ -421,6 +421,7 @@ async def plan_agent_turn(
     pinned_version_id: str | None = None,
     query: str | None = None,
     private_mode: bool = False,
+    personal_memory_allowed: bool = True,
     knowledge_retriever: AgentKnowledgeRetriever | None = None,
     guardrail_hooks: AgentGuardrailHooks | None = None,
 ) -> AgentTurnPlan:
@@ -555,10 +556,15 @@ async def plan_agent_turn(
                     runtime_context_blocks.append(
                         format_profile_system_block(profile_facts)
                     )
-            if policies.memory.enabled and policies.memory.max_items > 0:
-                memories = await load_injectable_memories(
+            if (
+                personal_memory_allowed
+                and policies.memory.enabled
+                and policies.memory.max_items > 0
+            ):
+                memories = await retrieve_memories(
                     db,
                     resource_subject.user_id,
+                    query=clean_query,
                     max_items=policies.memory.max_items,
                 )
                 if memories:

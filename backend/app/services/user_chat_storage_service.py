@@ -163,6 +163,7 @@ def _default_prefs() -> dict[str, Any]:
         "reply_notify_sound": True,
         # When true, enabled user memories are injected into non-private completions.
         "memory_enabled": True,
+        "memory_auto_capture": True,
     }
 
 
@@ -260,6 +261,10 @@ def _normalize_prefs(raw: dict[str, Any] | None) -> dict[str, Any]:
         )
     if "memory_enabled" in raw:
         base["memory_enabled"] = _coerce_bool(raw.get("memory_enabled"), default=True)
+    if "memory_auto_capture" in raw:
+        base["memory_auto_capture"] = _coerce_bool(
+            raw.get("memory_auto_capture"), default=True
+        )
     return base
 
 
@@ -1245,6 +1250,37 @@ async def append_session_messages(
             db, session, added=new_count, last_at=last_created
         )
         await db.flush()
+        try:
+            watermark = max((row.sequence for row in inserted), default=0)
+            if session.project_id:
+                # Project threads feed shared project memory; personal memory is
+                # never learned from, or injected into, a project chat.
+                from app.services.project_memory_job_service import (
+                    maybe_schedule_from_append as schedule_project_extraction,
+                )
+
+                await schedule_project_extraction(
+                    db,
+                    session=session,
+                    messages=messages,
+                    watermark_sequence=watermark,
+                )
+            else:
+                from app.services.memory_job_service import maybe_schedule_from_append
+
+                await maybe_schedule_from_append(
+                    db,
+                    user_id=user_id,
+                    session=session,
+                    messages=messages,
+                    watermark_sequence=watermark,
+                )
+        except Exception:
+            logger.exception(
+                "Memory extraction schedule failed user_id=%s session_id=%s",
+                user_id,
+                session_id,
+            )
     return [_message_to_client(r) for r in inserted]
 
 

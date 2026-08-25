@@ -111,6 +111,7 @@ class Settings(BaseSettings):
     qdrant_api_key: str = ""  # env: QDRANT_API_KEY
     qdrant_timeout_seconds: float = 10.0
     qdrant_collection_prefix: str = "alpharouter-knowledge"
+    qdrant_memory_collection_prefix: str = "alpharouter-memory"
     qdrant_replication_factor: int = 1
     knowledge_stream_name: str = "alpharouter:knowledge:jobs"
     knowledge_dead_letter_stream_name: str = "alpharouter:knowledge:dead"
@@ -153,6 +154,11 @@ class Settings(BaseSettings):
     knowledge_embedding_batch_size: int = 32
     knowledge_embedding_max_input_characters: int = 16_000
     knowledge_embedding_timeout_seconds: float = 60.0
+    # Automatic long-term memory. Extraction is a no-op until an admin selects a model.
+    memory_extract_enabled: bool = True
+    memory_job_lease_seconds: int = 120
+    memory_job_max_attempts: int = 5
+    memory_retry_base_seconds: int = 5
     knowledge_index_upsert_batch_size: int = 128
     knowledge_retrieval_max_query_characters: int = 8_000
     knowledge_retrieval_candidate_limit: int = 40

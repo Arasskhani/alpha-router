@@ -218,6 +218,8 @@ async def plan_project_turn(
     user_id: int | None,
     chat_session_id: str | None,
     client_project_id: str | None = None,
+    query: str | None = None,
+    injected_memory_ids: list[str] | None = None,
 ) -> list[dict]:
     """Inject project system context when the *session* belongs to a project.
 
@@ -256,15 +258,20 @@ async def plan_project_turn(
             db,
             project_id=session.project_id,
             memory_enabled=True,
+            query=query if query is not None else _last_user_query(messages),
         )
         if not _policy_flag(grounding_policy, "useGrantedMemory", default=True):
             injection = ProjectMemoryInjection(
                 own_facts=injection.own_facts,
                 granted_facts=(),
-                total_facts=len(injection.own_facts),
+                total_facts=len(injection.own_facts) + len(injection.auto_facts),
+                auto_facts=injection.auto_facts,
+                memory_ids=injection.memory_ids,
             )
         if injection.total_facts:
             blocks.append(format_project_memory_block(injection))
+            if injected_memory_ids is not None:
+                injected_memory_ids.extend(injection.memory_ids)
 
     if _policy_flag(grounding_policy, "useProjectResources", default=True):
         try:
@@ -295,6 +302,8 @@ async def augment_messages_with_project_context(
     user_id: int | None,
     chat_session_id: str | None,
     client_project_id: str | None = None,
+    query: str | None = None,
+    injected_memory_ids: list[str] | None = None,
 ) -> list[dict]:
     """Best-effort wrapper used by the chat proxy and Agent planner."""
 
@@ -305,6 +314,8 @@ async def augment_messages_with_project_context(
             user_id=user_id,
             chat_session_id=chat_session_id,
             client_project_id=client_project_id,
+            query=query,
+            injected_memory_ids=injected_memory_ids,
         )
     except Exception:
         logger.exception(

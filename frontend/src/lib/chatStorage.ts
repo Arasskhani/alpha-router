@@ -49,6 +49,8 @@ export type UserPrefs = {
   reply_notify_sound: boolean;
   /** When true, enabled memories are injected into non-private chat completions. */
   memory_enabled: boolean;
+  /** When true, new durable facts may be learned from non-private chats. */
+  memory_auto_capture: boolean;
 };
 
 export type UserChatsPayload = {
@@ -145,6 +147,7 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
   const replyNotifyAway = coercePrefsBool(raw?.reply_notify_away, false);
   const replyNotifySound = coercePrefsBool(raw?.reply_notify_sound, true);
   const memoryEnabled = coercePrefsBool(raw?.memory_enabled, true);
+  const memoryAutoCapture = coercePrefsBool(raw?.memory_auto_capture, true);
   return {
     default_model: model,
     theme,
@@ -155,6 +158,7 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
     reply_notify_away: replyNotifyAway,
     reply_notify_sound: replyNotifySound,
     memory_enabled: memoryEnabled,
+    memory_auto_capture: memoryAutoCapture,
   };
 }
 
@@ -254,9 +258,14 @@ export function sidebarTodayCutoffMs(now = Date.now()): number {
   return startOfTodayMs(now);
 }
 
-/** Activity before this ms → sidebar "Older than 3 days". */
+/** Activity before this ms is older than the "1–3 days ago" group. */
 export function sidebarOlderThan3DaysCutoffMs(now = Date.now()): number {
   return startOfDaysAgoMs(3, now);
+}
+
+/** Activity before this ms → sidebar "Older than 7 days". */
+export function sidebarOlderThan7DaysCutoffMs(now = Date.now()): number {
+  return startOfDaysAgoMs(7, now);
 }
 
 /** Initial list load: today + previous 3 calendar days. */
@@ -322,7 +331,7 @@ export type ChatSession = {
   revision?: number;
   createdAt: number;
   updatedAt: number;
-  /** Last message activity (server); used for sidebar sort and Recent/Older split. */
+  /** Last message activity (server); used for sidebar sort and age groups. */
   lastMessageAt?: number | null;
   /** Project-wide pin (project chats only). */
   pinned?: boolean;
@@ -1421,11 +1430,20 @@ export type FetchChatsOptions = {
   since?: number;
   min_activity_ms?: number;
   max_activity_ms?: number;
+  /** Add returned ids to the known-server set without replacing the hydrate snapshot. */
+  retainKnownSessionIds?: boolean;
 };
 
 export async function fetchUserChatsFromServer(
   opts?: FetchChatsOptions,
-): Promise<UserChatsPayload & { total?: number; older_total?: number; lastOpenedSessionId?: string | null }> {
+): Promise<
+  UserChatsPayload & {
+    total?: number;
+    older_total?: number;
+    fetchedCount?: number;
+    lastOpenedSessionId?: string | null;
+  }
+> {
   const projectId = getProjectChatScope();
   if (projectId) {
     const data = await listProjectChats(projectId, {
@@ -1454,6 +1472,7 @@ export async function fetchUserChatsFromServer(
       folders: [],
       total: data.total,
       older_total: 0,
+      fetchedCount: serverSessions.length,
       lastOpenedSessionId: data.lastOpenedSessionId ?? null,
     };
   }
@@ -1479,12 +1498,15 @@ export async function fetchUserChatsFromServer(
     older_total?: number;
   }>(`/api/user/chats?${params}`);
   if (!opts?.since) {
-    serverSessionIds.clear();
+    const retain = !!opts?.retainKnownSessionIds;
+    if (!retain) {
+      serverSessionIds.clear();
+      serverFolderIds = new Set((data.folders || []).map((f) => String(f.id)));
+    }
     for (const s of data.sessions || []) {
       const id = String(s.id);
       if (!isPendingDelete(id)) serverSessionIds.add(id);
     }
-    serverFolderIds = new Set((data.folders || []).map((f) => String(f.id)));
   }
   const privateLocal = await loadPrivateChatSessions();
   const serverSessions = (data.sessions || [])
@@ -1496,6 +1518,7 @@ export async function fetchUserChatsFromServer(
     prefs: normalizeUserPrefs(data.prefs),
     total: data.total,
     older_total: data.older_total,
+    fetchedCount: serverSessions.length,
   };
 }
 

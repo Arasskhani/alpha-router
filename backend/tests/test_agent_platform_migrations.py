@@ -10,9 +10,19 @@ import uuid
 from pathlib import Path
 from unittest.mock import Mock
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import Column, Index, MetaData, String, Table
 
 from app.db_migrate import _ensure_missing_indexes
+
+
+def _alembic_head() -> str:
+    """Current head, so adding a revision does not break this gate."""
+    backend_root = Path(__file__).resolve().parents[1]
+    config = Config(str(backend_root / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_root / "alembic"))
+    return ScriptDirectory.from_config(config).get_current_head()
 
 
 def _run_migrate(database_path: Path) -> subprocess.CompletedProcess[str]:
@@ -53,10 +63,14 @@ def test_agent_platform_migration_is_complete_and_idempotent():
         finally:
             connection.close()
 
-            assert revision == ("d0e1f2a3b4c5",)
+        assert revision == (_alembic_head(),)
         assert {
             "users",
             "chat_sessions",
+            "user_memories",
+            "user_memory_jobs",
+            "user_memory_events",
+            "user_memory_suppressions",
             "agents",
             "agent_versions",
             "agent_tools",
@@ -84,6 +98,9 @@ def test_agent_platform_migration_is_complete_and_idempotent():
             "project_config_versions",
             "project_memories",
             "project_memory_grants",
+            "project_memory_jobs",
+            "project_memory_events",
+            "project_memory_suppressions",
             "project_chat_pins",
             "project_user_prefs",
             "project_chat_composer_prefs",

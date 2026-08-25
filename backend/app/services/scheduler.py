@@ -167,15 +167,37 @@ async def job_model_tool_compatibility():
         await db.commit()
 
 
+async def job_user_memory_maintenance():
+    async with AsyncSessionLocal() as db:
+        from app.services.memory_maintenance_service import run_user_memory_maintenance
+
+        try:
+            # Covers both the user and project scopes in one pass.
+            stats = await run_user_memory_maintenance(db)
+            await db.commit()
+            if any(stats.values()):
+                logger.info("Memory maintenance %s", stats)
+        except Exception:
+            await db.rollback()
+            logger.exception("Memory maintenance failed")
+
+
 async def job_chat_retention_cleanup():
     async with AsyncSessionLocal() as db:
-        from app.services.retention_policy_service import get_chat_retention_settings, purge_expired_chat_messages
+        from app.services.retention_policy_service import (
+            get_chat_retention_settings,
+            purge_expired_chat_messages,
+        )
 
-        settings = await get_chat_retention_settings(db)
-        if not settings["retention_enabled"]:
-            return
-        await purge_expired_chat_messages(db)
-        await db.commit()
+        try:
+            settings = await get_chat_retention_settings(db)
+            if not settings["retention_enabled"]:
+                return
+            await purge_expired_chat_messages(db)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            logger.exception("Chat retention cleanup failed")
 
 
 async def job_purge_deleted_projects():
@@ -287,6 +309,16 @@ def start_scheduler():
         minute=0,
         timezone=get_server_timezone(),
         id="chat_retention_cleanup",
+    )
+    scheduler.add_job(
+        job_user_memory_maintenance,
+        "cron",
+        hour=3,
+        minute=40,
+        timezone=get_server_timezone(),
+        id="user_memory_maintenance",
+        max_instances=1,
+        coalesce=True,
     )
     scheduler.add_job(
         job_purge_deleted_projects,

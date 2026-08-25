@@ -13,6 +13,10 @@ from app.config import get_settings
 from app.database import AsyncSessionLocal, engine
 from app.services.knowledge_connector_service import schedule_due_connectors
 from app.services.knowledge_job_service import recover_stale_knowledge_jobs
+from app.services.memory_job_service import recover_stale_jobs as recover_stale_memory_jobs
+from app.services.project_memory_job_service import (
+    recover_stale_jobs as recover_stale_project_memory_jobs,
+)
 from app.services.knowledge_queue import create_knowledge_redis
 from app.services.knowledge_retention_service import (
     schedule_expired_knowledge_retention,
@@ -64,10 +68,16 @@ async def run() -> None:
                 if now >= next_reaper_at:
                     async with AsyncSessionLocal() as db:
                         recovered = await recover_stale_knowledge_jobs(db)
+                        memory_recovered = await recover_stale_memory_jobs(db)
+                        memory_recovered += await recover_stale_project_memory_jobs(db)
                         await db.commit()
                     if recovered:
                         logger.warning(
                             "Recovered %s expired Knowledge job leases", recovered
+                        )
+                    if memory_recovered:
+                        logger.warning(
+                            "Recovered %s expired memory job leases", memory_recovered
                         )
                     next_reaper_at = now + settings.knowledge_reaper_interval_seconds
                 if now >= next_connector_poll_at:

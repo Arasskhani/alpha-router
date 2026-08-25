@@ -227,3 +227,10 @@ def test_chat_retention_purge_removes_empty_sessions():
     import asyncio
 
     asyncio.run(_run_purge_removes_empty_sessions())
+
+
+def test_chat_retention_job_is_registered_by_start_scheduler():
+    from app.services import scheduler as sched
+
+    assert callable(sched.job_chat_retention_cleanup)
+    assert "job_chat_retention_cleanup" in sched.start_scheduler.__code__.co_names

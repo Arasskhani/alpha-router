@@ -29,6 +29,7 @@ from app.models.knowledge import (
 )
 from app.models.user import User
 from app.services.model_capabilities import model_kinds
+from app.services.knowledge_embedding_service import suggested_embedding_dimensions
 from app.services.agent_governance_service import append_governance_audit_event
 from app.services.bounded_io import BoundedIOError, read_upload_bounded
 from app.services.knowledge_connector_service import (
@@ -179,23 +180,6 @@ class AccessGrantBody(BaseModel):
 class KnowledgeAccessBody(BaseModel):
     access_type: str = Field(pattern=r"^(public|private)$")
     grants: list[AccessGrantBody] = Field(default_factory=list, max_length=5000)
-
-
-def _suggested_embedding_dimensions(external_id: str) -> int:
-    lowered = (external_id or "").casefold()
-    if "text-embedding-3-large" in lowered:
-        return 3072
-    if "text-embedding-3-small" in lowered or "ada-002" in lowered:
-        return 1536
-    if "gemini-embedding" in lowered:
-        return 3072
-    if "qwen3-embedding-8b" in lowered:
-        return 4096
-    if "qwen3-embedding" in lowered:
-        return 2560
-    if "mistral-embed" in lowered or "codestral-embed" in lowered:
-        return 1024
-    return 1536
 
 
 def _embedding_fingerprint(provider: str, model: str, dimensions: int) -> str:
@@ -836,7 +820,7 @@ async def list_knowledge_embedding_models(
         )
         if "embeddings" not in kinds:
             continue
-        dimensions = _suggested_embedding_dimensions(model.external_id or "")
+        dimensions = suggested_embedding_dimensions(model.external_id or "")
         models.append(
             {
                 "id": model.id,

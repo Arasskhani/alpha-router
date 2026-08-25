@@ -117,6 +117,7 @@ export type ProjectConfig = {
   revision: number;
   customPrompt?: string | null;
   memoryEnabled: boolean;
+  memoryAutoCapture: boolean;
   groundingPolicy: Record<string, unknown>;
   createdAt?: string | null;
 };
@@ -166,6 +167,8 @@ export function projectResourceTooManyFilesMessage(selectedCount: number): strin
   );
 }
 
+export type ProjectMemoryOrigin = "manual" | "auto_chat";
+
 export type ProjectMemory = {
   id: string;
   projectId: string;
@@ -173,9 +176,19 @@ export type ProjectMemory = {
   sourceType?: string | null;
   sourceId?: string | null;
   enabled: boolean;
+  origin: ProjectMemoryOrigin;
+  category: string;
+  sensitivity?: string | null;
+  salience?: number | null;
+  confidence?: number | null;
+  useCount?: number | null;
+  sourceSessionId?: string | null;
+  sourceSessionTitle?: string | null;
+  sourceMessageId?: string | null;
   createdByUserId?: number | null;
   createdAt?: string | null;
   updatedAt?: string | null;
+  lastUsedAt?: string | null;
 };
 
 export type MemoryGrant = {
@@ -378,7 +391,12 @@ export async function getProjectConfig(projectId: string): Promise<ProjectConfig
 
 export async function updateProjectConfig(
   projectId: string,
-  body: { customPrompt?: string | null; memoryEnabled?: boolean; groundingPolicy?: Record<string, unknown> },
+  body: {
+    customPrompt?: string | null;
+    memoryEnabled?: boolean;
+    memoryAutoCapture?: boolean;
+    groundingPolicy?: Record<string, unknown>;
+  },
 ): Promise<ProjectConfig> {
   return api(`/api/projects/${encodeURIComponent(projectId)}/config`, {
     method: "PUT",
@@ -392,6 +410,7 @@ export type ProjectConfigVersion = {
   revision: number;
   customPrompt?: string | null;
   memoryEnabled: boolean;
+  memoryAutoCapture: boolean;
   groundingPolicy: Record<string, unknown>;
   createdByUserId?: number | null;
   createdAt?: string | null;
@@ -461,8 +480,34 @@ export async function deleteProjectResource(
 
 export async function listProjectMemories(
   projectId: string,
+  opts?: {
+    origin?: "manual" | "auto";
+    category?: string;
+    limit?: number;
+    offset?: number;
+  },
 ): Promise<{ memories: ProjectMemory[]; total: number }> {
-  return api(`/api/projects/${encodeURIComponent(projectId)}/memories`);
+  const params = new URLSearchParams();
+  if (opts?.origin) params.set("origin", opts.origin);
+  if (opts?.category) params.set("category", opts.category);
+  if (opts?.limit != null) params.set("limit", String(opts.limit));
+  if (opts?.offset != null) params.set("offset", String(opts.offset));
+  const qs = params.toString();
+  return api(`/api/projects/${encodeURIComponent(projectId)}/memories${qs ? `?${qs}` : ""}`);
+}
+
+export async function deleteAllAutoProjectMemories(
+  projectId: string,
+): Promise<{ deleted: number }> {
+  return api(`/api/projects/${encodeURIComponent(projectId)}/memories`, {
+    method: "DELETE",
+  });
+}
+
+export async function exportProjectMemories(
+  projectId: string,
+): Promise<{ memories: ProjectMemory[]; total: number }> {
+  return api(`/api/projects/${encodeURIComponent(projectId)}/memories/export`);
 }
 
 export async function createProjectMemory(

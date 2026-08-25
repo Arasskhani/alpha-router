@@ -20,6 +20,7 @@ from app.api import (
     admin_agent_governance,
     admin_agents,
     admin_knowledge,
+    admin_memory,
     agents,
     auth,
     authentication,
@@ -741,6 +742,7 @@ app.include_router(admin_agent_evaluations.router)
 app.include_router(admin_agent_governance.router)
 app.include_router(admin_agents.router)
 app.include_router(admin_knowledge.router)
+app.include_router(admin_memory.router)
 app.include_router(agents.router)
 app.include_router(user_routes.router)
 app.include_router(user_media.router)

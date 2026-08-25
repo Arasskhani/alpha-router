@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import uuid
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -25,6 +26,7 @@ from app.services.agent_routing_service import (
     route_agent,
 )
 from app.services.agent_prompt_service import citation_validation_safe_response
+from app.services import agent_runtime_service
 from app.services.agent_runtime_service import (
     AgentRuntimeUnavailable,
     finalize_agent_completion,
@@ -40,6 +42,7 @@ from app.services.knowledge_retrieval_service import (
 )
 from app.services.model_access_service import ModelAccessSubject
 from app.services.resource_access_service import ResourceAccessSubject
+from app.services.user_memory_service import create_memory
 
 
 async def _session_factory():
@@ -484,8 +487,77 @@ async def _test_private_mode_disables_agent_rag_unless_published_policy_allows_i
         await engine.dispose()
 
 
+async def _test_project_agent_turn_gets_no_personal_memory() -> None:
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            user = await _user(db, "project-agent-user")
+            model = await _model(db)
+            assistant, version = await _agent(
+                db,
+                slug="project-memory-assistant",
+                name="Project Memory Assistant",
+                model=model,
+                keywords=["ledger"],
+            )
+            version.memory_policy = {"enabled": True, "max_items": 5}
+            await db.flush()
+            await create_memory(db, user.id, "Prefers black coffee with no sugar")
+            await db.flush()
+
+            resource_subject = ResourceAccessSubject(user_id=user.id)
+            model_subject = ModelAccessSubject(user_id=user.id)
+            messages = [{"role": "user", "content": "What runs the ledger?"}]
+            calls: list[int] = []
+
+            async def tracked_retrieve(db_arg, user_id, *, query, max_items):
+                del db_arg, query, max_items
+                calls.append(user_id)
+                return ("Prefers black coffee with no sugar",)
+
+            with patch.object(
+                agent_runtime_service, "retrieve_memories", tracked_retrieve
+            ):
+                shared = await plan_agent_turn(
+                    db,
+                    messages=messages,
+                    resource_subject=resource_subject,
+                    model_subject=model_subject,
+                    agent_id=assistant.id,
+                    personal_memory_allowed=False,
+                    knowledge_retriever=FakeRetriever(answerable=True),
+                )
+                assert shared.status == "ready"
+                assert calls == []
+                shared_prompt = "\n".join(
+                    str(message["content"]) for message in shared.prompt.messages
+                )
+                assert "black coffee" not in shared_prompt
+
+                personal = await plan_agent_turn(
+                    db,
+                    messages=messages,
+                    resource_subject=resource_subject,
+                    model_subject=model_subject,
+                    agent_id=assistant.id,
+                    knowledge_retriever=FakeRetriever(answerable=True),
+                )
+                assert personal.status == "ready"
+                assert calls == [user.id]
+                personal_prompt = "\n".join(
+                    str(message["content"]) for message in personal.prompt.messages
+                )
+                assert "black coffee" in personal_prompt
+    finally:
+        await engine.dispose()
+
+
 def test_router_prefers_explicit_and_handles_ambiguity():
     asyncio.run(_test_router_prefers_explicit_and_handles_ambiguity())
+
+
+def test_project_agent_turn_gets_no_personal_memory():
+    asyncio.run(_test_project_agent_turn_gets_no_personal_memory())
 
 
 def test_pinned_previously_published_version_is_resolved():

@@ -324,8 +324,8 @@ export const userManualSections: DocSection[] = [
             Rename, delete, or move sessions into <strong>folders</strong> from the chat sidebar.
           </li>
           <li>
-            Sidebar groups recent activity (for example today vs older). Search finds sessions and, when available,
-            message content on the server.
+            Sidebar groups recent activity: today, 1–3 days ago (scrollable), 3–7 days ago, and older than 7 days.
+            Search finds sessions and, when available, message content on the server.
           </li>
           <li>
             Switching sessions loads messages as needed. Long threads support scroll-to-bottom when you are not pinned
@@ -559,7 +559,8 @@ export const userManualSections: DocSection[] = [
       <>
         <h2>Memory</h2>
         <p>
-          Personalization has two additive context layers for non-private chats (they never replace session messages):
+          Personalization and Memory are two additive context layers for non-private chats (they never replace session
+          messages):
         </p>
         <ul>
           <li>
@@ -567,16 +568,29 @@ export const userManualSections: DocSection[] = [
             Report to). Read-only in Settings → Personalization; managed by admins or directory sync.
           </li>
           <li>
-            <strong>Saved memories</strong> — short facts you explicitly save. Toggle referencing, edit, or delete in
-            Settings → Personalization.
+            <strong>Automatic memory</strong> — durable facts learned from your non-private chats (preferences,
+            constraints, health notes you discussed, recurring work context). Learning is silent. Manage it in Settings
+            → Memory.
           </li>
         </ul>
         <ul>
-          <li>Private mode chats do not receive profile context or memories.</li>
+          <li>
+            <strong>Use my memories in chat</strong> (on by default) — inject relevant memories into new non-private
+            turns.
+          </li>
+          <li>
+            <strong>Automatically learn new things about me</strong> (on by default) — extract new facts after a
+            conversation. Turn this off to stop learning while still using existing memories.
+          </li>
+          <li>Private mode chats do not receive profile context or memories, and are never mined.</li>
+          <li>
+            You can disable, delete, or export memories. Deleting a fact also prevents it from being learned again from
+            old chats. Delete-all does the same for every fact.
+          </li>
         </ul>
         <Note>
-          Only save facts you are comfortable keeping on the server for your account. Prefer concise durable facts over
-          pasting full conversations.
+          Memories outlive individual chats. Prefer this for durable facts you are comfortable keeping on the server
+          for your account.
         </Note>
       </>
     ),
@@ -759,6 +773,35 @@ export const userManualSections: DocSection[] = [
           Room messages never become memory. Resource excerpts and memory are injected only into AI chats of this
           project — never into Rooms, and never into your personal <code>/app/chat</code> sessions.
         </p>
+        <h4>Automatic project memory</h4>
+        <p>
+          With <strong>Automatically learn from project chats</strong> enabled in Settings, the assistant quietly keeps
+          durable team facts it picks up from the project's AI chats — decisions, conventions, the stack, deadlines,
+          responsibilities, client constraints — and reuses them in later turns so you do not have to repeat them.
+        </p>
+        <ul>
+          <li>
+            Learned facts belong to the <strong>project</strong>, not to you: every member sees them, and each fact
+            records who contributed it and which chat it came from.
+          </li>
+          <li>
+            Only the AI chat tab is mined. Rooms, private chats, and your personal chats outside the project are never
+            read.
+          </li>
+          <li>
+            Personal and sensitive details — health, finances, and private facts about individuals — are dropped and
+            never stored as project memory, even if they were mentioned in the chat.
+          </li>
+          <li>
+            Your <strong>personal</strong> memory is never used inside a project chat, and a project chat never adds
+            anything to it. The two are fully separated.
+          </li>
+          <li>
+            In Settings, Owners can filter Manual vs Learned facts, disable or delete a single fact, or use{" "}
+            <strong>Delete all learned facts</strong> to clear everything the assistant learned while keeping
+            hand-written facts. A deleted fact is not learned again from the same chats.
+          </li>
+        </ul>
         <h3>Invitations</h3>
         <p>
           The Primary Owner and Owners create a link (Contributor or Viewer only — never Owner or Primary Owner). Share
@@ -873,8 +916,12 @@ export const userManualSections: DocSection[] = [
           <li>
             View read-only account profile fields (Company, Department, Job title, Report to) used in non-private chats
           </li>
-          <li>Toggle whether saved memories are referenced in non-private chats</li>
-          <li>Add, edit, enable/disable, or delete explicit memories</li>
+        </ul>
+        <h3>Memory</h3>
+        <ul>
+          <li>Toggle whether memories are referenced in non-private chats (default on)</li>
+          <li>Toggle whether new facts are learned automatically (default on)</li>
+          <li>Review, disable, delete, or export learned memories; delete-all asks for three confirmations</li>
         </ul>
         <h3>Data Control</h3>
         <ul>

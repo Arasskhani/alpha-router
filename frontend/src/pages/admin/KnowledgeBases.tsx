@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { api } from "../../api";
 import AdminPage from "../../components/AdminPage";
 import ResourceAccessEditor from "../../components/admin/ResourceAccessEditor";
+import SearchableModelSelect from "../../components/admin/SearchableModelSelect";
 import Modal from "../../components/Modal";
 import RowActionsMenu, { RowAction } from "../../components/RowActionsMenu";
 import { useConfirm } from "../../context/ConfirmContext";
@@ -12,6 +13,7 @@ import {
   humanAgentStatus,
   readableDate,
 } from "../../lib/agentPlatform";
+import { embeddingModelOptionLabel } from "../../lib/embeddingDimensions";
 
 const MAX_KNOWLEDGE_UPLOAD_FILES = 20;
 
@@ -761,22 +763,25 @@ export default function KnowledgeBases() {
                     <p>Agents retrieve only from an active indexed release, not from uploaded/approved files alone.</p>
                   </div>
                 </div>
-                <label>
+                <label className="knowledge-embed-picker">
                   Embedding model for indexing
-                  <select
+                  <SearchableModelSelect
+                    ariaLabel="Embedding model for indexing"
                     value={selectedEmbeddingId}
                     disabled={busy || embeddingModels.length === 0}
-                    onChange={(e) => setSelectedEmbeddingId(e.target.value)}
-                  >
-                    {embeddingModels.length === 0 ? (
-                      <option value="">No enabled embedding models found</option>
-                    ) : null}
-                    {embeddingModels.map((model) => (
-                      <option key={model.id} value={String(model.id)}>
-                        {model.external_id} · {model.provider} · {model.suggested_dimensions}d
-                      </option>
-                    ))}
-                  </select>
+                    allowEmpty={false}
+                    emptyLabel="No enabled embedding models found"
+                    placeholder="Search embedding models…"
+                    options={embeddingModels.map((model) => ({
+                      value: String(model.id),
+                      label: embeddingModelOptionLabel(
+                        model.external_id,
+                        model.provider,
+                        model.suggested_dimensions,
+                      ),
+                    }))}
+                    onChange={setSelectedEmbeddingId}
+                  />
                 </label>
                 <div className="table-wrap">
                   <table>

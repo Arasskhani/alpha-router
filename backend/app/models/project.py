@@ -10,6 +10,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -270,6 +271,9 @@ class ProjectConfigVersion(Base):
     revision = Column(Integer, nullable=False)
     custom_prompt = Column(Text, nullable=True)
     memory_enabled = Column(Boolean, nullable=False, default=True)
+    memory_auto_capture = Column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
     grounding_policy = Column(JsonDocument, nullable=False, default=dict)
     created_by_user_id = Column(
         Integer,
@@ -280,12 +284,22 @@ class ProjectConfigVersion(Base):
 
 
 class ProjectMemory(Base):
-    """Explicit, provenance-tracked memory items scoped to a single project."""
+    """Project-scoped memory items: owner-authored facts plus facts learned
+    automatically from the project AI chat tab."""
 
     __tablename__ = "project_memories"
     __table_args__ = (
         UniqueConstraint("project_id", "content_hash", name="uq_project_memories_project_hash"),
         Index("ix_project_memories_project_enabled", "project_id", "enabled"),
+        Index(
+            "ix_project_memories_project_enabled_salience",
+            "project_id",
+            "enabled",
+            "salience",
+        ),
+        Index("ix_project_memories_embedding_status", "embedding_status"),
+        Index("ix_project_memories_expires_at", "expires_at"),
+        Index("ix_project_memories_deleted_at", "deleted_at"),
     )
 
     id = Column(String(36), primary_key=True)
@@ -297,10 +311,42 @@ class ProjectMemory(Base):
     )
     content = Column(Text, nullable=False)
     content_hash = Column(String(64), nullable=False)
+    # "manual" for owner-authored facts, "auto_chat" for extracted facts.
     source_type = Column(String(32), nullable=False, default="manual")
     source_id = Column(String(128), nullable=True)
     authority = Column(String(32), nullable=False, default="user")
     enabled = Column(Boolean, nullable=False, default=True)
+    category = Column(String(32), nullable=False, default="other", server_default="other")
+    sensitivity = Column(
+        String(16), nullable=False, default="normal", server_default="normal"
+    )
+    confidence = Column(Float, nullable=False, default=0.5, server_default="0.5")
+    salience = Column(Float, nullable=False, default=0.5, server_default="0.5")
+    expires_at = Column(DateTime, nullable=True)
+    last_used_at = Column(DateTime, nullable=True)
+    use_count = Column(Integer, nullable=False, default=0, server_default="0")
+    source_session_id = Column(
+        String(36),
+        ForeignKey("chat_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    source_message_id = Column(
+        String(36),
+        ForeignKey("chat_messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    supersedes_id = Column(
+        String(36),
+        ForeignKey("project_memories.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    embedding_status = Column(
+        String(16), nullable=False, default="pending", server_default="pending"
+    )
+    embedding_model = Column(String(255), nullable=True)
+    embedding_dims = Column(Integer, nullable=True)
+    indexed_at = Column(DateTime, nullable=True)
+    deleted_at = Column(DateTime, nullable=True)
     created_by_user_id = Column(
         Integer,
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -312,6 +358,112 @@ class ProjectMemory(Base):
         nullable=False,
         default=datetime.datetime.utcnow,
         onupdate=datetime.datetime.utcnow,
+    )
+
+
+class ProjectMemoryJob(Base):
+    """Debounced per-session extraction job for automatic project memory.
+
+    Keyed on (project_id, session_id) rather than the posting member, so
+    concurrent members in one thread coalesce into a single job.
+    """
+
+    __tablename__ = "project_memory_jobs"
+
+    id = Column(String(36), primary_key=True)
+    project_id = Column(
+        String(36),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    session_id = Column(
+        String(36),
+        ForeignKey("chat_sessions.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    status = Column(String(16), nullable=False, default="pending")
+    watermark_sequence = Column(Integer, nullable=False, default=0)
+    extracted_sequence = Column(Integer, nullable=False, default=0)
+    run_after = Column(DateTime, nullable=False, index=True)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    max_attempts = Column(Integer, nullable=False, default=5)
+    lease_expires_at = Column(DateTime, nullable=True)
+    worker_id = Column(String(64), nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_project_memory_jobs_status_run", "status", "run_after"),
+        Index(
+            "ux_project_memory_jobs_open",
+            "project_id",
+            "session_id",
+            unique=True,
+            sqlite_where=text("status IN ('pending', 'retry')"),
+            postgresql_where=text("status IN ('pending', 'retry')"),
+        ),
+    )
+
+
+class ProjectMemoryEvent(Base):
+    """Append-only audit trail for project memory mutations (no memory text)."""
+
+    __tablename__ = "project_memory_events"
+
+    id = Column(String(36), primary_key=True)
+    project_id = Column(
+        String(36),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    memory_id = Column(
+        String(36),
+        ForeignKey("project_memories.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    event_type = Column(String(32), nullable=False)
+    actor = Column(String(16), nullable=False, default="system")
+    actor_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    session_id = Column(String(36), nullable=True)
+    detail = Column(JsonDocument, nullable=False, default=dict)
+    created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+
+    __table_args__ = (Index("ix_project_memory_events_created", "created_at"),)
+
+
+class ProjectMemorySuppression(Base):
+    """Blocks a deleted project fact from being re-learned from old chats."""
+
+    __tablename__ = "project_memory_suppressions"
+
+    id = Column(String(36), primary_key=True)
+    project_id = Column(
+        String(36),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    content_hash = Column(String(64), nullable=False, index=True)
+    vector_indexed = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "content_hash",
+            name="ux_project_memory_suppressions_project_hash",
+        ),
+        Index("ix_project_memory_suppressions_expires", "expires_at"),
     )
 
 

@@ -88,12 +88,161 @@ class KnowledgeWorker:
                 logger.exception("Knowledge job heartbeat failed for %s", job_id)
 
     async def process_message(self, message: QueueMessage) -> JobProcessResult:
+        if message.event_type == "memory.job.ready":
+            return await self._process_memory_job(message, scope="user")
+        if message.event_type == "project_memory.job.ready":
+            return await self._process_memory_job(message, scope="project")
         if message.event_type != "knowledge.job.ready":
             error = f"Unsupported Knowledge event type: {message.event_type}"
             await publish_dead_letter(self.redis, message, error=error)
             await acknowledge_message(self.redis, message.stream_id)
             return JobProcessResult(outcome="dead", error=error)
+        return await self._process_knowledge_job(message)
 
+    async def _process_memory_job(
+        self, message: QueueMessage, *, scope: str
+    ) -> JobProcessResult:
+        from app.services.memory_extraction_service import ExtractionParseError
+        from app.services.observability import observe_memory_extract_job
+
+        if scope == "project":
+            from app.models.project import ProjectMemoryJob as job_model
+            from app.services.project_memory_extraction_service import (
+                handle_project_memory_extraction as handle_extraction,
+            )
+            from app.services.project_memory_job_service import (
+                claim_job,
+                complete_job,
+                fail_job,
+                heartbeat_job,
+            )
+        else:
+            from app.models.chat import UserMemoryJob as job_model
+            from app.services.memory_extraction_service import (
+                handle_memory_extraction as handle_extraction,
+            )
+            from app.services.memory_job_service import (
+                claim_job,
+                complete_job,
+                fail_job,
+                heartbeat_job,
+            )
+
+        job_id = str(message.payload.get("job_id") or message.aggregate_id or "")
+        if not job_id:
+            error = "Memory queue message does not identify a job"
+            await publish_dead_letter(self.redis, message, error=error)
+            await acknowledge_message(self.redis, message.stream_id)
+            return JobProcessResult(outcome="dead", error=error)
+
+        async with self.session_factory() as db:
+            job = await claim_job(
+                db,
+                job_id=job_id,
+                worker_id=self.consumer_name,
+            )
+            existing = job or await db.get(job_model, job_id)
+            await db.commit()
+        if job is None:
+            if existing is None:
+                error = f"Memory job not found: {job_id}"
+                await publish_dead_letter(self.redis, message, error=error)
+                await acknowledge_message(self.redis, message.stream_id)
+                return JobProcessResult(outcome="dead", job_id=job_id, error=error)
+            await acknowledge_message(self.redis, message.stream_id)
+            observe_memory_extract_job(outcome="duplicate", scope=scope)
+            return JobProcessResult(outcome="duplicate", job_id=job_id)
+
+        stop_heartbeat = asyncio.Event()
+
+        async def _heartbeat() -> None:
+            interval = max(1, get_settings().memory_job_lease_seconds // 3)
+            while not stop_heartbeat.is_set():
+                try:
+                    await asyncio.wait_for(stop_heartbeat.wait(), timeout=interval)
+                    break
+                except TimeoutError:
+                    pass
+                try:
+                    async with self.session_factory() as db:
+                        current = await db.get(job_model, job.id)
+                        if current is None or not await heartbeat_job(
+                            db, current, worker_id=self.consumer_name
+                        ):
+                            await db.rollback()
+                            return
+                        await db.commit()
+                except Exception:
+                    logger.exception("Memory job heartbeat failed for %s", job.id)
+
+        heartbeat_task = asyncio.create_task(_heartbeat())
+        failure: Exception | None = None
+        retryable = True
+        started = asyncio.get_running_loop().time()
+        try:
+            async with self.session_factory() as db:
+                current = await db.get(job_model, job.id)
+                if current is None:
+                    raise ValueError("Memory job disappeared during execution")
+                await handle_extraction(db, current)
+                await db.commit()
+        except ExtractionParseError as exc:
+            failure = exc
+            retryable = False
+        except Exception as exc:
+            failure = exc
+        stop_heartbeat.set()
+        await heartbeat_task
+        duration = max(0.0, asyncio.get_running_loop().time() - started)
+
+        if failure is None:
+            async with self.session_factory() as db:
+                current = await db.get(job_model, job.id)
+                if current is None or not await complete_job(
+                    db,
+                    current,
+                    worker_id=self.consumer_name,
+                    extracted_sequence=int(current.extracted_sequence or 0),
+                ):
+                    await db.rollback()
+                    failure = RuntimeError("Memory job lease was lost before completion")
+                else:
+                    await db.commit()
+
+        if failure is not None:
+            async with self.session_factory() as db:
+                current = await db.get(job_model, job.id)
+                if current is None:
+                    result_status = "dead"
+                else:
+                    result = await fail_job(
+                        db,
+                        current,
+                        worker_id=self.consumer_name,
+                        error=failure,
+                        retryable=retryable,
+                    )
+                    result_status = result.status
+                    await db.commit()
+            if result_status == "dead":
+                await publish_dead_letter(self.redis, message, error=str(failure))
+            await acknowledge_message(self.redis, message.stream_id)
+            observe_memory_extract_job(
+                outcome=result_status, duration_seconds=duration, scope=scope
+            )
+            return JobProcessResult(
+                outcome=result_status,
+                job_id=job.id,
+                error=str(failure),
+            )
+
+        await acknowledge_message(self.redis, message.stream_id)
+        observe_memory_extract_job(
+            outcome="succeeded", duration_seconds=duration, scope=scope
+        )
+        return JobProcessResult(outcome="succeeded", job_id=job.id)
+
+    async def _process_knowledge_job(self, message: QueueMessage) -> JobProcessResult:
         job_id = str(message.payload.get("job_id") or message.aggregate_id or "")
         if not job_id:
             error = "Knowledge queue message does not identify a job"

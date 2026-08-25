@@ -48,6 +48,7 @@ class UserPrefsPatchIn(BaseModel):
     reply_notify_away: bool | None = None
     reply_notify_sound: bool | None = None
     memory_enabled: bool | None = None
+    memory_auto_capture: bool | None = None
 
 
 class ChatSessionCreateIn(BaseModel):

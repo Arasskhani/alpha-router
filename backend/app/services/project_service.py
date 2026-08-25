@@ -520,6 +520,7 @@ async def _purge_project_rows(
     object_store: Any | None = None,
 ) -> None:
     from app.services.project_media_service import cleanup_project_media_storage
+    from app.services.project_memory_service import purge_project_memory_index
 
     await cleanup_project_media_storage(
         db, project.id, object_store=object_store
@@ -527,6 +528,9 @@ async def _purge_project_rows(
     await db.execute(
         delete(ProjectMediaAsset).where(ProjectMediaAsset.project_id == project.id)
     )
+    # Qdrant is a derived index outside the Postgres cascade, so drop the
+    # project's vectors explicitly before the rows disappear.
+    await purge_project_memory_index(project.id)
     await db.delete(project)
     await db.flush()
 

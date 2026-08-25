@@ -78,7 +78,9 @@ from app.services.project_memory_service import (
     ProjectMemoryValidationError,
     create_project_memory,
     create_memory_grant,
+    delete_all_auto_project_memories,
     delete_project_memory,
+    export_project_memories,
     list_memory_grants,
     list_project_memories,
     revoke_memory_grant,
@@ -87,6 +89,7 @@ from app.services.project_memory_service import (
 from app.services.project_access_service import (
     ProjectAccessError,
     can_view_project_activity,
+    require_capability,
     resolve_project_access,
 )
 from app.services.project_service import (
@@ -1393,6 +1396,7 @@ async def delete_project_media_endpoint(
 class ProjectConfigIn(BaseModel):
     customPrompt: str | None = Field(default=None, max_length=12000)
     memoryEnabled: bool = True
+    memoryAutoCapture: bool = True
     groundingPolicy: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1410,6 +1414,7 @@ async def get_project_config(
         "revision": config.revision,
         "customPrompt": config.custom_prompt,
         "memoryEnabled": config.memory_enabled,
+        "memoryAutoCapture": config.memory_auto_capture,
         "groundingPolicy": config.grounding_policy,
         "createdAt": config.created_at,
     }
@@ -1429,6 +1434,7 @@ async def update_project_config_endpoint(
             user=user,
             custom_prompt=body.customPrompt,
             memory_enabled=body.memoryEnabled,
+            memory_auto_capture=body.memoryAutoCapture,
             grounding_policy=body.groundingPolicy,
         )
         await db.commit()
@@ -1442,6 +1448,7 @@ async def update_project_config_endpoint(
         "configVersionId": version.id,
         "revision": version.revision,
         "memoryEnabled": bool(version.memory_enabled),
+        "memoryAutoCapture": bool(version.memory_auto_capture),
         "customPrompt": version.custom_prompt,
         "groundingPolicy": dict(version.grounding_policy or {}),
     }
@@ -1483,6 +1490,8 @@ async def get_project_memories(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     include_disabled: bool = Query(True),
+    origin: str | None = Query(None, pattern="^(manual|auto|auto_chat)$"),
+    category: str | None = Query(None, max_length=32),
     limit: int = Query(100, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
@@ -1491,10 +1500,39 @@ async def get_project_memories(
         project_id=project_id,
         user=user,
         include_disabled=include_disabled,
+        origin=origin,
+        category=category,
         limit=limit,
         offset=offset,
     )
     return {"memories": items, "total": total}
+
+
+@router.get("/{project_id}/memories/export")
+async def export_project_memories_endpoint(
+    project_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    items = await export_project_memories(db, project_id=project_id, user=user)
+    return {"memories": items, "total": len(items)}
+
+
+@router.delete("/{project_id}/memories")
+async def delete_all_auto_project_memories_endpoint(
+    project_id: str,
+    user: User = Depends(require_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        deleted = await delete_all_auto_project_memories(
+            db, project_id=project_id, user=user
+        )
+        await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
+    return {"deleted": deleted}
 
 
 @router.post("/{project_id}/memories")

@@ -123,7 +123,11 @@ from app.services.usage_accounting_service import (
     quote_usage,
 )
 from app.services.project_turn_planner import augment_messages_with_project_context
-from app.services.user_memory_service import augment_messages_with_memory
+from app.services.user_memory_service import (
+    augment_messages_with_memory,
+    extract_query_text,
+    record_memory_usage,
+)
 from app.services.user_profile_context_service import augment_messages_with_profile
 
 logger = logging.getLogger("app.services.proxy_service")
@@ -1356,6 +1360,25 @@ async def _resolve_private_mode_for_memory(
     ).effective
 
 
+async def _resolve_session_project_id(
+    db: AsyncSession, chat_session_id: str | None
+) -> str | None:
+    """Server-side project of a chat session; the client value is never trusted."""
+    sid = (chat_session_id or "").strip()
+    if not sid:
+        return None
+    try:
+        from app.models.chat import ChatSession
+
+        session = await db.get(ChatSession, sid)
+    except Exception:
+        logger.exception("Failed to resolve session project session_id=%s", sid)
+        return None
+    if session is None:
+        return None
+    return str(session.project_id) if session.project_id else None
+
+
 async def stream_chat(
     request: Request,
     body: dict,
@@ -1370,6 +1393,9 @@ async def stream_chat(
     resolved: ResolvedStreamContext | None = None,
 ) -> AsyncIterator[bytes]:
     messages = list(body.get("messages", []))
+    injected_memory_ids: list[str] = []
+    injected_project_memory_ids: list[str] = []
+    project_memory_project_id: str | None = None
     prompt_lang = detect_prompt_language(_extract_prompt_text(messages))
     success = True
     error_message = None
@@ -1607,28 +1633,41 @@ async def stream_chat(
         private_mode = await _resolve_private_mode_for_memory(db, body, user_id=user_id)
         if agent_turn is None:
             try:
+                chat_session_id = (
+                    str(body.get("chat_session_id") or "").strip() or None
+                )
+                session_project_id = await _resolve_session_project_id(
+                    db, chat_session_id
+                )
+                project_memory_project_id = session_project_id
                 messages = await augment_messages_with_profile(
                     db,
                     messages,
                     user_id=user_id,
                     private_mode=private_mode,
                 )
-                messages = await augment_messages_with_memory(
-                    db,
-                    messages,
-                    user_id=user_id,
-                    private_mode=private_mode,
-                )
+                if session_project_id is None:
+                    # A project thread is shared with teammates, so it sees only
+                    # project memory. Personal facts stay out of it entirely.
+                    messages = await augment_messages_with_memory(
+                        db,
+                        messages,
+                        user_id=user_id,
+                        private_mode=private_mode,
+                        query=extract_query_text(messages),
+                        injected_ids=injected_memory_ids,
+                    )
                 messages = await augment_messages_with_project_context(
                     db,
                     messages,
                     user_id=user_id,
-                    chat_session_id=str(body.get("chat_session_id") or "").strip()
-                    or None,
+                    chat_session_id=chat_session_id,
                     client_project_id=str(
                         body.get("project_id") or body.get("projectId") or ""
                     ).strip()
                     or None,
+                    query=extract_query_text(messages),
+                    injected_memory_ids=injected_project_memory_ids,
                 )
             except BaseException:
                 try:
@@ -2461,6 +2500,30 @@ async def stream_chat(
                     f"chat:{usage_events[0].idempotency_key}" if usage_events else None
                 )
             )
+            if user_id and injected_memory_ids:
+                try:
+                    async with AsyncSessionLocal() as mem_db:
+                        await record_memory_usage(
+                            mem_db, int(user_id), injected_memory_ids
+                        )
+                        await mem_db.commit()
+                except Exception:
+                    logger.exception("Failed to record memory usage")
+            if project_memory_project_id and injected_project_memory_ids:
+                try:
+                    from app.services.project_memory_service import (
+                        record_project_memory_usage,
+                    )
+
+                    async with AsyncSessionLocal() as mem_db:
+                        await record_project_memory_usage(
+                            mem_db,
+                            project_memory_project_id,
+                            injected_project_memory_ids,
+                        )
+                        await mem_db.commit()
+                except Exception:
+                    logger.exception("Failed to record project memory usage")
 
             stream_request_log_id: int | None = None
 

@@ -18,7 +18,7 @@ import {
   type ProjectRoomMessage,
 } from "../lib/projectRoomsApi";
 import { applyProjectRoomSync, sortProjectRooms } from "../lib/projectRoomSync";
-import { inputDirectionForText } from "../lib/textDirection";
+import { inputDirectionForText, messageDirectionForText } from "../lib/textDirection";
 
 type Props = {
   projectId: string;
@@ -65,6 +65,7 @@ export default function ProjectRooms({ projectId, canWrite, onHandoff }: Props) 
     () => rooms.find((room) => room.id === selectedId) ?? null,
     [rooms, selectedId],
   );
+  const draftDir = inputDirectionForText(draft, draft.length);
 
   const scrollToBottom = useCallback(() => {
     const el = transcriptRef.current;
@@ -386,14 +387,17 @@ export default function ProjectRooms({ projectId, canWrite, onHandoff }: Props) 
                 <p className="form-hint">No messages yet.</p>
               ) : (
                 messages.map((message) => (
-                  <article key={message.id || message.clientMessageId} className="project-rooms__msg">
+                  <article
+                    key={message.id || message.clientMessageId}
+                    className={`project-rooms__msg${message.mine ? " project-rooms__msg--mine" : ""}`}
+                  >
                     <div className="alpha-router-msg-author-label">
                       {message.authorDisplayName || "Member"}
                       {message.edited ? <span className="project-rooms__edited">Edited</span> : null}
                     </div>
                     <div className="project-rooms__bubble">
                       {message.replyToContent ? (
-                        <div className="project-rooms__quote">
+                        <div className="project-rooms__quote" dir={messageDirectionForText(message.replyToContent)}>
                           <strong>{message.replyToAuthor || "Member"}</strong>
                           <span>{message.replyToContent}</span>
                         </div>
@@ -402,6 +406,7 @@ export default function ProjectRooms({ projectId, canWrite, onHandoff }: Props) 
                         <div className="project-rooms__edit">
                           <textarea
                             value={editingText}
+                            dir={inputDirectionForText(editingText, editingText.length)}
                             onChange={(event) => setEditingText(event.target.value)}
                             rows={3}
                           />
@@ -425,7 +430,9 @@ export default function ProjectRooms({ projectId, canWrite, onHandoff }: Props) 
                           </div>
                         </div>
                       ) : (
-                        <div className="project-rooms__bubble-body">{message.content}</div>
+                        <div className="project-rooms__bubble-body" dir={messageDirectionForText(message.content)}>
+                          {message.content}
+                        </div>
                       )}
                     </div>
                     {canWrite && editingId !== message.id ? (
@@ -470,7 +477,7 @@ export default function ProjectRooms({ projectId, canWrite, onHandoff }: Props) 
                   <div className="project-rooms__reply-bar">
                     <div>
                       Replying to <strong>{replyTo.authorDisplayName || "Member"}</strong>
-                      <span>{replyTo.content}</span>
+                      <span dir={messageDirectionForText(replyTo.content)}>{replyTo.content}</span>
                     </div>
                     <button type="button" className="btn btn-ghost btn-sm" onClick={() => setReplyTo(null)}>
                       Cancel
@@ -480,6 +487,7 @@ export default function ProjectRooms({ projectId, canWrite, onHandoff }: Props) 
                 <div className="project-rooms__composer-row">
                   <textarea
                     value={draft}
+                    dir={draftDir}
                     onChange={(event) => setDraft(event.target.value)}
                     placeholder={replyTo ? "Write a reply…" : "Write to the room…"}
                     rows={3}

@@ -167,7 +167,7 @@ MENU_PATH_PREFIXES: dict[MenuKey, tuple[str, ...]] = {
     "plans": ("/admin/plans",),
     "authentication": ("/admin/authentication",),
     "smtp": ("/admin/smtp",),
-    "storage": ("/admin/storage-management", "/admin/retention-policy", "/admin/storage"),
+    "storage": ("/admin/storage-management", "/admin/retention-policy", "/admin/memory", "/admin/storage"),
     "reports": ("/admin/reports", "/admin/project-usage"),
     "api_logs": ("/admin/logs",),
     "operations": ("/admin/operations", "/admin/debug"),

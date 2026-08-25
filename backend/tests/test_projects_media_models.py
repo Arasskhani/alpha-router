@@ -6,9 +6,19 @@ import uuid
 from pathlib import Path
 
 import app.models  # noqa: F401
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from app.database import Base
 from app.models.project import ProjectMediaAsset
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+
+def _alembic_head() -> str:
+    """Current head, so adding a revision does not break this gate."""
+    backend_root = Path(__file__).resolve().parents[1]
+    config = Config(str(backend_root / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_root / "alembic"))
+    return ScriptDirectory.from_config(config).get_current_head()
 
 
 def test_project_media_asset_columns():
@@ -101,7 +111,7 @@ def test_migration_idempotent_and_creates_table():
                 "SELECT version_num FROM alembic_version"
             ).fetchone()
 
-            assert revision == ("a8b9c0d1e2f3",)
+            assert revision == (_alembic_head(),)
             assert "project_media_assets" in tables
 
             # Verify project_id columns exist on image/video tables

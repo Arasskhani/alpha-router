@@ -70,6 +70,7 @@ export const adminNavSections: NavSection[] = [
     items: [
       { to: "/admin/storage-management", label: "Storage Management", menuKey: "storage" },
       { to: "/admin/retention-policy", label: "Retention Policy", menuKey: "storage" },
+      { to: "/admin/memory", label: "Memory", menuKey: "storage" },
       { to: "/admin/reports", label: "Reports", menuKey: "reports" },
       { to: "/admin/project-usage", label: "Projects", menuKey: "reports" },
       { to: "/admin/logs", label: "API Logs", menuKey: "api_logs" },

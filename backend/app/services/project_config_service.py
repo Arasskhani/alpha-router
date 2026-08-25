@@ -36,6 +36,7 @@ class ProjectConfigSnapshot:
     revision: int
     custom_prompt: str | None
     memory_enabled: bool
+    memory_auto_capture: bool
     grounding_policy: dict
     created_at: str | None
 
@@ -74,6 +75,7 @@ def config_to_client(row: ProjectConfigVersion) -> dict:
         "revision": row.revision,
         "customPrompt": row.custom_prompt,
         "memoryEnabled": bool(row.memory_enabled),
+        "memoryAutoCapture": bool(row.memory_auto_capture),
         "groundingPolicy": dict(row.grounding_policy or {}),
         "createdByUserId": row.created_by_user_id,
         "createdAt": row.created_at.isoformat() if row.created_at else None,
@@ -98,24 +100,18 @@ async def get_active_config(
     if project is None:
         return None
 
-    if project.active_config_version_id is None:
-        # No config has been set yet — return defaults.
-        return ProjectConfigSnapshot(
-            config_version_id=None,
-            revision=0,
-            custom_prompt=None,
-            memory_enabled=True,
-            grounding_policy={},
-            created_at=None,
-        )
-
-    version = await db.get(ProjectConfigVersion, project.active_config_version_id)
+    version = (
+        await db.get(ProjectConfigVersion, project.active_config_version_id)
+        if project.active_config_version_id is not None
+        else None
+    )
     if version is None:
         return ProjectConfigSnapshot(
             config_version_id=None,
             revision=0,
             custom_prompt=None,
             memory_enabled=True,
+            memory_auto_capture=True,
             grounding_policy={},
             created_at=None,
         )
@@ -125,6 +121,7 @@ async def get_active_config(
         revision=version.revision,
         custom_prompt=version.custom_prompt,
         memory_enabled=bool(version.memory_enabled),
+        memory_auto_capture=bool(version.memory_auto_capture),
         grounding_policy=dict(version.grounding_policy or {}),
         created_at=version.created_at.isoformat() if version.created_at else None,
     )
@@ -137,6 +134,7 @@ async def update_project_config(
     user: object,
     custom_prompt: str | None = None,
     memory_enabled: bool = True,
+    memory_auto_capture: bool = True,
     grounding_policy: dict | None = None,
 ) -> ProjectConfigVersion:
     """Create a new immutable config version and activate it (Owner only)."""
@@ -174,6 +172,7 @@ async def update_project_config(
         revision=next_revision,
         custom_prompt=prompt,
         memory_enabled=bool(memory_enabled),
+        memory_auto_capture=bool(memory_auto_capture),
         grounding_policy=policy,
         created_by_user_id=access.user_id,
         created_at=datetime.datetime.utcnow(),
@@ -194,12 +193,27 @@ async def update_project_config(
             "config_version_id": version.id,
             "revision": next_revision,
             "memory_enabled": bool(memory_enabled),
+            "memory_auto_capture": bool(memory_auto_capture),
             "custom_prompt_set": prompt is not None,
             "grounding_policy_keys": list(policy.keys()),
         },
     )
 
     return version
+
+
+async def load_project_memory_flags(
+    db: AsyncSession, project_id: str
+) -> tuple[bool, bool]:
+    """(memory_enabled, memory_auto_capture) with no ACL check, for background jobs."""
+
+    project = await db.get(Project, project_id)
+    if project is None or not project.active_config_version_id:
+        return True, True
+    version = await db.get(ProjectConfigVersion, project.active_config_version_id)
+    if version is None:
+        return True, True
+    return bool(version.memory_enabled), bool(version.memory_auto_capture)
 
 
 async def list_config_versions(

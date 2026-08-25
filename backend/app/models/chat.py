@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -15,6 +16,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     or_,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import JSON
@@ -210,7 +212,7 @@ class UserChatPrefs(Base):
 
 
 class UserMemory(Base):
-    """Durable facts the user explicitly saved for cross-session personalization."""
+    """Durable facts about the user for cross-session personalization."""
 
     __tablename__ = "user_memories"
 
@@ -220,11 +222,38 @@ class UserMemory(Base):
     )
     content = Column(Text, nullable=False)
     enabled = Column(Boolean, nullable=False, default=True)
+    origin = Column(String(16), nullable=False, default="auto", server_default="auto")
+    category = Column(String(32), nullable=False, default="other", server_default="other")
+    sensitivity = Column(
+        String(16), nullable=False, default="normal", server_default="normal"
+    )
+    confidence = Column(Float, nullable=False, default=0.5, server_default="0.5")
+    salience = Column(Float, nullable=False, default=0.5, server_default="0.5")
+    expires_at = Column(DateTime, nullable=True)
+    last_used_at = Column(DateTime, nullable=True)
+    use_count = Column(Integer, nullable=False, default=0, server_default="0")
     source_session_id = Column(
         String(36),
         ForeignKey("chat_sessions.id", ondelete="SET NULL"),
         nullable=True,
     )
+    source_message_id = Column(
+        String(36),
+        ForeignKey("chat_messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    supersedes_id = Column(
+        String(36),
+        ForeignKey("user_memories.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    embedding_status = Column(
+        String(16), nullable=False, default="pending", server_default="pending"
+    )
+    embedding_model = Column(String(255), nullable=True)
+    embedding_dims = Column(Integer, nullable=True)
+    indexed_at = Column(DateTime, nullable=True)
+    deleted_at = Column(DateTime, nullable=True)
     content_hash = Column(String(64), nullable=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
@@ -232,4 +261,99 @@ class UserMemory(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "content_hash", name="ux_user_memories_user_hash"),
         Index("ix_user_memories_user_updated", "user_id", "updated_at"),
+        Index(
+            "ix_user_memories_user_enabled_salience",
+            "user_id",
+            "enabled",
+            "salience",
+        ),
+        Index("ix_user_memories_embedding_status", "embedding_status"),
+        Index("ix_user_memories_expires_at", "expires_at"),
+        Index("ix_user_memories_deleted_at", "deleted_at"),
+    )
+
+
+class UserMemoryJob(Base):
+    """Debounced per-session extraction job for automatic memory capture."""
+
+    __tablename__ = "user_memory_jobs"
+
+    id = Column(String(36), primary_key=True)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    session_id = Column(
+        String(36),
+        ForeignKey("chat_sessions.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    status = Column(String(16), nullable=False, default="pending")
+    watermark_sequence = Column(Integer, nullable=False, default=0)
+    extracted_sequence = Column(Integer, nullable=False, default=0)
+    run_after = Column(DateTime, nullable=False, index=True)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    max_attempts = Column(Integer, nullable=False, default=5)
+    lease_expires_at = Column(DateTime, nullable=True)
+    worker_id = Column(String(64), nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_user_memory_jobs_status_run", "status", "run_after"),
+        Index(
+            "ux_user_memory_jobs_open",
+            "user_id",
+            "session_id",
+            unique=True,
+            sqlite_where=text("status IN ('pending', 'retry')"),
+            postgresql_where=text("status IN ('pending', 'retry')"),
+        ),
+    )
+
+
+class UserMemoryEvent(Base):
+    """Append-only audit trail for memory mutations (no memory text)."""
+
+    __tablename__ = "user_memory_events"
+
+    id = Column(String(36), primary_key=True)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    memory_id = Column(
+        String(36),
+        ForeignKey("user_memories.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    event_type = Column(String(32), nullable=False)
+    actor = Column(String(16), nullable=False, default="system")
+    session_id = Column(String(36), nullable=True)
+    detail = Column(JsonDocument, nullable=False, default=dict)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    __table_args__ = (Index("ix_user_memory_events_created", "created_at"),)
+
+
+class UserMemorySuppression(Base):
+    """Blocks a deleted fact from being re-learned."""
+
+    __tablename__ = "user_memory_suppressions"
+
+    id = Column(String(36), primary_key=True)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    content_hash = Column(String(64), nullable=False, index=True)
+    vector_indexed = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "content_hash", name="ux_user_memory_suppressions_user_hash"
+        ),
+        Index("ix_user_memory_suppressions_expires", "expires_at"),
     )

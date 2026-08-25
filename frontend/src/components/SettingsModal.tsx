@@ -19,21 +19,20 @@ import { BROWSER_EVENT_NAMES } from "../lib/brand";
 import { broadcastChatRefresh } from "../lib/chatLeader";
 import { requestReplyNotifyPermission } from "../lib/replyReadyNotify";
 import {
-  MAX_MEMORY_CHARS,
-  createUserMemory,
   deleteAllUserMemories,
   deleteUserMemory,
+  exportUserMemories,
   fetchUserMemoriesBundle,
-  normalizeMemoryDraft,
   updateUserMemory,
   type UserMemory,
   type UserProfileContext,
 } from "../lib/userMemories";
+import { useConfirm } from "../context/ConfirmContext";
 import Modal from "./Modal";
 import PersonalApiKeyPanel from "./PersonalApiKeyPanel";
 import ThemeSegmentedControl from "./ThemeSegmentedControl";
 
-type TabId = "general" | "personalization" | "data-control" | "security" | "api-keys";
+type TabId = "general" | "personalization" | "memory" | "data-control" | "security" | "api-keys";
 
 type SecurityStatus = {
   auth_provider: string;
@@ -59,6 +58,7 @@ type ImportResult = {
 const TABS: { id: TabId; label: string }[] = [
   { id: "general", label: "General" },
   { id: "personalization", label: "Personalization" },
+  { id: "memory", label: "Memory" },
   { id: "data-control", label: "Data Control" },
   { id: "security", label: "Security" },
   { id: "api-keys", label: "API Key" },
@@ -105,9 +105,10 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange }: P
 
         <section className="settings-panel" aria-live="polite">
           {tab === "general" && (
-            <GeneralPanel theme={theme} setTheme={onThemeChange} onSaved={onClose} />
+            <GeneralPanel theme={theme} setTheme={onThemeChange} />
           )}
           {tab === "personalization" && <PersonalizationPanel />}
+          {tab === "memory" && <MemoryPanel />}
           {tab === "data-control" && <DataControlPanel />}
           {tab === "security" && <SecurityPanel />}
           {tab === "api-keys" && <PersonalApiKeyPanel />}
@@ -122,34 +123,63 @@ function SettingsRow({
   hint,
   children,
   detail,
+  dimmed,
+  stacked,
 }: {
-  title: string;
-  hint?: string;
-  children: ReactNode;
+  title: ReactNode;
+  hint?: ReactNode;
+  children?: ReactNode;
   detail?: ReactNode;
+  dimmed?: boolean;
+  stacked?: boolean;
 }) {
   return (
-    <div className={`settings-row-block${detail ? " settings-row-block--open" : ""}`}>
+    <div
+      className={`settings-row-block${detail ? " settings-row-block--open" : ""}${dimmed ? " is-dimmed" : ""}${stacked ? " settings-row-block--stacked" : ""}`}
+    >
       <div className="settings-row">
         <div className="settings-row__meta">
           <span className="settings-row__title">{title}</span>
           {hint ? <span className="settings-row__hint">{hint}</span> : null}
         </div>
-        <div className="settings-row__trail">{children}</div>
+        {children ? <div className="settings-row__trail">{children}</div> : null}
       </div>
       {detail ? <div className="settings-row__detail">{detail}</div> : null}
     </div>
   );
 }
 
+function SettingsToggle({
+  on,
+  disabled,
+  label,
+  onToggle,
+}: {
+  on: boolean;
+  disabled?: boolean;
+  label: string;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`alpha-router-toggle${on ? " on" : ""}`}
+      onClick={onToggle}
+      aria-label={label}
+      aria-pressed={on}
+      disabled={disabled}
+    >
+      <span className="alpha-router-toggle-knob" />
+    </button>
+  );
+}
+
 function GeneralPanel({
   theme,
   setTheme,
-  onSaved,
 }: {
   theme: UserTheme;
   setTheme?: (theme: UserTheme) => void;
-  onSaved?: () => void;
 }) {
   const [timezone, setTimezone] = useState("UTC");
   const [voiceLang, setVoiceLang] = useState("en");
@@ -158,8 +188,6 @@ function GeneralPanel({
   const [replyNotifySound, setReplyNotifySound] = useState(true);
   const [notifyPermissionHint, setNotifyPermissionHint] = useState("");
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const persianFontOptions = useMemo(() => listPersianFontOptions(), []);
 
@@ -198,9 +226,30 @@ function GeneralPanel({
     };
   }, []);
 
+  async function persistPrefs(updates: {
+    timezone?: string;
+    voice_recording_language?: string;
+    persian_font?: string;
+    reply_notify_away?: boolean;
+    reply_notify_sound?: boolean;
+  }) {
+    setError("");
+    try {
+      if (updates.persian_font !== undefined) {
+        updates = { ...updates, persian_font: normalizePersianFontId(updates.persian_font) };
+        applyPersianFontToChat(updates.persian_font);
+      }
+      await saveUserPrefs(updates);
+      window.dispatchEvent(new CustomEvent(BROWSER_EVENT_NAMES.userPrefsSaved));
+    } catch (err) {
+      setError(formatApiError(err));
+    }
+  }
+
   async function onReplyNotifyAwayChange(checked: boolean) {
     setReplyNotifyAway(checked);
     setNotifyPermissionHint("");
+    void persistPrefs({ reply_notify_away: checked });
     if (!checked) return;
     const permission = await requestReplyNotifyPermission();
     if (permission === "denied") {
@@ -211,32 +260,6 @@ function GeneralPanel({
       setNotifyPermissionHint(
         "This browser does not support OS notifications. In-app toasts still work when another chat is open.",
       );
-    }
-  }
-
-  async function onSave(e: FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    setMessage("");
-    setError("");
-    try {
-      const fontId = normalizePersianFontId(persianFont);
-      await saveUserPrefs({
-        timezone,
-        language: "en",
-        voice_recording_language: voiceLang,
-        persian_font: fontId,
-        reply_notify_away: replyNotifyAway,
-        reply_notify_sound: replyNotifySound,
-      });
-      applyPersianFontToChat(fontId);
-      setMessage("Preferences saved.");
-      window.dispatchEvent(new CustomEvent(BROWSER_EVENT_NAMES.userPrefsSaved));
-      onSaved?.();
-    } catch (err) {
-      setError(formatApiError(err));
-    } finally {
-      setSaving(false);
     }
   }
 
@@ -273,7 +296,7 @@ function GeneralPanel({
   if (loading) return <p className="muted">Loading preferences…</p>;
 
   return (
-    <form className="settings-section" onSubmit={onSave}>
+    <div className="settings-section">
       <h2>General</h2>
       <p className="settings-section-desc">Account preferences and appearance.</p>
 
@@ -281,7 +304,11 @@ function GeneralPanel({
         <SettingsRow title="Time zone">
           <select
             value={timezone}
-            onChange={(e) => setTimezone(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value;
+              setTimezone(value);
+              void persistPrefs({ timezone: value });
+            }}
             className="settings-row__control"
           >
             {zoneOptions.map((z) => (
@@ -301,7 +328,11 @@ function GeneralPanel({
         <SettingsRow title="Voice language" hint="Used for voice transcription">
           <select
             value={voiceLang}
-            onChange={(e) => setVoiceLang(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value;
+              setVoiceLang(value);
+              void persistPrefs({ voice_recording_language: value });
+            }}
             className="settings-row__control"
           >
             <option value="en">English</option>
@@ -312,7 +343,11 @@ function GeneralPanel({
         <SettingsRow title="Persian font" hint="Chat messages and composer">
           <select
             value={persianFont}
-            onChange={(e) => setPersianFont(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value;
+              setPersianFont(value);
+              void persistPrefs({ persian_font: value });
+            }}
             className="settings-row__control"
           >
             <option value="">System default</option>
@@ -329,15 +364,20 @@ function GeneralPanel({
           hint="Only when the tab is in the background or you are in another chat"
           detail={
             <>
-              <label className="settings-inline-check">
-                <input
-                  type="checkbox"
-                  checked={replyNotifySound}
+              <div className="settings-inline-check">
+                <SettingsToggle
+                  on={replyNotifySound}
                   disabled={!replyNotifyAway}
-                  onChange={(e) => setReplyNotifySound(e.target.checked)}
+                  label="Play sound"
+                  onToggle={() => {
+                    if (!replyNotifyAway) return;
+                    const next = !replyNotifySound;
+                    setReplyNotifySound(next);
+                    void persistPrefs({ reply_notify_sound: next });
+                  }}
                 />
                 <span>Play sound</span>
-              </label>
+              </div>
               {notifyPermissionHint ? (
                 <p className="settings-row__hint" style={{ margin: "0.45rem 0 0" }}>
                   {notifyPermissionHint}
@@ -346,11 +386,10 @@ function GeneralPanel({
             </>
           }
         >
-          <input
-            type="checkbox"
-            checked={replyNotifyAway}
-            onChange={(e) => void onReplyNotifyAwayChange(e.target.checked)}
-            aria-label="Notify when a chat finishes only when away"
+          <SettingsToggle
+            on={replyNotifyAway}
+            label="Notify when a chat finishes only when away"
+            onToggle={() => void onReplyNotifyAwayChange(!replyNotifyAway)}
           />
         </SettingsRow>
 
@@ -375,29 +414,96 @@ function GeneralPanel({
       </div>
 
       {error && <p className="settings-error">{error}</p>}
-      {message && <p className="settings-success">{message}</p>}
-
-      <div className="settings-actions">
-        <button type="submit" className="btn btn-sm btn-ghost" disabled={saving}>
-          {saving ? "Saving…" : "Save"}
-        </button>
-      </div>
-    </form>
+    </div>
   );
 }
 
+function relativeTime(ms: number | null | undefined): string {
+  if (!ms) return "";
+  const delta = Date.now() - ms;
+  const minutes = Math.round(delta / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.round(days / 30);
+  return `${months}mo ago`;
+}
+
 function PersonalizationPanel() {
-  const [memoryEnabled, setMemoryEnabled] = useState(true);
-  const [memories, setMemories] = useState<UserMemory[]>([]);
   const [profile, setProfile] = useState<UserProfileContext>({
     company: null,
     department: null,
     job_title: null,
     reporting_to: null,
   });
-  const [draft, setDraft] = useState("");
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const bundle = await fetchUserMemoriesBundle({ limit: 1, offset: 0 });
+        if (cancelled) return;
+        setProfile(bundle.profile);
+      } catch (err) {
+        if (!cancelled) setError(formatApiError(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (loading) return <p className="muted">Loading personalization…</p>;
+
+  const hasProfile = !!(
+    profile.company || profile.department || profile.job_title || profile.reporting_to
+  );
+
+  return (
+    <div className="settings-section">
+      <h2>Personalization</h2>
+      <p className="settings-section-desc">
+        Read-only directory fields from your account. They are added alongside chat history in non-private chats and
+        never replace it. Private chats never receive this context.
+      </p>
+      <div className="settings-list">
+        <SettingsRow title="Company" hint="From User Properties">
+          <span className="settings-row__readonly">{profile.company || "—"}</span>
+        </SettingsRow>
+        <SettingsRow title="Department" hint="From User Properties">
+          <span className="settings-row__readonly">{profile.department || "—"}</span>
+        </SettingsRow>
+        <SettingsRow title="Job title" hint="From User Properties">
+          <span className="settings-row__readonly">{profile.job_title || "—"}</span>
+        </SettingsRow>
+        <SettingsRow title="Report to" hint="From User Properties">
+          <span className="settings-row__readonly">{profile.reporting_to || "—"}</span>
+        </SettingsRow>
+      </div>
+      {!hasProfile ? (
+        <p className="muted" style={{ marginTop: "0.45rem" }}>
+          No company, department, job title, or report-to is set on your account yet.
+        </p>
+      ) : null}
+      {error ? <p className="settings-error">{error}</p> : null}
+    </div>
+  );
+}
+
+function MemoryPanel() {
+  const { confirm } = useConfirm();
+  const [memoryEnabled, setMemoryEnabled] = useState(true);
+  const [autoCapture, setAutoCapture] = useState(true);
+  const [memories, setMemories] = useState<UserMemory[]>([]);
+  const [featureEnabled, setFeatureEnabled] = useState(true);
+  const [extractionConfigured, setExtractionConfigured] = useState(true);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -406,11 +512,13 @@ function PersonalizationPanel() {
   async function refresh() {
     const [prefs, bundle] = await Promise.all([
       fetchUserPrefsFromServer(),
-      fetchUserMemoriesBundle(),
+      fetchUserMemoriesBundle({ limit: 200, offset: 0 }),
     ]);
     setMemoryEnabled(prefs.memory_enabled !== false);
+    setAutoCapture(prefs.memory_auto_capture !== false);
     setMemories(bundle.memories);
-    setProfile(bundle.profile);
+    setFeatureEnabled(bundle.feature_enabled);
+    setExtractionConfigured(bundle.extraction_configured);
   }
 
   useEffect(() => {
@@ -445,46 +553,15 @@ function PersonalizationPanel() {
     }
   }
 
-  async function onAddMemory() {
-    const content = normalizeMemoryDraft(draft);
-    if (!content) {
-      setError("Enter something to remember.");
-      return;
-    }
-    if (content.length > MAX_MEMORY_CHARS) {
-      setError(`Memory must be at most ${MAX_MEMORY_CHARS} characters.`);
-      return;
-    }
+  async function onToggleCapture(checked: boolean) {
     setBusy(true);
     setError("");
     setMessage("");
     try {
-      await createUserMemory(content);
-      setDraft("");
-      await refresh();
-      setMessage("Memory saved.");
-    } catch (err) {
-      setError(formatApiError(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onSaveEdit(id: string) {
-    const content = normalizeMemoryDraft(editDraft);
-    if (!content) {
-      setError("Memory content cannot be empty.");
-      return;
-    }
-    setBusy(true);
-    setError("");
-    setMessage("");
-    try {
-      await updateUserMemory(id, { content });
-      setEditingId(null);
-      setEditDraft("");
-      await refresh();
-      setMessage("Memory updated.");
+      await saveUserPrefs({ memory_auto_capture: checked });
+      setAutoCapture(checked);
+      window.dispatchEvent(new CustomEvent(BROWSER_EVENT_NAMES.userPrefsSaved));
+      setMessage(checked ? "New memories can be learned from chat." : "Automatic learning is off.");
     } catch (err) {
       setError(formatApiError(err));
     } finally {
@@ -495,6 +572,7 @@ function PersonalizationPanel() {
   async function onToggleItem(item: UserMemory, enabled: boolean) {
     setBusy(true);
     setError("");
+    setMessage("");
     try {
       await updateUserMemory(item.id, { enabled });
       await refresh();
@@ -506,7 +584,13 @@ function PersonalizationPanel() {
   }
 
   async function onDeleteItem(id: string) {
-    if (!window.confirm("Delete this memory?")) return;
+    const ok = await confirm({
+      title: "Delete memory",
+      message: "Delete this memory? It will not be learned again from old chats.",
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
     setBusy(true);
     setError("");
     setMessage("");
@@ -521,8 +605,58 @@ function PersonalizationPanel() {
     }
   }
 
+  async function onExport() {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await exportUserMemories();
+      setMessage("Memories exported.");
+    } catch (err) {
+      setError(formatApiError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onDeleteAll() {
-    if (!window.confirm("Delete all saved memories? This cannot be undone.")) return;
+    const count = memories.length;
+    if (count === 0) {
+      setError("");
+      setMessage("No memories to delete.");
+      return;
+    }
+    const countLabel = count === 1 ? "1 memory" : `${count.toLocaleString()} memories`;
+    const step1 = await confirm({
+      title: "Delete all memories — step 1 of 3",
+      message:
+        `This permanently deletes every saved memory for your account (currently ${countLabel}). ` +
+        "Your chat history is not removed. Continue?",
+      confirmLabel: "Continue",
+      cancelLabel: "Cancel",
+      danger: true,
+    });
+    if (!step1) return;
+    const step2 = await confirm({
+      title: "Delete all memories — step 2 of 3",
+      message:
+        "Alpha Router will stop using these facts in future chats. Deleted memories are blocked from being " +
+        "learned again from the same old conversations. This cannot be undone. Proceed?",
+      confirmLabel: "I understand — continue",
+      cancelLabel: "Stop",
+      danger: true,
+    });
+    if (!step2) return;
+    const step3 = await confirm({
+      title: "Delete all memories — final confirmation",
+      message:
+        `Final step: permanently delete all ${countLabel} now. There is no undo inside Alpharouter. ` +
+        "Confirm only if you are certain.",
+      confirmLabel: "Delete all memories now",
+      cancelLabel: "Cancel",
+      danger: true,
+    });
+    if (!step3) return;
     setBusy(true);
     setError("");
     setMessage("");
@@ -537,173 +671,121 @@ function PersonalizationPanel() {
     }
   }
 
-  if (loading) return <p className="muted">Loading personalization…</p>;
-
-  const hasProfile = !!(
-    profile.company || profile.department || profile.job_title || profile.reporting_to
-  );
+  if (loading) return <p className="muted">Loading memory…</p>;
 
   return (
     <div className="settings-section">
-      <h2>Personalization</h2>
+      <h2>Memory</h2>
       <p className="settings-section-desc">
-        Account profile fields and explicit memories are added alongside chat history — they never replace it.
-        Private chats never use profile context or memories.
+        Durable facts learned from non-private chats. They are added alongside chat history and never replace it.
+        Private chats never use memories, and learning is silent.
       </p>
 
-      <h3 className="settings-subsection-title">From your account</h3>
-      <p className="settings-section-desc">
-        Read-only directory fields. Managed by administrators (or directory sync). Used in non-private chats when present.
-      </p>
-      <div className="settings-list">
-        <SettingsRow title="Company" hint="From User Properties">
-          <span className="settings-row__readonly">{profile.company || "—"}</span>
-        </SettingsRow>
-        <SettingsRow title="Department" hint="From User Properties">
-          <span className="settings-row__readonly">{profile.department || "—"}</span>
-        </SettingsRow>
-        <SettingsRow title="Job title" hint="From User Properties">
-          <span className="settings-row__readonly">{profile.job_title || "—"}</span>
-        </SettingsRow>
-        <SettingsRow title="Report to" hint="From User Properties">
-          <span className="settings-row__readonly">{profile.reporting_to || "—"}</span>
-        </SettingsRow>
-      </div>
-      {!hasProfile ? (
-        <p className="muted" style={{ marginTop: "0.45rem" }}>
-          No company, department, job title, or report-to is set on your account yet.
+      {!featureEnabled || !extractionConfigured ? (
+        <p className="settings-memory-banner">
+          Automatic memory is currently unavailable
+          {!featureEnabled ? " (disabled by your administrator)" : " (not configured yet)"}. Existing memories can still
+          be viewed, disabled, or deleted.
         </p>
       ) : null}
 
-      <h3 className="settings-subsection-title">Saved memories</h3>
       <div className="settings-list">
         <SettingsRow
-          title="Reference saved memories"
-          hint="Inject enabled memories into non-private chat completions"
+          title="Use my memories in chat"
+          hint="Reference saved facts in non-private chats"
         >
-          <input
-            type="checkbox"
-            checked={memoryEnabled}
+          <SettingsToggle
+            on={memoryEnabled}
             disabled={busy}
-            onChange={(e) => void onToggleMemory(e.target.checked)}
-            aria-label="Reference saved memories"
+            label="Use my memories in chat"
+            onToggle={() => void onToggleMemory(!memoryEnabled)}
           />
         </SettingsRow>
-
-        <SettingsRow title="Add a memory" hint={`Up to ${MAX_MEMORY_CHARS} characters`}>
-          <button
-            type="button"
-            className="settings-row__action"
-            disabled={busy || !normalizeMemoryDraft(draft)}
-            onClick={() => void onAddMemory()}
-          >
-            Save
-          </button>
+        <SettingsRow
+          title="Automatically learn new things about me"
+          hint="Learn durable facts from non-private chats. Private chats are excluded."
+        >
+          <SettingsToggle
+            on={autoCapture}
+            disabled={busy}
+            label="Automatically learn new things about me"
+            onToggle={() => void onToggleCapture(!autoCapture)}
+          />
         </SettingsRow>
       </div>
 
-      <textarea
-        className="settings-memory-draft"
-        value={draft}
-        maxLength={MAX_MEMORY_CHARS}
-        rows={3}
-        placeholder="What should be remembered?"
-        disabled={busy}
-        onChange={(e) => setDraft(e.target.value)}
-      />
-
-      <div className="settings-memory-list" role="list">
+      <h3 className="settings-subsection-title">What Alpha Router remembers</h3>
+      <div className="settings-list" role="list">
         {memories.length === 0 ? (
-          <p className="muted">No memories saved yet.</p>
+          <div className="settings-row">
+            <span className="settings-row__hint">
+              No memories yet. After a few non-private conversations, durable facts about you will appear here
+              automatically.
+            </span>
+          </div>
         ) : (
           memories.map((item) => (
-            <div key={item.id} className="settings-memory-item" role="listitem">
-              {editingId === item.id ? (
+            <SettingsRow
+              key={item.id}
+              dimmed={!item.enabled}
+              stacked
+              title={item.content}
+              hint={
                 <>
-                  <textarea
-                    className="settings-memory-draft"
-                    value={editDraft}
-                    maxLength={MAX_MEMORY_CHARS}
-                    rows={3}
-                    disabled={busy}
-                    onChange={(e) => setEditDraft(e.target.value)}
-                  />
-                  <div className="settings-memory-item__actions">
-                    <button
-                      type="button"
-                      className="settings-row__action"
-                      disabled={busy}
-                      onClick={() => void onSaveEdit(item.id)}
-                    >
-                      Save
-                    </button>
-                    <button
-                      type="button"
-                      className="settings-row__action"
-                      disabled={busy}
-                      onClick={() => {
-                        setEditingId(null);
-                        setEditDraft("");
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  </div>
+                  <span className="settings-memory-chip">{item.category || "other"}</span>
+                  {relativeTime(item.created_at) ? <span>{relativeTime(item.created_at)}</span> : null}
+                  {item.source_session_id ? (
+                    <a href={`/app/chat?session=${encodeURIComponent(item.source_session_id)}`}>
+                      {item.source_session_title || "Open source chat"}
+                    </a>
+                  ) : item.source_session_title ? (
+                    <span>From {item.source_session_title}</span>
+                  ) : null}
                 </>
-              ) : (
-                <>
-                  <p className={`settings-memory-item__text${!item.enabled ? " is-disabled" : ""}`}>
-                    {item.content}
-                  </p>
-                  <div className="settings-memory-item__actions">
-                    <label className="settings-inline-check">
-                      <input
-                        type="checkbox"
-                        checked={item.enabled}
-                        disabled={busy}
-                        onChange={(e) => void onToggleItem(item, e.target.checked)}
-                      />
-                      <span>Enabled</span>
-                    </label>
-                    <button
-                      type="button"
-                      className="settings-row__action"
-                      disabled={busy}
-                      onClick={() => {
-                        setEditingId(item.id);
-                        setEditDraft(item.content);
-                      }}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      className="settings-row__action"
-                      disabled={busy}
-                      onClick={() => void onDeleteItem(item.id)}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+              }
+            >
+              <button
+                type="button"
+                className="settings-row__action"
+                disabled={busy}
+                onClick={() => void onToggleItem(item, !item.enabled)}
+              >
+                {item.enabled ? "Disable" : "Enable"}
+              </button>
+              <button
+                type="button"
+                className="settings-row__action settings-row__action--danger"
+                disabled={busy}
+                onClick={() => void onDeleteItem(item.id)}
+              >
+                Delete
+              </button>
+            </SettingsRow>
           ))
         )}
       </div>
 
-      {memories.length > 0 ? (
-        <div className="settings-actions" style={{ marginTop: "0.75rem" }}>
+      <h3 className="settings-subsection-title">Danger zone</h3>
+      <div className="settings-list">
+        <SettingsRow title="Export my memories" hint="Download every saved fact as JSON">
+          <button type="button" className="settings-row__action" disabled={busy} onClick={() => void onExport()}>
+            Export
+          </button>
+        </SettingsRow>
+        <SettingsRow
+          title="Delete all memories"
+          hint="Permanently delete every memory. Old chats will not be re-learned."
+        >
           <button
             type="button"
-            className="btn btn-sm btn-ghost"
+            className="settings-row__action settings-row__action--danger"
             disabled={busy}
             onClick={() => void onDeleteAll()}
           >
-            Delete all memories
+            Delete all
           </button>
-        </div>
-      ) : null}
+        </SettingsRow>
+      </div>
 
       {error && <p className="settings-error">{error}</p>}
       {message && <p className="settings-success">{message}</p>}

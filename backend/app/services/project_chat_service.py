@@ -525,6 +525,19 @@ async def append_project_chat_message(
             row.revision = int(row.revision or 1) + 1
             row.updated_at = dt.datetime.utcnow()
             await db.flush()
+            if msg.role == "assistant":
+                # Only a completed exchange is worth mining, and the check stays
+                # ahead of the import so member turns pay nothing on this path.
+                from app.services.project_memory_job_service import (
+                    maybe_schedule_from_append,
+                )
+
+                await maybe_schedule_from_append(
+                    db,
+                    session=row,
+                    messages=[{"role": msg.role}],
+                    watermark_sequence=seq,
+                )
             return _project_message_to_client(msg)
         except (IntegrityError, OperationalError) as exc:
             last_error = exc

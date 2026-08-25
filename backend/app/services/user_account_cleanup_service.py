@@ -156,6 +156,12 @@ async def purge_user_account_data(
     )
 
     await db.execute(delete(UserMemory).where(UserMemory.user_id == user_id))
+    try:
+        from app.services.user_memory_service import purge_user_memory_index
+
+        await purge_user_memory_index(user_id)
+    except Exception:
+        logger.exception("Failed to purge memory vectors for user_id=%s", user_id)
     await db.execute(delete(ChatFolder).where(ChatFolder.user_id == user_id))
 
     chat_deleted = 1

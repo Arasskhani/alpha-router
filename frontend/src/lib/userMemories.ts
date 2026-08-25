@@ -1,14 +1,19 @@
-/** Client helpers for explicit user memories (`/api/user/memories`). */
+/** Client helpers for automatic user memories (`/api/user/memories`). */
 
-import { api } from "../api";
+import { api, authFetch } from "../api";
 
 export type UserMemory = {
   id: string;
   content: string;
   enabled: boolean;
+  origin?: string;
+  category?: string;
+  sensitivity?: string;
   source_session_id?: string | null;
+  source_session_title?: string | null;
   created_at: number;
   updated_at: number;
+  last_used_at?: number | null;
 };
 
 export type UserProfileContext = {
@@ -25,22 +30,39 @@ function trimOrNull(value: unknown): string | null {
 export type UserMemoriesPayload = {
   memories: UserMemory[];
   total: number;
+  limit?: number;
+  offset?: number;
   profile?: UserProfileContext;
+  auto_capture?: boolean;
+  memory_enabled?: boolean;
+  feature_enabled?: boolean;
+  extraction_configured?: boolean;
 };
 
-export const MAX_MEMORY_CHARS = 500;
-
-export function normalizeMemoryDraft(raw: string): string {
-  return raw.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").replace(/\s+/g, " ").trim();
-}
-
-export async function fetchUserMemoriesBundle(): Promise<{
+export async function fetchUserMemoriesBundle(opts?: {
+  limit?: number;
+  offset?: number;
+}): Promise<{
   memories: UserMemory[];
   profile: UserProfileContext;
+  total: number;
+  auto_capture: boolean;
+  memory_enabled: boolean;
+  feature_enabled: boolean;
+  extraction_configured: boolean;
 }> {
-  const data = await api<UserMemoriesPayload>("/api/user/memories");
+  const params = new URLSearchParams();
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  if (opts?.offset) params.set("offset", String(opts.offset));
+  const qs = params.toString();
+  const data = await api<UserMemoriesPayload>(`/api/user/memories${qs ? `?${qs}` : ""}`);
   return {
     memories: Array.isArray(data.memories) ? data.memories : [],
+    total: typeof data.total === "number" ? data.total : 0,
+    auto_capture: data.auto_capture !== false,
+    memory_enabled: data.memory_enabled !== false,
+    feature_enabled: data.feature_enabled !== false,
+    extraction_configured: data.extraction_configured !== false,
     profile: {
       company: trimOrNull(data.profile?.company),
       department: trimOrNull(data.profile?.department),
@@ -50,27 +72,18 @@ export async function fetchUserMemoriesBundle(): Promise<{
   };
 }
 
+export async function fetchUserMemoriesPage(limit: number, offset: number) {
+  return fetchUserMemoriesBundle({ limit, offset });
+}
+
 export async function listUserMemories(): Promise<UserMemory[]> {
   const data = await fetchUserMemoriesBundle();
   return data.memories;
 }
 
-export async function createUserMemory(
-  content: string,
-  opts?: { source_session_id?: string | null },
-): Promise<UserMemory> {
-  return api<UserMemory>("/api/user/memories", {
-    method: "POST",
-    body: JSON.stringify({
-      content,
-      source_session_id: opts?.source_session_id || undefined,
-    }),
-  });
-}
-
 export async function updateUserMemory(
   id: string,
-  updates: { content?: string; enabled?: boolean },
+  updates: { enabled?: boolean },
 ): Promise<UserMemory> {
   return api<UserMemory>(`/api/user/memories/${encodeURIComponent(id)}`, {
     method: "PATCH",
@@ -85,4 +98,20 @@ export async function deleteUserMemory(id: string): Promise<void> {
 export async function deleteAllUserMemories(): Promise<number> {
   const data = await api<{ deleted?: number }>("/api/user/memories", { method: "DELETE" });
   return typeof data.deleted === "number" ? data.deleted : 0;
+}
+
+export async function exportUserMemories(): Promise<void> {
+  const res = await authFetch("/api/user/memories/export");
+  if (!res.ok) {
+    throw new Error("Failed to export memories");
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "alpharouter-memories.json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }

@@ -23,6 +23,27 @@ from app.services.model_capabilities import model_kinds
 from app.services.secret_crypto import decrypt_secret
 
 
+def suggested_embedding_dimensions(external_id: str) -> int:
+    """Best-known dense size for a catalog embedding model id.
+
+    Keep in sync with frontend/src/lib/embeddingDimensions.ts.
+    """
+    lowered = (external_id or "").casefold()
+    if "text-embedding-3-large" in lowered:
+        return 3072
+    if "text-embedding-3-small" in lowered or "ada-002" in lowered:
+        return 1536
+    if "gemini-embedding" in lowered:
+        return 3072
+    if "qwen3-embedding-8b" in lowered:
+        return 4096
+    if "qwen3-embedding" in lowered:
+        return 2560
+    if "mistral-embed" in lowered or "codestral-embed" in lowered:
+        return 1024
+    return 1536
+
+
 class KnowledgeEmbeddingBackend(Protocol):
     async def embed(
         self,

@@ -84,6 +84,7 @@ import {
   withSessionMessagesActivity,
   sidebarTodayCutoffMs,
   sidebarOlderThan3DaysCutoffMs,
+  sidebarOlderThan7DaysCutoffMs,
   sidebarHydrateMinActivityMs,
 } from "../lib/chatStorage";
 import {
@@ -694,8 +695,12 @@ export default function ChatPanel({
   const [sessionsTotal, setSessionsTotal] = useState(0);
   const [sessionsLoadingMore, setSessionsLoadingMore] = useState(false);
   const [olderTotal, setOlderTotal] = useState(0);
-  const [pastDaysExpanded, setPastDaysExpanded] = useState(false);
+  const [midDaysTotal, setMidDaysTotal] = useState(0);
+  const [midDaysExpanded, setMidDaysExpanded] = useState(false);
   const [olderExpanded, setOlderExpanded] = useState(false);
+  const [midDaysLoading, setMidDaysLoading] = useState(false);
+  const [midDaysLoadingMore, setMidDaysLoadingMore] = useState(false);
+  const [midDaysLoadedCount, setMidDaysLoadedCount] = useState(0);
   const [olderLoading, setOlderLoading] = useState(false);
   const [olderLoadingMore, setOlderLoadingMore] = useState(false);
   const [olderLoadedCount, setOlderLoadedCount] = useState(0);
@@ -939,11 +944,24 @@ export default function ChatPanel({
       .sort((a, b) => sessionActivityAt(b) - sessionActivityAt(a));
   }, [filteredSessions, inSearchMode]);
 
-  const olderRootSessions = useMemo(() => {
+  const midDaysRootSessions = useMemo(() => {
     if (inSearchMode) return [];
     const threeDaysStart = sidebarOlderThan3DaysCutoffMs();
+    const sevenDaysStart = sidebarOlderThan7DaysCutoffMs();
     return filteredSessions
-      .filter((s) => !s.folderId && sessionActivityAt(s) < threeDaysStart)
+      .filter((s) => {
+        if (s.folderId) return false;
+        const activity = sessionActivityAt(s);
+        return activity >= sevenDaysStart && activity < threeDaysStart;
+      })
+      .sort((a, b) => sessionActivityAt(b) - sessionActivityAt(a));
+  }, [filteredSessions, inSearchMode]);
+
+  const olderRootSessions = useMemo(() => {
+    if (inSearchMode) return [];
+    const sevenDaysStart = sidebarOlderThan7DaysCutoffMs();
+    return filteredSessions
+      .filter((s) => !s.folderId && sessionActivityAt(s) < sevenDaysStart)
       .sort((a, b) => sessionActivityAt(b) - sessionActivityAt(a));
   }, [filteredSessions, inSearchMode]);
 
@@ -952,14 +970,26 @@ export default function ChatPanel({
     [filteredSessions, inSearchMode],
   );
 
-  const displayOlderCount = useMemo(() => {
+  const displayMidCount = useMemo(() => {
     if (inSearchMode) return 0;
     const threeDaysStart = sidebarOlderThan3DaysCutoffMs();
+    const sevenDaysStart = sidebarOlderThan7DaysCutoffMs();
+    const privateMid = sessions.filter((s) => {
+      if (!isPrivateChat(s) || s.folderId) return false;
+      const activity = sessionActivityAt(s);
+      return activity >= sevenDaysStart && activity < threeDaysStart;
+    }).length;
+    return Math.max(midDaysTotal + privateMid, midDaysRootSessions.length);
+  }, [sessions, midDaysTotal, midDaysRootSessions.length, inSearchMode]);
+
+  const displayOlderCount = useMemo(() => {
+    if (inSearchMode) return 0;
+    const sevenDaysStart = sidebarOlderThan7DaysCutoffMs();
     const privateOlder = sessions.filter(
-      (s) => isPrivateChat(s) && !s.folderId && sessionActivityAt(s) < threeDaysStart,
+      (s) => isPrivateChat(s) && !s.folderId && sessionActivityAt(s) < sevenDaysStart,
     ).length;
-    return Math.max(0, olderTotal) + privateOlder;
-  }, [sessions, olderTotal, inSearchMode]);
+    return Math.max(Math.max(0, olderTotal) + privateOlder, olderRootSessions.length);
+  }, [sessions, olderTotal, olderRootSessions.length, inSearchMode]);
 
   useEffect(() => {
     return onChatLeaderChange(setIsLeaderTab);
@@ -1962,15 +1992,43 @@ export default function ChatPanel({
           recentTotal = afterMigrate.total ?? nextSessions.length;
           olderTotalValue = afterMigrate.older_total ?? 0;
         }
+        let midDaysTotalValue = 0;
+        let midDaysLoaded = 0;
+        let olderThan7Value = 0;
+        if (!isProjectChat && olderTotalValue > 0) {
+          try {
+            const midRemote = await fetchUserChatsFromServer({
+              limit: 40,
+              min_activity_ms: sidebarOlderThan7DaysCutoffMs(),
+              max_activity_ms: sidebarOlderThan3DaysCutoffMs(),
+              retainKnownSessionIds: true,
+            });
+            if (gen !== hydrateGenRef.current) return;
+            midDaysTotalValue = midRemote.total ?? 0;
+            midDaysLoaded = midRemote.fetchedCount ?? 0;
+            olderThan7Value = Math.max(0, olderTotalValue - midDaysTotalValue);
+            if (midRemote.sessions.length) {
+              nextSessions = mergeRemoteChatSessions(nextSessions, midRemote.sessions);
+            }
+          } catch {
+            olderThan7Value = olderTotalValue;
+          }
+        }
         sessionsRef.current = nextSessions;
         commitServerListSync(nextSessions);
         setSessions(nextSessions);
         setFolders(nextFolders);
         setSessionsTotal(recentTotal);
-        setOlderTotal(olderTotalValue);
+        setMidDaysTotal(midDaysTotalValue);
+        setMidDaysLoadedCount(midDaysLoaded);
+        setOlderTotal(olderThan7Value);
         setOlderLoadedCount(0);
-        setPastDaysExpanded(false);
+        setMidDaysExpanded(false);
         setOlderExpanded(false);
+        setMidDaysLoading(false);
+        setMidDaysLoadingMore(false);
+        setOlderLoading(false);
+        setOlderLoadingMore(false);
         setChatsHydrated(true);
         setHydrateOutcome(nextSessions.length > 0 ? "ok" : "empty");
         setChatError("");
@@ -2227,6 +2285,40 @@ export default function ChatPanel({
     }
   }, [inSearchMode, sessions.length, sessionsLoadingMore, sessionsTotal, serverSearchQuery]);
 
+  const loadMidDaysChats = useCallback(
+    async (opts?: { append?: boolean }) => {
+      const append = !!opts?.append;
+      if (append) {
+        if (midDaysLoadingMore || midDaysLoadedCount >= midDaysTotal) return;
+        setMidDaysLoadingMore(true);
+      } else {
+        if (midDaysLoading) return;
+        setMidDaysLoading(true);
+      }
+      try {
+        const remote = await fetchUserChatsFromServer({
+          limit: 40,
+          min_activity_ms: sidebarOlderThan7DaysCutoffMs(),
+          max_activity_ms: sidebarOlderThan3DaysCutoffMs(),
+          offset: append ? midDaysLoadedCount : 0,
+          retainKnownSessionIds: true,
+        });
+        setSessions((prev) => {
+          const merged = mergeRemoteChatSessions(prev, remote.sessions);
+          sessionsRef.current = merged;
+          return merged;
+        });
+        const page = remote.fetchedCount ?? remote.sessions.length;
+        setMidDaysLoadedCount(append ? midDaysLoadedCount + page : page);
+        setMidDaysTotal(remote.total ?? midDaysTotal);
+      } finally {
+        if (append) setMidDaysLoadingMore(false);
+        else setMidDaysLoading(false);
+      }
+    },
+    [midDaysLoadedCount, midDaysLoading, midDaysLoadingMore, midDaysTotal],
+  );
+
   const loadOlderChats = useCallback(
     async (opts?: { append?: boolean }) => {
       const append = !!opts?.append;
@@ -2240,16 +2332,17 @@ export default function ChatPanel({
       try {
         const remote = await fetchUserChatsFromServer({
           limit: 40,
-          max_activity_ms: sidebarOlderThan3DaysCutoffMs(),
+          max_activity_ms: sidebarOlderThan7DaysCutoffMs(),
           offset: append ? olderLoadedCount : 0,
+          retainKnownSessionIds: true,
         });
         setSessions((prev) => {
           const merged = mergeRemoteChatSessions(prev, remote.sessions);
           sessionsRef.current = merged;
           return merged;
         });
-        const loaded = append ? olderLoadedCount + remote.sessions.length : remote.sessions.length;
-        setOlderLoadedCount(loaded);
+        const page = remote.fetchedCount ?? remote.sessions.length;
+        setOlderLoadedCount(append ? olderLoadedCount + page : page);
         setOlderTotal(remote.total ?? olderTotal);
       } finally {
         if (append) setOlderLoadingMore(false);
@@ -2259,9 +2352,16 @@ export default function ChatPanel({
     [olderLoadedCount, olderLoading, olderLoadingMore, olderTotal],
   );
 
-  const togglePastDaysSection = useCallback(() => {
-    setPastDaysExpanded((prev) => !prev);
-  }, []);
+  const toggleMidDaysSection = useCallback(() => {
+    if (midDaysExpanded) {
+      setMidDaysExpanded(false);
+      return;
+    }
+    setMidDaysExpanded(true);
+    if (midDaysLoadedCount === 0 && midDaysTotal > 0) {
+      void loadMidDaysChats();
+    }
+  }, [midDaysExpanded, midDaysLoadedCount, midDaysTotal, loadMidDaysChats]);
 
   const toggleOlderSection = useCallback(() => {
     if (olderExpanded) {
@@ -6234,13 +6334,14 @@ export default function ChatPanel({
                 <>
                   {todayRootSessions.length === 0 &&
                   pastDaysRootSessions.length === 0 &&
+                  displayMidCount === 0 &&
                   displayOlderCount === 0 ? (
                     <p className="alpha-router-history-empty">No conversations</p>
                   ) : (
                     <>
                       {todayRootSessions.length > 0 ? (
                         <>
-                          <div className="alpha-router-history-section-label">Today</div>
+                          <div className="alpha-router-history-section-label">today</div>
                           <ul className="alpha-router-history alpha-router-history-scroll">
                             {todayRootSessions.map((s) => (
                               <li key={s.id}>{renderSessionRow(s)}</li>
@@ -6249,24 +6350,50 @@ export default function ChatPanel({
                         </>
                       ) : null}
                       {pastDaysRootSessions.length > 0 ? (
+                        <>
+                          <div className="alpha-router-history-section-label">1–3 days ago</div>
+                          <ul className="alpha-router-history alpha-router-history-scroll alpha-router-history-past-days">
+                            {pastDaysRootSessions.map((s) => (
+                              <li key={s.id}>{renderSessionRow(s)}</li>
+                            ))}
+                          </ul>
+                        </>
+                      ) : null}
+                      {displayMidCount > 0 ? (
                         <div className="alpha-router-history-older">
                           <button
                             type="button"
                             className="alpha-router-history-older-toggle"
-                            onClick={() => togglePastDaysSection()}
-                            aria-expanded={pastDaysExpanded}
+                            onClick={() => toggleMidDaysSection()}
+                            aria-expanded={midDaysExpanded}
                           >
                             <span className="alpha-router-history-older-chevron">
-                              {pastDaysExpanded ? "▾" : "▸"}
+                              {midDaysExpanded ? "▾" : "▸"}
                             </span>
-                            1–3 days ago ({pastDaysRootSessions.length})
+                            3–7 days ago ({displayMidCount})
                           </button>
-                          {pastDaysExpanded ? (
-                            <ul className="alpha-router-history alpha-router-history-scroll alpha-router-history-older-list">
-                              {pastDaysRootSessions.map((s) => (
-                                <li key={s.id}>{renderSessionRow(s)}</li>
-                              ))}
-                            </ul>
+                          {midDaysExpanded ? (
+                            midDaysLoading && midDaysRootSessions.length === 0 ? (
+                              <p className="alpha-router-history-empty">Loading…</p>
+                            ) : (
+                              <>
+                                <ul className="alpha-router-history alpha-router-history-scroll alpha-router-history-older-list">
+                                  {midDaysRootSessions.map((s) => (
+                                    <li key={s.id}>{renderSessionRow(s)}</li>
+                                  ))}
+                                </ul>
+                                {midDaysLoadedCount < midDaysTotal ? (
+                                  <button
+                                    type="button"
+                                    className="alpha-router-history-older-more"
+                                    disabled={midDaysLoadingMore}
+                                    onClick={() => void loadMidDaysChats({ append: true })}
+                                  >
+                                    {midDaysLoadingMore ? "Loading…" : "Load more"}
+                                  </button>
+                                ) : null}
+                              </>
+                            )
                           ) : null}
                         </div>
                       ) : null}
@@ -6281,7 +6408,7 @@ export default function ChatPanel({
                             <span className="alpha-router-history-older-chevron">
                               {olderExpanded ? "▾" : "▸"}
                             </span>
-                            Older than 3 days ({displayOlderCount})
+                            older than 7 days ({displayOlderCount})
                           </button>
                           {olderExpanded ? (
                             olderLoading && olderRootSessions.length === 0 ? (

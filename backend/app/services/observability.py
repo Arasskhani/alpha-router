@@ -56,6 +56,8 @@ _KNOWN_EVENTS = frozenset(
         "evaluation_gate_passed",
         "knowledge_job_dead",
         "retention_purge_blocked",
+        "memory_extract_failed",
+        "memory_retrieval_fallback",
     }
 )
 _lock = Lock()
@@ -161,6 +163,51 @@ _EVALUATION_RUNS = PrometheusCounter(
     ("status", "trigger"),
     **_metric_kwargs,
 )
+_MEMORY_EXTRACT_JOBS = PrometheusCounter(
+    "alpharouter_memory_extract_jobs_total",
+    "Automatic memory extraction jobs by bounded outcome.",
+    ("outcome", "scope"),
+    **_metric_kwargs,
+)
+_MEMORY_EXTRACT_DURATION = Histogram(
+    "alpharouter_memory_extract_duration_seconds",
+    "Automatic memory extraction duration.",
+    ("scope",),
+    buckets=(0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60),
+    **_metric_kwargs,
+)
+_MEMORY_ITEMS = PrometheusCounter(
+    "alpharouter_memory_items_total",
+    "Memory consolidation operations by bounded op.",
+    ("op", "scope"),
+    **_metric_kwargs,
+)
+_MEMORY_RETRIEVAL_DURATION = Histogram(
+    "alpharouter_memory_retrieval_duration_seconds",
+    "Memory retrieval duration.",
+    ("scope",),
+    buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5),
+    **_metric_kwargs,
+)
+_MEMORY_RETRIEVAL_FALLBACK = PrometheusCounter(
+    "alpharouter_memory_retrieval_fallback_total",
+    "Memory retrieval fallbacks by bounded reason.",
+    ("reason", "scope"),
+    **_metric_kwargs,
+)
+_MEMORY_INJECTED = Histogram(
+    "alpharouter_memory_injected_items",
+    "Number of memory facts injected into a chat turn.",
+    ("scope",),
+    buckets=(0, 1, 2, 4, 6, 8, 12, 20, 30),
+    **_metric_kwargs,
+)
+_MEMORY_EMBEDDING_BACKLOG = Gauge(
+    "alpharouter_memory_embedding_backlog",
+    "Pending or failed memory embeddings awaiting index.",
+    multiprocess_mode="livemostrecent",
+    **_metric_kwargs,
+)
 _DEPENDENCY_READY = Gauge(
     "alpharouter_dependency_ready",
     "Dependency readiness (1 ready, 0 unavailable).",
@@ -258,6 +305,59 @@ def record_evaluation_run(*, status: str, trigger: str) -> None:
         increment("evaluation_gate_passed")
     elif status_label in {"failed", "error"}:
         increment("evaluation_gate_failed")
+
+
+_MEMORY_EXTRACT_OUTCOMES = frozenset(
+    {"succeeded", "failed", "skipped", "dead", "retry", "duplicate"}
+)
+_MEMORY_ITEM_OPS = frozenset(
+    {"add", "update", "supersede", "evict", "suppress-hit", "reject"}
+)
+_MEMORY_FALLBACK_REASONS = frozenset({"timeout_or_error", "unavailable", "unconfigured"})
+_MEMORY_SCOPES = frozenset({"user", "project"})
+
+
+def observe_memory_extract_job(
+    *, outcome: str, duration_seconds: float | None = None, scope: str = "user"
+) -> None:
+    label = _bounded_label(outcome, _MEMORY_EXTRACT_OUTCOMES)
+    scope_label = _bounded_label(scope, _MEMORY_SCOPES)
+    _MEMORY_EXTRACT_JOBS.labels(outcome=label, scope=scope_label).inc()
+    if duration_seconds is not None:
+        _MEMORY_EXTRACT_DURATION.labels(scope=scope_label).observe(
+            max(0.0, float(duration_seconds))
+        )
+    if label == "failed":
+        increment("memory_extract_failed")
+
+
+def observe_memory_item(op: str, *, scope: str = "user") -> None:
+    _MEMORY_ITEMS.labels(
+        op=_bounded_label(op, _MEMORY_ITEM_OPS),
+        scope=_bounded_label(scope, _MEMORY_SCOPES),
+    ).inc()
+
+
+def observe_memory_retrieval(
+    *, duration_seconds: float, injected: int, scope: str = "user"
+) -> None:
+    scope_label = _bounded_label(scope, _MEMORY_SCOPES)
+    _MEMORY_RETRIEVAL_DURATION.labels(scope=scope_label).observe(
+        max(0.0, float(duration_seconds))
+    )
+    _MEMORY_INJECTED.labels(scope=scope_label).observe(max(0, int(injected)))
+
+
+def observe_memory_retrieval_fallback(reason: str, *, scope: str = "user") -> None:
+    _MEMORY_RETRIEVAL_FALLBACK.labels(
+        reason=_bounded_label(reason, _MEMORY_FALLBACK_REASONS),
+        scope=_bounded_label(scope, _MEMORY_SCOPES),
+    ).inc()
+    increment("memory_retrieval_fallback")
+
+
+def set_memory_embedding_backlog(count: int) -> None:
+    _MEMORY_EMBEDDING_BACKLOG.set(max(0, int(count)))
 
 
 def set_dependency_ready(component: str, ready: bool) -> None:

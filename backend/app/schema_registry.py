@@ -45,6 +45,9 @@ AGENT_PLATFORM_TABLE_NAMES: frozenset[str] = frozenset(
         "project_config_versions",
         "project_memories",
         "project_memory_grants",
+        "project_memory_jobs",
+        "project_memory_events",
+        "project_memory_suppressions",
         "project_chat_pins",
         "project_user_prefs",
         "project_chat_composer_prefs",
@@ -52,6 +55,9 @@ AGENT_PLATFORM_TABLE_NAMES: frozenset[str] = frozenset(
         "project_resources",
         "project_media_assets",
         "project_room_handoffs",
+        "user_memory_jobs",
+        "user_memory_events",
+        "user_memory_suppressions",
     }
 )
 

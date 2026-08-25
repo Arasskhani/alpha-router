@@ -26,6 +26,7 @@ import Groups from "./pages/admin/Groups";
 import GroupActivity from "./pages/admin/GroupActivity";
 import Docs from "./pages/admin/Docs";
 import RetentionPolicy from "./pages/admin/RetentionPolicy";
+import MemoryAdmin from "./pages/admin/Memory";
 import StorageManagement from "./pages/admin/StorageManagement";
 import MyActivity from "./pages/MyActivity";
 import MediaLibrary from "./pages/MediaLibrary";
@@ -122,6 +123,7 @@ export default function App() {
         <Route path="my-activity" element={<MyActivity />} />
         <Route path="storage-management" element={<StorageManagement />} />
         <Route path="retention-policy" element={<RetentionPolicy />} />
+        <Route path="memory" element={<MemoryAdmin />} />
         <Route path="storage" element={<Navigate to="/admin/storage-management" replace />} />
         <Route path="reports" element={<Reports />} />
         <Route path="project-usage" element={<ProjectUsage />} />

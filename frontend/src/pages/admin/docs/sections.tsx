@@ -1650,9 +1650,18 @@ export const docSections: DocSection[] = [
             user&apos;s media).
           </li>
           <li>Super Admin: disable TOTP for a local user from the edit modal.</li>
+          <li>
+            <strong>Online Users</strong> — status filter for accounts signed in with an open tab right now. A browser
+            tab reports itself every 30s while visible and the marker expires after <code>PRESENCE_TTL_SECONDS</code>{" "}
+            (90s by default), so a closed tab drops off within about a minute. While the filter is active the list
+            refreshes every 20s. Presence lives only in Redis; set <code>PRESENCE_ENABLED=false</code> to turn it off.
+            If Redis is unreachable the filter is ignored and the page says so rather than showing an empty table.
+          </li>
         </ul>
         <Note>
-          Deactivated users can still sign in to browse history but cannot send chat or create new spend.
+          <strong>Online</strong> is not <strong>Active</strong>. Active means the account is enabled; Online means
+          someone is signed in with an open tab right now. Deactivated users can still sign in to browse history but
+          cannot send chat or create new spend, and they never show an online dot.
         </Note>
       </>
     ),

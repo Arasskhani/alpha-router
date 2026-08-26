@@ -105,6 +105,11 @@ class Settings(BaseSettings):
     # Phase 9: Redis auth. When set, the connection URL is rebuilt with this
     # password so rate-limit and OIDC state caches authenticate to Redis.
     redis_password: str = ""  # env: REDIS_PASSWORD
+    # Online presence for the admin Users table. Stored only as short-lived Redis
+    # keys refreshed by visible browser tabs; set false to turn the feature off
+    # without a code change. TTL must outlast two missed pings.
+    presence_enabled: bool = True  # env: PRESENCE_ENABLED
+    presence_ttl_seconds: int = 90  # env: PRESENCE_TTL_SECONDS
     # Agent Knowledge data plane. Qdrant stores derived vectors only; PostgreSQL
     # remains authoritative for content, releases, ACLs, and job state.
     qdrant_url: str = "http://qdrant:6333"  # env: QDRANT_URL

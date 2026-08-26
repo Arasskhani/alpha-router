@@ -98,8 +98,11 @@ async def logout_local(
     db: AsyncSession = Depends(get_db),
 ):
     """Revoke all previously-issued JWTs for this user."""
+    from app.services.presence_service import clear_presence
+
     user.token_version = int(user.token_version or 0) + 1
     await db.commit()
+    await clear_presence(user.id)
     clear_session_cookies(response, request=request)
     return {"ok": True}
 

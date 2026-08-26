@@ -22,6 +22,7 @@ import {
 } from "../lib/themeCache";
 import { hydrateUserPrefsFromServer, saveThemeToServer } from "../lib/chatStorage";
 import { getSessionUser } from "../lib/session";
+import usePresenceHeartbeat from "../hooks/usePresenceHeartbeat";
 import type { NavItem, NavSection } from "../nav/types";
 
 type Theme = CachedTheme;
@@ -30,6 +31,9 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
   const loc = useLocation();
   const [theme, setThemeState] = useState<Theme>(() => loadCachedTheme());
   const [navPeek, setNavPeek] = useState(false);
+
+  // Shell wraps every authenticated page, so this is the single mount point.
+  usePresenceHeartbeat();
 
   const path = loc.pathname.replace(/\/$/, "") || "/";
   const isChat = path.endsWith("/chat");

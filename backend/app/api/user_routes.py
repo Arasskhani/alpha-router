@@ -66,6 +66,20 @@ async def user_budget(user: User = Depends(get_current_user), db: AsyncSession =
     }
 
 
+@router.post("/presence")
+async def ping_presence(user: User = Depends(require_active_user)):
+    """Refresh this user's online marker.
+
+    The id comes from the session, never from the request body, so a caller can
+    only ever report itself online. Disabled accounts are rejected by the
+    dependency and therefore never appear online.
+    """
+    from app.services.presence_service import mark_online, presence_ttl_seconds
+
+    recorded = await mark_online(user.id)
+    return {"ok": recorded, "ttl_seconds": presence_ttl_seconds()}
+
+
 class UserKeyIn(BaseModel):
     name: str = Field(default=DEFAULT_PERSONAL_KEY_NAME, min_length=1, max_length=128)
 

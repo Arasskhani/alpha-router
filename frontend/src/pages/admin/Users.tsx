@@ -9,6 +9,10 @@ import RoleMultiSelect from "../../components/RoleMultiSelect";
 import RowActionsMenu, { RowAction } from "../../components/RowActionsMenu";
 import { useConfirm } from "../../context/ConfirmContext";
 import { USAGE_AND_ACTIVITY_LABEL } from "../../lib/usageActivityLabel";
+import {
+  PRESENCE_REFRESH_INTERVAL_MS,
+  presenceAvailableFromUserRows,
+} from "../../lib/presence";
 import { normalizeRole, roleLabel, userHasSuperAdminAccess, type RoleRecord } from "../../lib/rbac";
 
 function userPlanSelectValue(u: U): string {
@@ -124,6 +128,8 @@ type U = {
   inherited_plan_source?: "group" | "department" | null;
   monthly_budget_usd: number;
   budget_used_usd: number;
+  /** Reported online within the presence TTL. `null` when presence is unavailable. */
+  online?: boolean | null;
 };
 
 function userLabel(u: { username?: string; display_name?: string } | null | undefined): string {
@@ -134,7 +140,7 @@ function userLabel(u: { username?: string; display_name?: string } | null | unde
 type Plan = { id: number; name: string };
 type GroupOption = { id: number; name: string };
 
-type StatusFilter = "" | "enabled" | "disabled";
+type StatusFilter = "" | "enabled" | "disabled" | "online";
 type BulkGroupAction = "" | "add" | "remove";
 type BulkStatusAction = "" | "enable" | "disable";
 
@@ -201,6 +207,7 @@ export default function Users() {
   const [addToGroupId, setAddToGroupId] = useState("");
   const [addToGroupSaving, setAddToGroupSaving] = useState(false);
   const [roleCatalog, setRoleCatalog] = useState<RoleRecord[]>([]);
+  const [presenceAvailable, setPresenceAvailable] = useState(true);
   const usersLoadSeq = useRef(0);
 
   function buildUsersQuery(): string {
@@ -212,6 +219,10 @@ export default function Users() {
     if (filterRole) params.set("role", filterRole);
     if (statusFilter === "enabled") params.set("is_active", "true");
     if (statusFilter === "disabled") params.set("is_active", "false");
+    if (statusFilter === "online") {
+      params.set("online", "true");
+      params.set("is_active", "true");
+    }
     if (filterGroupId) params.set("group_id", filterGroupId);
     const qs = params.toString();
     return qs ? `?${qs}` : "";
@@ -227,6 +238,7 @@ export default function Users() {
         return { ...u, roles, role: normalizeRole(u.role) };
       });
       setUsers(nextUsers);
+      setPresenceAvailable(presenceAvailableFromUserRows(nextUsers));
       setSelectedUserIds((prev) => prev.filter((id) => nextUsers.some((u) => u.id === id)));
     } catch (e) {
       if (seq !== usersLoadSeq.current) return;
@@ -246,6 +258,16 @@ export default function Users() {
     api<GroupOption[]>("/api/admin/groups").then(setGroups).catch(() => {});
     api<RoleRecord[]>("/api/admin/roles").then(setRoleCatalog).catch(() => {});
   }, [debouncedUser, debouncedEmail, debouncedDepartment, debouncedJobTitle, filterRole, statusFilter, filterGroupId]);
+
+  // Only the Online filter needs a live list: who is online changes by the
+  // minute, and a snapshot from the moment the button was clicked goes stale.
+  useEffect(() => {
+    if (statusFilter !== "online") return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void loadUsers();
+    }, PRESENCE_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [statusFilter]);
 
   async function createLocalUser(values: CreateLocalUserValues) {
     setErr("");
@@ -744,7 +766,20 @@ export default function Users() {
         >
           Deactive Users
         </button>
+        <button
+          type="button"
+          className={`btn btn-ghost${statusFilter === "online" ? " is-active" : ""}`}
+          onClick={() => setStatusFilter("online")}
+          title="Signed in with an open tab right now — not the same as an enabled account"
+        >
+          Online Users
+        </button>
       </div>
+      {statusFilter === "online" && !presenceAvailable ? (
+        <p className="muted-text users-presence-note">
+          Online status is unavailable right now, so this list is not filtered by presence.
+        </p>
+      ) : null}
 
       <div className="users-filter-panel card">
         <div>

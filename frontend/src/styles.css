@@ -2666,6 +2666,11 @@ table.data-table--api-logs {
   white-space: nowrap;
 }
 
+.users-presence-note {
+  margin: -0.35rem 0 0.7rem;
+  font-size: 0.78rem;
+}
+
 .user-deactivated-label {
   flex-shrink: 0;
   margin-inline-start: 0.25rem;

@@ -1012,10 +1012,13 @@ async def list_users(
     is_active: bool | None = Query(None),
     group_id: int | None = Query(None),
     user_id: int | None = Query(None),
+    online: bool | None = Query(None, description="Keep only users online right now"),
     picker: bool = Query(False, description="Owner picker: search-only, no full list"),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_users),
 ):
+    from app.services.presence_service import online_user_ids
+
     if picker and user_id is not None:
         users = await _query_owner_picker_users(db, user_id=user_id)
     elif picker:
@@ -1035,6 +1038,13 @@ async def list_users(
             active_only=True,
         )
         users = (await db.execute(stmt)).scalars().all()
+    # One Redis MGET. Narrow the list here so the plan/group/budget batches below
+    # only run for rows that survive the filter. ``None`` means presence is
+    # unavailable, in which case the filter is ignored rather than returning an
+    # empty table that looks like a bug.
+    online_ids = None if picker else await online_user_ids([u.id for u in users])
+    if online and online_ids is not None:
+        users = [u for u in users if u.id in online_ids and bool(u.is_active)]
     user_ids = [u.id for u in users]
     plan_state = await _build_user_plan_state_map(db, user_ids)
     groups_map: dict[int, list[str]] = {uid: [] for uid in user_ids}
@@ -1091,6 +1101,11 @@ async def list_users(
             },
             "deleted_at": u.deleted_at.isoformat() if u.deleted_at else None,
             "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
+            "online": (
+                None
+                if online_ids is None
+                else (u.id in online_ids and bool(u.is_active))
+            ),
         }
         for u in users
     ]

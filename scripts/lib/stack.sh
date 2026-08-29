@@ -32,6 +32,7 @@ print_success() {
   local admin_user
   admin_user="$(env_value ADMIN_USERNAME 2>/dev/null || echo alpharouter)"
 
+  write_install_lock_marker
   show_bootstrap_admin_credentials
 
   cat <<EOF

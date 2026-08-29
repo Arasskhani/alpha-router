@@ -9,6 +9,7 @@
 .env.bak
 *.bak
 docker-compose.override.yml
+.alpharouter-installed
 
 # =============================================================================
 # Python — bytecode, caches, virtualenvs

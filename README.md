@@ -78,7 +78,10 @@ After CI publishes images:
 sudo ./scripts/install.sh --from-registry --image-tag latest
 ```
 
-`install.sh` refuses to run if `.env` or named data volumes already exist.
+`install.sh` has a hard lock: it exits immediately if `.env`,
+`docker-compose.override.yml`, `.alpharouter-installed`, named data volumes,
+or `alpha-router-*` containers already exist. There is no confirmation prompt
+and no override. Use `upgrade.sh` on a live host.
 
 ### Existing server with data (`upgrade.sh`)
 

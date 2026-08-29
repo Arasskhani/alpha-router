@@ -112,16 +112,84 @@ named_data_volumes_exist() {
   return 1
 }
 
+docker_is_ready() {
+  command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1
+}
+
+existing_alpha_router_containers() {
+  docker_is_ready || return 1
+  docker ps -aq --filter name=alpha-router 2>/dev/null | grep -q .
+}
+
+existing_alpha_router_network() {
+  docker_is_ready || return 1
+  docker network inspect alpha_router_app >/dev/null 2>&1
+}
+
+install_tree_lock_paths() {
+  local path seen=""
+  for path in "$ROOT_DIR" "${ALPHAROUTER_HOME:-}" /opt/alpha-router /home/alpha/alpha-router; do
+    [ -n "$path" ] || continue
+    case " $seen " in
+      *" $path "*) continue ;;
+    esac
+    seen="$seen $path"
+    printf '%s\n' "$path"
+  done
+}
+
+collect_existing_install_reasons() {
+  local path
+  while IFS= read -r path; do
+    [ -d "$path" ] || continue
+    if [ -f "$path/.alpharouter-installed" ]; then
+      printf 'lock file %s/.alpharouter-installed\n' "$path"
+    fi
+    if [ -f "$path/.env" ]; then
+      printf 'existing .env at %s/.env\n' "$path"
+    fi
+    if [ -f "$path/docker-compose.override.yml" ]; then
+      printf 'existing docker-compose.override.yml at %s\n' "$path"
+    fi
+  done < <(install_tree_lock_paths)
+
+  if named_data_volumes_exist; then
+    printf 'named data volumes (alpha_router_pg / redis / qdrant / seaweedfs / clamav)\n'
+  fi
+  if existing_alpha_router_containers; then
+    printf 'Docker containers named alpha-router-*\n'
+  fi
+  if existing_alpha_router_network; then
+    printf 'Docker network alpha_router_app\n'
+  fi
+}
+
 require_existing_install() {
   [ -f "$ROOT_DIR/.env" ] || die ".env not found. This is an existing-server script. Run it from the installed tree (the directory that already has .env)."
   [ -f "$ROOT_DIR/docker-compose.yml" ] || die "docker-compose.yml not found in $ROOT_DIR."
 }
 
+write_install_lock_marker() {
+  printf '%s\n' \
+    "Alpharouter is installed in this directory." \
+    "Do not run scripts/install.sh on this host." \
+    "Use scripts/upgrade.sh to update." \
+    >"$ROOT_DIR/.alpharouter-installed"
+  log "Wrote $ROOT_DIR/.alpharouter-installed"
+}
+
 refuse_if_existing_install() {
-  if [ -f "$ROOT_DIR/.env" ]; then
-    die "This directory already has .env. Use ./scripts/upgrade.sh so existing data and secrets stay intact."
+  local reasons
+  reasons="$(collect_existing_install_reasons || true)"
+  if [ -z "$reasons" ]; then
+    return 0
   fi
-  if named_data_volumes_exist; then
-    die "Named data volumes already exist (alpha_router_pg / redis / qdrant / seaweedfs / clamav). This host already has Alpharouter data. Use ./scripts/upgrade.sh from the current install directory. Do not run install.sh here."
-  fi
+  printf '[%s] ERROR: HARD LOCK — install.sh is blocked on this host.\n' "$LOG_PREFIX" >&2
+  printf '[%s] ERROR: This server already has Alpharouter data or an install. Use ./scripts/upgrade.sh from the live tree.\n' "$LOG_PREFIX" >&2
+  printf '[%s] ERROR: There is no override and no confirmation prompt.\n' "$LOG_PREFIX" >&2
+  printf '%s\n' "$reasons" | while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    printf '[%s] ERROR:  - %s\n' "$LOG_PREFIX" "$line" >&2
+  done
+  exit 1
 }

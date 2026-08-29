@@ -126,6 +126,7 @@ main() {
   parse_args "$@"
   cd "$ROOT_DIR"
   require_existing_install
+  write_install_lock_marker
   assert_no_volume_wipe
 
   if [ -z "$DEPLOY_MODE" ]; then

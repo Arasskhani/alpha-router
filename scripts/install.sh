@@ -44,8 +44,25 @@ bootstrap_minimal_git() {
   apt-get install -y --no-install-recommends ca-certificates curl git
 }
 
+bootstrap_refuse_existing() {
+  local dest="$ALPHAROUTER_HOME"
+  if [ -f "$dest/.alpharouter-installed" ] || [ -f "$dest/.env" ] || [ -f "$dest/docker-compose.override.yml" ]; then
+    bootstrap_die "HARD LOCK: $dest already has an Alpharouter install. Use $dest/scripts/upgrade.sh"
+  fi
+  if [ -f /home/alpha/alpha-router/.alpharouter-installed ] || [ -f /home/alpha/alpha-router/.env ]; then
+    bootstrap_die "HARD LOCK: /home/alpha/alpha-router already has an Alpharouter install. Use /home/alpha/alpha-router/scripts/upgrade.sh"
+  fi
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    if docker volume inspect alpha_router_pg >/dev/null 2>&1 \
+      || docker ps -aq --filter name=alpha-router 2>/dev/null | grep -q .; then
+      bootstrap_die "HARD LOCK: this host already has Alpharouter Docker data. Use ./scripts/upgrade.sh from the live tree."
+    fi
+  fi
+}
+
 reexec_from_clone() {
   local dest="$ALPHAROUTER_HOME"
+  bootstrap_refuse_existing
   bootstrap_minimal_git
   if [ ! -f "$dest/scripts/install.sh" ]; then
     if [ -e "$dest" ] && [ -n "$(ls -A "$dest" 2>/dev/null || true)" ]; then
@@ -108,7 +125,8 @@ On a host with no git checkout:
 This script installs git, curl, Docker Engine, and Compose, clones GitHub if
 needed, writes .env + docker-compose.override.yml, and starts the stack.
 
-Do not run this on a server that already has Alpharouter data. Use:
+Hard lock: if .env, override, lock file, named volumes, or alpha-router
+containers already exist, this script exits immediately. Use:
 
   ./scripts/upgrade.sh
 
@@ -187,6 +205,7 @@ main() {
     MIN_DISK_GB="$MIN_DISK_GB_REGISTRY"
   fi
 
+  refuse_if_existing_install
   install_ubuntu_prereqs
   refuse_if_existing_install
 

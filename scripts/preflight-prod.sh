@@ -15,7 +15,7 @@ if [ "${1:-}" != "" ]; then
 fi
 cd "$ROOT_DIR"
 
-[ -f "$ENV_FILE" ] || die ".env not found. Run install.sh first."
+[ -f "$ENV_FILE" ] || die ".env not found. Run install.sh (new host) or upgrade.sh (existing host) first."
 
 INSECURE_PLACEHOLDERS=(
   change-me-in-production

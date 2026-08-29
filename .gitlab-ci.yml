@@ -126,7 +126,8 @@ object-storage-image-audit:
 
 # Build and push Alpharouter images to the GitLab Container Registry.
 # Tags: alpha-router, alpha-router-sandbox, alpha-router-sandbox-broker
-# Deploy on a server with: ALPHAROUTER_REGISTRY=$CI_REGISTRY_IMAGE ./scripts/install.sh --from-registry --image-tag <tag>
+# New host: ALPHAROUTER_REGISTRY=$CI_REGISTRY_IMAGE ./scripts/install.sh --from-registry --image-tag <tag>
+# Existing host with data: ./scripts/upgrade.sh --from-registry --image-tag <tag>
 publish-images:
   stage: publish
   image: docker:27-cli

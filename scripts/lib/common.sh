@@ -9,17 +9,29 @@ MIN_DISK_GB_REGISTRY="${MIN_DISK_GB_REGISTRY:-10}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8080/health}"
 HEALTH_TIMEOUT_SEC="${HEALTH_TIMEOUT_SEC:-900}"
 REGISTRY_COMPOSE_FILE="deploy/docker-compose.registry.yml"
+LOG_PREFIX="${LOG_PREFIX:-install}"
+ALPHAROUTER_GIT_URL="${ALPHAROUTER_GIT_URL:-https://github.com/Arasskhani/alpha-router.git}"
+ALPHAROUTER_GIT_REF="${ALPHAROUTER_GIT_REF:-main}"
+ALPHAROUTER_HOME="${ALPHAROUTER_HOME:-/opt/alpha-router}"
+
+NAMED_DATA_VOLUMES=(
+  alpha_router_pg
+  alpha_router_redis
+  alpha_router_qdrant
+  alpha_router_seaweedfs
+  alpha_router_clamav
+)
 
 log() {
-  printf '[install] %s\n' "$*"
+  printf '[%s] %s\n' "$LOG_PREFIX" "$*"
 }
 
 warn() {
-  printf '[install] WARN: %s\n' "$*" >&2
+  printf '[%s] WARN: %s\n' "$LOG_PREFIX" "$*" >&2
 }
 
 die() {
-  printf '[install] ERROR: %s\n' "$*" >&2
+  printf '[%s] ERROR: %s\n' "$LOG_PREFIX" "$*" >&2
   exit 1
 }
 
@@ -80,4 +92,36 @@ run_python_production_check() {
   fi
   log "Running production guard (shell preflight)..."
   bash "$ROOT_DIR/scripts/preflight-prod.sh" "$ROOT_DIR"
+}
+
+is_repo_root() {
+  local dir="${1:-}"
+  [ -n "$dir" ] || return 1
+  [ -f "$dir/docker-compose.yml" ] && [ -f "$dir/scripts/lib/common.sh" ]
+}
+
+named_data_volumes_exist() {
+  local vol
+  command -v docker >/dev/null 2>&1 || return 1
+  docker info >/dev/null 2>&1 || return 1
+  for vol in "${NAMED_DATA_VOLUMES[@]}"; do
+    if docker volume inspect "$vol" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+require_existing_install() {
+  [ -f "$ROOT_DIR/.env" ] || die ".env not found. This is an existing-server script. Run it from the installed tree (the directory that already has .env)."
+  [ -f "$ROOT_DIR/docker-compose.yml" ] || die "docker-compose.yml not found in $ROOT_DIR."
+}
+
+refuse_if_existing_install() {
+  if [ -f "$ROOT_DIR/.env" ]; then
+    die "This directory already has .env. Use ./scripts/upgrade.sh so existing data and secrets stay intact."
+  fi
+  if named_data_volumes_exist; then
+    die "Named data volumes already exist (alpha_router_pg / redis / qdrant / seaweedfs / clamav). This host already has Alpharouter data. Use ./scripts/upgrade.sh from the current install directory. Do not run install.sh here."
+  fi
 }

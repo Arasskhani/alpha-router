@@ -45,43 +45,66 @@ run the same Compose stack on Linux or any other Docker-capable environment.
 
 ## Quick start with Docker
 
-### Automated install (recommended)
+### New Ubuntu Server (`install.sh`)
 
-From a full source tree on any Docker host:
-
-```bash
-cd alpha-router
-chmod +x scripts/install.sh
-./scripts/install.sh --from-source --dev
-```
-
-Production-oriented secrets and preflight:
+Use this only on an empty host. It installs git, curl, Docker Engine, and
+Compose, clones GitHub if needed, writes `.env` and
+`docker-compose.override.yml` (docker.sock GID for Code Interpreter), and
+starts the stack.
 
 ```bash
-./scripts/install.sh --from-source --prod
+curl -fsSL https://raw.githubusercontent.com/Arasskhani/alpha-router/main/scripts/install.sh | sudo bash
 ```
 
-After CI publishes images to your GitLab Container Registry:
+Or from a checkout (still installs missing host packages):
+
+```bash
+sudo ./scripts/install.sh --prod
+```
+
+Development mode:
+
+```bash
+sudo ./scripts/install.sh --dev
+```
+
+Default clone path is `/opt/alpha-router`. Override with
+`ALPHAROUTER_HOME=/home/alpha/alpha-router`.
+
+After CI publishes images:
 
 ```bash
 # In .env: ALPHAROUTER_REGISTRY=registry.gitlab.com/your-group/alpha-router
-./scripts/install.sh --from-registry --image-tag latest
+sudo ./scripts/install.sh --from-registry --image-tag latest
 ```
 
-Upgrade after copying a newer source tree (keeps existing `.env` secrets):
+`install.sh` refuses to run if `.env` or named data volumes already exist.
+
+### Existing server with data (`upgrade.sh`)
+
+Use this on a live host that already has `.env` and user data. It never
+removes volumes and never runs `docker compose down -v`.
 
 ```bash
-./scripts/install.sh --from-source --upgrade --dev
+cd /path/to/alpha-router
+./scripts/upgrade.sh --prod
 ```
+
+Skip image rebuild (keeps current images, refreshes override and starts):
+
+```bash
+./scripts/upgrade.sh --prod --skip-build
+```
+
+`upgrade.sh` fast-forwards git when the tree is a clone, merges new
+`.env.example` keys without overwriting secrets, rewrites
+`docker-compose.override.yml`, then `docker compose up`.
 
 Production guard check only:
 
 ```bash
 ./scripts/preflight-prod.sh
 ```
-
-The installer creates or patches `.env`, detects the host `docker.sock` group for
-Code Interpreter, writes `docker-compose.override.yml`, and waits for `/health`.
 
 ### Manual quick start
 
@@ -143,7 +166,7 @@ alpha-router/
 ├── sandbox/          Isolated code-interpreter image
 ├── sandbox-broker/   Internal Docker sandbox controller
 ├── deploy/           SeaweedFS support, registry compose overlay
-├── scripts/          install.sh and deploy helpers
+├── scripts/          install.sh (new host), upgrade.sh (existing data)
 ├── docker-compose.yml
 ├── Dockerfile
 ├── LICENSE
@@ -156,8 +179,10 @@ Two supported paths:
 
 | Path | When to use | Command |
 |------|-------------|---------|
-| **Source copy** | rsync/scp/tar onto the server; build on host | `./scripts/install.sh --from-source --dev` |
-| **Registry pull** | After GitLab CI `publish-images` | `./scripts/install.sh --from-registry --image-tag TAG` |
+| **New Ubuntu host** | Empty server, no Docker yet | `sudo ./scripts/install.sh --prod` |
+| **Existing host with data** | Live `.env` + volumes | `./scripts/upgrade.sh --prod` |
+| **Registry pull (new)** | After GitLab CI `publish-images` | `sudo ./scripts/install.sh --from-registry --image-tag TAG` |
+| **Registry pull (existing)** | Same, keep data | `./scripts/upgrade.sh --from-registry --image-tag TAG` |
 
 **Source bundle** (minimum files to copy):
 

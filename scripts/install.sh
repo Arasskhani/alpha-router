@@ -1,13 +1,69 @@
 #!/usr/bin/env bash
-# Alpharouter installer — source copy or registry pull.
+# New Ubuntu Server installer. Installs host prerequisites (git, Docker, Compose),
+# clones GitHub if needed, then does a first-time Alpharouter deploy.
 #
-# Examples:
-#   ./scripts/install.sh --from-source --dev
-#   ./scripts/install.sh --from-source --prod
-#   ./scripts/install.sh --from-registry --image-tag v1.0.0
-#   ./scripts/install.sh --from-source --upgrade
+# Do NOT use this on a host that already has Alpharouter data. Use upgrade.sh.
+#
+# Examples (Ubuntu Server, amd64):
+#   curl -fsSL https://raw.githubusercontent.com/Arasskhani/alpha-router/main/scripts/install.sh | sudo bash
+#   sudo ./scripts/install.sh --prod
+#   sudo ALPHAROUTER_HOME=/home/alpha/alpha-router ./scripts/install.sh --prod
 
 set -euo pipefail
+
+LOG_PREFIX="${LOG_PREFIX:-install}"
+ALPHAROUTER_GIT_URL="${ALPHAROUTER_GIT_URL:-https://github.com/Arasskhani/alpha-router.git}"
+ALPHAROUTER_GIT_REF="${ALPHAROUTER_GIT_REF:-main}"
+ALPHAROUTER_HOME="${ALPHAROUTER_HOME:-/opt/alpha-router}"
+
+bootstrap_die() {
+  printf '[install] ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+bootstrap_log() {
+  printf '[install] %s\n' "$*"
+}
+
+script_in_repo() {
+  local here
+  if [ -z "${BASH_SOURCE[0]:-}" ] || [ ! -f "${BASH_SOURCE[0]}" ]; then
+    return 1
+  fi
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  [ -f "$here/lib/common.sh" ] && [ -f "$here/../docker-compose.yml" ]
+}
+
+bootstrap_minimal_git() {
+  if command -v git >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
+    return 0
+  fi
+  [ "$(id -u)" -eq 0 ] || bootstrap_die "Need root to install git/curl. Re-run with sudo."
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -y
+  apt-get install -y --no-install-recommends ca-certificates curl git
+}
+
+reexec_from_clone() {
+  local dest="$ALPHAROUTER_HOME"
+  bootstrap_minimal_git
+  if [ ! -f "$dest/scripts/install.sh" ]; then
+    if [ -e "$dest" ] && [ -n "$(ls -A "$dest" 2>/dev/null || true)" ]; then
+      bootstrap_die "$dest exists and is not an Alpharouter checkout. Set ALPHAROUTER_HOME."
+    fi
+    [ "$(id -u)" -eq 0 ] || bootstrap_die "Need root to clone into $dest. Re-run with sudo."
+    bootstrap_log "Cloning $ALPHAROUTER_GIT_URL ($ALPHAROUTER_GIT_REF) into $dest..."
+    mkdir -p "$(dirname "$dest")"
+    git clone --branch "$ALPHAROUTER_GIT_REF" --depth 1 "$ALPHAROUTER_GIT_URL" "$dest"
+  fi
+  chmod +x "$dest/scripts/install.sh"
+  bootstrap_log "Re-running installer from $dest..."
+  exec bash "$dest/scripts/install.sh" "$@"
+}
+
+if ! script_in_repo; then
+  reexec_from_clone "$@"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
@@ -22,10 +78,15 @@ source "$SCRIPT_DIR/lib/env-merge.sh"
 source "$SCRIPT_DIR/lib/deploy-mode.sh"
 # shellcheck source=lib/docker-gid.sh
 source "$SCRIPT_DIR/lib/docker-gid.sh"
+# shellcheck source=lib/stack.sh
+source "$SCRIPT_DIR/lib/stack.sh"
+# shellcheck source=lib/ubuntu-prereqs.sh
+source "$SCRIPT_DIR/lib/ubuntu-prereqs.sh"
 
-FROM_SOURCE=0
+FROM_SOURCE=1
 FROM_REGISTRY=0
-DEPLOY_MODE=dev
+USE_REGISTRY_COMPOSE=0
+DEPLOY_MODE=prod
 UPGRADE=0
 PREFLIGHT_ONLY=0
 SKIP_BUILD=0
@@ -33,46 +94,52 @@ IMAGE_TAG=""
 
 usage() {
   cat <<'EOF'
-Alpharouter install
+Alpharouter new-server installer (Ubuntu Server amd64)
 
-  ./scripts/install.sh --from-source [--dev|--prod]
-  ./scripts/install.sh --from-registry [--dev|--prod] [--image-tag TAG]
-  ./scripts/install.sh --from-source --upgrade [--dev|--prod]
-  ./scripts/install.sh --from-source --preflight-only
-  ./scripts/install.sh --from-source --skip-build
+  sudo ./scripts/install.sh
+  sudo ./scripts/install.sh --prod
+  sudo ./scripts/install.sh --dev
+  sudo ./scripts/install.sh --from-registry --image-tag TAG
+
+On a host with no git checkout:
+
+  curl -fsSL https://raw.githubusercontent.com/Arasskhani/alpha-router/main/scripts/install.sh | sudo bash
+
+This script installs git, curl, Docker Engine, and Compose, clones GitHub if
+needed, writes .env + docker-compose.override.yml, and starts the stack.
+
+Do not run this on a server that already has Alpharouter data. Use:
+
+  ./scripts/upgrade.sh
 
 Options:
-  --dev                 Development mode (default)
-  --prod                Production secrets + production preflight
-  --upgrade             Merge new .env.example keys; rebuild or pull; run migrations
+  --prod                Production secrets + production preflight (default)
+  --dev                 Development mode
+  --from-source         Build images on the host (default)
+  --from-registry       Pull published images instead of building
+  --image-tag TAG       Registry image tag
   --preflight-only      Checks + .env only; no docker compose up
   --skip-build          Start without image rebuild (source mode only)
 
 Environment:
-  MIN_DISK_GB=30              Minimum free disk for source build (GiB)
-  MIN_DISK_GB_REGISTRY=10     Minimum free disk for registry pull (GiB)
-  HEALTH_TIMEOUT_SEC=900      Health poll timeout (seconds)
-  DOCKER_SOCK=/var/run/docker.sock
-
-Registry (.env):
-  ALPHAROUTER_REGISTRY        e.g. registry.gitlab.com/group/alpha-router
-  ALPHAROUTER_IMAGE_TAG       Image tag (default: latest)
-  REGISTRY_USER / REGISTRY_PASSWORD   Optional docker login
+  ALPHAROUTER_HOME=/opt/alpha-router
+  ALPHAROUTER_GIT_URL=https://github.com/Arasskhani/alpha-router.git
+  ALPHAROUTER_GIT_REF=main
+  MIN_DISK_GB=30
+  HEALTH_TIMEOUT_SEC=900
 EOF
 }
 
 parse_args() {
-  if [ "$#" -eq 0 ]; then
-    usage
-    die "Pass --from-source or --from-registry."
-  fi
-
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --from-source)
         FROM_SOURCE=1
+        FROM_REGISTRY=0
+        USE_REGISTRY_COMPOSE=0
         ;;
       --from-registry)
+        FROM_SOURCE=0
         FROM_REGISTRY=1
         USE_REGISTRY_COMPOSE=1
         ;;
@@ -83,7 +150,7 @@ parse_args() {
         DEPLOY_MODE=prod
         ;;
       --upgrade)
-        UPGRADE=1
+        die "install.sh is for empty hosts only. On a live server with data use: ./scripts/upgrade.sh"
         ;;
       --preflight-only)
         PREFLIGHT_ONLY=1
@@ -110,91 +177,6 @@ parse_args() {
   if [ "$FROM_SOURCE" -eq 1 ] && [ "$FROM_REGISTRY" -eq 1 ]; then
     die "Use only one of --from-source or --from-registry."
   fi
-  if [ "$FROM_SOURCE" -ne 1 ] && [ "$FROM_REGISTRY" -ne 1 ]; then
-    die "Pass --from-source or --from-registry."
-  fi
-}
-
-wait_for_health() {
-  local deadline=$((SECONDS + HEALTH_TIMEOUT_SEC))
-  log "Waiting for $HEALTH_URL (timeout ${HEALTH_TIMEOUT_SEC}s)..."
-
-  while [ "$SECONDS" -lt "$deadline" ]; do
-    if curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then
-      log "Health check passed."
-      return 0
-    fi
-    sleep 5
-  done
-
-  die "Timed out waiting for health. Check: docker compose logs alpha-router"
-}
-
-show_bootstrap_admin_credentials() {
-  local marker="BOOTSTRAP_ADMIN_CREDENTIALS_ONCE"
-  local line
-  line="$(compose logs alpha-router 2>&1 | grep "$marker" | tail -n 1 || true)"
-  if [ -z "$line" ]; then
-    return 0
-  fi
-  printf '\n[install] First-boot bootstrap administrator (one-time; also in container logs):\n'
-  printf '[install] %s\n' "$line"
-  warn "Change this password after first login. Docker log retention may keep a copy."
-}
-
-print_success() {
-  local admin_user
-  admin_user="$(env_value ADMIN_USERNAME 2>/dev/null || echo alpharouter)"
-
-  show_bootstrap_admin_credentials
-
-  cat <<EOF
-
-Alpharouter is running.
-
-  UI:     http://127.0.0.1:8080
-  Health: $HEALTH_URL
-  Admin:  $admin_user
-  Mode:   $DEPLOY_MODE
-
-Logs:   docker compose logs -f alpha-router
-Stop:   docker compose down
-
-EOF
-}
-
-prepare_env() {
-  if [ "$UPGRADE" -eq 1 ]; then
-    merge_env_from_example
-  fi
-  bootstrap_env_file
-  apply_deploy_mode
-  if [ -n "$IMAGE_TAG" ]; then
-    set_env_var ALPHAROUTER_IMAGE_TAG "$IMAGE_TAG"
-  fi
-  if [ "$DEPLOY_MODE" = "prod" ]; then
-    run_python_production_check
-  fi
-}
-
-start_stack() {
-  if [ "$FROM_REGISTRY" -eq 1 ]; then
-    require_registry_config
-    registry_login_if_configured
-    log "Pulling images from registry..."
-    compose pull
-    log "Starting stack..."
-    compose up -d
-    return 0
-  fi
-
-  if [ "$SKIP_BUILD" -eq 1 ]; then
-    log "Starting stack (no rebuild)..."
-    compose up -d
-  else
-    log "Building and starting stack (this may take several minutes)..."
-    compose up --build -d
-  fi
 }
 
 main() {
@@ -203,6 +185,12 @@ main() {
 
   if [ "$FROM_REGISTRY" -eq 1 ]; then
     MIN_DISK_GB="$MIN_DISK_GB_REGISTRY"
+  fi
+
+  install_ubuntu_prereqs
+  refuse_if_existing_install
+
+  if [ "$FROM_REGISTRY" -eq 1 ]; then
     run_preflight_registry
   else
     run_preflight

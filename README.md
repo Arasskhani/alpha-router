@@ -275,10 +275,11 @@ are rejected with an explicit workspace-limit error rather than silently
 truncated.
 
 Workspace and artifact filenames may use any script, so a generated
-`گزارش-مدیریتی.pdf` keeps its name through the sandbox, Media, and the download
-header. The shared policy in `backend/app/sandbox/filenames.py` (mirrored in
-`sandbox/runner.py`) rejects only path separators, control characters, BiDi and
-zero-width formatting characters that disguise the real extension, hidden or
+`report.pdf` (or the same name in another language) keeps its original
+spelling through the sandbox, Media, and the download header. The shared
+policy in `backend/app/sandbox/filenames.py` (mirrored in `sandbox/runner.py`)
+rejects only path separators, control characters, BiDi and zero-width
+formatting characters that disguise the real extension, hidden or
 argument-looking names, and names over the character/UTF-8 byte budget. What a
 file is allowed to be is still decided by the extension allowlist and the
 per-artifact content validation.

@@ -116,10 +116,17 @@ import {
 } from "../lib/replyReadyNotify";
 import { getSessionUser, isSessionActive, logout } from "../lib/session";
 import { copyFreshChatTools, anyChatToolEnabled, toolsToApiPayload, type ChatToolsState } from "../lib/chatTools";
+import MediaViewerModal from "./MediaViewerModal";
 import ChatAttachmentMessage from "./chat/ChatAttachmentMessage";
+import PromptQueue from "./chat/PromptQueue";
+import { collectChatSlideshowItems } from "../lib/chatMediaViewer";
+import { findMediaViewerIndex } from "../lib/mediaViewer";
 import ChatAudioMessage from "./chat/ChatAudioMessage";
 import ServerToolsMenu from "./chat/ServerToolsMenu";
 import ChatModelPickerModal from "./chat/ChatModelPickerModal";
+import ComposerAttachMenu from "./chat/ComposerAttachMenu";
+import ComposerMediaPicker from "./chat/ComposerMediaPicker";
+import ScreenshotCropOverlay from "./chat/ScreenshotCropOverlay";
 import {
   ComposerAgentIcon,
   ComposerToolsIcon,
@@ -152,7 +159,6 @@ import {
   AUDIO_MESSAGE_PREFIX,
   attachmentDisplayText,
   attachmentMessage,
-  buildApiMessageContent,
   buildApiMessageContentAsync,
   type ApiContentPart,
   cloneProcessedAttachments,
@@ -166,6 +172,13 @@ import {
   processAttachmentFilesLocally,
   type ProcessedAttachment,
 } from "../lib/chatAttachments";
+import { attachMediaIds } from "../lib/composerAttachSources";
+import {
+  captureDisplayFrame,
+  revokeScreenshotFrame,
+  screenshotPermissionErrorMessage,
+  type ScreenshotFrame,
+} from "../lib/screenshotCapture";
 import {
   buildImageMessage,
   buildStoppedImageMessages,
@@ -737,6 +750,18 @@ export default function ChatPanel({
   const [costDetails, setCostDetails] = useState<CostDetails | null>(null);
   const [costDetailsLoading, setCostDetailsLoading] = useState(false);
   const [costDetailsError, setCostDetailsError] = useState("");
+  const [mediaViewerUrl, setMediaViewerUrl] = useState<string | null>(null);
+  const chatSlideshowItems = useMemo(() => collectChatSlideshowItems(messages), [messages]);
+  const mediaViewerIndex = useMemo(
+    () => (mediaViewerUrl ? findMediaViewerIndex(chatSlideshowItems, mediaViewerUrl) : -1),
+    [mediaViewerUrl, chatSlideshowItems],
+  );
+  useEffect(() => {
+    setMediaViewerUrl(null);
+  }, [activeId]);
+  useEffect(() => {
+    if (mediaViewerUrl && mediaViewerIndex < 0) setMediaViewerUrl(null);
+  }, [mediaViewerUrl, mediaViewerIndex]);
   const [draggingSessionId, setDraggingSessionId] = useState<string | null>(null);
   const [dropFolderId, setDropFolderId] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -763,6 +788,11 @@ export default function ChatPanel({
   const voiceStreamRef = useRef<MediaStream | null>(null);
   const browserSpeechRef = useRef<BrowserSpeechCapture | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const attachBtnRef = useRef<HTMLButtonElement>(null);
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
+  const [screenshotFrame, setScreenshotFrame] = useState<ScreenshotFrame | null>(null);
+  const screenshotFrameRef = useRef<ScreenshotFrame | null>(null);
   const [voiceRecording, setVoiceRecording] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<ProcessedAttachment[]>([]);
@@ -771,6 +801,10 @@ export default function ChatPanel({
   const [attachUploading, setAttachUploading] = useState(false);
   const [promptQueues, setPromptQueues] = useState<Record<string, QueuedPrompt[]>>({});
   const promptQueuesRef = useRef<Record<string, QueuedPrompt[]>>({});
+  const [queueExpanded, setQueueExpanded] = useState(false);
+  useEffect(() => {
+    setQueueExpanded(false);
+  }, [activeId]);
   const streamingSessionsRef = useRef<Record<string, boolean>>({});
   const turnPhasesRef = useRef<Record<string, TurnPhase>>({});
   const streamingMsgsPendingRef = useRef<{ sessionId: string; msgs: ChatMessage[] } | null>(null);
@@ -785,6 +819,7 @@ export default function ChatPanel({
   composerInputRef.current = input;
   composerDirectionRef.current = inputDirection;
   pendingAttachmentsRef.current = pendingAttachments;
+  screenshotFrameRef.current = screenshotFrame;
   chatsHydratedRef.current = chatsHydrated;
   sessionsRef.current = sessions;
   foldersRef.current = folders;
@@ -2917,14 +2952,11 @@ export default function ChatPanel({
   async function apiMessages(
     history: ChatMessage[],
     forModel?: Model,
-    privateMode = false,
   ) {
     const trimmed = historyForModelRequest(history);
     const out: Array<{ role: string; content: string | ApiContentPart[] }> = [];
     for (const m of trimmed) {
-      const content = privateMode
-        ? await buildApiMessageContentAsync(m.content, forModel)
-        : buildApiMessageContent(m.content, forModel);
+      const content = await buildApiMessageContentAsync(m.content, forModel);
       out.push({ role: m.role, content });
     }
     return out.filter((m) => hasApiContent(m.content));
@@ -2953,7 +2985,7 @@ export default function ChatPanel({
         : {};
     return {
       model: modelId,
-      messages: await apiMessages(history, forModel, privateMode),
+      messages: await apiMessages(history, forModel),
       stream: true,
       private_mode: !!(privateMode && !isProjectChat),
       ...(isProjectChat && projectId ? { project_id: projectId } : {}),
@@ -4954,6 +4986,21 @@ export default function ChatPanel({
     );
   }
 
+  async function clearQueuedPrompts(sessionId: string) {
+    const prev = promptQueuesRef.current[sessionId] || [];
+    if (!prev.length) return;
+    if (prev.length > 2) {
+      const ok = await confirm({
+        title: "Clear queue",
+        message: `Remove ${prev.length} queued prompts? They will not be sent.`,
+        confirmLabel: "Clear",
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    setSessionQueue(sessionId, []);
+  }
+
   function editQueuedPrompt(item: QueuedPrompt) {
     const sid = activeIdRef.current;
     if (!sid) return;
@@ -5395,6 +5442,18 @@ export default function ChatPanel({
     } catch (err) {
       setChatError(formatApiError(err));
     }
+  }
+
+  function openChatMediaViewer(url: string) {
+    const trimmed = url.trim();
+    if (!trimmed) return;
+    if (findMediaViewerIndex(chatSlideshowItems, trimmed) >= 0) {
+      setMediaViewerUrl(trimmed);
+    }
+  }
+
+  function handleChatMediaViewerIndexChange(nextIndex: number) {
+    setMediaViewerUrl(chatSlideshowItems[nextIndex]?.url ?? null);
   }
 
   async function openImageFullSize(url: string) {
@@ -5887,6 +5946,7 @@ export default function ChatPanel({
         mediaRecorderRef.current.stop();
       }
       stopVoiceStream();
+      revokeScreenshotFrame(screenshotFrameRef.current);
     };
   }, []);
 
@@ -5894,9 +5954,39 @@ export default function ChatPanel({
     setPendingAttachments((prev) => prev.filter((_, i) => i !== index));
   }
 
-  function openAttachmentPicker() {
+  function openAttachmentMenu() {
     if (attachUploading) return;
-    fileInputRef.current?.click();
+    setToolsMenuOpen(false);
+    setAgentMenuOpen(false);
+    setAttachMenuOpen((open) => !open);
+  }
+
+  function closeScreenshotFrame() {
+    setScreenshotFrame((prev) => {
+      revokeScreenshotFrame(prev);
+      return null;
+    });
+  }
+
+  async function startScreenshotCapture() {
+    if (attachUploading) return;
+    setAttachMenuOpen(false);
+    if (pendingAttachmentsRef.current.length >= maxAttachments) {
+      setChatError(`You can attach up to ${maxAttachments} files at once.`);
+      return;
+    }
+    setChatError("");
+    await new Promise<void>((resolve) => {
+      window.setTimeout(resolve, 80);
+    });
+    try {
+      const frame = await captureDisplayFrame();
+      setScreenshotFrame(frame);
+    } catch (err) {
+      const permissionMessage = screenshotPermissionErrorMessage(err);
+      if (permissionMessage) setChatError(permissionMessage);
+      else reportUserFacingApiError(err);
+    }
   }
 
   async function processPendingAttachmentFiles(files: File[]) {
@@ -5943,6 +6033,34 @@ export default function ChatPanel({
     await processPendingAttachmentFiles(Array.from(list));
   }
 
+  async function processPendingMediaIds(mediaIds: number[]) {
+    const ids = [...new Set(mediaIds.filter((id) => Number.isInteger(id) && id > 0))];
+    if (!ids.length) return;
+    const sid = ensureActiveSession();
+    if (pendingAttachmentsRef.current.length + ids.length > maxAttachments) {
+      setChatError(`You can attach up to ${maxAttachments} files at once.`);
+      return;
+    }
+    if (sid && sessionPrivateMode(sid)) {
+      setChatError("Private Mode cannot attach library files through the server. Use Upload file.");
+      return;
+    }
+    setAttachUploading(true);
+    setChatError("");
+    try {
+      const attachments = await attachMediaIds({
+        mediaIds: ids,
+        chatSessionId: sid,
+        projectId: isProjectChat ? projectId : null,
+      });
+      setPendingAttachments((prev) => [...prev, ...attachments].slice(0, maxAttachments));
+    } catch (err) {
+      reportUserFacingApiError(err);
+    } finally {
+      setAttachUploading(false);
+    }
+  }
+
   async function consumeQueuedProjectMedia() {
     if (!isProjectChat || !projectId || readOnly || attachUploading) return;
     const payload = readQueuedProjectMediaAttach();
@@ -5953,17 +6071,13 @@ export default function ChatPanel({
       setChatError("Video files cannot be attached to chat. Use an image or a document.");
       return;
     }
+    if (!payload.mediaId) {
+      clearQueuedProjectMediaAttach();
+      setChatError("Could not attach that file.");
+      return;
+    }
     try {
-      const blob = await fetchAuthenticatedMediaBlob(payload.url);
-      let name = payload.fileName || "attachment";
-      if (!name.includes(".")) {
-        const ext = mime.split("/")[1]?.split("+")[0];
-        if (ext) name = `${name}.${ext}`;
-      }
-      const file = new File([blob], name, {
-        type: payload.mimeType || blob.type || "application/octet-stream",
-      });
-      await processPendingAttachmentFiles([file]);
+      await processPendingMediaIds([payload.mediaId]);
       clearQueuedProjectMediaAttach();
     } catch (err) {
       clearQueuedProjectMediaAttach();
@@ -6509,7 +6623,12 @@ export default function ChatPanel({
                 {(() => {
                   const attachPayload = readAttachmentMessage(m.content);
                   if (attachPayload) {
-                    return <ChatAttachmentMessage payload={attachPayload} />;
+                    return (
+                      <ChatAttachmentMessage
+                        payload={attachPayload}
+                        onOpenImage={openChatMediaViewer}
+                      />
+                    );
                   }
                   const audioPayload = readAudioMessage(m.content);
                   if (audioPayload) {
@@ -6566,11 +6685,18 @@ export default function ChatPanel({
                   if (imagePayload) {
                     return (
                       <div className="alpha-router-generated-block">
-                        <AuthenticatedImage
-                          url={imagePayload.url}
-                          alt="Generated"
-                          className="alpha-router-generated-image"
-                        />
+                        <button
+                          type="button"
+                          className="alpha-router-media-open"
+                          onClick={() => openChatMediaViewer(imagePayload.url)}
+                          aria-label="Open image"
+                        >
+                          <AuthenticatedImage
+                            url={imagePayload.url}
+                            alt="Generated"
+                            className="alpha-router-generated-image"
+                          />
+                        </button>
                       </div>
                     );
                   }
@@ -6578,11 +6704,26 @@ export default function ChatPanel({
                   if (videoPayload) {
                     return (
                       <div className="alpha-router-generated-block">
-                        <AuthenticatedVideo
-                          url={videoPayload.url}
-                          className="alpha-router-generated-video"
-                          title={videoPayload.prompt || "Generated video"}
-                        />
+                        <div
+                          className="alpha-router-media-open"
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => openChatMediaViewer(videoPayload.url)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              openChatMediaViewer(videoPayload.url);
+                            }
+                          }}
+                          aria-label="Open video"
+                        >
+                          <AuthenticatedVideo
+                            url={videoPayload.url}
+                            className="alpha-router-generated-video"
+                            title={videoPayload.prompt || "Generated video"}
+                            controls={false}
+                          />
+                        </div>
                       </div>
                     );
                   }
@@ -6607,11 +6748,18 @@ export default function ChatPanel({
                   if (mdImage.imageUrl) {
                     return (
                       <div className="alpha-router-generated-block">
-                        <img
-                          src={safeBrowserUrl(mdImage.imageUrl, "image") ?? ""}
-                          alt="Generated"
-                          className="alpha-router-generated-image"
-                        />
+                        <button
+                          type="button"
+                          className="alpha-router-media-open"
+                          onClick={() => openChatMediaViewer(mdImage.imageUrl!)}
+                          aria-label="Open image"
+                        >
+                          <img
+                            src={safeBrowserUrl(mdImage.imageUrl, "image") ?? ""}
+                            alt="Generated"
+                            className="alpha-router-generated-image"
+                          />
+                        </button>
                         {mdImage.text ? (
                           <MarkdownContent content={mdImage.text} className="alpha-router-markdown" />
                         ) : null}
@@ -6698,7 +6846,13 @@ export default function ChatPanel({
                         className="alpha-router-msg-action-btn alpha-router-msg-action-btn--icon"
                         title="Open full size"
                         aria-label="Open video full size"
-                        onClick={() => void openVideoFullSize(videoPayload.url)}
+                        onClick={() => {
+                          if (findMediaViewerIndex(chatSlideshowItems, videoPayload.url) >= 0) {
+                            openChatMediaViewer(videoPayload.url);
+                            return;
+                          }
+                          void openVideoFullSize(videoPayload.url);
+                        }}
                       >
                         <OpenFullSizeIcon />
                       </button>
@@ -6741,7 +6895,13 @@ export default function ChatPanel({
                         className="alpha-router-msg-action-btn alpha-router-msg-action-btn--icon"
                         title="Open full size"
                         aria-label="Open image full size"
-                        onClick={() => void openImageFullSize(imageUrl)}
+                        onClick={() => {
+                          if (findMediaViewerIndex(chatSlideshowItems, imageUrl) >= 0) {
+                            openChatMediaViewer(imageUrl);
+                            return;
+                          }
+                          void openImageFullSize(imageUrl);
+                        }}
                       >
                         <OpenFullSizeIcon />
                       </button>
@@ -6954,38 +7114,21 @@ export default function ChatPanel({
                 </div>
               ) : null}
               {activeQueue.length > 0 ? (
-                <div className="alpha-router-prompt-queue" aria-label="Queued messages">
-                  {activeQueue.map((item, idx) => (
-                    <div key={item.id} className="alpha-router-prompt-queue__item">
-                      <span className="alpha-router-prompt-queue__index" aria-hidden>
-                        {idx + 1}
-                      </span>
-                      <span className="alpha-router-prompt-queue__text" title={queueItemPreview(item)}>
-                        {queueItemPreview(item)}
-                      </span>
-                      <div className="alpha-router-prompt-queue__actions">
-                        <button
-                          type="button"
-                          className="alpha-router-prompt-queue__btn"
-                          onClick={() => editQueuedPrompt(item)}
-                          aria-label="Edit queued message"
-                          title="Edit"
-                        >
-                          ✎
-                        </button>
-                        <button
-                          type="button"
-                          className="alpha-router-prompt-queue__btn alpha-router-prompt-queue__btn--remove"
-                          onClick={() => activeId && removeQueuedPrompt(activeId, item.id)}
-                          aria-label="Remove from queue"
-                          title="Remove"
-                        >
-                          ×
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <PromptQueue
+                  items={activeQueue.map((item) => ({ id: item.id, preview: queueItemPreview(item) }))}
+                  expanded={queueExpanded}
+                  onToggleExpanded={() => setQueueExpanded((open) => !open)}
+                  onEdit={(id) => {
+                    const item = activeQueue.find((q) => q.id === id);
+                    if (item) editQueuedPrompt(item);
+                  }}
+                  onRemove={(id) => {
+                    if (activeId) removeQueuedPrompt(activeId, id);
+                  }}
+                  onClearAll={() => {
+                    if (activeId) void clearQueuedPrompts(activeId);
+                  }}
+                />
               ) : null}
               <textarea
                 ref={textareaRef}
@@ -7008,6 +7151,7 @@ export default function ChatPanel({
                       className="alpha-router-composer-ctrl alpha-router-model-trigger alpha-router-tools-trigger--icon"
                       onClick={() => {
                         setModelPickerMode(null);
+                        setAttachMenuOpen(false);
                         setToolsMenuOpen((o) => !o);
                       }}
                       aria-expanded={toolsMenuOpen}
@@ -7043,6 +7187,7 @@ export default function ChatPanel({
                       onClick={() => {
                         setModelPickerMode(null);
                         setToolsMenuOpen(false);
+                        setAttachMenuOpen(false);
                         setAgentMenuOpen((o) => !o);
                       }}
                       disabled={readOnly || activePrivateMode || !agentCatalog.length}
@@ -7119,17 +7264,36 @@ export default function ChatPanel({
                     </button>
                   ) : null}
                   <button
+                    ref={attachBtnRef}
                     type="button"
                     className="alpha-router-attach-btn"
-                    onClick={openAttachmentPicker}
+                    onClick={openAttachmentMenu}
                     disabled={attachUploading || !model}
-                    aria-label="Attach file"
-                    title="Attach file"
+                    aria-label="Attach"
+                    aria-haspopup="menu"
+                    aria-expanded={attachMenuOpen}
+                    title="Attach file, screenshot, or Media"
                   >
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66L9.64 16.2a2 2 0 0 1-2.83-2.83l8.49-8.49" />
                     </svg>
                   </button>
+                  <ComposerAttachMenu
+                    open={attachMenuOpen}
+                    anchorRef={attachBtnRef}
+                    onClose={() => setAttachMenuOpen(false)}
+                    onUpload={() => {
+                      setAttachMenuOpen(false);
+                      fileInputRef.current?.click();
+                    }}
+                    onScreenshot={() => {
+                      void startScreenshotCapture();
+                    }}
+                    onFromMedia={() => {
+                      setAttachMenuOpen(false);
+                      setMediaPickerOpen(true);
+                    }}
+                  />
                   <button
                     type="button"
                     className={voiceRecording ? "alpha-router-stop alpha-router-voice-btn--recording" : "alpha-router-voice-btn"}
@@ -7203,6 +7367,42 @@ export default function ChatPanel({
         loading={costDetailsLoading}
         error={costDetailsError}
         onClose={closeMessageCostDetails}
+      />
+
+      <MediaViewerModal
+        items={chatSlideshowItems}
+        index={mediaViewerIndex >= 0 ? mediaViewerIndex : null}
+        onClose={() => setMediaViewerUrl(null)}
+        onIndexChange={handleChatMediaViewerIndexChange}
+        onOpenExternal={(item) => {
+          if (item.kind === "video") void openVideoFullSize(item.url);
+          else void openImageFullSize(item.url);
+        }}
+      />
+
+      <ComposerMediaPicker
+        open={mediaPickerOpen}
+        projectId={isProjectChat ? projectId : null}
+        privateMode={activePrivateMode}
+        remainingSlots={Math.max(0, maxAttachments - pendingAttachments.length)}
+        onClose={() => setMediaPickerOpen(false)}
+        onPick={async (files) => {
+          setMediaPickerOpen(false);
+          await processPendingAttachmentFiles(files);
+        }}
+        onPickMediaIds={async (ids) => {
+          setMediaPickerOpen(false);
+          await processPendingMediaIds(ids);
+        }}
+      />
+
+      <ScreenshotCropOverlay
+        frame={screenshotFrame}
+        onCancel={closeScreenshotFrame}
+        onConfirm={async (file) => {
+          closeScreenshotFrame();
+          await processPendingAttachmentFiles([file]);
+        }}
       />
 
     </div>

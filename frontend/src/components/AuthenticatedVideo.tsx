@@ -9,9 +9,10 @@ type Props = {
   url: string;
   className?: string;
   title?: string;
+  controls?: boolean;
 };
 
-export default function AuthenticatedVideo({ url, className, title }: Props) {
+export default function AuthenticatedVideo({ url, className, title, controls = true }: Props) {
   const [src, setSrc] = useState<string | null>(() =>
     url && !isAlphaRouterMediaFileUrl(url) ? safeBrowserUrl(url, "media") : null,
   );
@@ -65,7 +66,7 @@ export default function AuthenticatedVideo({ url, className, title }: Props) {
       src={src}
       className={className}
       title={title || "Generated video"}
-      controls
+      controls={controls}
       playsInline
       preload="metadata"
     />

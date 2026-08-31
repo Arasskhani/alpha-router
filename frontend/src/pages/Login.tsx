@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useNavigate, useSearchParams, type NavigateFunction } from "react-router-dom";
 import AlphaRouterLogo from "../components/AlphaRouterLogo";
-import { LOGIN_TAGLINE, PAGE_TITLE, PRODUCT_NAME } from "../lib/brand";
+import { LOGIN_TAGLINE, PAGE_TITLE, PRODUCT_NAME_MARKED, TRADEMARK_OWNER } from "../lib/brand";
 import { applyThemeToDocument } from "../lib/themeCache";
 import { markLoggedIn } from "../lib/session";
 import { isAdminPanelRole, normalizeRole, filterAdminNav, firstAllowedAdminPath } from "../lib/rbac";
@@ -262,7 +262,7 @@ export default function Login() {
       <div className="login-page__glow login-page__glow--b" aria-hidden />
 
       <div className="login-page__shell">
-        <section className="login-brand" aria-label={PRODUCT_NAME}>
+        <section className="login-brand" aria-label={PRODUCT_NAME_MARKED}>
           <div className="login-brand__head">
             <h1 className="login-brand__title login-brand__title--assemble">
               <AlphaRouterLogo
@@ -391,6 +391,9 @@ export default function Login() {
           </div>
         </section>
       </div>
+      <p className="login-page__legal">
+        {PRODUCT_NAME_MARKED} is a trademark of {TRADEMARK_OWNER}.
+      </p>
     </div>
   );
 }

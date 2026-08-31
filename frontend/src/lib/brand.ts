@@ -2,6 +2,13 @@
 
 export const PRODUCT_NAME = "Alpharouter";
 
+/** Claimed mark. Use ® only after a registration certificate is issued. */
+export const TRADEMARK_SYMBOL = "™";
+
+export const TRADEMARK_OWNER = "Majid Arasskhani";
+
+export const PRODUCT_NAME_MARKED = `${PRODUCT_NAME}${TRADEMARK_SYMBOL}`;
+
 /** Login page tagline (shown below the Alpharouter wordmark). */
 export const LOGIN_TAGLINE = "One route. Every model.";
 
@@ -33,4 +40,4 @@ export const BROWSER_EVENT_NAMES = {
   chatsImported: "alpha-router:chats-imported",
 } as const;
 
-export const PAGE_TITLE = `${PRODUCT_NAME} | ${LOGIN_TAGLINE}`;
+export const PAGE_TITLE = `${PRODUCT_NAME_MARKED} | ${LOGIN_TAGLINE}`;

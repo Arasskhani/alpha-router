@@ -15,7 +15,11 @@ from app.branding import (
     API_KEY_PREFIX,
     OIDC_STATE_COOKIE_NAME,
     OUTBOUND_USER_AGENT,
+    PRODUCT_NAME,
+    PRODUCT_NAME_MARKED,
     REPLACE_MESSAGES_HEADER,
+    TRADEMARK_OWNER,
+    TRADEMARK_SYMBOL,
 )
 from app.config import Settings
 from app.core.security import generate_api_key_for_user
@@ -42,6 +46,10 @@ def _default(field_name: str):
 
 
 def test_application_identity_contracts():
+    assert PRODUCT_NAME == "Alpharouter"
+    assert TRADEMARK_SYMBOL == "™"
+    assert PRODUCT_NAME_MARKED == "Alpharouter™"
+    assert TRADEMARK_OWNER == "Majid Arasskhani"
     assert _default("app_name") == "Alpharouter"
     assert app.title == "Alpharouter Organizational AI Platform"
     assert sandbox_broker_app.title == "Alpharouter Sandbox Broker"

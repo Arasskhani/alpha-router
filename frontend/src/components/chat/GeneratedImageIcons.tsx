@@ -21,6 +21,22 @@ export function OpenFullSizeIcon() {
   );
 }
 
+export function ChevronLeftIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden>
+      <path d="M15.2 4.2 6.8 12l8.4 7.8V4.2z" />
+    </svg>
+  );
+}
+
+export function ChevronRightIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden>
+      <path d="M8.8 4.2V19.8L17.2 12 8.8 4.2z" />
+    </svg>
+  );
+}
+
 export function RegenerateIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>

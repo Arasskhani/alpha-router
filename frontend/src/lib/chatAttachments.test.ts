@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   ATTACHMENT_MESSAGE_PREFIX,
   AUDIO_MESSAGE_PREFIX,
+  attachmentKindFromName,
   attachmentMessage,
   buildApiMessageContent,
+  canProcessAttachmentLocally,
+  imageUrlNeedsAuthResolve,
   modelSupportsVision,
   readAttachmentMessage,
 } from "./chatAttachments";
@@ -96,5 +99,35 @@ describe("modelSupportsVision", () => {
     expect(
       modelSupportsVision({ id: "model::llama", external_id: "meta-llama/llama-3.1-70b-instruct" }),
     ).toBe(false);
+  });
+});
+
+describe("attachmentKindFromName", () => {
+  it("classifies images and documents", () => {
+    expect(attachmentKindFromName("shot.PNG")).toBe("image");
+    expect(attachmentKindFromName("notes.md")).toBe("document");
+  });
+
+  it("rejects blocked and unknown types", () => {
+    expect(attachmentKindFromName("icon.svg")).toBeNull();
+    expect(attachmentKindFromName("setup.exe")).toBeNull();
+    expect(attachmentKindFromName("clip.mp4")).toBeNull();
+  });
+});
+
+describe("canProcessAttachmentLocally", () => {
+  it("allows images and plain text, not binary documents", () => {
+    expect(canProcessAttachmentLocally("photo.webp")).toBe(true);
+    expect(canProcessAttachmentLocally("notes.txt")).toBe(true);
+    expect(canProcessAttachmentLocally("brief.pdf")).toBe(false);
+  });
+});
+
+describe("imageUrlNeedsAuthResolve", () => {
+  it("resolves personal and project media file URLs, not data URLs", () => {
+    expect(imageUrlNeedsAuthResolve("/api/chat/media/9/file")).toBe(true);
+    expect(imageUrlNeedsAuthResolve("/api/projects/p1/media/3/download")).toBe(true);
+    expect(imageUrlNeedsAuthResolve("data:image/png;base64,aaa")).toBe(false);
+    expect(imageUrlNeedsAuthResolve("https://cdn.example/a.png")).toBe(false);
   });
 });

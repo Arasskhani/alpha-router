@@ -1,5 +1,6 @@
 import { ReactNode } from "react";
 import AdminArchitectureDiagram from "../../../components/docs/AdminArchitectureDiagram";
+import { PRODUCT_NAME_MARKED, TRADEMARK_OWNER } from "../../../lib/brand";
 
 export type DocSection = {
   id: string;
@@ -2348,12 +2349,31 @@ export const docSections: DocSection[] = [
     content: (
       <>
         <h2>Copyright</h2>
-        <p>© 2026 Majid Arasskhani.</p>
-        <p>alpharouter is designed and developed by Majid Arasskhani.</p>
-        <p>Released under the MIT License. You may use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, subject to the license terms.</p>
-        <div style={{ marginTop: "1rem" }}>
-          <p style={{ margin: 0 }}>Contact: Majid.Arasskhani@Gmail.com</p>
-        </div>
+        <p>Copyright © 2026 Majid Arasskhani.</p>
+        <p>
+          The {PRODUCT_NAME_MARKED} source code is licensed under the MIT License. Use, modification, and
+          redistribution are permitted under that license. The name and logos are not included; see{" "}
+          <a href="#trademarks">Trademarks</a>.
+        </p>
+        <p>Contact: Majid.Arasskhani@gmail.com</p>
+      </>
+    ),
+  },
+  {
+    id: "trademarks",
+    title: "Trademarks",
+    group: "Legal",
+    content: (
+      <>
+        <h2>Trademarks</h2>
+        <p>
+          {PRODUCT_NAME_MARKED}, Alpha Router, AlphaRouter, and the product logos are trademarks of{" "}
+          {TRADEMARK_OWNER}.
+        </p>
+        <p>
+          The MIT License covers the source code only. It does not grant permission to use these
+          marks for a fork, a competing product, or any use that implies an official relationship.
+        </p>
       </>
     ),
   },

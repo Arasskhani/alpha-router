@@ -1,8 +1,8 @@
-# Alpharouter
+# Alpharouter™
 
 **One route. Every model.**
 
-Alpharouter is an organizational AI control plane with a built-in web UI. It
+Alpharouter™ is an organizational AI control plane with a built-in web UI. It
 sits between your people (and optional external tools) and upstream LLM
 providers such as OpenRouter, OpenAI, Anthropic, Google, and xAI. One platform
 enforces budgets, RBAC, quotas, retention, and audit logging while serving
@@ -400,6 +400,10 @@ dependency audits, and container-image scanning.
 ## License
 
 Alpharouter is released under the [MIT License](LICENSE).
+
+**Alpharouter™**, Alpha Router, AlphaRouter, and the product logos are
+trademarks of Majid Arasskhani. The MIT License does not grant trademark
+rights. See [TRADEMARK.md](TRADEMARK.md) and [NOTICE](NOTICE).
 
 Copyright © 2026 Majid Arasskhani.
 

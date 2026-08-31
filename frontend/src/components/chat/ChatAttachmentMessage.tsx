@@ -6,9 +6,10 @@ import {
 
 type Props = {
   payload: AttachmentMessagePayload;
+  onOpenImage?: (url: string) => void;
 };
 
-export default function ChatAttachmentMessage({ payload }: Props) {
+export default function ChatAttachmentMessage({ payload, onOpenImage }: Props) {
   const images = payload.attachments.filter((a) => a.kind === "image");
   const documents = payload.attachments.filter((a) => a.kind === "document");
 
@@ -17,12 +18,26 @@ export default function ChatAttachmentMessage({ payload }: Props) {
       {payload.userText.trim() ? <p className="alpha-router-attach-msg__text">{payload.userText.trim()}</p> : null}
       {images.length > 0 ? (
         <div className="alpha-router-attach-msg__images">
-          {images.map((img) => (
-            <figure key={img.url} className="alpha-router-attach-msg__image">
-              <AuthenticatedImage url={img.url} alt={img.name} className="alpha-router-attach-msg__thumb" />
-              <figcaption>{img.name}</figcaption>
-            </figure>
-          ))}
+          {images.map((img) => {
+            const url = (img.url || img.data_url || "").trim();
+            return (
+              <figure key={url || img.name} className="alpha-router-attach-msg__image">
+                {onOpenImage && url ? (
+                  <button
+                    type="button"
+                    className="alpha-router-media-open"
+                    onClick={() => onOpenImage(url)}
+                    aria-label={`Open ${img.name || "image"}`}
+                  >
+                    <AuthenticatedImage url={url} alt={img.name} className="alpha-router-attach-msg__thumb" />
+                  </button>
+                ) : (
+                  <AuthenticatedImage url={url} alt={img.name} className="alpha-router-attach-msg__thumb" />
+                )}
+                <figcaption>{img.name}</figcaption>
+              </figure>
+            );
+          })}
         </div>
       ) : null}
       {documents.length > 0 ? (

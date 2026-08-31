@@ -13,6 +13,7 @@ import {
   isAlphaRouterMediaFileUrl,
 } from "../lib/mediaUrl";
 import { openSafeUrlInNewTab, safeBrowserUrl } from "../lib/browserUrlPolicy";
+import MediaViewerModal from "../components/MediaViewerModal";
 import {
   dedupeMediaItemsForDisplay,
   formatMediaBytes,
@@ -26,6 +27,7 @@ import {
   type MediaViewMode,
   saveMediaViewMode,
 } from "../lib/mediaLibrary";
+import { isSlideshowMediaKind, slideshowItemsFromMedia } from "../lib/mediaViewer";
 
 type MediaLibraryProps = {
   /** When set, admin views/manages this user's media library. */
@@ -67,6 +69,7 @@ export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProp
   const [cleanupHour, setCleanupHour] = useState(3);
   const [cleanupMinute, setCleanupMinute] = useState(0);
   const [downloadingZip, setDownloadingZip] = useState(false);
+  const [viewerId, setViewerId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -110,6 +113,16 @@ export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProp
   }, [load]);
 
   const displayItems = useMemo(() => dedupeMediaItemsForDisplay(items), [items]);
+  const slideshowItems = useMemo(() => slideshowItemsFromMedia(displayItems), [displayItems]);
+  const viewerIndex = useMemo(() => {
+    if (!viewerId) return null;
+    const next = slideshowItems.findIndex((entry) => entry.id === viewerId);
+    return next >= 0 ? next : null;
+  }, [viewerId, slideshowItems]);
+
+  useEffect(() => {
+    if (viewerId && viewerIndex == null) setViewerId(null);
+  }, [viewerId, viewerIndex]);
 
   const allSelected = displayItems.length > 0 && displayItems.every((m) => selected.has(m.id));
   const someSelected = selected.size > 0;
@@ -278,6 +291,17 @@ export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProp
     }
     await downloadOne(targets[0]);
     setFlash("Downloaded 1 file.");
+  }
+
+  function openItem(item: MediaItem) {
+    if (isSlideshowMediaKind(item.kind)) {
+      const nextId = `media-${item.id}`;
+      if (slideshowItems.some((entry) => entry.id === nextId)) {
+        setViewerId(nextId);
+        return;
+      }
+    }
+    void openFull(item);
   }
 
   async function openFull(item: MediaItem) {
@@ -513,7 +537,7 @@ export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProp
             <button
               type="button"
               className="media-page-item__preview"
-              onClick={() => void openFull(m)}
+              onClick={() => openItem(m)}
               title={m.source_prompt || m.file_name}
             >
               {m.kind === "image" ? (
@@ -523,6 +547,7 @@ export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProp
                   url={m.url}
                   className="media-page-item__img"
                   title={m.source_prompt || m.file_name}
+                  controls={false}
                 />
               ) : (
                 <div className="media-page-item__file">{m.file_name}</div>
@@ -547,7 +572,7 @@ export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProp
               <span className="media-page-item__size">{formatMediaBytes(m.size_bytes)}</span>
             </div>
             <div className="media-page-item__actions">
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => void openFull(m)}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => openItem(m)}>
                 Open
               </button>
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => void downloadOne(m)}>
@@ -562,6 +587,16 @@ export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProp
           </article>
         ))}
       </div>
+      <MediaViewerModal
+        items={slideshowItems}
+        index={viewerIndex}
+        onClose={() => setViewerId(null)}
+        onIndexChange={(next) => setViewerId(slideshowItems[next]?.id ?? null)}
+        onOpenExternal={(entry) => {
+          const item = displayItems.find((row) => `media-${row.id}` === entry.id);
+          if (item) void openFull(item);
+        }}
+      />
     </AdminPage>
   );
 }

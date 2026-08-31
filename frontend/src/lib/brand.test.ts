@@ -9,7 +9,10 @@ import {
   COOKIE_NAMES,
   PAGE_TITLE,
   PRODUCT_NAME,
+  PRODUCT_NAME_MARKED,
   STORAGE_KEYS,
+  TRADEMARK_OWNER,
+  TRADEMARK_SYMBOL,
 } from "./brand";
 import {
   CHAT_LEADER_LOCK_NAME,
@@ -21,7 +24,10 @@ import { PRIVATE_MEDIA_DB_NAME } from "./privateMediaStore";
 describe("project-owned naming contracts", () => {
   it("locks the product display identity", () => {
     expect(PRODUCT_NAME).toBe("Alpharouter");
-    expect(PAGE_TITLE).toBe("Alpharouter | One route. Every model.");
+    expect(TRADEMARK_SYMBOL).toBe("™");
+    expect(PRODUCT_NAME_MARKED).toBe("Alpharouter™");
+    expect(TRADEMARK_OWNER).toBe("Majid Arasskhani");
+    expect(PAGE_TITLE).toBe("Alpharouter™ | One route. Every model.");
   });
 
   it("locks browser storage names", () => {

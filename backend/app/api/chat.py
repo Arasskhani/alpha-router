@@ -4,7 +4,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
@@ -18,6 +18,7 @@ from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
 from app.services.attachment_extract import processed_attachment_payload
+from app.services.attachment_from_media_service import attachments_from_existing_media
 from app.services.attachment_policy import (
     AttachmentPolicyError,
     media_response_type_and_disposition,
@@ -222,6 +223,12 @@ class EnhanceImagePromptIn(BaseModel):
     model: str
     prompt: str
     mode: str  # "improve" | "translate" | "translate_improve"
+
+
+class AttachFromMediaIn(BaseModel):
+    media_ids: list[int] = Field(..., min_length=1, max_length=500)
+    chat_session_id: str | None = None
+    project_id: str | None = None
 
 
 class MediaStoreIn(BaseModel):
@@ -578,6 +585,24 @@ async def process_attachments(
         )
 
     return {"attachments": out}
+
+
+@router.post("/attachments/from-media")
+async def attachments_from_media(
+    body: AttachFromMediaIn,
+    user: User = Depends(require_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reference existing Media library files as chat attachments (no second persist)."""
+    await ensure_budget_period(db, user)
+    attachments = await attachments_from_existing_media(
+        db,
+        user,
+        body.media_ids,
+        chat_session_id=body.chat_session_id,
+        project_id=body.project_id,
+    )
+    return {"attachments": attachments}
 
 
 @router.post("/media/store")

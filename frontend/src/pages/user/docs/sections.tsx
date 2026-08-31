@@ -1,4 +1,5 @@
 import { ReactNode } from "react";
+import { PRODUCT_NAME_MARKED, TRADEMARK_OWNER } from "../../../lib/brand";
 
 export type DocSection = {
   id: string;
@@ -178,7 +179,7 @@ export const userManualSections: DocSection[] = [
         <h3>Top bar</h3>
         <ul>
           <li>
-            <strong>alpharouter</strong> brand / home context
+            <strong>{PRODUCT_NAME_MARKED}</strong> brand / home context
           </li>
           <li>
             On Chat: model search / picker controls when available
@@ -382,7 +383,8 @@ export const userManualSections: DocSection[] = [
         <h3>Prompt queue</h3>
         <p>
           If a session is already generating, new prompts can be queued. They run one after another for that session so
-          turns stay ordered. You can review queued items in the composer area while a reply is in progress.
+          turns stay ordered. A compact queue bar stays in the composer so a long queue does not take over the chat.
+          Open it to edit or remove items, or clear the whole queue.
         </p>
         <h3>Read-only</h3>
         <p>
@@ -405,9 +407,12 @@ export const userManualSections: DocSection[] = [
         <h2>Attachments &amp; voice</h2>
         <h3>Files</h3>
         <p>
-          Attach files from the composer (subject to organization size limits). Text and document attachments are
-          processed for the model; images can be sent to vision-capable models. Oversized or blocked types show an
-          error before send.
+          The paperclip opens an attach menu: upload a file, take a screenshot of a tab or window and crop it, or
+          pick images and documents from your Media library (project Media in a project chat). Files already in
+          Media are attached by reference — they are not stored a second time. Text and document attachments are
+          processed for the model; images can be sent to vision-capable models. Video and blocked types stay
+          unavailable. In Private Mode, Media attach is limited to images and plain-text files, processed locally.
+          Oversized files and the per-message file count show an error before send.
         </p>
         <h3>Voice</h3>
         <ul>
@@ -1008,12 +1013,31 @@ export const userManualSections: DocSection[] = [
     content: (
       <>
         <h2>Copyright</h2>
-        <p>© 2026 Majid Arasskhani.</p>
-        <p>alpharouter is designed and developed by Majid Arasskhani.</p>
-        <p>Released under the MIT License. You may use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, subject to the license terms.</p>
-        <div style={{ marginTop: "1rem" }}>
-          <p style={{ margin: 0 }}>Contact: Majid.Arasskhani@Gmail.com</p>
-        </div>
+        <p>Copyright © 2026 Majid Arasskhani.</p>
+        <p>
+          The {PRODUCT_NAME_MARKED} source code is licensed under the MIT License. Use, modification, and
+          redistribution are permitted under that license. The name and logos are not included; see{" "}
+          <a href="#trademarks">Trademarks</a>.
+        </p>
+        <p>Contact: Majid.Arasskhani@gmail.com</p>
+      </>
+    ),
+  },
+  {
+    id: "trademarks",
+    title: "Trademarks",
+    group: "Legal",
+    content: (
+      <>
+        <h2>Trademarks</h2>
+        <p>
+          {PRODUCT_NAME_MARKED}, Alpha Router, AlphaRouter, and the product logos are trademarks of{" "}
+          {TRADEMARK_OWNER}.
+        </p>
+        <p>
+          The MIT License covers the source code only. It does not grant permission to use these
+          marks for a fork, a competing product, or any use that implies an official relationship.
+        </p>
       </>
     ),
   },

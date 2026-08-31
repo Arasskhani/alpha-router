@@ -1,5 +1,6 @@
 import { isPrivateBlobRef, resolvePrivateMediaUrlForApi } from "./privateMediaStore";
 import { isAutoRouterExternalId } from "./chatModels";
+import { fetchAuthenticatedMediaBlob, isAlphaRouterMediaFileUrl } from "./mediaUrl";
 import {
   ATTACHMENT_MESSAGE_PREFIX,
   AUDIO_MESSAGE_PREFIX,
@@ -47,10 +48,34 @@ const ALLOWED_DOCUMENT = new Set([
 
 const ALLOWED = new Set([...ALLOWED_IMAGE, ...ALLOWED_DOCUMENT]);
 
+const LOCAL_TEXT_EXTENSIONS = new Set([
+  "txt", "text", "md", "markdown", "csv", "tsv", "json", "yaml", "yml", "xml", "log", "ini", "cfg", "conf", "tex", "rst", "sql", "toml", "properties",
+]);
+
 function fileExtensions(name: string): string[] {
   const parts = name.toLowerCase().split(".");
   if (parts.length < 2) return [];
   return parts.slice(1);
+}
+
+export function attachmentKindFromName(name: string): "image" | "document" | null {
+  const parts = fileExtensions(name);
+  if (!parts.length) return null;
+  for (const ext of parts) {
+    if (BLOCKED_EXTENSIONS.has(ext)) return null;
+  }
+  const ext = parts[parts.length - 1];
+  if (ALLOWED_IMAGE.has(ext)) return "image";
+  if (ALLOWED_DOCUMENT.has(ext)) return "document";
+  return null;
+}
+
+export function canProcessAttachmentLocally(name: string): boolean {
+  const kind = attachmentKindFromName(name);
+  if (kind === "image") return true;
+  if (kind !== "document") return false;
+  const ext = fileExtensions(name).at(-1) || "";
+  return LOCAL_TEXT_EXTENSIONS.has(ext);
 }
 
 export function validateAttachmentFile(file: File): void {
@@ -207,10 +232,6 @@ export const ATTACHMENT_ACCEPT = [
   ...ALLOWED_DOCUMENT,
 ].map((e) => `.${e}`).join(",");
 
-const LOCAL_TEXT_EXTENSIONS = new Set([
-  "txt", "text", "md", "markdown", "csv", "tsv", "json", "yaml", "yml", "xml", "log", "ini", "cfg", "conf", "tex", "rst", "sql", "toml", "properties",
-]);
-
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -299,6 +320,45 @@ export type ApiContentPart =
   | { type: "text"; text: string }
   | { type: "image_url"; image_url: { url: string } };
 
+const mediaDataUrlCache = new Map<string, Promise<string>>();
+
+export function imageUrlNeedsAuthResolve(url: string): boolean {
+  const trimmed = (url || "").trim();
+  if (!trimmed) return false;
+  return isPrivateBlobRef(trimmed) || trimmed.startsWith("blob:") || isAlphaRouterMediaFileUrl(trimmed);
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Could not read attached media."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+export async function resolveAttachmentImageUrlForApi(raw: string): Promise<string | undefined> {
+  const trimmed = (raw || "").trim();
+  if (!trimmed) return undefined;
+  if (isPrivateBlobRef(trimmed) || trimmed.startsWith("blob:")) {
+    return resolvePrivateMediaUrlForApi(trimmed);
+  }
+  if (!isAlphaRouterMediaFileUrl(trimmed)) return trimmed;
+  const cached = mediaDataUrlCache.get(trimmed);
+  if (cached) return cached;
+  const pending = (async () => {
+    const blob = await fetchAuthenticatedMediaBlob(trimmed);
+    return blobToDataUrl(blob);
+  })();
+  mediaDataUrlCache.set(trimmed, pending);
+  try {
+    return await pending;
+  } catch (err) {
+    mediaDataUrlCache.delete(trimmed);
+    throw err;
+  }
+}
+
 export async function buildApiMessageContentAsync(
   content: string,
   visionModel?: VisionModel,
@@ -340,11 +400,8 @@ export async function buildApiMessageContentAsync(
   for (const img of images) {
     const raw = img.data_url || img.url;
     if (!raw) continue;
-    const url =
-      isPrivateBlobRef(raw) || raw.startsWith("blob:")
-        ? await resolvePrivateMediaUrlForApi(raw)
-        : raw;
-    parts.push({ type: "image_url", image_url: { url } });
+    const url = await resolveAttachmentImageUrlForApi(raw);
+    if (url) parts.push({ type: "image_url", image_url: { url } });
   }
   return parts.length ? parts : text;
 }

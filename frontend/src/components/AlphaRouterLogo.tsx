@@ -1,4 +1,4 @@
-import { PRODUCT_NAME } from "../lib/brand";
+import { PRODUCT_NAME, PRODUCT_NAME_MARKED, TRADEMARK_SYMBOL } from "../lib/brand";
 
 type Props = {
   size?: number;
@@ -15,7 +15,17 @@ type Props = {
    * large mark-A + lowercase rest, no space.
    */
   joined?: boolean;
+  /** Show ™ after the wordmark. Default on — this component is the brand lockup. */
+  showTrademark?: boolean;
 };
+
+function TrademarkSign() {
+  return (
+    <span className="alpha-router-logo-tm" aria-hidden>
+      {TRADEMARK_SYMBOL}
+    </span>
+  );
+}
 
 const MARK_URL = "/alpha-router-mark.png?v=7";
 const MARK_URL_HARD = "/alpha-router-mark-hard.png?v=7";
@@ -27,6 +37,7 @@ export default function AlphaRouterLogo({
   showMark = false,
   splitWords = false,
   joined = false,
+  showTrademark = true,
 }: Props) {
   const wordSize = Math.round(size * 0.86);
   /* Joined login: mark reads as display cap above lowercase. */
@@ -70,7 +81,7 @@ export default function AlphaRouterLogo({
   return (
     <span
       className={wordClass}
-      aria-label={PRODUCT_NAME}
+      aria-label={showTrademark ? PRODUCT_NAME_MARKED : PRODUCT_NAME}
       style={{ fontSize: `${wordSize}px`, lineHeight: `${size}px` }}
     >
       {joined && showMark && splitWords ? (
@@ -110,6 +121,7 @@ export default function AlphaRouterLogo({
           {routerText}
         </span>
       )}
+      {showTrademark ? <TrademarkSign /> : null}
     </span>
   );
 }

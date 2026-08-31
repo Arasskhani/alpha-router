@@ -1,12 +1,14 @@
 """Admin REST API: connections, models, keys, plans, users, dashboard, debug."""
 
+import csv
+import io
 from datetime import date, datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import delete, exists, func, insert, or_, select, update
+from sqlalchemy import and_, delete, exists, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
@@ -908,6 +910,8 @@ def _apply_user_list_filters(
     role: str | None,
     is_active: bool | None,
     group_id: int | None,
+    plan_id: int | None = None,
+    no_plan: bool = False,
     deleted_only: bool = False,
     active_only: bool = True,
 ):
@@ -949,6 +953,69 @@ def _apply_user_list_filters(
                     user_group_members.c.user_id == User.id,
                     user_group_members.c.group_id == group_id,
                 )
+            )
+        )
+    has_user_plan_row = exists(select(PlanAssignment.id).where(PlanAssignment.user_id == User.id))
+    if plan_id is not None:
+        direct_assigned = exists(
+            select(PlanAssignment.id).where(
+                PlanAssignment.user_id == User.id,
+                PlanAssignment.plan_id == plan_id,
+            )
+        )
+        inherit_via_group = exists(
+            select(user_group_members.c.user_id).where(
+                user_group_members.c.user_id == User.id,
+                exists(
+                    select(PlanAssignment.id).where(
+                        PlanAssignment.group_id == user_group_members.c.group_id,
+                        PlanAssignment.plan_id == plan_id,
+                    )
+                ),
+            )
+        )
+        inherit_via_department = exists(
+            select(PlanAssignment.id).where(
+                PlanAssignment.department.isnot(None),
+                PlanAssignment.department == User.department,
+                PlanAssignment.plan_id == plan_id,
+            )
+        )
+        stmt = stmt.where(
+            or_(
+                direct_assigned,
+                and_(~has_user_plan_row, or_(inherit_via_group, inherit_via_department)),
+            )
+        )
+    elif no_plan:
+        explicit_none = exists(
+            select(PlanAssignment.id).where(
+                PlanAssignment.user_id == User.id,
+                PlanAssignment.plan_id.is_(None),
+            )
+        )
+        inherit_via_group_any = exists(
+            select(user_group_members.c.user_id).where(
+                user_group_members.c.user_id == User.id,
+                exists(
+                    select(PlanAssignment.id).where(
+                        PlanAssignment.group_id == user_group_members.c.group_id,
+                        PlanAssignment.plan_id.isnot(None),
+                    )
+                ),
+            )
+        )
+        inherit_via_department_any = exists(
+            select(PlanAssignment.id).where(
+                PlanAssignment.department.isnot(None),
+                PlanAssignment.department == User.department,
+                PlanAssignment.plan_id.isnot(None),
+            )
+        )
+        stmt = stmt.where(
+            or_(
+                explicit_none,
+                and_(~has_user_plan_row, ~inherit_via_group_any, ~inherit_via_department_any),
             )
         )
     if q and not any((username, email, department, job_title)):
@@ -1001,22 +1068,127 @@ def _owner_picker_payload(users: list[User]) -> list[dict]:
     ]
 
 
-@router.get("/users")
-async def list_users(
-    q: str | None = Query(None),
-    username: str | None = Query(None),
-    email: str | None = Query(None),
-    department: str | None = Query(None),
-    job_title: str | None = Query(None),
-    role: str | None = Query(None),
-    is_active: bool | None = Query(None),
-    group_id: int | None = Query(None),
-    user_id: int | None = Query(None),
-    online: bool | None = Query(None, description="Keep only users online right now"),
-    picker: bool = Query(False, description="Owner picker: search-only, no full list"),
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_users),
-):
+def _effective_plan_id(user_id: int, plan_state: dict[int, dict], inherited_plans: dict[int, dict]) -> int | None:
+    state = plan_state.get(user_id) or {}
+    mode = state.get("user_plan_mode") or "inherit"
+    if mode == "assigned":
+        plan_id = state.get("user_plan_id")
+        return int(plan_id) if plan_id is not None else None
+    if mode == "none":
+        return None
+    inherited = inherited_plans.get(user_id) or {}
+    plan_id = inherited.get("inherited_plan_id")
+    return int(plan_id) if plan_id is not None else None
+
+
+def _filter_users_by_effective_plan(
+    users: list[User],
+    *,
+    plan_state: dict[int, dict],
+    inherited_plans: dict[int, dict],
+    plan_id: int | None,
+    no_plan: bool,
+) -> list[User]:
+    if plan_id is None and not no_plan:
+        return users
+    matched: list[User] = []
+    for user in users:
+        effective_id = _effective_plan_id(user.id, plan_state, inherited_plans)
+        if no_plan:
+            if effective_id is None:
+                matched.append(user)
+        elif effective_id == plan_id:
+            matched.append(user)
+    return matched
+
+
+def _admin_user_export_plan_name(row: dict) -> str:
+    mode = row.get("user_plan_mode")
+    if mode == "assigned" and row.get("user_plan_name"):
+        return str(row["user_plan_name"])
+    if mode == "inherit" and row.get("inherited_plan_name"):
+        return str(row["inherited_plan_name"])
+    return "No Plan"
+
+
+def _admin_user_export_plan_source(row: dict) -> str:
+    mode = row.get("user_plan_mode")
+    if mode == "assigned":
+        return "assigned"
+    if mode == "none":
+        return "none"
+    source = row.get("inherited_plan_source")
+    if source in ("group", "department"):
+        return str(source)
+    return "none"
+
+
+def _admin_users_to_csv_bytes(rows: list[dict]) -> bytes:
+    columns = [
+        "Username",
+        "Display Name",
+        "Email",
+        "Groups",
+        "Department",
+        "Office",
+        "Job Title",
+        "Company",
+        "Report To",
+        "Auth",
+        "Roles",
+        "User Plan",
+        "Plan Source",
+        "Budget Used USD",
+        "Monthly Budget USD",
+        "Status",
+        "Last Login At",
+    ]
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=columns, lineterminator="\n")
+    writer.writeheader()
+    for row in rows:
+        roles = row.get("roles") or []
+        writer.writerow(
+            {
+                "Username": row.get("username") or "",
+                "Display Name": row.get("display_name") or "",
+                "Email": row.get("email") or "",
+                "Groups": ", ".join(row.get("group_names") or []),
+                "Department": row.get("department") or "",
+                "Office": row.get("office") or "",
+                "Job Title": row.get("job_title") or "",
+                "Company": row.get("company") or "",
+                "Report To": row.get("reporting_to") or "",
+                "Auth": row.get("auth_provider") or "",
+                "Roles": ", ".join(str(role) for role in roles),
+                "User Plan": _admin_user_export_plan_name(row),
+                "Plan Source": _admin_user_export_plan_source(row),
+                "Budget Used USD": "" if row.get("budget_used_usd") is None else row.get("budget_used_usd"),
+                "Monthly Budget USD": "" if row.get("monthly_budget_usd") is None else row.get("monthly_budget_usd"),
+                "Status": "Active" if row.get("is_active") else "Deactive",
+                "Last Login At": row.get("last_login_at") or "",
+            }
+        )
+    return ("\ufeff" + buffer.getvalue()).encode("utf-8")
+
+
+async def _list_admin_user_dicts(
+    db: AsyncSession,
+    *,
+    q: str | None,
+    username: str | None,
+    email: str | None,
+    department: str | None,
+    job_title: str | None,
+    role: str | None,
+    is_active: bool | None,
+    group_id: int | None,
+    user_id: int | None,
+    online: bool | None,
+    picker: bool,
+    plan_id: int | None,
+    no_plan: bool,
+) -> list[dict]:
     from app.services.presence_service import online_user_ids
 
     if picker and user_id is not None:
@@ -1035,9 +1207,11 @@ async def list_users(
             role=role,
             is_active=is_active,
             group_id=group_id,
+            plan_id=None if picker else plan_id,
+            no_plan=False if picker else no_plan,
             active_only=True,
         )
-        users = (await db.execute(stmt)).scalars().all()
+        users = list((await db.execute(stmt)).scalars().all())
     # One Redis MGET. Narrow the list here so the plan/group/budget batches below
     # only run for rows that survive the filter. ``None`` means presence is
     # unavailable, in which case the filter is ignored rather than returning an
@@ -1047,6 +1221,18 @@ async def list_users(
         users = [u for u in users if u.id in online_ids and bool(u.is_active)]
     user_ids = [u.id for u in users]
     plan_state = await _build_user_plan_state_map(db, user_ids)
+    from app.services.budget_service import resolve_inherited_plans_batch, resolve_monthly_budgets_batch
+
+    inherited_plans = await resolve_inherited_plans_batch(db, users)
+    if not picker and (plan_id is not None or no_plan):
+        users = _filter_users_by_effective_plan(
+            users,
+            plan_state=plan_state,
+            inherited_plans=inherited_plans,
+            plan_id=plan_id,
+            no_plan=no_plan,
+        )
+        user_ids = [u.id for u in users]
     groups_map: dict[int, list[str]] = {uid: [] for uid in user_ids}
     if user_ids:
         group_rows = (
@@ -1061,10 +1247,7 @@ async def list_users(
             if uid is not None:
                 groups_map.setdefault(int(uid), []).append(str(gname))
     roles_map = await get_roles_map(db, user_ids)
-    from app.services.budget_service import resolve_inherited_plans_batch, resolve_monthly_budgets_batch
-
     budgets = await resolve_monthly_budgets_batch(db, users)
-    inherited_plans = await resolve_inherited_plans_batch(db, users)
     return [
         {
             "id": u.id,
@@ -1109,6 +1292,88 @@ async def list_users(
         }
         for u in users
     ]
+
+
+@router.get("/users")
+async def list_users(
+    q: str | None = Query(None),
+    username: str | None = Query(None),
+    email: str | None = Query(None),
+    department: str | None = Query(None),
+    job_title: str | None = Query(None),
+    role: str | None = Query(None),
+    is_active: bool | None = Query(None),
+    group_id: int | None = Query(None),
+    plan_id: int | None = Query(None, description="Effective budget plan (direct or inherited)"),
+    no_plan: bool = Query(False, description="Users with no effective budget plan"),
+    user_id: int | None = Query(None),
+    online: bool | None = Query(None, description="Keep only users online right now"),
+    picker: bool = Query(False, description="Owner picker: search-only, no full list"),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_users),
+):
+    if plan_id is not None and no_plan:
+        raise HTTPException(400, detail="Specify only one of plan_id or no_plan")
+    return await _list_admin_user_dicts(
+        db,
+        q=q,
+        username=username,
+        email=email,
+        department=department,
+        job_title=job_title,
+        role=role,
+        is_active=is_active,
+        group_id=group_id,
+        user_id=user_id,
+        online=online,
+        picker=picker,
+        plan_id=plan_id,
+        no_plan=no_plan,
+    )
+
+
+@router.get("/users/export")
+async def export_users(
+    q: str | None = Query(None),
+    username: str | None = Query(None),
+    email: str | None = Query(None),
+    department: str | None = Query(None),
+    job_title: str | None = Query(None),
+    role: str | None = Query(None),
+    is_active: bool | None = Query(None),
+    group_id: int | None = Query(None),
+    plan_id: int | None = Query(None, description="Effective budget plan (direct or inherited)"),
+    no_plan: bool = Query(False, description="Users with no effective budget plan"),
+    online: bool | None = Query(None, description="Keep only users online right now"),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_users),
+):
+    if plan_id is not None and no_plan:
+        raise HTTPException(400, detail="Specify only one of plan_id or no_plan")
+    rows = await _list_admin_user_dicts(
+        db,
+        q=q,
+        username=username,
+        email=email,
+        department=department,
+        job_title=job_title,
+        role=role,
+        is_active=is_active,
+        group_id=group_id,
+        user_id=None,
+        online=online,
+        picker=False,
+        plan_id=plan_id,
+        no_plan=no_plan,
+    )
+    content = _admin_users_to_csv_bytes(rows)
+    stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    filename = f"alpharouter-users-{stamp}.csv"
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/deleted-users")

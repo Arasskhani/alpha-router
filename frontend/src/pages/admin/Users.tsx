@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { api, getCachedSession } from "../../api";
+import { api, authFetch, formatApiError, getCachedSession } from "../../api";
 import { useDebounced } from "../../hooks/useDebounced";
 import AdminPage from "../../components/AdminPage";
 import CreateLocalUserModal, { type CreateLocalUserValues } from "../../components/users/CreateLocalUserModal";
@@ -137,6 +137,30 @@ function userLabel(u: { username?: string; display_name?: string } | null | unde
   return (u.display_name || u.username || "").trim() || "user";
 }
 
+async function downloadUsersCsv(path: string): Promise<void> {
+  const res = await authFetch(path);
+  if (!res.ok) {
+    let message = `Export failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.detail) message = String(body.detail);
+    } catch {
+      /* keep status fallback */
+    }
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  const cd = res.headers.get("Content-Disposition");
+  const match = cd?.match(/filename="([^"]+)"/);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = match?.[1] ?? "alpharouter-users.csv";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+}
+
 type Plan = { id: number; name: string };
 type GroupOption = { id: number; name: string };
 
@@ -182,7 +206,9 @@ export default function Users() {
   const [filterDepartment, setFilterDepartment] = useState("");
   const [filterJobTitle, setFilterJobTitle] = useState("");
   const [filterRole, setFilterRole] = useState("");
+  const [filterPlan, setFilterPlan] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("");
+  const [exporting, setExporting] = useState(false);
   const debouncedUser = useDebounced(filterUser, 280);
   const debouncedEmail = useDebounced(filterEmail, 280);
   const debouncedDepartment = useDebounced(filterDepartment, 280);
@@ -217,6 +243,8 @@ export default function Users() {
     if (debouncedDepartment.trim()) params.set("department", debouncedDepartment.trim());
     if (debouncedJobTitle.trim()) params.set("job_title", debouncedJobTitle.trim());
     if (filterRole) params.set("role", filterRole);
+    if (filterPlan === "__none__") params.set("no_plan", "true");
+    else if (filterPlan) params.set("plan_id", filterPlan);
     if (statusFilter === "enabled") params.set("is_active", "true");
     if (statusFilter === "disabled") params.set("is_active", "false");
     if (statusFilter === "online") {
@@ -257,7 +285,7 @@ export default function Users() {
     api<Plan[]>("/api/admin/plans").then(setPlans).catch(() => {});
     api<GroupOption[]>("/api/admin/groups").then(setGroups).catch(() => {});
     api<RoleRecord[]>("/api/admin/roles").then(setRoleCatalog).catch(() => {});
-  }, [debouncedUser, debouncedEmail, debouncedDepartment, debouncedJobTitle, filterRole, statusFilter, filterGroupId]);
+  }, [debouncedUser, debouncedEmail, debouncedDepartment, debouncedJobTitle, filterRole, filterPlan, statusFilter, filterGroupId]);
 
   // Only the Online filter needs a live list: who is online changes by the
   // minute, and a snapshot from the moment the button was clicked goes stale.
@@ -670,8 +698,21 @@ export default function Users() {
     setFilterDepartment("");
     setFilterJobTitle("");
     setFilterRole("");
+    setFilterPlan("");
     setStatusFilter("");
     setGroupFilter("");
+  }
+
+  async function exportFilteredUsers() {
+    setErr("");
+    setExporting(true);
+    try {
+      await downloadUsersCsv(`/api/admin/users/export${buildUsersQuery()}`);
+    } catch (e) {
+      setErr(formatApiError(e));
+    } finally {
+      setExporting(false);
+    }
   }
 
   async function saveBulkEdit(e: FormEvent) {
@@ -832,11 +873,32 @@ export default function Users() {
             ))}
           </select>
         </div>
+        <div>
+          <label>User Plan</label>
+          <select value={filterPlan} onChange={(e) => setFilterPlan(e.target.value)}>
+            <option value="">All plans</option>
+            <option value="__none__">No Plan</option>
+            {plans.map((p) => (
+              <option key={p.id} value={String(p.id)}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <div className="search-bar users-actions">
         <button type="button" className="btn btn-ghost" onClick={clearFilters}>
           Clear filters
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => void exportFilteredUsers()}
+          disabled={exporting}
+          title="Export the current filtered users as CSV"
+        >
+          {exporting ? "Exporting…" : "Export to CSV"}
         </button>
         <button
           className="btn btn-ghost"

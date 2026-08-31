@@ -1628,7 +1628,7 @@ export const docSections: DocSection[] = [
         <h2>Users</h2>
         <p>
           Path: <code>/admin/users</code>. Directory of accounts with filters (status, email, department, job title,
-          role, group).
+          role, group, user plan).
         </p>
         <h3>Capabilities</h3>
         <ul>
@@ -1656,6 +1656,16 @@ export const docSections: DocSection[] = [
             (90s by default), so a closed tab drops off within about a minute. While the filter is active the list
             refreshes every 20s. Presence lives only in Redis; set <code>PRESENCE_ENABLED=false</code> to turn it off.
             If Redis is unreachable the filter is ignored and the page says so rather than showing an empty table.
+          </li>
+          <li>
+            <strong>User Plan</strong> — filters by the effective budget plan shown in the table: a direct user
+            assignment, or a plan inherited from a group or department. <strong>No Plan</strong> includes accounts
+            with an explicit block and those that inherit nothing. Combined with the other filters.
+          </li>
+          <li>
+            <strong>Export to CSV</strong> downloads the current filtered set (same query as the table) via{" "}
+            <code>GET /api/admin/users/export</code>. Columns include profile fields, roles, effective plan, plan
+            source (assigned / group / department / none), budget, and status. The file is UTF-8 with BOM for Excel.
           </li>
         </ul>
         <Note>

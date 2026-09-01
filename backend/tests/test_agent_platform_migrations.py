@@ -108,6 +108,9 @@ def test_agent_platform_migration_is_complete_and_idempotent():
             "project_resources",
             "project_media_assets",
             "project_room_handoffs",
+            "admin_ip_allowlist_entries",
+            "tls_certificates",
+            "security_audit_events",
         }.issubset(tables)
     finally:
         database_path.unlink(missing_ok=True)

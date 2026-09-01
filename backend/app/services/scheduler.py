@@ -200,6 +200,20 @@ async def job_chat_retention_cleanup():
             logger.exception("Chat retention cleanup failed")
 
 
+async def job_tls_expiry_notice():
+    async with AsyncSessionLocal() as db:
+        from app.services.tls_expiry_service import notify_expiring_certificates
+
+        try:
+            result = await notify_expiring_certificates(db)
+            await db.commit()
+            if result.get("sent"):
+                logger.info("Sent %s TLS expiry notices", result["sent"])
+        except Exception:
+            await db.rollback()
+            logger.exception("TLS expiry notice job failed")
+
+
 async def job_purge_deleted_projects():
     async with AsyncSessionLocal() as db:
         from app.services.project_service import purge_expired_deleted_projects
@@ -331,6 +345,16 @@ def start_scheduler():
     scheduler.add_job(job_chat_stats_reconcile, "cron", hour=3, minute=30, id="chat_stats_reconcile")
     scheduler.add_job(job_user_media_cleanup, "cron", hour="*", minute=0, id="user_media_cleanup")
     scheduler.add_job(job_system_metrics_snapshot, "interval", hours=1, id="system_metrics_snapshot")
+    scheduler.add_job(
+        job_tls_expiry_notice,
+        "cron",
+        hour=6,
+        minute=0,
+        timezone=get_server_timezone(),
+        id="tls_expiry_notice",
+        max_instances=1,
+        coalesce=True,
+    )
     scheduler.add_job(
         job_model_tool_compatibility,
         "interval",

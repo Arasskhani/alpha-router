@@ -21,6 +21,7 @@ from app.api import (
     admin_agents,
     admin_knowledge,
     admin_memory,
+    admin_security,
     agents,
     auth,
     authentication,
@@ -69,6 +70,7 @@ from app.models.user import User
 from app.schema_registry import legacy_metadata_tables
 from app.services import object_storage_service as oss
 from app.services.auth_sync_scheduler import refresh_auth_sync_schedules
+from app.services.admin_ip_guard import AdminIpGuardMiddleware
 from app.services.bounded_io import RequestBodyLimitMiddleware
 from app.services.csrf_protection import CsrfProtectionMiddleware
 from app.services.docs_guard import OpenApiDocsGuardMiddleware
@@ -155,6 +157,10 @@ def _assert_production_safe() -> None:
         csrf_cookie_name=settings.csrf_cookie_name,
         clamav_required=settings.clamav_required,
         knowledge_ocr_required=settings.knowledge_ocr_required,
+        tls_edge_enabled=_tls_edge_enabled_from_disk(),
+        http_bind=settings.alpharouter_http_bind,
+        trusted_proxy_cidrs=settings.trusted_proxy_cidrs,
+        trust_local_gateway_proxy=settings.trust_local_gateway_proxy,
         guard_mode=settings.production_guard_mode,
     )
     if (
@@ -229,7 +235,7 @@ def _warn_dangerous_opt_in_flags() -> None:
         allow_insecure_code_subprocess=settings.allow_insecure_code_subprocess,
     ):
         logging.getLogger(LOGGER_NAMESPACE).warning(
-            "Dangerous opt-in enabled: %s — %s. Leave this false outside an isolated lab.",
+            "Dangerous opt-in enabled: %s -- %s. Leave this false outside an isolated lab.",
             name,
             reason,
         )
@@ -288,6 +294,18 @@ def _url_host_is_internal(url: str) -> bool:
     return "." not in host
 
 
+def _has_non_loopback_cidr(raw: str) -> bool:
+    from app.services.client_ip import parse_cidrs
+
+    return any(not network.is_loopback for network in parse_cidrs(raw))
+
+
+def _tls_edge_enabled_from_disk() -> bool:
+    from app.services.tls_edge_service import read_desired_state
+
+    return bool(read_desired_state().get("enabled"))
+
+
 def _url_has_secure_password(url: str) -> bool:
     """Return whether a configured URL contains a non-placeholder password."""
     try:
@@ -329,6 +347,10 @@ def _collect_production_insecurities(
     csrf_cookie_name: str = CSRF_COOKIE_NAME,
     clamav_required: bool = True,
     knowledge_ocr_required: bool = True,
+    tls_edge_enabled: bool = False,
+    http_bind: str = "0.0.0.0",
+    trusted_proxy_cidrs: str = "127.0.0.1/32,::1/128",
+    trust_local_gateway_proxy: bool = True,
 ) -> list[str]:
     """Pure collector used by the startup guard and by tests.
 
@@ -425,6 +447,13 @@ def _collect_production_insecurities(
         insecure.append("CLAMAV_REQUIRED")
     if not knowledge_ocr_required:
         insecure.append("KNOWLEDGE_OCR_REQUIRED")
+    bind = (http_bind or "0.0.0.0").strip() or "0.0.0.0"
+    if tls_edge_enabled and bind in {"0.0.0.0", "::", "*"}:
+        insecure.append("TLS_HTTP_BIND")
+    if tls_edge_enabled and not trust_local_gateway_proxy and not _has_non_loopback_cidr(trusted_proxy_cidrs):
+        # Nothing would be trusted to forward the client address, so every HTTPS
+        # request would be attributed to the proxy hop instead of the real client.
+        insecure.append("TRUSTED_PROXY")
     return insecure
 
 
@@ -460,6 +489,10 @@ def _check_production_safe(
     csrf_cookie_name: str = CSRF_COOKIE_NAME,
     clamav_required: bool = True,
     knowledge_ocr_required: bool = True,
+    tls_edge_enabled: bool = False,
+    http_bind: str = "0.0.0.0",
+    trusted_proxy_cidrs: str = "127.0.0.1/32,::1/128",
+    trust_local_gateway_proxy: bool = True,
     guard_mode: str = "hard-fail",
 ) -> None:
     """Pure check used by the startup guard and by tests.
@@ -500,6 +533,10 @@ def _check_production_safe(
         csrf_cookie_name=csrf_cookie_name,
         clamav_required=clamav_required,
         knowledge_ocr_required=knowledge_ocr_required,
+        tls_edge_enabled=tls_edge_enabled,
+        http_bind=http_bind,
+        trusted_proxy_cidrs=trusted_proxy_cidrs,
+        trust_local_gateway_proxy=trust_local_gateway_proxy,
     )
     if not insecure:
         return
@@ -699,14 +736,14 @@ if _DOCS_LOCKED:
     async def _protected_swagger_ui_html():
         return get_swagger_ui_html(
             openapi_url="/api/openapi.json",
-            title=f"{APPLICATION_TITLE} — API",
+            title=f"{APPLICATION_TITLE} API",
         )
 
     @app.get("/api/redoc", include_in_schema=False)
     async def _protected_redoc_html():
         return get_redoc_html(
             openapi_url="/api/openapi.json",
-            title=f"{APPLICATION_TITLE} — ReDoc",
+            title=f"{APPLICATION_TITLE} ReDoc",
         )
 
 
@@ -734,6 +771,7 @@ app.add_middleware(
 )
 app.add_middleware(CsrfProtectionMiddleware)
 app.add_middleware(ObservabilityMiddleware)
+app.add_middleware(AdminIpGuardMiddleware)
 
 app.include_router(auth.router)
 app.include_router(gateway.router)
@@ -759,6 +797,7 @@ app.include_router(reports.router)
 app.include_router(logs.router)
 app.include_router(authentication.router)
 app.include_router(smtp.router)
+app.include_router(admin_security.router)
 app.include_router(groups.router)
 app.include_router(chat.router)
 app.include_router(projects.router)
@@ -813,11 +852,11 @@ def _fallback_html() -> str:
   <pre>cd frontend\nnpm install\nnpm run build</pre>
   <p>Rebuild the Docker image so the frontend is compiled into the container:</p>
   <pre>docker compose up --build -d</pre>
-  <p>API docs: <a href="/docs">/docs</a> · Health: <a href="/health">/health</a></p>
+  <p>API docs: <a href="/docs">/docs</a> - Health: <a href="/health">/health</a></p>
 </body></html>"""
 
 
-# 16x16 transparent PNG embedded in ICO — empty tab icon
+# 16x16 transparent PNG embedded in ICO - empty tab icon
 _EMPTY_FAVICON_ICO = (
     b"\x00\x00\x01\x00\x01\x00\x10\x10\x00\x00\x01\x00 \x00K\x00"
     b"\x00\x00\x16\x00\x00\x00\x89PNG\r\n\x1a\n\x00\x00"
@@ -831,7 +870,7 @@ _EMPTY_FAVICON_ICO = (
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
-    """Empty favicon — avoid SPA fallback serving index.html as tab icon."""
+    """Empty favicon - avoid SPA fallback serving index.html as tab icon."""
     icon = _FRONTEND_DIST / "favicon.ico"
     body = icon.read_bytes() if icon.is_file() else _EMPTY_FAVICON_ICO
     return Response(
@@ -849,7 +888,7 @@ async def root():
     return HTMLResponse(_fallback_html())
 
 
-# Static assets (JS/CSS) — must be after explicit routes like /health
+# Static assets (JS/CSS) - must be after explicit routes like /health
 if _FRONTEND_DIST.is_dir():
     app.mount(
         "/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="assets"
@@ -857,8 +896,8 @@ if _FRONTEND_DIST.is_dir():
 
     @app.get("/{full_path:path}")
     async def spa_fallback(full_path: str):
-        """React Router: serve index.html for client-side routes (never shadow /api — those are separate routes)."""
-        # Never let the SPA mask unmatched API/gateway paths — return JSON 404
+        """React Router: serve index.html for client-side routes (never shadow /api - those are separate routes)."""
+        # Never let the SPA mask unmatched API/gateway paths - return JSON 404
         # so API clients get a predictable error instead of the HTML shell.
         if full_path.startswith(
             ("api/", "v1/", "health", "docs", "openapi.json", "redoc")

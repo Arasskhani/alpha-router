@@ -1,0 +1,1883 @@
+import { api } from "../api";
+import { STORAGE_KEYS } from "./brand";
+import { compactAttachmentMessageForStorage } from "./chatAttachments";
+import { ATTACHMENT_MESSAGE_PREFIX, AUDIO_MESSAGE_PREFIX, IMAGE_MESSAGE_PREFIX, IMAGE_PENDING_MARKER, VIDEO_MESSAGE_PREFIX, VIDEO_PENDING_MARKER, } from "./chatMarkers";
+import { compactPrivateSessionsForStorage, hydratePrivateSessionsFromStorage, privateSessionsNeedStorageMigration, } from "./privateMediaStorage";
+import { isQuotaExceededError, PrivateChatStorageError } from "./privateMediaStore";
+import { broadcastChatRefresh, isChatLeader, initChatLeader } from "./chatLeader";
+import { getSessionUser } from "./session";
+import { isCachedTheme, loadCachedTheme, saveCachedTheme } from "./themeCache";
+import { anyChatToolEnabled, copyFreshChatTools, normalizeChatTools, } from "./chatTools";
+import { createProjectChat, deleteProjectChat, getProjectChat, listProjectChats, syncProjectChats, } from "./projectsApi";
+let projectChatScopeId = null;
+/** Scope chat HTTP to a project workspace. Null restores personal /app/chat. */
+export function setProjectChatScope(projectId) {
+    const next = projectId ? String(projectId).trim() : "";
+    projectChatScopeId = next || null;
+}
+export function getProjectChatScope() {
+    return projectChatScopeId;
+}
+function parseApiTime(value, fallback = Date.now()) {
+    if (typeof value === "number" && Number.isFinite(value))
+        return value;
+    if (typeof value === "string" && value.trim()) {
+        const trimmed = value.trim();
+        if (!trimmed.includes("-") && !trimmed.includes("T") && !trimmed.includes(":")) {
+            const asNum = Number(trimmed);
+            if (Number.isFinite(asNum))
+                return asNum;
+        }
+        const ms = Date.parse(trimmed);
+        if (!Number.isNaN(ms))
+            return ms;
+    }
+    return fallback;
+}
+function normalizeUserPrefs(raw) {
+    const model = typeof raw?.default_model === "string" && raw.default_model.trim()
+        ? raw.default_model.trim()
+        : null;
+    const themeRaw = typeof raw?.theme === "string" ? raw.theme.trim().toLowerCase() : "light";
+    const theme = isCachedTheme(themeRaw) ? themeRaw : "light";
+    const timezone = typeof raw?.timezone === "string" && raw.timezone.trim()
+        ? raw.timezone.trim()
+        : "UTC";
+    const language = typeof raw?.language === "string" && raw.language.trim()
+        ? raw.language.trim().toLowerCase()
+        : "en";
+    const vrlRaw = typeof raw?.voice_recording_language === "string"
+        ? raw.voice_recording_language.trim().toLowerCase()
+        : "en";
+    const voiceRecordingLang = vrlRaw === "fa" ? "fa" : "en";
+    const persianRaw = typeof raw?.persian_font === "string" ? raw.persian_font.trim() : "";
+    const persianFont = !persianRaw || persianRaw.toLowerCase() === "system" || persianRaw.toLowerCase() === "default"
+        ? ""
+        : persianRaw.slice(0, 64);
+    const replyNotifyAway = coercePrefsBool(raw?.reply_notify_away, false);
+    const replyNotifySound = coercePrefsBool(raw?.reply_notify_sound, true);
+    const memoryEnabled = coercePrefsBool(raw?.memory_enabled, true);
+    const memoryAutoCapture = coercePrefsBool(raw?.memory_auto_capture, true);
+    return {
+        default_model: model,
+        theme,
+        timezone,
+        language: language === "en" ? "en" : "en",
+        voice_recording_language: voiceRecordingLang,
+        persian_font: persianFont,
+        reply_notify_away: replyNotifyAway,
+        reply_notify_sound: replyNotifySound,
+        memory_enabled: memoryEnabled,
+        memory_auto_capture: memoryAutoCapture,
+    };
+}
+function coercePrefsBool(value, defaultValue) {
+    if (typeof value === "boolean")
+        return value;
+    if (value === 0 || value === 1)
+        return Boolean(value);
+    if (typeof value === "string") {
+        const token = value.trim().toLowerCase();
+        if (token === "1" || token === "true" || token === "yes" || token === "on")
+            return true;
+        if (token === "0" || token === "false" || token === "no" || token === "off" || token === "")
+            return false;
+    }
+    return defaultValue;
+}
+function readLocalPrefsMigration() {
+    const patches = {};
+    const model = localStorage.getItem(STORAGE_KEYS.defaultModel)?.trim();
+    if (model)
+        patches.default_model = model;
+    patches.theme = loadCachedTheme();
+    return patches;
+}
+export function clearLocalPrefsStorage() {
+    localStorage.removeItem(STORAGE_KEYS.defaultModel);
+}
+export function cacheDefaultModelLocally(modelId) {
+    const trimmed = modelId.trim();
+    if (trimmed)
+        localStorage.setItem(STORAGE_KEYS.defaultModel, trimmed);
+    else
+        localStorage.removeItem(STORAGE_KEYS.defaultModel);
+}
+export async function saveUserPrefs(updates) {
+    const data = await api("/api/user/chats/prefs", {
+        method: "PATCH",
+        body: JSON.stringify(updates),
+    });
+    return normalizeUserPrefs(data);
+}
+export async function fetchUserPrefsFromServer() {
+    const data = await api("/api/user/chats/prefs");
+    return normalizeUserPrefs(data);
+}
+/** Load prefs from server; migrate legacy localStorage values once. */
+export async function hydrateUserPrefsFromServer() {
+    let prefs = await fetchUserPrefsFromServer();
+    const localPatches = readLocalPrefsMigration();
+    const hasLocal = !!localPatches.default_model || !!localPatches.theme;
+    if (hasLocal) {
+        prefs = await saveUserPrefs({ ...prefs, ...localPatches });
+        clearLocalPrefsStorage();
+    }
+    return prefs;
+}
+export async function saveDefaultModelToServer(modelId) {
+    cacheDefaultModelLocally(modelId);
+    const prefs = await saveUserPrefs({ default_model: modelId });
+    if (prefs.default_model)
+        cacheDefaultModelLocally(prefs.default_model);
+    return prefs.default_model;
+}
+export async function saveThemeToServer(theme) {
+    saveCachedTheme(theme);
+    const prefs = await saveUserPrefs({ theme });
+    return prefs.theme;
+}
+/** Non-empty messages for model API requests. */
+export function historyForModelRequest(messages) {
+    return messages.filter((m) => (m.content || "").trim());
+}
+/** Calendar-day boundaries for sidebar sections (local timezone). */
+export function startOfLocalDayMs(d = new Date()) {
+    const x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    return x.getTime();
+}
+export function startOfTodayMs(now = Date.now()) {
+    return startOfLocalDayMs(new Date(now));
+}
+/** Local midnight at the start of the calendar day N days before today. */
+export function startOfDaysAgoMs(days, now = Date.now()) {
+    const d = new Date(now);
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - days);
+    return d.getTime();
+}
+/** Activity on or after this ms → sidebar "Today". */
+export function sidebarTodayCutoffMs(now = Date.now()) {
+    return startOfTodayMs(now);
+}
+/** Activity before this ms is older than the "1–3 days ago" group. */
+export function sidebarOlderThan3DaysCutoffMs(now = Date.now()) {
+    return startOfDaysAgoMs(3, now);
+}
+/** Activity before this ms → sidebar "Older than 7 days". */
+export function sidebarOlderThan7DaysCutoffMs(now = Date.now()) {
+    return startOfDaysAgoMs(7, now);
+}
+/** Initial list load: today + previous 3 calendar days. */
+export function sidebarHydrateMinActivityMs(now = Date.now()) {
+    return startOfDaysAgoMs(3, now);
+}
+function messageActivityMs(m) {
+    return Math.max(m.sentAt ?? 0, m.receivedAt ?? 0);
+}
+/** Last user-visible activity for sidebar ordering (not metadata edits). */
+export function sessionActivityAt(s) {
+    if (s.lastMessageAt)
+        return s.lastMessageAt;
+    if (s.messages.length) {
+        let max = 0;
+        for (const m of s.messages) {
+            max = Math.max(max, messageActivityMs(m));
+        }
+        if (max > 0)
+            return max;
+    }
+    return s.createdAt;
+}
+export function sortSessionsByActivity(sessions) {
+    return [...sessions].sort((a, b) => sessionActivityAt(b) - sessionActivityAt(a));
+}
+export function withSessionMessagesActivity(session, messages) {
+    let last = 0;
+    for (const m of messages) {
+        last = Math.max(last, messageActivityMs(m));
+    }
+    const lastMessageAt = last > 0 ? last : session.lastMessageAt ?? session.createdAt;
+    return { ...session, messages, lastMessageAt };
+}
+export function newChatId() {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    return `chat-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+export function newClientMessageId() {
+    return newChatId();
+}
+let requestImmediateChatSync = null;
+let privateMessagesSync = null;
+/** ChatPanel registers to apply message updates for Private Mode chats (no server sync). */
+export function registerPrivateMessagesSync(fn) {
+    privateMessagesSync = fn;
+}
+/** ChatPanel registers to flush pending message appends to the server immediately. */
+export function registerImmediateChatSync(fn) {
+    requestImmediateChatSync = fn;
+}
+initChatLeader();
+const messageCache = new Map();
+const dirtySessionIds = new Set();
+const dirtyMetadataIds = new Set();
+const pendingAppendBySession = new Map();
+/** Serialize full message replace per session (avoid concurrent PUT races). */
+const replaceSessionMessagesInflight = new Map();
+const REPLACE_MESSAGES_MAX_RETRIES = 3;
+let lastServerListSyncMs = 0;
+/** Advance incremental sync cursor after a successful full list apply. */
+export function commitServerListSync(sessions) {
+    if (sessions.length) {
+        const maxUpdated = Math.max(...sessions.map((s) => s.updatedAt ?? 0));
+        if (maxUpdated > 0) {
+            lastServerListSyncMs = Math.max(lastServerListSyncMs, maxUpdated);
+            return;
+        }
+    }
+    lastServerListSyncMs = Date.now();
+}
+/** Incremental `since` poll with zero rows means "no changes" — never merge it. */
+export function shouldSkipEmptyIncrementalSync(payload) {
+    return !!payload.incremental && payload.sessions.length === 0;
+}
+function cacheKey(sessionId) {
+    return sessionId;
+}
+export function getCachedSessionMessages(sessionId) {
+    return messageCache.get(cacheKey(sessionId));
+}
+export function setCachedSessionMessages(sessionId, data) {
+    messageCache.set(cacheKey(sessionId), data);
+    try {
+        sessionStorage.setItem(`${STORAGE_KEYS.privateChats}:msgcache:${sessionId}`, JSON.stringify({ revision: data.revision, oldestSequence: data.oldestSequence }));
+    }
+    catch {
+        /* optional */
+    }
+}
+function markSessionDirty(sessionId, metadataOnly = false) {
+    if (metadataOnly) {
+        dirtyMetadataIds.add(sessionId);
+    }
+    else {
+        dirtySessionIds.add(sessionId);
+    }
+}
+export function markSessionMetadataDirty(sessionId) {
+    markSessionDirty(sessionId, true);
+}
+function chatStorageKey() {
+    const sub = getSessionUser()?.username || "anon";
+    return `alpha_router_chats_${sub}`;
+}
+function chatFoldersStorageKey() {
+    const sub = getSessionUser()?.username || "anon";
+    return `alpha_router_chat_folders_${sub}`;
+}
+function privateChatStorageKey() {
+    const username = getSessionUser()?.username;
+    return username ? `${STORAGE_KEYS.privateChats}:${username}` : `${STORAGE_KEYS.privateChats}:anon`;
+}
+export function isPrivateChat(session) {
+    return !!session?.privateMode;
+}
+export async function loadPrivateChatSessions() {
+    try {
+        const raw = localStorage.getItem(privateChatStorageKey());
+        if (!raw)
+            return [];
+        const parsed = normalizeChatSessions(JSON.parse(raw));
+        if (privateSessionsNeedStorageMigration(parsed)) {
+            const compacted = await compactPrivateSessionsForStorage(parsed);
+            try {
+                localStorage.setItem(privateChatStorageKey(), JSON.stringify(compacted));
+            }
+            catch (err) {
+                if (isQuotaExceededError(err)) {
+                    throw new PrivateChatStorageError("Could not migrate private chat media: browser storage is full. Delete old private chats or clear site data.");
+                }
+                throw err;
+            }
+            return hydratePrivateSessionsFromStorage(compacted);
+        }
+        return hydratePrivateSessionsFromStorage(parsed);
+    }
+    catch (err) {
+        if (err instanceof PrivateChatStorageError)
+            throw err;
+        return [];
+    }
+}
+export async function savePrivateChatSessions(sessions) {
+    const privateOnes = sessions.filter((s) => s.privateMode);
+    const compacted = await compactPrivateSessionsForStorage(privateOnes);
+    try {
+        localStorage.setItem(privateChatStorageKey(), JSON.stringify(compacted));
+    }
+    catch (err) {
+        if (isQuotaExceededError(err)) {
+            throw new PrivateChatStorageError("Could not save private chat: browser storage is full. Delete old private chats or clear site data.");
+        }
+        throw err;
+    }
+}
+function mergeChatSessions(serverSessions, localPrivate) {
+    const privateIds = new Set(localPrivate.map((s) => s.id));
+    const serverOnly = serverSessions.filter((s) => !privateIds.has(s.id));
+    return normalizeChatSessions([...localPrivate, ...serverOnly]);
+}
+let chatSessionsProvider = () => [];
+/** Live in-memory sessions (ChatPanel registers on mount). Used to avoid stale server overwrites. */
+export function registerChatSessionsProvider(provider) {
+    chatSessionsProvider = provider;
+}
+function pickMergedTitle(local, remote) {
+    if (local.titleLocked)
+        return local.title;
+    if (remote.titleLocked)
+        return remote.title;
+    const lt = (local.title || "").trim();
+    const rt = (remote.title || "").trim();
+    if (isDefaultChatTitle(lt) && !isDefaultChatTitle(rt))
+        return rt;
+    if (!isDefaultChatTitle(lt) && isDefaultChatTitle(rt))
+        return lt;
+    // Prefer substantive titles over truncated/LLM stubs like "قص" vs a full prompt snippet.
+    if (!isDefaultChatTitle(lt) && rt.length > 0 && rt.length < 4 && lt.length > rt.length)
+        return lt;
+    if (!isDefaultChatTitle(rt) && lt.length > 0 && lt.length < 4 && rt.length > lt.length)
+        return rt;
+    if (!isDefaultChatTitle(lt) && !isDefaultChatTitle(rt)) {
+        return lt.length >= rt.length ? lt : rt;
+    }
+    return lt.length >= rt.length ? lt : rt;
+}
+/**
+ * Merge a message-load result into the live sidebar row without wiping a better
+ * local title. Lazy loads often still carry the DB default "New chat"; the UI
+ * may already have a derived/generated title that has not reached the server yet.
+ */
+export function mergeSessionAfterMessageLoad(local, loaded) {
+    if (!local)
+        return loaded;
+    return {
+        ...loaded,
+        title: pickMergedTitle(local, loaded),
+        titleLocked: !!(local.titleLocked || loaded.titleLocked),
+        titleGenerated: !!(local.titleGenerated || loaded.titleGenerated),
+    };
+}
+function pickMergedMessages(local, remote) {
+    const lm = local.messages.length;
+    const rm = remote.messages.length;
+    if (lm > 0 && rm === 0)
+        return local.messages;
+    if (rm > 0 && lm === 0)
+        return remote.messages;
+    if (lm > rm)
+        return local.messages;
+    if (rm > lm)
+        return remote.messages;
+    return lm > 0 ? local.messages : remote.messages;
+}
+/**
+ * Merge remote sessions with local state. Protected ids (streaming / image jobs) always keep local messages.
+ * Otherwise prefer the copy with the newer updatedAt, or more messages when timestamps tie.
+ */
+export function mergeRemoteChatSessions(local, remote, protectedIds = []) {
+    if (!remote.length && local.length) {
+        return normalizeChatSessions(local);
+    }
+    const protect = new Set(protectedIds);
+    const remoteById = new Map(remote.map((s) => [s.id, s]));
+    const localById = new Map(local.map((s) => [s.id, s]));
+    const orderedIds = [];
+    const seen = new Set();
+    for (const s of local) {
+        if (!seen.has(s.id)) {
+            orderedIds.push(s.id);
+            seen.add(s.id);
+        }
+    }
+    for (const s of remote) {
+        if (!seen.has(s.id)) {
+            orderedIds.push(s.id);
+            seen.add(s.id);
+        }
+    }
+    const merged = [];
+    for (const id of orderedIds) {
+        if (isPendingDelete(id))
+            continue;
+        const l = localById.get(id);
+        const r = remoteById.get(id);
+        if (l && !r) {
+            merged.push(l);
+            continue;
+        }
+        if (r && !l) {
+            merged.push(r);
+            continue;
+        }
+        if (!l || !r)
+            continue;
+        const localUpdated = sessionActivityAt(l);
+        const remoteUpdated = sessionActivityAt(r);
+        const title = pickMergedTitle(l, r);
+        if (protect.has(id)) {
+            merged.push({
+                ...r,
+                ...l,
+                title: pickMergedTitle(l, r),
+                messages: l.messages,
+                currentAgentId: r.currentAgentId,
+                currentAgentVersionId: r.currentAgentVersionId,
+                agentSelectedAt: r.agentSelectedAt,
+                updatedAt: Math.max(l.updatedAt ?? 0, r.updatedAt ?? 0),
+                lastMessageAt: Math.max(l.lastMessageAt ?? sessionActivityAt(l), r.lastMessageAt ?? sessionActivityAt(r)),
+            });
+            continue;
+        }
+        const messages = pickMergedMessages(l, r);
+        if (localUpdated > remoteUpdated) {
+            merged.push({
+                ...r,
+                ...l,
+                title,
+                messages,
+                currentAgentId: r.currentAgentId,
+                currentAgentVersionId: r.currentAgentVersionId,
+                agentSelectedAt: r.agentSelectedAt,
+            });
+        }
+        else if (remoteUpdated > localUpdated) {
+            merged.push({
+                ...r,
+                ...l,
+                title,
+                messages,
+                currentAgentId: r.currentAgentId,
+                currentAgentVersionId: r.currentAgentVersionId,
+                agentSelectedAt: r.agentSelectedAt,
+            });
+        }
+        else {
+            merged.push({
+                ...r,
+                ...l,
+                title,
+                messages,
+                currentAgentId: r.currentAgentId,
+                currentAgentVersionId: r.currentAgentVersionId,
+                agentSelectedAt: r.agentSelectedAt,
+            });
+        }
+    }
+    return normalizeChatSessions(merged);
+}
+let saveUserChatsChain = Promise.resolve();
+const serverSessionIds = new Set();
+const createSessionInflight = new Map();
+const pendingDeleteIds = new Set();
+let serverFolderIds = new Set();
+export function markPendingDelete(id) {
+    pendingDeleteIds.add(id);
+}
+export function clearPendingDelete(id) {
+    pendingDeleteIds.delete(id);
+}
+export function isPendingDelete(id) {
+    return pendingDeleteIds.has(id);
+}
+function mapApiMessage(raw) {
+    const requestLogRaw = raw.requestLogId;
+    const requestLogId = typeof requestLogRaw === "number" && Number.isFinite(requestLogRaw)
+        ? requestLogRaw
+        : typeof requestLogRaw === "string" && /^\d+$/.test(requestLogRaw.trim())
+            ? Number(requestLogRaw.trim())
+            : undefined;
+    return {
+        id: typeof raw.id === "string" ? raw.id : undefined,
+        role: raw.role || "user",
+        content: String(raw.content || ""),
+        clientMessageId: typeof raw.clientMessageId === "string" ? raw.clientMessageId : undefined,
+        modelId: typeof raw.modelId === "string" ? raw.modelId : undefined,
+        modelName: typeof raw.modelName === "string" ? raw.modelName : undefined,
+        sentAt: typeof raw.sentAt === "number" ? raw.sentAt : undefined,
+        receivedAt: typeof raw.receivedAt === "number" ? raw.receivedAt : undefined,
+        streaming: typeof raw.streaming === "boolean" ? raw.streaming : undefined,
+        sequence: typeof raw.sequence === "number" ? raw.sequence : undefined,
+        ...(requestLogId != null ? { requestLogId } : {}),
+        agentRunId: typeof raw.agentRunId === "string" ? raw.agentRunId : undefined,
+        agentId: typeof raw.agentId === "string" ? raw.agentId : undefined,
+        agentVersionId: typeof raw.agentVersionId === "string" ? raw.agentVersionId : undefined,
+        agentName: typeof raw.agentName === "string" ? raw.agentName : undefined,
+        agentStatus: typeof raw.agentStatus === "string" ? raw.agentStatus : undefined,
+        routingOutcome: typeof raw.routingOutcome === "string" ? raw.routingOutcome : undefined,
+        completionReasonCode: typeof raw.completionReasonCode === "string"
+            ? raw.completionReasonCode
+            : undefined,
+        authorDisplayName: typeof raw.authorDisplayName === "string" && raw.authorDisplayName.trim()
+            ? raw.authorDisplayName.trim()
+            : undefined,
+        citations: Array.isArray(raw.citations)
+            ? raw.citations
+            : undefined,
+        feedback: raw.feedback &&
+            typeof raw.feedback === "object" &&
+            (raw.feedback.rating === -1 ||
+                raw.feedback.rating === 1)
+            ? {
+                rating: raw.feedback.rating,
+                reason: typeof raw.feedback.reason === "string"
+                    ? String(raw.feedback.reason)
+                    : null,
+            }
+            : undefined,
+    };
+}
+function mapApiSession(raw, messages = []) {
+    const tools = normalizeChatTools(raw.tools);
+    const toolsTouched = !!raw.toolsTouched || (raw.tools != null && anyChatToolEnabled(tools));
+    return {
+        id: String(raw.id),
+        title: String(raw.title || "New chat"),
+        titleLocked: !!raw.titleLocked,
+        titleGenerated: !!raw.titleGenerated,
+        folderId: raw.folderId ?? null,
+        model: String(raw.model || ""),
+        currentAgentId: typeof raw.currentAgentId === "string" ? raw.currentAgentId : null,
+        currentAgentVersionId: typeof raw.currentAgentVersionId === "string"
+            ? raw.currentAgentVersionId
+            : null,
+        agentSelectedAt: typeof raw.agentSelectedAt === "number" ? raw.agentSelectedAt : null,
+        tools: toolsTouched ? tools : copyFreshChatTools(),
+        toolsTouched,
+        privateMode: !!raw.privateMode,
+        messages,
+        messageCount: typeof raw.messageCount === "number" ? raw.messageCount : messages.length,
+        revision: typeof raw.revision === "number" ? raw.revision : 1,
+        createdAt: parseApiTime(raw.createdAt),
+        updatedAt: parseApiTime(raw.updatedAt),
+        lastMessageAt: raw.lastMessageAt == null ? raw.lastMessageAt : parseApiTime(raw.lastMessageAt),
+        pinned: !!raw.pinned,
+    };
+}
+export async function fetchSessionMessagesFromServer(sessionId, opts) {
+    const limit = opts?.limit ?? 50;
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (opts?.before != null)
+        params.set("before", String(opts.before));
+    const data = await api(`/api/user/chat-sessions/${encodeURIComponent(sessionId)}/messages?${params}`, {
+        signal: opts?.signal,
+    });
+    const messages = (data.messages || []).map(mapApiMessage);
+    return {
+        messages,
+        hasMore: !!(data.has_more ?? data.hasMore),
+        revision: typeof data.revision === "number" ? data.revision : undefined,
+    };
+}
+/** Fetch latest messages for polling; always hits the server and refreshes the local cache. */
+export async function pollSessionMessagesFromServer(sessionId, opts) {
+    const { messages, hasMore, revision: remoteRevision } = await fetchSessionMessagesFromServer(sessionId, { limit: opts?.limit ?? 50 });
+    const live = chatSessionsProvider().find((s) => s.id === sessionId);
+    const revision = remoteRevision ?? live?.revision ?? 1;
+    const oldest = messages[0];
+    setCachedSessionMessages(sessionId, {
+        revision,
+        messages,
+        hasMoreOlder: hasMore,
+        oldestSequence: typeof oldest === "object" && "sequence" in oldest
+            ? oldest.sequence
+            : undefined,
+    });
+    return { messages, revision, hasMore };
+}
+/** Request server-side cancellation of an in-flight assistant reply (survives page refresh). */
+export async function cancelStreamingReplyOnServer(sessionId) {
+    await api(`/api/user/chat-sessions/${encodeURIComponent(sessionId)}/cancel-stream`, {
+        method: "POST",
+    });
+}
+export async function setMessageFeedbackOnServer(sessionId, messageId, rating, reason) {
+    const result = await api(`/api/user/chat-sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/feedback`, {
+        method: "PUT",
+        body: JSON.stringify({ rating, reason: reason || null }),
+    });
+    return result.feedback || undefined;
+}
+async function appendSessionMessagesOnServer(sessionId, messages, revision, signal) {
+    const payload = messages.map((m) => ({
+        role: m.role,
+        content: m.role === "user" ? compactAttachmentMessageForStorage(m.content) : m.content,
+        clientMessageId: m.clientMessageId || newClientMessageId(),
+        modelId: m.modelId,
+        modelName: m.modelName,
+        sentAt: m.sentAt,
+        receivedAt: m.receivedAt,
+        ...(m.requestLogId != null ? { requestLogId: m.requestLogId } : {}),
+    }));
+    const data = await api(`/api/user/chat-sessions/${encodeURIComponent(sessionId)}/messages`, {
+        method: "POST",
+        body: JSON.stringify({ messages: payload, expectedRevision: revision }),
+        signal,
+    });
+    return {
+        messages: (data.messages || []).map(mapApiMessage),
+        session: data.session ? mapApiSession(data.session) : undefined,
+    };
+}
+function noteServerSessionFromAppend(sessionId, session) {
+    markServerSessionKnown(sessionId);
+    if (session)
+        applyServerSessionToLocal(sessionId, session);
+}
+/** Admin/repair only — normal client sync uses POST append. */
+async function replaceSessionMessagesOnServer(sessionId, messages, revision) {
+    await api(`/api/user/chat-sessions/${encodeURIComponent(sessionId)}/messages`, {
+        method: "PUT",
+        body: JSON.stringify({
+            messages: messages.map((m) => ({
+                ...m,
+                content: m.role === "user" ? compactAttachmentMessageForStorage(m.content) : m.content,
+            })),
+            expectedRevision: revision,
+        }),
+    });
+}
+export async function patchLastSessionMessageOnServer(sessionId, content, opts) {
+    const data = await api(`/api/user/chat-sessions/${encodeURIComponent(sessionId)}/messages/last`, {
+        method: "PATCH",
+        body: JSON.stringify({
+            content,
+            expectedRevision: opts?.revision,
+            receivedAt: opts?.receivedAt,
+            modelId: opts?.modelId,
+            modelName: opts?.modelName,
+        }),
+        signal: opts?.signal,
+    });
+    return mapApiSession(data);
+}
+/** Whether this chat session id is known to exist on the server (this tab). */
+export function isChatSessionOnServer(sessionId) {
+    return serverSessionIds.has(sessionId);
+}
+function markServerSessionKnown(sessionId) {
+    serverSessionIds.add(sessionId);
+}
+/** Probe the server when this tab learned about a session only via stream persistence. */
+async function ensureServerSessionKnown(session) {
+    if (serverSessionIds.has(session.id))
+        return true;
+    await createSessionOnServerIfMissing(session);
+    if (serverSessionIds.has(session.id))
+        return true;
+    try {
+        await fetchSessionMessagesFromServer(session.id, { limit: 1 });
+        markServerSessionKnown(session.id);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+/** Throttled streaming updates — patches the assistant placeholder row. */
+export async function patchStreamingAssistantOnServer(sessionId, content, opts) {
+    const live = chatSessionsProvider().find((s) => s.id === sessionId);
+    if (!live || live.privateMode)
+        return;
+    const updated = await patchLastSessionMessageOnServer(sessionId, content, opts);
+    if (updated)
+        applyServerSessionToLocal(sessionId, updated);
+    broadcastChatRefresh({ at: Date.now(), sessionId });
+}
+function serverHasUserMessage(serverMsgs, user) {
+    if (user.clientMessageId) {
+        return serverMsgs.some((m) => m.role === "user" && m.clientMessageId === user.clientMessageId);
+    }
+    const content = (user.content || "").trim();
+    if (!content)
+        return false;
+    return serverMsgs.some((m) => m.role === "user" && (m.content || "").trim() === content);
+}
+/** True when the trailing assistant belongs to this user turn (prepare already ran). */
+function serverTailIsUserTurn(serverMsgs, user) {
+    const last = serverMsgs[serverMsgs.length - 1];
+    const prev = serverMsgs[serverMsgs.length - 2];
+    const userMatch = (m) => !!m &&
+        m.role === "user" &&
+        ((user.clientMessageId && m.clientMessageId === user.clientMessageId) ||
+            (!!user.content && (m.content || "").trim() === (user.content || "").trim()));
+    if (last?.role === "assistant" && userMatch(prev))
+        return "patch-assistant";
+    if (userMatch(last))
+        return "append-assistant";
+    if (serverHasUserMessage(serverMsgs, user))
+        return "append-assistant";
+    return "append-turn";
+}
+/**
+ * Finalize assistant turn: patch placeholder if present, else append.
+ * When `userMessage` is provided and the server never persisted that turn
+ * (preflight failures before stream prepare), appends [user, assistant] so
+ * new chats keep the prompt above the error for retry.
+ */
+export async function finalizeAssistantOnServer(sessionId, content, opts) {
+    const live = chatSessionsProvider().find((s) => s.id === sessionId);
+    if (!live || live.privateMode)
+        return;
+    await createSessionOnServerIfMissing(live);
+    const assistantRow = {
+        role: "assistant",
+        content,
+        receivedAt: opts?.receivedAt,
+        clientMessageId: opts?.clientMessageId || newClientMessageId(),
+        modelId: opts?.modelId,
+        modelName: opts?.modelName,
+    };
+    try {
+        const { messages: serverMsgs } = await fetchSessionMessagesFromServer(sessionId, { limit: 8 });
+        if (opts?.userMessage) {
+            const mode = serverTailIsUserTurn(serverMsgs, opts.userMessage);
+            if (mode === "patch-assistant") {
+                await patchStreamingAssistantOnServer(sessionId, content, opts);
+                return;
+            }
+            if (mode === "append-assistant") {
+                await persistChatMessages(sessionId, [assistantRow]);
+                return;
+            }
+            const userRow = {
+                ...opts.userMessage,
+                role: "user",
+                clientMessageId: opts.userMessage.clientMessageId || newClientMessageId(),
+            };
+            await persistChatMessages(sessionId, [userRow, assistantRow]);
+            return;
+        }
+        if (serverMsgs[serverMsgs.length - 1]?.role === "assistant") {
+            await patchStreamingAssistantOnServer(sessionId, content, opts);
+            return;
+        }
+    }
+    catch {
+        /* append below */
+    }
+    if (opts?.userMessage) {
+        const userRow = {
+            ...opts.userMessage,
+            role: "user",
+            clientMessageId: opts.userMessage.clientMessageId || newClientMessageId(),
+        };
+        await persistChatMessages(sessionId, [userRow, assistantRow]);
+        return;
+    }
+    await persistChatMessages(sessionId, [assistantRow]);
+}
+async function handleRevisionConflict(sessionId) {
+    const remote = await fetchSessionWithMessages(sessionId);
+    if (!remote)
+        return null;
+    const live = chatSessionsProvider().find((s) => s.id === sessionId);
+    if (!live)
+        return remote;
+    const merged = mergeRemoteChatSessions([live], [remote])[0];
+    setCachedSessionMessages(sessionId, {
+        revision: merged.revision ?? 1,
+        messages: merged.messages,
+        hasMoreOlder: false,
+    });
+    return merged;
+}
+function abortError() {
+    return new DOMException("The operation was aborted.", "AbortError");
+}
+async function awaitWithAbortSignal(promise, signal) {
+    if (!signal)
+        return promise;
+    if (signal.aborted)
+        throw abortError();
+    return new Promise((resolve, reject) => {
+        const onAbort = () => reject(abortError());
+        signal.addEventListener("abort", onAbort, { once: true });
+        promise.then((value) => {
+            signal.removeEventListener("abort", onAbort);
+            resolve(value);
+        }, (error) => {
+            signal.removeEventListener("abort", onAbort);
+            reject(error);
+        });
+    });
+}
+async function createSessionOnServerIfMissing(session, signal) {
+    if (serverSessionIds.has(session.id))
+        return;
+    const inflight = createSessionInflight.get(session.id);
+    if (inflight) {
+        await awaitWithAbortSignal(inflight, signal);
+        return;
+    }
+    const task = (async () => {
+        if (serverSessionIds.has(session.id))
+            return;
+        // Re-read live session at POST time so a model change during an in-flight
+        // create is not persisted as the previous (e.g. default) model.
+        const live = chatSessionsProvider().find((s) => s.id === session.id) || session;
+        const projectId = getProjectChatScope();
+        try {
+            if (projectId) {
+                await createProjectChat(projectId, {
+                    id: live.id,
+                    title: live.title,
+                    model: live.model,
+                });
+            }
+            else {
+                const createPayload = {
+                    id: live.id,
+                    title: live.title,
+                    folderId: live.folderId,
+                    model: live.model,
+                    tools: live.tools,
+                    titleLocked: live.titleLocked,
+                    titleGenerated: live.titleGenerated,
+                    toolsTouched: live.toolsTouched,
+                    createdAt: live.createdAt,
+                    updatedAt: live.updatedAt,
+                };
+                try {
+                    await api("/api/user/chats/sessions", {
+                        method: "POST",
+                        body: JSON.stringify(createPayload),
+                    });
+                }
+                catch (err) {
+                    const status = err && typeof err === "object" ? err.status : undefined;
+                    if (status !== 409)
+                        throw err;
+                }
+            }
+        }
+        catch (err) {
+            const status = err && typeof err === "object" ? err.status : undefined;
+            if (status !== 409)
+                throw err;
+        }
+        serverSessionIds.add(session.id);
+        broadcastChatRefresh({ at: Date.now(), sessionId: session.id });
+    })();
+    createSessionInflight.set(session.id, task);
+    void task
+        .finally(() => {
+        if (createSessionInflight.get(session.id) === task) {
+            createSessionInflight.delete(session.id);
+        }
+    })
+        .catch(() => { });
+    // The create request is shared with other sync callers, so cancelling one
+    // waiter must not abort the shared request itself.
+    await awaitWithAbortSignal(task, signal);
+}
+async function patchSessionMetadataOnServer(session) {
+    const known = await ensureServerSessionKnown(session);
+    if (!known)
+        return null;
+    const projectScoped = Boolean(getProjectChatScope());
+    const data = await api(`/api/user/chats/sessions/${encodeURIComponent(session.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify(projectScoped
+            ? {
+                title: session.title,
+                titleLocked: session.titleLocked,
+                titleGenerated: session.titleGenerated,
+                updatedAt: session.updatedAt,
+            }
+            : {
+                title: session.title,
+                folderId: session.folderId,
+                model: session.model,
+                tools: session.tools,
+                titleLocked: session.titleLocked,
+                titleGenerated: session.titleGenerated,
+                toolsTouched: session.toolsTouched,
+                updatedAt: session.updatedAt,
+            }),
+    });
+    return mapApiSession(data);
+}
+/** Push session metadata (title, model, tools) to the server immediately. */
+export async function pushSessionMetadataToServer(sessionId) {
+    const live = chatSessionsProvider().find((s) => s.id === sessionId);
+    if (!live || live.privateMode)
+        return;
+    const updated = await patchSessionMetadataOnServer(live);
+    if (updated) {
+        applyServerSessionToLocal(sessionId, updated);
+        broadcastChatRefresh({ at: Date.now(), sessionId });
+    }
+}
+function applyServerSessionToLocal(sessionId, remote) {
+    const row = chatSessionsProvider().find((s) => s.id === sessionId);
+    if (!row)
+        return;
+    if (typeof remote.revision === "number")
+        row.revision = remote.revision;
+    if (typeof remote.messageCount === "number")
+        row.messageCount = remote.messageCount;
+    if (typeof remote.updatedAt === "number")
+        row.updatedAt = remote.updatedAt;
+    if (typeof remote.lastMessageAt === "number")
+        row.lastMessageAt = remote.lastMessageAt;
+    if (remote.lastMessageAt === null)
+        row.lastMessageAt = null;
+    if (typeof remote.title === "string")
+        row.title = remote.title;
+    if (typeof remote.titleGenerated === "boolean")
+        row.titleGenerated = remote.titleGenerated;
+    if (remote.folderId !== undefined)
+        row.folderId = remote.folderId ?? null;
+}
+/** @deprecated Use createSessionOnServerIfMissing + patchSessionMetadataOnServer */
+async function ensureSessionOnServer(session) {
+    await createSessionOnServerIfMissing(session);
+    const updated = await patchSessionMetadataOnServer(session);
+    if (updated)
+        applyServerSessionToLocal(session.id, updated);
+}
+async function syncFoldersToServer(folders) {
+    const remote = await api("/api/user/chats/folders");
+    const remoteIds = new Set((remote.folders || []).map((f) => String(f.id)));
+    const localIds = new Set(folders.map((f) => f.id));
+    for (const folder of folders) {
+        if (!remoteIds.has(folder.id)) {
+            await api("/api/user/chats/folders", {
+                method: "POST",
+                body: JSON.stringify(folder),
+            });
+        }
+        else {
+            await api(`/api/user/chats/folders/${encodeURIComponent(folder.id)}`, {
+                method: "PATCH",
+                body: JSON.stringify({ name: folder.name, color: folder.color }),
+            });
+        }
+    }
+    for (const id of remoteIds) {
+        if (!localIds.has(id)) {
+            await api(`/api/user/chats/folders/${encodeURIComponent(id)}`, { method: "DELETE" });
+        }
+    }
+    serverFolderIds = localIds;
+}
+export async function deleteChatSessionOnServer(sessionId) {
+    markPendingDelete(sessionId);
+    try {
+        const projectId = getProjectChatScope();
+        if (projectId) {
+            await deleteProjectChat(projectId, sessionId);
+        }
+        else {
+            await api(`/api/user/chats/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+        }
+        serverSessionIds.delete(sessionId);
+        clearPendingDelete(sessionId);
+    }
+    catch (err) {
+        const status = err && typeof err === "object" ? err.status : undefined;
+        if (status === 404) {
+            serverSessionIds.delete(sessionId);
+            clearPendingDelete(sessionId);
+            return;
+        }
+        clearPendingDelete(sessionId);
+        throw err;
+    }
+}
+function messagesLookIncomplete(messages) {
+    const last = messages.at(-1);
+    if (!last || last.role !== "assistant")
+        return false;
+    if (last.streaming === true)
+        return true;
+    return last.receivedAt == null;
+}
+export async function loadSessionMessagesIfNeeded(session, opts) {
+    if (session.privateMode)
+        return session;
+    const count = session.messageCount ?? 0;
+    if (count <= 0 && !session.messages.length)
+        return session;
+    if (session.messages.length > count)
+        return session;
+    const cached = getCachedSessionMessages(session.id);
+    const cachedIncomplete = !!cached?.messages.length && messagesLookIncomplete(cached.messages);
+    if (cached &&
+        !cachedIncomplete &&
+        cached.revision === (session.revision ?? 1) &&
+        cached.messages.length) {
+        return { ...session, messages: cached.messages };
+    }
+    const { messages, hasMore, revision } = await fetchSessionMessagesFromServer(session.id, {
+        limit: opts?.limit ?? 50,
+    });
+    const oldest = messages[0];
+    const nextRevision = revision ?? session.revision ?? 1;
+    setCachedSessionMessages(session.id, {
+        revision: nextRevision,
+        messages,
+        hasMoreOlder: hasMore,
+        oldestSequence: typeof oldest === "object" && "sequence" in oldest
+            ? oldest.sequence
+            : undefined,
+    });
+    return { ...session, messages, revision: nextRevision };
+}
+export async function loadOlderSessionMessages(session) {
+    if (session.privateMode)
+        return { session, hasMore: false };
+    const cached = getCachedSessionMessages(session.id);
+    const before = cached?.oldestSequence ?? session.messages[0]?.sequence;
+    if (!before)
+        return { session, hasMore: false };
+    const { messages: older, hasMore } = await fetchSessionMessagesFromServer(session.id, {
+        limit: 50,
+        before,
+    });
+    if (!older.length)
+        return { session, hasMore: false };
+    const merged = [...older, ...session.messages];
+    const next = { ...session, messages: merged };
+    setCachedSessionMessages(session.id, {
+        revision: session.revision ?? 1,
+        messages: merged,
+        hasMoreOlder: hasMore,
+        oldestSequence: older[0]?.sequence,
+    });
+    return { session: next, hasMore };
+}
+function normalizeChatSessions(parsed) {
+    if (!Array.isArray(parsed))
+        return [];
+    return parsed
+        .map((s) => {
+        const tools = normalizeChatTools(s.tools);
+        const toolsTouched = !!s.toolsTouched || (s.tools != null && anyChatToolEnabled(tools));
+        const messages = s.messages || [];
+        const hasAssistant = messages.some((m) => m.role === "assistant" && (m.content || "").trim());
+        const stuckDefaultTitle = !!s.titleGenerated && isDefaultChatTitle(s.title) && hasAssistant;
+        const storedTitle = (s.title || "").trim();
+        const derivedTitle = sessionTitleFromMessages(messages);
+        const badShortTitle = !s.titleLocked &&
+            storedTitle.length > 0 &&
+            storedTitle.length < 4 &&
+            !isDefaultChatTitle(derivedTitle) &&
+            derivedTitle.length > storedTitle.length + 2;
+        return {
+            ...s,
+            title: badShortTitle ? derivedTitle : s.title,
+            titleLocked: !!s.titleLocked,
+            titleGenerated: stuckDefaultTitle || badShortTitle ? false : !!s.titleGenerated,
+            folderId: s.folderId ?? null,
+            privateMode: !!s.privateMode,
+            tools: toolsTouched ? tools : copyFreshChatTools(),
+            toolsTouched,
+            messages,
+            messageCount: s.messageCount ?? messages.length,
+        };
+    })
+        .sort((a, b) => sessionActivityAt(b) - sessionActivityAt(a));
+}
+function normalizeChatFolders(parsed) {
+    if (!Array.isArray(parsed))
+        return [];
+    return parsed
+        .map((f) => ({ ...f, color: f.color ?? null }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+}
+/** Browser-only chat storage fallback and migration source. */
+export function loadChatSessionsLocal() {
+    try {
+        const raw = localStorage.getItem(chatStorageKey());
+        if (!raw)
+            return [];
+        return normalizeChatSessions(JSON.parse(raw));
+    }
+    catch {
+        return [];
+    }
+}
+export function loadChatFoldersLocal() {
+    try {
+        const raw = localStorage.getItem(chatFoldersStorageKey());
+        if (!raw)
+            return [];
+        return normalizeChatFolders(JSON.parse(raw));
+    }
+    catch {
+        return [];
+    }
+}
+export function clearLocalChatStorage() {
+    localStorage.removeItem(chatStorageKey());
+    localStorage.removeItem(chatFoldersStorageKey());
+}
+export async function fetchUserChatsFromServer(opts) {
+    const projectId = getProjectChatScope();
+    if (projectId) {
+        const data = await listProjectChats(projectId, {
+            limit: opts?.limit ?? 40,
+            offset: opts?.offset,
+            q: opts?.q,
+        });
+        if (!opts?.since) {
+            serverSessionIds.clear();
+            for (const s of data.sessions || []) {
+                const id = String(s.id);
+                if (!isPendingDelete(id))
+                    serverSessionIds.add(id);
+            }
+            serverFolderIds = new Set();
+        }
+        const serverSessions = (data.sessions || [])
+            .map((s) => mapApiSession(s))
+            .filter((s) => !isPendingDelete(s.id));
+        serverSessions.sort((a, b) => {
+            const pin = Number(!!b.pinned) - Number(!!a.pinned);
+            if (pin)
+                return pin;
+            return (b.lastMessageAt ?? b.updatedAt) - (a.lastMessageAt ?? a.updatedAt);
+        });
+        return {
+            sessions: normalizeChatSessions(serverSessions),
+            folders: [],
+            total: data.total,
+            older_total: 0,
+            fetchedCount: serverSessions.length,
+            lastOpenedSessionId: data.lastOpenedSessionId ?? null,
+        };
+    }
+    const params = new URLSearchParams();
+    const limit = opts?.limit ?? 40;
+    params.set("limit", String(limit));
+    if (opts?.offset)
+        params.set("offset", String(opts.offset));
+    if (opts?.q?.trim())
+        params.set("q", opts.q.trim());
+    if (opts?.since)
+        params.set("since", String(opts.since));
+    if (opts?.min_activity_ms != null) {
+        params.set("min_activity_ms", String(opts.min_activity_ms));
+    }
+    if (opts?.max_activity_ms != null) {
+        params.set("max_activity_ms", String(opts.max_activity_ms));
+    }
+    const data = await api(`/api/user/chats?${params}`);
+    if (!opts?.since) {
+        const retain = !!opts?.retainKnownSessionIds;
+        if (!retain) {
+            serverSessionIds.clear();
+            serverFolderIds = new Set((data.folders || []).map((f) => String(f.id)));
+        }
+        for (const s of data.sessions || []) {
+            const id = String(s.id);
+            if (!isPendingDelete(id))
+                serverSessionIds.add(id);
+        }
+    }
+    const privateLocal = await loadPrivateChatSessions();
+    const serverSessions = (data.sessions || [])
+        .map((s) => mapApiSession(s))
+        .filter((s) => !isPendingDelete(s.id));
+    return {
+        sessions: mergeChatSessions(normalizeChatSessions(serverSessions), privateLocal),
+        folders: normalizeChatFolders((data.folders || [])),
+        prefs: normalizeUserPrefs(data.prefs),
+        total: data.total,
+        older_total: data.older_total,
+        fetchedCount: serverSessions.length,
+    };
+}
+export async function fetchProjectChatById(projectId, sessionId) {
+    try {
+        const raw = await getProjectChat(projectId, sessionId);
+        return mapApiSession(raw);
+    }
+    catch {
+        return null;
+    }
+}
+export async function fetchProjectChatSync(projectId, opts) {
+    const data = await syncProjectChats(projectId, opts);
+    return {
+        ...data,
+        sessions: (data.sessions || []).map((row) => mapApiSession(row)),
+        messages: (data.messages || []).map(mapApiMessage),
+    };
+}
+export async function searchChatMessagesOnServer(q) {
+    if (getProjectChatScope())
+        return [];
+    const data = await api(`/api/user/chats/search-messages?q=${encodeURIComponent(q)}`);
+    return (data.results || []).map((r) => ({
+        messageId: String(r.messageId),
+        sessionId: String(r.sessionId),
+        sessionTitle: String(r.sessionTitle || "New chat"),
+        role: String(r.role),
+        content: String(r.content || ""),
+        createdAt: Number(r.createdAt) || 0,
+    }));
+}
+export async function refreshChatsSince(sinceMs) {
+    const since = sinceMs ?? lastServerListSyncMs;
+    if (!since) {
+        const payload = await fetchUserChatsFromServer({
+            limit: 50,
+            min_activity_ms: sidebarHydrateMinActivityMs(),
+        });
+        commitServerListSync(payload.sessions);
+        return { ...payload, incremental: false };
+    }
+    const payload = await fetchUserChatsFromServer({ limit: 200, since });
+    if (payload.sessions.length) {
+        commitServerListSync(payload.sessions);
+    }
+    return { ...payload, incremental: true };
+}
+async function syncSessionAppend(sessionId, session, byId) {
+    const pending = pendingAppendBySession.get(sessionId) || [];
+    if (!pending.length) {
+        dirtySessionIds.delete(sessionId);
+        return;
+    }
+    const live = chatSessionsProvider().find((s) => s.id === sessionId) || byId.get(sessionId) || session;
+    await createSessionOnServerIfMissing(live);
+    const result = await appendSessionMessagesOnServer(sessionId, pending.map((m) => ({
+        ...m,
+        clientMessageId: m.clientMessageId || newClientMessageId(),
+    })), undefined);
+    noteServerSessionFromAppend(sessionId, result.session);
+    if (result.session) {
+        byId.set(sessionId, { ...live, ...result.session });
+    }
+    pendingAppendByServerClear(sessionId);
+    dirtySessionIds.delete(sessionId);
+}
+async function syncSessionMetadata(sessionId, session, byId) {
+    const live = chatSessionsProvider().find((s) => s.id === sessionId) || byId.get(sessionId) || session;
+    if (!live || live.privateMode) {
+        dirtyMetadataIds.delete(sessionId);
+        return;
+    }
+    const updated = await patchSessionMetadataOnServer(live);
+    if (updated) {
+        byId.set(sessionId, { ...live, ...updated });
+        applyServerSessionToLocal(sessionId, updated);
+        dirtyMetadataIds.delete(sessionId);
+        broadcastChatRefresh({ at: Date.now(), sessionId });
+    }
+}
+async function syncDirtySessionsToServer(sessions) {
+    const byId = new Map(sessions.map((s) => [s.id, s]));
+    // Ensure every non-private session exists on the server before append/metadata sync.
+    for (const session of sessions) {
+        if (session.privateMode || serverSessionIds.has(session.id))
+            continue;
+        try {
+            await createSessionOnServerIfMissing(session);
+        }
+        catch (err) {
+            if (!isRevisionConflict(err))
+                throw err;
+        }
+    }
+    // Append messages before metadata PATCH (append bumps revision).
+    for (const sessionId of [...dirtySessionIds]) {
+        const session = byId.get(sessionId);
+        if (!session || session.privateMode) {
+            dirtySessionIds.delete(sessionId);
+            continue;
+        }
+        const pending = pendingAppendBySession.get(sessionId) || [];
+        if (!pending.length) {
+            dirtySessionIds.delete(sessionId);
+            continue;
+        }
+        await syncSessionAppend(sessionId, session, byId);
+    }
+    for (const sessionId of [...dirtyMetadataIds]) {
+        const session = byId.get(sessionId);
+        if (!session || session.privateMode) {
+            dirtyMetadataIds.delete(sessionId);
+            continue;
+        }
+        await syncSessionMetadata(sessionId, session, byId);
+    }
+}
+function pendingAppendByServerClear(sessionId) {
+    pendingAppendBySession.delete(sessionId);
+}
+/** Drop queued appends / metadata sync so a full replace is not raced by background sync. */
+export function clearSessionMessageSyncQueue(sessionId) {
+    pendingAppendByServerClear(sessionId);
+    dirtySessionIds.delete(sessionId);
+    dirtyMetadataIds.delete(sessionId);
+}
+/**
+ * Replace the full message list on the server (e.g. after deleting a prompt in-thread).
+ *
+ * Fetches a fresh revision before each attempt and retries on 409. When
+ * `opts.reconcile` is provided, retries re-apply the intended change on the
+ * latest server messages instead of pushing a stale local snapshot.
+ */
+export async function replaceChatSessionMessagesOnServer(sessionId, messages, opts) {
+    const prior = replaceSessionMessagesInflight.get(sessionId) ?? Promise.resolve({
+        messages: [],
+        revision: 1,
+    });
+    const task = prior
+        .catch(() => undefined)
+        .then(() => replaceChatSessionMessagesOnServerInner(sessionId, messages, opts));
+    replaceSessionMessagesInflight.set(sessionId, task);
+    try {
+        return await task;
+    }
+    finally {
+        if (replaceSessionMessagesInflight.get(sessionId) === task) {
+            replaceSessionMessagesInflight.delete(sessionId);
+        }
+    }
+}
+async function replaceChatSessionMessagesOnServerInner(sessionId, messages, opts) {
+    const live = chatSessionsProvider().find((s) => s.id === sessionId);
+    if (!live || live.privateMode) {
+        return { messages, revision: live?.revision ?? 1 };
+    }
+    await createSessionOnServerIfMissing(live);
+    clearSessionMessageSyncQueue(sessionId);
+    let payload = messages;
+    let lastErr;
+    for (let attempt = 0; attempt < REPLACE_MESSAGES_MAX_RETRIES; attempt++) {
+        const fresh = await pollSessionMessagesFromServer(sessionId, { limit: 200 });
+        applyServerSessionToLocal(sessionId, {
+            revision: fresh.revision,
+            messageCount: fresh.messages.length,
+        });
+        if (attempt > 0 && opts?.reconcile) {
+            const reconciled = opts.reconcile(fresh.messages);
+            if (reconciled == null) {
+                throw lastErr ?? new Error("Could not apply change — refresh and try again.");
+            }
+            payload = reconciled;
+        }
+        try {
+            await replaceSessionMessagesOnServer(sessionId, payload, fresh.revision);
+            lastErr = undefined;
+            break;
+        }
+        catch (err) {
+            lastErr = err;
+            if (!isRevisionConflict(err) || attempt === REPLACE_MESSAGES_MAX_RETRIES - 1) {
+                throw err;
+            }
+            if (opts?.reconcile) {
+                const reconciled = opts.reconcile(fresh.messages);
+                if (reconciled == null)
+                    throw err;
+                payload = reconciled;
+            }
+        }
+    }
+    const polled = await pollSessionMessagesFromServer(sessionId, { limit: 200 });
+    applyServerSessionToLocal(sessionId, {
+        revision: polled.revision,
+        messageCount: polled.messages.length,
+    });
+    setCachedSessionMessages(sessionId, {
+        revision: polled.revision,
+        messages: polled.messages,
+        hasMoreOlder: false,
+    });
+    broadcastChatRefresh({ at: Date.now(), sessionId });
+    return polled;
+}
+function isRevisionConflict(err) {
+    if (!err || typeof err !== "object")
+        return false;
+    const status = err.status;
+    return status === 409;
+}
+/** True when an API error is a session revision mismatch (409). */
+export function isChatRevisionConflict(err) {
+    return isRevisionConflict(err);
+}
+async function applyPrivateSessionMessages(sessionId, messages) {
+    if (!messages.length)
+        return;
+    if (privateMessagesSync) {
+        privateMessagesSync(sessionId, messages);
+    }
+    else {
+        const all = chatSessionsProvider();
+        const next = all.map((s) => s.id === sessionId ? withSessionMessagesActivity(s, messages) : s);
+        await savePrivateChatSessions(next);
+    }
+    broadcastChatRefresh({ at: Date.now(), sessionId });
+}
+function applySessionMessagesLocally(sessionId, messages) {
+    const row = chatSessionsProvider().find((s) => s.id === sessionId);
+    if (row) {
+        row.messages = messages;
+        row.updatedAt = Date.now();
+    }
+    setCachedSessionMessages(sessionId, {
+        revision: row?.revision ?? 0,
+        messages,
+        hasMoreOlder: false,
+    });
+}
+/** Sync messages to server or to local Private Mode storage. */
+export async function syncSessionMessages(sessionId, messages, opts) {
+    if (!messages.length)
+        return;
+    const live = chatSessionsProvider().find((s) => s.id === sessionId);
+    const isPrivate = !!opts?.forcePrivate || !!live?.privateMode;
+    if (isPrivate) {
+        if (!live && !privateMessagesSync) {
+            throw new Error("Private chat session not found. Refresh and try again.");
+        }
+        applyPrivateSessionMessages(sessionId, messages);
+        return;
+    }
+    if (!live)
+        return;
+    await createSessionOnServerIfMissing(live, opts?.signal);
+    const { messages: serverMsgs } = await fetchSessionMessagesFromServer(sessionId, {
+        limit: 200,
+        signal: opts?.signal,
+    });
+    const serverCount = serverMsgs.length;
+    const lastLocal = messages[messages.length - 1];
+    const lastServer = serverMsgs[serverMsgs.length - 1];
+    const patchTrailingAssistant = async (content, receivedAt) => {
+        // Never blank out a server-owned assistant row. The streaming persister may be
+        // mid-write; patching it to "" here would erase live content and leave an
+        // orphan placeholder that keeps the UI stuck "generating".
+        if (!content.trim() || content === _IMAGE_PENDING)
+            return;
+        const updated = await patchLastSessionMessageOnServer(sessionId, content, {
+            receivedAt,
+            signal: opts?.signal,
+        });
+        if (updated)
+            applyServerSessionToLocal(sessionId, updated);
+        broadcastChatRefresh({ at: Date.now(), sessionId });
+    };
+    if (lastLocal?.role === "assistant" &&
+        lastServer?.role === "assistant" &&
+        lastServer.content === _IMAGE_PENDING &&
+        lastLocal.content !== _IMAGE_PENDING) {
+        await patchTrailingAssistant(lastLocal.content, lastLocal.receivedAt);
+        applySessionMessagesLocally(sessionId, messages);
+        return;
+    }
+    if (messages.length > serverCount) {
+        const firstToAppend = messages[serverCount];
+        if (lastServer?.role === "assistant" &&
+            lastServer.content === _IMAGE_PENDING &&
+            firstToAppend?.role === "assistant" &&
+            firstToAppend.content !== _IMAGE_PENDING) {
+            await patchTrailingAssistant(firstToAppend.content, firstToAppend.receivedAt);
+            if (messages.length > serverCount + 1) {
+                const rest = messages.slice(serverCount + 1).map((m) => ({
+                    ...m,
+                    clientMessageId: m.clientMessageId || newClientMessageId(),
+                }));
+                const result = await appendSessionMessagesOnServer(sessionId, rest, undefined, opts?.signal);
+                noteServerSessionFromAppend(sessionId, result.session);
+                if (result.session)
+                    applyServerSessionToLocal(sessionId, result.session);
+                broadcastChatRefresh({ at: Date.now(), sessionId });
+            }
+            return;
+        }
+        const toAppend = messages.slice(serverCount).map((m) => ({
+            ...m,
+            clientMessageId: m.clientMessageId || newClientMessageId(),
+            receivedAt: m.content === _IMAGE_PENDING ? undefined : m.receivedAt,
+        }));
+        const result = await appendSessionMessagesOnServer(sessionId, toAppend, undefined, opts?.signal);
+        noteServerSessionFromAppend(sessionId, result.session);
+        if (result.session)
+            applyServerSessionToLocal(sessionId, result.session);
+        broadcastChatRefresh({ at: Date.now(), sessionId });
+        return;
+    }
+    if (lastLocal?.role === "assistant" &&
+        lastServer?.role === "assistant" &&
+        lastLocal.content !== lastServer.content) {
+        await patchTrailingAssistant(lastLocal.content, lastLocal.receivedAt);
+        applySessionMessagesLocally(sessionId, messages);
+    }
+}
+/** Sync full local message list to server: append missing rows, patch last assistant if updated. */
+export async function syncSessionMessagesToServer(sessionId, messages) {
+    return syncSessionMessages(sessionId, messages);
+}
+/** Persist new messages for one chat turn (user + assistant). */
+export async function persistChatMessages(sessionId, messages) {
+    if (!messages.length)
+        return;
+    const live = chatSessionsProvider().find((s) => s.id === sessionId);
+    if (!live || live.privateMode)
+        return;
+    await createSessionOnServerIfMissing(live);
+    const result = await appendSessionMessagesOnServer(sessionId, messages.map((m) => ({
+        ...m,
+        clientMessageId: m.clientMessageId || newClientMessageId(),
+    })), undefined);
+    noteServerSessionFromAppend(sessionId, result.session);
+    if (result.session) {
+        applyServerSessionToLocal(sessionId, result.session);
+    }
+    pendingAppendByServerClear(sessionId);
+    dirtySessionIds.delete(sessionId);
+    broadcastChatRefresh({ at: Date.now(), sessionId });
+}
+export function queueMessagesForAppend(sessionId, messages) {
+    const existing = pendingAppendBySession.get(sessionId) || [];
+    pendingAppendBySession.set(sessionId, [...existing, ...messages]);
+    markSessionDirty(sessionId);
+    requestImmediateChatSync?.();
+}
+/** One-time legacy localStorage → server migration (full replace). */
+export async function migrateLegacyChatsToServer(sessions, folders) {
+    const normalized = normalizeChatSessions(sessions);
+    await savePrivateChatSessions(normalized);
+    const serverSessions = normalized.filter((s) => !s.privateMode);
+    await syncFoldersToServer(folders);
+    for (const session of serverSessions) {
+        await ensureSessionOnServer(session);
+        await replaceSessionMessagesOnServer(session.id, session.messages, session.revision);
+    }
+    broadcastChatRefresh({ migrated: true });
+}
+export async function syncChatsToServer(sessions, folders) {
+    const run = async () => {
+        const live = chatSessionsProvider();
+        const merged = live.length ? mergeRemoteChatSessions(live, sessions) : sessions;
+        const normalized = normalizeChatSessions(merged);
+        await savePrivateChatSessions(normalized);
+        if (isChatLeader() && !getProjectChatScope()) {
+            await syncFoldersToServer(folders);
+        }
+        await syncDirtySessionsToServer(normalized);
+        broadcastChatRefresh({ at: Date.now() });
+    };
+    const task = saveUserChatsChain.then(run, run);
+    saveUserChatsChain = task;
+    return task;
+}
+/** @deprecated Use syncChatsToServer */
+export async function saveUserChatsToServer(sessions, folders) {
+    await syncChatsToServer(sessions, folders);
+    return fetchUserChatsFromServer();
+}
+export async function patchChatSessionMessages(sessionId, messages) {
+    try {
+        await syncSessionMessagesToServer(sessionId, messages);
+    }
+    catch (err) {
+        if (isRevisionConflict(err))
+            await handleRevisionConflict(sessionId);
+        else
+            throw err;
+    }
+}
+/** Track new messages for append-based sync (preferred over full PUT). */
+export function trackNewMessagesForSync(sessionId, newMessages) {
+    if (!newMessages.length)
+        return;
+    queueMessagesForAppend(sessionId, newMessages.map((m) => ({
+        ...m,
+        clientMessageId: m.clientMessageId || newClientMessageId(),
+    })));
+}
+export async function fetchSessionWithMessages(sessionId) {
+    const live = chatSessionsProvider().find((s) => s.id === sessionId);
+    if (live?.privateMode)
+        return live;
+    try {
+        const polled = await pollSessionMessagesFromServer(sessionId, { limit: 50 });
+        if (live) {
+            return {
+                ...live,
+                messages: polled.messages,
+                revision: polled.revision,
+                messageCount: Math.max(live.messageCount ?? 0, polled.messages.length),
+            };
+        }
+        const remote = await fetchUserChatsFromServer();
+        const session = remote.sessions.find((s) => s.id === sessionId);
+        return session
+            ? {
+                ...session,
+                messages: polled.messages,
+                revision: polled.revision,
+                messageCount: Math.max(session.messageCount ?? 0, polled.messages.length),
+            }
+            : null;
+    }
+    catch {
+        return live ?? null;
+    }
+}
+/** @deprecated Use server storage; kept for compatibility during migration. */
+export function loadChatSessions() {
+    return loadChatSessionsLocal();
+}
+/** @deprecated Use saveUserChatsToServer. */
+export function saveChatSessions(_sessions) {
+    /* no-op: chats persist on server */
+}
+/** Turn off Image Generation in all stored chats for the signed-in user (e.g. on logout). */
+export async function clearStoredImageGenerationForCurrentUser() {
+    try {
+        const data = await fetchUserChatsFromServer();
+        if (!data.sessions.length)
+            return;
+        let changed = false;
+        const next = data.sessions.map((s) => {
+            if (!s.toolsTouched)
+                return s;
+            const tools = normalizeChatTools(s.tools);
+            if (!tools.imageGeneration)
+                return s;
+            changed = true;
+            return { ...s, tools: { ...tools, imageGeneration: false } };
+        });
+        if (changed) {
+            for (const s of next) {
+                if (!s.privateMode && s.toolsTouched) {
+                    await api(`/api/user/chats/sessions/${encodeURIComponent(s.id)}`, {
+                        method: "PATCH",
+                        body: JSON.stringify({ tools: s.tools, toolsTouched: true }),
+                    });
+                }
+            }
+        }
+    }
+    catch {
+        const sessions = loadChatSessionsLocal();
+        if (!sessions.length)
+            return;
+        let changed = false;
+        const next = sessions.map((s) => {
+            if (!s.toolsTouched)
+                return s;
+            const tools = normalizeChatTools(s.tools);
+            if (!tools.imageGeneration)
+                return s;
+            changed = true;
+            return { ...s, tools: { ...tools, imageGeneration: false } };
+        });
+        if (changed)
+            localStorage.setItem(chatStorageKey(), JSON.stringify(next));
+    }
+}
+/** @deprecated Use loadChatFoldersLocal. */
+export function loadChatFolders() {
+    return loadChatFoldersLocal();
+}
+/** @deprecated Use saveUserChatsToServer. */
+export function saveChatFolders(_folders) {
+    /* no-op */
+}
+/**
+ * Pick a model for a new chat. Order: user preferred default → admin system
+ * default → caller fallback → first catalog entry.
+ * The admin system default is never written into user prefs.
+ */
+export function resolveNewChatModel(models, fallback, preferredDefault) {
+    const preferred = preferredDefault?.trim() || "";
+    if (preferred && models.some((m) => m.id === preferred))
+        return preferred;
+    const system = models.find((m) => m.is_system_default)?.id?.trim() || "";
+    if (system && models.some((m) => m.id === system))
+        return system;
+    const fb = fallback?.trim() || "";
+    if (fb && models.some((m) => m.id === fb))
+        return fb;
+    return models[0]?.id || "";
+}
+/** @deprecated Use server prefs. */
+export function loadDefaultModel() {
+    return null;
+}
+/** @deprecated Use saveDefaultModelToServer. */
+export function saveDefaultModel(_modelId) {
+    /* no-op */
+}
+export function sessionTools(session) {
+    if (!session?.toolsTouched)
+        return copyFreshChatTools();
+    return normalizeChatTools(session.tools);
+}
+export function createSession(model, title = "New chat", tools) {
+    const now = Date.now();
+    return {
+        id: newChatId(),
+        title,
+        titleLocked: false,
+        folderId: null,
+        model,
+        tools: tools ? { ...tools } : copyFreshChatTools(),
+        toolsTouched: false,
+        privateMode: false,
+        messages: [],
+        createdAt: now,
+        updatedAt: now,
+    };
+}
+export function createFolder(name) {
+    const now = Date.now();
+    return {
+        id: newChatId(),
+        name,
+        createdAt: now,
+        updatedAt: now,
+    };
+}
+export const DEFAULT_CHAT_TITLE = "New chat";
+export function isDefaultChatTitle(title) {
+    const t = (title || "").trim().toLowerCase();
+    return !t || t === "new chat";
+}
+const _IMAGE_PREFIX = IMAGE_MESSAGE_PREFIX;
+const _IMAGE_PENDING = IMAGE_PENDING_MARKER;
+const _VIDEO_PREFIX = VIDEO_MESSAGE_PREFIX;
+const _VIDEO_PENDING = VIDEO_PENDING_MARKER;
+function _parseMediaPrompt(raw, prefix, fallback) {
+    try {
+        const payload = JSON.parse(raw.slice(prefix.length));
+        return (payload.prompt || "").trim() || fallback;
+    }
+    catch {
+        return fallback;
+    }
+}
+/** Plain text for title generation — never raw image JSON or internal markers. */
+export function normalizeMessageForTitle(content) {
+    const raw = (content || "").trim();
+    if (!raw || raw === _IMAGE_PENDING || raw === _VIDEO_PENDING)
+        return "";
+    const attachPrefix = ATTACHMENT_MESSAGE_PREFIX;
+    if (raw.startsWith(attachPrefix)) {
+        try {
+            const payload = JSON.parse(raw.slice(attachPrefix.length));
+            const text = (payload.userText || "").trim();
+            if (text)
+                return text;
+            const names = (payload.attachments || []).map((a) => a.name).filter(Boolean);
+            if (names.length)
+                return names.join(", ");
+        }
+        catch {
+            /* fall through */
+        }
+    }
+    const audioPrefix = AUDIO_MESSAGE_PREFIX;
+    if (raw.startsWith(audioPrefix)) {
+        try {
+            const payload = JSON.parse(raw.slice(audioPrefix.length));
+            if (payload.transcript?.trim())
+                return payload.transcript.trim();
+        }
+        catch {
+            /* fall through */
+        }
+    }
+    if (raw.startsWith(_IMAGE_PREFIX)) {
+        return _parseMediaPrompt(raw, _IMAGE_PREFIX, "Generated image");
+    }
+    if (raw.startsWith(_VIDEO_PREFIX)) {
+        return _parseMediaPrompt(raw, _VIDEO_PREFIX, "Generated video");
+    }
+    return raw;
+}
+function _clipTitle(text) {
+    const t = text.trim().replace(/\s+/g, " ");
+    if (!t)
+        return DEFAULT_CHAT_TITLE;
+    // Keep local fallback titles short; LLM titles are clipped server-side (~40 chars).
+    const limit = 28;
+    const maxWords = 4;
+    const byWords = t.split(/\s+/).slice(0, maxWords).join(" ");
+    const source = byWords.length < t.length ? byWords : t;
+    if (source.length <= limit)
+        return source;
+    if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
+        const seg = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+        let out = "";
+        let count = 0;
+        for (const part of seg.segment(source)) {
+            if (count >= limit - 1)
+                break;
+            out += part.segment;
+            count += 1;
+        }
+        return out ? `${out}…` : DEFAULT_CHAT_TITLE;
+    }
+    return `${source.slice(0, limit - 1)}…`;
+}
+export function sessionTitleFromMessages(messages) {
+    const user = messages.find((m) => m.role === "user" && normalizeMessageForTitle(m.content));
+    if (user)
+        return _clipTitle(normalizeMessageForTitle(user.content));
+    const assistant = messages.find((m) => m.role === "assistant" && normalizeMessageForTitle(m.content));
+    if (assistant)
+        return _clipTitle(normalizeMessageForTitle(assistant.content));
+    return DEFAULT_CHAT_TITLE;
+}
+export async function fetchChatSessionTitle(model, messages) {
+    const payload = messages
+        .map((m) => ({
+        role: m.role,
+        content: normalizeMessageForTitle(m.content || "").slice(0, 2000),
+    }))
+        .filter((m) => m.content.trim())
+        .slice(0, 6);
+    if (!payload.length)
+        return null;
+    try {
+        const data = await api("/api/chat/session-title", {
+            method: "POST",
+            body: JSON.stringify({ model, messages: payload }),
+        });
+        const title = (data.title || "").trim();
+        return title || null;
+    }
+    catch {
+        return null;
+    }
+}
+export async function enhancePrompt(model, prompt, mode, context = "image") {
+    const trimmed = (prompt || "").trim();
+    if (!trimmed)
+        return null;
+    const data = await api("/api/chat/enhance-prompt", {
+        method: "POST",
+        body: JSON.stringify({ model, prompt: trimmed, mode, context }),
+    });
+    const result = (data.prompt || "").trim();
+    return result || null;
+}
+/** @deprecated Use enhancePrompt */
+export async function enhanceImagePrompt(model, prompt, mode) {
+    return enhancePrompt(model, prompt, mode, "image");
+}

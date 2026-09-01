@@ -202,6 +202,7 @@ def test_path_to_menu():
     assert path_to_menu("/admin/retention-policy") == "storage"
     assert path_to_menu("/admin/storage-management") == "storage"
     assert path_to_menu("/admin/storage") == "storage"
+    assert path_to_menu("/admin/security-settings") == "security_settings"
 
 
 def test_operations_and_database_live_under_overview():
@@ -212,6 +213,15 @@ def test_operations_and_database_live_under_overview():
     assert overview[:3] == ("dashboard", "operations", "database")
     assert "operations" in overview
     assert "database" in overview
+
+
+def test_security_category_and_settings_menu():
+    assert CATEGORY_LABELS["security"] == "Security"
+    assert MENU_GROUP_KEYS["security_settings"] == "security"
+    assert MENUS_BY_CATEGORY["security"] == ("security_settings",)
+    assert path_to_menu("/admin/security-settings") == "security_settings"
+    assert can_access_menu(SUPER_ADMIN_SLUG, "security_settings")
+    assert not can_access_menu(API_KEY_ADMIN_SLUG, "security_settings")
 
 
 def test_agents_category_and_routes_are_single_menu_surface():

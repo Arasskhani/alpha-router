@@ -34,3 +34,8 @@ services:
     image: ${ALPHAROUTER_REGISTRY}/alpha-router:${ALPHAROUTER_IMAGE_TAG:-latest}
     build: !reset null
     pull_policy: always
+
+  alpha-router-edge:
+    image: ${ALPHAROUTER_REGISTRY}/alpha-router-edge:${ALPHAROUTER_IMAGE_TAG:-latest}
+    build: !reset null
+    pull_policy: always

@@ -58,6 +58,9 @@ AGENT_PLATFORM_TABLE_NAMES: frozenset[str] = frozenset(
         "user_memory_jobs",
         "user_memory_events",
         "user_memory_suppressions",
+        "admin_ip_allowlist_entries",
+        "tls_certificates",
+        "security_audit_events",
     }
 )
 

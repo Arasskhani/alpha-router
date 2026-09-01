@@ -45,6 +45,7 @@ import AgentEvaluations from "./pages/admin/AgentEvaluations";
 import AgentApprovals from "./pages/admin/AgentApprovals";
 import AgentActivity from "./pages/admin/AgentActivity";
 import AgentUsageActivity from "./pages/admin/AgentUsageActivity";
+import SecuritySettings from "./pages/admin/SecuritySettings";
 import { isAdminPanelRole } from "./lib/rbac";
 import { bootstrapSession, type SessionInfo } from "./api";
 
@@ -139,6 +140,7 @@ export default function App() {
         <Route path="agent-evaluations" element={<AgentEvaluations />} />
         <Route path="agent-approvals" element={<AgentApprovals />} />
         <Route path="agent-activity" element={<AgentActivity />} />
+        <Route path="security-settings" element={<SecuritySettings />} />
         <Route path="docs" element={<Docs />} />
       </Route>
       <Route

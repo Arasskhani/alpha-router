@@ -6,7 +6,7 @@ from __future__ import annotations
 import sys
 
 from app.config import get_settings
-from app.main import _collect_production_insecurities
+from app.main import _collect_production_insecurities, _tls_edge_enabled_from_disk
 
 
 def main() -> int:
@@ -42,6 +42,10 @@ def main() -> int:
         csrf_cookie_name=settings.csrf_cookie_name,
         clamav_required=settings.clamav_required,
         knowledge_ocr_required=settings.knowledge_ocr_required,
+        tls_edge_enabled=_tls_edge_enabled_from_disk(),
+        http_bind=settings.alpharouter_http_bind,
+        trusted_proxy_cidrs=settings.trusted_proxy_cidrs,
+        trust_local_gateway_proxy=settings.trust_local_gateway_proxy,
     )
     if settings.environment.lower() != "production":
         print("ENVIRONMENT is not production; guard checks skipped.")

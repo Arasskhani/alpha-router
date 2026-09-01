@@ -12,6 +12,8 @@ REQUIRED_PATHS=(
   "sandbox/runner.py"
   "sandbox-broker/Dockerfile"
   "deploy/seaweedfs/entrypoint.sh"
+  "deploy/edge/Dockerfile"
+  "deploy/edge/entrypoint.sh"
 )
 
 run_preflight() {

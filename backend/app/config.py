@@ -341,6 +341,19 @@ class Settings(BaseSettings):
     # Minimum length for local-account passwords (admin create/reset). The
     # bootstrap admin password from env is not subject to this.
     password_min_length: int = 8
+    # Trust X-Forwarded-For only from these CIDRs (comma-separated).
+    trusted_proxy_cidrs: str = "127.0.0.1/32,::1/128"
+    # Also trust this container's default gateway. Docker SNATs host-originated
+    # traffic (the host-network TLS edge) to the bridge gateway address, so
+    # without this the edge's X-Forwarded-For is ignored and every HTTPS client
+    # looks like the gateway. Set false when the app is exposed without a proxy.
+    trust_local_gateway_proxy: bool = True
+    # Emergency kill-switch for Admin → Security IP restriction.
+    admin_ip_restriction_disabled: bool = False
+    # Host interface used to publish the HTTP listener (compose: ALPHAROUTER_HTTP_BIND).
+    alpharouter_http_bind: str = "0.0.0.0"
+    # Shared volume path written by the app and read by the TLS edge proxy.
+    tls_state_dir: str = "/app/tls"
 
 
 @lru_cache

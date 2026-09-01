@@ -171,6 +171,7 @@ require_database, require_database_write = _menu_requires("database")
 require_agents, require_agents_write = _menu_requires("agents")
 require_admin_guide, require_admin_guide_write = _menu_requires("admin_guide")
 require_user_manual, require_user_manual_write = _menu_requires("user_manual")
+require_security_settings, require_security_settings_write = _menu_requires("security_settings")
 
 # Backward-compatible category aliases (any menu in the group — prefer menu-specific deps in new code).
 from app.services.rbac import MENUS_BY_CATEGORY  # noqa: E402
@@ -206,6 +207,8 @@ require_data_reports = require_rbac_category("data_reports")
 require_data_reports_write = require_rbac_category("data_reports", write=True)
 require_developer = require_rbac_category("developer")
 require_developer_write = require_rbac_category("developer", write=True)
+require_security = require_rbac_category("security")
+require_security_write = require_rbac_category("security", write=True)
 
 
 async def get_bearer_token(

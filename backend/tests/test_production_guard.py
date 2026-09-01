@@ -245,6 +245,54 @@ def test_production_hard_fail_mode_raises():
         )
 
 
+def test_production_flags_open_http_bind_when_tls_edge_is_on():
+    flags = _collect_production_insecurities(
+        **_prod_kwargs(
+            frontend_url="https://vpn.example.com",
+            api_public_url="https://vpn.example.com",
+            enable_hsts=True,
+            smtp_tls=True,
+            clamav_required=True,
+            knowledge_ocr_required=True,
+        ),
+        tls_edge_enabled=True,
+        http_bind="0.0.0.0",
+    )
+    assert "TLS_HTTP_BIND" in flags
+
+
+def test_production_flags_no_trusted_forwarder_behind_tls_edge():
+    base = dict(
+        **_prod_kwargs(
+            frontend_url="http://127.0.0.1:8080",
+            api_public_url="http://127.0.0.1:8080",
+            enable_hsts=True,
+            clamav_required=True,
+            knowledge_ocr_required=True,
+        ),
+        tls_edge_enabled=True,
+        http_bind="127.0.0.1",
+    )
+    # Gateway trust disabled and only loopback trusted: no hop could ever be
+    # trusted to forward the real client address.
+    assert "TRUSTED_PROXY" in _collect_production_insecurities(
+        **base,
+        trusted_proxy_cidrs="127.0.0.1/32,::1/128",
+        trust_local_gateway_proxy=False,
+    )
+    # Default gateway trust, or an explicitly listed proxy network, is fine.
+    assert "TRUSTED_PROXY" not in _collect_production_insecurities(
+        **base,
+        trusted_proxy_cidrs="127.0.0.1/32,::1/128",
+        trust_local_gateway_proxy=True,
+    )
+    assert "TRUSTED_PROXY" not in _collect_production_insecurities(
+        **base,
+        trusted_proxy_cidrs="127.0.0.1/32,172.18.0.1/32",
+        trust_local_gateway_proxy=False,
+    )
+
+
 def test_development_is_noop_even_for_new_checks():
     # New Phase 9 checks must also be no-ops in development.
     assert (

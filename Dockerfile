@@ -33,6 +33,7 @@ COPY backend/app ./app
 COPY --from=frontend-build /fe/dist ./frontend/dist
 RUN groupadd --system --gid 10001 alpha_router \
     && useradd --system --uid 10001 --gid 10001 --create-home --home-dir /home/alpha_router alpha_router \
+    && mkdir -p /app/tls \
     && chown -R alpha_router:alpha_router /app /home/alpha_router
 
 USER alpha_router

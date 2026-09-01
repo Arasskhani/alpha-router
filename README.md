@@ -203,8 +203,20 @@ Set `ALPHAROUTER_REGISTRY` in `.env` to your registry path (for GitLab,
 `docker login` during install.
 
 `--prod` generates strong secrets and runs the production guard preflight.
-For public HTTPS deployments, set `FRONTEND_URL`, `API_PUBLIC_URL`, and
-`ENABLE_HSTS` in `.env` after install.
+For public HTTPS deployments, either place your own reverse proxy in front of
+`:8080` and set `FRONTEND_URL`, `API_PUBLIC_URL`, and `ENABLE_HSTS`, or upload a
+certificate in **Admin → Security → Security Settings** to enable the bundled
+TLS edge on port 443 (or another port). After HTTPS is confirmed, set
+`ALPHAROUTER_HTTP_BIND=127.0.0.1` so clients cannot skip the edge.
+
+The bundled edge (`alpha-router-edge`) runs on the host network and reaches the
+app through its published port, so Docker rewrites the source address to the
+bridge gateway. `TRUST_LOCAL_GATEWAY_PROXY=true` (the default) trusts exactly
+that one address, which is what lets `X-Forwarded-For` from the edge be honoured
+while traffic routed in from outside keeps its real source address. Add
+`TRUSTED_PROXY_CIDRS` entries only for an external reverse proxy, and confirm the
+detected address in **Admin → Security → Security Settings → Admin IP
+Restrictions** before switching the allowlist to enforce.
 
 Machine-specific files (never commit): `.env`, `docker-compose.override.yml`.
 
@@ -219,6 +231,9 @@ Copy `.env.example` to `.env`. Important groups include:
 - **Gateway** — `GATEWAY_MASTER_KEY`, administrator-issued `alpha_router_...`
   keys, and user-created personal API keys
 - **Public URLs** — `API_PUBLIC_URL` and `FRONTEND_URL`
+- **Security** — `TRUSTED_PROXY_CIDRS`, `TRUST_LOCAL_GATEWAY_PROXY`,
+  `ALPHAROUTER_HTTP_BIND`, in-product HTTPS (Admin → Security Settings), and
+  optional admin IP allowlist
 - **Sandbox** — broker URL, token, timeout, and resource limits
 - **Agents & Knowledge** — Qdrant, ClamAV, worker, retrieval, evaluation,
   and observability

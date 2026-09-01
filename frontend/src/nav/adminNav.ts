@@ -58,6 +58,13 @@ export const adminNavSections: NavSection[] = [
     ],
   },
   {
+    title: "Security",
+    categoryKey: "security",
+    items: [
+      { to: "/admin/security-settings", label: "Security Settings", menuKey: "security_settings" },
+    ],
+  },
+  {
     title: "Integrations",
     categoryKey: "integrations",
     items: [

@@ -152,7 +152,9 @@ async def login_local(
     username = body.username.strip()
     from app.services.rate_limit import check_login_rate_limit
 
-    source_ip = request.client.host if request.client else None
+    from app.services.client_ip import resolve_client_ip
+
+    source_ip = resolve_client_ip(request)
     await check_login_rate_limit(normalize_username(username) or username, source_ip)
     user = await find_user_by_username_ci(db, username)
     if user and user.deleted_at is not None:
@@ -215,7 +217,9 @@ async def login_2fa(
     )
     from app.services.twofa_pending import consume_pending
 
-    source_ip = request.client.host if request.client else None
+    from app.services.client_ip import resolve_client_ip
+
+    source_ip = resolve_client_ip(request)
     await check_rate_limit(
         f"login2fa:ip:{source_ip or 'unknown'}",
         limit=30,

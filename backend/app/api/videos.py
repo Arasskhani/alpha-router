@@ -133,12 +133,9 @@ async def _resolve_video_model(
 
 
 def _client_ip(request: Request) -> str | None:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()[:64]
-    if request.client:
-        return (request.client.host or "")[:64] or None
-    return None
+    from app.services.client_ip import resolve_client_ip
+
+    return resolve_client_ip(request)
 
 
 @router.post("/generate")

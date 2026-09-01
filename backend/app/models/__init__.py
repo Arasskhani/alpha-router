@@ -101,6 +101,7 @@ from app.models.project import (
     ProjectRoomHandoff,
     ProjectUserPref,
 )
+from app.models.security import AdminIpAllowlistEntry, SecurityAuditEvent, TlsCertificate
 from app.models.system import (
     ReportSchedule,
     SmtpSettings,
@@ -188,9 +189,12 @@ __all__ = [
     "ReconciliationRun",
     "ReportSchedule",
     "RequestLog",
+    "SecurityAuditEvent",
     "SmtpSettings",
     "SystemMetricSnapshot",
     "SystemSetting",
+    "TlsCertificate",
+    "AdminIpAllowlistEntry",
     "UsageEvent",
     "UsageOperation",
     "User",

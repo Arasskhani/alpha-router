@@ -58,6 +58,8 @@ _KNOWN_EVENTS = frozenset(
         "retention_purge_blocked",
         "memory_extract_failed",
         "memory_retrieval_fallback",
+        "admin_ip_denied",
+        "tls_expiry_notice",
     }
 )
 _lock = Lock()

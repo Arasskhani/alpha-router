@@ -2,6 +2,7 @@ export type CategoryKey =
   | "overview"
   | "models_api"
   | "people_access"
+  | "security"
   | "integrations"
   | "data_reports"
   | "agents_knowledge"
@@ -51,7 +52,9 @@ export type MenuKey =
 
   | "admin_guide"
 
-  | "user_manual";
+  | "user_manual"
+
+  | "security_settings";
 
 
 

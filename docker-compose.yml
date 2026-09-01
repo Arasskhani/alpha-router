@@ -296,7 +296,7 @@ services:
     env_file:
       - .env
     ports:
-      - "8080:8080"
+      - "${ALPHAROUTER_HTTP_BIND:-0.0.0.0}:8080:8080"
     environment:
       # Docker network overrides (env_file supplies pool/worker/rate-limit tuning)
       CODE_SANDBOX_BROKER_URL: http://alpha-router-sandbox-broker:8081
@@ -317,6 +317,8 @@ services:
     security_opt:
       - no-new-privileges:true
     read_only: true
+    volumes:
+      - alpha_router_tls:/app/tls
     tmpfs:
       # ZIP download packs under /tmp; keep headroom above max ZIP download setting.
       - /tmp:rw,nosuid,nodev,size=10g
@@ -330,6 +332,8 @@ services:
         mkdir -p /tmp/prometheus &&
         exec uvicorn app.main:app --host 0.0.0.0 --port 8080
         --workers ${UVICORN_WORKERS:-4}
+        --proxy-headers
+        --forwarded-allow-ips=${TRUSTED_PROXY_CIDRS:-127.0.0.1/32,::1/128}
     depends_on:
       db-init:
         condition: service_completed_successfully
@@ -347,6 +351,45 @@ services:
       - alpha_router_app
       - alpha_router_sandbox_control
 
+  alpha-router-edge:
+    build:
+      context: .
+      dockerfile: deploy/edge/Dockerfile
+    image: alpha-router-edge:latest
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - alpha_router_tls:/etc/alpha-router/tls
+    cap_drop:
+      - ALL
+    cap_add:
+      # Bind 443 (or any privileged HTTPS port) chosen in Security Settings.
+      - NET_BIND_SERVICE
+      # nginx master starts as root and drops workers to the nginx user.
+      - SETUID
+      - SETGID
+      # nginx -t / startup chowns /var/cache/nginx/*_temp to uid 101 (nginx).
+      # Without CHOWN, that syscall fails on the read-only + tmpfs rootfs.
+      - CHOWN
+      # Read key.pem, which the app writes as uid 10001 with mode 0600.
+      - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:rw,nosuid,nodev
+      - /var/log/nginx:rw,nosuid,nodev
+      - /run:rw,nosuid,nodev
+      - /tmp:rw,nosuid,nodev
+    healthcheck:
+      test: ["CMD-SHELL", "/entrypoint.sh --healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      - alpha-router
+
 volumes:
   alpha_router_pg:
     name: alpha_router_pg
@@ -358,6 +401,8 @@ volumes:
     name: alpha_router_seaweedfs
   alpha_router_clamav:
     name: alpha_router_clamav
+  alpha_router_tls:
+    name: alpha_router_tls
 
 networks:
   alpha_router_app:

@@ -722,7 +722,7 @@ export const docSections: DocSection[] = [
       <>
         <h2>RBAC model</h2>
         <p>
-          Permissions are role slugs assigned per user (many roles supported). Admin menus are defined in seven
+          Permissions are role slugs assigned per user (many roles supported). Admin menus are defined in eight
           categories matching the sidebar. Write access is least-privilege: if any of a user’s roles for a menu is
           read-only, writes are denied.
         </p>
@@ -837,7 +837,8 @@ export const docSections: DocSection[] = [
           </li>
           <li>
             Use HTTPS for public <code>FRONTEND_URL</code> / <code>API_PUBLIC_URL</code>; enable HSTS when the public
-            surface is TLS-terminated.
+            surface is TLS-terminated. Prefer <strong>Security → Security Settings</strong> for in-product certificates,
+            then bind HTTP to loopback with <code>ALPHAROUTER_HTTP_BIND=127.0.0.1</code>.
           </li>
           <li>
             Keep all dangerous opt-in flags <code>false</code> (see table below). Startup logs a warning if any are
@@ -904,6 +905,66 @@ export const docSections: DocSection[] = [
       </>
     ),
   },
+  {
+    id: "security-settings-https",
+    title: "HTTPS certificates",
+    group: "Security",
+    content: (
+      <>
+        <h2>HTTPS certificates</h2>
+        <p>
+          <strong>Security → Security Settings</strong> stores a certificate and private key, then writes desired TLS
+          state onto a shared volume. The <code>alpha-router-edge</code> container (nginx, host network) watches that
+          volume, runs <code>nginx -t</code>, and reloads without restarting the application.
+        </p>
+        <ul>
+          <li>Upload PEM (certificate + key, optional chain) or PKCS#12. Private keys are encrypted at rest and never returned by the API.</li>
+          <li>Activate on port 443 or any free port that is not reserved by Alpharouter services.</li>
+          <li>Keep HTTP on 8080 during cutover, confirm <code>https://host:port/health</code>, then set <code>ALPHAROUTER_HTTP_BIND=127.0.0.1</code>.</li>
+          <li>Revert to HTTP from the same page if the listener does not come up.</li>
+        </ul>
+        <Warn>
+          If HTTP stays published on <code>0.0.0.0:8080</code> after HTTPS is on, clients can skip the edge proxy. Bind
+          loopback after you confirm TLS.
+        </Warn>
+      </>
+    ),
+  },
+  {
+    id: "security-settings-ip",
+    title: "Admin IP restrictions",
+    group: "Security",
+    content: (
+      <>
+        <h2>Admin IP restrictions</h2>
+        <p>
+          The allowlist applies to <code>/admin</code> and <code>/api/admin/*</code> only. Login and end-user routes
+          stay reachable so operators can recover.
+        </p>
+        <ul>
+          <li>
+            <strong>off</strong> — no restriction.
+          </li>
+          <li>
+            <strong>monitor</strong> — log and increment <code>admin_ip_denied</code> without blocking.
+          </li>
+          <li>
+            <strong>enforce</strong> — deny unmatched clients. The API refuses to enable this unless the current browser
+            IP is already listed.
+          </li>
+        </ul>
+        <p>
+          Break-glass inside the app container:{" "}
+          <code>python -m app.security_breakglass --disable-admin-ip-restriction</code>. The env kill-switch is{" "}
+          <code>ADMIN_IP_RESTRICTION_DISABLED=true</code>.
+        </p>
+        <Note>
+          <code>X-Forwarded-For</code> is trusted only from <code>TRUSTED_PROXY_CIDRS</code> (default loopback, which is
+          the host-network edge).
+        </Note>
+      </>
+    ),
+  },
 
   // ── Overview ──────────────────────────────────────────────────────────────
   {
@@ -944,6 +1005,10 @@ export const docSections: DocSection[] = [
             <tr>
               <td>People &amp; access</td>
               <td>Roles, Users, Deleted Users, Groups, Plans, Authentication</td>
+            </tr>
+            <tr>
+              <td>Security</td>
+              <td>Security Settings (HTTPS certificates and admin IP allowlist)</td>
             </tr>
             <tr>
               <td>Integrations</td>

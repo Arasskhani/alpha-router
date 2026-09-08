@@ -32,12 +32,12 @@ class RequestBodyLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        from app.config import get_settings
+        from app.services.request_body_limit_service import effective_request_body_limit_bytes
 
         limit = clamp_limit(
-            get_settings().max_request_body_bytes,
+            effective_request_body_limit_bytes(),
             minimum=1024 * 1024,
-            maximum=128 * 1024 * 1024,
+            maximum=2048 * 1024 * 1024,
         )
         headers = {
             key.decode("latin-1").lower(): value.decode("latin-1")

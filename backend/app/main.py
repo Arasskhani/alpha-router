@@ -677,6 +677,9 @@ async def lifespan(app: FastAPI):
         from app.services.transfer_limits_service import get_transfer_limits
 
         await get_transfer_limits(db)
+        from app.services.tls_edge_service import reconcile_edge_body_limit
+
+        await reconcile_edge_body_limit(db)
         from app.services.code_interpreter_capacity_service import (
             sync_code_interpreter_capacity_policy,
         )

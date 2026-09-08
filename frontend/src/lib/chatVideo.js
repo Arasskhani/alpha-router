@@ -90,7 +90,7 @@ export function buildVideoRequestBody(args) {
         reference_image: args.referenceImage || undefined,
         chat_session_id: args.chatSessionId,
         persist: args.persist,
-        duration: args.duration ?? 4,
+        duration: args.duration,
         resolution: args.resolution ?? "720p",
         aspect_ratio: args.aspectRatio ?? "16:9",
         generate_audio: Boolean(args.generateAudio),

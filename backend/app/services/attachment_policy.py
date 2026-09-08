@@ -109,6 +109,53 @@ ALLOWED_IMAGE_EXTENSIONS: frozenset[str] = frozenset(
     }
 )
 
+ALLOWED_VIDEO_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        "mp4",
+        "m4v",
+        "mov",
+        "mkv",
+        "webm",
+        "avi",
+        "wmv",
+        "flv",
+        "mpeg",
+        "mpg",
+        "mpe",
+        "mp2",
+        "m2v",
+        "3gp",
+        "3g2",
+        "ts",
+        "m2ts",
+        "mts",
+        "ogv",
+        "vob",
+    }
+)
+
+ALLOWED_AUDIO_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        "mp3",
+        "ogg",
+        "oga",
+        "opus",
+        "wav",
+        "flac",
+        "aac",
+        "m4a",
+        "wma",
+        "aiff",
+        "aif",
+        "aifc",
+        "mid",
+        "midi",
+        "weba",
+        "amr",
+        "caf",
+    }
+)
+
 ALLOWED_DOCUMENT_EXTENSIONS: frozenset[str] = frozenset(
     {
         "pdf",
@@ -145,7 +192,12 @@ ALLOWED_DOCUMENT_EXTENSIONS: frozenset[str] = frozenset(
     }
 )
 
-ALLOWED_EXTENSIONS = ALLOWED_IMAGE_EXTENSIONS | ALLOWED_DOCUMENT_EXTENSIONS
+ALLOWED_EXTENSIONS = (
+    ALLOWED_IMAGE_EXTENSIONS
+    | ALLOWED_VIDEO_EXTENSIONS
+    | ALLOWED_AUDIO_EXTENSIONS
+    | ALLOWED_DOCUMENT_EXTENSIONS
+)
 
 # Extension → MIME for documents. Client Content-Type is never trusted for these.
 DOCUMENT_MIME_BY_EXTENSION: dict[str, str] = {
@@ -197,6 +249,67 @@ IMAGE_MIME_BY_EXTENSION: dict[str, str] = {
     "ico": "image/x-icon",
 }
 
+VIDEO_MIME_BY_EXTENSION: dict[str, str] = {
+    "mp4": "video/mp4",
+    "m4v": "video/mp4",
+    "mov": "video/quicktime",
+    "mkv": "video/x-matroska",
+    "webm": "video/webm",
+    "avi": "video/x-msvideo",
+    "wmv": "video/x-ms-wmv",
+    "flv": "video/x-flv",
+    "mpeg": "video/mpeg",
+    "mpg": "video/mpeg",
+    "mpe": "video/mpeg",
+    "mp2": "video/mpeg",
+    "m2v": "video/mpeg",
+    "3gp": "video/3gpp",
+    "3g2": "video/3gpp2",
+    "ts": "video/mp2t",
+    "m2ts": "video/mp2t",
+    "mts": "video/mp2t",
+    "ogv": "video/ogg",
+    "vob": "video/mpeg",
+}
+
+AUDIO_MIME_BY_EXTENSION: dict[str, str] = {
+    "mp3": "audio/mpeg",
+    "ogg": "audio/ogg",
+    "oga": "audio/ogg",
+    "opus": "audio/opus",
+    "wav": "audio/wav",
+    "flac": "audio/flac",
+    "aac": "audio/aac",
+    "m4a": "audio/mp4",
+    "wma": "audio/x-ms-wma",
+    "aiff": "audio/aiff",
+    "aif": "audio/aiff",
+    "aifc": "audio/aiff",
+    "mid": "audio/midi",
+    "midi": "audio/midi",
+    "weba": "audio/webm",
+    "amr": "audio/amr",
+    "caf": "audio/x-caf",
+}
+
+# Video MIME types safe enough to serve inline for <video> playback.
+INLINE_VIDEO_MIMES: frozenset[str] = frozenset(
+    {
+        "video/mp4",
+        "video/webm",
+        "video/quicktime",
+        "video/x-matroska",
+        "video/ogg",
+        "video/x-msvideo",
+        "video/mpeg",
+        "video/3gpp",
+        "video/3gpp2",
+        "video/mp2t",
+        "video/x-ms-wmv",
+        "video/x-flv",
+    }
+)
+
 # Never store or serve these as Content-Type (XSS / script execution risk).
 UNSAFE_MEDIA_MIMES: frozenset[str] = frozenset(
     {
@@ -243,7 +356,7 @@ class AttachmentPolicyError(ValueError):
 
 
 def validate_attachment_filename(filename: str) -> tuple[str, str]:
-    """Return (extension, kind) where kind is image|document."""
+    """Return (extension, kind) where kind is image|video|audio|document."""
     if not filename or not filename.strip():
         raise AttachmentPolicyError("Missing file name.")
 
@@ -260,10 +373,17 @@ def validate_attachment_filename(filename: str) -> tuple[str, str]:
         raise AttachmentPolicyError(f'File type ".{ext}" is not allowed for security reasons.')
     if ext not in ALLOWED_EXTENSIONS:
         raise AttachmentPolicyError(
-            f'File type ".{ext}" is not supported. Use images (not SVG) or text documents.'
+            f'File type ".{ext}" is not supported. Use images, video, audio, or text documents.'
         )
 
-    kind = "image" if ext in ALLOWED_IMAGE_EXTENSIONS else "document"
+    if ext in ALLOWED_IMAGE_EXTENSIONS:
+        kind = "image"
+    elif ext in ALLOWED_VIDEO_EXTENSIONS:
+        kind = "video"
+    elif ext in ALLOWED_AUDIO_EXTENSIONS:
+        kind = "audio"
+    else:
+        kind = "document"
     return ext, kind
 
 
@@ -298,6 +418,22 @@ def resolve_attachment_mime(
             return client
         return "application/octet-stream"
 
+    if kind_norm == "video":
+        mapped = VIDEO_MIME_BY_EXTENSION.get(ext)
+        if mapped:
+            return mapped
+        if client.startswith("video/") and client not in UNSAFE_MEDIA_MIMES:
+            return client
+        return "video/mp4"
+
+    if kind_norm == "audio":
+        mapped = AUDIO_MIME_BY_EXTENSION.get(ext)
+        if mapped:
+            return mapped
+        if client.startswith("audio/") and client not in UNSAFE_MEDIA_MIMES:
+            return client
+        return "audio/mpeg"
+
     # Documents and anything else: extension map only; never trust client.
     mapped = DOCUMENT_MIME_BY_EXTENSION.get(ext)
     if mapped and mapped not in UNSAFE_MEDIA_MIMES:
@@ -315,9 +451,9 @@ def coerce_safe_storage_mime(kind: str, mime: str | None) -> str:
         return "application/octet-stream"
     if kind_norm == "image" and cleaned == "image/svg+xml":
         return "application/octet-stream"
-    if kind_norm == "video" and cleaned not in {"video/mp4", "video/webm"}:
-        if cleaned.startswith("video/"):
-            return "video/mp4"
+    if kind_norm == "video":
+        if cleaned in INLINE_VIDEO_MIMES or cleaned.startswith("video/"):
+            return cleaned if cleaned.startswith("video/") else "video/mp4"
         return "application/octet-stream"
     if kind_norm == "audio" and cleaned not in INLINE_AUDIO_MIMES:
         if cleaned.startswith("audio/"):
@@ -332,7 +468,7 @@ def is_inline_image_media(*, kind: str | None, mime: str | None) -> bool:
     cleaned = _normalize_mime(mime)
     if cleaned in UNSAFE_MEDIA_MIMES:
         return False
-    if kind_norm in {"document", "video"}:
+    if kind_norm in {"document", "video", "audio"}:
         return False
     if kind_norm == "image":
         return cleaned.startswith("image/") or not cleaned
@@ -344,11 +480,11 @@ def is_inline_video_media(*, kind: str | None, mime: str | None) -> bool:
     cleaned = _normalize_mime(mime)
     if cleaned in UNSAFE_MEDIA_MIMES:
         return False
-    if kind_norm in {"document", "image"}:
+    if kind_norm in {"document", "image", "audio"}:
         return False
     if kind_norm == "video":
-        return cleaned in {"video/mp4", "video/webm"} or cleaned.startswith("video/")
-    return cleaned in {"video/mp4", "video/webm"}
+        return cleaned in INLINE_VIDEO_MIMES or cleaned.startswith("video/")
+    return cleaned in INLINE_VIDEO_MIMES or cleaned in {"video/mp4", "video/webm"}
 
 
 # Audio MIME types safe to serve inline (for <audio> playback).
@@ -421,7 +557,7 @@ def media_response_type_and_disposition(
 
     if is_inline_video_media(kind=kind_norm, mime=stored):
         mime = stored if stored.startswith("video/") else "video/mp4"
-        if mime not in {"video/mp4", "video/webm"}:
+        if mime not in INLINE_VIDEO_MIMES and not mime.startswith("video/"):
             mime = "video/mp4"
         return mime, build_media_content_disposition(file_name, disposition="inline")
 

@@ -239,7 +239,7 @@ class Settings(BaseSettings):
     )
 
     # Bounded I/O defaults. Callers clamp overrides to hard safety ceilings.
-    max_request_body_bytes: int = 64 * 1024 * 1024
+    max_request_body_bytes: int = 1024 * 1024 * 1024
     max_attachment_bytes: int = 12 * 1024 * 1024
     max_attachments_total_bytes: int = 36 * 1024 * 1024
     max_voice_upload_bytes: int = 25 * 1024 * 1024
@@ -252,6 +252,8 @@ class Settings(BaseSettings):
     max_zip_aggregate_bytes: int = 256 * 1024 * 1024
 
     # Conservative in-flight billing holds (USD) and stale recovery.
+    budget_hold_buffer: float = 1.10
+    budget_unpriced_hold_usd: float = 0.05
     budget_chat_fallback_hold_usd: float = 0.05
     budget_embedding_fallback_hold_usd: float = 0.01
     budget_image_fallback_hold_usd: float = 0.25
@@ -260,9 +262,20 @@ class Settings(BaseSettings):
     budget_tool_fallback_hold_usd: float = 0.05
     budget_max_hold_usd: float = 5.0
     budget_reservation_ttl_seconds: int = 7200
+    # Chat is the one operation whose cost cannot be known before the call: the
+    # reply length is unknown, so the hold assumes the whole max_tokens budget and
+    # over-states a short answer by orders of magnitude. Refusing on that estimate
+    # blocks users who still have real budget, so a chat turn may be admitted on a
+    # hold clamped to the remaining balance -- but only while the estimate misses
+    # that balance by at most this much, which bounds the possible overshoot.
+    # Set to 0 to require every estimate to fit exactly (strict everywhere).
+    budget_soft_overshoot_usd: float = 0.50
 
-    # Video generation (OpenRouter /videos async jobs)
-    video_max_duration_seconds: int = 8
+    # Video generation (OpenRouter /videos async jobs).
+    # Clip length is the user's selected duration from the model's
+    # supported_durations. This env value is not applied as a generation cap;
+    # it is kept optional so existing .env files still parse.
+    video_max_duration_seconds: int | None = None
     video_max_resolution: str = "1080p"
     video_max_output_bytes: int = 200 * 1024 * 1024
     video_max_concurrent_jobs_per_user: int = 1

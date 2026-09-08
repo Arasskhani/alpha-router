@@ -35,7 +35,7 @@ export const docSections: DocSection[] = [
       <>
         <h1>Admin Guide</h1>
         <p className="docs-lead">
-          alpharouter is an organizational AI control plane. It sits between your employees (and optional external tools) and
+          Alpharouter is an organizational AI control plane. It sits between your employees (and optional external tools) and
           upstream LLM providers, enforcing budgets, roles, quotas, audit logging, and retention — while serving a
           built-in chat app and an OpenAI-compatible gateway.
         </p>
@@ -105,11 +105,11 @@ export const docSections: DocSection[] = [
   },
   {
     id: "why-alpha-router",
-    title: "Why alpharouter exists",
+    title: "Why Alpharouter exists",
     group: "Get started",
     content: (
       <>
-        <h2>Why alpharouter exists</h2>
+        <h2>Why Alpharouter exists</h2>
         <p>Teams adopting LLMs across chat, IDEs, and automation usually hit the same problems:</p>
         <ul>
           <li>Provider API keys are shared or scattered, with no central policy.</li>
@@ -117,11 +117,11 @@ export const docSections: DocSection[] = [
           <li>Model catalogs and pricing change often.</li>
           <li>Compliance needs a durable request history.</li>
         </ul>
-        <p>alpharouter addresses this by:</p>
+        <p>Alpharouter addresses this by:</p>
         <ol>
           <li>Terminating client traffic at a platform you operate.</li>
           <li>
-            Syncing models and <strong>provider-native pricing</strong> from Connections (alpharouter does not rewrite
+            Syncing models and <strong>provider-native pricing</strong> from Connections (Alpharouter does not rewrite
             catalog prices).
           </li>
           <li>
@@ -148,7 +148,7 @@ export const docSections: DocSection[] = [
       <>
         <h2>Hardware &amp; software requirements</h2>
         <p>
-          alpharouter ships as a Docker Compose stack. Plan the host from two independent drivers: the always-on
+          Alpharouter ships as a Docker Compose stack. Plan the host from two independent drivers: the always-on
           platform services (app, database, cache, object storage, Qdrant, ClamAV, Knowledge worker) and the Code
           Interpreter sandbox fleet, which is sized from its concurrent-execution ceiling rather than from the number of
           signed-in users.
@@ -327,7 +327,7 @@ export const docSections: DocSection[] = [
       <>
         <h2>Architecture &amp; services</h2>
         <p>
-          alpharouter is one application container that serves the React SPA and the API. Supporting services run beside it in
+          Alpharouter is one application container that serves the React SPA and the API. Supporting services run beside it in
           Docker Compose.
         </p>
         <AdminArchitectureDiagram />
@@ -361,7 +361,7 @@ export const docSections: DocSection[] = [
                 <code>/v1/*</code>
               </td>
               <td>
-                <code>Authorization: Bearer</code> — alpharouter API key, user API key, or gateway master key
+                <code>Authorization: Bearer</code> — Alpharouter API key, user API key, or gateway master key
               </td>
             </tr>
           </tbody>
@@ -405,7 +405,7 @@ export const docSections: DocSection[] = [
               </td>
               <td>
                 S3-compatible object storage for media blobs and Knowledge source bytes (authenticated access via
-                alpharouter APIs only)
+                Alpharouter APIs only)
               </td>
             </tr>
             <tr>
@@ -454,8 +454,8 @@ export const docSections: DocSection[] = [
             with an explicit Agent or auto-route.
           </li>
           <li>
-            alpharouter resolves an enabled model and Connection key. Code Interpreter requests validate their workspace
-            and acquire a Redis capacity lease before alpharouter <strong>reserves</strong> budget (or API-key credit).
+            Alpharouter resolves an enabled model and Connection key. Code Interpreter requests validate their workspace
+            and acquire a Redis capacity lease before Alpharouter <strong>reserves</strong> budget (or API-key credit).
           </li>
           <li>
             Streaming goes through LiteLLM to the upstream provider. Optional tools: web search/fetch and code
@@ -534,7 +534,7 @@ export const docSections: DocSection[] = [
         </p>
         <h3>Schema &amp; migrations</h3>
         <p>
-          On startup alpharouter creates ORM tables under a PostgreSQL advisory lock, applies nullable column patches for new
+          On startup Alpharouter creates ORM tables under a PostgreSQL advisory lock, applies nullable column patches for new
           fields, and creates any missing current-schema indexes. Greenfield deployments do not run historical data or storage
           migrations. There is no separate Alembic revision history for operators to apply by hand.
         </p>
@@ -595,7 +595,7 @@ export const docSections: DocSection[] = [
       <>
         <h2>Security overview</h2>
         <p>
-          alpharouter hardens the browser surface with cookie sessions and CSRF, encrypts secrets at rest, gates admin menus
+          Alpharouter hardens the browser surface with cookie sessions and CSRF, encrypts secrets at rest, gates admin menus
           with RBAC, and isolates code execution in disposable containers. Upstream provider keys never leave the
           Connections table as plaintext in the API responses.
         </p>
@@ -920,8 +920,17 @@ export const docSections: DocSection[] = [
         <ul>
           <li>Upload PEM (certificate + key, optional chain) or PKCS#12. Private keys are encrypted at rest and never returned by the API.</li>
           <li>Activate on port 443 or any free port that is not reserved by Alpharouter services.</li>
+          <li>
+            On activate (and when Storage transfer limits change), the edge nginx config uses a{" "}
+            <code>client_max_body_size</code> derived from Storage max upload / chat total so large chat attachments
+            are not rejected at the TLS edge before they reach the app.
+          </li>
           <li>Keep HTTP on 8080 during cutover, confirm <code>https://host:port/health</code>, then set <code>ALPHAROUTER_HTTP_BIND=127.0.0.1</code>.</li>
           <li>Revert to HTTP from the same page if the listener does not come up.</li>
+          <li>
+            The page shows an expiry warning when the active certificate is near the end of its validity (and an error
+            banner after expiry). Replace the cert before clients start failing TLS.
+          </li>
         </ul>
         <Warn>
           If HTTP stays published on <code>0.0.0.0:8080</code> after HTTPS is on, clients can skip the edge proxy. Bind
@@ -1070,7 +1079,7 @@ export const docSections: DocSection[] = [
       <>
         <h2>Activity scopes</h2>
         <p>
-          alpharouter uses one shared Activity experience (Overview · Trends · Explore) everywhere usage is analyzed.
+          Alpharouter uses one shared Activity experience (Overview · Trends · Explore) everywhere usage is analyzed.
           Each scope fixes the dataset and hides filters that would be meaningless (for example an API-key page does not
           offer an “API key” filter).
         </p>
@@ -1197,7 +1206,7 @@ export const docSections: DocSection[] = [
         <h2>Database</h2>
         <p>
           Path: <code>/admin/database</code>. Read-only monitor: connection status, engine, host CPU/RAM, DB size, ping,
-          alpharouter process RSS/CPU, and table row counts. Use <strong>Refresh</strong> to reload.
+          Alpharouter process RSS/CPU, and table row counts. Use <strong>Refresh</strong> to reload.
         </p>
       </>
     ),
@@ -1511,7 +1520,7 @@ export const docSections: DocSection[] = [
         <p>
           Not every text model can complete the Code Interpreter flow: some never emit a <code>```python</code> block,
           and some providers reject the tool-calling schema (for example with <code>MALFORMED_FUNCTION_CALL</code>).
-          alpharouter therefore <em>measures</em> compatibility per Connection + model instead of hardcoding vendor
+          Alpharouter therefore <em>measures</em> compatibility per Connection + model instead of hardcoding vendor
           names, so newly released models are handled without a code change.
         </p>
         <ul>
@@ -1543,7 +1552,7 @@ export const docSections: DocSection[] = [
           of daily.
         </p>
         <p>
-          For OpenRouter Auto Router, alpharouter derives per-request routing constraints from this registry: verified
+          For OpenRouter Auto Router, Alpharouter derives per-request routing constraints from this registry: verified
           models become the allowed pool and blocked models are excluded. The Auto Router entry itself is never hidden.
           Because the router reports its alias while streaming, the concretely selected model is resolved from the
           provider afterwards, so evidence is credited to the model that actually ran the flow rather than to the alias.
@@ -1878,7 +1887,14 @@ export const docSections: DocSection[] = [
           </li>
           <li>
             Global transfer limits: max upload (MB), max chat attachments total per message (MB), maximum files per
-            upload, max ZIP download (MB).
+            upload, max ZIP download (MB). Chat attachments may include images, video, audio, and documents; per-file
+            size follows max upload and the combined size of one message follows chat total.
+          </li>
+          <li>
+            Saving transfer limits publishes a shared request-body ceiling to the TLS volume and, when HTTPS edge is
+            enabled, rewrites <code>client_max_body_size</code> on <code>alpha-router-edge</code> to{" "}
+            <code>max(upload, chat total) + margin</code> (hard cap 2048 MB). The Save API does not wait for nginx
+            reload (edge applies within a few seconds). If HTTPS is off, app limits still apply on port 8080.
           </li>
           <li>
             Code Interpreter workspace limits: maximum files per turn and maximum extracted-text size. The product
@@ -1886,6 +1902,13 @@ export const docSections: DocSection[] = [
             pathological zero-byte file counts and payload abuse.
           </li>
         </ul>
+        <Note>
+          Any reverse proxy in front of Alpha Router (outside <code>alpha-router-edge</code>) must allow request bodies
+          at least as large as your Storage max upload / chat total settings, and should use long{" "}
+          <code>proxy_read_timeout</code> / <code>proxy_send_timeout</code> values for slow image or video generation
+          (often well over a minute). Otherwise clients may see HTML 413/504 errors from that outer gateway even when
+          the app later finishes the job.
+        </Note>
       </>
     ),
   },
@@ -2203,7 +2226,7 @@ export const docSections: DocSection[] = [
         <h3>Authentication modes</h3>
         <ul>
           <li>
-            <strong>alpharouter gateway API key</strong> — debits the key&apos;s period credit pool (not the owner&apos;s
+            <strong>Alpharouter gateway API key</strong> — debits the key&apos;s period credit pool (not the owner&apos;s
             personal budget). Optional connection and model allowlists further restrict which providers and catalog
             entries appear. Owner controls Private-model ACL inheritance.
           </li>
@@ -2219,8 +2242,8 @@ export const docSections: DocSection[] = [
         <Code>{`curl -sS "$ALPHA_ROUTER_BASE/v1/models" \\
   -H "Authorization: Bearer $ALPHA_ROUTER_API_KEY"`}</Code>
         <p>
-          Point OpenAI-compatible clients at your alpharouter base URL (for example{" "}
-          <code>https://alpha-router.example.com/v1</code>) and use an alpharouter-issued key as the API key.
+          Point OpenAI-compatible clients at your Alpharouter base URL (for example{" "}
+          <code>https://alpha-router.example.com/v1</code>) and use an Alpharouter-issued key as the API key.
         </p>
       </>
     ),
@@ -2234,17 +2257,18 @@ export const docSections: DocSection[] = [
         <h2>Budget &amp; pricing</h2>
         <h3>Pricing</h3>
         <p>
-          Model prices come from provider sync (normalized to USD per 1K tokens where possible). alpharouter does not
+          Model prices come from provider sync (normalized to USD per 1K tokens where possible). Alpharouter does not
           apply a markup in the catalog. Billing prefers a provider-reported request charge, then provider
           catalog/configured contract pricing, and finally a LiteLLM estimate. A request that cannot be priced is marked{" "}
           <strong>Unpriced</strong>; missing cost data is never presented as a confirmed zero.
         </p>
         <h3>Monthly user budgets</h3>
         <p>
-          Resolved from plan assignment (user → group → department). Before a paid request, alpharouter places a{" "}
-          <strong>reservation</strong> (hold) against <code>budget_reserved_usd</code>. After completion it{" "}
-          <strong>settles</strong> the actual cost into <code>budget_used_usd</code> and releases the hold. Stale holds
-          expire via a background sweeper.
+          Resolved from plan assignment (user → group → department). Before a paid request, Alpharouter places a{" "}
+          <strong>reservation</strong> (hold) against <code>budget_reserved_usd</code> using the same catalog/contract
+          quote that later bills the request (plus a small buffer). After completion it{" "}
+          <strong>settles</strong> the actual cost into <code>budget_used_usd</code> and releases the hold. Remaining
+          budget is <code>cap − used − reserved</code>. Stale holds expire via a background sweeper.
         </p>
         <h3>What counts</h3>
         <ul>
@@ -2275,7 +2299,7 @@ export const docSections: DocSection[] = [
       <>
         <h2>Cost accounting &amp; reconciliation</h2>
         <p>
-          alpharouter uses a provider-agnostic usage ledger. A user action is a <code>UsageOperation</code>; every real
+          Alpharouter uses a provider-agnostic usage ledger. A user action is a <code>UsageOperation</code>; every real
           upstream attempt is a <code>UsageEvent</code>; normalized quantities and unit prices are{" "}
           <code>CostLineItem</code> records; and the amount applied to a user budget or gateway key is an immutable{" "}
           <code>LedgerEntry</code>. Provider corrections create adjustment entries instead of rewriting history.
@@ -2342,7 +2366,7 @@ export const docSections: DocSection[] = [
             <code>total_cost</code>.
           </li>
           <li>
-            <strong>OpenAI</strong> — for Responses IDs (<code>resp_*</code>), alpharouter retrieves{" "}
+            <strong>OpenAI</strong> — for Responses IDs (<code>resp_*</code>), Alpharouter retrieves{" "}
             <code>/v1/responses/&lt;id&gt;</code>. If the payload includes a USD charge it is used; otherwise the
             provider&apos;s authoritative token usage is re-quoted against the local model catalog. Chat Completions IDs
             (<code>chatcmpl-*</code>) cannot be retrieved from OpenAI, so they stay unmatched until you post a manual
@@ -2389,7 +2413,7 @@ export const docSections: DocSection[] = [
     content: (
       <>
         <h2>Background jobs</h2>
-        <p>APScheduler jobs inside the alpharouter process include (among others):</p>
+        <p>APScheduler jobs inside the Alpharouter process include (among others):</p>
         <ul>
           <li>Model sync due-check (interval)</li>
           <li>Monthly budget reset</li>

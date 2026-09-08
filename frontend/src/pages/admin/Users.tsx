@@ -95,13 +95,14 @@ function UserPlanSelect({
   );
 }
 
+function formatBudgetUsd(value: number): string {
+  const rounded = Math.round(value * 100) / 100;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
+}
+
 function formatBudgetRatio(used: number, total: number): string {
   if (total <= 0) return "No Plan";
-  const fmt = (value: number) => {
-    const rounded = Math.round(value * 100) / 100;
-    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
-  };
-  return `${fmt(used)}/${fmt(total)} $`;
+  return `${formatBudgetUsd(used)}/${formatBudgetUsd(total)} $`;
 }
 
 type U = {
@@ -128,6 +129,7 @@ type U = {
   inherited_plan_source?: "group" | "department" | null;
   monthly_budget_usd: number;
   budget_used_usd: number;
+  budget_reserved_usd?: number;
   /** Reported online within the presence TTL. `null` when presence is unavailable. */
   online?: boolean | null;
 };
@@ -978,7 +980,22 @@ export default function Users() {
                 <td className="users-table__plan">
                   <UserPlanSelect user={u} plans={plans} onAssign={assignPlan} />
                 </td>
-                <td className="col-budget">{formatBudgetRatio(u.budget_used_usd || 0, u.monthly_budget_usd || 0)}</td>
+                {/* The server blocks on used + reserved, so show that total —
+                    reporting `used` alone made a blocked account look funded. */}
+                <td
+                  className="col-budget"
+                  title={
+                    (u.budget_reserved_usd || 0) > 0
+                      ? `${formatBudgetUsd(u.budget_used_usd || 0)} settled + `
+                        + `${formatBudgetUsd(u.budget_reserved_usd || 0)} held in flight`
+                      : undefined
+                  }
+                >
+                  {formatBudgetRatio(
+                    (u.budget_used_usd || 0) + (u.budget_reserved_usd || 0),
+                    u.monthly_budget_usd || 0,
+                  )}
+                </td>
                 <td className="col-actions">
                   <RowActionsMenu actions={userRowActions(u)} />
                 </td>

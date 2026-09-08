@@ -10,10 +10,11 @@ from app.services.model_capabilities import (
 )
 from app.services.openrouter_video_service import (
     build_video_generation_payload,
-    clamp_video_duration,
+    catalog_video_durations,
     extract_job_ids,
     job_status,
     normalize_video_resolution,
+    parse_video_duration,
 )
 
 
@@ -215,8 +216,22 @@ def test_model_kinds_image_for_authoritative_openrouter():
     assert "image" in kinds
 
 
-def test_clamp_duration_and_resolution():
-    assert clamp_video_duration(100) <= 8
+def test_user_selected_duration_is_not_capped():
+    assert parse_video_duration(30) == 30
+    assert parse_video_duration(8) == 8
+    assert parse_video_duration(4) == 4
+    assert parse_video_duration(None) is None
+    assert parse_video_duration(0) is None
+    assert catalog_video_durations([4, 8, 30, 8]) == [4, 8, 30]
+    payload = build_video_generation_payload(
+        model_id="google/veo-3.1-lite",
+        prompt="A glass greenhouse at sunrise",
+        duration=30,
+        resolution="720p",
+        aspect_ratio="16:9",
+        generate_audio=False,
+    )
+    assert payload["duration"] == 30
     assert normalize_video_resolution("1080p") == "1080p"
     assert normalize_video_resolution("nope") == "720p"
 

@@ -117,7 +117,7 @@ const html = `<!DOCTYPE html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>alpharouter — Admin Guide &amp; User Manual</title>
+  <title>Alpharouter — Admin Guide &amp; User Manual</title>
   <style>
     ${rootVars}
     * { box-sizing: border-box; }
@@ -184,7 +184,7 @@ const html = `<!DOCTYPE html>
 </head>
 <body>
   <header class="export-top">
-    <h1>alpharouter documentation</h1>
+    <h1>Alpharouter documentation</h1>
     <nav>
       <a href="#book-ag">Admin Guide</a>
       <a href="#book-um">User Manual</a>

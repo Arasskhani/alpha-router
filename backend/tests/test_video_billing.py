@@ -4,16 +4,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from app.services.budget_reservation_service import estimate_video_hold
 from app.services.video_billing_service import VideoBillingCapture, log_video_usage
-
-
-def test_estimate_video_hold_scales_with_duration_and_resolution():
-    base = estimate_video_hold(None, duration_seconds=4, resolution="720p")
-    longer = estimate_video_hold(None, duration_seconds=8, resolution="720p")
-    higher = estimate_video_hold(None, duration_seconds=4, resolution="1080p")
-    assert longer > base
-    assert higher > base
 
 
 def test_log_video_usage_calls_log_usage():

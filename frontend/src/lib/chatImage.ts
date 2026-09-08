@@ -9,6 +9,7 @@ import {
 import { referenceImageFromUserContent, resolveReferenceImageFromUserContent } from "./chatAttachments";
 import { isPrivateBlobRef, resolvePrivateMediaUrlForApi } from "./privateMediaStore";
 import { authFetch } from "../api";
+import { humanizeGatewayError } from "./gatewayErrors";
 import {
   normalizeImageAspectPreset,
   presetFromAspectRatio,
@@ -340,7 +341,7 @@ function parseApiError(raw: string, status: number): string {
     const j = JSON.parse(raw);
     return j.detail || j.message || raw;
   } catch {
-    return raw || `Request failed (${status})`;
+    return humanizeGatewayError(raw, status);
   }
 }
 

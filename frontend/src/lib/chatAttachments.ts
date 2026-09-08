@@ -10,7 +10,7 @@ export { ATTACHMENT_MESSAGE_PREFIX, AUDIO_MESSAGE_PREFIX } from "./chatMarkers";
 
 export type ProcessedAttachment = {
   name: string;
-  kind: "image" | "document";
+  kind: "image" | "video" | "audio" | "document";
   mime_type: string;
   url: string;
   data_url?: string;
@@ -40,13 +40,28 @@ const ALLOWED_IMAGE = new Set([
   "jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff", "heic", "heif", "avif", "ico",
 ]);
 
+const ALLOWED_VIDEO = new Set([
+  "mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "flv", "mpeg", "mpg", "mpe", "mp2", "m2v",
+  "3gp", "3g2", "ts", "m2ts", "mts", "ogv", "vob",
+]);
+
+const ALLOWED_AUDIO = new Set([
+  "mp3", "ogg", "oga", "opus", "wav", "flac", "aac", "m4a", "wma", "aiff", "aif", "aifc",
+  "mid", "midi", "weba", "amr", "caf",
+]);
+
 const ALLOWED_DOCUMENT = new Set([
   "pdf", "doc", "docx", "xls", "xlsx", "xlsm", "csv", "tsv", "txt", "text", "md", "markdown",
   "rtf", "odt", "ods", "odp", "ppt", "pptx", "json", "yaml", "yml", "xml", "log", "ini", "cfg",
   "conf", "tex", "rst", "sql", "toml", "properties",
 ]);
 
-const ALLOWED = new Set([...ALLOWED_IMAGE, ...ALLOWED_DOCUMENT]);
+const ALLOWED = new Set([
+  ...ALLOWED_IMAGE,
+  ...ALLOWED_VIDEO,
+  ...ALLOWED_AUDIO,
+  ...ALLOWED_DOCUMENT,
+]);
 
 const LOCAL_TEXT_EXTENSIONS = new Set([
   "txt", "text", "md", "markdown", "csv", "tsv", "json", "yaml", "yml", "xml", "log", "ini", "cfg", "conf", "tex", "rst", "sql", "toml", "properties",
@@ -58,7 +73,7 @@ function fileExtensions(name: string): string[] {
   return parts.slice(1);
 }
 
-export function attachmentKindFromName(name: string): "image" | "document" | null {
+export function attachmentKindFromName(name: string): "image" | "video" | "audio" | "document" | null {
   const parts = fileExtensions(name);
   if (!parts.length) return null;
   for (const ext of parts) {
@@ -66,13 +81,15 @@ export function attachmentKindFromName(name: string): "image" | "document" | nul
   }
   const ext = parts[parts.length - 1];
   if (ALLOWED_IMAGE.has(ext)) return "image";
+  if (ALLOWED_VIDEO.has(ext)) return "video";
+  if (ALLOWED_AUDIO.has(ext)) return "audio";
   if (ALLOWED_DOCUMENT.has(ext)) return "document";
   return null;
 }
 
 export function canProcessAttachmentLocally(name: string): boolean {
   const kind = attachmentKindFromName(name);
-  if (kind === "image") return true;
+  if (kind === "image" || kind === "video" || kind === "audio") return true;
   if (kind !== "document") return false;
   const ext = fileExtensions(name).at(-1) || "";
   return LOCAL_TEXT_EXTENSIONS.has(ext);
@@ -90,7 +107,9 @@ export function validateAttachmentFile(file: File): void {
   }
   const ext = parts[parts.length - 1];
   if (!ALLOWED.has(ext)) {
-    throw new Error(`File type ".${ext}" is not supported. Use images (not SVG) or text documents.`);
+    throw new Error(
+      `File type ".${ext}" is not supported. Use images, video, audio, or text documents.`,
+    );
   }
 }
 
@@ -210,7 +229,9 @@ export function shouldRouteToImageGeneration(
   if (!imageGenerationEnabled) return false;
   const attach = readAttachmentMessage(userContent);
   if (attach) {
-    if (attach.attachments.some((a) => a.kind === "document")) return false;
+    if (attach.attachments.some((a) => a.kind === "document" || a.kind === "video" || a.kind === "audio")) {
+      return false;
+    }
     const image = attach.attachments.find((a) => a.kind === "image");
     const ref = (image?.data_url || image?.url || "").trim();
     if (ref) return supportsImageToImage;
@@ -229,6 +250,8 @@ export function shouldRouteToImageGeneration(
 
 export const ATTACHMENT_ACCEPT = [
   ...ALLOWED_IMAGE,
+  ...ALLOWED_VIDEO,
+  ...ALLOWED_AUDIO,
   ...ALLOWED_DOCUMENT,
 ].map((e) => `.${e}`).join(",");
 
@@ -259,6 +282,18 @@ export async function processAttachmentFilesLocally(files: File[]): Promise<Proc
       });
       continue;
     }
+    if (ALLOWED_VIDEO.has(ext) || ALLOWED_AUDIO.has(ext)) {
+      const data_url = await readFileAsDataUrl(file);
+      const kind = ALLOWED_VIDEO.has(ext) ? "video" : "audio";
+      out.push({
+        name: file.name,
+        kind,
+        mime_type: file.type || `${kind}/${ext}`,
+        url: data_url,
+        data_url,
+      });
+      continue;
+    }
     if (LOCAL_TEXT_EXTENSIONS.has(ext)) {
       const text = await file.text();
       out.push({
@@ -271,7 +306,7 @@ export async function processAttachmentFilesLocally(files: File[]): Promise<Proc
       continue;
     }
     throw new Error(
-      `Private Mode: "${file.name}" cannot be processed locally. Use an image or plain-text file, or turn off Private Mode.`,
+      `Private Mode: "${file.name}" cannot be processed locally. Use an image, audio/video, or plain-text file, or turn off Private Mode.`,
     );
   }
   return out;
@@ -359,6 +394,24 @@ export async function resolveAttachmentImageUrlForApi(raw: string): Promise<stri
   }
 }
 
+function appendAvAttachmentNotes(
+  text: string,
+  attachments: ProcessedAttachment[],
+): string {
+  const videos = attachments.filter((a) => a.kind === "video");
+  const audios = attachments.filter((a) => a.kind === "audio");
+  let next = text;
+  if (videos.length) {
+    const names = videos.map((v) => v.name).join(", ");
+    next += `${next ? "\n\n" : ""}[Attached video(s): ${names}]`;
+  }
+  if (audios.length) {
+    const names = audios.map((a) => a.name).join(", ");
+    next += `${next ? "\n\n" : ""}[Attached audio: ${names}]`;
+  }
+  return next;
+}
+
 export async function buildApiMessageContentAsync(
   content: string,
   visionModel?: VisionModel,
@@ -384,6 +437,7 @@ export async function buildApiMessageContentAsync(
       text += `${text ? "\n\n" : ""}--- ${doc.name} ---\n${doc.text}`;
     }
   }
+  text = appendAvAttachmentNotes(text, attach.attachments);
   if (!images.length) {
     return text || attachmentDisplayText(attach);
   }
@@ -431,6 +485,7 @@ export function buildApiMessageContent(
       text += `${text ? "\n\n" : ""}--- ${doc.name} ---\n${doc.text}`;
     }
   }
+  text = appendAvAttachmentNotes(text, attach.attachments);
   if (!images.length) {
     return text || attachmentDisplayText(attach);
   }

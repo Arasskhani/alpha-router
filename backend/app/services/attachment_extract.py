@@ -8,7 +8,12 @@ from typing import Any
 import pandas as pd
 
 from app.core.text_safety import clean_extracted_text
-from app.services.attachment_policy import ALLOWED_IMAGE_EXTENSIONS, _extension
+from app.services.attachment_policy import (
+    ALLOWED_AUDIO_EXTENSIONS,
+    ALLOWED_IMAGE_EXTENSIONS,
+    ALLOWED_VIDEO_EXTENSIONS,
+    _extension,
+)
 
 _MAX_EXTRACT_CHARS = 120_000
 
@@ -82,7 +87,11 @@ def _extract_tabular(raw: bytes, ext: str) -> str:
 
 def extract_document_text(raw: bytes, filename: str) -> str:
     ext = _extension(filename)
-    if ext in ALLOWED_IMAGE_EXTENSIONS:
+    if (
+        ext in ALLOWED_IMAGE_EXTENSIONS
+        or ext in ALLOWED_VIDEO_EXTENSIONS
+        or ext in ALLOWED_AUDIO_EXTENSIONS
+    ):
         raise ValueError("Not a document file.")
 
     try:
@@ -173,6 +182,9 @@ def processed_attachment_payload(
     }
     if kind == "image":
         payload["data_url"] = build_image_data_url(raw, mime_type, filename)
+    elif kind in {"video", "audio"}:
+        # Binary media is referenced by URL only (no text extraction).
+        pass
     else:
         payload["text"] = extract_document_text(raw, filename)
     return payload

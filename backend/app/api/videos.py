@@ -23,19 +23,19 @@ from app.models.model_catalog import AIModel
 from app.models.user import User
 from app.models.video import VideoGenerationJob
 from app.services.budget_reservation_service import (
-    estimate_video_hold,
+    reservation_hold_usd,
     reservation_key,
     reserve,
 )
 from app.services.model_access_service import resolve_access_subject, user_can_access_model
 from app.services.model_capabilities import video_generation_capabilities
 from app.services.openrouter_video_service import (
-    clamp_video_duration,
+    catalog_video_durations,
+    parse_video_duration,
     normalize_video_aspect_ratio,
     normalize_video_resolution,
 )
 from app.services.secret_crypto import decrypt_secret
-from app.services.usage_accounting_service import configured_metered_cost
 from app.services.video_job_service import (
     cancel_video_job,
     create_video_job,
@@ -58,7 +58,7 @@ class VideoRequest(BaseModel):
     chat_session_id: str | None = None
     project_id: str | None = None
     persist: bool = True
-    duration: int | None = 4
+    duration: int | None = None
     resolution: str | None = "720p"
     aspect_ratio: str | None = "16:9"
     generate_audio: bool = False
@@ -184,7 +184,9 @@ async def generate_video(
             if not getattr(ai_model, "is_video_model", False):
                 raise HTTPException(status_code=400, detail="Selected model does not support video generation")
 
-    duration = clamp_video_duration(body.duration)
+    duration = parse_video_duration(body.duration)
+    if duration is None:
+        raise HTTPException(status_code=400, detail="Duration is required")
     resolution = normalize_video_resolution(body.resolution)
     max_res = normalize_video_resolution(settings.video_max_resolution)
     # Simple ordinal check via known list order.
@@ -195,8 +197,8 @@ async def generate_video(
     except ValueError:
         resolution = "720p"
     aspect_ratio = normalize_video_aspect_ratio(body.aspect_ratio) or "16:9"
-    supported_durations = caps.get("supported_durations") or []
-    if supported_durations and duration not in {int(value) for value in supported_durations}:
+    supported_durations = catalog_video_durations(caps.get("supported_durations"))
+    if supported_durations and duration not in set(supported_durations):
         raise HTTPException(status_code=400, detail="Requested duration is not supported by the selected video model")
     supported_resolutions = {str(value).lower() for value in (caps.get("supported_resolutions") or [])}
     if supported_resolutions and resolution.lower() not in supported_resolutions:
@@ -208,22 +210,18 @@ async def generate_video(
     hold_body = body.model_dump()
     if request.headers.get("Idempotency-Key"):
         hold_body["_idempotency_key"] = request.headers["Idempotency-Key"]
-    configured_hold = await configured_metered_cost(
-        db,
-        provider_type=provider_type or "unknown",
-        service_type="video",
-        model_id=model_id,
-        connection_id=getattr(ai_model, "connection_id", None),
-        quantity=float(duration),
-        unit="second",
-    )
     hold = await reserve(
         db,
         user_id=user.id,
         alpha_router_api_key_id=None,
-        amount_usd=max(
-            estimate_video_hold(ai_model, duration_seconds=duration, resolution=resolution),
-            float(configured_hold or 0) * 1.1,
+        amount_usd=await reservation_hold_usd(
+            db,
+            service_type="video",
+            ai_model=ai_model,
+            provider_type=provider_type or "unknown",
+            model_id=model_id,
+            quantity=float(duration),
+            unit="second",
         ),
         operation="video",
         model_id=model_id,

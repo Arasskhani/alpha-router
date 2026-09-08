@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -22,12 +24,16 @@ from app.services.tls_certificate_service import (
 
 HttpMode = Literal["redirect", "loopback_only"]
 
+LOGGER = logging.getLogger("app.services.tls_edge")
+
 KEY_HTTPS_PORT = "tls_https_port"
 KEY_HTTP_MODE = "tls_http_mode"
 KEY_HSTS = "tls_hsts_enabled"
 KEY_GENERATION = "tls_generation"
 RESERVED_PORTS = frozenset({8080, 8081, 5432, 6432, 6379, 6333, 6334, 8333, 3310, 9333, 23646})
-DEFAULT_MAX_BODY_MB = 64
+# Fallback only when transfer limits are unavailable during render.
+DEFAULT_MAX_BODY_MB = 1024
+_NGINX_BODY_RE = re.compile(r"client_max_body_size\s+(\d+)m\s*;", re.IGNORECASE)
 
 
 def tls_state_dir() -> Path:
@@ -217,6 +223,163 @@ async def _set_setting(db: AsyncSession, key: str, value: str) -> None:
         db.add(SystemSetting(key=key, value=value))
 
 
+def read_nginx_client_max_body_mb(conf_path: Path | None = None) -> int | None:
+    path = conf_path or (tls_state_dir() / "nginx.conf")
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = _NGINX_BODY_RE.search(text)
+    if not match:
+        return None
+    try:
+        return max(1, int(match.group(1)))
+    except ValueError:
+        return None
+
+
+async def _resolve_edge_body_mb(db: AsyncSession) -> int:
+    from app.services.request_body_limit_service import (
+        resolve_request_body_limit_mb_from_limits,
+    )
+    from app.services.transfer_limits_service import get_transfer_limits
+
+    limits = await get_transfer_limits(db)
+    return resolve_request_body_limit_mb_from_limits(limits)
+
+
+async def sync_edge_body_limit(db: AsyncSession) -> dict[str, Any]:
+    """Publish the shared request ceiling and queue an edge reload when needed.
+
+    Never waits for nginx apply (edge polls desired-state asynchronously).
+    Safe to call after Storage transfer-limit saves and on startup reconcile.
+    """
+    from app.services.request_body_limit_service import publish_request_body_limit_mb
+
+    body_mb = await _resolve_edge_body_mb(db)
+    try:
+        publish_request_body_limit_mb(body_mb)
+    except OSError as exc:
+        LOGGER.warning("Failed to publish shared request body limit: %s", exc)
+        return {
+            "attempted": True,
+            "queued": False,
+            "applied": False,
+            "body_mb": body_mb,
+            "reason": "publish_failed",
+            "error": str(exc),
+        }
+
+    desired = read_desired_state()
+    if not desired.get("enabled"):
+        return {
+            "attempted": False,
+            "queued": False,
+            "applied": False,
+            "body_mb": body_mb,
+            "reason": "https_disabled",
+        }
+
+    current_mb = read_nginx_client_max_body_mb()
+    if current_mb == body_mb and (tls_state_dir() / "nginx.conf").is_file():
+        return {
+            "attempted": True,
+            "queued": False,
+            "applied": True,
+            "body_mb": body_mb,
+            "generation": int(desired.get("generation") or 0),
+            "reason": "unchanged",
+        }
+
+    https_port = int(desired.get("https_port") or 0)
+    http_mode_raw = str(desired.get("http_mode") or "loopback_only")
+    http_mode: HttpMode = (
+        "redirect" if http_mode_raw == "redirect" else "loopback_only"
+    )
+    hsts_enabled = bool(desired.get("hsts"))
+    certificate_id = desired.get("certificate_id")
+    if not https_port or not certificate_id:
+        return {
+            "attempted": True,
+            "queued": False,
+            "applied": False,
+            "body_mb": body_mb,
+            "reason": "tls_state_incomplete",
+        }
+
+    try:
+        cert = await get_certificate(db, int(certificate_id))
+    except Exception as exc:
+        LOGGER.warning("Edge body sync could not load certificate: %s", exc)
+        return {
+            "attempted": True,
+            "queued": False,
+            "applied": False,
+            "body_mb": body_mb,
+            "reason": "certificate_unavailable",
+            "error": str(exc),
+        }
+
+    nginx = render_nginx_config(
+        https_port=https_port,
+        http_mode=http_mode,
+        hsts_enabled=hsts_enabled,
+        has_chain=bool(cert.chain_pem),
+        max_body_mb=body_mb,
+    )
+    try:
+        atomic_write(tls_state_dir() / "nginx.conf", nginx, mode=0o644)
+    except OSError as exc:
+        LOGGER.warning("Failed to rewrite edge nginx.conf: %s", exc)
+        return {
+            "attempted": True,
+            "queued": False,
+            "applied": False,
+            "body_mb": body_mb,
+            "reason": "nginx_write_failed",
+            "error": str(exc),
+        }
+
+    generation = await _next_generation(db)
+    await db.commit()
+    write_desired_state(
+        {
+            "enabled": True,
+            "generation": generation,
+            "https_port": https_port,
+            "http_mode": http_mode,
+            "hsts": hsts_enabled,
+            "fingerprint": desired.get("fingerprint") or cert.sha256_fingerprint,
+            "certificate_id": cert.id,
+        }
+    )
+    return {
+        "attempted": True,
+        "queued": True,
+        "applied": False,
+        "body_mb": body_mb,
+        "generation": generation,
+        "reason": "queued",
+    }
+
+
+async def reconcile_edge_body_limit(db: AsyncSession) -> dict[str, Any]:
+    """Startup/admin reconcile: publish limits and refresh edge conf if needed."""
+    try:
+        return await sync_edge_body_limit(db)
+    except Exception as exc:
+        LOGGER.warning("Edge body-limit reconcile failed: %s", exc)
+        return {
+            "attempted": True,
+            "queued": False,
+            "applied": False,
+            "reason": "reconcile_failed",
+            "error": str(exc),
+        }
+
+
 async def activate_https(
     db: AsyncSession,
     *,
@@ -225,6 +388,8 @@ async def activate_https(
     http_mode: HttpMode,
     hsts_enabled: bool,
 ) -> dict[str, Any]:
+    from app.services.request_body_limit_service import publish_request_body_limit_mb
+
     port = validate_https_port(https_port)
     if http_mode not in {"redirect", "loopback_only"}:
         raise TlsCertificateError("HTTP mode must be redirect or loopback_only.")
@@ -232,8 +397,11 @@ async def activate_https(
     key_pem = decrypt_private_key(cert)
     if not key_pem:
         raise TlsCertificateError("The stored private key could not be decrypted.")
-    settings = get_settings()
-    max_body_mb = max(1, int(getattr(settings, "max_request_body_bytes", 64 * 1024 * 1024) or 0) // (1024 * 1024))
+    max_body_mb = await _resolve_edge_body_mb(db)
+    try:
+        publish_request_body_limit_mb(max_body_mb)
+    except OSError as exc:
+        LOGGER.warning("Failed to publish request body limit during HTTPS activate: %s", exc)
     nginx = render_nginx_config(
         https_port=port,
         http_mode=http_mode,

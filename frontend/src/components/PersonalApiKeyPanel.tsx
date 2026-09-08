@@ -16,6 +16,7 @@ type PersonalKey = {
 type Budget = {
   monthly_budget_usd: number;
   used_usd: number;
+  reserved_usd?: number;
   remaining_usd: number | null;
 };
 
@@ -207,6 +208,12 @@ export default function PersonalApiKeyPanel() {
         <div className="docs-callout docs-callout-info personal-api-key-panel__budget">
           Monthly budget:{" "}
           <strong>${budget.used_usd.toFixed(2)}</strong> used
+          {(budget.reserved_usd ?? 0) > 0 ? (
+            <>
+              {" "}
+              · <strong>${(budget.reserved_usd ?? 0).toFixed(2)}</strong> reserved
+            </>
+          ) : null}
           {budget.remaining_usd != null ? (
             <>
               {" "}

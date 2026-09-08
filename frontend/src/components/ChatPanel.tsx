@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, us
 import { flushSync } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api, authFetch, formatApiError, getCachedSession, isApiAuthError } from "../api";
+import { humanizeGatewayError } from "../lib/gatewayErrors";
 import { chatModelsEmptyMessage, normalizeChatModelsError } from "../lib/chatMessages";
 import AuthenticatedImage from "./AuthenticatedImage";
 import AuthenticatedVideo from "./AuthenticatedVideo";
@@ -115,7 +116,7 @@ import {
   REPLY_READY_FOCUS_EVENT,
 } from "../lib/replyReadyNotify";
 import { getSessionUser, isSessionActive, logout } from "../lib/session";
-import { copyFreshChatTools, anyChatToolEnabled, toolsToApiPayload, type ChatToolsState } from "../lib/chatTools";
+import { copyFreshChatTools, anyChatToolEnabled, isAllowedVideoDuration, toolsToApiPayload, type ChatToolsState } from "../lib/chatTools";
 import MediaViewerModal from "./MediaViewerModal";
 import ChatAttachmentMessage from "./chat/ChatAttachmentMessage";
 import PromptQueue from "./chat/PromptQueue";
@@ -797,6 +798,8 @@ export default function ChatPanel({
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<ProcessedAttachment[]>([]);
   const [maxAttachments, setMaxAttachments] = useState(DEFAULT_MAX_ATTACHMENTS);
+  const [maxUploadFileMb, setMaxUploadFileMb] = useState(25);
+  const [maxChatAttachmentsTotalMb, setMaxChatAttachmentsTotalMb] = useState(36);
   const pendingAttachmentsRef = useRef<ProcessedAttachment[]>([]);
   const [attachUploading, setAttachUploading] = useState(false);
   const [promptQueues, setPromptQueues] = useState<Record<string, QueuedPrompt[]>>({});
@@ -1661,12 +1664,24 @@ export default function ChatPanel({
       return;
     }
     let cancelled = false;
-    api<{ max_chat_attachments_count?: number }>("/api/chat/attachment-limits")
+    api<{
+      max_chat_attachments_count?: number;
+      max_upload_file_mb?: number;
+      max_chat_attachments_total_mb?: number;
+    }>("/api/chat/attachment-limits")
       .then((limits) => {
         if (cancelled) return;
         const count = Number(limits?.max_chat_attachments_count);
         if (Number.isFinite(count) && count >= 1) {
           setMaxAttachments(Math.min(50, Math.round(count)));
+        }
+        const uploadMb = Number(limits?.max_upload_file_mb);
+        if (Number.isFinite(uploadMb) && uploadMb >= 1) {
+          setMaxUploadFileMb(Math.round(uploadMb));
+        }
+        const chatTotalMb = Number(limits?.max_chat_attachments_total_mb);
+        if (Number.isFinite(chatTotalMb) && chatTotalMb >= 1) {
+          setMaxChatAttachmentsTotalMb(Math.round(chatTotalMb));
         }
       })
       .catch(() => {
@@ -4189,6 +4204,10 @@ export default function ChatPanel({
     // Video wins over both image and text when its tool is on for this turn.
     if (allowMediaRoute && willRoutePromptToVideoGeneration(turnTools, primaryModel)) {
       const videoModel = resolveVideoGenerationModel(primaryModel);
+      if (!isAllowedVideoDuration(turnTools.videoDuration, videoModel.supported_durations)) {
+        setChatError("Choose a duration supported by this video model.");
+        return;
+      }
       const titleModelId = resolveSessionTitleModelId(videoModel.id);
       const videoAssistantId = newClientMessageId();
       const pendingMsgs: ChatMessage[] = [
@@ -4868,7 +4887,7 @@ export default function ChatPanel({
         retryAfterSeconds: j.retry_after_seconds,
       };
     } catch {
-      return { message: raw || `Request failed (${status})` };
+      return { message: humanizeGatewayError(raw, status) };
     }
   }
 
@@ -6005,8 +6024,22 @@ export default function ChatPanel({
         const localAttachments = await processAttachmentFilesLocally(files);
         setPendingAttachments((prev) => [...prev, ...localAttachments].slice(0, maxAttachments));
       } else {
+        const uploadLimitBytes = Math.max(1, maxUploadFileMb) * 1024 * 1024;
+        const totalLimitBytes = Math.max(uploadLimitBytes, maxChatAttachmentsTotalMb * 1024 * 1024);
+        let totalBytes = 0;
         for (const file of files) {
           validateAttachmentFile(file);
+          if (file.size > uploadLimitBytes) {
+            throw new Error(
+              `“${file.name}” exceeds the maximum upload size (${maxUploadFileMb} MB).`,
+            );
+          }
+          totalBytes += file.size;
+          if (totalBytes > totalLimitBytes) {
+            throw new Error(
+              `Attachments exceed the total per-message limit (${maxChatAttachmentsTotalMb} MB).`,
+            );
+          }
         }
         const fd = new FormData();
         for (const file of files) fd.append("files", file);
@@ -6065,12 +6098,6 @@ export default function ChatPanel({
     if (!isProjectChat || !projectId || readOnly || attachUploading) return;
     const payload = readQueuedProjectMediaAttach();
     if (!payload || payload.projectId !== projectId) return;
-    const mime = (payload.mimeType || "").toLowerCase();
-    if (payload.kind === "video" || mime.startsWith("video/")) {
-      clearQueuedProjectMediaAttach();
-      setChatError("Video files cannot be attached to chat. Use an image or a document.");
-      return;
-    }
     if (!payload.mediaId) {
       clearQueuedProjectMediaAttach();
       setChatError("Could not attach that file.");
@@ -7099,7 +7126,7 @@ export default function ChatPanel({
                   {pendingAttachments.map((a, idx) => (
                     <span key={`${a.url}-${idx}`} className="alpha-router-pending-attachment">
                       <span className="alpha-router-pending-attachment__name" title={a.name}>
-                        {a.kind === "image" ? "🖼" : "📄"} {a.name}
+                        {a.kind === "image" ? "🖼" : a.kind === "video" ? "🎬" : a.kind === "audio" ? "🔊" : "📄"} {a.name}
                       </span>
                       <button
                         type="button"

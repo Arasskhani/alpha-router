@@ -26,7 +26,7 @@ export const userManualSections: DocSection[] = [
       <>
         <h1>User Manual</h1>
         <p className="docs-lead">
-          Welcome to alpharouter — your organization’s AI workspace. Use approved models in Chat, keep generated files in
+          Welcome to Alpharouter — your organization’s AI workspace. Use approved models in Chat, keep generated files in
           Media, collaborate in Projects, and track your own spend under Activity. Administrators configure models, budgets, and
           sign-in; this manual covers what you can do in the <strong>/app</strong> panel after you sign in.
         </p>
@@ -94,7 +94,7 @@ export const userManualSections: DocSection[] = [
       <>
         <h2>Sign-in</h2>
         <p>
-          Open the alpharouter URL your administrator gave you and sign in on <code>/login</code>. Depending on your
+          Open the Alpharouter URL your administrator gave you and sign in on <code>/login</code>. Depending on your
           organization you may see:
         </p>
         <ul>
@@ -103,12 +103,12 @@ export const userManualSections: DocSection[] = [
             a backup code) after the password.
           </li>
           <li>
-            <strong>Active Directory / LDAP</strong> — same username/password form; alpharouter validates against your
+            <strong>Active Directory / LDAP</strong> — same username/password form; Alpharouter validates against your
             directory.
           </li>
           <li>
             <strong>SSO</strong> — SAML or OIDC buttons that redirect to your company identity provider, then return you
-            to alpharouter.
+            to Alpharouter.
           </li>
         </ul>
         <Note>
@@ -244,6 +244,8 @@ export const userManualSections: DocSection[] = [
             <a href="#chat-images">Image generation</a>
             {" · "}
             <a href="#chat-videos">Video generation</a>
+            {" · "}
+            <a href="#chat-speech">Text to speech</a>
           </li>
           <li>
             <a href="#chat-tools">Chat Tools</a>
@@ -376,7 +378,7 @@ export const userManualSections: DocSection[] = [
           <li>Type your prompt in the composer (Persian and English are both supported; direction follows the text).</li>
           <li>Send to start a turn. The assistant reply streams token by token.</li>
           <li>
-            Use <strong>Stop</strong> to cancel generation for that session. alpharouter still finalizes billing for work
+            Use <strong>Stop</strong> to cancel generation for that session. Alpharouter still finalizes billing for work
             already done upstream when applicable.
           </li>
         </ol>
@@ -408,12 +410,34 @@ export const userManualSections: DocSection[] = [
         <h3>Files</h3>
         <p>
           The paperclip opens an attach menu: upload a file, take a screenshot of a tab or window and crop it, or
-          pick images and documents from your Media library (project Media in a project chat). Files already in
-          Media are attached by reference — they are not stored a second time. Text and document attachments are
-          processed for the model; images can be sent to vision-capable models. Video and blocked types stay
-          unavailable. In Private Mode, Media attach is limited to images and plain-text files, processed locally.
-          Oversized files and the per-message file count show an error before send.
+          pick items from your Media library (project Media in a project chat). Files already in Media are attached by
+          reference — they are not stored a second time.
         </p>
+        <ul>
+          <li>
+            <strong>Images</strong> (for example <code>jpg</code>, <code>png</code>, <code>webp</code>, <code>gif</code>
+            ) can be sent to vision-capable models.
+          </li>
+          <li>
+            <strong>Video</strong> (for example <code>mp4</code>, <code>mov</code>, <code>mkv</code>, <code>webm</code>)
+            and <strong>audio</strong> (for example <code>mp3</code>, <code>ogg</code>, <code>wav</code>,{" "}
+            <code>m4a</code>) can be attached and play in the thread; the model receives a short note that the file was
+            attached (not raw multimedia understanding unless your deployment adds that).
+          </li>
+          <li>
+            <strong>Documents</strong> (PDF, Office, text, CSV, and similar) are processed for extractable text where
+            supported.
+          </li>
+          <li>
+            Executables, archives, HTML/SVG, and other blocked types stay unavailable. Oversized files and the
+            per-message file count show an error before send (limits come from your administrator&apos;s Storage
+            settings).
+          </li>
+          <li>
+            In Private Mode, Media attach works for images, audio/video, and plain-text files, processed locally. Some
+            Office/PDF types still need Private Mode off so the server can extract text.
+          </li>
+        </ul>
         <h3>Voice</h3>
         <ul>
           <li>Record or upload audio for transcription into the composer.</li>
@@ -434,7 +458,7 @@ export const userManualSections: DocSection[] = [
       <>
         <h2>Image generation</h2>
         <p>
-          When an image-capable model (or image tool flow) is selected, alpharouter generates images through the platform
+          When an image-capable model (or image tool flow) is selected, Alpharouter generates images through the platform
           image API. Generation can continue in the background for that session; you can navigate away and return while
           a job is pending.
         </p>
@@ -442,6 +466,11 @@ export const userManualSections: DocSection[] = [
           <li>Prompt enhancement / translation helpers may be available from the composer for image prompts.</li>
           <li>Completed images appear in the thread and usually in your Media library (unless Private mode).</li>
           <li>Costs count against your monthly budget like other paid requests.</li>
+          <li>
+            Some image models (for example OpenAI GPT Image) can take well over a minute. If the UI reports a gateway
+            timeout, retry once and check Media — the image may still have finished on the server after the browser
+            connection dropped.
+          </li>
         </ul>
       </>
     ),
@@ -460,9 +489,39 @@ export const userManualSections: DocSection[] = [
         </p>
         <ul>
           <li>Choose duration, resolution, and aspect ratio from the tools menu before sending.</li>
+          <li>
+            Optionally enable <strong>Generate audio</strong> when the selected video model supports soundtrack output.
+          </li>
           <li>Completed videos appear in the thread and in your Media library (unless Private mode).</li>
           <li>Only one video job runs at a time per user by default; costs count against your monthly budget.</li>
         </ul>
+      </>
+    ),
+  },
+  {
+    id: "chat-speech",
+    title: "Text to speech",
+    group: "Chat",
+    content: (
+      <>
+        <h2>Text to speech</h2>
+        <p>
+          Enable <strong>Text to Speech</strong> in Chat Tools to turn your message text into spoken audio. Image and
+          video generation tools are turned off while speech generation is on (and the reverse).
+        </p>
+        <ul>
+          <li>Pick a voice and playback speed from the tools menu before sending.</li>
+          <li>
+            The platform generates audio from your message text (subject to a maximum character length shown in the
+            tools menu).
+          </li>
+          <li>Completed audio appears in the thread and in your Media library (unless Private mode).</li>
+          <li>Costs count against your monthly budget like other paid requests.</li>
+        </ul>
+        <Note>
+          Voice <em>recording</em> (microphone → transcript into the composer) is separate from Text to Speech. See{" "}
+          <a href="#chat-attachments">Attachments &amp; voice</a>.
+        </Note>
       </>
     ),
   },
@@ -501,7 +560,26 @@ export const userManualSections: DocSection[] = [
               <td>
                 <strong>Image generation</strong>
               </td>
-              <td>Enables image generation flows from chat.</td>
+              <td>
+                Enables text-to-image and image-to-image flows from chat. See{" "}
+                <a href="#chat-images">Image generation</a>.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <strong>Video generation</strong>
+              </td>
+              <td>
+                Creates clips from text or an attached image. See <a href="#chat-videos">Video generation</a>.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <strong>Text to speech</strong>
+              </td>
+              <td>
+                Generates spoken audio from your message text. See <a href="#chat-speech">Text to speech</a>.
+              </td>
             </tr>
             <tr>
               <td>
@@ -538,11 +616,11 @@ export const userManualSections: DocSection[] = [
         <h2>Private mode</h2>
         <p>
           Private mode keeps a chat on your device: sessions and messages stay in local browser storage; media uses
-          IndexedDB. alpharouter does <strong>not</strong> persist that session’s messages to the server.
+          IndexedDB. Alpharouter does <strong>not</strong> persist that session’s messages to the server.
         </p>
         <ul>
           <li>Enabling Private mode requires confirmation and is <strong>not reversible</strong> for that chat.</li>
-          <li>Model calls still go through alpharouter (and count toward budget) — only chat history storage is local.</li>
+          <li>Model calls still go through Alpharouter (and count toward budget) — only chat history storage is local.</li>
           <li>
             On logout, private chats are cleared unless your browser has persistence explicitly enabled by policy/local
             flag (administrators document this for your site).
@@ -767,9 +845,10 @@ export const userManualSections: DocSection[] = [
             index is for Agents bound to that Knowledge Base, not for ordinary project chat.
           </li>
           <li>
-            <strong>Media</strong> are binary files (images, video, uploads) stored in the project library. Images and
-            files generated or attached in a project chat are stored here (not in your personal Media library) so every
-            member can open them. If the project is over quota, the file is kept only for the sender.
+            <strong>Media</strong> are binary files (images, video, audio, uploads) stored in the project library.
+            Images, video, audio, and other files generated or attached in a project chat are stored here (not in your
+            personal Media library) so every member can open them. If the project is over quota, the file is kept only
+            for the sender.
           </li>
         </ul>
         <h3>Memory and grounding</h3>
@@ -810,7 +889,7 @@ export const userManualSections: DocSection[] = [
         <h3>Invitations</h3>
         <p>
           The Primary Owner and Owners create a link (Contributor or Viewer only — never Owner or Primary Owner). Share
-          the link, or optionally email it to an existing alpharouter user when SMTP is configured. If email is
+          the link, or optionally email it to an existing Alpharouter user when SMTP is configured. If email is
           unavailable, the invitation is still created: copy the link from the dialog. Claim invitations at{" "}
           <code>/app/projects/invite</code>.
         </p>
@@ -832,7 +911,7 @@ export const userManualSections: DocSection[] = [
         <h2>Media</h2>
         <p>
           Path: <code>/app/media</code>. Browse files associated with your account — uploads and generations from chat
-          (non-private).
+          (images, video, audio, and documents; non-private).
         </p>
         <ul>
           <li>Search and filter by kind or date as offered in the library UI.</li>
@@ -934,7 +1013,7 @@ export const userManualSections: DocSection[] = [
             <strong>Export</strong> server-side chats as JSON
           </li>
           <li>
-            <strong>Import</strong> JSON from alpharouter, ChatGPT, or Open WebUI formats (merges into your account)
+            <strong>Import</strong> JSON from Alpharouter, ChatGPT, or Open WebUI formats (merges into your account)
           </li>
         </ul>
         <p>Private-mode chats are not included in server export.</p>
@@ -954,7 +1033,7 @@ export const userManualSections: DocSection[] = [
           revoking the old one.
         </p>
         <ul>
-          <li>Base URL: your alpharouter <code>/v1</code> endpoint (shown after creation).</li>
+          <li>Base URL: your Alpharouter <code>/v1</code> endpoint (shown after creation).</li>
           <li>Header: <code>Authorization: Bearer &lt;your-key&gt;</code></li>
           <li>The plaintext key is shown once at creation — store it securely.</li>
         </ul>

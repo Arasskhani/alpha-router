@@ -54,9 +54,8 @@ from app.services.agent_tool_registry_service import (
     ToolRegistryError,
 )
 from app.services.budget_reservation_service import (
-    estimate_chat_hold,
-    estimate_embedding_hold,
     release,
+    reservation_hold_usd,
     reservation_key,
     reserve,
     settle,
@@ -1011,10 +1010,13 @@ async def preflight_stream_chat(
     hold = None
     try:
         if alpha_router_api_key_id or (not skip_budget and user_id):
-            estimate = (
-                estimate_embedding_hold(ai_model, body)
-                if operation == "embedding"
-                else estimate_chat_hold(ai_model, body)
+            estimate = await reservation_hold_usd(
+                db,
+                service_type="embedding" if operation == "embedding" else "llm",
+                ai_model=ai_model,
+                provider_type=provider_type or ai_model.provider_type,
+                model_id=ai_model.external_id,
+                body=body,
             )
             hold = await reserve(
                 db,
@@ -1024,6 +1026,10 @@ async def preflight_stream_chat(
                 operation=operation,
                 model_id=ai_model.external_id,
                 idempotency_key=reservation_key(body, operation=operation),
+                # Chat only: the reply length is unknown, so the hold assumes the
+                # whole max_tokens budget and over-states a short answer. Embedding
+                # is priced from a known input size, so it stays strict.
+                cost_is_estimated=operation != "embedding",
             )
     except BaseException:
         if capacity_permit is not None:
@@ -1246,10 +1252,20 @@ async def reserve_auxiliary_llm_usage(
         db,
         user_id=user_id,
         alpha_router_api_key_id=None,
-        amount_usd=estimate_chat_hold(ai_model, body),
+        amount_usd=await reservation_hold_usd(
+            db,
+            service_type="llm",
+            ai_model=ai_model,
+            provider_type=ai_model.provider_type,
+            model_id=ai_model.external_id,
+            body=body,
+        ),
         operation=operation_name[:32],
         model_id=ai_model.external_id,
         idempotency_key=reservation_key(body, operation=operation_name[:32]),
+        # Auxiliary LLM calls (titles, prompt assist) are chat: reply length, and
+        # therefore cost, is not knowable before the call.
+        cost_is_estimated=True,
     )
     await db.commit()
     return hold.id if hold else None

@@ -44,8 +44,35 @@ function normalizeVideoResolution(v) {
 function normalizeVideoDuration(v) {
     const n = Number(v);
     if (!Number.isFinite(n))
-        return 4;
-    return Math.max(1, Math.min(8, Math.round(n)));
+        return FRESH_CHAT_TOOLS.videoDuration;
+    const rounded = Math.round(n);
+    return rounded >= 1 ? rounded : FRESH_CHAT_TOOLS.videoDuration;
+}
+export function videoDurationChoices(supported) {
+    if (!supported?.length)
+        return [];
+    const out = [];
+    const seen = new Set();
+    for (const raw of supported) {
+        const parsed = Number(raw);
+        if (!Number.isFinite(parsed))
+            continue;
+        const seconds = Math.round(parsed);
+        if (seconds < 1 || seen.has(seconds))
+            continue;
+        seen.add(seconds);
+        out.push(seconds);
+    }
+    return out;
+}
+export function isAllowedVideoDuration(duration, supported) {
+    const choices = videoDurationChoices(supported);
+    const selected = Number(duration);
+    if (!Number.isFinite(selected) || selected < 1)
+        return false;
+    if (!choices.length)
+        return true;
+    return choices.includes(Math.round(selected));
 }
 function normalizeVideoAspectRatio(v) {
     const raw = (v || "").trim();

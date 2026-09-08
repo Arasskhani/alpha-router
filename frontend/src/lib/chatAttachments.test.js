@@ -72,7 +72,8 @@ describe("attachmentKindFromName", () => {
     it("rejects blocked and unknown types", () => {
         expect(attachmentKindFromName("icon.svg")).toBeNull();
         expect(attachmentKindFromName("setup.exe")).toBeNull();
-        expect(attachmentKindFromName("clip.mp4")).toBeNull();
+        expect(attachmentKindFromName("clip.mp4")).toBe("video");
+        expect(attachmentKindFromName("song.mp3")).toBe("audio");
     });
 });
 describe("canProcessAttachmentLocally", () => {

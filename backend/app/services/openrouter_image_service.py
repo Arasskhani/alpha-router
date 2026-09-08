@@ -114,44 +114,110 @@ def is_openrouter_auto_model(model_id: str) -> bool:
     return tail == "auto" or tail.startswith("auto-")
 
 
-def openrouter_image_modalities(model_id: str) -> list[str]:
-    """Modalities for OpenRouter chat/completions image generation."""
+IMAGE_ONLY_NAME_HINTS = (
+    "flux",
+    "sourceful",
+    "riverflow",
+    "dall-e",
+    "dalle",
+    "stable-diffusion",
+    "sdxl",
+)
+
+
+def catalog_image_modalities(pricing_raw: str | None) -> list[str] | None:
+    """Chat modalities from the stored provider catalog, or None when unknown."""
+    # Imported lazily to keep this module free of service-layer import order rules;
+    # model_capabilities has no further imports of its own, so this is cycle-free.
+    from app.services.model_capabilities import catalog_output_modalities
+
+    outputs = catalog_output_modalities(pricing_raw)
+    if "image" not in outputs:
+        return None
+    return ["image", "text"] if "text" in outputs else ["image"]
+
+
+def openrouter_image_modalities(model_id: str, pricing_raw: str | None = None) -> list[str]:
+    """Modalities for OpenRouter chat/completions image generation.
+
+    The catalog snapshot (`architecture.output_modalities`) is authoritative:
+    asking a model that cannot emit text for `["image", "text"]` makes
+    OpenRouter answer 404 "No endpoints found that support the requested
+    output modalities". Most of its image catalog is image-only, so the
+    name-substring hints below are just a fallback for models whose snapshot
+    is missing.
+    """
     if is_openrouter_auto_model(model_id):
         return ["image", "text"]
+    from_catalog = catalog_image_modalities(pricing_raw)
+    if from_catalog is not None:
+        return from_catalog
     low = (model_id or "").lower()
-    image_only_hints = (
-        "flux",
-        "sourceful",
-        "riverflow",
-        "dall-e",
-        "dalle",
-        "stable-diffusion",
-        "sdxl",
-    )
-    if any(h in low for h in image_only_hints):
+    if any(h in low for h in IMAGE_ONLY_NAME_HINTS):
         return ["image"]
     if is_openai_gpt_image_model(model_id):
         return ["image"]
     return ["image", "text"]
 
 
-def prefer_openrouter_images_generations(model_id: str) -> bool:
-    """Prefer /images/generations over chat/completions for these models."""
-    low = (model_id or "").lower()
+def prefer_openrouter_images_generations(model_id: str, pricing_raw: str | None = None) -> bool:
+    """Route to OpenRouter's dedicated Image API instead of chat/completions.
+
+    A model whose catalog output is image-only is not a chat model at all:
+    OpenRouter answers 404 "<model> is an image generation model and cannot be
+    used with the chat/completions endpoint" for its whole new generation of
+    image models. Models that also emit text (Gemini image, ...) stay on
+    chat/completions, which is where they work today. Name hints remain the
+    fallback for models without a catalog snapshot.
+    """
+    if is_openrouter_auto_model(model_id):
+        # Auto Router resolves to an arbitrary downstream model at request time.
+        return False
+    from_catalog = catalog_image_modalities(pricing_raw)
+    if from_catalog is not None:
+        return from_catalog == ["image"]
     if is_openai_gpt_image_model(model_id):
         return True
-    return any(
-        h in low
-        for h in (
-            "flux",
-            "sourceful",
-            "riverflow",
-            "dall-e",
-            "dalle",
-            "stable-diffusion",
-            "sdxl",
-        )
-    )
+    low = (model_id or "").lower()
+    return any(h in low for h in IMAGE_ONLY_NAME_HINTS)
+
+
+# OpenRouter's dedicated Image API is /images; /images/generations is the older
+# OpenAI-compatible shim. Try the documented path first and fall back.
+OPENROUTER_IMAGE_ENDPOINT_PATHS: tuple[str, ...] = ("/images", "/images/generations")
+
+
+def openrouter_input_references(reference_image: str | None) -> list[dict]:
+    """`input_references` entries for image-to-image on the Image API."""
+    url = (reference_image or "").strip()
+    if not url:
+        return []
+    return [{"type": "image_url", "image_url": {"url": url}}]
+
+
+def build_openrouter_image_endpoint_payload(
+    *,
+    path: str,
+    model: str,
+    prompt: str,
+    n: int,
+    size: str | None,
+    input_references: list[dict] | None = None,
+) -> dict | None:
+    """Request body for one Image-API path, or None when it cannot serve it."""
+    payload: dict = {"model": model, "prompt": prompt, "n": n}
+    if size:
+        payload["size"] = size
+    if path == "/images":
+        if input_references:
+            payload["input_references"] = list(input_references)
+        return payload
+    if input_references:
+        # The OpenAI-compatible shim has no reference-image field, so it cannot
+        # serve an img2img request; the caller must skip this path.
+        return None
+    payload["response_format"] = "b64_json"
+    return payload
 
 
 def _has_routing_suffix(model_id: str) -> bool:

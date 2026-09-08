@@ -112,7 +112,16 @@ git_pull_ff_only() {
     warn "git is not installed; skipping pull. Install git or copy an updated source tree."
     return 0
   fi
-  log "Fetching and fast-forwarding $(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD)..."
-  git -C "$ROOT_DIR" fetch --prune
-  git -C "$ROOT_DIR" pull --ff-only
+  local branch remote
+  branch="$(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD)"
+  remote="origin"
+  log "Fetching and fast-forwarding $branch..."
+  git -C "$ROOT_DIR" fetch --prune "$remote"
+  if git -C "$ROOT_DIR" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+    git -C "$ROOT_DIR" pull --ff-only
+  else
+    log "No upstream set for $branch; pulling $remote/$branch."
+    git -C "$ROOT_DIR" pull --ff-only "$remote" "$branch"
+    git -C "$ROOT_DIR" branch --set-upstream-to="$remote/$branch" "$branch" || true
+  fi
 }

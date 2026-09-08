@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { DEFAULT_CHAT_TOOLS, type ChatToolsState } from "../../lib/chatTools";
+import { DEFAULT_CHAT_TOOLS, type ChatToolsState, videoDurationChoices } from "../../lib/chatTools";
 import {
   DEFAULT_CUSTOM_ASPECT_RATIO,
   IMAGE_ASPECT_PRESETS,
@@ -336,10 +336,7 @@ export default function ServerToolsMenu({
         <div className="alpha-router-image-aspect-picker" onMouseDown={(e) => e.stopPropagation()}>
           <span className="alpha-router-image-aspect-picker__label">Duration / resolution</span>
           <div className="alpha-router-image-aspect-picker__options" role="group" aria-label="Video duration">
-            {(videoCapabilities?.supported_durations?.length
-              ? videoCapabilities.supported_durations
-              : [4, 5, 6, 8]
-            ).map((sec) => {
+            {videoDurationChoices(videoCapabilities?.supported_durations).map((sec) => {
               const active = tools.videoDuration === sec;
               return (
                 <button

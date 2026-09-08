@@ -25,11 +25,6 @@ export function normalizeProjectMediaItem(item) {
     };
 }
 export function composerAttachEligibility(item, opts) {
-    const mime = (item.mimeType || "").toLowerCase();
-    const kind = (item.kind || "").toLowerCase();
-    if (kind === "video" || mime.startsWith("video/")) {
-        return { attachable: false, reason: "Video files cannot be attached to chat." };
-    }
     const processedKind = attachmentKindFromName(item.fileName);
     if (!processedKind) {
         return { attachable: false, reason: "This file type cannot be attached to chat." };
@@ -37,7 +32,7 @@ export function composerAttachEligibility(item, opts) {
     if (opts.privateMode && !canProcessAttachmentLocally(item.fileName)) {
         return {
             attachable: false,
-            reason: "Private Mode can only attach images or plain-text files from Media.",
+            reason: "Private Mode can only attach images, audio/video, or plain-text files from Media.",
         };
     }
     return { attachable: true, reason: null, processedKind };

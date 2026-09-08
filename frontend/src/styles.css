@@ -5233,6 +5233,7 @@ table.data-table--api-logs {
   align-self: flex-end;
   max-width: 85%;
   width: fit-content;
+  min-width: 0;
 }
 
 .alpha-router-msg-assistant .alpha-router-msg-inner {
@@ -7407,6 +7408,8 @@ table.data-table--api-logs {
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .alpha-router-attach-msg__text {
@@ -7418,15 +7421,19 @@ table.data-table--api-logs {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .alpha-router-attach-msg__image {
   margin: 0;
-  max-width: 220px;
+  max-width: min(220px, 100%);
+  min-width: 0;
 }
 
 .alpha-router-attach-msg__thumb {
   width: 100%;
+  max-width: 100%;
   max-height: 180px;
   object-fit: cover;
   border-radius: 10px;
@@ -7439,6 +7446,53 @@ table.data-table--api-logs {
   margin-top: 0.2rem;
 }
 
+.alpha-router-attach-msg__videos {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.alpha-router-attach-msg__video {
+  margin: 0;
+  width: 100%;
+  max-width: min(100%, 30rem);
+  min-width: 0;
+}
+
+.alpha-router-attach-msg__video-el {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+}
+
+.alpha-router-attach-msg__video figcaption {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-top: 0.2rem;
+}
+
+.alpha-router-attach-msg__audios {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.alpha-router-attach-msg__audios li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .alpha-router-attach-msg__docs {
   list-style: none;
   margin: 0;
@@ -7446,6 +7500,8 @@ table.data-table--api-logs {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .alpha-router-attach-msg__docs li {
@@ -7453,12 +7509,15 @@ table.data-table--api-logs {
   align-items: center;
   gap: 0.35rem;
   font-size: 0.82rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .alpha-router-attach-msg__doc-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
 .alpha-router-disclaimer {

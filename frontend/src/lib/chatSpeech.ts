@@ -4,6 +4,7 @@ import {
   syncSessionMessages,
 } from "./chatStorage";
 import { authFetch } from "../api";
+import { humanizeGatewayError } from "./gatewayErrors";
 import {
   SPEECH_MESSAGE_PREFIX,
   SPEECH_PENDING_MARKER,
@@ -174,7 +175,7 @@ function parseApiError(raw: string, status: number): string {
     const j = JSON.parse(raw);
     return j.detail || j.message || raw;
   } catch {
-    return raw || `Request failed (${status})`;
+    return humanizeGatewayError(raw, status);
   }
 }
 

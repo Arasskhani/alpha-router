@@ -15,7 +15,7 @@ from app.branding import CHAT_CLIENT_APP
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.services.budget_reservation_service import (
-    estimate_metered_service_hold,
+    reservation_hold_usd,
     reservation_key,
     reserve,
 )
@@ -136,7 +136,16 @@ async def transcribe_audio_bytes(
             db,
             user_id=user_id,
             alpha_router_api_key_id=None,
-            amount_usd=estimate_metered_service_hold("audio"),
+            amount_usd=await reservation_hold_usd(
+                db,
+                service_type="audio",
+                ai_model=ai_model,
+                provider_type=provider_type,
+                model_id=model,
+                connection_id=connection_id,
+                quantity=1.0,
+                unit="request",
+            ),
             operation="transcription",
             model_id=model,
             idempotency_key=reservation_key(

@@ -167,7 +167,18 @@ export default function StorageManagement() {
     setError("");
     setFlash("");
     try {
-      await api("/api/admin/storage/settings", {
+      const result = await api<{
+        ok?: boolean;
+        settings?: StorageSettings;
+        edge_sync?: {
+          attempted?: boolean;
+          queued?: boolean;
+          applied?: boolean;
+          body_mb?: number;
+          reason?: string;
+          error?: string;
+        };
+      }>("/api/admin/storage/settings", {
         method: "PATCH",
         body: JSON.stringify({
           max_upload_file_mb: nextUpload,
@@ -178,10 +189,22 @@ export default function StorageManagement() {
           max_code_interpreter_workspace_total_mb: nextWorkspaceTotal,
         }),
       });
+      const edge = result?.edge_sync;
+      let edgeNote = "";
+      if (edge?.queued) {
+        edgeNote = ` HTTPS edge body limit queued at ${edge.body_mb ?? "?"} MB.`;
+      } else if (edge?.reason === "unchanged" || edge?.applied) {
+        edgeNote = ` HTTPS edge body limit is ${edge.body_mb ?? "?"} MB.`;
+      } else if (edge?.reason === "https_disabled") {
+        edgeNote = " HTTPS edge is off (app limits still apply).";
+      } else if (edge?.attempted && edge?.reason && edge.reason !== "unchanged") {
+        edgeNote = ` Edge sync warning: ${edge.reason}${edge.error ? ` (${edge.error})` : ""}.`;
+      }
       setFlash(
         `Transfer limits updated for all users: upload ${nextUpload} MB, chat total ${nextChat} MB, ` +
           `max ${nextCount} files per upload, workspace ${nextWorkspaceFiles} files / ${nextWorkspaceTotal} MB, ` +
-          `ZIP download ${nextZip} MB.`,
+          `ZIP download ${nextZip} MB.` +
+          edgeNote,
       );
       await load();
     } catch (e) {

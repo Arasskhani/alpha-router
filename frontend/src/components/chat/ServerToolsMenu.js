@@ -1,7 +1,7 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { useEffect, useLayoutEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { DEFAULT_CHAT_TOOLS } from "../../lib/chatTools";
+import { DEFAULT_CHAT_TOOLS, videoDurationChoices } from "../../lib/chatTools";
 import { DEFAULT_CUSTOM_ASPECT_RATIO, IMAGE_ASPECT_PRESETS, normalizeCustomAspectRatio, normalizeImageAspectPreset, SUPPORTED_ASPECT_RATIOS, } from "../../lib/imageSize";
 function Toggle({ on, onToggle, label, disabled = false, disabledTitle, }) {
     return (_jsx("button", { type: "button", className: `alpha-router-toggle${on ? " on" : ""}`, disabled: disabled, title: disabled ? disabledTitle : undefined, onClick: (e) => {
@@ -105,9 +105,7 @@ export default function ServerToolsMenu({ open, anchorRef, tools, privateMode, o
                     videoGeneration: !tools.videoGeneration,
                     imageGeneration: !tools.videoGeneration ? false : tools.imageGeneration,
                     speechGeneration: !tools.videoGeneration ? false : tools.speechGeneration,
-                }) }), tools.videoGeneration ? (_jsxs("div", { className: "alpha-router-image-aspect-picker", onMouseDown: (e) => e.stopPropagation(), children: [_jsx("span", { className: "alpha-router-image-aspect-picker__label", children: "Duration / resolution" }), _jsx("div", { className: "alpha-router-image-aspect-picker__options", role: "group", "aria-label": "Video duration", children: (videoCapabilities?.supported_durations?.length
-                            ? videoCapabilities.supported_durations
-                            : [4, 5, 6, 8]).map((sec) => {
+                }) }), tools.videoGeneration ? (_jsxs("div", { className: "alpha-router-image-aspect-picker", onMouseDown: (e) => e.stopPropagation(), children: [_jsx("span", { className: "alpha-router-image-aspect-picker__label", children: "Duration / resolution" }), _jsx("div", { className: "alpha-router-image-aspect-picker__options", role: "group", "aria-label": "Video duration", children: videoDurationChoices(videoCapabilities?.supported_durations).map((sec) => {
                             const active = tools.videoDuration === sec;
                             return (_jsxs("button", { type: "button", className: `alpha-router-image-aspect-picker__chip${active ? " active" : ""}`, "aria-pressed": active, onClick: () => patch({ videoDuration: sec }), children: [sec, "s"] }, sec));
                         }) }), _jsx("div", { className: "alpha-router-image-aspect-picker__options", role: "group", "aria-label": "Video resolution", children: (videoCapabilities?.supported_resolutions?.length

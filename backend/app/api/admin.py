@@ -1266,6 +1266,7 @@ async def _list_admin_user_dicts(
             "reporting_to": u.reporting_to,
             "monthly_budget_usd": budgets.get(u.id, 0.0),
             "budget_used_usd": u.budget_used_usd,
+            "budget_reserved_usd": u.budget_reserved_usd,
             "totp_enabled": bool(u.totp_enabled) and (u.auth_provider or "local") == "local",
             **{
                 **plan_state.get(
@@ -1887,6 +1888,7 @@ def _user_admin_dict(user: User, roles: list[str], monthly_budget_usd: float | N
         "reporting_to": user.reporting_to,
         "monthly_budget_usd": monthly_budget_usd if monthly_budget_usd is not None else user.monthly_budget_usd,
         "budget_used_usd": user.budget_used_usd,
+        "budget_reserved_usd": user.budget_reserved_usd,
         "totp_enabled": bool(user.totp_enabled) and (user.auth_provider or "local") == "local",
     }
 
@@ -3321,8 +3323,26 @@ async def patch_storage_settings(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         settings = {**settings, **transfer_limits_public_view(transfer)}
     await db.commit()
+    edge_sync = None
+    if transfer_fields:
+        from app.services.tls_edge_service import sync_edge_body_limit
+
+        # Fire-and-queue only: never await edge nginx apply (avoids admin Save timeouts).
+        try:
+            edge_sync = await sync_edge_body_limit(db)
+        except Exception as exc:
+            edge_sync = {
+                "attempted": True,
+                "queued": False,
+                "applied": False,
+                "reason": "sync_failed",
+                "error": str(exc),
+            }
     await refresh_storage_cleanup_schedule()
-    return {"ok": True, "settings": settings}
+    payload: dict = {"ok": True, "settings": settings}
+    if edge_sync is not None:
+        payload["edge_sync"] = edge_sync
+    return payload
 
 
 @router.patch("/storage/chat-settings")

@@ -12,6 +12,7 @@ import ThemePicker from "./ThemePicker";
 type UserBudget = {
   monthly_budget_usd: number;
   used_usd: number;
+  reserved_usd?: number;
   remaining_usd: number | null;
 };
 
@@ -20,13 +21,24 @@ function formatBudgetUsd(value: number): string {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
 }
 
+/** Budget line showing the figure the server actually enforces on.
+ *
+ * The backend blocks a request on ``used + reserved``, so showing ``used`` alone
+ * made a blocked account look like it had budget left: $10.29 of $15.00 on
+ * screen while $5.05 sat in the reserved counter. Lead with the committed total
+ * and break out the held part, so "why am I blocked?" is answerable at a glance.
+ */
 function formatBudgetLine(budget: UserBudget | null, loading: boolean): string {
   if (loading) return "…";
   if (!budget) return "—";
   if ((budget.monthly_budget_usd ?? 0) <= 0) return "No Plan";
-  const used = formatBudgetUsd(budget.used_usd ?? 0);
   const total = formatBudgetUsd(budget.monthly_budget_usd ?? 0);
-  return `${used}/${total} $`;
+  const reserved = budget.reserved_usd ?? 0;
+  const committed = (budget.used_usd ?? 0) + reserved;
+  if (reserved > 0) {
+    return `${formatBudgetUsd(committed)}/${total} $ · ${formatBudgetUsd(reserved)} held`;
+  }
+  return `${formatBudgetUsd(committed)}/${total} $`;
 }
 
 type Props = {

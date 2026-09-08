@@ -29,7 +29,7 @@ import { formatLocalDateTimeFromMs } from "../lib/dateTime";
 import { BROWSER_EVENT_NAMES, PRODUCT_NAME, STORAGE_KEYS } from "../lib/brand";
 import { notifyReplyReady, REPLY_READY_FOCUS_EVENT, } from "../lib/replyReadyNotify";
 import { getSessionUser, isSessionActive, logout } from "../lib/session";
-import { copyFreshChatTools, anyChatToolEnabled, toolsToApiPayload } from "../lib/chatTools";
+import { copyFreshChatTools, anyChatToolEnabled, isAllowedVideoDuration, toolsToApiPayload } from "../lib/chatTools";
 import MediaViewerModal from "./MediaViewerModal";
 import ChatAttachmentMessage from "./chat/ChatAttachmentMessage";
 import PromptQueue from "./chat/PromptQueue";
@@ -3493,6 +3493,10 @@ export default function ChatPanel({ projectId, projectReadOnly = false, projectS
         // Video wins over both image and text when its tool is on for this turn.
         if (allowMediaRoute && willRoutePromptToVideoGeneration(turnTools, primaryModel)) {
             const videoModel = resolveVideoGenerationModel(primaryModel);
+            if (!isAllowedVideoDuration(turnTools.videoDuration, videoModel.supported_durations)) {
+                setChatError("Choose a duration supported by this video model.");
+                return;
+            }
             const titleModelId = resolveSessionTitleModelId(videoModel.id);
             const videoAssistantId = newClientMessageId();
             const pendingMsgs = [
@@ -5258,12 +5262,6 @@ export default function ChatPanel({ projectId, projectReadOnly = false, projectS
         const payload = readQueuedProjectMediaAttach();
         if (!payload || payload.projectId !== projectId)
             return;
-        const mime = (payload.mimeType || "").toLowerCase();
-        if (payload.kind === "video" || mime.startsWith("video/")) {
-            clearQueuedProjectMediaAttach();
-            setChatError("Video files cannot be attached to chat. Use an image or a document.");
-            return;
-        }
         if (!payload.mediaId) {
             clearQueuedProjectMediaAttach();
             setChatError("Could not attach that file.");

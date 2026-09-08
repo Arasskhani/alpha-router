@@ -112,6 +112,17 @@ def _modalities(arch: dict[str, Any]) -> tuple[list[str], list[str]]:
     return _list("input_modalities"), _list("output_modalities")
 
 
+def catalog_output_modalities(pricing_raw: str | None) -> list[str]:
+    """Output modalities the provider catalog advertises (empty when unknown).
+
+    For OpenRouter image models `model_sync` stores the dedicated image
+    catalog's `architecture` block, so this is the authoritative answer to
+    "can this model emit text as well as an image?".
+    """
+    _inputs, outputs = _modalities(_architecture_from_raw(pricing_raw))
+    return outputs
+
+
 def _image_id_heuristic(external_id: str, is_image_model: bool = False) -> bool:
     ext = (external_id or "").lower()
     return bool(

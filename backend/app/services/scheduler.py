@@ -46,11 +46,22 @@ async def job_reset_budgets():
 
 
 async def job_expire_budget_reservations():
-    from app.services.budget_reservation_service import expire_stale_reservations
+    from app.services.budget_reservation_service import (
+        expire_stale_reservations,
+        reconcile_drifted_reserved_counters,
+    )
 
     async with AsyncSessionLocal() as db:
         await expire_stale_reservations(db)
+        # Expiry only closes rows. A reserved counter that drifted above the rows
+        # behind it has nothing to expire, so repair those too — otherwise the
+        # gap keeps consuming budget until period rollover.
+        repaired = await reconcile_drifted_reserved_counters(db)
         await db.commit()
+    if repaired:
+        logger.warning(
+            "Repaired drifted reserved budget counters for %s subject(s)", repaired
+        )
 
 
 async def job_reconcile_provider_costs():

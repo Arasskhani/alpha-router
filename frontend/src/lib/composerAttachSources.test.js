@@ -26,9 +26,17 @@ describe("composerAttachEligibility", () => {
             processedKind: "document",
         });
     });
-    it("blocks video by kind or mime", () => {
-        expect(composerAttachEligibility(candidate({ kind: "video", fileName: "clip.mp4", mimeType: "video/mp4" }), { privateMode: false }).attachable).toBe(false);
-        expect(composerAttachEligibility(candidate({ kind: "other", fileName: "clip.bin", mimeType: "video/webm" }), { privateMode: false }).reason).toMatch(/Video/);
+    it("allows video and audio by filename", () => {
+        expect(composerAttachEligibility(candidate({ kind: "video", fileName: "clip.mp4", mimeType: "video/mp4" }), { privateMode: false })).toEqual({
+            attachable: true,
+            reason: null,
+            processedKind: "video",
+        });
+        expect(composerAttachEligibility(candidate({ kind: "audio", fileName: "song.mp3", mimeType: "audio/mpeg" }), { privateMode: false })).toEqual({
+            attachable: true,
+            reason: null,
+            processedKind: "audio",
+        });
     });
     it("blocks SVG and other disallowed types", () => {
         expect(composerAttachEligibility(candidate({ kind: "image", fileName: "icon.svg", mimeType: "image/svg+xml" }), { privateMode: false }).attachable).toBe(false);

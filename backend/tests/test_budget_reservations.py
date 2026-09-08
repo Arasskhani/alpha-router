@@ -112,6 +112,8 @@ def test_user_reserve_settle_and_limit_enforcement() -> None:
             hold = await _reserve_user(db, user_id, 0.6, "first")
             await db.commit()
         async with factory() as db:
+            # $1.00 limit with $0.60 held: the whole $0.50 estimate does not fit,
+            # so the request is refused rather than admitted on a smaller hold.
             with pytest.raises(HTTPException) as exc:
                 await _reserve_user(db, user_id, 0.5, "second")
             assert exc.value.status_code == 402
@@ -173,6 +175,8 @@ def test_alpha_router_key_reservation_and_log_settlement_are_atomic() -> None:
             )
             await db.commit()
         async with factory() as db:
+            # $1.00 credit with $0.70 held: the $0.40 estimate does not fit, so
+            # admission is refused (see _hold_fits_balance).
             with pytest.raises(HTTPException) as exc:
                 await reservations.reserve(
                     db,

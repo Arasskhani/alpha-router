@@ -97,8 +97,8 @@ def test_request_middleware_caps_chunked_body_without_content_length() -> None:
     }
     middleware = RequestBodyLimitMiddleware(drain)
     with patch(
-        "app.config.get_settings",
-        return_value=SimpleNamespace(max_request_body_bytes=1024 * 1024),
+        "app.services.request_body_limit_service.effective_request_body_limit_bytes",
+        return_value=1024 * 1024,
     ):
         asyncio.run(middleware(scope, receive, send))
     assert any(message.get("status") == 413 for message in sent)

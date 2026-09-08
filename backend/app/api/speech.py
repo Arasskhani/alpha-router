@@ -20,7 +20,7 @@ from app.models.model_catalog import AIModel
 from app.models.user import User
 from app.services.model_access_service import resolve_access_subject, user_can_access_model
 from app.services.budget_reservation_service import (
-    estimate_speech_hold,
+    reservation_hold_usd,
     reservation_key,
     reserve,
 )
@@ -279,20 +279,19 @@ async def generate_speech(
         hold_body = body.model_dump()
         if request.headers.get("Idempotency-Key"):
             hold_body["_idempotency_key"] = request.headers["Idempotency-Key"]
-        configured_hold = await _configured_speech_cost(
-            db,
-            provider_type=provider_type or "unknown",
-            model_id=model_id,
-            connection_id=billing.connection_id,
-            characters=len(text),
-        )
         hold = await reserve(
             db,
             user_id=user.id,
             alpha_router_api_key_id=None,
-            amount_usd=max(
-                estimate_speech_hold(ai_model, characters=len(text)),
-                float(configured_hold or 0) * 1.1,
+            amount_usd=await reservation_hold_usd(
+                db,
+                service_type="speech",
+                ai_model=ai_model,
+                provider_type=provider_type or "unknown",
+                model_id=model_id,
+                connection_id=billing.connection_id,
+                quantity=float(len(text)),
+                unit="character",
             ),
             operation="speech",
             model_id=model_id,
@@ -477,23 +476,3 @@ async def generate_speech(
                 detail="Speech persistence failed due to an internal error",
             ) from commit_error
 
-
-async def _configured_speech_cost(
-    db: AsyncSession,
-    *,
-    provider_type: str,
-    model_id: str,
-    connection_id: int | None,
-    characters: int,
-) -> float | None:
-    from app.services.usage_accounting_service import configured_metered_cost
-
-    return await configured_metered_cost(
-        db,
-        provider_type=provider_type,
-        service_type="speech",
-        model_id=model_id,
-        connection_id=connection_id,
-        quantity=float(max(1, characters)),
-        unit="character",
-    )

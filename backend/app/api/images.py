@@ -31,7 +31,7 @@ from app.services.image_model_resolver import (
 )
 from app.services.model_access_service import resolve_access_subject, user_can_access_model
 from app.services.budget_reservation_service import (
-    estimate_image_hold,
+    reservation_hold_usd,
     reservation_key,
     reserve,
 )
@@ -40,15 +40,18 @@ from app.services.media_authorization_service import MediaAccessAction, load_aut
 from app.services.openrouter_image_service import (
     OPENROUTER_EMPTY_IMAGE_RETRY_DELAYS_SEC,
     OPENROUTER_FALLBACK_TIMEOUT,
+    OPENROUTER_IMAGE_ENDPOINT_PATHS,
     OPENROUTER_IMAGE_MAX_ATTEMPTS,
     build_fast_openrouter_payload,
     build_openrouter_headers,
+    build_openrouter_image_endpoint_payload,
     gemini_image_size_for_model,
     is_openai_gpt_image_model,
     is_openrouter_auto_model,
     is_retryable_openrouter_transport_error,
     is_transient_empty_openrouter_image_response,
     openrouter_image_modalities,
+    openrouter_input_references,
     openrouter_message_is_text_only,
     optimize_openrouter_image_model,
     post_openrouter_json,
@@ -73,7 +76,6 @@ from app.services.llm_providers import (
     resolve_litellm_provider,
 )
 from app.services.openrouter_image_service import prepare_image_generation_prompt
-from app.services.usage_accounting_service import configured_metered_cost
 
 router = APIRouter(prefix="/api/images", tags=["images"])
 _ALPHA_ROUTER_MEDIA_PATH = re.compile(r"/api/chat/media/(\d+)/file/?(?:\?.*)?$")
@@ -282,12 +284,31 @@ def _is_openrouter_chat_image_model(model_id: str) -> bool:
     )
 
 
-def _openrouter_modalities(model_id: str) -> list[str]:
-    return openrouter_image_modalities(model_id)
+def _openrouter_modalities(model_id: str, ai_model: AIModel | None = None) -> list[str]:
+    return openrouter_image_modalities(
+        model_id,
+        pricing_raw=getattr(ai_model, "pricing_raw", None),
+    )
 
 
-def _prefer_openrouter_images_generations(model_id: str) -> bool:
-    return prefer_openrouter_images_generations(model_id)
+def _is_output_modality_404(resp: httpx.Response | None) -> bool:
+    """True for OpenRouter's "no endpoints ... requested output modalities" 404."""
+    if resp is None or resp.status_code != 404:
+        return False
+    try:
+        body = (resp.text or "").lower()
+    except Exception:
+        return False
+    return "output modalit" in body and "no endpoint" in body
+
+
+def _prefer_openrouter_images_generations(
+    model_id: str, ai_model: AIModel | None = None
+) -> bool:
+    return prefer_openrouter_images_generations(
+        model_id,
+        pricing_raw=getattr(ai_model, "pricing_raw", None),
+    )
 
 
 def _normalize_image_size(size: str) -> str:
@@ -927,22 +948,18 @@ async def generate_image(
         if request.headers.get("Idempotency-Key"):
             hold_body["_idempotency_key"] = request.headers["Idempotency-Key"]
         requested_quantity = max(1, min(4, int(body.n or 1)))
-        configured_hold = await configured_metered_cost(
-            db,
-            provider_type=provider_type or "unknown",
-            service_type="image",
-            model_id=model_id,
-            connection_id=getattr(ai_model, "connection_id", None),
-            quantity=requested_quantity,
-            unit="image",
-        )
         hold = await reserve(
             db,
             user_id=user.id,
             alpha_router_api_key_id=None,
-            amount_usd=max(
-                estimate_image_hold(ai_model, quantity=requested_quantity),
-                float(configured_hold or 0) * 1.1,
+            amount_usd=await reservation_hold_usd(
+                db,
+                service_type="image",
+                ai_model=ai_model,
+                provider_type=provider_type or "unknown",
+                model_id=model_id,
+                quantity=float(requested_quantity),
+                unit="image",
             ),
             operation="image",
             model_id=model_id,
@@ -1010,28 +1027,42 @@ async def generate_image(
                     body.operation = "img2img"
 
                 async def _try_openrouter_images_generations() -> tuple[list[dict] | None, dict | None]:
-                    img_payload = {
-                        "model": optimize_openrouter_image_model(model_id),
-                        "prompt": upstream_prompt,
-                        "n": max(1, min(4, int(body.n or 1))),
-                        "size": body.size,
-                        "response_format": "b64_json",
-                    }
-                    img_resp = await post_openrouter_json(
-                        f"{openrouter_base}/images/generations",
-                        headers=headers,
-                        json_payload=img_payload,
-                        read_timeout=OPENROUTER_FALLBACK_TIMEOUT,
-                        max_attempts=(
-                            1 if using_auto_router else OPENROUTER_IMAGE_MAX_ATTEMPTS
-                        ),
-                        on_attempt_error=lambda _attempt, started_at, exc: billing.add_usage(
-                            None,
-                            started_at=started_at,
-                            success=False,
-                            error_message=str(exc),
-                        ),
-                    )
+                    input_refs = openrouter_input_references(reference_image)
+                    img_resp: httpx.Response | None = None
+                    for index, path in enumerate(OPENROUTER_IMAGE_ENDPOINT_PATHS):
+                        is_last = index == len(OPENROUTER_IMAGE_ENDPOINT_PATHS) - 1
+                        img_payload = build_openrouter_image_endpoint_payload(
+                            path=path,
+                            model=optimize_openrouter_image_model(model_id),
+                            prompt=upstream_prompt,
+                            n=max(1, min(4, int(body.n or 1))),
+                            size=body.size,
+                            input_references=input_refs,
+                        )
+                        if img_payload is None:
+                            continue
+                        img_resp = await post_openrouter_json(
+                            f"{openrouter_base}{path}",
+                            headers=headers,
+                            json_payload=img_payload,
+                            read_timeout=OPENROUTER_FALLBACK_TIMEOUT,
+                            max_attempts=(
+                                1 if using_auto_router else OPENROUTER_IMAGE_MAX_ATTEMPTS
+                            ),
+                            on_attempt_error=lambda _attempt, started_at, exc: billing.add_usage(
+                                None,
+                                started_at=started_at,
+                                success=False,
+                                error_message=str(exc),
+                            ),
+                        )
+                        if img_resp.status_code in {404, 405} and not is_last:
+                            # This deployment does not expose this path; try the
+                            # next one before recording a failed attempt.
+                            continue
+                        break
+                    if img_resp is None:
+                        return None, None
                     if img_resp.status_code >= 400:
                         try:
                             error_payload = img_resp.json()
@@ -1061,7 +1092,9 @@ async def generate_image(
                     )
                     return items, img_data if isinstance(img_data, dict) else None
 
-                if _prefer_openrouter_images_generations(model_id) and not reference_image:
+                if _prefer_openrouter_images_generations(model_id, ai_model):
+                    # Image-only models reject chat/completions outright, and the
+                    # Image API takes a reference image via input_references.
                     out_gen, usage_data = await _try_openrouter_images_generations()
                     if out_gen:
                         return await _ok_response(
@@ -1070,7 +1103,7 @@ async def generate_image(
                             routing=routing_reason,
                         )
 
-                modalities = _openrouter_modalities(model_id)
+                modalities = _openrouter_modalities(model_id, ai_model)
                 allow_fallbacks = not is_openai_gpt_image_model(model_id)
                 safe_1k_size = _aspect_ratio_to_default_size(resolved_aspect)
 
@@ -1273,6 +1306,26 @@ async def generate_image(
                     return last_out, last_data, last_resp
 
                 out, data, resp = await _openrouter_chat_image_with_retries()
+                if modalities != ["image"] and _is_output_modality_404(resp):
+                    # Safety net for a stale or missing catalog snapshot: the model
+                    # cannot emit text at all, so ask for image output only.
+                    modalities = ["image"]
+                    retry_out, retry_data, retry_resp = await _try_openrouter_chat_completion(
+                        pixel_size=safe_1k_size,
+                        mods=modalities,
+                        fallbacks=allow_fallbacks,
+                        tier="1K",
+                    )
+                    if retry_out:
+                        return await _ok_response(
+                            retry_out,
+                            aspect_ratio=resolved_aspect,
+                            routing=routing_reason,
+                        )
+                    if retry_resp is not None and retry_resp.status_code < 400:
+                        # Reached the model this time; keep its payload for the
+                        # text-only / empty-response handling below.
+                        out, data, resp = retry_out, retry_data, retry_resp
                 if resp is not None and resp.status_code >= 400:
                     body_preview = (resp.text or "").strip()
                     detail_msg = body_preview

@@ -46,19 +46,27 @@ describe("composerAttachEligibility", () => {
     });
   });
 
-  it("blocks video by kind or mime", () => {
+  it("allows video and audio by filename", () => {
     expect(
       composerAttachEligibility(
         candidate({ kind: "video", fileName: "clip.mp4", mimeType: "video/mp4" }),
         { privateMode: false },
-      ).attachable,
-    ).toBe(false);
+      ),
+    ).toEqual({
+      attachable: true,
+      reason: null,
+      processedKind: "video",
+    });
     expect(
       composerAttachEligibility(
-        candidate({ kind: "other", fileName: "clip.bin", mimeType: "video/webm" }),
+        candidate({ kind: "audio", fileName: "song.mp3", mimeType: "audio/mpeg" }),
         { privateMode: false },
-      ).reason,
-    ).toMatch(/Video/);
+      ),
+    ).toEqual({
+      attachable: true,
+      reason: null,
+      processedKind: "audio",
+    });
   });
 
   it("blocks SVG and other disallowed types", () => {

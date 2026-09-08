@@ -37,6 +37,7 @@ COST_SOURCE_CONFIGURED = "configured_rate"
 COST_SOURCE_LITELLM = "litellm"
 COST_SOURCE_LEGACY = "legacy"
 COST_SOURCE_UNKNOWN = "unknown"
+COST_SOURCE_UNPRICED = "unpriced"
 
 CONFIDENCE_EXACT = "exact"
 CONFIDENCE_RECONCILED = "reconciled"
@@ -121,6 +122,16 @@ class PendingUsageEvent:
     unit: str | None = None
     error_message: str | None = None
     pricing_snapshot_id: int | None = None
+
+
+@dataclass(slots=True)
+class HoldQuote:
+    """Pre-flight reservation amount derived from the same quote path as settlement."""
+
+    hold_usd: float
+    quoted_usd: float | None
+    cost_source: str
+    priced: bool
 
 
 @dataclass(slots=True)
@@ -1406,6 +1417,132 @@ async def configured_metered_cost(
     if event.quote.cost_source != COST_SOURCE_CONFIGURED:
         return None
     return event.quote.final_cost_usd
+
+
+def _hold_buffer() -> float:
+    from app.config import get_settings
+
+    return max(1.0, min(2.0, float(get_settings().budget_hold_buffer or 1.10)))
+
+
+def _unpriced_hold_usd() -> float:
+    from app.config import get_settings
+
+    settings = get_settings()
+    maximum = max(0.01, min(100.0, float(settings.budget_max_hold_usd or 5.0)))
+    fallback = max(0.0001, float(settings.budget_unpriced_hold_usd or 0.05))
+    return round(min(maximum, fallback), 8)
+
+
+def _priced_hold_usd(quoted_usd: float) -> float:
+    return round(max(0.0001, float(quoted_usd) * _hold_buffer()), 8)
+
+
+def catalog_hold_quote(
+    *,
+    ai_model: AIModel | None,
+    provider_type: str | None,
+    service_type: str,
+    quantity: float | None = None,
+    unit: str | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
+) -> float | None:
+    """Catalog/normalized rate quote for a prospective hold. Does not call LiteLLM."""
+
+    usage = NormalizedUsage(
+        prompt_tokens=max(0, int(prompt_tokens or 0)),
+        completion_tokens=max(0, int(completion_tokens or 0)),
+        metered_quantity=quantity,
+        metered_unit=unit,
+    )
+    calculated, items, _payload = _catalog_quote(
+        ai_model,
+        usage,
+        provider_type=(provider_type or "unknown").strip().lower() or "unknown",
+        service_type=(service_type or "unknown").strip().lower() or "unknown",
+        quantity=quantity,
+        unit=unit,
+    )
+    if calculated is not None:
+        return max(0.0, float(calculated))
+    if items:
+        return max(0.0, sum(float(item.cost_usd or 0) for item in items))
+    return None
+
+
+async def quote_hold(
+    db: AsyncSession,
+    *,
+    service_type: str,
+    ai_model: AIModel | None = None,
+    provider_type: str | None = None,
+    model_id: str | None = None,
+    connection_id: int | None = None,
+    quantity: float | None = None,
+    unit: str | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
+) -> HoldQuote:
+    """Quote a reservation using configured rates, then catalog; else unpriced fallback.
+
+    Priced holds are ``quote * budget_hold_buffer`` and are not clamped to the
+    unpriced maximum. Unpriced operations share one small global fallback.
+    """
+
+    service = (service_type or "unknown").strip().lower() or "unknown"
+    if service in {"chat", "completion"}:
+        service = "llm"
+    provider = (provider_type or getattr(ai_model, "provider_type", None) or "unknown")
+    provider = str(provider).strip().lower() or "unknown"
+    resolved_model = (model_id or getattr(ai_model, "external_id", None) or None)
+    resolved_model = str(resolved_model).strip() if resolved_model else None
+    configured: float | None = None
+    lookup_quantity = quantity
+    lookup_unit = (unit or "").strip().lower() or None
+    if lookup_quantity is None and (prompt_tokens or completion_tokens) and lookup_unit in {None, "token"}:
+        lookup_quantity = float(max(0, int(prompt_tokens or 0)) + max(0, int(completion_tokens or 0)))
+        lookup_unit = "token"
+    if lookup_quantity is not None and lookup_unit:
+        configured = await configured_metered_cost(
+            db,
+            provider_type=provider,
+            service_type=service,
+            model_id=resolved_model,
+            connection_id=connection_id,
+            quantity=float(lookup_quantity),
+            unit=lookup_unit,
+        )
+    if configured is not None:
+        return HoldQuote(
+            hold_usd=_priced_hold_usd(float(configured)),
+            quoted_usd=float(configured),
+            cost_source=COST_SOURCE_CONFIGURED,
+            priced=True,
+        )
+    catalog = catalog_hold_quote(
+        ai_model=ai_model,
+        provider_type=provider,
+        service_type=service,
+        quantity=quantity,
+        unit=unit,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+    )
+    if catalog is not None:
+        return HoldQuote(
+            hold_usd=_priced_hold_usd(catalog),
+            quoted_usd=catalog,
+            cost_source=COST_SOURCE_CATALOG,
+            priced=True,
+        )
+    unpriced = _unpriced_hold_usd()
+    return HoldQuote(
+        hold_usd=unpriced,
+        quoted_usd=None,
+        cost_source=COST_SOURCE_UNPRICED,
+        priced=False,
+    )
 
 
 async def _pricing_snapshot(

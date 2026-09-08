@@ -56,11 +56,12 @@ describe("chatVideo routing", () => {
       chatSessionId: "s1",
       persist: true,
       referenceImage: "data:image/png;base64,aaa",
-      duration: 4,
+      duration: 30,
       resolution: "720p",
       aspectRatio: "16:9",
     });
     expect(body.operation).toBe("img2vid");
+    expect(body.duration).toBe(30);
     expect(body.reference_image).toContain("data:image");
   });
 });

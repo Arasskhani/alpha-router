@@ -47,14 +47,31 @@ def normalize_video_aspect_ratio(value: str | None) -> str | None:
     return None
 
 
-def clamp_video_duration(seconds: int | None) -> int:
-    settings = get_settings()
-    max_dur = max(1, int(settings.video_max_duration_seconds or 8))
+def parse_video_duration(seconds: object | None) -> int | None:
+    """Parse a requested clip length. Never clamps to a platform default."""
+    if seconds is None or isinstance(seconds, bool):
+        return None
     try:
-        value = int(seconds if seconds is not None else 4)
+        value = int(seconds)
     except (TypeError, ValueError):
-        value = 4
-    return max(1, min(value, max_dur))
+        return None
+    if value < 1:
+        return None
+    return value
+
+
+def catalog_video_durations(raw: object | None) -> list[int]:
+    if not isinstance(raw, list):
+        return []
+    out: list[int] = []
+    seen: set[int] = set()
+    for item in raw:
+        parsed = parse_video_duration(item)
+        if parsed is None or parsed in seen:
+            continue
+        seen.add(parsed)
+        out.append(parsed)
+    return out
 
 
 def openrouter_videos_base(base_url: str | None) -> str:
@@ -66,7 +83,7 @@ def build_video_generation_payload(
     *,
     model_id: str,
     prompt: str,
-    duration: int | None = 4,
+    duration: int | None = None,
     resolution: str | None = "720p",
     aspect_ratio: str | None = "16:9",
     generate_audio: bool = False,
@@ -74,10 +91,13 @@ def build_video_generation_payload(
     seed: int | None = None,
 ) -> dict[str, Any]:
     """Build OpenRouter POST /videos body. Never includes callback_url (no inbound webhook)."""
+    parsed_duration = parse_video_duration(duration)
+    if parsed_duration is None:
+        raise ValueError("duration is required")
     payload: dict[str, Any] = {
         "model": (model_id or "").strip(),
         "prompt": (prompt or "").strip(),
-        "duration": clamp_video_duration(duration),
+        "duration": parsed_duration,
         "resolution": normalize_video_resolution(resolution),
         "generate_audio": bool(generate_audio),
     }

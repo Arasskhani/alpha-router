@@ -22,7 +22,7 @@ from app.models.model_catalog import AIModel
 from app.models.user import User
 from app.models.video import VideoGenerationJob
 from app.services.openrouter_video_service import (
-    clamp_video_duration,
+    parse_video_duration,
     normalize_video_aspect_ratio,
     normalize_video_resolution,
 )
@@ -140,7 +140,9 @@ async def create_video_job(
             f"Video generation concurrency limit reached ({max_concurrent} active job(s))"
         )
 
-    duration = clamp_video_duration(params.get("duration"))
+    duration = parse_video_duration(params.get("duration"))
+    if duration is None:
+        raise ValueError("duration is required")
     resolution = normalize_video_resolution(params.get("resolution"))
     aspect = normalize_video_aspect_ratio(params.get("aspect_ratio"))
     clean_params = {
@@ -300,6 +302,10 @@ async def cancel_video_job(db: AsyncSession, job: VideoGenerationJob) -> VideoGe
     job.error_message = "Cancelled by user"
     job.completed_at = _now()
     job.updated_at = _now()
+    if job.budget_reservation_id:
+        from app.services.budget_reservation_service import release
+
+        await release(db, job.budget_reservation_id)
     await db.flush()
     task = _ACTIVE_TASKS.get(job.id)
     if task and not task.done():
@@ -407,7 +413,7 @@ async def _run_video_job(job_id: str) -> None:
             except json.JSONDecodeError:
                 params = {}
 
-        duration = clamp_video_duration(params.get("duration"))
+        duration = parse_video_duration(params.get("duration"))
         success = False
         error_message: str | None = None
         settings = get_settings()
@@ -415,6 +421,8 @@ async def _run_video_job(job_id: str) -> None:
         poll_interval = max(0.5, float(settings.video_job_poll_interval_ms or 2500) / 1000.0)
 
         try:
+            if duration is None:
+                raise RuntimeError("Video job is missing a duration")
             if not api_key:
                 raise RuntimeError(f"No active {provider_type} connection for video model")
             adapter = get_video_adapter(provider_type, adapter_key=job.adapter_key)

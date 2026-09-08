@@ -12,12 +12,11 @@ from typing import Any
 from app.database import AsyncSessionLocal
 from app.models.user import User
 from app.services.budget_reservation_service import (
-    estimate_metered_service_hold,
+    reservation_hold_usd,
     reserve,
 )
 from app.services.usage_accounting_service import (
     capture_usage_event,
-    configured_metered_cost,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,18 +73,14 @@ async def start_metered_usage(
                 else ""
             )
         if reserve_budget:
-            configured_cost = await configured_metered_cost(
+            hold_amount = await reservation_hold_usd(
                 db,
-                provider_type=provider_type,
                 service_type=service_type,
+                provider_type=provider_type,
                 model_id=model_id,
                 connection_id=connection_id,
                 quantity=max(0.0, float(quantity)),
                 unit=unit,
-            )
-            hold_amount = max(
-                estimate_metered_service_hold(service_type),
-                float(configured_cost or 0) * 1.1,
             )
             hold = await reserve(
                 db,

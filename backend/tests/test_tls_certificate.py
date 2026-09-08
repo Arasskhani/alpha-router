@@ -101,6 +101,7 @@ def test_nginx_config_snapshot():
     assert "Strict-Transport-Security" in config
     assert "ssl_stapling on;" in config
     assert "proxy_pass http://127.0.0.1:8080;" in config
+    assert "client_max_body_size 1024m;" in config
 
 
 def test_parse_rejects_passphrase_for_unencrypted_key():

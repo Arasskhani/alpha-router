@@ -54,15 +54,18 @@ async def list_user_keys(user: User = Depends(get_current_user), db: AsyncSessio
 
 @router.get("/budget")
 async def user_budget(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    from app.services.budget_service import ensure_budget_period, get_month_usage, resolve_monthly_budget
+    from app.services.budget_service import ensure_budget_period, resolve_monthly_budget
 
     await ensure_budget_period(db, user)
     budget = await resolve_monthly_budget(db, user)
-    used = await get_month_usage(db, user.id)
+    used = float(user.budget_used_usd or 0)
+    reserved = float(user.budget_reserved_usd or 0)
+    remaining = max(0.0, budget - used - reserved) if budget > 0 else None
     return {
         "monthly_budget_usd": budget,
         "used_usd": used,
-        "remaining_usd": max(0, budget - used) if budget > 0 else None,
+        "reserved_usd": reserved,
+        "remaining_usd": remaining,
     }
 
 

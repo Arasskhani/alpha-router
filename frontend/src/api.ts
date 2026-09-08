@@ -1,4 +1,5 @@
 import { COOKIE_NAMES, STORAGE_KEYS } from "./lib/brand";
+import { humanizeGatewayError } from "./lib/gatewayErrors";
 
 export type SessionInfo = {
   username: string;
@@ -128,7 +129,7 @@ async function parseError(res: Response): Promise<string> {
     }
     return text || res.statusText;
   } catch {
-    return text || res.statusText;
+    return humanizeGatewayError(text || res.statusText, res.status);
   }
 }
 

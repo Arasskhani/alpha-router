@@ -12,7 +12,7 @@ import time
 import uuid
 from typing import Any
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -41,6 +41,11 @@ _ACTIVE_TASKS: dict[str, asyncio.Task] = {}
 _WORKER_TASK: asyncio.Task | None = None
 _WORKER_STOP = asyncio.Event()
 _TERMINAL = frozenset({"completed", "failed", "cancelled"})
+# How long a claimed job stays leased to one worker, and how often a long
+# phase renews that lease. The heartbeat must stay well under the lease so a
+# single slow beat never lets a second worker claim a job that is running.
+_LEASE_SECONDS = 120
+_LEASE_HEARTBEAT_SECONDS = 30
 
 
 def _now() -> datetime.datetime:
@@ -207,7 +212,7 @@ async def create_video_job(
 async def claim_due_video_jobs(*, limit: int = 4) -> list[str]:
     """Claim due jobs using a short lease so multiple workers cannot duplicate work."""
     now = _now()
-    lease_until = now + datetime.timedelta(seconds=120)
+    lease_until = now + datetime.timedelta(seconds=_LEASE_SECONDS)
     owner = f"video-worker:{uuid.uuid4()}"
     async with AsyncSessionLocal() as db:
         query = (
@@ -326,8 +331,20 @@ async def reclaim_stale_video_jobs() -> int:
         rows = (
             await db.execute(
                 select(VideoGenerationJob).where(
-                    VideoGenerationJob.status.in_(("queued", "running")),
+                    # "submitted" and "ingesting" belong here too: a worker that
+                    # dies mid-submit or mid-ingest used to leave the job stuck
+                    # in those states forever, holding its budget reservation
+                    # and leaving the chat bubble pending with nothing to heal
+                    # it. Safe to sweep now only because a live run heartbeats
+                    # its lease, and the lease guard below skips those.
+                    VideoGenerationJob.status.in_(
+                        ("queued", "submitted", "running", "ingesting")
+                    ),
                     VideoGenerationJob.updated_at < cutoff,
+                    (
+                        VideoGenerationJob.lease_expires_at.is_(None)
+                        | (VideoGenerationJob.lease_expires_at < _now())
+                    ),
                 )
             )
         ).scalars().all()
@@ -369,12 +386,77 @@ async def reclaim_stale_video_jobs() -> int:
     return reclaimed
 
 
+async def _touch_video_job_lease(job_id: str, owner: str | None) -> bool:
+    """Renew one job's lease and updated_at from an independent session.
+
+    Returns False when the row is gone, already terminal, or has been taken
+    over by another worker - the caller must then stop beating.
+    """
+    now = _now()
+    conditions = [
+        VideoGenerationJob.id == job_id,
+        VideoGenerationJob.status.not_in(tuple(_TERMINAL)),
+    ]
+    if owner:
+        conditions.append(VideoGenerationJob.lease_owner == owner)
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            update(VideoGenerationJob)
+            .where(*conditions)
+            .values(
+                lease_expires_at=now + datetime.timedelta(seconds=_LEASE_SECONDS),
+                updated_at=now,
+            )
+        )
+        await db.commit()
+        return bool(result.rowcount)
+
+
+@contextlib.asynccontextmanager
+async def _lease_heartbeat(job_id: str, owner: str | None):
+    """Keep the lease and updated_at fresh across a long, beat-less phase.
+
+    The provider poll loop renews the lease on every iteration; ingest
+    (provider download + object-storage write) is a single long await with no
+    such beat. Left alone, an ingest longer than the lease lets
+    claim_due_video_jobs hand the same "ingesting" job to a second worker -
+    duplicate media and duplicate billing - and an ingest longer than
+    VIDEO_JOB_RECLAIM_AFTER_SECONDS lets reclaim_stale_video_jobs mark a job
+    that is actually succeeding as failed.
+    """
+    stop = asyncio.Event()
+
+    async def beat() -> None:
+        while not stop.is_set():
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(stop.wait(), timeout=_LEASE_HEARTBEAT_SECONDS)
+            if stop.is_set():
+                return
+            try:
+                if not await _touch_video_job_lease(job_id, owner):
+                    return
+            except Exception:
+                _LOG.warning("Lease heartbeat failed for video job %s", job_id, exc_info=True)
+
+    task = asyncio.create_task(beat(), name=f"video-lease-{job_id}")
+    try:
+        yield
+    finally:
+        stop.set()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
 async def _run_video_job(job_id: str) -> None:
     started = time.perf_counter()
     async with AsyncSessionLocal() as db:
         job = await db.get(VideoGenerationJob, job_id)
         if job is None or job.status in _TERMINAL:
             return
+        # Whoever claimed this job owns its lease; the heartbeat renews only
+        # that claim, so a stale runner can never steal it back.
+        lease_owner = job.lease_owner
         user = await db.get(User, job.user_id)
         if user is None:
             job.status = "failed"
@@ -491,7 +573,7 @@ async def _run_video_job(job_id: str) -> None:
                 await db.refresh(job)
                 if job.status == "cancelled":
                     raise asyncio.CancelledError()
-                job.lease_expires_at = _now() + datetime.timedelta(seconds=120)
+                job.lease_expires_at = _now() + datetime.timedelta(seconds=_LEASE_SECONDS)
                 await asyncio.sleep(poll_interval)
                 final_snapshot = await adapter.poll(
                     api_key=api_key,
@@ -517,86 +599,89 @@ async def _run_video_job(job_id: str) -> None:
             if status != "completed" or final_snapshot is None:
                 raise RuntimeError(final_snapshot.error_message if final_snapshot else "Video generation failed")
 
-            asset_ref = await adapter.fetch_result(
-                api_key=api_key,
-                base_url=base_url,
-                snapshot=final_snapshot,
-            )
-
-            from app.services.video_media_ingest_service import fetch_video_asset
-            blob, mime = await fetch_video_asset(
-                url=asset_ref.url,
-                api_key=api_key,
-                requires_auth=asset_ref.requires_auth,
-                allowed_hosts=asset_ref.allowed_hosts,
-            )
-            usage = adapter.normalize_usage(final_snapshot)
-            # Ensure provider cost/duration land under usage.* so
-            # extract_normalized_usage can treat OpenRouter cost as exact.
-            usage_payload: dict = dict(usage.raw) if isinstance(usage.raw, dict) else {}
-            usage_obj = (
-                dict(usage_payload["usage"])
-                if isinstance(usage_payload.get("usage"), dict)
-                else {}
-            )
-            if usage.quantity is not None:
-                usage_obj.setdefault("duration_seconds", usage.quantity)
-            if usage.cost_usd is not None:
-                usage_obj["cost"] = usage.cost_usd
-            if usage_obj:
-                usage_payload["usage"] = usage_obj
-            billing.add_usage(
-                usage_payload or usage.raw,
-                started_at=submit_started,
-                success=True,
-                quantity=usage.quantity or float(duration),
-                unit=usage.unit or "second",
-            )
-
-            media_url: str | None = None
-            if int(job.persist or 0) == 1:
-                storage_blob, storage_mime, _digest = media_content_hash(blob, mime, "video")
-                media_url = await persist_scoped_chat_media(
-                    db,
-                    user=user,
-                    project_id=job.project_id,
-                    kind="video",
-                    blob=storage_blob,
-                    mime=storage_mime,
-                    file_name="generated.mp4",
-                    source_model=job.model_id,
-                    source_prompt=job.prompt,
-                    chat_session_id=job.chat_session_id,
-                    metadata={"operation": job.operation, "duration": duration},
+            # Fetching the asset and writing it to object storage can outlast
+            # the lease; beat while it runs so no second worker claims this job.
+            async with _lease_heartbeat(job_id, lease_owner):
+                asset_ref = await adapter.fetch_result(
+                    api_key=api_key,
+                    base_url=base_url,
+                    snapshot=final_snapshot,
                 )
-                personal_ids = collect_personal_media_ids(media_url)
-                job.media_asset_id = next(iter(personal_ids), None)
-                params["result_media_url"] = media_url
-                job.params_json = json.dumps(params)
-                if job.chat_session_id:
-                    await finalize_chat_session_video(
-                        db,
-                        user.id,
-                        job.chat_session_id,
-                        media_url,
-                        job.prompt,
-                        job.model_id,
-                        params={
-                            "duration": duration,
-                            "resolution": params.get("resolution"),
-                            "aspect_ratio": params.get("aspect_ratio"),
-                            "operation": job.operation,
-                        },
-                    )
-            else:
-                # Private mode uses a short-lived object, never SQL base64.
-                from app.services import object_storage_service as oss
 
-                private_key = f"private/videos/{job.id}.{mime.rsplit('/', 1)[-1]}"
-                await asyncio.to_thread(oss.put_object, private_key, blob, mime)
-                job.ephemeral_storage_path = private_key
-                job.ephemeral_expires_at = _now() + datetime.timedelta(minutes=15)
-                media_url = f"/api/videos/jobs/{job.id}/private-file"
+                from app.services.video_media_ingest_service import fetch_video_asset
+                blob, mime = await fetch_video_asset(
+                    url=asset_ref.url,
+                    api_key=api_key,
+                    requires_auth=asset_ref.requires_auth,
+                    allowed_hosts=asset_ref.allowed_hosts,
+                )
+                usage = adapter.normalize_usage(final_snapshot)
+                # Ensure provider cost/duration land under usage.* so
+                # extract_normalized_usage can treat OpenRouter cost as exact.
+                usage_payload: dict = dict(usage.raw) if isinstance(usage.raw, dict) else {}
+                usage_obj = (
+                    dict(usage_payload["usage"])
+                    if isinstance(usage_payload.get("usage"), dict)
+                    else {}
+                )
+                if usage.quantity is not None:
+                    usage_obj.setdefault("duration_seconds", usage.quantity)
+                if usage.cost_usd is not None:
+                    usage_obj["cost"] = usage.cost_usd
+                if usage_obj:
+                    usage_payload["usage"] = usage_obj
+                billing.add_usage(
+                    usage_payload or usage.raw,
+                    started_at=submit_started,
+                    success=True,
+                    quantity=usage.quantity or float(duration),
+                    unit=usage.unit or "second",
+                )
+
+                media_url: str | None = None
+                if int(job.persist or 0) == 1:
+                    storage_blob, storage_mime, _digest = media_content_hash(blob, mime, "video")
+                    media_url = await persist_scoped_chat_media(
+                        db,
+                        user=user,
+                        project_id=job.project_id,
+                        kind="video",
+                        blob=storage_blob,
+                        mime=storage_mime,
+                        file_name="generated.mp4",
+                        source_model=job.model_id,
+                        source_prompt=job.prompt,
+                        chat_session_id=job.chat_session_id,
+                        metadata={"operation": job.operation, "duration": duration},
+                    )
+                    personal_ids = collect_personal_media_ids(media_url)
+                    job.media_asset_id = next(iter(personal_ids), None)
+                    params["result_media_url"] = media_url
+                    job.params_json = json.dumps(params)
+                    if job.chat_session_id:
+                        await finalize_chat_session_video(
+                            db,
+                            user.id,
+                            job.chat_session_id,
+                            media_url,
+                            job.prompt,
+                            job.model_id,
+                            params={
+                                "duration": duration,
+                                "resolution": params.get("resolution"),
+                                "aspect_ratio": params.get("aspect_ratio"),
+                                "operation": job.operation,
+                            },
+                        )
+                else:
+                    # Private mode uses a short-lived object, never SQL base64.
+                    from app.services import object_storage_service as oss
+
+                    private_key = f"private/videos/{job.id}.{mime.rsplit('/', 1)[-1]}"
+                    await asyncio.to_thread(oss.put_object, private_key, blob, mime)
+                    job.ephemeral_storage_path = private_key
+                    job.ephemeral_expires_at = _now() + datetime.timedelta(minutes=15)
+                    media_url = f"/api/videos/jobs/{job.id}/private-file"
 
             job.status = "completed"
             increment("video_job_completed")

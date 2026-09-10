@@ -5,8 +5,33 @@ import { authFetch } from "../api";
 import { VIDEO_MESSAGE_PREFIX, VIDEO_PENDING_MARKER, } from "./chatMarkers";
 export { VIDEO_MESSAGE_PREFIX, VIDEO_PENDING_MARKER } from "./chatMarkers";
 export const VIDEO_POLL_INTERVAL_MS = 2500;
-export const VIDEO_GENERATION_TIMEOUT_MS = 600_000;
+/**
+ * Client-side polling budget.
+ *
+ * This clock must stay comfortably ABOVE every server-side budget, because the
+ * server - not the browser - decides whether a job failed. The backend's
+ * VIDEO_JOB_TIMEOUT_SECONDS (default 600s) covers only the provider polling
+ * loop: it excludes the queue wait before a worker claims the job, and the
+ * whole "ingesting" phase (provider download + object-storage write), which
+ * has no deadline of its own. VIDEO_JOB_RECLAIM_AFTER_SECONDS (default 900s)
+ * is the real upper bound on a live job.
+ *
+ * A 600s budget here made this poller give up on jobs that then completed
+ * normally, leaving "Video generation timed out." in the chat while the video
+ * landed in the media library.
+ */
+export const VIDEO_GENERATION_TIMEOUT_MS = 1_200_000;
 export const VIDEO_TIMEOUT_MESSAGE = "Video generation timed out.";
+export const VIDEO_STILL_PROCESSING_MESSAGE = "This video is taking longer than usual. It is still generating on the server and will appear here, and in your media library, once it finishes.";
+/** Raised when the client budget runs out while the server job is still alive. */
+export class VideoStillProcessingError extends Error {
+    constructor(jobId, status) {
+        super(VIDEO_STILL_PROCESSING_MESSAGE);
+        this.name = "VideoStillProcessingError";
+        this.jobId = jobId;
+        this.status = status;
+    }
+}
 const activeJobs = new Map();
 const listeners = new Set();
 function notify(sessionId) {
@@ -99,42 +124,71 @@ export function buildVideoRequestBody(args) {
             : {}),
     };
 }
+function abortedError() {
+    return new DOMException("The operation was aborted.", "AbortError");
+}
+async function fetchVideoJob(jobId, signal) {
+    const res = await authFetch(`/api/videos/jobs/${jobId}`, { signal });
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Video job status failed (${res.status})`);
+    }
+    return (await res.json());
+}
+async function settleCompletedJob(jobId, body, signal) {
+    // Billing may attach request_log_id a tick after status flips to completed.
+    if (typeof body.request_log_id === "number")
+        return body;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (signal.aborted)
+        throw abortedError();
+    try {
+        return await fetchVideoJob(jobId, signal);
+    }
+    catch {
+        return body;
+    }
+}
 async function pollVideoJob(jobId, signal) {
     const started = Date.now();
+    let lastStatus = "";
     while (Date.now() - started < VIDEO_GENERATION_TIMEOUT_MS) {
         if (signal.aborted)
-            throw new DOMException("The operation was aborted.", "AbortError");
-        const res = await authFetch(`/api/videos/jobs/${jobId}`, { signal });
-        if (!res.ok) {
-            const text = await res.text();
-            throw new Error(text || `Video job status failed (${res.status})`);
-        }
-        const body = (await res.json());
+            throw abortedError();
+        const body = await fetchVideoJob(jobId, signal);
         const status = (body.status || "").toLowerCase();
-        if (status === "completed") {
-            // Billing may attach request_log_id a tick after status flips to completed.
-            if (typeof body.request_log_id === "number")
-                return body;
-            await new Promise((resolve) => setTimeout(resolve, 500));
-            if (signal.aborted)
-                throw new DOMException("The operation was aborted.", "AbortError");
-            const retry = await authFetch(`/api/videos/jobs/${jobId}`, { signal });
-            if (retry.ok) {
-                try {
-                    return (await retry.json());
-                }
-                catch {
-                    return body;
-                }
-            }
-            return body;
-        }
+        lastStatus = status;
+        if (status === "completed")
+            return settleCompletedJob(jobId, body, signal);
         if (status === "failed" || status === "cancelled") {
             throw new Error(body.error_message || `Video generation ${status}`);
         }
         await new Promise((resolve) => setTimeout(resolve, VIDEO_POLL_INTERVAL_MS));
     }
-    throw new Error(VIDEO_TIMEOUT_MESSAGE);
+    // Budget spent. Never call it a failure on this clock alone: a job routinely
+    // finishes during the ingest phase, after the backend's own deadline. Take
+    // one last look and let the server have the final word.
+    if (signal.aborted)
+        throw abortedError();
+    let finalBody = null;
+    try {
+        finalBody = await fetchVideoJob(jobId, signal);
+    }
+    catch (err) {
+        if (err instanceof DOMException)
+            throw err;
+        finalBody = null;
+    }
+    // Only an unreachable status endpoint leaves us genuinely in the dark.
+    if (!finalBody)
+        throw new Error(VIDEO_TIMEOUT_MESSAGE);
+    const finalStatus = (finalBody.status || "").toLowerCase();
+    if (finalStatus === "completed")
+        return settleCompletedJob(jobId, finalBody, signal);
+    if (finalStatus === "failed" || finalStatus === "cancelled") {
+        throw new Error(finalBody.error_message || `Video generation ${finalStatus}`);
+    }
+    throw new VideoStillProcessingError(jobId, finalStatus || lastStatus);
 }
 export async function runBackgroundVideoGeneration(args) {
     const { sessionId, prompt, model, userContent, history, persist, duration, resolution, aspectRatio, generateAudio, assistantClientMessageId, onUpdate, getMessages, } = args;
@@ -250,6 +304,13 @@ export async function runBackgroundVideoGeneration(args) {
                 /* ignore */
             }
             return;
+        }
+        if (err instanceof VideoStillProcessingError) {
+            // Leave the pending marker exactly as it is. The durable worker replaces
+            // it with the real video message when ingest finishes, but
+            // finalize_chat_session_video only heals a *trailing pending marker* -
+            // writing an error over it here would strand the finished video for good.
+            throw err;
         }
         const detail = err instanceof Error ? err.message : "Video generation failed";
         const message = detail.startsWith("Error:") ? detail : `Error: ${detail}`;

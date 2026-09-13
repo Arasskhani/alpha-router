@@ -14,6 +14,7 @@ import {
   type ColorMode,
   type NamedTheme,
 } from "../lib/themeCache";
+import { normalizeVoiceLang, type VoiceLang } from "../lib/voiceInput";
 import { COMMON_TIMEZONES, detectBrowserTimezone } from "../lib/timezones";
 import { BROWSER_EVENT_NAMES } from "../lib/brand";
 import { broadcastChatRefresh } from "../lib/chatLeader";
@@ -182,7 +183,11 @@ function GeneralPanel({
   setTheme?: (theme: UserTheme) => void;
 }) {
   const [timezone, setTimezone] = useState("UTC");
-  const [voiceLang, setVoiceLang] = useState("en");
+  const [voiceLang, setVoiceLang] = useState<VoiceLang>("auto");
+  const [transcriptionModel, setTranscriptionModel] = useState("");
+  const [transcriptionOptions, setTranscriptionOptions] = useState<
+    Array<{ id: string; name: string }>
+  >([]);
   const [persianFont, setPersianFont] = useState("");
   const [replyNotifyAway, setReplyNotifyAway] = useState(false);
   const [replyNotifySound, setReplyNotifySound] = useState(true);
@@ -202,7 +207,8 @@ function GeneralPanel({
         if (cancelled) return;
         const tz = prefs.timezone?.trim() || detectBrowserTimezone();
         setTimezone(tz);
-        setVoiceLang(prefs.voice_recording_language === "fa" ? "fa" : "en");
+        setVoiceLang(normalizeVoiceLang(prefs.voice_recording_language));
+        setTranscriptionModel(prefs.transcription_model || "");
         setPersianFont(normalizePersianFontId(prefs.persian_font));
         setReplyNotifyAway(!!prefs.reply_notify_away);
         setReplyNotifySound(prefs.reply_notify_sound !== false);
@@ -226,9 +232,31 @@ function GeneralPanel({
     };
   }, []);
 
+  // Only models this user may actually use: the endpoint already filters by ACL.
+  useEffect(() => {
+    let cancelled = false;
+    api<Array<{ id: string; name: string; kinds?: string[] }>>("/api/chat/models")
+      .then((rows) => {
+        if (cancelled) return;
+        setTranscriptionOptions(
+          (rows || [])
+            .filter((m) => (m.kinds || []).includes("transcription"))
+            .map((m) => ({ id: m.id, name: m.name }))
+            .sort((a, b) => a.name.localeCompare(b.name)),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setTranscriptionOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   async function persistPrefs(updates: {
     timezone?: string;
-    voice_recording_language?: string;
+    voice_recording_language?: VoiceLang;
+    transcription_model?: string;
     persian_font?: string;
     reply_notify_away?: boolean;
     reply_notify_sound?: boolean;
@@ -329,16 +357,38 @@ function GeneralPanel({
           <select
             value={voiceLang}
             onChange={(e) => {
-              const value = e.target.value;
+              const value = normalizeVoiceLang(e.target.value);
               setVoiceLang(value);
               void persistPrefs({ voice_recording_language: value });
             }}
             className="settings-row__control"
           >
+            <option value="auto">Auto — detect</option>
             <option value="en">English</option>
             <option value="fa">Persian</option>
           </select>
         </SettingsRow>
+
+        {transcriptionOptions.length ? (
+          <SettingsRow title="Transcription model" hint="Used by the microphone button">
+            <select
+              value={transcriptionModel}
+              onChange={(e) => {
+                const value = e.target.value;
+                setTranscriptionModel(value);
+                void persistPrefs({ transcription_model: value });
+              }}
+              className="settings-row__control"
+            >
+              <option value="">System default</option>
+              {transcriptionOptions.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </SettingsRow>
+        ) : null}
 
         <SettingsRow title="Persian font" hint="Chat messages and composer">
           <select

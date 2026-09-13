@@ -4,6 +4,7 @@ import { api, authFetch, formatApiError } from "../api";
 import { fetchUserPrefsFromServer, saveUserPrefs } from "../lib/chatStorage";
 import { applyPersianFontToChat, listPersianFontOptions, normalizePersianFontId, } from "../lib/persianFonts";
 import { colorModeOf, composeTheme, namedThemeLabel, namedThemeOf, } from "../lib/themeCache";
+import { normalizeVoiceLang } from "../lib/voiceInput";
 import { COMMON_TIMEZONES, detectBrowserTimezone } from "../lib/timezones";
 import { BROWSER_EVENT_NAMES } from "../lib/brand";
 import { broadcastChatRefresh } from "../lib/chatLeader";
@@ -38,7 +39,9 @@ function SettingsToggle({ on, disabled, label, onToggle, }) {
 }
 function GeneralPanel({ theme, setTheme, }) {
     const [timezone, setTimezone] = useState("UTC");
-    const [voiceLang, setVoiceLang] = useState("en");
+    const [voiceLang, setVoiceLang] = useState("auto");
+    const [transcriptionModel, setTranscriptionModel] = useState("");
+    const [transcriptionOptions, setTranscriptionOptions] = useState([]);
     const [persianFont, setPersianFont] = useState("");
     const [replyNotifyAway, setReplyNotifyAway] = useState(false);
     const [replyNotifySound, setReplyNotifySound] = useState(true);
@@ -57,7 +60,8 @@ function GeneralPanel({ theme, setTheme, }) {
                     return;
                 const tz = prefs.timezone?.trim() || detectBrowserTimezone();
                 setTimezone(tz);
-                setVoiceLang(prefs.voice_recording_language === "fa" ? "fa" : "en");
+                setVoiceLang(normalizeVoiceLang(prefs.voice_recording_language));
+                setTranscriptionModel(prefs.transcription_model || "");
                 setPersianFont(normalizePersianFontId(prefs.persian_font));
                 setReplyNotifyAway(!!prefs.reply_notify_away);
                 setReplyNotifySound(prefs.reply_notify_sound !== false);
@@ -76,6 +80,26 @@ function GeneralPanel({ theme, setTheme, }) {
                     setLoading(false);
             }
         })();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+    // Only models this user may actually use: the endpoint already filters by ACL.
+    useEffect(() => {
+        let cancelled = false;
+        api("/api/chat/models")
+            .then((rows) => {
+            if (cancelled)
+                return;
+            setTranscriptionOptions((rows || [])
+                .filter((m) => (m.kinds || []).includes("transcription"))
+                .map((m) => ({ id: m.id, name: m.name }))
+                .sort((a, b) => a.name.localeCompare(b.name)));
+        })
+            .catch(() => {
+            if (!cancelled)
+                setTranscriptionOptions([]);
+        });
         return () => {
             cancelled = true;
         };
@@ -144,10 +168,14 @@ function GeneralPanel({ theme, setTheme, }) {
                                 setTimezone(value);
                                 void persistPrefs({ timezone: value });
                             }, className: "settings-row__control", children: zoneOptions.map((z) => (_jsx("option", { value: z.value, children: z.label }, z.value))) }) }), _jsx(SettingsRow, { title: "Language", hint: "More languages coming later", children: _jsx("select", { value: "en", disabled: true, className: "settings-row__control", "aria-disabled": "true", children: _jsx("option", { value: "en", children: "English" }) }) }), _jsx(SettingsRow, { title: "Voice language", hint: "Used for voice transcription", children: _jsxs("select", { value: voiceLang, onChange: (e) => {
-                                const value = e.target.value;
+                                const value = normalizeVoiceLang(e.target.value);
                                 setVoiceLang(value);
                                 void persistPrefs({ voice_recording_language: value });
-                            }, className: "settings-row__control", children: [_jsx("option", { value: "en", children: "English" }), _jsx("option", { value: "fa", children: "Persian" })] }) }), _jsx(SettingsRow, { title: "Persian font", hint: "Chat messages and composer", children: _jsxs("select", { value: persianFont, onChange: (e) => {
+                            }, className: "settings-row__control", children: [_jsx("option", { value: "auto", children: "Auto — detect" }), _jsx("option", { value: "en", children: "English" }), _jsx("option", { value: "fa", children: "Persian" })] }) }), transcriptionOptions.length ? (_jsx(SettingsRow, { title: "Transcription model", hint: "Used by the microphone button", children: _jsxs("select", { value: transcriptionModel, onChange: (e) => {
+                                const value = e.target.value;
+                                setTranscriptionModel(value);
+                                void persistPrefs({ transcription_model: value });
+                            }, className: "settings-row__control", children: [_jsx("option", { value: "", children: "System default" }), transcriptionOptions.map((m) => (_jsx("option", { value: m.id, children: m.name }, m.id)))] }) })) : null, _jsx(SettingsRow, { title: "Persian font", hint: "Chat messages and composer", children: _jsxs("select", { value: persianFont, onChange: (e) => {
                                 const value = e.target.value;
                                 setPersianFont(value);
                                 void persistPrefs({ persian_font: value });

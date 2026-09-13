@@ -10,7 +10,19 @@ export type ImageCapableModelRef = ChatModelRef & {
   is_image_model?: boolean;
   supports_text_to_image?: boolean;
   supports_image_to_image?: boolean;
+  /** Capabilities this model is the admin-chosen system default for. */
+  default_kinds?: string[];
 };
+
+/** The admin-chosen default for a capability, when it is still usable. */
+export function findSystemDefaultModel<T extends { default_kinds?: string[] }>(
+  models: T[],
+  kind: string,
+  usable: (m: T) => boolean,
+): T | undefined {
+  const picked = models.find((m) => (m.default_kinds || []).includes(kind));
+  return picked && usable(picked) ? picked : undefined;
+}
 
 const IMAGE_ID_HINTS = [
   "nanobanana",
@@ -81,13 +93,20 @@ export function findImageGenerationFallbackModel<T extends ImageCapableModelRef>
 ): T | undefined {
   const autoRouter = models.find(isAutoRouterModel);
   if (autoRouter && autoRouterCanGenerateImages(models)) return autoRouter;
-  return models.find((m) => !isAutoRouterModel(m) && modelSupportsImages(m, models));
+  return findConcreteImageGenerationModel(models);
 }
 
 /** First enabled image model excluding Auto Router (for upstream image API calls). */
 export function findConcreteImageGenerationModel<T extends ImageCapableModelRef>(
   models: T[],
 ): T | undefined {
+  // Admin's pick wins over catalog order, which is otherwise arbitrary.
+  const chosen = findSystemDefaultModel(
+    models,
+    "image",
+    (m) => !isAutoRouterModel(m) && modelSupportsImages(m, models),
+  );
+  if (chosen) return chosen;
   return models.find((m) => !isAutoRouterModel(m) && modelSupportsImages(m, models));
 }
 

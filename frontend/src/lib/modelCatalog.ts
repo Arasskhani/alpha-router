@@ -31,6 +31,8 @@ export type CatalogModel = {
   admin_disabled?: boolean;
   /** Admin system default for users who have not chosen a personal default. */
   is_system_default?: boolean;
+  /** Admin default speech-to-text model for the mic button. */
+  is_transcription_default?: boolean;
   access_type?: ModelAccessType;
   assignment_counts?: { users: number; groups: number };
   input_cost_per_1k: number | null;

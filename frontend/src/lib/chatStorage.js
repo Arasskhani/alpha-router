@@ -6,6 +6,7 @@ import { compactPrivateSessionsForStorage, hydratePrivateSessionsFromStorage, pr
 import { isQuotaExceededError, PrivateChatStorageError } from "./privateMediaStore";
 import { broadcastChatRefresh, isChatLeader, initChatLeader } from "./chatLeader";
 import { getSessionUser } from "./session";
+import { normalizeVoiceLang } from "./voiceInput";
 import { isCachedTheme, loadCachedTheme, saveCachedTheme } from "./themeCache";
 import { anyChatToolEnabled, copyFreshChatTools, normalizeChatTools, } from "./chatTools";
 import { createProjectChat, deleteProjectChat, getProjectChat, listProjectChats, syncProjectChats, } from "./projectsApi";
@@ -46,10 +47,8 @@ function normalizeUserPrefs(raw) {
     const language = typeof raw?.language === "string" && raw.language.trim()
         ? raw.language.trim().toLowerCase()
         : "en";
-    const vrlRaw = typeof raw?.voice_recording_language === "string"
-        ? raw.voice_recording_language.trim().toLowerCase()
-        : "en";
-    const voiceRecordingLang = vrlRaw === "fa" ? "fa" : "en";
+    const voiceRecordingLang = normalizeVoiceLang(typeof raw?.voice_recording_language === "string" ? raw.voice_recording_language : null);
+    const transcriptionModel = typeof raw?.transcription_model === "string" ? raw.transcription_model.trim() : "";
     const persianRaw = typeof raw?.persian_font === "string" ? raw.persian_font.trim() : "";
     const persianFont = !persianRaw || persianRaw.toLowerCase() === "system" || persianRaw.toLowerCase() === "default"
         ? ""
@@ -64,6 +63,7 @@ function normalizeUserPrefs(raw) {
         timezone,
         language: language === "en" ? "en" : "en",
         voice_recording_language: voiceRecordingLang,
+        transcription_model: transcriptionModel,
         persian_font: persianFont,
         reply_notify_away: replyNotifyAway,
         reply_notify_sound: replyNotifySound,

@@ -10,6 +10,8 @@ export type VideoCapableModelRef = ChatModelRef & {
   is_video_model?: boolean;
   supports_text_to_video?: boolean;
   supports_image_to_video?: boolean;
+  /** Capabilities this model is the admin-chosen system default for. */
+  default_kinds?: string[];
 };
 
 function dedicatedTextToVideo(m: VideoCapableModelRef): boolean {
@@ -54,6 +56,11 @@ export function modelSupportsVideos(
 export function findConcreteVideoGenerationModel<T extends VideoCapableModelRef>(
   models: T[],
 ): T | undefined {
+  // Admin's pick wins over catalog order, which is otherwise arbitrary.
+  const chosen = models.find((m) => (m.default_kinds || []).includes("video"));
+  if (chosen && !isAutoRouterModel(chosen) && modelSupportsVideos(chosen, models)) {
+    return chosen;
+  }
   return models.find((m) => !isAutoRouterModel(m) && modelSupportsVideos(m, models));
 }
 

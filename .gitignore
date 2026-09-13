@@ -39,6 +39,12 @@ node_modules/
 frontend/dist/
 frontend/build/
 frontend/tsconfig.tsbuildinfo
+# Compiled twins of the TypeScript sources. They are build output, not source:
+# tsconfig sets noEmit so nothing refreshes them, while Vite happily resolves
+# them ahead of the .ts/.tsx they shadow. Every module under frontend/src is
+# authored in TypeScript -- if a genuine hand-written .js is ever needed there,
+# add an explicit `!frontend/src/path/to/file.js` exception below.
+frontend/src/**/*.js
 *.log
 npm-debug.log*
 yarn-debug.log*

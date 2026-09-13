@@ -60,6 +60,40 @@ def external_id_lookup_candidates(model_id: str | None) -> list[str]:
     return candidates
 
 
+def litellm_transcription_model(model_id: str, provider_type: str | None) -> str:
+    """Map a catalog external_id to the LiteLLM model string for transcription.
+
+    Deliberately NOT ``litellm_model_for_provider``: LiteLLM routes
+    ``/audio/transcriptions`` by different rules than chat.
+
+    Inside ``atranscription`` it re-derives the provider from the *model string*
+    and ignores any ``custom_llm_provider`` that was passed, and it ships no
+    transcription adapter for most chat providers. So ``openrouter/<id>`` fails
+    with "Unmapped provider passed in", and a bare vendor-namespaced id such as
+    ``microsoft/mai-transcribe-2`` fails with "LLM Provider NOT provided"
+    because ``microsoft`` is read as the provider.
+
+    Every OpenAI-compatible endpoint must therefore be addressed as
+    ``openai/<id>`` alongside ``api_base`` — which is exactly what the original
+    hardcoded ``"openai/whisper-1"`` was doing before this was generalized to
+    the catalog.
+    """
+    model = normalize_model_id(model_id)
+    if not model:
+        return model
+    provider = (provider_type or "").strip().lower()
+    # A LiteLLM chat-routing prefix is not valid here; drop it before mapping.
+    model = model.removeprefix("openrouter/") or model
+    if provider == "azure":
+        return model if model.startswith("azure/") else f"azure/{model}"
+    if model.startswith(("openai/", "azure/")):
+        return model
+    if provider == "openai" and "/" not in model:
+        # Native OpenAI ids ("whisper-1", "gpt-4o-transcribe") route as they are.
+        return model
+    return f"openai/{model}"
+
+
 def litellm_model_for_provider(model_id: str, provider_type: str | None) -> str:
     """Map a catalog external_id to the LiteLLM model string.
 

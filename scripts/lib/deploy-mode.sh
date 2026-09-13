@@ -14,6 +14,111 @@ INSECURE_PLACEHOLDERS=(
   rustfsadmin
 )
 
+# FRONTEND_URL / API_PUBLIC_URL are deployment-specific: every site has its own
+# hostname. These are the first-install defaults shipped in .env.example, i.e.
+# the only values this script may replace. Anything else was set by the
+# operator and must survive every upgrade -- overwriting it collapses
+# allowed_origins() (backend/app/services/csrf_protection.py) down to loopback
+# and every browser request from the real hostname then fails with
+# "CSRF validation failed".
+PUBLIC_URL_PLACEHOLDERS=(
+  http://localhost:8080
+  http://localhost:8000
+  http://127.0.0.1:8080
+  http://127.0.0.1:8000
+)
+
+is_public_url_placeholder() {
+  local value="${1%/}"
+  local item
+  for item in "${PUBLIC_URL_PLACEHOLDERS[@]}"; do
+    if [ "$value" = "$item" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+is_loopback_public_url() {
+  case "${1:-}" in
+    http://localhost | http://localhost:* | \
+      http://127.0.0.1 | http://127.0.0.1:* | \
+      https://localhost | https://localhost:* | \
+      https://127.0.0.1 | https://127.0.0.1:* | \
+      http://\[::1\] | http://\[::1\]:* | https://\[::1\] | https://\[::1\]:*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+# Keep whatever the operator configured; only fill in a missing or
+# still-default value. Mirrors ensure_secret below. Echoes the effective value.
+preserve_env_var() {
+  local key="$1"
+  local default_value="$2"
+  local current
+  current="$(env_value "$key" || true)"
+
+  if [ -z "$current" ] || is_public_url_placeholder "$current"; then
+    set_env_var "$key" "$default_value"
+    printf '%s' "$default_value"
+    return 0
+  fi
+  # stdout carries the value back to the caller's $( ), so the notice goes to stderr.
+  log "Keeping configured $key=$current" >&2
+  printf '%s' "$current"
+}
+
+is_truthy() {
+  case "${1:-}" in
+    true | True | TRUE | 1) return 0 ;;
+  esac
+  return 1
+}
+
+# HSTS is not a free-standing preference: the production guard
+# (_collect_production_insecurities in backend/app/main.py) flags "HSTS"
+# whenever either public URL is non-loopback and ENABLE_HSTS is not true. So it
+# has to follow whatever surface the URLs above ended up describing, or simply
+# preserving those URLs would start failing the guard on every upgrade.
+apply_hsts_for_surface() {
+  local frontend="$1"
+  local api_public="$2"
+  local current
+  current="$(env_value ENABLE_HSTS || true)"
+
+  if is_loopback_public_url "$frontend" && is_loopback_public_url "$api_public"; then
+    if [ -z "$current" ]; then
+      set_env_var ENABLE_HSTS false
+    fi
+    return 0
+  fi
+
+  local url insecure_scheme=0
+  for url in "$frontend" "$api_public"; do
+    [ -n "$url" ] || continue
+    if ! is_loopback_public_url "$url" && [ "${url#https://}" = "$url" ]; then
+      insecure_scheme=1
+    fi
+  done
+
+  if [ "$insecure_scheme" -eq 1 ]; then
+    warn "FRONTEND_URL/API_PUBLIC_URL are publicly reachable but not HTTPS."
+    warn "The production guard refuses this unless PRODUCTION_GUARD_MODE=warning."
+    warn "Terminate TLS in front of Alpharouter and use https:// URLs."
+    if [ -z "$current" ]; then
+      set_env_var ENABLE_HSTS false
+    fi
+    return 0
+  fi
+
+  if ! is_truthy "$current"; then
+    set_env_var ENABLE_HSTS true
+    log "Public HTTPS surface configured; set ENABLE_HSTS=true (production guard requires it)."
+  fi
+}
+
 is_insecure_value() {
   local value="$1"
   local item
@@ -49,9 +154,11 @@ apply_prod_mode() {
 
   set_env_var ENVIRONMENT production
   set_env_var OPENAPI_ADMIN_ONLY true
-  set_env_var ENABLE_HSTS false
-  set_env_var FRONTEND_URL "http://127.0.0.1:8080"
-  set_env_var API_PUBLIC_URL "http://127.0.0.1:8080"
+
+  local frontend_url api_public_url
+  frontend_url="$(preserve_env_var FRONTEND_URL "http://127.0.0.1:8080")"
+  api_public_url="$(preserve_env_var API_PUBLIC_URL "http://127.0.0.1:8080")"
+  apply_hsts_for_surface "$frontend_url" "$api_public_url"
 
   ensure_secret SECRET_KEY "$(rand_hex 32)" "change-me-in-production"
   ensure_secret DATA_ENCRYPTION_KEY "$(rand_hex 32)" "change-me-in-production"

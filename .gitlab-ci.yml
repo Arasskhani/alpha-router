@@ -52,6 +52,16 @@ deployment-config:
     - docker compose config --quiet
     - ALPHAROUTER_REGISTRY=registry.example.com/group/alpha-router docker compose -f docker-compose.yml -f deploy/docker-compose.registry.yml config --quiet
 
+frontend-sources:
+  stage: verify
+  image: node:20
+  rules:
+    - changes:
+        - frontend/**/*
+        - .gitlab-ci.yml
+  script:
+    - bash scripts/check-frontend-sources.sh
+
 frontend-tests-and-build:
   stage: verify
   image: node:20

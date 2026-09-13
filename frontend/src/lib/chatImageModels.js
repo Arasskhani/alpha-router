@@ -1,5 +1,10 @@
 /** Image-capable chat model detection and preferred model selection for Image Generation tool. */
 import { AUTO_ROUTER_EXTERNAL_ID, isAutoRouterModel, } from "./chatModels";
+/** The admin-chosen default for a capability, when it is still usable. */
+export function findSystemDefaultModel(models, kind, usable) {
+    const picked = models.find((m) => (m.default_kinds || []).includes(kind));
+    return picked && usable(picked) ? picked : undefined;
+}
 const IMAGE_ID_HINTS = [
     "nanobanana",
     "image",
@@ -59,10 +64,14 @@ export function findImageGenerationFallbackModel(models) {
     const autoRouter = models.find(isAutoRouterModel);
     if (autoRouter && autoRouterCanGenerateImages(models))
         return autoRouter;
-    return models.find((m) => !isAutoRouterModel(m) && modelSupportsImages(m, models));
+    return findConcreteImageGenerationModel(models);
 }
 /** First enabled image model excluding Auto Router (for upstream image API calls). */
 export function findConcreteImageGenerationModel(models) {
+    // Admin's pick wins over catalog order, which is otherwise arbitrary.
+    const chosen = findSystemDefaultModel(models, "image", (m) => !isAutoRouterModel(m) && modelSupportsImages(m, models));
+    if (chosen)
+        return chosen;
     return models.find((m) => !isAutoRouterModel(m) && modelSupportsImages(m, models));
 }
 /** Keep UI model; only substitute when the selected model cannot generate images. */

@@ -11131,6 +11131,132 @@ body.activity-pdf-export .activity-page {
   gap: 0.75rem 1rem;
   margin-bottom: 0.75rem;
 }
+/* "Set as Default" capability menu on the models toolbar. */
+.models-default-menu {
+  position: relative;
+}
+.models-default-menu__list {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  z-index: 30;
+  min-width: 15rem;
+  padding: 0.3rem;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 18%);
+}
+.models-default-menu__item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0.65rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.models-default-menu__item:hover,
+.models-default-menu__item:focus-visible {
+  background: color-mix(in srgb, var(--border) 45%, transparent);
+}
+.models-default-menu__item-label {
+  font-weight: 600;
+}
+.models-default-menu__item-current {
+  color: var(--muted);
+  font-size: 0.8rem;
+  max-width: 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Capability-filtered model picker. */
+.set-default-modal {
+  width: min(46rem, 94vw);
+}
+.set-default-modal__intro {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+}
+.set-default-modal__search {
+  width: 100%;
+  padding: 0.55rem 0.85rem;
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text);
+}
+.set-default-modal__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-height: min(24rem, 52vh);
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+.set-default-modal__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.75rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.set-default-modal__row:hover:not(:disabled),
+.set-default-modal__row:focus-visible {
+  background: color-mix(in srgb, var(--border) 40%, transparent);
+}
+.set-default-modal__row:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.set-default-modal__row--current {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--border) 30%, transparent);
+}
+.set-default-modal__row-name {
+  font-weight: 600;
+  min-width: 0;
+}
+.set-default-modal__row-id {
+  color: var(--muted);
+  font-size: 0.8rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.set-default-modal__row-badge {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+.set-default-modal__empty {
+  margin: 0.5rem 0 0;
+}
+.set-default-modal__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
 .models-page__search-wrap {
   flex: 1 1 16rem;
   min-width: 0;

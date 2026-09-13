@@ -131,8 +131,12 @@ async def sync_ldap_ad(db: AsyncSession = Depends(get_db), _: User = Depends(req
     try:
         return await sync_ldap_directory(db, cfg)
     except RuntimeError as e:
+        await db.rollback()
         raise HTTPException(400, str(e)) from e
     except Exception as e:
+        # Leave the session usable: after a failed flush it stays inactive
+        # until it is rolled back, and the dependency reuses it for this request.
+        await db.rollback()
         raise HTTPException(400, f"LDAP sync failed: {e}") from e
 
 

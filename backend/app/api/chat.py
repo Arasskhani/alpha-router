@@ -2,7 +2,16 @@
 
 import asyncio
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
@@ -12,7 +21,7 @@ from starlette.background import BackgroundTask
 from app.api.deps import get_current_user, require_active_user
 from app.branding import CHAT_CLIENT_APP
 from app.config import get_settings
-from app.database import get_db
+from app.database import AsyncSessionLocal, get_db
 from app.models.chat import ChatSession
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
@@ -54,7 +63,7 @@ from app.services.media_authorization_service import (
     MediaAccessAction,
     load_authorized_media_asset,
 )
-from app.services.global_default_chat_model import get_global_default_model_id
+from app.services.system_default_models import get_all_default_model_ids
 from app.services.model_access_service import (
     filter_models_for_subject,
     resolve_access_subject,
@@ -92,7 +101,7 @@ from app.services.project_media_service import (
     persist_scoped_chat_media,
 )
 from app.services.transcription_service import transcribe_audio_bytes
-from app.services.voice_refine_service import refine_voice_transcript
+from app.services.user_chat_storage_service import load_user_prefs
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -123,13 +132,21 @@ async def chat_models(
     subject = await resolve_access_subject(db, user_id=user.id)
     rows = await filter_models_for_subject(db, list(rows), subject)
     compatibility = await compatibility_map_for_models(db, rows)
-    default_id = await get_global_default_model_id(db)
+    system_defaults = await get_all_default_model_ids(db)
+    default_id = system_defaults.get("chat")
     return [
         {
             "id": f"model::{m.id}",
             "name": m.display_name or m.external_id,
             "external_id": m.external_id,
             "is_system_default": default_id is not None and int(m.id) == int(default_id),
+            # Admin-chosen defaults per capability, so the client stops falling
+            # back to "first capable model in catalog order".
+            "default_kinds": [
+                key
+                for key, value in system_defaults.items()
+                if value is not None and int(value) == int(m.id)
+            ],
             "code_interpreter": compatibility_payload(
                 compatibility.get((int(m.connection_id), m.external_id)),
                 static_candidate=is_code_interpreter_candidate(m),
@@ -373,11 +390,59 @@ async def chat_completions(
     )
 
 
+async def _store_voice_note(
+    *,
+    user_id: int,
+    username: str,
+    raw: bytes,
+    mime: str,
+    filename: str,
+    transcript: str,
+    chat_session_id: str | None,
+) -> None:
+    """Persist a voice note after its transcript has already been returned.
+
+    Storing the audio means a content hash, a quota check and an object-store
+    upload. None of that changes the transcript the caller is waiting on, so
+    keeping it in the request path only made every recording feel slow.
+
+    Runs on its own session because the request's session is closed once the
+    response is sent. Failures are logged and never surface: the transcript is
+    what was asked for, and it has already been delivered.
+    """
+    import logging
+
+    try:
+        async with AsyncSessionLocal() as store_db:
+            await store_generated_blob(
+                store_db,
+                user_id=user_id,
+                username=username,
+                kind="audio",
+                blob=raw,
+                mime=mime,
+                source_model=None,
+                source_prompt=transcript[:2000],
+                chat_session_id=chat_session_id,
+                file_name_hint=filename,
+                metadata={"transcript": transcript},
+            )
+            await store_db.commit()
+    except Exception:
+        logging.getLogger("app.api.chat").exception(
+            "Voice note storage failed after the transcript was returned "
+            "(user_id=%s); the transcript itself was delivered normally",
+            user_id,
+        )
+
+
 @router.post("/voice")
 async def voice_message(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     chat_session_id: str | None = Form(None),
     language: str | None = Form(None),
+    duration_seconds: float | None = Form(None),
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -398,6 +463,11 @@ async def voice_message(
     mime = (file.content_type or "audio/webm").split(";")[0].strip() or "audio/webm"
     filename = file.filename or "voice.webm"
 
+    # The user's own pick, when they made one. It is re-validated downstream
+    # against their ACL, so an unusable value falls through to the system default.
+    prefs = await load_user_prefs(db, user.id)
+    preferred_model_ref = (prefs.get("transcription_model") or "").strip() or None
+
     try:
         transcript = await transcribe_audio_bytes(
             db,
@@ -407,10 +477,20 @@ async def voice_message(
             language=language,
             user_id=user.id,
             username=user.username,
+            client_duration_seconds=duration_seconds,
+            preferred_model_ref=preferred_model_ref,
         )
     except HTTPException:
         raise
     except ValueError as exc:
+        import logging
+
+        # A "clean" failure (provider rejected the model, no speech, bad audio)
+        # used to return 400 with no server-side trace at all, which made these
+        # invisible in the logs while the client only saw a generic notice.
+        logging.getLogger("app.api.chat").warning(
+            "Transcription rejected: %s", exc, exc_info=True
+        )
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         # Log the full provider error server-side; return a generic message so
@@ -422,54 +502,28 @@ async def voice_message(
             status_code=502, detail="Transcription failed. Please try again."
         ) from exc
 
-    try:
-        asset = await store_generated_blob(
-            db,
-            user_id=user.id,
-            username=user.username,
-            kind="audio",
-            blob=raw,
-            mime=mime,
-            source_model=None,
-            source_prompt=transcript[:2000],
-            chat_session_id=chat_session_id,
-            file_name_hint=filename,
-            metadata={"transcript": transcript},
-        )
-    except ValueError as exc:
-        status_code = (
-            413 if "limit" in str(exc).lower() or "quota" in str(exc).lower() else 400
-        )
-        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
-    return {
-        "id": asset.id,
-        "url": media_public_url(asset.id),
-        "transcript": transcript,
-        "mime_type": asset.mime_type,
-    }
-
-
-class VoiceRefineIn(BaseModel):
-    transcript: str
-    model: str | None = None
-    context: list[dict] | None = None
-
-
-@router.post("/voice/refine")
-async def refine_voice_message(
-    body: VoiceRefineIn,
-    user: User = Depends(require_active_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Correct speech-to-text errors in a transcript using conversation context."""
-    transcript = (body.transcript or "").strip()
-    if not transcript:
-        return {"transcript": ""}
-    model_ref = (body.model or "").strip() or None
-    refined = await refine_voice_transcript(
-        db, user, model_ref, transcript, body.context
+    # Identity primitives are captured now: the ORM user expires with the
+    # request session, and the storage task outlives it.
+    background_tasks.add_task(
+        _store_voice_note,
+        user_id=int(user.id),
+        username=str(user.username or ""),
+        raw=raw,
+        mime=mime,
+        filename=filename,
+        transcript=transcript,
+        chat_session_id=chat_session_id,
     )
-    return {"transcript": refined}
+    return {
+        # The asset is written after this response, so its id and url are not
+        # known yet. They stay in the payload as nulls so the response shape is
+        # unchanged for any caller that reads them.
+        "id": None,
+        "url": None,
+        "transcript": transcript,
+        "mime_type": mime,
+        "media_pending": True,
+    }
 
 
 @router.get("/attachment-limits")

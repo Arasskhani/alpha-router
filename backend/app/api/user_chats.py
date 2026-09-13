@@ -44,6 +44,7 @@ class UserPrefsPatchIn(BaseModel):
     timezone: str | None = None
     language: str | None = None
     voice_recording_language: str | None = None
+    transcription_model: str | None = None
     persian_font: str | None = None
     reply_notify_away: bool | None = None
     reply_notify_sound: bool | None = None

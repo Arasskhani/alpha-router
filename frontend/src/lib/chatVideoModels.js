@@ -31,6 +31,11 @@ export function modelSupportsVideos(m, catalog) {
     return dedicatedTextToVideo(m) || dedicatedImageToVideo(m);
 }
 export function findConcreteVideoGenerationModel(models) {
+    // Admin's pick wins over catalog order, which is otherwise arbitrary.
+    const chosen = models.find((m) => (m.default_kinds || []).includes("video"));
+    if (chosen && !isAutoRouterModel(chosen) && modelSupportsVideos(chosen, models)) {
+        return chosen;
+    }
     return models.find((m) => !isAutoRouterModel(m) && modelSupportsVideos(m, models));
 }
 export function findVideoGenerationFallbackModel(models) {

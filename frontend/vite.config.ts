@@ -59,6 +59,13 @@ function persianFontsPlugin(): Plugin {
 
 export default defineConfig({
   plugins: [persianFontsPlugin(), react()],
+  // tsconfig.json sets noEmit, so `tsc -b` only type-checks and never refreshes
+  // the .js files still sitting next to the sources. Vite's default extension
+  // order resolves .js BEFORE .ts, so an extensionless import silently picks
+  // the stale compiled copy and ships it. Source must win.
+  resolve: {
+    extensions: [".tsx", ".ts", ".jsx", ".mts", ".mjs", ".js", ".json"],
+  },
   build: { outDir: "dist" },
   server: {
     proxy: {

@@ -51,7 +51,19 @@ def main() -> int:
         print("ENVIRONMENT is not production; guard checks skipped.")
         return 0
     if insecure:
-        print("Production guard would refuse to start:", ", ".join(insecure), file=sys.stderr)
+        findings = ", ".join(insecure)
+        # Match the application itself: PRODUCTION_GUARD_MODE="warning" lets the
+        # app start with these findings (see _apply_production_guard in
+        # backend/app/main.py), so this pre-flight must not fail the deploy for
+        # a configuration the app will happily run.
+        if getattr(settings, "production_guard_mode", "hard-fail") == "warning":
+            print(
+                "Production guard findings (PRODUCTION_GUARD_MODE=warning):",
+                findings,
+                file=sys.stderr,
+            )
+            return 0
+        print("Production guard would refuse to start:", findings, file=sys.stderr)
         return 1
     print("Production guard checks passed.")
     return 0

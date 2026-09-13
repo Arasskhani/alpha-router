@@ -3,6 +3,11 @@ frontend/node_modules
 frontend/dist
 frontend/tsconfig.tsbuildinfo
 
+# Never ship the stale compiled twins into the image build context: Vite would
+# resolve them ahead of the .ts/.tsx sources and bundle old code. The image is
+# always built from TypeScript.
+frontend/src/**/*.js
+
 # Python local env and caches (runtime stage only copies backend/app)
 .venv
 venv

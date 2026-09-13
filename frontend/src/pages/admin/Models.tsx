@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import AdminPage from "../../components/AdminPage";
 import Modal from "../../components/Modal";
@@ -8,6 +8,9 @@ import ModelsNewFilterMenu from "../../components/models/ModelsNewFilterMenu";
 import ModelsBrowseView from "../../components/models/ModelsBrowseView";
 import ModelAccessModal from "../../components/models/ModelAccessModal";
 import ModelCodeInterpreterModal from "../../components/models/ModelCodeInterpreterModal";
+import SetDefaultModelModal, {
+  type DefaultKind,
+} from "../../components/models/SetDefaultModelModal";
 import { api } from "../../api";
 import { useConfirm } from "../../context/ConfirmContext";
 import { useDebounced } from "../../hooks/useDebounced";
@@ -26,7 +29,6 @@ import {
   type ModelKind,
   type ModelNewFilter,
 } from "../../lib/modelCatalog";
-import { modelSupportsTextChat } from "../../lib/chatModels";
 
 type ViewMode = "table" | "browse";
 type BulkAction = "on" | "off" | "delete" | "public" | "private";
@@ -57,10 +59,50 @@ export default function Models() {
   const [accessModelId, setAccessModelId] = useState<number | null>(null);
   const [compatModelId, setCompatModelId] = useState<number | null>(null);
   const [msg, setMsg] = useState("");
+  const [defaultKinds, setDefaultKinds] = useState<DefaultKind[]>([]);
+  const [systemDefaults, setSystemDefaults] = useState<Record<string, number | null>>({});
+  const [defaultMenuOpen, setDefaultMenuOpen] = useState(false);
+  const [defaultKind, setDefaultKind] = useState<DefaultKind | null>(null);
+  const [defaultBusy, setDefaultBusy] = useState(false);
+  const defaultMenuRef = useRef<HTMLDivElement>(null);
   const debouncedSearch = useDebounced(search, 280);
 
   async function loadModels() {
     return api<CatalogModel[]>("/api/admin/models", { cache: "no-store" });
+  }
+
+  async function loadSystemDefaults() {
+    const data = await api<{
+      defaults: Record<string, number | null>;
+      kinds: DefaultKind[];
+    }>("/api/admin/models/defaults", { cache: "no-store" });
+    setSystemDefaults(data.defaults || {});
+    setDefaultKinds(data.kinds || []);
+  }
+
+  async function pickSystemDefault(modelId: number | null) {
+    if (!defaultKind) return;
+    const kind = defaultKind;
+    setDefaultBusy(true);
+    setMsg("");
+    try {
+      await api(`/api/admin/models/defaults/${kind.key}`, {
+        method: "PUT",
+        body: JSON.stringify({ model_id: modelId }),
+      });
+      const label =
+        modelId === null
+          ? `${kind.label} default cleared — falling back to automatic selection.`
+          : `${kind.label} default set. Users who picked their own are not changed.`;
+      setMsg(label);
+      setDefaultKind(null);
+      await loadSystemDefaults();
+      setAllModels(await loadModels());
+    } catch (e) {
+      setMsg(String(e));
+    } finally {
+      setDefaultBusy(false);
+    }
   }
 
   const models = useMemo(
@@ -80,41 +122,27 @@ export default function Models() {
   const newFilterCounts = useMemo(() => newWindowCounts(allModels), [allModels]);
   const accessModel = allModels.find((m) => m.id === accessModelId) || null;
   const compatModel = allModels.find((m) => m.id === compatModelId) || null;
-  const selectedDefaultTarget = selectedIds.length === 1
-    ? allModels.find((m) => m.id === selectedIds[0]) || null
-    : null;
-  const canSetDefault = Boolean(
-    selectedDefaultTarget
-    && selectedDefaultTarget.enabled
-    && !selectedDefaultTarget.admin_disabled
-    && (selectedDefaultTarget.access_type || "public") === "public"
-    && modelSupportsTextChat({
-      id: String(selectedDefaultTarget.id),
-      name: selectedDefaultTarget.display_name || selectedDefaultTarget.external_id,
-      external_id: selectedDefaultTarget.external_id,
-      kinds: selectedDefaultTarget.kinds,
-    })
-    && !selectedDefaultTarget.is_system_default,
-  );
-  const setDefaultTitle = !selectedDefaultTarget
-    ? "Select exactly one model"
-    : selectedDefaultTarget.is_system_default
-      ? "Already the system default"
-      : !selectedDefaultTarget.enabled || selectedDefaultTarget.admin_disabled
-        ? "Model must be enabled"
-        : (selectedDefaultTarget.access_type || "public") === "private"
-          ? "Model must be public"
-          : !modelSupportsTextChat({
-              id: String(selectedDefaultTarget.id),
-              external_id: selectedDefaultTarget.external_id,
-              kinds: selectedDefaultTarget.kinds,
-            })
-            ? "Model must support text chat"
-            : "System default for new chats. Does not change users who already picked their own.";
+  useEffect(() => {
+    if (!defaultMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!defaultMenuRef.current?.contains(e.target as Node)) setDefaultMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setDefaultMenuOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [defaultMenuOpen]);
 
   useEffect(() => {
     loadModels().then(setAllModels).catch(() => setAllModels([]));
     setSelectedIds([]);
+    loadSystemDefaults().catch(() => {
+      setSystemDefaults({});
+      setDefaultKinds([]);
+    });
   }, []);
 
   useEffect(() => {
@@ -161,28 +189,6 @@ export default function Models() {
     setAllModels(await loadModels());
   }
 
-  async function setSystemDefault() {
-    if (!selectedDefaultTarget || !canSetDefault) return;
-    const ok = await confirm({
-      title: "Set Default",
-      message:
-        "New chats will start with this model when a user has not chosen their own default. Existing personal defaults are not changed.",
-      confirmLabel: "Set Default",
-    });
-    if (!ok) return;
-    setMsg("");
-    try {
-      await api("/api/admin/models/default", {
-        method: "PUT",
-        body: JSON.stringify({ model_id: selectedDefaultTarget.id }),
-      });
-      setMsg(`Set ${selectedDefaultTarget.external_id} as the system default for new chats.`);
-      setSelectedIds([]);
-      setAllModels(await loadModels());
-    } catch (e) {
-      setMsg(String(e));
-    }
-  }
 
   async function runBulk(action: BulkAction) {
     if (!selectedIds.length) return;
@@ -296,15 +302,45 @@ export default function Models() {
               counts={newFilterCounts}
               onChange={setNewFilter}
             />
-            <button
-              type="button"
-              className="btn btn-ghost"
-              disabled={!canSetDefault}
-              onClick={() => void setSystemDefault()}
-              title={setDefaultTitle}
-            >
-              Set Default
-            </button>
+            <div className="models-default-menu" ref={defaultMenuRef}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setDefaultMenuOpen((o) => !o)}
+                aria-expanded={defaultMenuOpen}
+                aria-haspopup="menu"
+                title="Choose the system default model for a capability"
+              >
+                Set as Default ▾
+              </button>
+              {defaultMenuOpen ? (
+                <div className="models-default-menu__list" role="menu">
+                  {defaultKinds.map((k) => {
+                    const currentId = systemDefaults[k.key] ?? null;
+                    const current = currentId
+                      ? allModels.find((m) => m.id === currentId)
+                      : null;
+                    return (
+                      <button
+                        key={k.key}
+                        type="button"
+                        role="menuitem"
+                        className="models-default-menu__item"
+                        onClick={() => {
+                          setDefaultMenuOpen(false);
+                          setDefaultKind(k);
+                        }}
+                      >
+                        <span className="models-default-menu__item-label">{k.label}</span>
+                        <span className="models-default-menu__item-current">
+                          {current ? current.display_name || current.external_id : "Automatic"}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
             <button
               type="button"
               className="btn btn-ghost"
@@ -488,6 +524,14 @@ export default function Models() {
         </div>
       </Modal>
 
+      <SetDefaultModelModal
+        kind={defaultKind}
+        models={allModels}
+        currentId={defaultKind ? systemDefaults[defaultKind.key] ?? null : null}
+        busy={defaultBusy}
+        onClose={() => setDefaultKind(null)}
+        onPick={(id) => void pickSystemDefault(id)}
+      />
       <ModelAccessModal
         open={accessModelId != null}
         modelId={accessModelId}

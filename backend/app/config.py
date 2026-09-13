@@ -271,6 +271,13 @@ class Settings(BaseSettings):
     # Set to 0 to require every estimate to fit exactly (strict everywhere).
     budget_soft_overshoot_usd: float = 0.50
 
+    # Image generation is a single synchronous upstream call, so this value has
+    # to stay below the read timeout of every proxy in front of Alpharouter.
+    # An nginx default (proxy_read_timeout 60s) returns 504 to the browser while
+    # the generation is still running here -- the image is produced, persisted
+    # and billed, but the response never reaches the user.
+    image_request_timeout_seconds: float = 180.0  # env: IMAGE_REQUEST_TIMEOUT_SECONDS
+
     # Video generation (OpenRouter /videos async jobs).
     # Clip length is the user's selected duration from the model's
     # supported_durations. This env value is not applied as a generation cap;

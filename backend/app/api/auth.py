@@ -1,11 +1,12 @@
 """Authentication: local, LDAP, SAML 2.0 SP, generic OIDC."""
 
 import asyncio
+import logging
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse, Response as RawResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -52,6 +53,7 @@ from app.services.session_cookie import clear_session_cookies, new_csrf_token, s
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 class LoginRequest(BaseModel):
@@ -547,7 +549,7 @@ async def _upsert_directory_user(db: AsyncSession, profile: dict, provider: str)
 
     * SAML: stable identity is NameID (external_id).
     * OIDC: stable identity is ``sub`` (external_id).
-    * LDAP: username-based binding.
+    * LDAP: objectGUID when the directory exposes one, else username.
     Username collision with a different provider is rejected (409).
     Existing usernames are matched case-insensitively and not auto-renamed.
     """
@@ -561,7 +563,9 @@ async def _upsert_directory_user(db: AsyncSession, profile: dict, provider: str)
     external_id = (profile.get("external_id") or "").strip() or None
     user: User | None = None
 
-    if provider in {"saml", "oidc"} and external_id:
+    # Matching LDAP on external_id too means a user renamed or moved in AD is
+    # still recognised at login instead of colliding with their own row.
+    if provider in {"saml", "oidc", "ldap"} and external_id:
         user = (
             await db.execute(
                 select(User).where(
@@ -592,7 +596,24 @@ async def _upsert_directory_user(db: AsyncSession, profile: dict, provider: str)
     if not user:
         user = User(username=username, auth_provider=provider)
         db.add(user)
-    user.email = mapped.get("email") or user.email
+    # ``users.email`` is unique. Writing a directory address that another row
+    # already holds used to raise IntegrityError here and turn a login into a
+    # 500; keep the account's current address and let an admin resolve it.
+    new_email = (mapped.get("email") or "").strip()
+    if new_email and (user.email or "").strip().lower() != new_email.lower():
+        clash_stmt = select(User).where(func.lower(User.email) == new_email.lower())
+        if user.id is not None:
+            clash_stmt = clash_stmt.where(User.id != user.id)
+        clash = (await db.execute(clash_stmt)).scalars().first()
+        if clash is None:
+            user.email = new_email
+        else:
+            logger.warning(
+                "Directory login for '%s': address %s is held by '%s'; keeping existing address",
+                username,
+                new_email,
+                clash.username,
+            )
     user.display_name = mapped.get("display_name") or user.display_name
     for field in ("company", "job_title", "department", "office", "reporting_to"):
         val = mapped.get(field)

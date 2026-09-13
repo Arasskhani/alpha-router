@@ -43,6 +43,24 @@ _RETRYABLE_EXC: tuple[type[BaseException], ...] = (
 _shared_client: httpx.AsyncClient | None = None
 
 
+def image_request_timeout() -> float:
+    """Read timeout for one OpenRouter image call (IMAGE_REQUEST_TIMEOUT_SECONDS).
+
+    Operators need this tunable because the call is synchronous end to end:
+    browser -> reverse proxy -> Alpharouter -> OpenRouter. Whichever hop has the
+    smallest read timeout decides the outcome, and when a proxy gives up first
+    the user sees a gateway error for an image that was generated and billed.
+    Keep this below the proxy's ``proxy_read_timeout``.
+    """
+    try:
+        from app.config import get_settings
+
+        value = float(getattr(get_settings(), "image_request_timeout_seconds", 0) or 0)
+    except Exception:  # noqa: BLE001 - configuration must never break generation
+        return OPENROUTER_READ_TIMEOUT
+    return value if value > 0 else OPENROUTER_READ_TIMEOUT
+
+
 def is_retryable_openrouter_transport_error(exc: BaseException) -> bool:
     """True for disconnects / timeouts that should try another connection or strategy."""
     if isinstance(exc, _RETRYABLE_EXC):
@@ -308,7 +326,7 @@ async def post_openrouter_json(
 ) -> httpx.Response:
     """POST JSON to OpenRouter with retries on transient disconnects."""
     last_exc: Exception | None = None
-    timeout = httpx.Timeout(read_timeout or OPENROUTER_READ_TIMEOUT, connect=OPENROUTER_CONNECT_TIMEOUT)
+    timeout = httpx.Timeout(read_timeout or image_request_timeout(), connect=OPENROUTER_CONNECT_TIMEOUT)
     attempts = max(1, int(max_attempts))
     req_headers = dict(headers)
     # Prefer a fresh TCP connection for large multimodal responses.

@@ -487,6 +487,25 @@ def _speech_character_rate_usd(pricing: dict[str, Any]) -> tuple[bool, float | N
     return _rate(pricing, "prompt")
 
 
+def _audio_second_rate_usd(pricing: dict[str, Any]) -> tuple[bool, float | None]:
+    """Resolve USD/second for speech-to-text (transcription) catalog rows.
+
+    Transcription is billed per second of audio, not per request. A catalog that
+    publishes a per-minute figure is converted here so the line item is always
+    per second, matching the unit the caller reports.
+
+    Nothing is guessed: when none of these keys exist the quote falls through to
+    the admin rate table, exactly as before.
+    """
+    present, rate = _rate(pricing, "transcription", "audio_second", "second")
+    if present:
+        return present, rate
+    present, rate = _rate(pricing, "audio_minute", "minute")
+    if present and rate is not None:
+        return True, rate / 60.0
+    return False, None
+
+
 def _video_second_rate_usd(pricing: dict[str, Any]) -> tuple[bool, float | None]:
     """Resolve USD/second (or per-clip) for video catalog rows.
 
@@ -599,6 +618,9 @@ def _catalog_quote(
             "web_search",
             "search",
         )
+        audio_present, audio_rate = (
+            _audio_second_rate_usd(pricing) if service_type == "audio" else (False, None)
+        )
         if service_type == "speech":
             speech_present, speech_rate = _speech_character_rate_usd(pricing)
         else:
@@ -633,6 +655,12 @@ def _catalog_quote(
             service_type == "video"
             and quantity
             and not video_present
+        ):
+            pricing_complete = False
+        if (
+            service_type == "audio"
+            and quantity
+            and not audio_present
         ):
             pricing_complete = False
 
@@ -784,6 +812,22 @@ def _catalog_quote(
                     quantity=float(quantity),
                     unit=unit or "character",
                     unit_price_usd=speech_rate,
+                    pricing_source=source,
+                )
+            )
+        if (
+            service_type == "audio"
+            and audio_present
+            and audio_rate is not None
+            and quantity is not None
+            and float(quantity) > 0
+        ):
+            items.append(
+                _line_item(
+                    category="audio",
+                    quantity=float(quantity),
+                    unit=unit or "second",
+                    unit_price_usd=audio_rate,
                     pricing_source=source,
                 )
             )

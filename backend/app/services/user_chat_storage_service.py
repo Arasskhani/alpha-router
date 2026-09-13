@@ -155,7 +155,13 @@ def _default_prefs() -> dict[str, Any]:
         "theme": "light",
         "timezone": "UTC",
         "language": "en",
-        "voice_recording_language": "en",
+        # "auto" = no language hint is sent to the speech-to-text provider, so it
+        # detects the spoken language itself. Forcing "en" makes Whisper
+        # transliterate or translate non-English audio.
+        "voice_recording_language": "auto",
+        # Catalog ref ("model::12") for speech-to-text; empty = use the
+        # admin-selected system default.
+        "transcription_model": "",
         # Catalog id from frontend build (public/fonts); empty = system UI font.
         "persian_font": "",
         # Opt-in: notify when a chat reply finishes while the user is away.
@@ -228,10 +234,21 @@ def _normalize_prefs(raw: dict[str, Any] | None) -> dict[str, Any]:
     base["language"] = "en" if lang in ("en", "english", "") else "en"
 
     # Voice recording language: drives Web Speech API locale and Whisper `language`.
-    vrl = str(raw.get("voice_recording_language") or "en").strip().lower()
-    base["voice_recording_language"] = (
-        "fa" if vrl in ("fa", "fas", "persian", "farsi") else "en"
-    )
+    # "auto" (the default, and anything unrecognized) sends no hint at all.
+    vrl = str(raw.get("voice_recording_language") or "auto").strip().lower()
+    if vrl in ("fa", "fas", "persian", "farsi"):
+        base["voice_recording_language"] = "fa"
+    elif vrl in ("en", "eng", "english"):
+        base["voice_recording_language"] = "en"
+    else:
+        base["voice_recording_language"] = "auto"
+
+    # Personal speech-to-text model. Stored as an opaque catalog ref and
+    # re-validated server-side on every use, so a stale or forbidden pick simply
+    # falls through to the system default instead of breaking dictation.
+    if "transcription_model" in raw:
+        tm = raw.get("transcription_model")
+        base["transcription_model"] = "" if tm is None else str(tm).strip()[:64]
 
     # Persian chat font preference (frontend validates against build-time catalog).
     if "persian_font" in raw:

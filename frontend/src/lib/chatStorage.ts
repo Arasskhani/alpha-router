@@ -17,6 +17,7 @@ import {
 import { isQuotaExceededError, PrivateChatStorageError } from "./privateMediaStore";
 import { broadcastChatRefresh, isChatLeader, initChatLeader } from "./chatLeader";
 import { getSessionUser } from "./session";
+import { normalizeVoiceLang, type VoiceLang } from "./voiceInput";
 import { isCachedTheme, loadCachedTheme, saveCachedTheme, type CachedTheme } from "./themeCache";
 import type { AgentCitation } from "./agentChat";
 import {
@@ -40,7 +41,10 @@ export type UserPrefs = {
   theme: UserTheme;
   timezone: string;
   language: string;
-  voice_recording_language: string;
+  /** "auto" sends no language hint to speech-to-text; "en"/"fa" force one. */
+  voice_recording_language: VoiceLang;
+  /** Catalog ref for speech-to-text; empty = the admin-selected default. */
+  transcription_model: string;
   /** Build-time font catalog id from public/fonts; empty = system UI font. */
   persian_font: string;
   /** Notify when a reply finishes only if the user is away from that chat/tab. */
@@ -135,10 +139,11 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
   const language = typeof raw?.language === "string" && raw.language.trim()
     ? raw.language.trim().toLowerCase()
     : "en";
-  const vrlRaw = typeof raw?.voice_recording_language === "string"
-    ? raw.voice_recording_language.trim().toLowerCase()
-    : "en";
-  const voiceRecordingLang = vrlRaw === "fa" ? "fa" : "en";
+  const voiceRecordingLang = normalizeVoiceLang(
+    typeof raw?.voice_recording_language === "string" ? raw.voice_recording_language : null,
+  );
+  const transcriptionModel =
+    typeof raw?.transcription_model === "string" ? raw.transcription_model.trim() : "";
   const persianRaw = typeof raw?.persian_font === "string" ? raw.persian_font.trim() : "";
   const persianFont =
     !persianRaw || persianRaw.toLowerCase() === "system" || persianRaw.toLowerCase() === "default"
@@ -154,6 +159,7 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
     timezone,
     language: language === "en" ? "en" : "en",
     voice_recording_language: voiceRecordingLang,
+    transcription_model: transcriptionModel,
     persian_font: persianFont,
     reply_notify_away: replyNotifyAway,
     reply_notify_sound: replyNotifySound,

@@ -1,5 +1,5 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import AdminPage from "../../components/AdminPage";
 import Modal from "../../components/Modal";
 import ModelName from "../../components/ModelName";
@@ -8,12 +8,12 @@ import ModelsNewFilterMenu from "../../components/models/ModelsNewFilterMenu";
 import ModelsBrowseView from "../../components/models/ModelsBrowseView";
 import ModelAccessModal from "../../components/models/ModelAccessModal";
 import ModelCodeInterpreterModal from "../../components/models/ModelCodeInterpreterModal";
+import SetDefaultModelModal from "../../components/models/SetDefaultModelModal";
 import { api } from "../../api";
 import { useConfirm } from "../../context/ConfirmContext";
 import { useDebounced } from "../../hooks/useDebounced";
 import { BROWSER_EVENT_NAMES, STORAGE_KEYS } from "../../lib/brand";
 import { accessCounts, accessTypeLabel, codeInterpreterButtonClass, codeInterpreterLabel, enabledCounts, filterCatalogModels, newWindowCounts, } from "../../lib/modelCatalog";
-import { modelSupportsTextChat } from "../../lib/chatModels";
 function loadViewMode() {
     try {
         const v = localStorage.getItem(STORAGE_KEYS.modelsView);
@@ -42,9 +42,46 @@ export default function Models() {
     const [accessModelId, setAccessModelId] = useState(null);
     const [compatModelId, setCompatModelId] = useState(null);
     const [msg, setMsg] = useState("");
+    const [defaultKinds, setDefaultKinds] = useState([]);
+    const [systemDefaults, setSystemDefaults] = useState({});
+    const [defaultMenuOpen, setDefaultMenuOpen] = useState(false);
+    const [defaultKind, setDefaultKind] = useState(null);
+    const [defaultBusy, setDefaultBusy] = useState(false);
+    const defaultMenuRef = useRef(null);
     const debouncedSearch = useDebounced(search, 280);
     async function loadModels() {
         return api("/api/admin/models", { cache: "no-store" });
+    }
+    async function loadSystemDefaults() {
+        const data = await api("/api/admin/models/defaults", { cache: "no-store" });
+        setSystemDefaults(data.defaults || {});
+        setDefaultKinds(data.kinds || []);
+    }
+    async function pickSystemDefault(modelId) {
+        if (!defaultKind)
+            return;
+        const kind = defaultKind;
+        setDefaultBusy(true);
+        setMsg("");
+        try {
+            await api(`/api/admin/models/defaults/${kind.key}`, {
+                method: "PUT",
+                body: JSON.stringify({ model_id: modelId }),
+            });
+            const label = modelId === null
+                ? `${kind.label} default cleared — falling back to automatic selection.`
+                : `${kind.label} default set. Users who picked their own are not changed.`;
+            setMsg(label);
+            setDefaultKind(null);
+            await loadSystemDefaults();
+            setAllModels(await loadModels());
+        }
+        catch (e) {
+            setMsg(String(e));
+        }
+        finally {
+            setDefaultBusy(false);
+        }
     }
     const models = useMemo(() => filterCatalogModels(allModels, debouncedSearch, activeKind, enabledFilter, accessFilter, newFilter), [allModels, debouncedSearch, activeKind, enabledFilter, accessFilter, newFilter]);
     const statusCounts = useMemo(() => enabledCounts(allModels), [allModels]);
@@ -52,38 +89,28 @@ export default function Models() {
     const newFilterCounts = useMemo(() => newWindowCounts(allModels), [allModels]);
     const accessModel = allModels.find((m) => m.id === accessModelId) || null;
     const compatModel = allModels.find((m) => m.id === compatModelId) || null;
-    const selectedDefaultTarget = selectedIds.length === 1
-        ? allModels.find((m) => m.id === selectedIds[0]) || null
-        : null;
-    const canSetDefault = Boolean(selectedDefaultTarget
-        && selectedDefaultTarget.enabled
-        && !selectedDefaultTarget.admin_disabled
-        && (selectedDefaultTarget.access_type || "public") === "public"
-        && modelSupportsTextChat({
-            id: String(selectedDefaultTarget.id),
-            name: selectedDefaultTarget.display_name || selectedDefaultTarget.external_id,
-            external_id: selectedDefaultTarget.external_id,
-            kinds: selectedDefaultTarget.kinds,
-        })
-        && !selectedDefaultTarget.is_system_default);
-    const setDefaultTitle = !selectedDefaultTarget
-        ? "Select exactly one model"
-        : selectedDefaultTarget.is_system_default
-            ? "Already the system default"
-            : !selectedDefaultTarget.enabled || selectedDefaultTarget.admin_disabled
-                ? "Model must be enabled"
-                : (selectedDefaultTarget.access_type || "public") === "private"
-                    ? "Model must be public"
-                    : !modelSupportsTextChat({
-                        id: String(selectedDefaultTarget.id),
-                        external_id: selectedDefaultTarget.external_id,
-                        kinds: selectedDefaultTarget.kinds,
-                    })
-                        ? "Model must support text chat"
-                        : "System default for new chats. Does not change users who already picked their own.";
+    useEffect(() => {
+        if (!defaultMenuOpen)
+            return;
+        const onDown = (e) => {
+            if (!defaultMenuRef.current?.contains(e.target))
+                setDefaultMenuOpen(false);
+        };
+        const onKey = (e) => e.key === "Escape" && setDefaultMenuOpen(false);
+        document.addEventListener("mousedown", onDown);
+        document.addEventListener("keydown", onKey);
+        return () => {
+            document.removeEventListener("mousedown", onDown);
+            document.removeEventListener("keydown", onKey);
+        };
+    }, [defaultMenuOpen]);
     useEffect(() => {
         loadModels().then(setAllModels).catch(() => setAllModels([]));
         setSelectedIds([]);
+        loadSystemDefaults().catch(() => {
+            setSystemDefaults({});
+            setDefaultKinds([]);
+        });
     }, []);
     useEffect(() => {
         const onSyncFlash = async () => {
@@ -124,30 +151,6 @@ export default function Models() {
     async function toggle(id, enabled) {
         await api(`/api/admin/models/${id}/toggle?enabled=${!enabled}`, { method: "PATCH" });
         setAllModels(await loadModels());
-    }
-    async function setSystemDefault() {
-        if (!selectedDefaultTarget || !canSetDefault)
-            return;
-        const ok = await confirm({
-            title: "Set Default",
-            message: "New chats will start with this model when a user has not chosen their own default. Existing personal defaults are not changed.",
-            confirmLabel: "Set Default",
-        });
-        if (!ok)
-            return;
-        setMsg("");
-        try {
-            await api("/api/admin/models/default", {
-                method: "PUT",
-                body: JSON.stringify({ model_id: selectedDefaultTarget.id }),
-            });
-            setMsg(`Set ${selectedDefaultTarget.external_id} as the system default for new chats.`);
-            setSelectedIds([]);
-            setAllModels(await loadModels());
-        }
-        catch (e) {
-            setMsg(String(e));
-        }
     }
     async function runBulk(action) {
         if (!selectedIds.length)
@@ -209,6 +212,10 @@ export default function Models() {
                                         ].map(({ key, label }) => {
                                             const selected = accessFilter === key;
                                             return (_jsxs("button", { type: "button", className: `models-filter-chip${selected ? " models-filter-chip--active" : ""}`, onClick: () => setAccessFilter(selected ? null : key), "aria-pressed": selected, children: [_jsx("span", { children: label }), _jsx("span", { className: "models-filter-chip__count", children: accessFilterCounts[key] })] }, key));
-                                        }) }), _jsx(ModelsNewFilterMenu, { value: newFilter, counts: newFilterCounts, onChange: setNewFilter }), _jsx("button", { type: "button", className: "btn btn-ghost", disabled: !canSetDefault, onClick: () => void setSystemDefault(), title: setDefaultTitle, children: "Set Default" }), _jsx("button", { type: "button", className: "btn btn-ghost", disabled: selectedIds.length === 0, onClick: () => setBulkOpen(true), title: selectedIds.length ? `${selectedIds.length} selected` : "Select models first", children: "Bulk Edit" }), _jsxs("div", { className: "models-view-toggle", role: "group", "aria-label": "View mode", children: [_jsx("button", { type: "button", className: `models-view-toggle__btn${viewMode === "browse" ? " models-view-toggle__btn--active" : ""}`, onClick: () => setViewMode("browse"), title: "Browse view", "aria-pressed": viewMode === "browse", children: _jsx("svg", { viewBox: "0 0 24 24", width: 18, height: 18, "aria-hidden": true, children: _jsx("path", { fill: "currentColor", d: "M4 5h16v3H4V5zm0 5h16v3H4v-3zm0 5h10v3H4v-3z" }) }) }), _jsx("button", { type: "button", className: `models-view-toggle__btn${viewMode === "table" ? " models-view-toggle__btn--active" : ""}`, onClick: () => setViewMode("table"), title: "Table view", "aria-pressed": viewMode === "table", children: _jsx("svg", { viewBox: "0 0 24 24", width: 18, height: 18, "aria-hidden": true, children: _jsx("path", { fill: "currentColor", d: "M3 5h18v2H3V5zm0 6h18v2H3v-2zm0 6h18v2H3v-2z" }) }) })] })] })] }), _jsx(ModelsFilterBar, { models: allModels, active: activeKind, onChange: setActiveKind }), _jsx("p", { className: "muted-text models-page__hint", children: "Pricing per 1K tokens from provider (read-only). Descriptions load from provider catalog after sync." }), msg && _jsx("p", { className: "alert alert-success", children: msg }), _jsxs("p", { style: { color: "var(--muted)", fontSize: "0.85rem" }, children: [models.length, " model(s) shown", allModels.length !== models.length ? ` · ${allModels.length} total` : "", selectedIds.length > 0 ? ` · ${selectedIds.length} selected` : ""] }), viewMode === "browse" ? (_jsx(ModelsBrowseView, { models: models, selectedIds: selectedIds, onToggleSelect: toggleRowSelection, onToggleEnabled: toggle, onEditAccess: (id) => setAccessModelId(id) })) : (_jsx("div", { className: "table-wrap", children: _jsxs("table", { className: "card data-table", children: [_jsx("thead", { children: _jsxs("tr", { children: [_jsx("th", { className: "col-sm", children: _jsx("input", { type: "checkbox", checked: allVisibleSelected, onChange: toggleSelectAllVisible, "aria-label": "Select all visible models" }) }), _jsx("th", { children: "Model" }), _jsx("th", { children: "Input / 1K" }), _jsx("th", { children: "Output / 1K" }), _jsx("th", { children: "Total / 1K" }), _jsx("th", { children: "Access Type" }), _jsx("th", { children: "Code Interpreter" }), _jsx("th", { className: "col-onoff", children: "ON/OFF" })] }) }), _jsx("tbody", { children: models.map((m) => (_jsxs("tr", { children: [_jsx("td", { className: "col-sm", children: _jsx("input", { type: "checkbox", checked: selectedIds.includes(m.id), onChange: () => toggleRowSelection(m.id), "aria-label": `Select ${m.external_id}` }) }), _jsx("td", { children: _jsx(ModelName, { modelId: m.external_id, label: m.external_id, size: 15 }) }), _jsx("td", { children: m.input_cost_per_1k ?? "—" }), _jsx("td", { children: m.output_cost_per_1k ?? "—" }), _jsx("td", { children: m.total_cost_per_1k }), _jsx("td", { children: _jsx("button", { type: "button", className: `btn btn-sm btn-ghost model-access-btn${(m.access_type || "public") === "private" ? " model-access-btn--private" : ""}`, onClick: () => setAccessModelId(m.id), children: accessTypeLabel(m) }) }), _jsx("td", { children: _jsx("button", { type: "button", className: `btn btn-sm btn-ghost${codeInterpreterButtonClass(m)}`, onClick: () => setCompatModelId(m.id), title: m.code_interpreter?.reason_detail ||
-                                                        "Code Interpreter compatibility and probe history", children: codeInterpreterLabel(m) }) }), _jsx("td", { className: "col-onoff", children: _jsxs("div", { className: "model-onoff-cell", children: [_jsx("button", { type: "button", className: `btn btn-sm model-toggle-btn${m.enabled ? " model-toggle-btn--on" : ""}`, onClick: () => toggle(m.id, m.enabled), children: m.enabled ? "ON" : "OFF" }), m.admin_disabled ? (_jsx("span", { className: "model-admin-off-badge", title: "Disabled by admin \u2014 sync will not re-enable", children: "Admin off" })) : null, m.is_system_default ? (_jsx("span", { className: "model-default-badge", title: "System default for new chats. Does not change users who already picked their own.", children: "Default" })) : null] }) })] }, m.id))) })] }) }))] }), _jsxs(Modal, { open: bulkOpen, title: `Bulk Edit (${selectedIds.length} models)`, onClose: () => !bulkBusy && setBulkOpen(false), children: [_jsx("p", { className: "muted-text", children: "Apply an action to all selected models." }), _jsxs("div", { className: "dialog-actions", style: { flexWrap: "wrap", gap: "0.5rem" }, children: [_jsx("button", { type: "button", className: "btn", disabled: bulkBusy, onClick: () => runBulk("on"), children: bulkBusy ? "…" : "ON" }), _jsx("button", { type: "button", className: "btn btn-ghost", disabled: bulkBusy, onClick: () => runBulk("off"), children: "OFF" }), _jsx("button", { type: "button", className: "btn btn-ghost", disabled: bulkBusy, onClick: () => runBulk("public"), children: "Public" }), _jsx("button", { type: "button", className: "btn btn-ghost", disabled: bulkBusy, onClick: () => runBulk("private"), children: "Private" }), _jsx("button", { type: "button", className: "btn btn-danger", disabled: bulkBusy, onClick: () => runBulk("delete"), children: "Delete" }), _jsx("button", { type: "button", className: "btn btn-ghost", disabled: bulkBusy, onClick: () => setBulkOpen(false), children: "Cancel" })] })] }), _jsx(ModelAccessModal, { open: accessModelId != null, modelId: accessModelId, modelLabel: accessModel?.external_id || "", onClose: () => setAccessModelId(null), onSaved: async () => setAllModels(await loadModels()) }), _jsx(ModelCodeInterpreterModal, { open: compatModelId != null, modelId: compatModelId, modelLabel: compatModel?.external_id || "", onClose: () => setCompatModelId(null), onSaved: async () => setAllModels(await loadModels()) })] }));
+                                        }) }), _jsx(ModelsNewFilterMenu, { value: newFilter, counts: newFilterCounts, onChange: setNewFilter }), _jsxs("div", { className: "models-default-menu", ref: defaultMenuRef, children: [_jsx("button", { type: "button", className: "btn btn-ghost", onClick: () => setDefaultMenuOpen((o) => !o), "aria-expanded": defaultMenuOpen, "aria-haspopup": "menu", title: "Choose the system default model for a capability", children: "Set as Default \u25BE" }), defaultMenuOpen ? (_jsx("div", { className: "models-default-menu__list", role: "menu", children: defaultKinds.map((k) => {
+                                    const currentId = systemDefaults[k.key] ?? null;
+                                    const current = currentId ? allModels.find((m) => m.id === currentId) : null;
+                                    return (_jsxs("button", { type: "button", role: "menuitem", className: "models-default-menu__item", onClick: () => { setDefaultMenuOpen(false); setDefaultKind(k); }, children: [_jsx("span", { className: "models-default-menu__item-label", children: k.label }), _jsx("span", { className: "models-default-menu__item-current", children: current ? current.display_name || current.external_id : "Automatic" })] }, k.key));
+                                }) })) : null] }), _jsx("button", { type: "button", className: "btn btn-ghost", disabled: selectedIds.length === 0, onClick: () => setBulkOpen(true), title: selectedIds.length ? `${selectedIds.length} selected` : "Select models first", children: "Bulk Edit" }), _jsxs("div", { className: "models-view-toggle", role: "group", "aria-label": "View mode", children: [_jsx("button", { type: "button", className: `models-view-toggle__btn${viewMode === "browse" ? " models-view-toggle__btn--active" : ""}`, onClick: () => setViewMode("browse"), title: "Browse view", "aria-pressed": viewMode === "browse", children: _jsx("svg", { viewBox: "0 0 24 24", width: 18, height: 18, "aria-hidden": true, children: _jsx("path", { fill: "currentColor", d: "M4 5h16v3H4V5zm0 5h16v3H4v-3zm0 5h10v3H4v-3z" }) }) }), _jsx("button", { type: "button", className: `models-view-toggle__btn${viewMode === "table" ? " models-view-toggle__btn--active" : ""}`, onClick: () => setViewMode("table"), title: "Table view", "aria-pressed": viewMode === "table", children: _jsx("svg", { viewBox: "0 0 24 24", width: 18, height: 18, "aria-hidden": true, children: _jsx("path", { fill: "currentColor", d: "M3 5h18v2H3V5zm0 6h18v2H3v-2zm0 6h18v2H3v-2z" }) }) })] })] })] }), _jsx(ModelsFilterBar, { models: allModels, active: activeKind, onChange: setActiveKind }), _jsx("p", { className: "muted-text models-page__hint", children: "Pricing per 1K tokens from provider (read-only). Descriptions load from provider catalog after sync." }), msg && _jsx("p", { className: "alert alert-success", children: msg }), _jsxs("p", { style: { color: "var(--muted)", fontSize: "0.85rem" }, children: [models.length, " model(s) shown", allModels.length !== models.length ? ` · ${allModels.length} total` : "", selectedIds.length > 0 ? ` · ${selectedIds.length} selected` : ""] }), viewMode === "browse" ? (_jsx(ModelsBrowseView, { models: models, selectedIds: selectedIds, onToggleSelect: toggleRowSelection, onToggleEnabled: toggle, onEditAccess: (id) => setAccessModelId(id) })) : (_jsx("div", { className: "table-wrap", children: _jsxs("table", { className: "card data-table", children: [_jsx("thead", { children: _jsxs("tr", { children: [_jsx("th", { className: "col-sm", children: _jsx("input", { type: "checkbox", checked: allVisibleSelected, onChange: toggleSelectAllVisible, "aria-label": "Select all visible models" }) }), _jsx("th", { children: "Model" }), _jsx("th", { children: "Input / 1K" }), _jsx("th", { children: "Output / 1K" }), _jsx("th", { children: "Total / 1K" }), _jsx("th", { children: "Access Type" }), _jsx("th", { children: "Code Interpreter" }), _jsx("th", { className: "col-onoff", children: "ON/OFF" })] }) }), _jsx("tbody", { children: models.map((m) => (_jsxs("tr", { children: [_jsx("td", { className: "col-sm", children: _jsx("input", { type: "checkbox", checked: selectedIds.includes(m.id), onChange: () => toggleRowSelection(m.id), "aria-label": `Select ${m.external_id}` }) }), _jsx("td", { children: _jsx(ModelName, { modelId: m.external_id, label: m.external_id, size: 15 }) }), _jsx("td", { children: m.input_cost_per_1k ?? "—" }), _jsx("td", { children: m.output_cost_per_1k ?? "—" }), _jsx("td", { children: m.total_cost_per_1k }), _jsx("td", { children: _jsx("button", { type: "button", className: `btn btn-sm btn-ghost model-access-btn${(m.access_type || "public") === "private" ? " model-access-btn--private" : ""}`, onClick: () => setAccessModelId(m.id), children: accessTypeLabel(m) }) }), _jsx("td", { children: _jsx("button", { type: "button", className: `btn btn-sm btn-ghost${codeInterpreterButtonClass(m)}`, onClick: () => setCompatModelId(m.id), title: m.code_interpreter?.reason_detail ||
+                                                        "Code Interpreter compatibility and probe history", children: codeInterpreterLabel(m) }) }), _jsx("td", { className: "col-onoff", children: _jsxs("div", { className: "model-onoff-cell", children: [_jsx("button", { type: "button", className: `btn btn-sm model-toggle-btn${m.enabled ? " model-toggle-btn--on" : ""}`, onClick: () => toggle(m.id, m.enabled), children: m.enabled ? "ON" : "OFF" }), m.admin_disabled ? (_jsx("span", { className: "model-admin-off-badge", title: "Disabled by admin \u2014 sync will not re-enable", children: "Admin off" })) : null, m.is_system_default ? (_jsx("span", { className: "model-default-badge", title: "System default for new chats. Does not change users who already picked their own.", children: "Default" })) : null] }) })] }, m.id))) })] }) }))] }), _jsxs(Modal, { open: bulkOpen, title: `Bulk Edit (${selectedIds.length} models)`, onClose: () => !bulkBusy && setBulkOpen(false), children: [_jsx("p", { className: "muted-text", children: "Apply an action to all selected models." }), _jsxs("div", { className: "dialog-actions", style: { flexWrap: "wrap", gap: "0.5rem" }, children: [_jsx("button", { type: "button", className: "btn", disabled: bulkBusy, onClick: () => runBulk("on"), children: bulkBusy ? "…" : "ON" }), _jsx("button", { type: "button", className: "btn btn-ghost", disabled: bulkBusy, onClick: () => runBulk("off"), children: "OFF" }), _jsx("button", { type: "button", className: "btn btn-ghost", disabled: bulkBusy, onClick: () => runBulk("public"), children: "Public" }), _jsx("button", { type: "button", className: "btn btn-ghost", disabled: bulkBusy, onClick: () => runBulk("private"), children: "Private" }), _jsx("button", { type: "button", className: "btn btn-danger", disabled: bulkBusy, onClick: () => runBulk("delete"), children: "Delete" }), _jsx("button", { type: "button", className: "btn btn-ghost", disabled: bulkBusy, onClick: () => setBulkOpen(false), children: "Cancel" })] })] }), _jsx(SetDefaultModelModal, { kind: defaultKind, models: allModels, currentId: defaultKind ? systemDefaults[defaultKind.key] ?? null : null, busy: defaultBusy, onClose: () => setDefaultKind(null), onPick: (id) => void pickSystemDefault(id) }), _jsx(ModelAccessModal, { open: accessModelId != null, modelId: accessModelId, modelLabel: accessModel?.external_id || "", onClose: () => setAccessModelId(null), onSaved: async () => setAllModels(await loadModels()) }), _jsx(ModelCodeInterpreterModal, { open: compatModelId != null, modelId: compatModelId, modelLabel: compatModel?.external_id || "", onClose: () => setCompatModelId(null), onSaved: async () => setAllModels(await loadModels()) })] }));
 }

@@ -60,7 +60,8 @@ check_not_insecure() {
 is_loopback_url() {
   local url="$1"
   case "$url" in
-    http://127.0.0.1:* | http://localhost:* | https://127.0.0.1:* | https://localhost:*)
+    http://127.0.0.1 | http://localhost | https://127.0.0.1 | https://localhost | \
+      http://127.0.0.1:* | http://localhost:* | https://127.0.0.1:* | https://localhost:*)
       return 0
       ;;
   esac
@@ -108,17 +109,30 @@ main() {
     die "OPENAPI_ADMIN_ONLY must be true in production."
   fi
 
+  # PRODUCTION_GUARD_MODE=warning is the application's own supported escape
+  # hatch (backend/app/main.py). Honour it here too, or this preflight blocks
+  # deployments the app itself would start.
+  local guard_mode
+  guard_mode="$(env_value PRODUCTION_GUARD_MODE || echo hard-fail)"
+  guard_fail() {
+    if [ "$guard_mode" = "warning" ]; then
+      warn "$* (allowed by PRODUCTION_GUARD_MODE=warning)"
+      return 0
+    fi
+    die "$*"
+  }
+
   local frontend api_public
   frontend="$(require_env FRONTEND_URL)"
   api_public="$(require_env API_PUBLIC_URL)"
   if ! is_loopback_url "$frontend" && [[ "$frontend" != https://* ]]; then
-    die "FRONTEND_URL must be HTTPS or loopback HTTP in production."
+    guard_fail "FRONTEND_URL must be HTTPS or loopback HTTP in production."
   fi
   if ! is_loopback_url "$api_public" && [[ "$api_public" != https://* ]]; then
-    die "API_PUBLIC_URL must be HTTPS or loopback HTTP in production."
+    guard_fail "API_PUBLIC_URL must be HTTPS or loopback HTTP in production."
   fi
 
-  if ! is_loopback_url "$frontend" && ! is_loopback_url "$api_public"; then
+  if [[ "$frontend" == https://* ]] && [[ "$api_public" == https://* ]]; then
     local hsts
     hsts="$(env_value ENABLE_HSTS || echo false)"
     if [ "$hsts" != "true" ] && [ "$hsts" != "True" ] && [ "$hsts" != "1" ]; then

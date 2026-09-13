@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import ssl
+import uuid
 from typing import Any
 
 from app.config import get_settings
@@ -30,8 +31,13 @@ _AD_USER_ATTRS = [
     "department",
     "physicalDeliveryOfficeName",
     "manager",
+    # Immutable identity. Everything else above (DN, sAMAccountName, mail)
+    # changes when the object is renamed or moved between OUs.
+    "objectGUID",
+    # RFC 4530 equivalent for non-AD directories (OpenLDAP, 389DS).
+    "entryUUID",
 ]
-_GROUP_ATTRS = ["cn", "description", "member"]
+_GROUP_ATTRS = ["cn", "description", "member", "objectGUID", "entryUUID"]
 
 LDAP_UNAVAILABLE_MESSAGE = (
     "LDAP directory is not available right now. Please try again later or use a local account."
@@ -154,6 +160,55 @@ def _attr_str(entry: Any, name: str) -> str | None:
         raw = values[0] if len(values) == 1 else values[0]
     text = str(raw).strip()
     return text if text and text != "[]" else None
+
+
+def _normalize_guid(value: Any) -> str | None:
+    """Canonical lowercase UUID string, or None when the value is not a GUID.
+
+    ldap3 usually hands back ``{xxxxxxxx-....}``; WinLdap and raw reads hand
+    back the 16 packed bytes, which Active Directory lays out mixed-endian
+    (``bytes_le``) for display.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        raw = bytes(value)
+        if len(raw) != 16:
+            return None
+        try:
+            return str(uuid.UUID(bytes_le=raw))
+        except Exception:
+            return None
+    text = str(value).strip().strip("{}").strip()
+    if not text:
+        return None
+    try:
+        return str(uuid.UUID(text))
+    except Exception:
+        return None
+
+
+def _stable_entry_id(entry: Any) -> str | None:
+    """Immutable directory identity for an entry: objectGUID, else entryUUID.
+
+    Returns None when the directory exposes neither, in which case callers
+    fall back to the DN and keep the pre-GUID behaviour.
+    """
+    for attr in ("objectGUID", "entryUUID"):
+        raw = _attr_raw(entry, attr)
+        if raw is None:
+            continue
+        if hasattr(raw, "values"):
+            candidates: list[Any] = list(raw.values or [])
+        elif isinstance(raw, (list, tuple)):
+            candidates = list(raw)
+        else:
+            candidates = [raw]
+        for candidate in candidates:
+            guid = _normalize_guid(candidate)
+            if guid:
+                return guid
+    return None
 
 
 def _attr_values(entry: Any, name: str) -> list[str]:
@@ -556,6 +611,8 @@ def _resolve_username(entry: Any) -> str | None:
 def _entry_to_profile(entry: Any, fallback_username: str) -> dict[str, Any]:
     username = _resolve_username(entry) or fallback_username
     email = _attr_str(entry, "mail") or _attr_str(entry, "userPrincipalName")
+    dn = getattr(entry, "entry_dn", None) or None
+    stable_id = _stable_entry_id(entry)
     return {
         "username": username,
         "email": email,
@@ -565,7 +622,12 @@ def _entry_to_profile(entry: Any, fallback_username: str) -> dict[str, Any]:
         "department": _attr_str(entry, "department"),
         "office": _attr_str(entry, "physicalDeliveryOfficeName"),
         "reporting_to": _attr_str(entry, "manager"),
-        "external_id": entry.entry_dn,
+        # Identity is the GUID when the directory has one; the DN is kept as a
+        # separate field because group membership (``member``) is DN-valued and
+        # because it still matches rows stored before the GUID migration.
+        "external_id": stable_id or dn,
+        "dn": dn,
+        "identity_source": "guid" if stable_id else "dn",
     }
 
 
@@ -639,11 +701,19 @@ def authenticate_ldap_sync(username: str, password: str, config: dict | None = N
         return profile
 
     conn.unbind()
+    # The directory search found nothing (restricted read, or a bind identity
+    # outside the search base). ``login_bind`` is a bind string such as
+    # ``CORP\jdoe`` -- NOT a directory identity -- so it must never be written
+    # to ``external_id``: doing so overwrites the real GUID/DN and makes the
+    # next sync treat the user as unknown (and, with prune on, delete them).
+    del login_bind
     return {
         "username": sam,
         "email": upn if "@" in upn else None,
         "display_name": sam,
-        "external_id": login_bind,
+        "external_id": None,
+        "dn": None,
+        "identity_source": "none",
     }
 
 
@@ -713,10 +783,13 @@ def fetch_ldap_groups(config: dict) -> list[dict[str, Any]]:
                 continue
             seen_dn.add(dn)
             name = _attr_str(entry, "cn") or dn
+            stable_id = _stable_entry_id(entry)
             groups.append(
                 {
                     "name": name,
-                    "external_id": dn,
+                    "external_id": stable_id or dn,
+                    "dn": dn,
+                    "identity_source": "guid" if stable_id else "dn",
                     "description": _attr_str(entry, "description"),
                     "members": _attr_values(entry, "member"),
                 }

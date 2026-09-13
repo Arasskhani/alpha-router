@@ -65,13 +65,31 @@ from app.services.model_tool_compatibility_service import (
     is_code_interpreter_candidate,
     set_manual_override,
 )
-from app.services.global_default_chat_model import (
-    GlobalDefaultModelError,
-    clear_global_default_if_ids,
-    drop_unusable_global_default,
-    get_global_default_model_id,
-    set_global_default_model,
+from app.services.global_default_chat_model import get_global_default_model_id
+from app.services.system_default_models import (
+    DEFAULT_MODEL_KIND_KEYS,
+    DEFAULT_MODEL_KINDS,
+    SystemDefaultModelError,
+    clear_default_model,
+    clear_defaults_if_ids,
+    drop_unusable_defaults,
+    get_all_default_model_ids,
+    set_default_model,
 )
+
+
+async def clear_global_default_if_ids(db: AsyncSession, model_ids) -> None:
+    """Clear every system default that points at one of these catalog rows.
+
+    Kept under the original name so all seven call sites (model delete, disable,
+    make-private, connection delete…) cover every kind of default automatically.
+    """
+    await clear_defaults_if_ids(db, model_ids)
+
+
+async def drop_unusable_global_default(db: AsyncSession) -> None:
+    """Drop any system default whose model is gone or no longer eligible."""
+    await drop_unusable_defaults(db)
 from app.services.model_sync import (
     disable_models_for_connection,
     enable_models_for_connection,
@@ -356,7 +374,8 @@ async def list_admin_models(
     rows = (await db.execute(stmt)).scalars().all()
     counts = await list_assignment_counts(db, [m.id for m in rows])
     compatibility = await compatibility_map_for_models(db, rows)
-    default_id = await get_global_default_model_id(db)
+    system_defaults = await get_all_default_model_ids(db)
+    default_id = system_defaults.get("chat")
     return [
         {
             "id": m.id,
@@ -364,6 +383,11 @@ async def list_admin_models(
             "display_name": m.display_name,
             "enabled": m.is_enabled,
             "is_system_default": default_id is not None and int(m.id) == int(default_id),
+            "default_kinds": [
+                key
+                for key, value in system_defaults.items()
+                if value is not None and int(value) == int(m.id)
+            ],
             "admin_disabled": bool(m.admin_disabled),
             "access_type": (m.access_type or "public").strip().lower(),
             "assignment_counts": counts.get(m.id, {"users": 0, "groups": 0}),
@@ -424,17 +448,63 @@ async def get_models_system_default(
 
 
 @router.put("/models/default")
-async def put_models_system_default(
+async def put_models_chat_default(
     body: GlobalDefaultModelIn,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_models_write),
 ):
+    """Legacy chat-only alias; ``/models/defaults/chat`` is the general form."""
     try:
-        model = await set_global_default_model(db, body.model_id)
-    except GlobalDefaultModelError as exc:
+        model = await set_default_model(db, "chat", body.model_id)
+    except SystemDefaultModelError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await db.commit()
     return {"ok": True, "model_id": int(model.id)}
+
+
+class SystemDefaultModelIn(BaseModel):
+    """``model_id: null`` clears the default and restores the previous fallback."""
+
+    model_id: int | None = None
+
+
+@router.get("/models/defaults")
+async def get_models_system_defaults(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_models),
+):
+    """Current default per capability, plus what the picker should offer."""
+    return {
+        "defaults": await get_all_default_model_ids(db),
+        "kinds": [
+            {
+                "key": entry.key,
+                "label": entry.label,
+                "catalog_kind": entry.catalog_kind,
+                "requirement": entry.requirement,
+            }
+            for entry in (DEFAULT_MODEL_KINDS[k] for k in DEFAULT_MODEL_KIND_KEYS)
+        ],
+    }
+
+
+@router.put("/models/defaults/{kind}")
+async def put_models_default_for_kind(
+    kind: str,
+    body: SystemDefaultModelIn,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_models_write),
+):
+    try:
+        if body.model_id is None:
+            await clear_default_model(db, kind)
+            await db.commit()
+            return {"ok": True, "kind": kind, "model_id": None}
+        model = await set_default_model(db, kind, body.model_id)
+    except SystemDefaultModelError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await db.commit()
+    return {"ok": True, "kind": kind, "model_id": int(model.id)}
 
 
 class ModelCompatibilityOverrideIn(BaseModel):

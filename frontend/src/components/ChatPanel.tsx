@@ -154,7 +154,13 @@ import {
 } from "../lib/requestLogCostDetails";
 import VirtualSidebarList from "./chat/ChatSidebarVirtual";
 import PrivateModeLockIcon from "./chat/PrivateModeLockIcon";
-import { BrowserSpeechCapture, pickVoiceRecordingMime } from "../lib/voiceInput";
+import {
+  BrowserSpeechCapture,
+  normalizeVoiceLang,
+  pickVoiceRecordingMime,
+  type VoiceLang,
+} from "../lib/voiceInput";
+import { wavFromRecording } from "../lib/audioWav";
 import {
   ATTACHMENT_ACCEPT,
   AUDIO_MESSAGE_PREFIX,
@@ -696,7 +702,7 @@ export default function ChatPanel({
   const composerPrefSaveTimerRef = useRef<number | null>(null);
   const [translateToEngBusy, setTranslateToEngBusy] = useState(false);
   const [defaultModel, setDefaultModel] = useState("");
-  const [voiceRecordingLang, setVoiceRecordingLang] = useState("en");
+  const [voiceRecordingLang, setVoiceRecordingLang] = useState<VoiceLang>("auto");
   const [persianFont, setPersianFont] = useState("");
   /** False until user prefs hydrate (or fail) so we never stamp a catalog fallback before the saved default arrives. */
   const [userPrefsReady, setUserPrefsReady] = useState(false);
@@ -788,6 +794,16 @@ export default function ChatPanel({
   const voiceChunksRef = useRef<Blob[]>([]);
   const voiceStreamRef = useRef<MediaStream | null>(null);
   const browserSpeechRef = useRef<BrowserSpeechCapture | null>(null);
+  /** Composer text when recording started; the live transcript is appended to it. */
+  const voiceBaseTextRef = useRef("");
+  /** Exact composer value the live preview last wrote, used to replace it cleanly. */
+  const voiceLiveTextRef = useRef("");
+  /** Set when the user edits the composer mid-recording, which stops live writes. */
+  const voiceUserEditedRef = useRef(false);
+  /** Bumped per recording so a late server pass cannot overwrite a newer one. */
+  const voiceRunIdRef = useRef(0);
+  /** Wall-clock start of the current recording, used to bill actual audio length. */
+  const voiceStartedAtRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachBtnRef = useRef<HTMLButtonElement>(null);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
@@ -796,6 +812,8 @@ export default function ChatPanel({
   const screenshotFrameRef = useRef<ScreenshotFrame | null>(null);
   const [voiceRecording, setVoiceRecording] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
+  /** Server passes still running after stop, while usable preview text is already shown. */
+  const [voicePolishing, setVoicePolishing] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<ProcessedAttachment[]>([]);
   const [maxAttachments, setMaxAttachments] = useState(DEFAULT_MAX_ATTACHMENTS);
   const [maxUploadFileMb, setMaxUploadFileMb] = useState(25);
@@ -1835,7 +1853,7 @@ export default function ChatPanel({
         if (cancelled) return;
         serverDefaultModelRef.current = prefs.default_model;
         setDefaultModel(prefs.default_model || "");
-        setVoiceRecordingLang(prefs.voice_recording_language === "fa" ? "fa" : "en");
+        setVoiceRecordingLang(normalizeVoiceLang(prefs.voice_recording_language));
         setPersianFont(normalizePersianFontId(prefs.persian_font));
         replyNotifyPrefsRef.current = {
           away: !!prefs.reply_notify_away,
@@ -1847,7 +1865,7 @@ export default function ChatPanel({
         if (cancelled) return;
         serverDefaultModelRef.current = null;
         setDefaultModel("");
-        setVoiceRecordingLang("en");
+        setVoiceRecordingLang("auto");
         setPersianFont("");
         replyNotifyPrefsRef.current = { away: false, sound: true };
         setUserPrefsReady(true);
@@ -1861,7 +1879,7 @@ export default function ChatPanel({
     function onPrefsSaved() {
       void hydrateUserPrefsFromServer()
         .then((prefs) => {
-          setVoiceRecordingLang(prefs.voice_recording_language === "fa" ? "fa" : "en");
+          setVoiceRecordingLang(normalizeVoiceLang(prefs.voice_recording_language));
           setPersianFont(normalizePersianFontId(prefs.persian_font));
           replyNotifyPrefsRef.current = {
             away: !!prefs.reply_notify_away,
@@ -5786,80 +5804,80 @@ export default function ChatPanel({
     voiceStreamRef.current = null;
   }
 
-  async function transcribeVoiceBlob(
-    blob: Blob,
-    mimeType: string,
-    extension: string,
-    browserFallback: string,
-  ): Promise<string> {
-    const sid = activeIdRef.current || ensureActiveSession();
-    if (sid && sessionPrivateMode(sid)) {
-      throw new Error("No speech detected in Private Mode. Try again or type your message.");
-    }
+  function resetVoicePreviewState() {
+    voiceBaseTextRef.current = "";
+    voiceLiveTextRef.current = "";
+    voiceUserEditedRef.current = false;
+  }
 
-    // Layer 2: prefer the server (Whisper) over the browser fallback.
-    let baseTranscript = "";
+  /** Join the pre-recording composer text with a transcript, preserving spacing. */
+  function mergeVoiceText(base: string, addition: string): string {
+    const head = base.trim();
+    const tail = addition.trim();
+    if (!head) return tail;
+    if (!tail) return head;
+    return `${head} ${tail}`;
+  }
+
+  /**
+   * Write an in-progress transcript into the composer while recording.
+   *
+   * This is a preview only — it is replaced by the server transcript on stop.
+   * The draft is deliberately not persisted on every tick; `finishVoiceRecording`
+   * persists once when the final text lands.
+   */
+  function applyLiveVoiceText(partial: string) {
+    if (voiceUserEditedRef.current) return;
+    const merged = mergeVoiceText(voiceBaseTextRef.current, partial);
+    if (!merged) return;
+    voiceLiveTextRef.current = merged;
+    setInput(merged);
+    setInputDirection(inputDirectionForText(merged, merged.length));
+  }
+
+  /** Upload the recording and return the server (Whisper) transcript. */
+  async function postVoiceForTranscript(
+    blob: Blob,
+    extension: string,
+    sid: string | null,
+    durationSeconds: number,
+  ): Promise<string> {
     const fd = new FormData();
     fd.append("file", blob, `voice-${Date.now()}.${extension}`);
     if (sid) fd.append("chat_session_id", sid);
     fd.append("language", voiceRecordingLang);
-    try {
-      const res = await authFetch("/api/chat/voice", {
-        method: "POST",
-        body: fd,
-      });
-      if (!res.ok) throw new Error(parseApiError(await res.text(), res.status).message);
-      const data = (await res.json()) as { transcript?: string };
-      baseTranscript = (data.transcript || "").trim();
-    } catch (err) {
-      if (browserFallback.trim()) {
-        baseTranscript = browserFallback.trim();
-      } else {
-        throw err;
-      }
-    }
-    if (!baseTranscript && browserFallback.trim()) {
-      baseTranscript = browserFallback.trim();
-    }
-    if (!baseTranscript) {
-      throw new Error("No speech detected. Try again or type your message.");
-    }
-
-    // Layer 4: LLM refinement using conversation context (best-effort).
-    try {
-      const context = buildVoiceRefineContext();
-      const refined = await refineVoiceTranscript(baseTranscript, model || "", context);
-      if (refined && refined.trim()) return refined.trim();
-    } catch {
-      /* fall back to the base transcript */
-    }
-    return baseTranscript;
-  }
-
-  function buildVoiceRefineContext(): Array<{ role: string; content: string }> {
-    const recent = messages.slice(-6);
-    const out: Array<{ role: string; content: string }> = [];
-    for (const m of recent) {
-      const content = (m.content || "").trim();
-      if (!content) continue;
-      out.push({
-        role: m.role === "assistant" ? "assistant" : "user",
-        content: content.length > 300 ? content.slice(0, 300) + "…" : content,
-      });
-    }
-    return out;
-  }
-
-  async function refineVoiceTranscript(
-    transcript: string,
-    modelRef: string,
-    context: Array<{ role: string; content: string }>,
-  ): Promise<string> {
-    const data = await api<{ transcript?: string }>("/api/chat/voice/refine", {
-      method: "POST",
-      body: JSON.stringify({ transcript, model: modelRef || null, context }),
-    });
+    // Billing is per second of audio; the server floors this by file size.
+    if (durationSeconds > 0) fd.append("duration_seconds", durationSeconds.toFixed(2));
+    const res = await authFetch("/api/chat/voice", { method: "POST", body: fd });
+    if (!res.ok) throw new Error(parseApiError(await res.text(), res.status).message);
+    const data = (await res.json()) as { transcript?: string };
     return (data.transcript || "").trim();
+  }
+
+  /**
+   * Swap settled server text in for the provisional preview.
+   *
+   * Dropped when a newer recording has started, or when the composer no longer
+   * begins with the text we wrote — the user edited or sent it, and their
+   * version wins over a late arrival.
+   */
+  function applySettledVoiceText(next: string, runId: number) {
+    const text = (next || "").trim();
+    if (!text || runId !== voiceRunIdRef.current) return;
+    const live = voiceLiveTextRef.current;
+    const current = composerInputRef.current;
+    if (live && !current.startsWith(live)) return;
+    const settled = mergeVoiceText(voiceBaseTextRef.current, text);
+    const merged = live ? settled + current.slice(live.length) : mergeVoiceText(current, text);
+    if (!merged) return;
+    // Record the prefix we just wrote so the next stage can replace this one.
+    voiceLiveTextRef.current = settled;
+    const dir = inputDirectionForText(merged, merged.length);
+    // Keep the mirror in step now; the next stage may land before React commits.
+    composerInputRef.current = merged;
+    setInput(merged);
+    setInputDirection(dir);
+    persistActiveComposerDraft({ text: merged, direction: dir });
   }
 
   async function finishVoiceRecording(
@@ -5867,28 +5885,81 @@ export default function ChatPanel({
     mimeType: string,
     extension: string,
     browserFallback: string,
+    runId: number,
+    durationSeconds: number,
   ) {
     if (!model) {
       setChatError("Choose a model below.");
       return;
     }
-    setVoiceBusy(true);
+    // With a live preview the user already has usable text, so the two server
+    // round-trips run in the background and the mic stays available. Only block
+    // the composer when there is nothing in the box to work with.
+    const hasPreview = !!voiceLiveTextRef.current;
+    if (hasPreview) setVoicePolishing(true);
+    else setVoiceBusy(true);
     setChatError("");
     try {
-      const transcript = await transcribeVoiceBlob(blob, mimeType, extension, browserFallback);
-      const next = transcript.trim();
-      if (!next) return;
-      const base = composerInputRef.current.trim();
-      const merged = base ? `${base} ${next}` : next;
-      const dir = inputDirectionForText(merged, merged.length);
-      setInput(merged);
-      setInputDirection(dir);
-      persistActiveComposerDraft({ text: merged, direction: dir });
-      textareaRef.current?.focus();
+      const sid = activeIdRef.current || ensureActiveSession();
+      if (sid && sessionPrivateMode(sid)) {
+        // Private Mode never uploads audio. With a preview there is still text
+        // in the box, so keep it rather than reporting a failure.
+        if (hasPreview) return;
+        throw new Error("No speech detected in Private Mode. Try again or type your message.");
+      }
+
+      // Several transcription models accept only a RIFF/WAVE container, which
+      // MediaRecorder cannot produce. Converting in the browser makes the
+      // recording acceptable to every model, and yields an exact duration.
+      let uploadBlob = blob;
+      let uploadExtension = extension;
+      let uploadDuration = durationSeconds;
+      try {
+        const wav = await wavFromRecording(blob);
+        uploadBlob = wav.blob;
+        uploadExtension = "wav";
+        uploadDuration = wav.durationSeconds;
+      } catch {
+        // Keep the original recording: models that accept webm still work.
+      }
+
+      let baseTranscript = "";
+      try {
+        baseTranscript = await postVoiceForTranscript(
+          uploadBlob,
+          uploadExtension,
+          sid,
+          uploadDuration,
+        );
+      } catch (err) {
+        if (!browserFallback.trim()) throw err;
+        // Falling back used to be silent, so a broken server path looked like a
+        // bad model. Say so, and include the server's own reason — without it
+        // the only way to learn why was to read container logs.
+        baseTranscript = browserFallback.trim();
+        const reason = err instanceof Error ? err.message.trim() : "";
+        setChatError(
+          reason
+            ? `Server transcription unavailable (${reason}) — used the browser's recognition, which is less accurate.`
+            : "Server transcription unavailable — used the browser's recognition, which is less accurate.",
+        );
+      }
+      if (!baseTranscript) baseTranscript = browserFallback.trim();
+      if (!baseTranscript) {
+        if (hasPreview) return;
+        throw new Error("No speech detected. Try again or type your message.");
+      }
+      if (runId !== voiceRunIdRef.current) return;
+      applySettledVoiceText(baseTranscript, runId);
+      if (!hasPreview) textareaRef.current?.focus();
     } catch (err) {
+      // Whatever the live preview recognized stays in the box — the user keeps
+      // their words instead of losing the recording to a failed server pass.
+      if (voiceLiveTextRef.current) persistActiveComposerDraft();
       reportUserFacingApiError(err);
     } finally {
-      setVoiceBusy(false);
+      if (hasPreview) setVoicePolishing(false);
+      else setVoiceBusy(false);
     }
   }
 
@@ -5922,9 +5993,17 @@ export default function ChatPanel({
         : { audioBitsPerSecond: 128000 };
       const recorder = new MediaRecorder(stream, recorderOpts);
       voiceChunksRef.current = [];
+      // Live preview: the browser recognizer streams interim text while the
+      // MediaRecorder keeps capturing audio for the authoritative server pass.
+      voiceBaseTextRef.current = composerInputRef.current;
+      voiceLiveTextRef.current = "";
+      voiceUserEditedRef.current = false;
+      const runId = voiceRunIdRef.current + 1;
+      voiceRunIdRef.current = runId;
+      voiceStartedAtRef.current = Date.now();
       const speech = new BrowserSpeechCapture();
       browserSpeechRef.current = speech;
-      speech.start(voiceRecordingLang);
+      speech.start(voiceRecordingLang, (partial) => applyLiveVoiceText(partial));
 
       recorder.ondataavailable = (ev) => {
         if (ev.data.size > 0) voiceChunksRef.current.push(ev.data);
@@ -5938,15 +6017,20 @@ export default function ChatPanel({
         voiceChunksRef.current = [];
         mediaRecorderRef.current = null;
         if (blob.size < 200 && !browserText) {
+          resetVoicePreviewState();
           setChatError("Recording too short. Hold the mic a little longer.");
           return;
         }
-        void finishVoiceRecording(blob, type, extension, browserText);
+        const durationSeconds = voiceStartedAtRef.current
+          ? (Date.now() - voiceStartedAtRef.current) / 1000
+          : 0;
+        void finishVoiceRecording(blob, type, extension, browserText, runId, durationSeconds);
       };
       recorder.onerror = () => {
         browserSpeechRef.current?.stop();
         browserSpeechRef.current = null;
         stopVoiceStream();
+        resetVoicePreviewState();
         setVoiceRecording(false);
         setChatError("Recording failed. Please try again.");
       };
@@ -6192,6 +6276,8 @@ export default function ChatPanel({
 
   function onComposerInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
     const value = e.target.value;
+    // Typing during a recording wins: stop overwriting the box with live text.
+    if (voiceRecording) voiceUserEditedRef.current = true;
     setInput(value);
     const caret = e.target.selectionStart ?? value.length;
     setInputDirection(inputDirectionForText(value, caret));
@@ -7326,8 +7412,15 @@ export default function ChatPanel({
                     className={voiceRecording ? "alpha-router-stop alpha-router-voice-btn--recording" : "alpha-router-voice-btn"}
                     onClick={() => void toggleVoiceRecording()}
                     disabled={voiceBusy || !model}
+                    aria-busy={voicePolishing}
                     aria-label={voiceRecording ? "Stop recording" : "Record voice message"}
-                    title={voiceRecording ? "Stop and insert text" : "Record voice → text in box"}
+                    title={
+                      voiceRecording
+                        ? "Stop and insert text"
+                        : voicePolishing
+                          ? "Improving the transcript…"
+                          : "Record voice → text in box"
+                    }
                   >
                     {voiceRecording ? (
                       "■"

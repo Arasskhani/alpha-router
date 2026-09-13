@@ -35,6 +35,24 @@ from app.services.username_norm import find_user_by_username_ci, normalize_usern
 
 logger = logging.getLogger(__name__)
 
+# Providers whose rows the sync may claim as LDAP accounts. A SAML or OIDC row
+# must never be flipped: their login path looks the user up by
+# (auth_provider, external_id) and then refuses a username match on a different
+# provider with 409 (see _upsert_directory_user in app/api/auth.py) -- so one
+# sync run would permanently lock that person out of their own SSO.
+LINKABLE_PROVIDERS = frozenset({"local", "ldap"})
+
+
+class ForeignProviderAccount(Exception):
+    """The matched row belongs to another identity provider; left untouched."""
+
+    def __init__(self, user: User, matched_by: str):
+        self.user = user
+        self.matched_by = matched_by
+        super().__init__(
+            f"'{user.username}' belongs to {user.auth_provider}; matched by {matched_by}"
+        )
+
 
 def _clean(value: Any) -> str | None:
     text = (str(value).strip() if value is not None else "")
@@ -168,14 +186,19 @@ async def _sync_one_user(
     existing, matched_by = await _match_directory_user(db, item, claimed_ids or set())
 
     if existing:
-        was_local = (existing.auth_provider or "local") == "local"
+        provider = (existing.auth_provider or "local").strip().lower()
+        if provider not in LINKABLE_PROVIDERS:
+            # Do not restore, do not rewrite the profile, do not touch
+            # external_id -- the row is owned by another provider's login flow.
+            raise ForeignProviderAccount(existing, matched_by)
+        was_local = provider == "local"
         if existing.deleted_at is not None:
             await restore_directory_user(db, existing)
         await _apply_directory_profile(db, existing, item, conflicts)
-        # Unconditional link: a matched row becomes the directory account.
-        # ``hashed_password`` is deliberately left in place -- clearing it would
-        # remove the only way back in if this row is the last administrator and
-        # the directory is unreachable.
+        # Unconditional link for local accounts: a matched row becomes the
+        # directory account. ``hashed_password`` is deliberately left in place
+        # -- clearing it would remove the only way back in if this row is the
+        # last administrator and the directory is unreachable.
         existing.auth_provider = "ldap"
         if matched_by in {"dn", "username", "email"}:
             logger.info(
@@ -274,6 +297,7 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:
     users_new = 0
     users_updated = 0
     users_skipped = 0
+    foreign_provider_skipped = 0
     local_accounts_linked = 0
     groups_new = 0
     groups_updated = 0
@@ -306,6 +330,20 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:
                 user, created, relinked_local = await _sync_one_user(
                     db, item, conflicts, claimed_ids
                 )
+        except ForeignProviderAccount as exc:
+            # Deliberate, not a failure: the directory entry is understood, its
+            # keys are already in synced_user_keys, and the row it collided with
+            # is not an LDAP row -- so pruning stays safe and is NOT suppressed.
+            foreign_provider_skipped += 1
+            conflicts.append(
+                {
+                    "username": username,
+                    "reason": "foreign_provider",
+                    "detail": str(exc)[:300],
+                }
+            )
+            logger.warning("LDAP sync: not linking '%s': %s", username, exc)
+            continue
         except IntegrityError as exc:
             users_skipped += 1
             conflicts.append(
@@ -467,6 +505,7 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:
         "users_skipped": users_skipped,
         "groups_skipped": groups_skipped,
         "local_accounts_linked": local_accounts_linked,
+        "foreign_provider_skipped": foreign_provider_skipped,
         "prune_skipped": prune_skipped,
         "conflicts": conflicts,
     }

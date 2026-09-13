@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import ssl
 import uuid
 from typing import Any
@@ -31,13 +32,92 @@ _AD_USER_ATTRS = [
     "department",
     "physicalDeliveryOfficeName",
     "manager",
-    # Immutable identity. Everything else above (DN, sAMAccountName, mail)
-    # changes when the object is renamed or moved between OUs.
-    "objectGUID",
-    # RFC 4530 equivalent for non-AD directories (OpenLDAP, 389DS).
-    "entryUUID",
 ]
-_GROUP_ATTRS = ["cn", "description", "member", "objectGUID", "entryUUID"]
+_GROUP_ATTRS = ["cn", "description", "member"]
+
+# Immutable identity, in preference order. Everything in the lists above (DN,
+# sAMAccountName, mail) changes when an object is renamed or moved between OUs.
+#
+# These are NOT part of the fixed lists because no directory defines both:
+# Active Directory has objectGUID and no entryUUID; RFC 4530 directories
+# (OpenLDAP, 389DS) have entryUUID and no objectGUID. Connections are opened
+# with get_info=ALL, so ldap3 reads the server schema and -- with check_names
+# on by default -- validates every requested attribute name against it and
+# raises "invalid attribute type <name>" BEFORE the search leaves the client.
+# Asking for the wrong one therefore breaks user sync, group sync AND login on
+# that directory. The list is narrowed per connection by identity_attrs_for().
+IDENTITY_ATTRS: tuple[str, ...] = ("objectGUID", "entryUUID")
+
+LOGGER = logging.getLogger("app.services.ldap_auth")
+
+
+def _schema_attribute_names(conn: Any) -> set[str] | None:
+    """Lowercased attribute names this server's schema defines, else None.
+
+    None means "unknown", which is different from "empty": without a schema
+    ldap3 performs no name validation and directories ignore attributes they do
+    not recognise, so callers may then ask for everything.
+    """
+    schema = getattr(getattr(conn, "server", None), "schema", None)
+    if schema is None:
+        return None
+    try:
+        types = schema.attribute_types
+    except Exception:
+        return None
+    if not types:
+        return None
+    try:
+        names = {str(name).lower() for name in types}
+    except Exception:
+        return None
+    return names or None
+
+
+def identity_attrs_for(conn: Any) -> list[str]:
+    """Identity attributes that are safe to request on this connection."""
+    known = _schema_attribute_names(conn)
+    if known is None:
+        return list(IDENTITY_ATTRS)
+    return [attr for attr in IDENTITY_ATTRS if attr.lower() in known]
+
+
+def user_attrs_for(conn: Any) -> list[str]:
+    return [*_AD_USER_ATTRS, *identity_attrs_for(conn)]
+
+
+def group_attrs_for(conn: Any) -> list[str]:
+    return [*_GROUP_ATTRS, *identity_attrs_for(conn)]
+
+
+def _is_attribute_type_error(exc: BaseException) -> bool:
+    if type(exc).__name__ == "LDAPAttributeError":
+        return True
+    return "invalid attribute type" in str(exc).lower()
+
+
+def search_with_identity_attrs(conn: Any, base: str, search_filter: str, attributes: list[str], **kwargs: Any):
+    """conn.search that degrades instead of failing on an unusable identity attr.
+
+    identity_attrs_for() already narrows the list to the advertised schema; this
+    is the backstop for a directory whose advertised schema does not match what
+    it actually accepts. Losing the GUID only costs DN-based matching, which is
+    what the sync did before -- far better than failing sync and login outright.
+    """
+    try:
+        return conn.search(base, search_filter, attributes=attributes, **kwargs)
+    except Exception as exc:
+        if not _is_attribute_type_error(exc):
+            raise
+        reduced = [attr for attr in attributes if attr not in IDENTITY_ATTRS]
+        if reduced == list(attributes):
+            raise
+        LOGGER.warning(
+            "Directory rejected identity attribute(s) %s; retrying without them (%s)",
+            [attr for attr in attributes if attr in IDENTITY_ATTRS],
+            exc,
+        )
+        return conn.search(base, search_filter, attributes=reduced, **kwargs)
 
 LDAP_UNAVAILABLE_MESSAGE = (
     "LDAP directory is not available right now. Please try again later or use a local account."
@@ -694,7 +774,7 @@ def authenticate_ldap_sync(username: str, password: str, config: dict | None = N
         f"(&(objectCategory=person)(objectClass=user)"
         f"(|(sAMAccountName={esc_sam})(userPrincipalName={esc_upn})))"
     )
-    conn.search(base, filt, attributes=_AD_USER_ATTRS, size_limit=1)
+    search_with_identity_attrs(conn, base, filt, user_attrs_for(conn), size_limit=1)
     if conn.entries:
         profile = _entry_to_profile(conn.entries[0], sam)
         conn.unbind()
@@ -749,10 +829,11 @@ def fetch_ldap_users(config: dict) -> list[dict[str, Any]]:
         raise ValueError("No search base: set sync OUs or configure domain base DN")
     filt = (cfg.get("user_list_filter") or "").strip()
     conn = _open_connection(cfg)
+    attributes = user_attrs_for(conn)
     seen_dn: set[str] = set()
     users: list[dict[str, Any]] = []
     for base in bases:
-        conn.search(base, filt, attributes=_AD_USER_ATTRS)
+        search_with_identity_attrs(conn, base, filt, attributes)
         for entry in conn.entries:
             dn = entry.entry_dn
             if dn in seen_dn:
@@ -773,10 +854,11 @@ def fetch_ldap_groups(config: dict) -> list[dict[str, Any]]:
         raise ValueError("No search base: set sync OUs or configure domain base DN")
     filt = (cfg.get("group_filter") or "").strip()
     conn = _open_connection(cfg)
+    attributes = group_attrs_for(conn)
     seen_dn: set[str] = set()
     groups = []
     for base in bases:
-        conn.search(base, filt, attributes=_GROUP_ATTRS)
+        search_with_identity_attrs(conn, base, filt, attributes)
         for entry in conn.entries:
             dn = entry.entry_dn
             if dn in seen_dn:

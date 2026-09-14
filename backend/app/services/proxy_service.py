@@ -1882,6 +1882,14 @@ async def stream_chat(
                 active_completion_tokens = 0
                 active_cached_tokens = 0
                 active_last_chunk = None
+                # Release the request session's connection before waiting on
+                # the provider. Only persisted chats commit via
+                # persister.prepare(); gateway, API-key and Private Mode turns
+                # otherwise keep the transaction opened by the session lookups
+                # above -- and with it one pooled connection and one PgBouncer
+                # server slot -- for the whole stream (minutes). ~32 concurrent
+                # gateway streams per worker then exhaust the pool.
+                await _end_request_transaction(db)
                 response = await acompletion(**completion_kwargs)
                 active_response = response
                 iteration_content = ""
@@ -2737,6 +2745,20 @@ async def stream_chat(
               yield f"data: {meta_payload}\n\n".encode()
           if not was_cancelled and not client_disconnected:
               yield b"data: [DONE]\n\n"
+
+
+async def _end_request_transaction(db: AsyncSession) -> None:
+    """Commit (or roll back) whatever the request session has open so its
+    connection goes back to the pool while we await the provider."""
+    try:
+        if db.in_transaction():
+            await db.commit()
+    except Exception:
+        logger.warning("Could not commit request session before provider call; rolling back", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            logger.debug("rollback after failed pre-provider commit failed", exc_info=True)
 
 
 async def _close_upstream_stream(response) -> None:

@@ -49,7 +49,9 @@ backend-typecheck:
   image: python:3.12-slim
   <<: *backend-rules
   script:
-    - python -m pip install --no-cache-dir -r backend/requirements.txt -r backend/requirements-dev.txt
+    # Two installs: the lock is hash-verified, the dev tools are not (pip refuses to mix).
+    - python -m pip install --no-cache-dir --require-hashes -r backend/requirements.lock
+    - python -m pip install --no-cache-dir -r backend/requirements-dev.txt
     - bash scripts/mypy-check.sh
 
 backend-tests:
@@ -57,7 +59,9 @@ backend-tests:
   image: python:3.12-slim
   <<: *backend-rules
   script:
-    - python -m pip install --no-cache-dir -r backend/requirements.txt -r backend/requirements-dev.txt
+    # Two installs: the lock is hash-verified, the dev tools are not (pip refuses to mix).
+    - python -m pip install --no-cache-dir --require-hashes -r backend/requirements.lock
+    - python -m pip install --no-cache-dir -r backend/requirements-dev.txt
     - python -m pip check
     - cd backend && python -m pytest tests -q
 
@@ -79,7 +83,9 @@ backend-postgres-canary:
     DATABASE_URL: postgresql+asyncpg://alpha_router:ci-canary@postgres:5432/alpha_router_test
     RUN_POSTGRES_RESERVATION_CANARY: "1"
   script:
-    - python -m pip install --no-cache-dir -r backend/requirements.txt -r backend/requirements-dev.txt
+    # Two installs: the lock is hash-verified, the dev tools are not (pip refuses to mix).
+    - python -m pip install --no-cache-dir --require-hashes -r backend/requirements.lock
+    - python -m pip install --no-cache-dir -r backend/requirements-dev.txt
     - cd backend
     - python -m app.migrate
     - PYTHONPATH=. python -m pytest tests/test_budget_reservations_postgres.py tests/test_budget_reconcile_race_postgres.py tests/test_scheduler_leader.py tests/test_readiness.py -q -rs
@@ -177,10 +183,11 @@ backend-audit:
     - *always-on-default
     - changes:
         - backend/requirements.txt
+        - backend/requirements.lock
         - .gitlab-ci.yml
   script:
     - python -m pip install --no-cache-dir pip-audit
-    - pip-audit -r backend/requirements.txt -f json -o pip-audit.json || audit_status=$?
+    - pip-audit --no-deps -r backend/requirements.lock -f json -o pip-audit.json || audit_status=$?
     - test -f pip-audit.json
     - cat pip-audit.json
     - |

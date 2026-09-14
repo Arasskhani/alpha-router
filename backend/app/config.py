@@ -311,6 +311,10 @@ class Settings(BaseSettings):
     ldap_connect_timeout_seconds: int = 4
     ldap_receive_timeout_seconds: int = 5
     ldap_login_timeout_seconds: int = 10
+    # Directory sync may take over a *local* row that still has a password only
+    # when this is true. Off by default: linking such a row lets the directory
+    # identity inherit its roles and used to switch off its TOTP.
+    ldap_link_local_password_accounts: bool = False  # env: LDAP_LINK_LOCAL_PASSWORD_ACCOUNTS
     # SAML 2.0 SP (env fallback when no DB row)
     saml_enabled: bool = False
     saml_idp_metadata_url: str = ""

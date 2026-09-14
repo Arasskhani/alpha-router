@@ -27,8 +27,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import get_settings
 from app.models.budget import PlanAssignment
-from app.models.user import User, UserGroup, user_group_members
+from app.models.user import User, UserGroup, UserRoleAssignment, user_group_members
+from app.services.rbac import user_has_super_admin_access
 from app.services.ldap_auth import fetch_ldap_groups, fetch_ldap_users
 from app.services.user_lifecycle_service import prune_sync_user, restore_directory_user
 from app.services.username_norm import find_user_by_username_ci, normalize_username, username_taken_ci
@@ -52,6 +54,55 @@ class ForeignProviderAccount(Exception):
         super().__init__(
             f"'{user.username}' belongs to {user.auth_provider}; matched by {matched_by}"
         )
+
+
+class LocalPasswordAccount(Exception):
+    """A password-bearing local row matched a directory entry; not linked.
+
+    Flipping such a row to ``ldap`` would (a) let the directory identity log in
+    with the row's roles and (b) switch off its TOTP, which the login path only
+    enforced for ``local`` rows. The row is left exactly as it is and the entry
+    is reported in ``conflicts``; an administrator resolves it deliberately
+    (rename one side, or opt in via LDAP_LINK_LOCAL_PASSWORD_ACCOUNTS).
+    """
+
+    def __init__(self, user: User, matched_by: str, reason: str):
+        self.user = user
+        self.matched_by = matched_by
+        self.reason = reason
+        super().__init__(
+            f"'{user.username}' is a {reason}; matched by {matched_by}; not linked"
+        )
+
+
+async def _is_full_administrator(db: AsyncSession, user: User) -> bool:
+    if user.id is None:
+        return False
+    slugs = (
+        await db.execute(
+            select(UserRoleAssignment.role_slug).where(UserRoleAssignment.user_id == user.id)
+        )
+    ).scalars().all()
+    return user_has_super_admin_access([str(s) for s in slugs])
+
+
+async def _local_row_may_link(db: AsyncSession, user: User, matched_by: str) -> None:
+    """Raise LocalPasswordAccount when a local row must not become an LDAP row.
+
+    Rules (evaluated only for ``auth_provider == "local"``):
+    - a row matched by its stable directory identity (GUID or historical DN)
+      was created by the directory path and may always be re-linked;
+    - a Full Administrator row is never linked, whatever the flag says;
+    - a row that still has a local password is linked only when
+      ``LDAP_LINK_LOCAL_PASSWORD_ACCOUNTS=true`` (default false);
+    - a passwordless local row (provisioned ahead of the directory) links.
+    """
+    if matched_by in {"external_id", "dn"}:
+        return
+    if await _is_full_administrator(db, user):
+        raise LocalPasswordAccount(user, matched_by, "Full Administrator account")
+    if user.hashed_password and not get_settings().ldap_link_local_password_accounts:
+        raise LocalPasswordAccount(user, matched_by, "local account with a password")
 
 
 def _clean(value: Any) -> str | None:
@@ -192,13 +243,18 @@ async def _sync_one_user(
             # external_id -- the row is owned by another provider's login flow.
             raise ForeignProviderAccount(existing, matched_by)
         was_local = provider == "local"
+        if was_local:
+            # Decide before touching anything: a refused row must come out of
+            # the sync byte-for-byte unchanged (no restore, no profile rewrite,
+            # no external_id backfill).
+            await _local_row_may_link(db, existing, matched_by)
         if existing.deleted_at is not None:
             await restore_directory_user(db, existing)
         await _apply_directory_profile(db, existing, item, conflicts)
-        # Unconditional link for local accounts: a matched row becomes the
-        # directory account. ``hashed_password`` is deliberately left in place
-        # -- clearing it would remove the only way back in if this row is the
-        # last administrator and the directory is unreachable.
+        # A local row that passed _local_row_may_link becomes the directory
+        # account. ``hashed_password`` is deliberately left in place -- clearing
+        # it would remove the only way back in if this row is the last
+        # administrator and the directory is unreachable.
         existing.auth_provider = "ldap"
         if matched_by in {"dn", "username", "email"}:
             logger.info(
@@ -298,6 +354,7 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:
     users_updated = 0
     users_skipped = 0
     foreign_provider_skipped = 0
+    local_password_skipped = 0
     local_accounts_linked = 0
     groups_new = 0
     groups_updated = 0
@@ -339,6 +396,19 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:
                 {
                     "username": username,
                     "reason": "foreign_provider",
+                    "detail": str(exc)[:300],
+                }
+            )
+            logger.warning("LDAP sync: not linking '%s': %s", username, exc)
+            continue
+        except LocalPasswordAccount as exc:
+            # Same contract as ForeignProviderAccount: deliberate skip, keys are
+            # already recorded, the untouched row is 'local' so prune ignores it.
+            local_password_skipped += 1
+            conflicts.append(
+                {
+                    "username": username,
+                    "reason": "local_password_account",
                     "detail": str(exc)[:300],
                 }
             )
@@ -506,6 +576,7 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:
         "groups_skipped": groups_skipped,
         "local_accounts_linked": local_accounts_linked,
         "foreign_provider_skipped": foreign_provider_skipped,
+        "local_password_skipped": local_password_skipped,
         "prune_skipped": prune_skipped,
         "conflicts": conflicts,
     }

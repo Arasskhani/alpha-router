@@ -164,22 +164,11 @@ async def login_local(
     if user and user.hashed_password:
         if verify_password(body.password, user.hashed_password):
             await ensure_user_chat_store(db, user.id)
-            if bool(user.totp_enabled) and (user.auth_provider or "local") == "local":
-                from app.services.twofa_pending import generate_pending_token, store_pending
-
-                pending = generate_pending_token()
-                await store_pending(
-                    pending,
-                    {"user_id": user.id, "username": user.username, "purpose": "login_2fa"},
-                )
-                return TokenResponse(
-                    access_token="",
-                    token_type="2fa_pending",
-                    role="",
-                    is_active=bool(user.is_active),
-                    requires_2fa=True,
-                    pending_token=pending,
-                )
+            # TOTP is a property of the account, not of the credential that
+            # authenticated it: an LDAP-linked row with 2FA enrolled must still
+            # be challenged (a directory re-link used to switch 2FA off here).
+            if bool(user.totp_enabled):
+                return await _two_factor_challenge(user)
             return await _token_response(db, user, response, request)
         if (user.auth_provider or "local") == "local":
             raise HTTPException(status_code=401, detail="Invalid username or password")
@@ -198,9 +187,30 @@ async def login_local(
             raise HTTPException(status_code=503, detail=str(exc) or LDAP_UNAVAILABLE_MESSAGE) from exc
         if profile:
             user = await _upsert_directory_user(db, profile, "ldap")
+            if bool(user.totp_enabled):
+                return await _two_factor_challenge(user)
             return await _token_response(db, user, response, request)
 
     raise HTTPException(status_code=401, detail="Invalid username or password")
+
+
+async def _two_factor_challenge(user: User) -> TokenResponse:
+    """Issue the short-lived pending token that /login/2fa exchanges for a session."""
+    from app.services.twofa_pending import generate_pending_token, store_pending
+
+    pending = generate_pending_token()
+    await store_pending(
+        pending,
+        {"user_id": user.id, "username": user.username, "purpose": "login_2fa"},
+    )
+    return TokenResponse(
+        access_token="",
+        token_type="2fa_pending",
+        role="",
+        is_active=bool(user.is_active),
+        requires_2fa=True,
+        pending_token=pending,
+    )
 
 
 @router.post("/login/2fa", response_model=TokenResponse)

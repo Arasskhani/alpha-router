@@ -109,6 +109,7 @@ from app.models.system import (
     SystemSetting,
 )
 from app.models.user import User, UserGroup, UserRoleAssignment, user_group_members
+from app.models.user_media_prefs import UserMediaPreferences
 from app.models.video import VideoGenerationJob
 
 __all__ = [
@@ -206,6 +207,7 @@ __all__ = [
     "UserMemoryJob",
     "UserMemorySuppression",
     "UserRoleAssignment",
+    "UserMediaPreferences",
     "VideoGenerationJob",
     "user_group_members",
     "alpha_router_api_key_connections",

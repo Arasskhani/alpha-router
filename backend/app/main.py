@@ -90,6 +90,7 @@ from app.services.scheduler import (
     start_scheduler,
     stop_scheduler,
 )
+from app.services.scheduler_leader import SchedulerLeader, install_leader
 from app.services.security_headers import SecurityHeadersMiddleware
 from app.services.user_chat_storage_service import ensure_user_chat_store
 from app.services.video_job_service import start_video_worker, stop_video_worker
@@ -698,14 +699,39 @@ async def lifespan(app: FastAPI):
         await ensure_all_model_compatibility_rows(db)
         await db.commit()
 
-    start_scheduler()
+    # One scheduler per deployment, not per uvicorn worker: the leader holds a
+    # PostgreSQL advisory lock (see scheduler_leader.py). Losing the lock stops
+    # the scheduler on this worker; another worker picks it up on its next retry.
+    async def _become_scheduler_leader() -> None:
+        start_scheduler()
+        await refresh_storage_cleanup_schedule()
+        await refresh_chat_retention_cleanup_schedule()
+        await refresh_auth_sync_schedules()
+
+    leader = SchedulerLeader(
+        engine,
+        on_acquire=_become_scheduler_leader,
+        on_release=stop_scheduler,
+    )
+    install_leader(leader)
+    # Try synchronously once so a single-worker deployment (and every test)
+    # has its scheduler running before the first request; the background loop
+    # then keeps heartbeating / retrying.
+    try:
+        if await leader.try_acquire():
+            await _become_scheduler_leader()
+    except Exception:
+        logging.getLogger(LOGGER_NAMESPACE).exception(
+            "Scheduler leader election failed at startup; will retry in background"
+        )
+    leader.start()
+    # The video worker claims jobs with FOR UPDATE SKIP LOCKED and is safe to
+    # run on every worker; it stays outside the election on purpose.
     start_video_worker()
-    await refresh_storage_cleanup_schedule()
-    await refresh_chat_retention_cleanup_schedule()
-    await refresh_auth_sync_schedules()
     configure_litellm_cache()
     yield
     await stop_video_worker()
+    await leader.stop()
     stop_scheduler()
     await close_openrouter_http_client()
     await engine.dispose()

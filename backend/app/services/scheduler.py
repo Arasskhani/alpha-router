@@ -375,7 +375,33 @@ def start_scheduler():
         max_instances=1,
         coalesce=True,
     )
+    # Admin-controlled schedules (storage cleanup, chat retention, directory
+    # sync) are edited through whichever uvicorn worker serves the request,
+    # which is usually not the leader. The leader re-reads them from the
+    # database every minute so a change applies without a restart.
+    scheduler.add_job(
+        job_refresh_dynamic_schedules,
+        "interval",
+        minutes=1,
+        id="refresh_dynamic_schedules",
+        max_instances=1,
+        coalesce=True,
+    )
     scheduler.start()
+
+
+async def job_refresh_dynamic_schedules() -> None:
+    from app.services.auth_sync_scheduler import refresh_auth_sync_schedules
+
+    for refresh in (
+        refresh_storage_cleanup_schedule,
+        refresh_chat_retention_cleanup_schedule,
+        refresh_auth_sync_schedules,
+    ):
+        try:
+            await refresh()
+        except Exception:
+            logger.exception("Failed to refresh %s", getattr(refresh, "__name__", refresh))
 
 
 def stop_scheduler():

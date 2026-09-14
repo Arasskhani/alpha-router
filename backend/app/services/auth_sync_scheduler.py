@@ -49,5 +49,9 @@ async def refresh_auth_sync_schedules() -> None:
             id="ldap_directory_sync",
         )
 
-    if not scheduler.running and scheduler.get_jobs():
+    # Only the elected leader runs jobs; on other workers the entries stay
+    # pending and become live if this worker is ever elected.
+    from app.services.scheduler_leader import is_leader
+
+    if is_leader() and not scheduler.running and scheduler.get_jobs():
         scheduler.start()

@@ -167,7 +167,7 @@ apply_prod_mode() {
   ensure_secret GATEWAY_MASTER_KEY "sk-alpharouter-$(rand_hex 24)" "sk-alpha-router-master"
 
   local pg_pass
-  pg_pass="$(ensure_secret POSTGRES_PASSWORD "$(rand_hex 24)" "changeme")"
+  pg_pass="$(rotate_postgres_password)"
   sync_database_url_password "$pg_pass"
 
   ensure_secret REDIS_PASSWORD "$(rand_hex 24)" ""
@@ -204,6 +204,70 @@ ensure_secret() {
     return 0
   fi
   printf '%s' "$current"
+}
+
+# POSTGRES_PASSWORD is the one secret that also lives *inside* a data volume:
+# the role password in alpha_router_pg. ensure_secret alone would rewrite .env
+# on a host installed with --dev (password "changeme") and later switched to
+# --prod, leaving pgbouncer/db-init unable to authenticate against the existing
+# cluster -- a full outage with no automatic way back. So: rotate .env only
+# together with an ALTER ROLE on the running cluster, or when no cluster exists
+# yet. Echoes the effective password; all diagnostics go to stderr.
+rotate_postgres_password() {
+  local current new user db
+  current="$(env_value POSTGRES_PASSWORD || true)"
+  if [ -n "$current" ] && [ "$current" != "changeme" ] && ! is_insecure_value "$current"; then
+    printf '%s' "$current"
+    return 0
+  fi
+  new="$(rand_hex 24)"
+  if ! postgres_volume_exists; then
+    # Fresh install: initdb will create the role with whatever .env says.
+    set_env_var POSTGRES_PASSWORD "$new"
+    printf '%s' "$new"
+    return 0
+  fi
+  user="$(env_value POSTGRES_USER || echo alpha_router)"
+  db="$(env_value POSTGRES_DB || echo alpha_router)"
+  warn "POSTGRES_PASSWORD is a known placeholder but a database volume already exists; rotating the role password in the cluster first."
+  if ! postgres_alter_role_password "$user" "$db" "$new"; then
+    die "Could not change the PostgreSQL role password inside the existing cluster. .env was left untouched so the stack still starts; fix the database, then re-run with --prod."
+  fi
+  set_env_var POSTGRES_PASSWORD "$new"
+  printf '%s' "$new"
+}
+
+postgres_volume_exists() {
+  docker volume inspect alpha_router_pg >/dev/null 2>&1
+}
+
+# ALTER ROLE on the cluster stored in alpha_router_pg. Starts only the postgres
+# service (with the *current* .env, i.e. the old password) if it is not up;
+# psql inside the container authenticates over the unix socket, so no password
+# is needed. The later 'compose up' recreates the container with the new .env;
+# POSTGRES_PASSWORD only matters at initdb, so the running cluster is unaffected.
+postgres_alter_role_password() {
+  local user="$1" db="$2" new="$3"
+  local started=0 _attempt
+  if ! compose ps --status running --services 2>/dev/null | grep -qx postgres; then
+    compose up -d --no-deps postgres >&2 || return 1
+    started=1
+  fi
+  for _attempt in $(seq 1 30); do
+    if compose exec -T postgres pg_isready -U "$user" -d "$db" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+  done
+  # rand_hex output is [0-9a-f], so no quoting hazards inside the literal.
+  if ! compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$user" -d "$db" \
+      -c "ALTER ROLE \"$user\" WITH PASSWORD '$new';" >&2; then
+    if [ "$started" -eq 1 ]; then
+      compose stop postgres >&2 || true
+    fi
+    return 1
+  fi
+  return 0
 }
 
 sync_database_url_password() {

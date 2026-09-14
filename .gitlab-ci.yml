@@ -103,6 +103,20 @@ deployment-config:
     - docker compose config --quiet
     - ALPHAROUTER_REGISTRY=registry.example.com/group/alpha-router docker compose -f docker-compose.yml -f deploy/docker-compose.registry.yml config --quiet
 
+# Shell helpers that edit .env / rotate secrets are unit-tested with mocked
+# docker/compose; a regression here takes a production host down on upgrade.
+scripts-tests:
+  stage: verify
+  image: bash:5
+  rules:
+    - *always-on-default
+    - changes:
+        - scripts/**/*
+        - .gitlab-ci.yml
+  script:
+    - apk add --no-cache openssl grep coreutils >/dev/null
+    - for t in scripts/tests/test-*.sh; do echo "== $t"; bash "$t"; done
+
 frontend-sources:
   stage: verify
   image: node:20

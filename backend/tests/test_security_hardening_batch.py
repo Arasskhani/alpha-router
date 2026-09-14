@@ -254,13 +254,17 @@ def test_connection_base_url_rejects_internal_targets(monkeypatch):
     from app.api import admin
 
     monkeypatch.setattr("app.services.ssrf_guard.get_settings", lambda: SimpleNamespace(allow_ssrf_private_ranges=False))
-    for bad in ("http://169.254.169.254/latest", "http://127.0.0.1:6333", "http://10.1.2.3/v1", "ftp://x.test"):
-        with pytest.raises(HTTPException) as exc:
-            admin._validated_connection_base_url(bad)
-        assert exc.value.status_code == 400
-    with patch("app.services.ssrf_guard.socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 0))]):
-        assert admin._validated_connection_base_url(" https://api.provider.test/v1 ") == "https://api.provider.test/v1"
-    assert admin._validated_connection_base_url("") is None
+
+    async def run():
+        for bad in ("http://169.254.169.254/latest", "http://127.0.0.1:6333", "http://10.1.2.3/v1", "ftp://x.test"):
+            with pytest.raises(HTTPException) as exc:
+                await admin._validated_connection_base_url(bad)
+            assert exc.value.status_code == 400
+        with patch("app.services.ssrf_guard.socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 0))]):
+            assert await admin._validated_connection_base_url(" https://api.provider.test/v1 ") == "https://api.provider.test/v1"
+        assert await admin._validated_connection_base_url("") is None
+
+    asyncio.run(run())
 
 
 # --- production guard: ALLOW_INSECURE_SAML -------------------------------------

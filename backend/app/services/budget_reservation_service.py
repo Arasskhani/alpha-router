@@ -7,7 +7,7 @@ import uuid
 
 import litellm
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -24,6 +24,9 @@ from app.services.alpha_router_api_key_service import ensure_key_usable
 
 SUBJECT_USER = "user"
 SUBJECT_ALPHA_ROUTER_KEY = "alpha_router_key"
+# Sibling of the DDL (56023113), admin-bootstrap (56023114) and scheduler
+# leader (56023115) locks.
+RECONCILE_LOCK_ID = 56023116
 STATUS_HELD = "held"
 STATUS_SETTLED = "settled"
 STATUS_RELEASED = "released"
@@ -786,7 +789,21 @@ async def reconcile_subject_reserved(
     subject_type: str,
     subject_id: int,
 ) -> float:
-    """Set the subject reserved counter to the sum of open HELD rows."""
+    """Set the subject reserved counter to the sum of open HELD rows.
+
+    Lock *first*, sum *second*. ``reserve`` holds the subject row FOR UPDATE
+    while it inserts the reservation and bumps the counter in one
+    transaction. Summing before taking that lock reads a snapshot without the
+    in-flight row, then waits for the lock, then writes the stale sum over
+    the counter the reservation just increased - the hold exists but is no
+    longer counted, so the subject can overspend by exactly that amount.
+    """
+    if subject_type == SUBJECT_USER:
+        subject = (await db.execute(_locked_user_stmt(subject_id))).scalar_one_or_none()
+    elif subject_type == SUBJECT_ALPHA_ROUTER_KEY:
+        subject = (await db.execute(_locked_key_stmt(subject_id))).scalar_one_or_none()
+    else:
+        subject = None
     held = float(
         (
             await db.execute(
@@ -799,22 +816,11 @@ async def reconcile_subject_reserved(
         ).scalar_one()
     )
     held = round(max(0.0, held), 8)
-    if subject_type == SUBJECT_USER:
-        user = (
-            await db.execute(
-                _locked_user_stmt(subject_id)
-            )
-        ).scalar_one_or_none()
-        if user:
-            user.budget_reserved_usd = held
-    elif subject_type == SUBJECT_ALPHA_ROUTER_KEY:
-        key = (
-            await db.execute(
-                _locked_key_stmt(subject_id)
-            )
-        ).scalar_one_or_none()
-        if key:
-            key.period_reserved_usd = held
+    if subject is not None:
+        if subject_type == SUBJECT_USER:
+            subject.budget_reserved_usd = held
+        else:
+            subject.period_reserved_usd = held
     await db.flush()
     return held
 
@@ -868,7 +874,21 @@ async def reconcile_drifted_reserved_counters(db: AsyncSession) -> int:
     consuming budget) until period rollover.
 
     Returns the number of subjects repaired.
+
+    Only one instance may run this at a time: the scheduler leader election
+    already guarantees that, and the transaction-scoped advisory lock below
+    is the defence in depth for a manual run or a second deployment sharing
+    the database. When the lock is taken elsewhere this call returns 0.
     """
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        got = (
+            await db.execute(
+                text("SELECT pg_try_advisory_xact_lock(:lock_id)"),
+                {"lock_id": RECONCILE_LOCK_ID},
+            )
+        ).scalar()
+        if not got:
+            return 0
     repaired = 0
     for subject_type, id_column, counter_column in (
         (SUBJECT_USER, User.id, User.budget_reserved_usd),

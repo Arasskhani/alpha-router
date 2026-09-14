@@ -298,13 +298,25 @@ async def ensure_budget_period(db: AsyncSession, user: User) -> None:
     if not user.budget_period_start or user.budget_period_start < month_start:
         from app.services.budget_reservation_service import (
             SUBJECT_USER,
+            _locked_user_stmt,
             release_open_holds_for_subject,
         )
 
-        await release_open_holds_for_subject(db, SUBJECT_USER, int(user.id))
-        user.budget_period_start = month_start
-        user.budget_used_usd = await get_month_usage(db, user.id)
-        user.budget_reserved_usd = 0.0
+        # Callers pass the request-scoped User loaded without a lock. The
+        # rollover rewrites budget_used_usd / budget_reserved_usd, which
+        # ``reserve`` and ``release`` update under SELECT ... FOR UPDATE in
+        # other transactions; writing them from an unlocked snapshot lost
+        # those updates. Take the row lock (refreshing the instance) and
+        # re-check: another request may have rolled the period over already.
+        locked = (await db.execute(_locked_user_stmt(int(user.id)))).scalar_one_or_none()
+        if locked is None:
+            return
+        user = locked
+        if not user.budget_period_start or user.budget_period_start < month_start:
+            await release_open_holds_for_subject(db, SUBJECT_USER, int(user.id))
+            user.budget_period_start = month_start
+            user.budget_used_usd = await get_month_usage(db, user.id)
+            user.budget_reserved_usd = 0.0
     user.monthly_budget_usd = await resolve_monthly_budget(db, user)
     await db.flush()
 

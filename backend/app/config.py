@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     # baseline. Set false once an install has run the new migrate once; the
     # default flips to false in the next release.
     legacy_schema_bootstrap: bool = True  # env: LEGACY_SCHEMA_BOOTSTRAP
+    # Phase 4.5: the Specialist Agent platform (agents, knowledge bases, tool
+    # registry, evaluations, governance) is a preview. Off by default: its
+    # routers are not mounted, chat requests carrying agent fields are refused
+    # and the admin navigation hides the section.
+    agents_platform_enabled: bool = False  # env: AGENTS_PLATFORM_ENABLED
     secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     # Token lifetime. Default 8h (480 min) — balances UX against stolen-token

@@ -1,4 +1,4 @@
-import type { CategoryKey, MenuKey, NavSection } from "../nav/types";
+import type { CategoryKey, MenuKey, NavItem, NavSection } from "../nav/types";
 
 export type { CategoryKey, MenuKey };
 
@@ -24,7 +24,22 @@ export type SessionRbac = {
   is_admin_panel?: boolean;
   menus?: MenuKey[] | null;
   categories?: CategoryKey[] | null;
+  /** Server feature flags (Phase 4.5). Missing = feature on, for older backends. */
+  features?: { agents_platform?: boolean } | null;
 };
+
+/** Menus that belong to preview features and disappear when the feature is off. */
+const PREVIEW_FEATURE_MENUS: Record<string, MenuKey> = { agents_platform: "agents" };
+
+function disabledPreviewMenus(session: SessionRbac | null): Set<MenuKey> {
+  const off = new Set<MenuKey>();
+  const features = session?.features;
+  if (!features) return off;
+  for (const [feature, menu] of Object.entries(PREVIEW_FEATURE_MENUS)) {
+    if ((features as Record<string, boolean | undefined>)[feature] === false) off.add(menu);
+  }
+  return off;
+}
 
 const FULL_ADMIN = "full_administrator";
 const READ_ONLY_FULL_ADMIN = "read_only_full_administrator";
@@ -239,14 +254,18 @@ export function filterAdminNavFromSession(
       ? session.menus
       : accessibleMenuKeysFromRoles(session?.roles?.length ? session.roles : [session?.role ?? fallbackRole]);
 
+  const hidden = disabledPreviewMenus(session);
+  const visible = (item: NavItem) => item.menuKey == null || !hidden.has(item.menuKey);
   if (allowed === null) {
-    return sections.map((section) => ({ ...section, items: [...section.items] }));
+    return sections
+      .map((section) => ({ ...section, items: section.items.filter(visible) }))
+      .filter((section) => section.items.length > 0);
   }
   const allowedSet = new Set(allowed);
   return sections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => item.menuKey == null || allowedSet.has(item.menuKey)),
+      items: section.items.filter((item) => visible(item) && (item.menuKey == null || allowedSet.has(item.menuKey))),
     }))
     .filter((section) => section.items.length > 0);
 }
@@ -258,6 +277,9 @@ export function isAdminPathAllowedForSession(
 ): boolean {
   const path = pathname.replace(/\/$/, "") || "/";
   if (!path.startsWith("/admin")) return false;
+  for (const menu of disabledPreviewMenus(session)) {
+    if (pathMatchesMenu(path, menu)) return false;
+  }
   if (session && session.menus !== undefined) {
     if (session.menus === null) return true;
     return session.menus.some((menu) => pathMatchesMenu(path, menu));

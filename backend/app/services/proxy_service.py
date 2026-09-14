@@ -505,6 +505,8 @@ async def preflight_stream_chat(  # noqa: C901 -- Phase 4 split; complexity must
                 )
             ).effective
         agent_options = parse_agent_request(body) if operation == "chat" else None
+        if agent_options is not None and not settings.agents_platform_enabled:
+            raise HTTPException(status_code=400, detail="The Agent platform is not enabled on this installation")
         if agent_options is not None:
             agent_turn = await prepare_agent_turn(
                 db,

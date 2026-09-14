@@ -33,7 +33,6 @@ from app.models.project import (
     PROJECT_RESOURCE_STATUS_PROCESSING,
     PROJECT_RESOURCE_STATUS_REVOKED,
     Project,
-    ProjectAuditEvent,
     ProjectResource,
 )
 from app.services.knowledge_ingestion_service import (
@@ -42,7 +41,6 @@ from app.services.knowledge_ingestion_service import (
 )
 from app.services.knowledge_object_store import KnowledgeObjectStoreProtocol
 from app.services.project_access_service import (
-    ProjectAccess,
     append_project_audit,
     require_capability,
 )
@@ -323,7 +321,7 @@ async def list_project_resources(
 ) -> tuple[list[dict], int]:
     """List project resources visible to any member (or public viewer)."""
 
-    access = await require_capability(
+    await require_capability(
         db,
         project_id=project_id,
         user=user,
@@ -377,7 +375,7 @@ async def get_project_resource(
 ) -> dict | None:
     """Return a single project resource (visible to any member)."""
 
-    access = await require_capability(
+    await require_capability(
         db,
         project_id=project_id,
         user=user,

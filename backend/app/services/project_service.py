@@ -20,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.chat import ChatSession, ai_channel_filter
 from app.models.project import (
     PROJECT_RESOURCE_STATUS_REVOKED,
-    PROJECT_ROLE_CONTRIBUTOR,
     PROJECT_ROLE_OWNER,
     PROJECT_ROLE_PRIMARY_OWNER,
     PROJECT_ROLE_VIEWER,
@@ -437,7 +436,7 @@ async def delete_project(
     db: AsyncSession, *, project_id: str, user: User
 ) -> bool:
     """Soft-delete: marks the project deletion_pending."""
-    access = await require_capability(
+    await require_capability(
         db, project_id=project_id, user=user, capability="project.delete"
     )
     project = await db.get(Project, project_id)

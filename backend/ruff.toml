@@ -1,0 +1,24 @@
+# Phase 0 baseline: only defect-class rules that must never regress.
+# Style/complexity rules (E5xx, C90, SIM, UP, BLE) are introduced in Phase 3
+# once a formatting pass has landed, so this file stays a hard CI gate.
+target-version = "py312"
+line-length = 120
+extend-exclude = ["alembic/versions"]
+
+[lint]
+select = [
+  "E9",   # syntax / io errors
+  "F63",  # invalid comparisons (is-literal, etc.)
+  "F7",   # misplaced statements (return/yield outside function, ...)
+  "F82",  # undefined names
+  "F401", # unused import
+  "F841", # unused local variable
+  "B006", # mutable default argument
+  "E722", # bare except
+]
+
+[lint.per-file-ignores]
+# Package re-exports register ORM models on Base.metadata; keep them.
+"app/models/__init__.py" = ["F401"]
+"app/__init__.py" = ["F401"]
+"tests/**" = ["F841"]

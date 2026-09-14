@@ -13,7 +13,7 @@ import logging
 
 import pytest
 
-from app.config import INSECURE_DEFAULTS, Settings, get_settings
+from app.config import INSECURE_DEFAULTS, Settings
 from app.main import (
     _check_production_safe,
     _collect_production_insecurities,

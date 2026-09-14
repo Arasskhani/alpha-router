@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import contextlib
 import datetime
 import json
@@ -542,7 +541,6 @@ async def _run_video_job(job_id: str) -> None:
                 reference_image_mime=reference_mime,
                 seed=params.get("seed"),
             )
-            referer = settings.frontend_url
             submit_started = _now()
             if job.provider_job_id:
                 provider_job = ProviderJobRef(

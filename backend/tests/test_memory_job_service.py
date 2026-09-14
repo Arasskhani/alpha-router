@@ -21,7 +21,6 @@ from app.services.memory_job_service import (
     complete_job,
     fail_job,
     recover_stale_jobs,
-    reset_watermarks_for_user,
     schedule_extraction,
 )
 from app.services.user_memory_service import create_memory, delete_all_memories

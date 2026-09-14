@@ -14,7 +14,6 @@ from app.services.image_model_resolver import (
     is_image_model_failover_error,
     list_auto_router_image_candidates,
     resolve_auto_router_image_model,
-    resolve_openrouter_auto_image_model,
     score_image_model_candidate,
 )
 

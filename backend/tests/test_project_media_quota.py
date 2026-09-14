@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 import app.models  # noqa: F401
 from app.database import Base
 from app.models.project import (
-    PROJECT_ROLE_OWNER,
     PROJECT_ROLE_PRIMARY_OWNER,
     Project,
     ProjectMediaAsset,

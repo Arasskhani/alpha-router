@@ -25,7 +25,6 @@ from app.services.usage_accounting_service import (
     COST_SOURCE_CATALOG,
     COST_SOURCE_CONFIGURED,
     COST_SOURCE_PROVIDER,
-    COST_SOURCE_UNKNOWN,
     capture_usage_event,
     create_configured_pricing_snapshot,
     create_reconciliation_run,

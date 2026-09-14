@@ -21,7 +21,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import require_active_user
 from app.database import AsyncSessionLocal, get_db
 from app.models.connection import Connection
-from app.models.media import MediaAsset
 from app.models.model_catalog import AIModel
 from app.models.user import User
 from app.services.secret_crypto import decrypt_secret
@@ -1353,7 +1352,6 @@ async def generate_image(
                     )
 
                 msg = ((data or {}).get("choices") or [{}])[0].get("message") or {}
-                content_preview = str(msg.get("content") or "")[:300]
                 text_only = isinstance(msg.get("content"), str) and bool(str(msg.get("content") or "").strip())
                 if chat_image_model:
                     if text_only:

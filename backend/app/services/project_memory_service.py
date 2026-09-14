@@ -30,9 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chat import ChatSession
 from app.models.project import (
-    PROJECT_VISIBILITY_PRIVATE,
     Project,
-    ProjectConfigVersion,
     ProjectMemory,
     ProjectMemoryEvent,
     ProjectMemoryGrant,
@@ -44,11 +42,9 @@ from app.services.memory_settings_service import (
     get_memory_settings,
 )
 from app.services.project_access_service import (
-    ProjectAccess,
     append_project_audit,
     is_project_owner_role,
     require_capability,
-    resolve_project_access,
 )
 from app.utils.text_normalize import normalize_memory_text
 
@@ -198,7 +194,7 @@ async def list_project_memories(
 ) -> tuple[list[dict], int]:
     """List memory items for a project (visible to any member)."""
 
-    access = await require_capability(
+    await require_capability(
         db,
         project_id=project_id,
         user=user,
@@ -998,7 +994,7 @@ async def list_memory_grants(
 ) -> list[dict]:
     """List all grants where this project is the consumer (Owner only)."""
 
-    access = await require_capability(
+    await require_capability(
         db,
         project_id=project_id,
         user=user,

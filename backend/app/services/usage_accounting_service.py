@@ -8,7 +8,7 @@ import json
 import math
 import uuid
 from dataclasses import dataclass, field
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any
 
 import litellm

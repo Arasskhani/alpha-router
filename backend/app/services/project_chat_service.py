@@ -444,7 +444,7 @@ async def append_project_chat_message(
     allocation via ``_next_project_sequence`` to avoid race conditions
     between concurrent writers.
     """
-    access = await require_capability(
+    await require_capability(
         db, project_id=project_id, user=user, capability="chat.write"
     )
     user_id = getattr(user, "id", None)
@@ -478,7 +478,6 @@ async def append_project_chat_message(
     # constraint ux_chat_messages_session_sequence) or when SQLite
     # reports the database is locked.  This makes the append robust
     # under concurrent writes on both SQLite and PostgreSQL.
-    last_error: Exception | None = None
     for attempt in range(12):
         try:
             # Re-fetch the session row each iteration (it may have been
@@ -543,8 +542,7 @@ async def append_project_chat_message(
                     watermark_sequence=seq,
                 )
             return _project_message_to_client(msg)
-        except (IntegrityError, OperationalError) as exc:
-            last_error = exc
+        except (IntegrityError, OperationalError):
             await db.rollback()
             continue
     return None
@@ -558,7 +556,7 @@ async def delete_project_chat_session(
     user: object,
 ) -> bool | None:
     """Delete a project chat session. Requires chat.write. Returns None if hidden."""
-    access = await require_capability(
+    await require_capability(
         db, project_id=project_id, user=user, capability="chat.write"
     )
     row = await db.get(ChatSession, session_id)
@@ -577,7 +575,7 @@ async def pin_project_chat(
     user: object,
 ) -> dict[str, Any] | None:
     """Pin a chat thread for all project members. Requires chat.pin capability."""
-    access = await require_capability(
+    await require_capability(
         db, project_id=project_id, user=user, capability="chat.pin"
     )
     user_id = getattr(user, "id", None)
@@ -616,7 +614,7 @@ async def unpin_project_chat(
     user: object,
 ) -> dict[str, Any] | None:
     """Unpin a chat thread. Requires chat.pin capability."""
-    access = await require_capability(
+    await require_capability(
         db, project_id=project_id, user=user, capability="chat.pin"
     )
     row = await db.get(ChatSession, session_id)

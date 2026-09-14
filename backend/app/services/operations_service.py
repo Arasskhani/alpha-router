@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import calendar
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.branding import PRODUCT_NAME
-from app.config import get_settings
 from app.models.logging import RequestLog
 from app.models.system import SystemMetricSnapshot
 from app.services.activity_service import ACTIVITY_CHART_COLORS
@@ -346,7 +345,6 @@ def _build_model_experience(
     )
     chart_models = by_volume[:TOP_MODELS_CHART]
     chart_keys = [_model_key(m["model_id"]) for m in chart_models]
-    key_to_label = {_model_key(m["model_id"]): m["model_id"] for m in chart_models}
 
     models_chart: list[dict[str, Any]] = []
     for start in _bucket_starts(tr):

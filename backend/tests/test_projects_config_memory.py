@@ -378,7 +378,7 @@ def test_create_grant_contributor_denied():
         factory, engine = await _session_factory()
         try:
             async with factory() as db:
-                owner = await _setup_two_projects(db)
+                await _setup_two_projects(db)
                 contrib = await _user(db, "contrib")
                 db.add(ProjectMember(project_id=PROJ_ID, user_id=contrib.id, role=PROJECT_ROLE_CONTRIBUTOR))
                 await db.flush()

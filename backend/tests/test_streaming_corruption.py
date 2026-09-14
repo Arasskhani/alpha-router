@@ -14,13 +14,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
-from app.models.chat import ChatMessage, ChatSession
 from app.models.user import User
 from app.services.chat_completion_persistence import ChatCompletionPersister
 from app.services.user_chat_storage_service import (
     create_chat_session,
     list_session_messages,
-    update_last_session_message,
 )
 
 

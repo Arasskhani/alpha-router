@@ -90,7 +90,7 @@ async def get_active_config(
 ) -> ProjectConfigSnapshot | None:
     """Return the active config snapshot for a project (visible to any member)."""
 
-    access = await require_capability(
+    await require_capability(
         db,
         project_id=project_id,
         user=user,
@@ -226,7 +226,7 @@ async def list_config_versions(
 ) -> tuple[list[dict], int]:
     """List config version history (Owner only — sensitive content)."""
 
-    access = await require_capability(
+    await require_capability(
         db,
         project_id=project_id,
         user=user,

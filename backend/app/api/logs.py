@@ -762,11 +762,6 @@ async def admin_log_export(
         if log_row.alpha_router_api_key_id
         else None
     )
-    user_key = (
-        user_key_map.get(log_row.user_api_key_id)
-        if log_row.user_api_key_id
-        else None
-    )
 
     operation = None
     events: list[UsageEvent] = []

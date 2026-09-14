@@ -3,7 +3,6 @@
 import asyncio
 import base64
 import io
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx

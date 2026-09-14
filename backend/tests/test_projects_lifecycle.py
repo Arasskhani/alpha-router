@@ -12,7 +12,6 @@ from app.models.project import (
     PROJECT_ROLE_OWNER,
     PROJECT_ROLE_PRIMARY_OWNER,
     PROJECT_STATUS_ARCHIVED,
-    PROJECT_STATUS_DELETION_PENDING,
     PROJECT_VISIBILITY_PUBLIC,
     Project,
     ProjectMediaAsset,

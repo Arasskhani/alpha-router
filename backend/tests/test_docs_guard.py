@@ -13,7 +13,6 @@ from starlette.testclient import TestClient
 from app.core.security import create_access_token
 from app.database import Base
 from app.models.user import User, UserRoleAssignment
-from app.services import docs_guard
 from app.services.docs_guard import (
     OpenApiDocsGuardMiddleware,
     is_docs_path,

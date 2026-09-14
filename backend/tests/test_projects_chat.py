@@ -10,7 +10,6 @@ from app.database import Base
 from app.models.chat import ChatSession
 from app.models.project import (
     PROJECT_ROLE_CONTRIBUTOR,
-    PROJECT_ROLE_OWNER,
     PROJECT_ROLE_PRIMARY_OWNER,
     PROJECT_ROLE_VIEWER,
     PROJECT_VISIBILITY_PRIVATE,
@@ -459,7 +458,7 @@ def test_session_from_other_project_hidden():
         try:
             async with factory() as db:
                 owner, _, _ = await _setup_project(db)
-                s = await create_project_chat_session(db, project_id=PROJ_ID, user=owner)
+                await create_project_chat_session(db, project_id=PROJ_ID, user=owner)
                 # Create a second project with a session.
                 db.add(Project(id="proj-2", name="P2", status="active", visibility="private", created_by_user_id=owner.id, revision=1, acl_version=1))
                 db.add(ProjectMember(project_id="proj-2", user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))

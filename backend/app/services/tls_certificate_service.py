@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import dsa, ec, ed25519, rsa
 from cryptography.hazmat.primitives.serialization import pkcs12
 from sqlalchemy import select

@@ -13,7 +13,6 @@ from app.models.project import (
     PROJECT_RESOURCE_STATUS_PROCESSING,
     PROJECT_RESOURCE_STATUS_REVOKED,
     PROJECT_ROLE_CONTRIBUTOR,
-    PROJECT_ROLE_OWNER,
     PROJECT_ROLE_PRIMARY_OWNER,
     PROJECT_ROLE_VIEWER,
     PROJECT_VISIBILITY_PRIVATE,
@@ -356,7 +355,7 @@ def test_list_resources_status_filter():
             async with factory() as db:
                 owner, _, _ = await _setup_project(db)
                 data, name, mime = _fake_upload_bytes()
-                result = await upload_project_resource(
+                await upload_project_resource(
                     db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
                     object_store=InMemoryObjectStore(),
                 )

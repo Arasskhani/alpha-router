@@ -5,13 +5,8 @@ import asyncio
 import app.models  # noqa: F401
 from app.database import Base
 from app.models.project import (
-    PROJECT_ROLE_CONTRIBUTOR,
-    PROJECT_ROLE_OWNER,
-    PROJECT_ROLE_VIEWER,
     PROJECT_STATUS_DELETION_PENDING,
-    PROJECT_VISIBILITY_PUBLIC,
     Project,
-    ProjectInvitation,
     ProjectMember,
 )
 from app.models.user import User
@@ -26,7 +21,6 @@ from app.services.project_service import (
     get_project,
     leave_project,
     list_invitable_users,
-    list_invitations,
     list_members,
     list_my_projects,
     list_public_projects,
@@ -121,8 +115,8 @@ def test_list_my_projects_only_returns_memberships():
             async with factory() as db:
                 owner = await _user(db, "owner")
                 other = await _user(db, "other")
-                p1 = await create_project(db, user=owner, name="Alpha")
-                p2 = await create_project(db, user=owner, name="Beta")
+                await create_project(db, user=owner, name="Alpha")
+                await create_project(db, user=owner, name="Beta")
                 mine, total = await list_my_projects(db, user=owner)
                 assert total == 2
                 assert {p["name"] for p in mine} == {"Alpha", "Beta"}

@@ -8,7 +8,6 @@ import os
 import struct
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path
 
 from litellm import atranscription
 from sqlalchemy import or_, select

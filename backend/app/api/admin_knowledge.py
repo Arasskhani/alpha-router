@@ -18,7 +18,6 @@ from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.knowledge import (
     IngestionJob,
-    KnowledgeAuditEvent,
     KnowledgeBase,
     KnowledgeBaseAccessAssignment,
     KnowledgeConnector,

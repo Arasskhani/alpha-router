@@ -31,7 +31,7 @@ from app.api.deps import (
     require_deleted_users,
     require_deleted_users_write,
 )
-from app.core.security import generate_api_key, generate_api_key_for_user, hash_password
+from app.core.security import generate_api_key, hash_password
 from app.database import get_db
 from app.models.api_key import AlphaRouterApiKey
 from app.models.budget import BudgetPlan, PlanAssignment
@@ -139,7 +139,6 @@ from app.services.api_key_model_policy import (
 from app.services.smtp_service import SmtpNotConfiguredError, SmtpSendError, send_email
 from app.services.username_norm import normalize_username, username_taken_ci
 from app.services.rbac import (
-    FULL_ADMIN_SLUG,
     USER_SLUG,
     actor_may_assign_roles,
     is_valid_role_slug,

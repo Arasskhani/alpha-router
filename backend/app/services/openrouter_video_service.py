@@ -8,7 +8,6 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from app.config import get_settings
 from app.services.openrouter_image_service import (
     OPENROUTER_CONNECT_TIMEOUT,
     build_openrouter_headers,
@@ -287,7 +286,6 @@ async def download_video_bytes(
     referer: str | None = None,
 ) -> tuple[bytes, str]:
     """Download generated video with a hard size cap. Returns (blob, mime)."""
-    settings = get_settings()
     limit = int(max_bytes or video_output_limit())
     headers = build_openrouter_headers(api_key, referer=referer)
     # Content endpoints may need auth; public CDNs ignore the header.

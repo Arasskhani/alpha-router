@@ -1,6 +1,5 @@
 """User provisioning from Open WebUI / gateway identity."""
 
-from fastapi import Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 

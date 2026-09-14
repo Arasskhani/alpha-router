@@ -10,7 +10,7 @@ import app.models  # noqa: F401
 from app.database import Base
 from app.models.chat import ChatSession
 from app.models.logging import ImageGenerationAttempt, RequestLog
-from app.models.project import PROJECT_ROLE_OWNER, PROJECT_ROLE_PRIMARY_OWNER, Project, ProjectMember
+from app.models.project import PROJECT_ROLE_PRIMARY_OWNER, Project, ProjectMember
 from app.models.user import User
 from app.models.video import VideoGenerationJob
 from app.services.image_billing_service import ImageBillingCapture, log_image_usage

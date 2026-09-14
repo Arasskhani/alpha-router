@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.parse import urlparse
 
-import httpx
 
 from app.branding import OUTBOUND_USER_AGENT
 from app.services.metered_usage_service import (

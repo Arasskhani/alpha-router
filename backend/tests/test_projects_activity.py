@@ -6,7 +6,6 @@ import app.models  # noqa: F401
 from app.database import Base
 from app.models.project import (
     PROJECT_ROLE_CONTRIBUTOR,
-    PROJECT_ROLE_OWNER,
     PROJECT_ROLE_PRIMARY_OWNER,
     PROJECT_ROLE_VIEWER,
     Project,

@@ -18,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.logging import RequestLog
 from app.models.project import PROJECT_STATUS_DELETION_PENDING, Project, ProjectMember
-from app.models.user import User
 from app.services.project_access_service import resolve_project_access
 
 PROJECT_REPORT_DEFAULT_DAYS = 30

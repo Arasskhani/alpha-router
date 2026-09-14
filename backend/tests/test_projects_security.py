@@ -2,24 +2,17 @@
 
 import asyncio
 import datetime
-import uuid
 
 import app.models  # noqa: F401
 from app.database import Base
-from app.models.chat import ChatMessage, ChatSession
+from app.models.chat import ChatSession
 from app.models.logging import RequestLog
 from app.models.project import (
     PROJECT_ROLE_CONTRIBUTOR,
-    PROJECT_ROLE_OWNER,
     PROJECT_ROLE_PRIMARY_OWNER,
     PROJECT_ROLE_VIEWER,
-    PROJECT_STATUS_DELETION_PENDING,
-    PROJECT_VISIBILITY_PUBLIC,
     Project,
-    ProjectChatPin,
     ProjectMember,
-    ProjectMemory,
-    ProjectMemoryGrant,
 )
 from app.models.user import User
 from app.services.project_access_service import (
@@ -30,7 +23,6 @@ from app.services.project_chat_service import (
     append_project_chat_message,
     create_project_chat_session,
     list_project_chat_messages,
-    list_project_chat_sessions,
     pin_project_chat,
 )
 from app.services.project_memory_service import (
@@ -40,10 +32,8 @@ from app.services.project_memory_service import (
 )
 from app.services.project_service import (
     ProjectValidationError,
-    add_member,
     claim_invitation,
     create_invitation,
-    create_project,
     delete_project,
     get_project,
     leave_project,

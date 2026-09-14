@@ -1,10 +1,7 @@
 """Video job ownership and serialization helpers."""
 
 import json
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
 from app.models.video import VideoGenerationJob
 from app.services.video_job_service import serialize_job

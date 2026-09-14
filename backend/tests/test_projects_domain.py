@@ -15,7 +15,6 @@ from app.models.project import (
     PROJECT_VISIBILITY_PRIVATE,
     PROJECT_VISIBILITY_PUBLIC,
     Project,
-    ProjectAuditEvent,
     ProjectInvitation,
     ProjectMember,
 )

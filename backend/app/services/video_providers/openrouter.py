@@ -7,7 +7,6 @@ from urllib.parse import urlparse
 
 from app.services.openrouter_video_service import (
     build_video_generation_payload,
-    download_video_bytes,
     extract_job_ids,
     extract_video_download_url,
     frame_image_from_data_url,
@@ -20,7 +19,6 @@ from app.services.video_providers.contracts import (
     ProviderAssetRef,
     ProviderJobRef,
     ProviderJobSnapshot,
-    VideoProviderAdapter,
     VideoUsage,
 )
 

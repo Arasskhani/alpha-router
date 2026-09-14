@@ -89,7 +89,6 @@ from app.services.project_memory_service import (
 from app.services.project_access_service import (
     ProjectAccessError,
     can_view_project_activity,
-    require_capability,
     resolve_project_access,
 )
 from app.services.project_service import (

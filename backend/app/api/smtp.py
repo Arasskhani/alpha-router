@@ -9,7 +9,7 @@ from app.api.deps import require_smtp, require_smtp_write
 from app.database import get_db
 from app.models.system import SmtpSettings
 from app.models.user import User
-from app.services.secret_crypto import decrypt_secret, encrypt_secret
+from app.services.secret_crypto import encrypt_secret
 
 router = APIRouter(prefix="/api/admin/smtp", tags=["smtp"])
 

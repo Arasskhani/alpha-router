@@ -24,7 +24,6 @@ from app.models.project import (
     PROJECT_ROLE_VIEWER,
     PROJECT_ROLES,
     PROJECT_STATUS_ACTIVE,
-    PROJECT_VISIBILITY_PRIVATE,
     PROJECT_VISIBILITY_PUBLIC,
     Project,
     ProjectAuditEvent,

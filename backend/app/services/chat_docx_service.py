@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import io
 import re
-from typing import Iterable
 
 from docx import Document
 from docx.document import Document as DocxDocument

@@ -109,6 +109,30 @@ Production guard check only:
 ./scripts/preflight-prod.sh
 ```
 
+### Backup, restore and rollback
+
+`upgrade.sh` takes a snapshot before it rebuilds or migrates anything
+(`scripts/backup.sh --consistent`, written to `./backups/<timestamp>/`, last
+7 kept) and tags the images that were running as `<image>:prev`. Snapshots
+hold a `pg_dump` of the database, the Qdrant / SeaweedFS / TLS volumes, `.env`
+and a `MANIFEST` with the git commit and image ids.
+
+```bash
+./scripts/backup.sh                       # on-demand, online (no downtime)
+./scripts/backup.sh --consistent          # stops qdrant/seaweedfs during the copy
+BACKUP_DIR=/mnt/backups ./scripts/backup.sh
+
+./scripts/restore.sh 20260914103000                    # database + volumes
+./scripts/restore.sh 20260914103000 --previous-images  # roll back a bad upgrade
+./scripts/restore.sh 20260914103000 --with-env         # also restore .env
+```
+
+Restore stops the stack (volumes are kept), replaces the database contents and
+data volumes with the snapshot, and starts the stack again; everything written
+after the snapshot is lost. Keep `./backups` (or `BACKUP_DIR`) on separate
+storage — it contains `.env` with all secrets. Set `SKIP_BACKUP=1` to upgrade
+without a snapshot.
+
 ### Manual quick start
 
 ```bash

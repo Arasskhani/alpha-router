@@ -64,6 +64,33 @@ prepare_env() {
   fi
 }
 
+# Keep the images that are running right now reachable as <image>:prev so
+# scripts/restore.sh --previous-images can bring the pre-upgrade code back.
+tag_previous_images() {
+  local img
+  for img in alpha-router alpha-router-sandbox alpha-router-sandbox-broker alpha-router-edge; do
+    if docker image inspect "${img}:latest" >/dev/null 2>&1; then
+      docker tag "${img}:latest" "${img}:prev"
+    fi
+  done
+  log "Tagged current images as :prev (rollback: ./scripts/restore.sh <snapshot> --previous-images)."
+}
+
+# Snapshot before anything is rebuilt or migrated. Set SKIP_BACKUP=1 to opt out
+# (e.g. on a fresh host or when a backup was just taken by hand).
+backup_before_upgrade() {
+  if [ "${SKIP_BACKUP:-0}" -eq 1 ]; then
+    warn "SKIP_BACKUP=1: no pre-upgrade snapshot will be taken."
+    return 0
+  fi
+  if ! docker volume inspect alpha_router_pg >/dev/null 2>&1; then
+    log "No database volume yet; skipping pre-upgrade backup."
+    return 0
+  fi
+  log "Taking a pre-upgrade snapshot (./scripts/backup.sh --consistent)..."
+  LOG_PREFIX=backup "$ROOT_DIR/scripts/backup.sh" --consistent
+}
+
 start_stack() {
   if [ "${FROM_REGISTRY:-0}" -eq 1 ]; then
     require_registry_config
@@ -90,7 +117,12 @@ backup_env_file() {
   stamp="$(date +%Y%m%d%H%M%S)"
   dest="$ROOT_DIR/.env.bak.${stamp}"
   cp -a "$ROOT_DIR/.env" "$dest"
+  chmod 600 "$dest" 2>/dev/null || true
   log "Backed up .env to $dest"
+  # These copies hold every secret; keep only the five newest.
+  find "$ROOT_DIR" -maxdepth 1 -name '.env.bak.*' -type f | sort | head -n -5 | while read -r old; do
+    rm -f "$old"
+  done
 }
 
 deploy_mode_from_env() {

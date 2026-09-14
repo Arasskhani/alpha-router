@@ -66,6 +66,11 @@ Options:
 Environment:
   MIN_DISK_GB=30
   HEALTH_TIMEOUT_SEC=900
+  SKIP_BACKUP=1         Skip the pre-upgrade snapshot (scripts/backup.sh --consistent)
+  BACKUP_DIR=...        Where snapshots go (default: ./backups, last 7 kept)
+
+Rollback after a bad upgrade:
+  ./scripts/restore.sh <snapshot> --previous-images
 EOF
 }
 
@@ -159,6 +164,10 @@ main() {
     exit 0
   fi
 
+  backup_before_upgrade
+  if [ "$FROM_SOURCE" -eq 1 ] && [ "$SKIP_BUILD" -ne 1 ]; then
+    tag_previous_images
+  fi
   start_stack
   wait_for_health
   print_success

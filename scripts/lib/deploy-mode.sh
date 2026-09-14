@@ -249,7 +249,9 @@ postgres_volume_exists() {
 postgres_alter_role_password() {
   local user="$1" db="$2" new="$3"
   local started=0 _attempt
-  if ! compose ps --status running --services 2>/dev/null | grep -qx postgres; then
+  local running
+  running="$(compose ps --status running --services 2>/dev/null || true)"
+  if ! printf '%s\n' "$running" | grep -qx postgres; then
     compose up -d --no-deps postgres >&2 || return 1
     started=1
   fi

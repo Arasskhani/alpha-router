@@ -233,6 +233,7 @@ export function citationDisplayMarker(
 
 function safeCitationFileName(value: string | null | undefined): string {
   const cleaned = (value || "citation-source")
+    // eslint-disable-next-line no-control-regex -- control characters are exactly what is being stripped
     .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
     .trim();
   return cleaned || "citation-source";

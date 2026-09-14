@@ -1,4 +1,4 @@
-import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import Modal from "../Modal";
 import {
   knownConnectionBaseUrls,
@@ -40,6 +40,7 @@ export default function ConnectionFormModal({ open, title, initial, onClose, onS
   const [providerOpen, setProviderOpen] = useState(false);
   const [activeSuggestion, setActiveSuggestion] = useState(0);
   const providerWrapRef = useRef<HTMLDivElement>(null);
+  const providerListboxId = useId();
   const lastAutoBaseUrlRef = useRef("");
 
   useEffect(() => {
@@ -209,11 +210,12 @@ export default function ConnectionFormModal({ open, title, initial, onClose, onS
               autoComplete="off"
               aria-autocomplete="list"
               aria-expanded={providerOpen}
+              aria-controls={providerListboxId}
               role="combobox"
               required
             />
             {providerOpen && suggestions.length > 0 ? (
-              <div className="connection-provider-combobox__panel card" role="listbox">
+              <div className="connection-provider-combobox__panel card" role="listbox" id={providerListboxId}>
                 <ul className="connection-provider-combobox__list">
                   {suggestions.map((preset, index) => (
                     <li key={preset.id}>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { api } from "../../api";
 
 export type OwnerUser = {
@@ -89,6 +89,8 @@ export default function UserOwnerSelect({ value, onChange, disabled }: Props) {
 
   const searching = query.trim().length >= MIN_SEARCH;
 
+  const listboxId = useId();
+
   return (
     <div className="user-owner-select" ref={ref}>
       <input
@@ -105,12 +107,14 @@ export default function UserOwnerSelect({ value, onChange, disabled }: Props) {
         }}
         onFocus={() => setOpen(true)}
         autoComplete="off"
+        role="combobox"
+        aria-controls={listboxId}
         aria-expanded={open}
         aria-autocomplete="list"
       />
       {open ? (
         <div className="user-owner-select__panel card">
-          <ul className="user-owner-select__list" role="listbox">
+          <ul className="user-owner-select__list" role="listbox" id={listboxId}>
             {loadError && <li className="muted-text user-owner-select__hint">{loadError}</li>}
             {!loadError && !searching && !loading && (
               <li className="muted-text user-owner-select__hint">

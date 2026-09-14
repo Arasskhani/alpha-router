@@ -147,7 +147,7 @@ export function normalizeChatTools(raw?: Partial<ChatToolsState> | null): ChatTo
 
   let imageGeneration = raw.imageGeneration ?? FRESH_CHAT_TOOLS.imageGeneration;
   let videoGeneration = raw.videoGeneration ?? FRESH_CHAT_TOOLS.videoGeneration;
-  let speechGeneration = raw.speechGeneration ?? FRESH_CHAT_TOOLS.speechGeneration;
+  const speechGeneration = raw.speechGeneration ?? FRESH_CHAT_TOOLS.speechGeneration;
   // Mutual exclusion: only one media generation tool can be on at a time.
   // Priority: speech > video > image when multiple are explicitly set.
   if (speechGeneration) {

@@ -108,7 +108,6 @@ import {
 import { applyProjectChatSync, sortProjectSessions } from "../lib/projectChatSync";
 import {
   CHAT_REFRESH_EVENT_NAME,
-  isChatLeader,
   onChatLeaderChange,
 } from "../lib/chatLeader";
 import { formatLocalDateTimeFromMs } from "../lib/dateTime";
@@ -189,7 +188,6 @@ import {
   type ScreenshotFrame,
 } from "../lib/screenshotCapture";
 import {
-  buildImageMessage,
   buildStoppedImageMessages,
   mergeChatMessagesPreferLocal,
   IMAGE_MESSAGE_PREFIX,
@@ -204,7 +202,6 @@ import {
   sessionHasIncompleteTextReply,
   parseImageMessage,
   stopBackgroundImageGeneration,
-  stripOrphanImagePending,
   subscribeBackgroundImageUpdates,
   type ImagePayload,
 } from "../lib/chatImage";
@@ -369,14 +366,6 @@ function TurnStatusDots() {
 function shortModelName(name: string, id: string) {
   const n = name || id;
   return n.length > 28 ? `${n.slice(0, 26)}…` : n;
-}
-
-function imageMessage(payload: ImagePayload) {
-  return buildImageMessage(payload);
-}
-
-function audioMessage(payload: AudioPayload) {
-  return `${AUDIO_MESSAGE_PREFIX}${JSON.stringify(payload)}`;
 }
 
 function readAudioMessage(content: string): AudioPayload | null {
@@ -728,7 +717,7 @@ export default function ChatPanel({
   const [olderLoadedCount, setOlderLoadedCount] = useState(0);
   const [messagesLoadingOlder, setMessagesLoadingOlder] = useState(false);
   const [messagesHasOlder, setMessagesHasOlder] = useState(false);
-  const [isLeaderTab, setIsLeaderTab] = useState(true);
+  const [, setIsLeaderTab] = useState(true);
   const serverSearchTimerRef = useRef<number | null>(null);
   const [chatsHydrated, setChatsHydrated] = useState(false);
   const [hydrateOutcome, setHydrateOutcome] = useState<"pending" | "ok" | "empty" | "error">("pending");
@@ -1105,8 +1094,6 @@ export default function ChatPanel({
     }
     return grouped;
   }, [filteredSessions]);
-
-  const currentModel = models.find((m) => m.id === model);
 
   function sessionPrivateMode(sessionId: string): boolean {
     return isPrivateChat(sessionsRef.current.find((s) => s.id === sessionId));

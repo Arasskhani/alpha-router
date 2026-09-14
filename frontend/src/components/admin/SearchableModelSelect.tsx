@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 export type SearchableModelOption = {
   value: string;
@@ -111,6 +111,8 @@ export default function SearchableModelSelect({
     }
   }
 
+  const listboxId = useId();
+
   return (
     <div className="admin-model-combobox" ref={rootRef}>
       <input
@@ -124,6 +126,7 @@ export default function SearchableModelSelect({
         autoComplete="off"
         role="combobox"
         aria-label={ariaLabel}
+        aria-controls={listboxId}
         aria-expanded={open}
         aria-autocomplete="list"
         onFocus={() => {
@@ -138,7 +141,7 @@ export default function SearchableModelSelect({
         onKeyDown={onKeyDown}
       />
       {open && !disabled ? (
-        <div className="admin-model-combobox__panel card" role="listbox">
+        <div className="admin-model-combobox__panel card" role="listbox" id={listboxId}>
           {filtered.length === 0 ? (
             <p className="muted-text admin-model-combobox__hint">No matches</p>
           ) : (

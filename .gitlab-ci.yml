@@ -152,6 +152,9 @@ frontend-tests-and-build:
     - cd frontend
     - npm ci --cache .npm --prefer-offline
   script:
+    # eslint: errors fail; the warning budget (--max-warnings in package.json)
+    # is the Phase 3 baseline and may only be lowered.
+    - npm run lint
     - npm test
     - npm run build
 

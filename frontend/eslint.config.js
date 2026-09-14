@@ -1,0 +1,48 @@
+// Phase 3 lint gate. Flat config (ESLint 9). Rules are the recommended sets of
+// each plugin; project-specific relaxations are listed with a reason.
+import js from "@eslint/js";
+import tseslint from "typescript-eslint";
+import reactHooks from "eslint-plugin-react-hooks";
+import jsxA11y from "eslint-plugin-jsx-a11y";
+import globals from "globals";
+
+export default tseslint.config(
+  { ignores: ["dist/**", "node_modules/**", "src/generated/**", "*.config.*", "scripts/**"] },
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
+  jsxA11y.flatConfigs.recommended,
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    plugins: { "react-hooks": reactHooks },
+    languageOptions: {
+      globals: { ...globals.browser, ...globals.es2022 },
+      parserOptions: { ecmaFeatures: { jsx: true } },
+    },
+    rules: {
+      ...reactHooks.configs.recommended.rules,
+      // Baseline (Phase 3): the React Compiler rules shipped with react-hooks 7
+      // flag 130+ existing patterns (setState in effects, ref reads in render).
+      // They stay visible as warnings; fixing them is Phase 4 ChatPanel work.
+      "react-hooks/set-state-in-effect": "warn",
+      "react-hooks/refs": "warn",
+      "react-hooks/purity": "warn",
+      "react-hooks/immutability": "warn",
+      "react-hooks/exhaustive-deps": "warn",
+      // a11y: 91 unlabeled controls and 12 autofocus uses pre-date the gate;
+      // warnings until each screen is revisited. New code should not add any.
+      "jsx-a11y/label-has-associated-control": "warn",
+      "jsx-a11y/no-autofocus": "warn",
+      "jsx-a11y/click-events-have-key-events": "warn",
+      "jsx-a11y/no-static-element-interactions": "warn",
+      "jsx-a11y/no-noninteractive-element-interactions": "warn",
+      "jsx-a11y/interactive-supports-focus": "warn",
+      "jsx-a11y/media-has-caption": "warn",
+      // `_`-prefixed names are the project's convention for intentionally unused values.
+      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrors: "none" }],
+    },
+  },
+  {
+    files: ["src/**/*.test.{ts,tsx}", "src/test/**"],
+    languageOptions: { globals: { ...globals.node } },
+  },
+);

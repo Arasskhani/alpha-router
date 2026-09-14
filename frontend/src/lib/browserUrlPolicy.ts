@@ -26,6 +26,7 @@ export function safeBrowserUrl(
 ): string | null {
   if (!value) return null;
   const trimmed = value.trim();
+  // eslint-disable-next-line no-control-regex -- rejecting control characters is the point
   if (!trimmed || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(trimmed)) return null;
 
   if (trimmed.toLowerCase().startsWith("data:")) {

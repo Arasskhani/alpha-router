@@ -1,5 +1,4 @@
 import { useMemo } from "react";
-import { Link } from "react-router-dom";
 import ActivityView from "../components/activity/ActivityView";
 import { getSessionUser } from "../lib/session";
 import { MY_USAGE_AND_ACTIVITY_LABEL } from "../lib/usageActivityLabel";

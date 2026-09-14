@@ -1,7 +1,6 @@
 import {
   type ChatMessage,
   cancelStreamingReplyOnServer,
-  fetchSessionMessagesFromServer,
   fetchSessionWithMessages,
   isPrivateChat,
   syncSessionMessages,

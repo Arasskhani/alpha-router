@@ -50,6 +50,8 @@ export default function LogFilterCombobox({
     setOpen(false);
   }
 
+  const listboxId = `${id ?? "log-filter"}-listbox`;
+
   return (
     <div className="log-filter-combobox" ref={ref}>
       <input
@@ -59,6 +61,8 @@ export default function LogFilterCombobox({
         value={open ? query : value}
         disabled={disabled}
         autoComplete="off"
+        role="combobox"
+        aria-controls={listboxId}
         aria-expanded={open}
         aria-autocomplete="list"
         onFocus={() => {
@@ -72,7 +76,7 @@ export default function LogFilterCombobox({
         }}
       />
       {open ? (
-        <div className="log-filter-combobox__panel card" role="listbox">
+        <div className="log-filter-combobox__panel card" role="listbox" id={listboxId}>
           {loading ? <p className="muted-text log-filter-combobox__hint">Loading…</p> : null}
           {!loading && options.length === 0 ? (
             <p className="muted-text log-filter-combobox__hint">No values in current logs</p>

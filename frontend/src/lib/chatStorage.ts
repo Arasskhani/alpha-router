@@ -682,8 +682,6 @@ let saveUserChatsChain: Promise<unknown> = Promise.resolve();
 const serverSessionIds = new Set<string>();
 const createSessionInflight = new Map<string, Promise<void>>();
 const pendingDeleteIds = new Set<string>();
-let serverFolderIds = new Set<string>();
-
 export function markPendingDelete(id: string): void {
   pendingDeleteIds.add(id);
 }
@@ -1264,7 +1262,6 @@ async function syncFoldersToServer(folders: ChatFolder[]): Promise<void> {
       await api(`/api/user/chats/folders/${encodeURIComponent(id)}`, { method: "DELETE" });
     }
   }
-  serverFolderIds = localIds;
 }
 
 export async function deleteChatSessionOnServer(sessionId: string): Promise<void> {
@@ -1463,7 +1460,6 @@ export async function fetchUserChatsFromServer(
         const id = String(s.id);
         if (!isPendingDelete(id)) serverSessionIds.add(id);
       }
-      serverFolderIds = new Set();
     }
     const serverSessions = (data.sessions || [])
       .map((s) => mapApiSession(s))
@@ -1507,7 +1503,6 @@ export async function fetchUserChatsFromServer(
     const retain = !!opts?.retainKnownSessionIds;
     if (!retain) {
       serverSessionIds.clear();
-      serverFolderIds = new Set((data.folders || []).map((f) => String(f.id)));
     }
     for (const s of data.sessions || []) {
       const id = String(s.id);

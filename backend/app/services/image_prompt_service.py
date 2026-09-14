@@ -12,13 +12,10 @@ from app.models.user import User
 from app.services.budget_service import budget_request_blocked, get_user_budget_state
 from app.services.model_capabilities import model_kinds, model_media_flags
 from app.services.model_tool_compatibility_service import is_auto_router_model_id
-from app.services.proxy_service import (
-    _apply_litellm_provider_kwargs,
-    _litellm_model_for_provider,
-    reserve_auxiliary_llm_usage,
-    resolve_model_and_key,
-    settle_auxiliary_usage,
-)
+from app.services.llm_providers import litellm_model_for_provider as _litellm_model_for_provider
+from app.services.provider_utils import _apply_litellm_provider_kwargs
+from app.services.model_resolution_service import resolve_model_and_key
+from app.services.usage_logging_service import reserve_auxiliary_llm_usage, settle_auxiliary_usage
 
 ENHANCE_MODES = ("improve", "translate", "translate_improve")
 ENHANCE_CONTEXTS = ("image", "chat")

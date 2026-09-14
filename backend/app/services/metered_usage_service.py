@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.services.observability import increment
+from app.services.usage_logging_service import log_usage
 from app.database import AsyncSessionLocal
 from app.models.user import User
 from app.services.budget_reservation_service import (
@@ -142,9 +143,6 @@ async def finish_metered_usage(
     event.connection_id = call.connection_id
 
     async def _persist() -> bool:
-        # Imported lazily because proxy_service imports the chat tool module.
-        from app.services.proxy_service import log_usage
-
         for attempt in range(3):
             try:
                 async with AsyncSessionLocal() as db:

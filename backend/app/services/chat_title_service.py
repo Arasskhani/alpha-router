@@ -18,13 +18,10 @@ from app.services.chat_markers import (
     VIDEO_MESSAGE_PREFIX,
     VIDEO_PENDING_MARKER,
 )
-from app.services.proxy_service import (
-    _apply_litellm_provider_kwargs,
-    _litellm_model_for_provider,
-    reserve_auxiliary_llm_usage,
-    resolve_model_and_key,
-    settle_auxiliary_usage,
-)
+from app.services.llm_providers import litellm_model_for_provider as _litellm_model_for_provider
+from app.services.provider_utils import _apply_litellm_provider_kwargs
+from app.services.model_resolution_service import resolve_model_and_key
+from app.services.usage_logging_service import reserve_auxiliary_llm_usage, settle_auxiliary_usage
 
 _TITLE_SYSTEM = (
     "You create short chat titles for a sidebar. Given the start of a conversation, "

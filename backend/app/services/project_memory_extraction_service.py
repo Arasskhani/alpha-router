@@ -587,7 +587,7 @@ async def extract_project_memory_operations(
         litellm_model_for_provider,
         resolve_litellm_provider,
     )
-    from app.services.proxy_service import resolve_model_and_key
+    from app.services.model_resolution_service import resolve_model_and_key
     from app.services.usage_accounting_service import (
         capture_usage_event,
         persist_usage_operation,

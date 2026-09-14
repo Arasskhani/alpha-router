@@ -11,7 +11,7 @@ from app.branding import CHAT_CLIENT_APP
 from app.core.language_detect import detect_prompt_language
 from app.models.model_catalog import AIModel
 from app.models.user import User
-from app.services.proxy_service import log_usage
+from app.services.usage_logging_service import log_usage
 from app.services.usage_accounting_service import PendingUsageEvent, capture_usage_event
 
 

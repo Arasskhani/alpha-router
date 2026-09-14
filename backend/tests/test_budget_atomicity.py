@@ -16,7 +16,7 @@ from app.database import Base
 from app.models.api_key import AlphaRouterApiKey
 from app.models.user import User
 from app.services.alpha_router_api_key_service import record_key_usage
-from app.services.proxy_service import _apply_cost_to_user
+from app.services.usage_logging_service import _apply_cost_to_user
 
 
 def _make_engine():

@@ -29,7 +29,7 @@ from app.services.openrouter_transcription_service import (
     transcribe_with_openrouter,
 )
 from app.services.model_access_service import resolve_access_subject, user_can_access_model
-from app.services.proxy_service import settle_auxiliary_usage
+from app.services.usage_logging_service import settle_auxiliary_usage
 from app.services.secret_crypto import decrypt_secret
 import contextlib
 

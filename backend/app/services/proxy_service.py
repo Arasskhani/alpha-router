@@ -18,14 +18,13 @@ import httpx
 import litellm
 from fastapi import HTTPException, Request
 from litellm import acompletion, aembedding
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import effective_redis_url, get_settings
 from app.core.language_detect import detect_prompt_language
 from app.database import AsyncSessionLocal
 from app.models.chat import ChatSession
-from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel
 from app.services.agent_chat_integration_service import (
     AgentRequestError,
@@ -60,7 +59,6 @@ from app.services.budget_reservation_service import (
     reservation_hold_usd,
     reservation_key,
     reserve,
-    settle,
 )
 from app.services.chat_completion_persistence import persister_from_body
 from app.services.chat_tools_service import (
@@ -92,12 +90,10 @@ from app.services.code_interpreter_service import (
     workspace_files_from_messages,
 )
 from app.services.llm_providers import (
-    external_id_lookup_candidates,
     litellm_model_for_provider,
     normalize_model_id,
     resolve_litellm_provider,
 )
-from app.services.model_capabilities import model_kinds, model_media_flags
 from app.services.model_tool_compatibility_service import (
     assert_code_interpreter_model_available,
     classify_failure_reason,
@@ -113,15 +109,10 @@ from app.services.private_mode_service import (
 )
 from app.services.prompt_cache_service import apply_prompt_cache_breakpoints
 from app.services.resource_access_service import resolve_resource_access_subject
-from app.services.secret_crypto import decrypt_secret
 from app.services.storage_service import media_public_url, store_generated_blob
 from app.services.usage_accounting_service import (
-    NormalizedUsage,
     PendingUsageEvent,
     capture_usage_event,
-    legacy_usage_event,
-    persist_usage_operation,
-    quote_usage,
 )
 from app.services.project_turn_planner import augment_messages_with_project_context
 from app.services.user_memory_service import (
@@ -131,6 +122,35 @@ from app.services.user_memory_service import (
 )
 from app.services.user_profile_context_service import augment_messages_with_profile
 from app.core.constants import normalize_openrouter_base_url
+from app.services.provider_utils import (  # noqa: F401 -- re-exported under the historical names
+    _apply_litellm_provider_kwargs,
+    _close_upstream_stream,
+    _compute_token_cost_usd,
+    _extract_non_stream_content,
+    _extract_prompt_text,
+    _format_provider_error,
+    _merge_stream_usage,
+    _sanitize_cost_usd,
+    _serialize_stream_chunk,
+    _should_retry_non_stream,
+    _sse_delta_chunk,
+    _sse_error_frame,
+    _usable_cost_per_1k,
+    _usage_event_model_id,
+    _usage_from_chunk,
+    _usage_from_response,
+    _usage_from_stream_wrapper,
+    _usage_from_usage_obj,
+)
+from app.services.model_resolution_service import (  # noqa: F401 -- re-exported for api.chat / api.gateway
+    assert_model_supports_text_chat,
+    resolve_model_and_key,
+)
+from app.services.usage_logging_service import (  # noqa: F401 -- re-exported for api.chat / api.gateway
+    log_usage,
+    reserve_auxiliary_llm_usage,
+    settle_auxiliary_usage,
+)
 
 logger = logging.getLogger("app.services.proxy_service")
 
@@ -145,15 +165,6 @@ STREAM_SSE_HEADERS = {
     "Connection": "keep-alive",
     "X-Accel-Buffering": "no",
 }
-
-
-def _apply_litellm_provider_kwargs(kwargs: dict, provider_type: str | None, model_id: str) -> str:
-    litellm_model = litellm_model_for_provider(normalize_model_id(model_id), provider_type)
-    kwargs["model"] = litellm_model
-    llm_provider = resolve_litellm_provider(provider_type)
-    if llm_provider:
-        kwargs["custom_llm_provider"] = llm_provider
-    return litellm_model
 
 
 @dataclass
@@ -252,267 +263,6 @@ def configure_litellm_cache() -> None:
         litellm.cache = litellm.Cache()
 
 
-async def resolve_model_and_key(
-    db: AsyncSession,
-    model_id: str,
-    *,
-    allowed_connection_ids: set[int] | None = None,
-    allowed_model_ids: set[int] | None = None,
-) -> tuple[AIModel | None, str | None, str | None, str | None]:
-    from sqlalchemy import select
-
-    from app.models.connection import Connection
-
-    if allowed_connection_ids is not None and not allowed_connection_ids:
-        return None, None, None, None
-    if allowed_model_ids is not None and not allowed_model_ids:
-        return None, None, None, None
-
-    connection_filter = ()
-    if allowed_connection_ids is not None:
-        connection_filter = (AIModel.connection_id.in_(allowed_connection_ids),)
-    model_filter = ()
-    if allowed_model_ids is not None:
-        model_filter = (AIModel.id.in_(allowed_model_ids),)
-
-    normalized_input = normalize_model_id(model_id)
-    row: AIModel | None = None
-    if isinstance(normalized_input, str) and normalized_input.startswith("model::"):
-        try:
-            model_pk = int(normalized_input.split("::", 1)[1])
-        except Exception:  # noqa: BLE001 -- falls back to a safe default value
-            model_pk = None
-        if model_pk is not None:
-            row = (
-                (
-                    await db.execute(
-                        select(AIModel)
-                        .join(Connection, Connection.id == AIModel.connection_id)
-                        .where(
-                            AIModel.id == model_pk,
-                            AIModel.is_enabled == True,  # noqa: E712
-                            Connection.is_active == True,  # noqa: E712
-                            *connection_filter,
-                            *model_filter,
-                        )
-                        .order_by(AIModel.id.asc())
-                    )
-                )
-                .scalars()
-                .first()
-            )
-    if not row:
-        candidates = external_id_lookup_candidates(normalized_input)
-        if candidates:
-            row = (
-                (
-                    await db.execute(
-                        select(AIModel)
-                        # The same external id can exist on several connections;
-                        # picking the lowest id and *then* checking its connection
-                        # returned "no model" when that one was disabled even
-                        # though an active twin existed. Filter first.
-                        .join(Connection, Connection.id == AIModel.connection_id)
-                        .where(
-                            AIModel.external_id.in_(candidates),
-                            AIModel.is_enabled == True,  # noqa: E712
-                            Connection.is_active == True,  # noqa: E712
-                            *connection_filter,
-                            *model_filter,
-                        )
-                        .order_by(AIModel.id.asc())
-                    )
-                )
-                .scalars()
-                .first()
-            )
-    if not row:
-        return None, None, None, None
-    if allowed_connection_ids is not None and int(row.connection_id) not in allowed_connection_ids:
-        return None, None, None, None
-    if allowed_model_ids is not None and int(row.id) not in allowed_model_ids:
-        return None, None, None, None
-    conn = await db.get(Connection, row.connection_id)
-    if not conn or not conn.is_active:
-        return None, None, None, None
-    return (
-        row,
-        decrypt_secret(conn.api_key_encrypted),
-        conn.base_url,
-        conn.provider_type,
-    )
-
-
-def assert_model_supports_text_chat(ai_model: AIModel) -> None:
-    """Reject embeddings/rerank/media-only models from the chat-completions path."""
-    if is_auto_router_model_id(ai_model.external_id):
-        return
-    media = model_media_flags(
-        external_id=ai_model.external_id or "",
-        is_image_model=bool(ai_model.is_image_model),
-        is_video_model=bool(getattr(ai_model, "is_video_model", False)),
-        pricing_raw=ai_model.pricing_raw,
-        provider_type=ai_model.provider_type,
-    )
-    kinds = model_kinds(
-        external_id=ai_model.external_id or "",
-        is_image_model=media["is_image_model"],
-        is_video_model=media["is_video_model"],
-        pricing_raw=ai_model.pricing_raw,
-        provider_type=ai_model.provider_type,
-    )
-    if "text" in kinds:
-        return
-    kind_label = ", ".join(kinds) if kinds else "unknown"
-    raise HTTPException(
-        status_code=400,
-        detail={
-            "message": (
-                f"This model is not available for text chat (capabilities: {kind_label}). Choose a text model instead."
-            ),
-            "code": "model_not_for_chat",
-            "kinds": kinds,
-        },
-    )
-
-
-def _extract_prompt_text(messages: list) -> str:
-    parts = []
-    for m in messages:
-        content = m.get("content")
-        if isinstance(content, str):
-            parts.append(content)
-        elif isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    parts.append(block.get("text", ""))
-    return "\n".join(parts)
-
-
-_STREAM_BODY_READ_ERROR_MARKERS = (
-    "Attempted to access streaming response content, without having called read()",
-    "without having called read()",
-)
-
-
-def _message_has_stream_body_read_error(msg: str) -> bool:
-    return any(marker in msg for marker in _STREAM_BODY_READ_ERROR_MARKERS)
-
-
-def _is_stream_body_read_error(exc: Exception) -> bool:
-    return _message_has_stream_body_read_error(str(exc))
-
-
-def _should_retry_non_stream(_provider: str, exc: Exception) -> bool:
-    return _is_stream_body_read_error(exc)
-
-
-def _format_provider_error(exc: Exception, provider: str) -> str:
-    msg = str(exc).strip()
-    if provider != "openrouter":
-        return msg
-    for attr in ("message", "body", "text"):
-        val = getattr(exc, attr, None)
-        if isinstance(val, str) and val.strip() and not _message_has_stream_body_read_error(val):
-            return val.strip()
-    if _is_stream_body_read_error(exc):
-        return "OpenRouter request failed. Check model availability, context size, and API key."
-    return msg
-
-
-def _cached_tokens_from_usage(usage) -> int:
-    if not usage:
-        return 0
-    if isinstance(usage, dict):
-        details = usage.get("prompt_tokens_details") or {}
-        if isinstance(details, dict):
-            cached = details.get("cached_tokens") or 0
-        else:
-            cached = getattr(details, "cached_tokens", None) or 0
-        for key in (
-            "cache_read_input_tokens",
-            "prompt_cache_hit_tokens",
-            "cached_tokens",
-        ):
-            if usage.get(key):
-                cached = cached or usage.get(key) or 0
-        return int(cached or 0)
-    details = getattr(usage, "prompt_tokens_details", None)
-    cached = 0
-    if details:
-        if isinstance(details, dict):
-            cached = int(details.get("cached_tokens") or 0)
-        else:
-            cached = int(getattr(details, "cached_tokens", None) or 0)
-    for key in ("cache_read_input_tokens", "prompt_cache_hit_tokens", "cached_tokens"):
-        val = getattr(usage, key, None)
-        if val:
-            cached = int(val)
-            break
-    return cached
-
-
-def _usage_from_usage_obj(usage) -> tuple[int, int, int]:
-    if not usage:
-        return 0, 0, 0
-    if isinstance(usage, dict):
-        pt = int(usage.get("prompt_tokens") or 0)
-        ct = int(usage.get("completion_tokens") or 0)
-        return pt, ct, _cached_tokens_from_usage(usage)
-    pt = int(getattr(usage, "prompt_tokens", 0) or 0)
-    ct = int(getattr(usage, "completion_tokens", 0) or 0)
-    return pt, ct, _cached_tokens_from_usage(usage)
-
-
-def _usage_from_chunk(chunk) -> tuple[int, int, int]:
-    pt, ct, cache = _usage_from_usage_obj(getattr(chunk, "usage", None))
-    if pt or ct or cache:
-        return pt, ct, cache
-    if hasattr(chunk, "model_dump"):
-        try:
-            data = chunk.model_dump()
-            if isinstance(data, dict):
-                return _usage_from_usage_obj(data.get("usage"))
-        except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
-            pass
-    return 0, 0, 0
-
-
-def _merge_stream_usage(
-    prompt_tokens: int,
-    completion_tokens: int,
-    cached_tokens: int,
-    pt: int,
-    ct: int,
-    cache: int,
-) -> tuple[int, int, int]:
-    if pt:
-        prompt_tokens = pt
-    if ct:
-        completion_tokens = ct
-    if cache:
-        cached_tokens = cache
-    return prompt_tokens, completion_tokens, cached_tokens
-
-
-def _usage_from_stream_wrapper(stream) -> tuple[int, int, int]:
-    """Read final usage LiteLLM may attach after the stream completes."""
-    for attr in ("_last_returned_hidden_params", "_hidden_params", "hidden_params"):
-        params = getattr(stream, attr, None)
-        if isinstance(params, dict) and params.get("usage"):
-            return _usage_from_usage_obj(params["usage"])
-    return 0, 0, 0
-
-
-def _usage_from_response(response) -> tuple[int, int, int]:
-    return _usage_from_usage_obj(getattr(response, "usage", None))
-
-
-def _sse_delta_chunk(content: str) -> bytes:
-    payload = {"choices": [{"delta": {"content": content}}]}
-    return f"data: {json.dumps(payload)}\n\n".encode()
-
-
 def _agent_citation_metadata(
     agent_turn: PreparedAgentTurn,
     review: AgentCompletionReview | None,
@@ -559,48 +309,6 @@ def _agent_identity_metadata(agent_turn: PreparedAgentTurn) -> dict[str, object]
         "agent_version_id": getattr(plan, "selected_agent_version_id", None) or getattr(version, "id", None),
         "agent_name": getattr(agent, "name", None),
     }
-
-
-def _sse_error_frame(message: str, *, error_type: str = "provider_error") -> bytes:
-    """One SSE ``data:`` frame carrying an error in the OpenAI wire shape.
-
-    ``{"error": {"message": ..., "type": ..., "code": null}}`` is what the OpenAI
-    SDKs (and our own ChatPanel) understand; a bare string under ``error`` was
-    the pre-Phase-3 form and is still accepted by the frontend.
-    """
-    payload = {"error": {"message": message, "type": error_type, "code": None}}
-    return f"data: {json.dumps(payload, separators=(',', ':'))}\n\n".encode()
-
-
-def _serialize_stream_chunk(chunk) -> str:
-    try:
-        return chunk.model_dump_json()
-    except Exception:  # noqa: BLE001 -- boundary with an external dependency; degraded result is returned
-        if hasattr(chunk, "model_dump"):
-            return json.dumps(chunk.model_dump(), default=str)
-        return json.dumps(chunk, default=str)
-
-
-def _usage_event_model_id(event: PendingUsageEvent | None) -> str | None:
-    if event is None:
-        return None
-
-    def _from_raw(value) -> str | None:
-        if not isinstance(value, dict):
-            return None
-        model_value = value.get("model")
-        if model_value:
-            return str(model_value)
-        for key in ("primary", "fallback"):
-            nested = _from_raw(value.get(key))
-            if nested:
-                return nested
-        return None
-
-    value = _from_raw(event.usage.raw_usage)
-    if value and value.startswith("openrouter/"):
-        return value.removeprefix("openrouter/")
-    return value
 
 
 async def _openrouter_generation_outcome(
@@ -1036,307 +744,6 @@ async def preflight_stream_chat(  # noqa: C901 -- Phase 4 split; complexity must
         code_interpreter_capacity_permit=capacity_permit,
         agent_turn=agent_turn,
     )
-
-
-def _extract_non_stream_content(response) -> tuple[str, tuple[int, int, int]]:
-    content = ""
-    if response.choices:
-        message = response.choices[0].message
-        content = getattr(message, "content", None) or ""
-    return content, _usage_from_response(response)
-
-
-async def _apply_cost_to_user(db: AsyncSession, user_id: int, cost: float) -> None:
-    if cost <= 0:
-        return
-    # Atomic increment via SQL UPDATE (col = col + :cost) instead of ORM
-    # read-modify-write. Concurrent requests otherwise race on the same row:
-    # both read the old value, both add their cost, both write — one update is
-    # lost. The single UPDATE statement is atomic at the row level under both
-    # PostgreSQL (row lock) and SQLite (database lock), so no lost updates.
-    await db.execute(
-        text("UPDATE users SET budget_used_usd = COALESCE(budget_used_usd, 0) + :cost WHERE id = :uid"),
-        {"cost": float(cost), "uid": user_id},
-    )
-
-
-def _usable_cost_per_1k(value: float | None) -> float | None:
-    if value is None:
-        return None
-    try:
-        rate = float(value)
-    except (TypeError, ValueError):
-        return None
-    return rate if rate >= 0 else None
-
-
-def _sanitize_cost_usd(cost: float | None) -> float:
-    try:
-        value = float(cost or 0)
-    except (TypeError, ValueError):
-        return 0.0
-    return value if value >= 0 else 0.0
-
-
-def _compute_token_cost_usd(
-    ai_model: AIModel,
-    *,
-    prompt_tokens: int,
-    completion_tokens: int,
-    model_id: str,
-    messages,
-    completion_text: str,
-    provider_type: str | None = None,
-) -> float:
-    usage = NormalizedUsage(
-        prompt_tokens=max(0, int(prompt_tokens or 0)),
-        completion_tokens=max(0, int(completion_tokens or 0)),
-    )
-    quote = quote_usage(
-        usage,
-        ai_model=ai_model,
-        provider_type=provider_type or getattr(ai_model, "provider_type", None),
-        service_type="llm",
-        model_id=model_id,
-        prompt=messages,
-        completion=completion_text,
-    )
-    return _sanitize_cost_usd(quote.final_cost_usd)
-
-
-async def log_usage(
-    db: AsyncSession,
-    *,
-    user_id: int | None,
-    username: str,
-    model_id: str,
-    prompt_tokens: int,
-    completion_tokens: int,
-    cached_tokens: int,
-    total_cost_usd: float,
-    response_time_ms: float,
-    prompt_language: str,
-    source_ip: str | None,
-    source: str,
-    success: bool,
-    error_message: str | None = None,
-    alpha_router_api_key_id: int | None = None,
-    user_api_key_id: int | None = None,
-    client_app: str | None = None,
-    budget_reservation_id: str | None = None,
-    usage_events: list[PendingUsageEvent] | None = None,
-    operation_type: str = "chat",
-    operation_idempotency_key: str | None = None,
-    project_id: str | None = None,
-) -> int | None:
-    events = list(usage_events or [])
-    if not events:
-        events = [
-            legacy_usage_event(
-                model_id=model_id,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                cached_tokens=cached_tokens,
-                total_cost_usd=total_cost_usd,
-                operation_name=operation_type,
-            )
-        ]
-    log_row = RequestLog(
-        user_id=user_id,
-        username=username,
-        model_id=model_id,
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        cached_tokens=cached_tokens,
-        total_cost_usd=_sanitize_cost_usd(total_cost_usd),
-        response_time_ms=response_time_ms,
-        prompt_language=prompt_language,
-        source_ip=source_ip,
-        source=source,
-        client_app=client_app,
-        success=success,
-        error_message=error_message,
-        alpha_router_api_key_id=alpha_router_api_key_id,
-        user_api_key_id=user_api_key_id,
-        budget_reservation_id=budget_reservation_id,
-        project_id=project_id,
-    )
-    db.add(log_row)
-    await db.flush()
-    accounting = await persist_usage_operation(
-        db,
-        events=events,
-        user_id=user_id,
-        alpha_router_api_key_id=alpha_router_api_key_id,
-        budget_reservation_id=budget_reservation_id,
-        request_log_id=log_row.id,
-        operation_type=operation_type,
-        source=source,
-        client_app=client_app,
-        success=success,
-        idempotency_key=operation_idempotency_key,
-        metadata={"model_id": model_id},
-    )
-    if not accounting.created:
-        await db.delete(log_row)
-        if budget_reservation_id:
-            await release(db, budget_reservation_id)
-        await db.flush()
-        return None
-    total_cost_usd = _sanitize_cost_usd(accounting.total_cost_usd)
-    log_row.prompt_tokens = accounting.prompt_tokens
-    log_row.completion_tokens = accounting.completion_tokens
-    log_row.cached_tokens = accounting.cached_tokens
-    log_row.total_cost_usd = total_cost_usd
-    log_row.provider_cost_usd = accounting.provider_cost_usd
-    log_row.calculated_cost_usd = accounting.calculated_cost_usd
-    log_row.cost_source = accounting.cost_source
-    log_row.cost_confidence = accounting.cost_confidence
-    log_row.has_unpriced_usage = accounting.unpriced_event_count > 0
-    log_row.usage_operation_id = accounting.operation_id
-    settled = False
-    if budget_reservation_id:
-        settled = await settle(
-            db,
-            budget_reservation_id,
-            actual_usd=total_cost_usd,
-            request_log_id=log_row.id,
-        )
-    if not settled and alpha_router_api_key_id and total_cost_usd > 0:
-        from app.models.api_key import AlphaRouterApiKey
-        from app.services.alpha_router_api_key_service import record_key_usage
-
-        key = await db.get(AlphaRouterApiKey, alpha_router_api_key_id)
-        if key:
-            await record_key_usage(db, key, total_cost_usd)
-    elif not settled and user_id and total_cost_usd > 0:
-        await _apply_cost_to_user(db, user_id, total_cost_usd)
-    from app.services.user_api_key_service import touch_user_key_last_used
-
-    await touch_user_key_last_used(db, user_api_key_id)
-    await db.flush()
-    return int(log_row.id) if log_row.id is not None else None
-
-
-async def reserve_auxiliary_llm_usage(
-    db: AsyncSession,
-    *,
-    user_id: int,
-    ai_model: AIModel,
-    operation_name: str,
-    messages: list[dict],
-    max_tokens: int,
-) -> str | None:
-    """Atomically reserve a helper LLM call and release its row lock."""
-
-    body = {
-        "model": ai_model.external_id,
-        "messages": messages,
-        "max_tokens": max_tokens,
-    }
-    hold = await reserve(
-        db,
-        user_id=user_id,
-        alpha_router_api_key_id=None,
-        amount_usd=await reservation_hold_usd(
-            db,
-            service_type="llm",
-            ai_model=ai_model,
-            provider_type=ai_model.provider_type,
-            model_id=ai_model.external_id,
-            body=body,
-        ),
-        operation=operation_name[:32],
-        model_id=ai_model.external_id,
-        idempotency_key=reservation_key(body, operation=operation_name[:32]),
-        # Auxiliary LLM calls (titles, prompt assist) are chat: reply length, and
-        # therefore cost, is not knowable before the call.
-        cost_is_estimated=True,
-    )
-    await db.commit()
-    return hold.id if hold else None
-
-
-async def settle_auxiliary_usage(
-    *,
-    user_id: int,
-    username: str,
-    ai_model: AIModel | None,
-    provider_type: str | None,
-    model_id: str,
-    response,
-    prompt,
-    completion: str,
-    operation_name: str,
-    client_app: str,
-    budget_reservation_id: str | None,
-    success: bool,
-    error_message: str | None = None,
-    service_type: str = "llm",
-    quantity: float | None = None,
-    unit: str | None = None,
-    started_at: datetime.datetime | None = None,
-) -> None:
-    """Persist one non-stream helper call without coupling it to route state."""
-
-    event = capture_usage_event(
-        response,
-        ai_model=ai_model,
-        provider_type=provider_type,
-        service_type=service_type,
-        operation_name=operation_name,
-        model_id=model_id,
-        status="succeeded" if success else "failed",
-        started_at=started_at,
-        completed_at=datetime.datetime.utcnow(),
-        prompt=prompt,
-        completion=completion,
-        error_message=error_message,
-        quantity=quantity,
-        unit=unit,
-    )
-    for attempt in range(3):
-        try:
-            async with AsyncSessionLocal() as log_db:
-                await log_usage(
-                    log_db,
-                    user_id=user_id,
-                    username=username,
-                    model_id=model_id,
-                    prompt_tokens=event.usage.prompt_tokens,
-                    completion_tokens=event.usage.completion_tokens,
-                    cached_tokens=event.usage.cached_tokens,
-                    total_cost_usd=float(event.quote.final_cost_usd or 0),
-                    response_time_ms=max(
-                        0.0,
-                        (event.completed_at - event.started_at).total_seconds() * 1000,
-                    ),
-                    prompt_language=detect_prompt_language(
-                        _extract_prompt_text(prompt) if isinstance(prompt, list) else str(prompt or "")
-                    ),
-                    source_ip=None,
-                    source="alpha_router_chat",
-                    success=success,
-                    error_message=error_message,
-                    client_app=client_app,
-                    budget_reservation_id=budget_reservation_id,
-                    usage_events=[event],
-                    operation_type=operation_name,
-                    operation_idempotency_key=(
-                        f"aux:{budget_reservation_id}" if budget_reservation_id else f"aux:{event.idempotency_key}"
-                    ),
-                )
-                await log_db.commit()
-            return
-        except Exception:
-            if attempt < 2:
-                await asyncio.sleep(0.1 * (attempt + 1))
-                continue
-            increment("budget_hold_leak")
-            logger.exception(
-                "Auxiliary usage settlement failed after retries operation=%s; reservation remains held for recovery",
-                operation_name,
-            )
 
 
 async def _resolve_private_mode_for_memory(
@@ -2582,24 +1989,6 @@ async def _end_request_transaction(db: AsyncSession) -> None:
             await db.rollback()
         except Exception:
             logger.debug("rollback after failed pre-provider commit failed", exc_info=True)
-
-
-async def _close_upstream_stream(response) -> None:
-    """Best-effort close of a LiteLLM stream wrapper and its underlying iterator."""
-    seen: set[int] = set()
-    for target in (response, getattr(response, "completion_stream", None)):
-        if target is None or id(target) in seen:
-            continue
-        seen.add(id(target))
-        aclose = getattr(target, "aclose", None)
-        if aclose is None:
-            continue
-        try:
-            result = aclose()
-            if asyncio.iscoroutine(result):
-                await result
-        except Exception:
-            logger.debug("Ignoring error while closing upstream stream", exc_info=True)
 
 
 def _embedding_input_text(input_value) -> str:

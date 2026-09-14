@@ -12,12 +12,12 @@ from app.branding import CHAT_CLIENT_APP
 from app.core.language_detect import detect_prompt_language
 from app.models.model_catalog import AIModel
 from app.models.user import User
-from app.services.proxy_service import (
+from app.services.provider_utils import (
     _compute_token_cost_usd,
     _usage_from_response,
     _usage_from_usage_obj,
-    log_usage,
 )
+from app.services.usage_logging_service import log_usage
 from app.services.usage_accounting_service import (
     PendingUsageEvent,
     capture_usage_event,

@@ -15,6 +15,7 @@ from app.services.metered_usage_service import (
     finish_metered_usage,
     start_metered_usage,
 )
+from app.services.provider_utils import extract_prompt_text
 
 URL_RE = re.compile(r"https?://[^\s<>\[\]()\"']+", re.IGNORECASE)
 
@@ -46,9 +47,7 @@ def _last_user_text(messages: list[dict]) -> str:
             content = m.get("content")
             if isinstance(content, str):
                 return content.strip()
-    from app.services.proxy_service import _extract_prompt_text
-
-    return _extract_prompt_text(messages).strip()
+    return extract_prompt_text(messages).strip()
 
 
 def _search_result_limit(depth: str) -> int:

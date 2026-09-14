@@ -77,6 +77,7 @@ from app.services.csrf_protection import CsrfProtectionMiddleware
 from app.services.docs_guard import OpenApiDocsGuardMiddleware
 from app.services.observability import (
     ObservabilityMiddleware,
+    configure_app_log_level,
     configure_json_logging,
     configure_telemetry,
     increment,
@@ -570,6 +571,7 @@ _PRODUCTION_GUARD_LOG = logging.getLogger(f"{LOGGER_NAMESPACE}.production_guard"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_json_logging(settings.json_logging_enabled)
+    configure_app_log_level(getattr(settings, "app_log_level", "INFO"))
     configure_telemetry(
         enabled=settings.otel_enabled,
         service_name=settings.otel_service_name,

@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     # deployments boot unchanged. "production" enables the startup guard that
     # refuses to boot while insecure defaults are still configured.
     environment: str = "development"
+    # Level for the application's own loggers (alpha_router.* and app.*); the
+    # root logger and third-party libraries stay at WARNING.
+    app_log_level: str = "INFO"  # env: APP_LOG_LEVEL
     secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     # Token lifetime. Default 8h (480 min) — balances UX against stolen-token

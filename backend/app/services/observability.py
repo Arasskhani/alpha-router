@@ -29,6 +29,8 @@ from prometheus_client import (
     multiprocess,
 )
 from prometheus_client import Counter as PrometheusCounter
+
+from app.branding import LOGGER_NAMESPACE
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 _KNOWN_EVENTS = frozenset(
@@ -402,6 +404,23 @@ class JsonLogFormatter(logging.Formatter):
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)[:8_000]
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def configure_app_log_level(level_name: str) -> None:
+    """Make the application's own INFO lines visible.
+
+    The root logger stays at WARNING (third-party noise), but every logger the
+    app writes to - the ``alpha_router`` namespace and the ``app.*`` module
+    loggers - gets APP_LOG_LEVEL (INFO by default). Under uvicorn nothing set
+    these before, so operational lines such as "This worker is now the
+    scheduler leader" or "LDAP sync: prune suppressed" were silently dropped.
+    """
+    level = getattr(logging, str(level_name or "INFO").upper(), logging.INFO)
+    root = logging.getLogger()
+    if not root.handlers:
+        root.addHandler(logging.StreamHandler())
+    for name in (LOGGER_NAMESPACE, "app"):
+        logging.getLogger(name).setLevel(level)
 
 
 def configure_json_logging(enabled: bool) -> None:

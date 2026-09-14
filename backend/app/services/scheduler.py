@@ -319,8 +319,10 @@ async def job_reclaim_stale_video_jobs():
 
 
 def start_scheduler():
+    global _shutdown_requested
     if scheduler.running:
         return
+    _shutdown_requested = False
     # Check every 30 minutes which connections are due for their own sync_interval_hours
     scheduler.add_job(job_sync_all_models, "interval", minutes=30, id="model_sync")
     # Budget periods are month-of-UTC everywhere else (ensure_budget_period,
@@ -440,6 +442,16 @@ async def job_refresh_dynamic_schedules() -> None:
             logger.exception("Failed to refresh %s", getattr(refresh, "__name__", refresh))
 
 
+_shutdown_requested = False
+
+
 def stop_scheduler():
-    if scheduler.running:
+    """Idempotent: AsyncIOScheduler.shutdown() is deferred to the loop, so
+    ``scheduler.running`` stays True until that callback runs and a second
+    call in the same tick scheduled a second shutdown that raised
+    SchedulerNotRunningError (seen on every worker exit: the leader's
+    on_release and the lifespan both called this)."""
+    global _shutdown_requested
+    if scheduler.running and not _shutdown_requested:
+        _shutdown_requested = True
         scheduler.shutdown(wait=False)

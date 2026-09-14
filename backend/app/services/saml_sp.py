@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 from typing import Any
 from urllib.parse import urljoin, urlsplit
@@ -10,7 +11,9 @@ import httpx
 from onelogin.saml2.auth import OneLogin_Saml2_Auth
 from onelogin.saml2.idp_metadata_parser import OneLogin_Saml2_IdPMetadataParser
 from onelogin.saml2.settings import OneLogin_Saml2_Settings
+from onelogin.saml2.xml_utils import OneLogin_Saml2_XML
 
+from app.config import get_settings
 from app.services.auth_urls import public_api_base
 from app.services.ssrf_guard import SSRFBlockedError, assert_response_target_safe, assert_url_safe
 
@@ -72,8 +75,9 @@ def public_view(cfg: dict[str, Any]) -> dict[str, Any]:
         "attr_username": str(merged.get("attr_username") or DEFAULT_ATTR_USERNAME),
         "attr_email": str(merged.get("attr_email") or DEFAULT_ATTR_EMAIL),
         "attr_display_name": str(merged.get("attr_display_name") or DEFAULT_ATTR_DISPLAY_NAME),
-        "strict": bool(merged.get("strict", True)),
-        "want_assertions_signed": bool(merged.get("want_assertions_signed", True)),
+        "strict": _effective_flag(merged, "strict"),
+        "want_assertions_signed": _effective_flag(merged, "want_assertions_signed"),
+        "security_locked": security_locked(),
     }
 
 
@@ -83,6 +87,18 @@ def _safe_public_base() -> bool:
         return True
     except ValueError:
         return False
+
+
+def security_locked() -> bool:
+    """True unless ALLOW_INSECURE_SAML is set: strict validation and signed
+    assertions are then mandatory regardless of what the admin form says."""
+    return not bool(getattr(get_settings(), "allow_insecure_saml", False))
+
+
+def _effective_flag(cfg: dict[str, Any], key: str) -> bool:
+    if security_locked():
+        return True
+    return bool(cfg.get(key, True))
 
 
 def validate_idp_metadata_url(url: str) -> str:
@@ -134,8 +150,8 @@ def validate_saml_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "attr_username": (view.get("attr_username") or DEFAULT_ATTR_USERNAME).strip(),
         "attr_email": (view.get("attr_email") or DEFAULT_ATTR_EMAIL).strip(),
         "attr_display_name": (view.get("attr_display_name") or DEFAULT_ATTR_DISPLAY_NAME).strip(),
-        "strict": bool(view.get("strict", True)),
-        "want_assertions_signed": bool(view.get("want_assertions_signed", True)),
+        "strict": _effective_flag(view, "strict"),
+        "want_assertions_signed": _effective_flag(view, "want_assertions_signed"),
     }
 
 
@@ -205,7 +221,12 @@ def _load_idp_data(cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def _security_settings(cfg: dict[str, Any]) -> dict[str, Any]:
-    want_signed = bool(cfg.get("want_assertions_signed", True))
+    # wantAssertionsSigned is what stops a forged login; it is forced on unless
+    # ALLOW_INSECURE_SAML. wantMessagesSigned stays off on purpose: most IdPs
+    # (Entra ID by default) sign the Assertion, not the Response envelope, and
+    # in strict mode python3-saml already requires at least one signature and
+    # checks InResponseTo/Destination/Audience inside the signed assertion.
+    want_signed = _effective_flag(cfg, "want_assertions_signed")
     return {
         "nameIdEncrypted": False,
         "authnRequestsSigned": False,
@@ -246,7 +267,7 @@ def _sp_settings_block(cfg: dict[str, Any]) -> dict[str, Any]:
 def build_sp_only_settings(cfg: dict[str, Any]) -> dict[str, Any]:
     """Settings sufficient to emit SP metadata — no IdP required."""
     return {
-        "strict": bool(cfg.get("strict", True)),
+        "strict": _effective_flag(cfg, "strict"),
         "debug": False,
         "sp": _sp_settings_block(cfg),
         # Placeholder IdP so python3-saml accepts the settings object; not used for metadata.
@@ -267,7 +288,7 @@ def build_saml_settings(cfg: dict[str, Any]) -> dict[str, Any]:
     if not idp.get("entityId") or not idp.get("singleSignOnService", {}).get("url"):
         raise ValueError("IdP metadata is missing entityId or SSO URL")
     return {
-        "strict": bool(cfg.get("strict", True)),
+        "strict": _effective_flag(cfg, "strict"),
         "debug": False,
         "sp": _sp_settings_block(cfg),
         "idp": idp,
@@ -301,17 +322,56 @@ def _auth_from_request(cfg: dict[str, Any], req: dict) -> OneLogin_Saml2_Auth:
     return OneLogin_Saml2_Auth(req, old_settings=settings)
 
 
-def login_redirect_url(cfg: dict[str, Any], request_url: str) -> str:
+def login_redirect_url(cfg: dict[str, Any], request_url: str) -> tuple[str, str]:
+    """Build the IdP redirect. Returns ``(url, authn_request_id)``.
+
+    The caller must remember the request id (see ``saml_state``) so the ACS
+    step can insist on ``InResponseTo`` matching a request this SP issued.
+    """
     req = prepare_request_data(request_url)
     auth = _auth_from_request(cfg, req)
-    return auth.login()
+    url = auth.login()
+    request_id = auth.get_last_request_id()
+    if not request_id:
+        raise ValueError("SAML AuthnRequest has no ID")
+    return url, request_id
 
 
-def process_acs(cfg: dict[str, Any], request_url: str, form: dict[str, Any]) -> dict[str, Any]:
-    """Validate SAMLResponse and return a normalized profile dict."""
+def peek_in_response_to(saml_response_b64: str) -> str | None:
+    """Read ``InResponseTo`` off the Response element *before* validation.
+
+    Only the attribute is read; nothing here is trusted. Its sole use is to look
+    up the outstanding AuthnRequest whose id then feeds ``process_acs`` for the
+    real, signature-backed comparison.
+    """
+    try:
+        raw = base64.b64decode(saml_response_b64, validate=False)
+        doc = OneLogin_Saml2_XML.to_etree(raw)
+    except Exception:
+        return None
+    value = doc.get("InResponseTo")
+    return str(value).strip() if value else None
+
+
+def process_acs(
+    cfg: dict[str, Any],
+    request_url: str,
+    form: dict[str, Any],
+    *,
+    request_id: str | None = None,
+) -> dict[str, Any]:
+    """Validate SAMLResponse and return a normalized profile dict.
+
+    ``request_id`` is the AuthnRequest id this SP issued; python3-saml then
+    rejects a Response whose ``InResponseTo`` differs. Unsolicited
+    (IdP-initiated) responses are refused: without an outstanding request there
+    is nothing to bind the assertion to, which is what makes replay possible.
+    """
     req = prepare_request_data(request_url, form=form)
     auth = _auth_from_request(cfg, req)
-    auth.process_response()
+    if not request_id:
+        raise ValueError("SAML response is unsolicited (no matching AuthnRequest)")
+    auth.process_response(request_id=request_id)
     errors = auth.get_errors()
     if errors:
         reason = auth.get_last_error_reason() or "; ".join(errors)
@@ -328,11 +388,17 @@ def process_acs(cfg: dict[str, Any], request_url: str, form: dict[str, Any]) -> 
         raise ValueError("SAML response did not include a username or NameID")
     if not name_id:
         raise ValueError("SAML response is missing NameID (required as external identity)")
+    assertion_id = (auth.get_last_assertion_id() or "").strip()
+    if not assertion_id:
+        raise ValueError("SAML assertion is missing its ID")
     return {
         "username": username,
         "email": email,
         "display_name": display_name or username,
         "external_id": name_id,
+        # Replay bookkeeping (consumed by the ACS endpoint, not part of the profile).
+        "assertion_id": assertion_id,
+        "assertion_not_on_or_after": auth.get_last_assertion_not_on_or_after(),
     }
 
 

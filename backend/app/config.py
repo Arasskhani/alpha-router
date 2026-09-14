@@ -326,6 +326,12 @@ class Settings(BaseSettings):
     saml_enabled: bool = False
     saml_idp_metadata_url: str = ""
     saml_entity_id: str = ""
+    # Lab-only escape hatch: lets an admin switch off strict validation and the
+    # signed-assertion requirement from the UI. Never set this in production;
+    # an unsigned assertion is a forged login.
+    allow_insecure_saml: bool = False  # env: ALLOW_INSECURE_SAML
+    # How long an outstanding AuthnRequest id stays valid for its ACS response.
+    saml_request_ttl_seconds: int = 600  # env: SAML_REQUEST_TTL_SECONDS
     # OIDC (env fallback when no DB row)
     oidc_enabled: bool = False
     oidc_issuer: str = ""

@@ -43,8 +43,15 @@ from app.services.oidc_client import (
 from app.services.saml_sp import (
     login_redirect_url,
     logout_redirect_url,
+    peek_in_response_to,
     process_acs,
     sp_metadata_xml,
+)
+from app.services.saml_state import (
+    SamlStateUnavailable,
+    consume_authn_request,
+    register_assertion,
+    remember_authn_request,
 )
 from app.services.user_chat_storage_service import ensure_user_chat_store
 from app.services.username_norm import find_user_by_username_ci, normalize_username
@@ -281,11 +288,15 @@ async def saml_login(request: Request, db: AsyncSession = Depends(get_db)):
     if not cfg.get("enabled"):
         raise HTTPException(status_code=400, detail="SAML is disabled")
     try:
-        url = await asyncio.to_thread(login_redirect_url, cfg, _request_public_url(request))
+        url, request_id = await asyncio.to_thread(login_redirect_url, cfg, _request_public_url(request))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"SAML login failed: {exc}") from exc
+    try:
+        await remember_authn_request(request_id)
+    except SamlStateUnavailable as exc:
+        raise HTTPException(status_code=503, detail="SAML login is temporarily unavailable") from exc
     return RedirectResponse(url)
 
 
@@ -301,12 +312,43 @@ async def saml_acs(
     if not cfg.get("enabled"):
         raise HTTPException(status_code=400, detail="SAML is disabled")
     form = {"SAMLResponse": SAMLResponse}
+
+    # 1. The Response must answer an AuthnRequest this SP issued and not yet
+    #    consumed. The id is read untrusted here; python3-saml re-checks it
+    #    against the signed assertion inside process_acs.
+    in_response_to = peek_in_response_to(SAMLResponse)
     try:
-        profile = await asyncio.to_thread(process_acs, cfg, _request_public_url(request), form)
+        solicited = await consume_authn_request(in_response_to)
+    except SamlStateUnavailable as exc:
+        raise HTTPException(status_code=503, detail="SAML login is temporarily unavailable") from exc
+    if not solicited:
+        await _audit_saml_rejection(db, request, "unsolicited_or_replayed_response", in_response_to)
+        raise HTTPException(
+            status_code=401,
+            detail="SAML response does not match an outstanding login request",
+        )
+
+    try:
+        profile = await asyncio.to_thread(
+            process_acs, cfg, _request_public_url(request), form, request_id=in_response_to
+        )
     except ValueError as exc:
+        await _audit_saml_rejection(db, request, "assertion_invalid", in_response_to)
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except Exception as exc:
+        await _audit_saml_rejection(db, request, "assertion_invalid", in_response_to)
         raise HTTPException(status_code=401, detail=f"SAML ACS failed: {exc}") from exc
+
+    # 2. Defense in depth: the same assertion must never log in twice.
+    assertion_id = str(profile.pop("assertion_id", "") or "")
+    not_on_or_after = profile.pop("assertion_not_on_or_after", None)
+    try:
+        fresh = await register_assertion(assertion_id, not_on_or_after)
+    except SamlStateUnavailable as exc:
+        raise HTTPException(status_code=503, detail="SAML login is temporarily unavailable") from exc
+    if not fresh:
+        await _audit_saml_rejection(db, request, "assertion_replayed", assertion_id)
+        raise HTTPException(status_code=401, detail="SAML assertion was already used")
 
     user = await _upsert_directory_user(db, profile, "saml")
     slugs = await get_user_role_slugs(db, user.id)
@@ -330,6 +372,25 @@ async def saml_acs(
     except ValueError as exc:
         raise HTTPException(status_code=500, detail="Invalid frontend redirect configuration") from exc
     return RedirectResponse(f"{frontend_url}/login?code={xchg_code}")
+
+
+async def _audit_saml_rejection(db: AsyncSession, request: Request, reason: str, ref: str | None) -> None:
+    """Record a refused SAML Response; never let bookkeeping mask the 401."""
+    try:
+        from app.services.security_audit import log_security_event
+
+        await log_security_event(
+            db,
+            actor=None,
+            actor_ip=request.client.host if request.client else None,
+            action="saml_response_rejected",
+            resource_type="saml",
+            resource_id=(ref or "")[:64] or None,
+            detail={"reason": reason},
+        )
+        await db.commit()
+    except Exception:
+        logger.warning("could not record SAML rejection audit event", exc_info=True)
 
 
 async def _sso_exchange(

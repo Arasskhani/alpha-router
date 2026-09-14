@@ -209,40 +209,6 @@ def dedupe_media_rows_by_hash(rows: list[MediaAsset]) -> list[MediaAsset]:
     return merged
 
 
-async def cleanup_duplicate_media_assets(db: AsyncSession) -> int:
-    """Delete duplicate media_assets rows that share user_id + content_hash."""
-    rows = (
-        (
-            await db.execute(
-                select(MediaAsset)
-                .where(MediaAsset.content_hash.isnot(None))
-                .where(MediaAsset.content_hash != "")
-                .order_by(MediaAsset.user_id, MediaAsset.content_hash, MediaAsset.id.desc())
-            )
-        )
-        .scalars()
-        .all()
-    )
-    keep_ids: set[int] = set()
-    to_delete: list[MediaAsset] = []
-    seen: set[tuple[int, str]] = set()
-    for row in rows:
-        key = (row.user_id, (row.content_hash or "").strip().lower())
-        if key in seen:
-            to_delete.append(row)
-        else:
-            seen.add(key)
-            keep_ids.add(row.id)
-    paths: list[str] = []
-    for row in to_delete:
-        paths.append(row.storage_path)
-        await db.delete(row)
-    await db.flush()
-    for path in paths:
-        await unlink_storage_if_unreferenced(db, path)
-    return len(to_delete)
-
-
 async def list_user_media_filtered(
     db: AsyncSession,
     user_id: int,

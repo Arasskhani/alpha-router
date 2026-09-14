@@ -6,7 +6,7 @@ import asyncio
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 import httpx
 
@@ -27,20 +27,6 @@ class SandboxExecutorError(Exception):
 
 class SandboxJobCancelled(Exception):
     """The submitted job reached the broker's cancelled terminal state."""
-
-
-class SandboxExecutor(Protocol):
-    async def execute(
-        self,
-        code: str,
-        files: dict[str, str],
-        *,
-        job_id: str | None = None,
-    ) -> dict[str, Any]: ...
-
-    async def cancel(self, job_id: str) -> bool: ...
-
-    async def capacity(self) -> dict[str, Any]: ...
 
 
 class DockerBrokerSandboxExecutor:

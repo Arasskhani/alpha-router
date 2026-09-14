@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import httpx
 
@@ -13,7 +13,6 @@ from app.services.openrouter_image_service import (
     build_openrouter_headers,
     get_openrouter_http_client,
 )
-from app.services.storage_service import video_output_limit
 import contextlib
 
 
@@ -274,69 +273,3 @@ def extract_video_download_url(payload: dict[str, Any], *, base_url: str | None 
         if parsed.scheme == "https" and parsed.hostname:
             return url
     return None
-
-
-async def download_video_bytes(
-    *,
-    api_key: str,
-    url: str,
-    base_url: str | None = None,
-    max_bytes: int | None = None,
-    referer: str | None = None,
-) -> tuple[bytes, str]:
-    """Download generated video with a hard size cap. Returns (blob, mime)."""
-    limit = int(max_bytes or video_output_limit())
-    headers = build_openrouter_headers(api_key, referer=referer)
-    # Content endpoints may need auth; public CDNs ignore the header.
-    client = get_openrouter_http_client()
-    timeout = httpx.Timeout(120.0, connect=OPENROUTER_CONNECT_TIMEOUT)
-
-    if url.startswith("data:"):
-        from app.services.bounded_io import decode_data_url_bounded
-
-        blob, mime = decode_data_url_bounded(url, max_decoded_bytes=limit)
-        return blob, mime or "video/mp4"
-
-    # Absolute-ize relative OpenRouter paths.
-    if url.startswith("/"):
-        root = (base_url or "https://openrouter.ai/api/v1").rstrip("/")
-        # url may be /api/v1/videos/... — prefer joining against origin.
-        parsed_base = urlparse(root)
-        origin = f"{parsed_base.scheme}://{parsed_base.netloc}"
-        url = urljoin(origin, url)
-
-    from app.services.ssrf_guard import safe_client
-
-    async with safe_client() as ssrf_client:
-        # Prefer SSRF-safe client for non-OpenRouter CDN URLs.
-        use_client: httpx.AsyncClient = client
-        if not _is_allowed_openrouter_url(url, base_url=base_url):
-            use_client = ssrf_client
-        async with use_client.stream("GET", url, headers=headers, timeout=timeout) as response:
-            if response.status_code >= 400:
-                body = (await response.aread())[:500]
-                raise httpx.HTTPStatusError(
-                    f"Video download failed: {response.status_code} {body!r}",
-                    request=response.request,
-                    response=response,
-                )
-            mime = (response.headers.get("content-type") or "video/mp4").split(";")[0].strip().lower()
-            chunks: list[bytes] = []
-            total = 0
-            async for chunk in response.aiter_bytes():
-                if not chunk:
-                    continue
-                total += len(chunk)
-                if total > limit:
-                    raise ValueError(f"Video exceeds max size of {limit} bytes")
-                chunks.append(chunk)
-            blob = b"".join(chunks)
-    if mime not in ALLOWED_VIDEO_MIME_TYPES:
-        # Trust mp4/webm by magic when CDN omits content-type.
-        if blob[4:8] == b"ftyp":
-            mime = "video/mp4"
-        elif blob[:4] == b"\x1aE\xdf\xa3":
-            mime = "video/webm"
-        else:
-            mime = "video/mp4"
-    return blob, mime

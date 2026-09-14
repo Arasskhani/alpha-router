@@ -40,6 +40,8 @@ backend-lint:
     - python -m pip install --no-cache-dir -r backend/requirements-dev.txt
     # Full rule set (backend/ruff.toml) plus formatting; both are hard gates.
     - cd backend && ruff check . && ruff format --check .
+    # Dead code: anything vulture is >=80% sure about fails; allowlist in vulture_whitelist.py.
+    - vulture app vulture_whitelist.py --min-confidence 80
 
 # Type errors are frozen in backend/mypy-baseline.txt; the job fails on any
 # error not in the baseline. Fix errors and run `scripts/mypy-check.sh --sync`

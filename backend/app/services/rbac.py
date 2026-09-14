@@ -615,13 +615,6 @@ def is_full_administrator(role: str | None) -> bool:
     return normalize_role_slug(role) in GLOBAL_FULL_ADMIN_SLUGS
 
 
-def is_global_platform_role(role: str | None) -> bool:
-    slug = normalize_role_slug(role)
-    if slug == SUPER_ADMIN_SLUG:
-        return True
-    return is_legacy_super_admin_slug(role)
-
-
 def is_read_only_role(role: str | None) -> bool:
     slug = normalize_role_slug(role)
     if slug in (READ_ONLY_FULL_ADMIN_SLUG, LEGACY_READ_ONLY_ADMIN_SLUG):
@@ -665,26 +658,6 @@ def can_write_menu(role: str | None, menu: MenuKey | None = None) -> bool:
 
 
 # Category helpers (any menu in the group).
-def can_access_category(role: str | None, category: CategoryKey) -> bool:
-    return any(can_access_menu(role, menu) for menu in MENUS_BY_CATEGORY.get(category, ()))
-
-
-def can_write(role: str | None, category: CategoryKey | None = None) -> bool:
-    if category is None:
-        return can_write_menu(role)
-    return any(can_write_menu(role, menu) for menu in MENUS_BY_CATEGORY.get(category, ()))
-
-
-def accessible_category_keys(role: str | None) -> frozenset[CategoryKey] | None:
-    allowed_menus = accessible_menu_keys(role)
-    if allowed_menus is None:
-        return None
-    groups: set[CategoryKey] = set()
-    for menu in allowed_menus:
-        groups.add(MENU_GROUP_KEYS[menu])
-    return frozenset(groups)
-
-
 def path_to_menu(path: str) -> MenuKey | None:
     normalized = path.rstrip("/") or "/"
     best: MenuKey | None = None
@@ -698,10 +671,6 @@ def path_to_menu(path: str) -> MenuKey | None:
             if (normalized == prefix or normalized.startswith(f"{prefix}/")) and len(prefix) > best_len:
                 best, best_len = menu, len(prefix)
     return best
-
-
-def session_payload(role: str | None) -> dict:
-    return session_payload_for_slugs([normalize_role_slug(role)])
 
 
 def _role_privilege_rank(slug: str) -> int:
@@ -777,19 +746,6 @@ def user_can_write_menu(slugs: list[str], menu: MenuKey | None = None) -> bool:
         return all(can_write_menu(s, menu) for s in contributors)
     admin_menus = [m for m in MENU_LABELS if m not in USER_APP_MENUS]
     return any(user_can_write_menu(slugs, m) for m in admin_menus)
-
-
-def user_can_access_category(slugs: list[str], category: CategoryKey) -> bool:
-    return any(user_can_access_menu(slugs, menu) for menu in MENUS_BY_CATEGORY.get(category, ()))
-
-
-def user_can_write(slugs: list[str], category: CategoryKey | None = None) -> bool:
-    if category is not None:
-        menus = MENUS_BY_CATEGORY.get(category, ())
-        if not menus:
-            return False
-        return any(user_can_write_menu(slugs, menu) for menu in menus)
-    return user_can_write_menu(slugs)
 
 
 def user_is_read_only_admin(slugs: list[str]) -> bool:

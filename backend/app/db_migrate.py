@@ -3,7 +3,6 @@
 from sqlalchemy import inspect, text
 from sqlalchemy.schema import CreateIndex
 
-from app.config import get_settings
 from app.database import Base, engine
 from app.schema_registry import AGENT_PLATFORM_TABLE_NAMES
 
@@ -479,10 +478,3 @@ async def validate_accounting_schema() -> None:
         missing = await conn.run_sync(validate)
     if missing:
         raise RuntimeError("Accounting schema is incomplete: " + ", ".join(missing))
-
-
-async def apply_sqlite_schema_patches() -> None:
-    """Apply current-schema patches only for a configured SQLite database."""
-    if "sqlite" not in get_settings().database_url:
-        return
-    await apply_schema_column_patches()

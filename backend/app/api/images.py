@@ -424,7 +424,6 @@ async def _reference_image_dimensions(reference_image: str) -> tuple[int, int] |
         return await asyncio.to_thread(image_dimensions, data)
     except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return None)
         return None
-    return None
 
 
 async def _resolve_generation_dimensions(

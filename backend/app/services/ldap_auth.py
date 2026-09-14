@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import ssl
 import uuid
@@ -789,10 +788,6 @@ def authenticate_ldap_sync(username: str, password: str, config: dict | None = N
         "dn": None,
         "identity_source": "none",
     }
-
-
-async def authenticate_ldap(username: str, password: str, config: dict | None = None) -> dict | None:
-    return await asyncio.to_thread(authenticate_ldap_sync, username, password, config)
 
 
 def _sync_search_bases(cfg: dict) -> list[str]:

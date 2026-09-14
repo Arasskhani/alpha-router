@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import HTTPException
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.budget import BudgetPlan, PlanAssignment
@@ -107,62 +107,3 @@ async def clear_group_plan(db: AsyncSession, group_id: int) -> dict[str, int]:
             user.monthly_budget_usd = await resolve_monthly_budget(db, user)
     await db.flush()
     return {"users_assigned": len(member_ids), "group_id": group_id}
-
-
-async def assignment_labels(db: AsyncSession, assignments: list[PlanAssignment]) -> list[dict]:
-    """Human-readable assignment rows for admin UI."""
-    if not assignments:
-        return []
-    user_ids = {a.user_id for a in assignments if a.user_id}
-    group_ids = {a.group_id for a in assignments if a.group_id}
-    users_by_id: dict[int, User] = {}
-    groups_by_id: dict[int, UserGroup] = {}
-    if user_ids:
-        users = (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all()
-        users_by_id = {u.id: u for u in users}
-    if group_ids:
-        groups = (await db.execute(select(UserGroup).where(UserGroup.id.in_(group_ids)))).scalars().all()
-        groups_by_id = {g.id: g for g in groups}
-
-    member_counts: dict[int, int] = {}
-    if group_ids:
-        count_rows = (
-            await db.execute(
-                select(user_group_members.c.group_id, func.count())
-                .where(user_group_members.c.group_id.in_(group_ids))
-                .group_by(user_group_members.c.group_id)
-            )
-        ).all()
-        member_counts = {int(gid): int(cnt) for gid, cnt in count_rows}
-
-    out = []
-    for a in assignments:
-        label = ""
-        kind = "other"
-        if a.user_id:
-            u = users_by_id.get(a.user_id)
-            if a.plan_id is None:
-                label = f"User: {u.display_name or u.username if u else f'#{a.user_id}'} (No Plan)"
-            else:
-                label = f"User: {u.display_name or u.username if u else f'#{a.user_id}'}"
-            kind = "user"
-        elif a.group_id:
-            g = groups_by_id.get(a.group_id)
-            name = g.name if g else f"#{a.group_id}"
-            n = member_counts.get(a.group_id, 0)
-            label = f"Group: {name} ({n} member(s))"
-            kind = "group"
-        elif a.department:
-            label = f"Department: {a.department}"
-            kind = "department"
-        out.append(
-            {
-                "id": a.id,
-                "user_id": a.user_id,
-                "group_id": a.group_id,
-                "department": a.department,
-                "label": label,
-                "kind": kind,
-            }
-        )
-    return out

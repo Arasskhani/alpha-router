@@ -16,6 +16,7 @@ FIELD_LABELS: dict[str, str] = {
     "name": "Name",
     "owner_user_id": "Owner",
     "credit_limit_usd": "Credit limit (USD)",
+    "unlimited_budget": "Unlimited budget",
     "reset_period": "Reset period",
     "expires_at": "Expiration",
     "is_active": "Active",
@@ -196,6 +197,7 @@ async def log_api_key_deleted(
             "key_prefix": (getattr(key, "key_prefix", None) or "")[:12],
             "owner_user_id": key.owner_user_id,
             "credit_limit_usd": key.credit_limit_usd,
+            "unlimited_budget": bool(getattr(key, "unlimited_budget", False)),
             "is_active": bool(key.is_active),
         },
     )

@@ -175,6 +175,32 @@ async def apply_schema_column_patches() -> None:
         await conn.run_sync(patch)
 
 
+async def backfill_api_key_unlimited_budget() -> None:
+    """One-time data migration for ``alpha_router_api_keys.unlimited_budget``.
+
+    Before this column existed, ``credit_limit_usd <= 0`` meant "no cap". To
+    keep every existing key working exactly as before, rows that still have
+    NULL in the new column get ``true`` when they had no positive limit and
+    ``false`` otherwise. New keys always carry an explicit value, so this
+    touches nothing after the first run. Admins should review the keys now
+    flagged unlimited (the UI marks them).
+    """
+    async with engine.begin() as conn:
+        try:
+            await conn.execute(
+                text(
+                    "UPDATE alpha_router_api_keys SET unlimited_budget = "
+                    "CASE WHEN credit_limit_usd IS NULL OR credit_limit_usd <= 0 "
+                    "THEN TRUE ELSE FALSE END WHERE unlimited_budget IS NULL"
+                )
+            )
+        except Exception as exc:
+            message = str(exc).lower()
+            if "does not exist" in message or "no such table" in message or "no such column" in message:
+                return
+            raise
+
+
 async def validate_agent_platform_schema() -> None:
     """Fail startup when the versioned Agent Platform migration was not applied."""
 

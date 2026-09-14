@@ -49,6 +49,7 @@ type AlphaRouterKey = {
   owner_username: string | null;
   owner_display_name: string | null;
   credit_limit_usd: number;
+  unlimited_budget: boolean;
   reset_period: "daily" | "weekly" | "monthly";
   expires_at: string | null;
   expiration_never: boolean;
@@ -175,6 +176,7 @@ export default function AdminApiKeys() {
         name: values.name,
         owner_user_id: values.owner_user_id,
         credit_limit_usd: values.credit_limit_usd ?? 0,
+        unlimited_budget: values.unlimited_budget,
         reset_period: values.reset_period,
         expiration_days: values.expiration_never ? null : values.expiration_days,
         restrict_connections: values.restrict_connections,
@@ -202,6 +204,7 @@ export default function AdminApiKeys() {
         name: values.name,
         owner_user_id: values.owner_user_id,
         credit_limit_usd: values.credit_limit_usd ?? 0,
+        unlimited_budget: values.unlimited_budget,
         reset_period: values.reset_period,
         expiration_days: values.expiration_never ? null : values.expiration_days,
         expiration_never: values.expiration_never,
@@ -375,7 +378,9 @@ export default function AdminApiKeys() {
                   <td className="col-sm">{formatUsd(k.total_used_usd)}</td>
                   <td className="col-md">
                     <div className="api-keys-limit">
-                      <span>{limit > 0 ? formatUsd(limit) : "—"}</span>
+                      <span>
+                        {limit > 0 ? formatUsd(limit) : k.unlimited_budget ? "Unlimited" : "Blocked (no limit set)"}
+                      </span>
                       {limit > 0 ? (
                         <div className="api-keys-limit-bar" aria-hidden>
                           <div className="api-keys-limit-fill" style={{ width: `${periodPct}%` }} />
@@ -478,6 +483,7 @@ export default function AdminApiKeys() {
                 name: editKey.name,
                 owner_user_id: editKey.owner_user_id ?? undefined,
                 credit_limit_usd: editKey.credit_limit_usd,
+                unlimited_budget: editKey.unlimited_budget,
                 reset_period: editKey.reset_period,
                 expiration_never: editKey.expiration_never,
                 expiration_days: editKey.expiration_never

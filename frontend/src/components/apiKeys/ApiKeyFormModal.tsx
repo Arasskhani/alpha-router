@@ -10,6 +10,8 @@ export type ApiKeyFormValues = {
   name: string;
   owner_user_id: number;
   credit_limit_usd: number | null;
+  /** Explicit opt-out from the credit limit; required when the limit is empty/0. */
+  unlimited_budget: boolean;
   reset_period: "daily" | "weekly" | "monthly";
   expiration_days: number | null;
   expiration_never: boolean;
@@ -32,6 +34,7 @@ const defaultValues: ApiKeyFormValues = {
   name: "",
   owner_user_id: 0,
   credit_limit_usd: null,
+  unlimited_budget: false,
   reset_period: "monthly",
   expiration_days: null,
   expiration_never: false,
@@ -53,6 +56,7 @@ export default function ApiKeyFormModal({ open, title, initial, onClose, onSubmi
       name: initial?.name ?? "",
       owner_user_id: initial?.owner_user_id ?? 0,
       credit_limit_usd: initial?.credit_limit_usd ?? null,
+      unlimited_budget: initial?.unlimited_budget ?? false,
       reset_period: initial?.reset_period ?? "monthly",
       expiration_days: initial?.expiration_days ?? null,
       expiration_never: initial?.expiration_never ?? false,
@@ -126,8 +130,24 @@ export default function ApiKeyFormModal({ open, title, initial, onClose, onSubmi
               }))
             }
           />
-          <span className="muted-text api-key-form__hint">Leave empty for no cap; 0 also means no cap</span>
+          <span className="muted-text api-key-form__hint">
+            A key without a positive limit is blocked unless you mark it unlimited below.
+          </span>
         </label>
+        <label className="api-key-form__label" style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          <input
+            type="checkbox"
+            checked={form.unlimited_budget}
+            onChange={(e) => setForm((f) => ({ ...f, unlimited_budget: e.target.checked }))}
+          />
+          <span>Unlimited budget (no credit cap)</span>
+        </label>
+        {form.unlimited_budget ? (
+          <p className="form-hint form-hint--warning">
+            This key can spend without any per-period ceiling. Every request is still billed to the
+            owner&apos;s account.
+          </p>
+        ) : null}
         <label className="api-key-form__label">
           Reset limit every…
           <select

@@ -64,6 +64,11 @@ class AlphaRouterApiKey(Base):
     notes = Column(Text, nullable=True)
     owner_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
     credit_limit_usd = Column(Float, default=0.0)
+    # Explicit opt-out from the credit limit. A key with credit_limit_usd <= 0
+    # and this false is *blocked*, not unlimited. Nullable so the column can be
+    # added to existing tables; db_migrate.backfill_api_key_unlimited_budget
+    # sets it from the old implicit semantics ("0 meant no cap") exactly once.
+    unlimited_budget = Column(Boolean, nullable=True, default=False)
     reset_period = Column(String(16), default="monthly")  # daily | weekly | monthly
     expires_at = Column(DateTime, nullable=True)
     period_used_usd = Column(Float, default=0.0)

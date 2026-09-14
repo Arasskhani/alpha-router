@@ -570,6 +570,8 @@ async def reserve(
         limit = float(key.credit_limit_usd or 0)
         used = float(key.period_used_usd or 0)
         held = float(key.period_reserved_usd or 0)
+        # ensure_key_usable has already refused limit <= 0 unless the key is
+        # explicitly unlimited, so "limit > 0" here means "a cap applies".
         if limit > 0:
             held, amount = await _admit_hold(
                 db,

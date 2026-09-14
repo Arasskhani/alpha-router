@@ -92,6 +92,7 @@ async def _seed_alpha_router_key(
     raw_key="alpha_router_gatewaykey_test456",
     credit_limit_usd=0.0,
     period_used_usd=0.0,
+    unlimited_budget=None,
 ):
     async with session_factory() as db:
         key = AlphaRouterApiKey(
@@ -100,6 +101,8 @@ async def _seed_alpha_router_key(
             key_hash=hash_api_key(raw_key),
             is_active=True,
             credit_limit_usd=credit_limit_usd,
+            # A key without a positive limit is blocked unless explicitly unlimited.
+            unlimited_budget=(credit_limit_usd <= 0) if unlimited_budget is None else unlimited_budget,
             reset_period="monthly",
             period_used_usd=period_used_usd,
             period_started_at=datetime.datetime.utcnow(),

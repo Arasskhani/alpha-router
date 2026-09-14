@@ -58,6 +58,7 @@ from app.core.security import hash_password
 from app.database import AsyncSessionLocal, Base, engine
 from app.db_migrate import (
     apply_schema_column_patches,
+    backfill_api_key_unlimited_budget,
     validate_accounting_schema,
     validate_agent_platform_schema,
 )
@@ -580,6 +581,7 @@ async def lifespan(app: FastAPI):
             tables=legacy_metadata_tables(Base.metadata),
         )
     await apply_schema_column_patches()
+    await backfill_api_key_unlimited_budget()
     await validate_agent_platform_schema()
     await validate_accounting_schema()
 

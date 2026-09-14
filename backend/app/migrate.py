@@ -10,6 +10,7 @@ import app.models  # noqa: F401
 from app.database import Base, engine
 from app.db_migrate import (
     apply_schema_column_patches,
+    backfill_api_key_unlimited_budget,
     validate_accounting_schema,
     validate_agent_platform_schema,
 )
@@ -28,6 +29,7 @@ async def _bootstrap_legacy_schema() -> None:
             tables=legacy_metadata_tables(Base.metadata),
         )
     await apply_schema_column_patches()
+    await backfill_api_key_unlimited_budget()
     await engine.dispose()
 
 

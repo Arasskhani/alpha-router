@@ -734,6 +734,8 @@ class ApiKeyCreate(BaseModel):
     name: str
     owner_user_id: int
     credit_limit_usd: float = 0
+    # Must be true when credit_limit_usd is 0: no silent blank cheques.
+    unlimited_budget: bool = False
     reset_period: Literal["daily", "weekly", "monthly"] = "monthly"
     expiration_days: int | None = None
     restrict_connections: bool = False
@@ -746,6 +748,7 @@ class ApiKeyPatch(BaseModel):
     name: str | None = None
     owner_user_id: int | None = None
     credit_limit_usd: float | None = None
+    unlimited_budget: bool | None = None
     reset_period: Literal["daily", "weekly", "monthly"] | None = None
     expiration_days: int | None = None
     expiration_never: bool | None = None
@@ -766,6 +769,10 @@ async def create_alpha_router_key(
         raise HTTPException(400, detail="Owner user not found")
     if body.credit_limit_usd < 0:
         raise HTTPException(400, detail="Credit limit must be >= 0")
+    if body.credit_limit_usd <= 0 and not body.unlimited_budget:
+        raise HTTPException(
+            400, detail="Set a credit limit greater than 0, or explicitly mark the key as unlimited"
+        )
     raw, prefix, key_hash = generate_api_key()
     now = datetime.utcnow()
     expires_at = compute_expires_at(now, body.expiration_days)
@@ -775,6 +782,7 @@ async def create_alpha_router_key(
         key_hash=key_hash,
         owner_user_id=body.owner_user_id,
         credit_limit_usd=float(body.credit_limit_usd),
+        unlimited_budget=bool(body.unlimited_budget),
         reset_period=body.reset_period,
         expires_at=expires_at,
         period_started_at=now,
@@ -1791,6 +1799,13 @@ async def patch_alpha_router_key(
             raise HTTPException(400, detail="Credit limit must be >= 0")
         k.credit_limit_usd = float(body.credit_limit_usd)
         patches["credit_limit_usd"] = k.credit_limit_usd
+    if body.unlimited_budget is not None:
+        k.unlimited_budget = bool(body.unlimited_budget)
+        patches["unlimited_budget"] = k.unlimited_budget
+    if float(k.credit_limit_usd or 0) <= 0 and not bool(k.unlimited_budget):
+        raise HTTPException(
+            400, detail="Set a credit limit greater than 0, or explicitly mark the key as unlimited"
+        )
     if body.reset_period is not None:
         k.reset_period = body.reset_period
         patches["reset_period"] = k.reset_period

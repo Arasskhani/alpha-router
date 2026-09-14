@@ -216,6 +216,7 @@ async def _test_gateway_models_list_respects_allowlist() -> None:
                 key_prefix=raw[:16],
                 key_hash=hash_api_key(raw),
                 is_active=True,
+                unlimited_budget=True,  # no cap must now be explicit
             )
             db.add(key)
             await db.flush()

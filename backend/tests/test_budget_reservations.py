@@ -347,6 +347,7 @@ def test_embedding_failure_settles_committed_hold_independently() -> None:
                     source="user_key",
                     skip_budget=False,
                     alpha_router_api_key_id=None,
+                    user_api_key_id=None,
                     client_app="test",
                     source_ip=None,
                 )

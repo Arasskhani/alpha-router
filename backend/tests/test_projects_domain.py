@@ -1,6 +1,7 @@
 """Tests for the Projects domain model, ACL service, and membership invariants."""
 
 import asyncio
+import pytest
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -112,7 +113,10 @@ def test_resolve_project_access_owner_can_view_and_edit():
                 assert access.is_member is True
                 assert access.role == "owner"
                 assert access.can("project.edit") is True
-                assert access.can("project.delete") is True
+                # Only the Primary Owner may delete a project; a regular Owner
+                # is a strict subset (see _CAPABILITIES in project_access_service).
+                assert access.can("project.delete") is False
+                assert access.can("member.manage_owners") is False
                 assert access.can("chat.write") is True
         finally:
             await engine.dispose()
@@ -345,8 +349,11 @@ def test_ensure_not_last_owner_allows_demote_when_multiple_owners():
                 db.add(ProjectMember(project_id="proj-1", user_id=second.id, role=PROJECT_ROLE_OWNER))
                 await db.flush()
 
-                # Should not raise
-                await ensure_not_last_owner(db, project_id="proj-1", user_id=owner.id, new_role=PROJECT_ROLE_VIEWER)
+                # A regular Owner may be demoted while a Primary Owner remains.
+                await ensure_not_last_owner(db, project_id="proj-1", user_id=second.id, new_role=PROJECT_ROLE_VIEWER)
+                # The Primary Owner itself is always protected.
+                with pytest.raises(ProjectAccessError):
+                    await ensure_not_last_owner(db, project_id="proj-1", user_id=owner.id, new_role=PROJECT_ROLE_VIEWER)
         finally:
             await engine.dispose()
 

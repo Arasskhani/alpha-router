@@ -65,7 +65,8 @@ def test_create_project_makes_creator_owner():
             async with factory() as db:
                 owner = await _user(db, "owner")
                 proj = await create_project(db, user=owner, name="Alpha")
-                assert proj["myRole"] == "owner"
+                # The creator becomes the (single, non-assignable) Primary Owner.
+                assert proj["myRole"] == "primary_owner"
                 assert proj["isMember"] is True
                 assert proj["visibility"] == "private"
                 members = await db.execute(
@@ -73,7 +74,7 @@ def test_create_project_makes_creator_owner():
                 )
                 rows = members.all()
                 assert len(rows) == 1
-                assert rows[0].role == "owner"
+                assert rows[0].role == "primary_owner"
         finally:
             await engine.dispose()
 
@@ -386,7 +387,7 @@ def test_list_members_returns_all():
                 members = await list_members(db, project_id=pid, user=owner)
                 assert len(members) == 2
                 roles = {m["role"] for m in members}
-                assert roles == {"owner", "viewer"}
+                assert roles == {"primary_owner", "viewer"}
         finally:
             await engine.dispose()
 

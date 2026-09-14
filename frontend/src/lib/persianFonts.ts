@@ -7,7 +7,6 @@ export type PersianFontOption = {
 };
 
 type PersianFontsManifest = {
-  generatedAt?: string;
   families: PersianFontOption[];
 };
 

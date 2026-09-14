@@ -372,7 +372,7 @@ environment. For a host-side backend/frontend loop:
 cd backend
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-dev.txt   # Linux CI/Docker use requirements.lock
 uvicorn app.main:app --reload --port 8080
 ```
 
@@ -386,18 +386,24 @@ npx vite
 
 The Vite development server proxies `/api` to `localhost:8080`.
 
-## Tests
+## Tests and quality gates
 
 ```bash
 cd backend
-pytest
+pytest                      # native async tests; fixtures in tests/conftest.py
+ruff check . && ruff format --check .
+../scripts/mypy-check.sh    # type errors not in mypy-baseline.txt fail
 ```
 
 ```bash
 cd frontend
+npm run lint && npm run knip
 npm test
 npm run build
 ```
+
+See `CONTRIBUTING.md` for the full list of gates, the commit-message format and
+`pre-commit install` — the hooks run the same tools CI runs.
 
 Final release verification also validates the resolved Compose model:
 

@@ -25,7 +25,8 @@ from typing import Any
 
 import redis.asyncio as redis_async
 
-from app.config import effective_redis_url, get_settings
+from app.config import get_settings
+from app.core.redis_client import get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +44,8 @@ ClientFactory = Callable[[], Any]
 
 
 def _default_client() -> redis_async.Redis:
-    return redis_async.from_url(
-        effective_redis_url(),
-        decode_responses=True,
-        socket_connect_timeout=2.0,
-        socket_timeout=2.0,
-    )
+    """Shared per-process client (never closed here)."""
+    return get_redis()
 
 
 _client_factory: ClientFactory = _default_client
@@ -69,11 +66,6 @@ async def _with_client(op):
     except Exception as exc:
         logger.error("SAML state store unavailable: %s", type(exc).__name__)
         raise SamlStateUnavailable(str(exc)) from exc
-    finally:
-        try:
-            await client.aclose()
-        except Exception:
-            pass
 
 
 async def remember_authn_request(request_id: str) -> None:

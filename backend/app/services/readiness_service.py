@@ -27,7 +27,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from app.config import effective_redis_url, get_settings
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -87,14 +87,12 @@ async def _check_database() -> None:
 
 
 async def _check_redis() -> None:
-    import redis.asyncio as redis_async
+    from app.core.redis_client import get_redis
 
-    client = redis_async.from_url(effective_redis_url(), socket_connect_timeout=1.5, socket_timeout=1.5)
-    try:
-        if not await client.ping():
-            raise RuntimeError("PING returned false")
-    finally:
-        await client.aclose()
+    # The shared pool: a broken pooled connection is exactly what the probe
+    # should notice, and the 2s timeouts on the client bound it.
+    if not await get_redis().ping():
+        raise RuntimeError("PING returned false")
 
 
 async def _check_qdrant() -> None:

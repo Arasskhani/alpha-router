@@ -736,6 +736,9 @@ async def lifespan(app: FastAPI):
     await leader.stop()
     stop_scheduler()
     await close_openrouter_http_client()
+    from app.core.redis_client import close_redis
+
+    await close_redis()
     await engine.dispose()
     shutdown_telemetry()
 

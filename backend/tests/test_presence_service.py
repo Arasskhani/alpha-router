@@ -52,13 +52,15 @@ def _install(monkeypatch, client: FakeRedis | None, *, settings: FakeSettings | 
     return client
 
 
-def test_mark_online_sets_key_with_ttl_and_releases_the_client(monkeypatch) -> None:
+def test_mark_online_sets_key_with_ttl_and_keeps_the_shared_client_open(monkeypatch) -> None:
     client = _install(monkeypatch, FakeRedis())
 
     assert asyncio.run(presence_service.mark_online(7)) is True
     assert client.store == {"presence:user:7": "1"}
     assert client.ttls["presence:user:7"] == 90
-    assert client.closed is True
+    # The client is the per-process singleton now; closing it here would
+    # tear down the pool for every other caller.
+    assert client.closed is False
 
 
 def test_ttl_is_floored_so_a_tab_cannot_expire_between_pings(monkeypatch) -> None:

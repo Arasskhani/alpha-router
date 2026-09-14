@@ -18,7 +18,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from app.config import effective_redis_url, get_settings
+from app.core.redis_client import get_redis
+from app.config import get_settings
 from app.services.observability import increment
 
 _KEY_PREFIX = "presence:user:"
@@ -31,19 +32,11 @@ _MIN_TTL_SECONDS = 30
 
 
 def _client():
+    """Shared per-process client (never closed here)."""
     try:
-        import redis.asyncio as redis_async
-
-        return redis_async.from_url(effective_redis_url(), decode_responses=True)
+        return get_redis()
     except Exception:
         return None
-
-
-async def _close(client) -> None:
-    try:
-        await client.aclose()
-    except Exception:
-        pass
 
 
 def presence_key(user_id: int) -> str:
@@ -73,8 +66,6 @@ async def mark_online(user_id: int) -> bool:
     except Exception:
         increment("redis_fallback")
         return False
-    finally:
-        await _close(client)
 
 
 async def clear_presence(user_id: int) -> None:
@@ -88,8 +79,6 @@ async def clear_presence(user_id: int) -> None:
         await client.delete(presence_key(user_id))
     except Exception:
         increment("redis_fallback")
-    finally:
-        await _close(client)
 
 
 async def online_user_ids(user_ids: Sequence[int]) -> set[int] | None:
@@ -122,6 +111,4 @@ async def online_user_ids(user_ids: Sequence[int]) -> set[int] | None:
     except Exception:
         increment("redis_fallback")
         return None
-    finally:
-        await _close(client)
     return {uid for uid, value in zip(ids, values) if value}

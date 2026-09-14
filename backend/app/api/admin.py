@@ -253,7 +253,7 @@ async def create_connection(
     admin: User = Depends(require_connections_write),
 ):
     """Add connection to list immediately; model sync is optional (use Sync Now in table)."""
-    base_url = (body.base_url or "").strip() or None
+    base_url = _validated_connection_base_url(body.base_url)
     provider = (body.provider_type or "").strip().lower()
     if not provider:
         raise HTTPException(400, detail="Provider is required")
@@ -361,8 +361,7 @@ async def list_admin_models(
 ):
     conn_count = (await db.execute(select(func.count()).select_from(Connection))).scalar() or 0
     if conn_count == 0:
-        await db.execute(delete(AIModel))
-        await db.commit()
+        # Read-only: orphan rows are cleaned when the last connection is deleted.
         return []
 
     stmt = select(AIModel)
@@ -1556,7 +1555,7 @@ async def update_connection(
     if body.api_key:
         conn.api_key_encrypted = encrypt_secret(body.api_key)
     if body.base_url is not None:
-        conn.base_url = (body.base_url or "").strip() or None
+        conn.base_url = _validated_connection_base_url(body.base_url)
         patches["base_url"] = conn.base_url or ""
     if body.sync_interval_hours is not None:
         conn.sync_interval_hours = body.sync_interval_hours
@@ -3491,6 +3490,34 @@ async def admin_purge_expired_chat(
     result = await purge_expired_chat_messages(db)
     await db.commit()
     return {"ok": True, **result}
+
+
+def _validated_connection_base_url(raw: str | None) -> str | None:
+    """A provider base_url is fetched server-side with the connection's API key.
+
+    Without a check an admin-level account (or a CSRF'd admin) could point a
+    connection at http://169.254.169.254/ or an internal service and have
+    Alpharouter POST the credentialed model-sync/completion requests there.
+    ALLOW_SSRF_PRIVATE_RANGES=true keeps internal, self-hosted providers working.
+    """
+    from app.services.ssrf_guard import SSRFBlockedError, assert_url_safe
+
+    value = (raw or "").strip() or None
+    if value is None:
+        return None
+    if not value.lower().startswith(("http://", "https://")):
+        raise HTTPException(400, detail="base_url must start with http:// or https://")
+    try:
+        assert_url_safe(value)
+    except SSRFBlockedError as exc:
+        raise HTTPException(
+            400,
+            detail=(
+                "base_url points at a private, loopback or metadata address. "
+                "Set ALLOW_SSRF_PRIVATE_RANGES=true only for a trusted internal provider."
+            ),
+        ) from exc
+    return value
 
 
 def _client_ip(request: Request) -> str | None:

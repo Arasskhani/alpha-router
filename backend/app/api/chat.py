@@ -14,7 +14,7 @@ from fastapi import (
 )
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
@@ -22,10 +22,10 @@ from app.api.deps import get_current_user, require_active_user
 from app.branding import CHAT_CLIENT_APP
 from app.config import get_settings
 from app.database import AsyncSessionLocal, get_db
-from app.models.chat import ChatSession
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
+from app.services.chat_session_access import resolve_owned_chat_session
 from app.services.attachment_extract import processed_attachment_payload_async
 from app.services.upload_screening import UploadRejected, screen_upload
 from app.services.attachment_from_media_service import attachments_from_existing_media
@@ -115,8 +115,9 @@ async def chat_models(
         await db.execute(select(func.count()).select_from(Connection))
     ).scalar() or 0
     if conn_count == 0:
-        await db.execute(delete(AIModel))
-        await db.commit()
+        # No connections -> no usable models. Orphan catalog rows (FK cascade
+        # off) are removed by DELETE /api/admin/connections/{id}; a GET must
+        # never write.
         return []
 
     rows = (
@@ -448,6 +449,7 @@ async def voice_message(
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a voice note, store it, and return transcript for chat."""
+    await resolve_owned_chat_session(db, user=user, chat_session_id=chat_session_id)
     budget, usage = await get_user_budget_state(db, user)
     if blocked := budget_request_blocked(budget, usage):
         raise HTTPException(status_code=402, detail=blocked)
@@ -559,10 +561,10 @@ async def process_attachments(
         raise HTTPException(status_code=400, detail="No files uploaded.")
 
     scoped_project_id = (project_id or "").strip() or None
-    if not scoped_project_id and chat_session_id:
-        session = await db.get(ChatSession, chat_session_id)
-        if session is not None and session.project_id:
-            scoped_project_id = session.project_id
+    # 404 unless the caller owns the session or can write in its project.
+    session = await resolve_owned_chat_session(db, user=user, chat_session_id=chat_session_id)
+    if not scoped_project_id and session is not None and session.project_id:
+        scoped_project_id = session.project_id
 
     out: list[dict] = []
     total_bytes = 0

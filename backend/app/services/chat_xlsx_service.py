@@ -96,17 +96,34 @@ def _autosize_columns(ws, col_count: int, sample_rows: list[list[str]]) -> None:
         ws.column_dimensions[letter].width = max_len + 2
 
 
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _safe_cell(value):
+    """Neutralise spreadsheet formula injection in model-authored text.
+
+    A cell starting with ``=``, ``+``, ``-`` or ``@`` is evaluated by Excel
+    and LibreOffice (``=HYPERLINK(...)``, ``=WEBSERVICE(...)``, DDE). The text
+    came from a chat reply the user asked to export, i.e. from a model that
+    may have been steered by a document or web page. Prefix with an
+    apostrophe so it stays literal text; numbers are left alone.
+    """
+    if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
 def _write_table(ws, table: _Table, *, start_row: int = 1) -> int:
     """Write ``table`` starting at ``start_row``; return next free row index."""
     header_font = Font(bold=True)
     row_i = start_row
     for col_i, cell in enumerate(table.header, start=1):
-        c = ws.cell(row=row_i, column=col_i, value=cell)
+        c = ws.cell(row=row_i, column=col_i, value=_safe_cell(cell))
         c.font = header_font
     row_i += 1
     for row in table.rows:
         for col_i, cell in enumerate(row, start=1):
-            ws.cell(row=row_i, column=col_i, value=cell)
+            ws.cell(row=row_i, column=col_i, value=_safe_cell(cell))
         row_i += 1
     width_rows = [table.header, *table.rows[:40]]
     _autosize_columns(ws, max(len(table.header), 1), width_rows)

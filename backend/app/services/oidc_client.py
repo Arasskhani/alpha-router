@@ -237,19 +237,65 @@ def clear_state_cookie_params() -> dict:
     return {**state_cookie_params(), "max_age": 0, "expires": 0}
 
 
+_DISCOVERY_ENDPOINT_KEYS = (
+    "authorization_endpoint",
+    "token_endpoint",
+    "jwks_uri",
+    "userinfo_endpoint",
+    "end_session_endpoint",
+)
+
+
+def _assert_idp_url_safe(url: str, *, what: str) -> str:
+    """Every URL we will contact must be https and must not resolve internally.
+
+    The issuer is validated when the admin saves it, but the endpoints come
+    from the discovery document *the IdP serves*: a compromised IdP (or its
+    DNS) could send the token exchange, with client_secret and the code, to
+    an internal address. Same guard as web fetch and IdP metadata fetches.
+    """
+    from app.services.ssrf_guard import SSRFBlockedError, assert_url_safe
+
+    value = (url or "").strip()
+    if not value:
+        raise ValueError(f"OIDC discovery has an empty {what}")
+    parsed = urlsplit(value)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError(f"OIDC {what} must be an https URL")
+    try:
+        assert_url_safe(value)
+    except SSRFBlockedError as exc:
+        raise ValueError(f"OIDC {what} points at a disallowed address") from exc
+    return value
+
+
+def _validate_discovery_document(data: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        raise ValueError("OIDC discovery document is not an object")
+    if not data.get("authorization_endpoint") or not data.get("token_endpoint"):
+        raise ValueError("OIDC discovery missing authorization/token endpoints")
+    for key in _DISCOVERY_ENDPOINT_KEYS:
+        if data.get(key):
+            data[key] = _assert_idp_url_safe(str(data[key]), what=key)
+    return data
+
+
+def _idp_http_client() -> httpx.Client:
+    # No redirects: a 30x from an IdP endpoint could re-target the request.
+    return httpx.Client(timeout=15.0, follow_redirects=False, trust_env=False)
+
+
 def fetch_discovery(issuer: str) -> dict[str, Any]:
     issuer_n = validate_issuer_url(issuer)
     now = time.time()
     cached = _DISCOVERY_CACHE.get(issuer_n)
     if cached is not None and (now - _DISCOVERY_CACHE_TS.get(issuer_n, 0)) < _DISCOVERY_CACHE_TTL:
         return cached
-    url = f"{issuer_n}/.well-known/openid-configuration"
-    with httpx.Client(timeout=15.0, follow_redirects=False) as client:
+    url = _assert_idp_url_safe(f"{issuer_n}/.well-known/openid-configuration", what="discovery URL")
+    with _idp_http_client() as client:
         resp = client.get(url)
         resp.raise_for_status()
-        data = resp.json()
-    if not data.get("authorization_endpoint") or not data.get("token_endpoint"):
-        raise ValueError("OIDC discovery missing authorization/token endpoints")
+        data = _validate_discovery_document(resp.json())
     _DISCOVERY_CACHE[issuer_n] = data
     _DISCOVERY_CACHE_TS[issuer_n] = now
     return data
@@ -280,7 +326,7 @@ def build_authorize_url(cfg: dict[str, Any], params: OIDCFlowParams) -> str:
 def exchange_code_for_tokens(cfg: dict[str, Any], *, code: str, code_verifier: str) -> dict[str, Any]:
     issuer = validate_issuer_url(cfg.get("issuer") or "")
     discovery = fetch_discovery(issuer)
-    token_ep = discovery["token_endpoint"]
+    token_ep = _assert_idp_url_safe(discovery["token_endpoint"], what="token_endpoint")
     data = {
         "grant_type": "authorization_code",
         "code": code,
@@ -294,7 +340,7 @@ def exchange_code_for_tokens(cfg: dict[str, Any], *, code: str, code_verifier: s
     if secret:
         # Prefer body client_secret for broad IdP compatibility.
         data["client_secret"] = secret
-    with httpx.Client(timeout=15.0, follow_redirects=False) as client:
+    with _idp_http_client() as client:
         resp = client.post(token_ep, data=data, headers=headers, auth=auth)
         if resp.status_code != 200:
             raise ValueError("OIDC token exchange failed")
@@ -309,7 +355,8 @@ def _fetch_jwks(jwks_uri: str) -> dict:
     cached = _JWKS_CACHE.get(jwks_uri)
     if cached is not None and (now - _JWKS_CACHE_TS.get(jwks_uri, 0)) < _JWKS_CACHE_TTL:
         return cached
-    with httpx.Client(timeout=15.0, follow_redirects=False) as client:
+    jwks_uri = _assert_idp_url_safe(jwks_uri, what="jwks_uri")
+    with _idp_http_client() as client:
         resp = client.get(jwks_uri)
         resp.raise_for_status()
         data = resp.json()
@@ -390,7 +437,8 @@ def fetch_userinfo(cfg: dict[str, Any], access_token: str) -> dict[str, Any]:
     userinfo_ep = discovery.get("userinfo_endpoint")
     if not userinfo_ep or not access_token:
         return {}
-    with httpx.Client(timeout=15.0, follow_redirects=False) as client:
+    userinfo_ep = _assert_idp_url_safe(userinfo_ep, what="userinfo_endpoint")
+    with _idp_http_client() as client:
         resp = client.get(userinfo_ep, headers={"Authorization": f"Bearer {access_token}"})
         if resp.status_code != 200:
             return {}

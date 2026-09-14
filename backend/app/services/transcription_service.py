@@ -106,6 +106,10 @@ def wav_duration_seconds(audio_bytes: bytes) -> float | None:
             pos = body + chunk_size + (chunk_size & 1)
         if not sample_rate or not channels or not bits or not data_size:
             return None
+        # Header sanity: a crafted fmt chunk (1 Hz, 1 channel, 8 bit) would make
+        # a few kilobytes "hours" of billable audio, or the reverse.
+        if not (8000 <= sample_rate <= 192_000) or not (1 <= channels <= 8) or bits not in (8, 16, 24, 32, 64):
+            return None
         bytes_per_frame = channels * (bits // 8)
         if bytes_per_frame <= 0:
             return None
@@ -177,11 +181,20 @@ def _provider_duration_seconds(result) -> float | None:
     return None
 
 
+_ALLOWED_AUDIO_SUFFIXES = frozenset(_EXT_BY_MIME.values()) | frozenset({".m4a", ".mp4", ".oga", ".opus"})
+
+
 def _suffix_for_file(filename: str, mime_type: str) -> str:
+    """Temp-file suffix for the LiteLLM upload, from a fixed audio whitelist.
+
+    The suffix came straight from the client filename (``voice.php``,
+    ``x.exe``...). It only names a temp file, but the whitelist keeps the
+    file we hand to a third-party library an audio file by name too.
+    """
     name = (filename or "").lower()
     if "." in name:
         ext = "." + name.rsplit(".", 1)[-1]
-        if ext != ".":
+        if ext in _ALLOWED_AUDIO_SUFFIXES:
             return ext
     mime = (mime_type or "").split(";")[0].strip().lower()
     return _EXT_BY_MIME.get(mime, ".webm")

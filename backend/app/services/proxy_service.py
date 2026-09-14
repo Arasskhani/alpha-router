@@ -290,9 +290,11 @@ async def resolve_model_and_key(
                 (
                     await db.execute(
                         select(AIModel)
+                        .join(Connection, Connection.id == AIModel.connection_id)
                         .where(
                             AIModel.id == model_pk,
                             AIModel.is_enabled == True,  # noqa: E712
+                            Connection.is_active == True,  # noqa: E712
                             *connection_filter,
                             *model_filter,
                         )
@@ -309,9 +311,15 @@ async def resolve_model_and_key(
                 (
                     await db.execute(
                         select(AIModel)
+                        # The same external id can exist on several connections;
+                        # picking the lowest id and *then* checking its connection
+                        # returned "no model" when that one was disabled even
+                        # though an active twin existed. Filter first.
+                        .join(Connection, Connection.id == AIModel.connection_id)
                         .where(
                             AIModel.external_id.in_(candidates),
                             AIModel.is_enabled == True,  # noqa: E712
+                            Connection.is_active == True,  # noqa: E712
                             *connection_filter,
                             *model_filter,
                         )
@@ -830,13 +838,22 @@ async def _adaptive_openrouter_extra_body(ai_model: AIModel) -> dict | None:
     return {"plugins": [plugin]}
 
 
-def _code_interpreter_capacity_subject(
+async def _code_interpreter_capacity_subject(
+    db: AsyncSession,
     *,
     user_id: int | None,
     alpha_router_api_key_id: int | None,
     source: str | None,
 ) -> str:
+    """Per-subject capacity is per *person*: an owner with several gateway keys
+    used to get one share per key and could crowd out everyone else."""
     if alpha_router_api_key_id is not None:
+        from app.models.api_key import AlphaRouterApiKey
+
+        key = await db.get(AlphaRouterApiKey, alpha_router_api_key_id)
+        owner_id = getattr(key, "owner_user_id", None)
+        if owner_id is not None:
+            return subject_for_user(int(owner_id))
         return subject_for_api_key(alpha_router_api_key_id)
     if user_id is not None:
         return subject_for_user(user_id)
@@ -1000,7 +1017,8 @@ async def preflight_stream_chat(
             )
         except WorkspaceLimitError as exc:
             raise HTTPException(status_code=413, detail=exc.api_detail()) from exc
-        capacity_subject = _code_interpreter_capacity_subject(
+        capacity_subject = await _code_interpreter_capacity_subject(
+            db,
             user_id=user_id,
             alpha_router_api_key_id=alpha_router_api_key_id,
             source=source,

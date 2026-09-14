@@ -44,13 +44,20 @@ def _normalized_origin(value: str) -> str:
     return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
 
 
+def _is_production() -> bool:
+    return str(getattr(get_settings(), "environment", "") or "").lower() == "production"
+
+
+def development_origins() -> set[str]:
+    """Loopback origins accepted only outside production."""
+    if _is_production():
+        return set()
+    return {"http://127.0.0.1:8080", "http://localhost:8080"}
+
+
 def allowed_origins() -> set[str]:
     settings = get_settings()
-    configured = {
-        _normalized_origin(settings.frontend_url),
-        "http://127.0.0.1:8080",
-        "http://localhost:8080",
-    }
+    configured = {_normalized_origin(settings.frontend_url), *development_origins()}
     return {origin for origin in configured if origin}
 
 
@@ -77,6 +84,11 @@ def origin_allowed(origin: str) -> bool:
         return False
     if normalized in allowed_origins():
         return True
+    # Any http://<RFC1918 IP> origin used to pass in every environment, so a
+    # page on a compromised LAN host could make credentialed state-changing
+    # requests. Lab convenience only: production accepts FRONTEND_URL alone.
+    if _is_production():
+        return False
     return _is_private_http_origin(normalized)
 
 

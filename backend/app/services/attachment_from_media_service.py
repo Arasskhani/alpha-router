@@ -56,12 +56,18 @@ async def resolve_attach_scope(
     *,
     project_id: str | None,
     chat_session_id: str | None,
+    user: object | None = None,
 ) -> str | None:
     """Return the project id media_ids belong to, or None for personal media."""
     requested = (project_id or "").strip() or None
     session_project: str | None = None
     if chat_session_id:
-        session = await db.get(ChatSession, chat_session_id)
+        if user is not None:
+            from app.services.chat_session_access import resolve_owned_chat_session
+
+            session = await resolve_owned_chat_session(db, user=user, chat_session_id=chat_session_id)
+        else:
+            session = await db.get(ChatSession, chat_session_id)
         if session is not None:
             session_project = (session.project_id or "").strip() or None
     if requested and session_project and requested != session_project:
@@ -162,6 +168,7 @@ async def attachments_from_existing_media(
         db,
         project_id=project_id,
         chat_session_id=chat_session_id,
+        user=user,
     )
     if scoped_project_id:
         await require_capability(

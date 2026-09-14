@@ -17,15 +17,21 @@ wait_for_health() {
 }
 
 show_bootstrap_admin_credentials() {
-  local marker="BOOTSTRAP_ADMIN_CREDENTIALS_ONCE"
-  local line
+  # The app writes the first-boot admin password to a 0600 file inside the
+  # container (never to its log). Print it once here, then remove the file.
+  local marker="BOOTSTRAP_ADMIN_CREDENTIALS_ONCE" line creds
   line="$(compose logs alpha-router 2>&1 | grep "$marker" | tail -n 1 || true)"
   if [ -z "$line" ]; then
     return 0
   fi
-  printf '\n[%s] First-boot bootstrap administrator (one-time; also in container logs):\n' "$LOG_PREFIX"
-  printf '[%s] %s\n' "$LOG_PREFIX" "$line"
-  warn "Change this password after first login. Docker log retention may keep a copy."
+  creds="$(compose exec -T alpha-router sh -c 'cat /app/tls/bootstrap-admin.txt 2>/dev/null && rm -f /app/tls/bootstrap-admin.txt' 2>/dev/null || true)"
+  if [ -z "$creds" ]; then
+    printf '\n[%s] First-boot bootstrap administrator was created; the password is ADMIN_PASSWORD in .env.\n' "$LOG_PREFIX"
+    return 0
+  fi
+  printf '\n[%s] First-boot bootstrap administrator (shown once; the file has been removed):\n' "$LOG_PREFIX"
+  printf '%s\n' "$creds" | sed "s/^/[$LOG_PREFIX]   /"
+  warn "Change this password after first login."
 }
 
 print_success() {

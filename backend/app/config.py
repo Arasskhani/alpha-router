@@ -332,6 +332,9 @@ class Settings(BaseSettings):
     # when this is true. Off by default: linking such a row lets the directory
     # identity inherit its roles and used to switch off its TOTP.
     ldap_link_local_password_accounts: bool = False  # env: LDAP_LINK_LOCAL_PASSWORD_ACCOUNTS
+    # Prune is refused when the directory answer is empty or would remove more
+    # than this share of the known LDAP users in one run (0.5 = half).
+    ldap_prune_max_ratio: float = 0.5  # env: LDAP_PRUNE_MAX_RATIO
     # SAML 2.0 SP (env fallback when no DB row)
     saml_enabled: bool = False
     saml_idp_metadata_url: str = ""

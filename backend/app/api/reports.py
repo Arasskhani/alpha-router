@@ -1,5 +1,7 @@
 """Admin reports: catalog, query, export + scheduled email (SMTP)."""
 
+import json
+import re
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -240,6 +242,58 @@ class ScheduleIn(BaseModel):
     format: str = "pdf"
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_SCHEDULE_FORMATS = frozenset({"pdf", "xlsx", "csv"})
+_MAX_RECIPIENTS = 20
+
+
+def _validate_schedule(body: ScheduleIn) -> dict:
+    """Shared validation for admin and self-service schedules.
+
+    Rows land in the admin schedule list and will one day drive an emailer,
+    so every field is checked here: known report, a parseable 5-field cron,
+    well-formed recipient addresses, a known format and JSON parameters.
+    """
+    from apscheduler.triggers.cron import CronTrigger
+
+    if body.report_type not in {r["id"] for r in REPORT_CATALOG}:
+        raise HTTPException(400, "Unknown report_type")
+    cron = (body.cron_expression or "").strip()
+    if not cron or len(cron.split()) != 5:
+        raise HTTPException(400, "cron_expression must have 5 fields (minute hour day month weekday)")
+    try:
+        CronTrigger.from_crontab(cron)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, f"Invalid cron_expression: {exc}") from exc
+    recipients = [r.strip() for r in re.split(r"[,;\s]+", body.recipients or "") if r.strip()]
+    if not recipients:
+        raise HTTPException(400, "At least one recipient is required")
+    if len(recipients) > _MAX_RECIPIENTS:
+        raise HTTPException(400, f"At most {_MAX_RECIPIENTS} recipients")
+    bad = [r for r in recipients if not _EMAIL_RE.match(r) or len(r) > 254]
+    if bad:
+        raise HTTPException(400, f"Invalid recipient address: {bad[0]}")
+    fmt = (body.format or "pdf").lower()
+    if fmt not in _SCHEDULE_FORMATS:
+        raise HTTPException(400, "format must be one of pdf, xlsx, csv")
+    params = body.parameters_json
+    if params:
+        if len(params) > 8192:
+            raise HTTPException(400, "parameters_json is too large")
+        try:
+            if not isinstance(json.loads(params), dict):
+                raise ValueError("not an object")
+        except ValueError as exc:
+            raise HTTPException(400, "parameters_json must be a JSON object") from exc
+    return {
+        "report_type": body.report_type,
+        "cron_expression": cron,
+        "recipients": ",".join(recipients),
+        "parameters_json": params,
+        "format": fmt,
+    }
+
+
 @router.get("/schedules")
 async def list_schedules(db: AsyncSession = Depends(get_db), _: User = Depends(require_reports)):
     rows = (await db.execute(select(ReportSchedule))).scalars().all()
@@ -258,18 +312,8 @@ async def list_schedules(db: AsyncSession = Depends(get_db), _: User = Depends(r
 
 @router.post("/schedules")
 async def create_schedule(body: ScheduleIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_reports_write)):
-    if body.report_type not in {r["id"] for r in REPORT_CATALOG}:
-        raise HTTPException(400, "Unknown report_type")
-    db.add(
-        ReportSchedule(
-            report_type=body.report_type,
-            cron_expression=body.cron_expression,
-            recipients=body.recipients,
-            parameters_json=body.parameters_json,
-            format=body.format,
-            is_active=True,
-        )
-    )
+    clean = _validate_schedule(body)
+    db.add(ReportSchedule(**clean, is_active=True))
     await db.commit()
     return {"ok": True}
 
@@ -280,17 +324,17 @@ async def user_schedule_report(
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Users may schedule their own reports; cannot configure SMTP."""
-    db.add(
-        ReportSchedule(
-            owner_user_id=user.id,
-            report_type=body.report_type,
-            cron_expression=body.cron_expression,
-            recipients=body.recipients,
-            parameters_json=body.parameters_json,
-            format=body.format,
-            is_active=True,
-        )
-    )
+    """Users may schedule their own reports; cannot configure SMTP.
+
+    Same validation as the admin endpoint, plus: a user may only send to
+    their own address (anything else would be an unauthenticated mailer
+    the moment the sender is wired up).
+    """
+    clean = _validate_schedule(body)
+    own = (user.email or "").strip().lower()
+    others = [r for r in clean["recipients"].split(",") if r.lower() != own]
+    if not own or others:
+        raise HTTPException(400, "Self-service schedules can only be sent to your own account email")
+    db.add(ReportSchedule(owner_user_id=user.id, **clean, is_active=True))
     await db.commit()
     return {"ok": True}

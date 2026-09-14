@@ -319,6 +319,8 @@ def test_s10_redirect_uri_pinned():
     with (
         patch("app.services.oidc_client.fetch_discovery", return_value=DISCOVERY),
         patch("app.services.oidc_client.httpx.Client", FakeClient),
+        # Endpoints from discovery now pass the SSRF guard; resolve the test IdP publicly.
+        patch("app.services.ssrf_guard.socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 0))]),
     ):
         url = build_authorize_url(cfg, params)
         tokens = exchange_code_for_tokens(cfg, code="abc", code_verifier=params.code_verifier)
@@ -402,7 +404,18 @@ def test_s17_secret_masked_and_encrypted_at_rest():
 
 
 def _ensure_fake_onelogin() -> None:
-    """Stub python3-saml imports for hosts without the xmlsec stack."""
+    """Stub python3-saml imports for hosts without the xmlsec stack.
+
+    Only when the real package is missing: the previous version replaced the
+    attributes of the *real* modules with MagicMocks, which broke every SAML
+    test that happened to run after this one.
+    """
+    try:
+        import onelogin.saml2.auth  # noqa: F401
+
+        return
+    except Exception:
+        pass
     names = [
         "onelogin",
         "onelogin.saml2",
@@ -410,6 +423,7 @@ def _ensure_fake_onelogin() -> None:
         "onelogin.saml2.settings",
         "onelogin.saml2.idp_metadata_parser",
         "onelogin.saml2.utils",
+        "onelogin.saml2.xml_utils",
     ]
     for name in names:
         if name not in sys.modules:
@@ -420,6 +434,7 @@ def _ensure_fake_onelogin() -> None:
     sys.modules["onelogin.saml2.auth"].OneLogin_Saml2_Auth = MagicMock()
     sys.modules["onelogin.saml2.settings"].OneLogin_Saml2_Settings = MagicMock()
     sys.modules["onelogin.saml2.idp_metadata_parser"].OneLogin_Saml2_IdPMetadataParser = MagicMock()
+    sys.modules["onelogin.saml2.xml_utils"].OneLogin_Saml2_XML = MagicMock()
 
 
 def test_s18_oidc_tls_guard():

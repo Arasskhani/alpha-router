@@ -14,6 +14,7 @@ from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.text_safety import strip_nul
 from app.config import get_settings
 from app.models.chat import (
     ChatFolder,
@@ -1640,6 +1641,12 @@ async def update_last_session_message(
     if last is None:
         return None
 
+    # Same bounds as append: no NUL (PostgreSQL text rejects it -> 500 mid-
+    # stream) and the storage ceiling, truncated rather than refused because
+    # the message already exists and the stream must finish.
+    content = strip_nul(content) or ""
+    if len(content.encode("utf-8")) > _MAX_MESSAGE_BYTES:
+        content = content.encode("utf-8")[:_MAX_MESSAGE_BYTES].decode("utf-8", errors="ignore")
     last.content = content
     if meta:
         merged = dict(last.meta) if isinstance(last.meta, dict) else {}

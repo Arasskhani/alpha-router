@@ -46,6 +46,7 @@ def main() -> int:
         http_bind=settings.alpharouter_http_bind,
         trusted_proxy_cidrs=settings.trusted_proxy_cidrs,
         trust_local_gateway_proxy=settings.trust_local_gateway_proxy,
+        allow_insecure_saml=bool(getattr(settings, "allow_insecure_saml", False)),
     )
     if settings.environment.lower() != "production":
         print("ENVIRONMENT is not production; guard checks skipped.")

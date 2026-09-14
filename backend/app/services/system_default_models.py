@@ -203,7 +203,13 @@ async def _assert_usable(db: AsyncSession, entry: DefaultModelKind, model: AIMod
         raise SystemDefaultModelError("Model must be public")
     if not entry.supports(model):
         raise SystemDefaultModelError(entry.requirement)
-    if model.connection_id is not None:
-        conn = await db.get(Connection, model.connection_id)
-        if conn is None or not bool(conn.is_active):
-            raise SystemDefaultModelError("Model connection must be active")
+    # Same bar as global_default_transcription_model: a system default is what
+    # every user falls back to, so it must be routable right now - a live
+    # connection with credentials, not merely a catalog row.
+    if model.connection_id is None:
+        raise SystemDefaultModelError("Model has no connection")
+    conn = await db.get(Connection, model.connection_id)
+    if conn is None or not bool(conn.is_active):
+        raise SystemDefaultModelError("Model connection must be active")
+    if not conn.api_key_encrypted:
+        raise SystemDefaultModelError("Model connection has no API key")

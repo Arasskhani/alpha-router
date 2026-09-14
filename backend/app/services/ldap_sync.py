@@ -529,19 +529,42 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:
     # directory snapshot is incomplete and pruning from it would delete real
     # users. Never prune from a partial run.
     prune_skipped = prune and bool(users_skipped or groups_skipped)
-    if prune_skipped:
-        logger.warning(
-            "LDAP sync: prune suppressed, %d user(s) and %d group(s) were skipped",
-            users_skipped,
-            groups_skipped,
-        )
-
+    prune_reason = "skipped_records" if prune_skipped else None
+    ldap_directory_users: list[User] = []
     if prune and not prune_skipped:
         ldap_directory_users = (
             await db.execute(
                 select(User).where(User.auth_provider == "ldap", User.deleted_at.is_(None))
             )
         ).scalars().all()
+        # An empty directory answer, or one that would remove most of the
+        # known users, is far more likely a search-base typo, a moved OU or a
+        # half-failed paged search than a real mass departure. Refuse to prune
+        # from it; the admin sees prune_reason in the sync result.
+        if not users_data:
+            prune_skipped, prune_reason = True, "empty_directory"
+        elif ldap_directory_users:
+            to_remove = sum(
+                1
+                for u in ldap_directory_users
+                if not (
+                    (u.external_id and u.external_id in synced_user_keys)
+                    or (not u.external_id and normalize_username(u.username) in synced_usernames)
+                )
+            )
+            ratio = to_remove / max(1, len(ldap_directory_users))
+            max_ratio = float(getattr(get_settings(), "ldap_prune_max_ratio", 0.5) or 0.5)
+            if to_remove >= 2 and ratio > max_ratio:
+                prune_skipped, prune_reason = True, f"ratio_{ratio:.2f}_exceeds_{max_ratio:.2f}"
+    if prune_skipped:
+        logger.warning(
+            "LDAP sync: prune suppressed (%s); %d user(s) and %d group(s) were skipped",
+            prune_reason,
+            users_skipped,
+            groups_skipped,
+        )
+
+    if prune and not prune_skipped:
         for user in ldap_directory_users:
             if user.external_id and user.external_id in synced_user_keys:
                 continue
@@ -578,6 +601,7 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:
         "foreign_provider_skipped": foreign_provider_skipped,
         "local_password_skipped": local_password_skipped,
         "prune_skipped": prune_skipped,
+        "prune_reason": prune_reason,
         "conflicts": conflicts,
     }
 

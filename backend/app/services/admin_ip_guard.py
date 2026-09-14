@@ -64,7 +64,24 @@ class AdminIpGuardMiddleware:
                 logger.exception("admin IP allowlist cache refresh failed")
                 state = peek_restriction_state(allow_stale=True)
                 if state is None:
-                    await self.app(scope, receive, send)
+                    # No policy has ever been loaded in this process and the
+                    # database is unreachable: we cannot tell whether an
+                    # allowlist is enforced. Letting the request through here
+                    # turned "enforce" into "off" for the duration of an
+                    # outage. The admin surface cannot work without the
+                    # database anyway, so answer 503 instead.
+                    increment("admin_ip_guard_unavailable")
+                    if path.startswith("/api/"):
+                        response = JSONResponse(
+                            status_code=503,
+                            content={"detail": "Admin access policy is temporarily unavailable"},
+                        )
+                    else:
+                        response = HTMLResponse(
+                            "<h1>503</h1><p>Admin access policy is temporarily unavailable.</p>",
+                            status_code=503,
+                        )
+                    await response(scope, receive, send)
                     return
 
         if state.mode == "off":

@@ -39,6 +39,14 @@ from app.services.proxy_service import (
 from app.services.user_service import get_user_by_api_key
 from app.utils.app_attribution import detect_client_app
 
+def _is_master_key(candidate: str) -> bool:
+    """Constant-time comparison: ``==`` on secrets leaks length/prefix timing."""
+    expected = str(settings.gateway_master_key or "")
+    if not expected:
+        return False
+    return secrets.compare_digest(candidate.encode("utf-8"), expected.encode("utf-8"))
+
+
 router = APIRouter(tags=["gateway"])
 settings = get_settings()
 configure_litellm_cache()
@@ -106,7 +114,7 @@ async def _resolve_gateway_auth(
     username = "gateway"
     client_app = detect_client_app(request)
 
-    if raw_key == settings.gateway_master_key:
+    if _is_master_key(raw_key):
         # Master key → fixed service identity. body.user is intentionally ignored
         # to prevent impersonation. Usage debits the service account's budget, so
         # the key is denied (402) until an admin assigns a budget plan to it.
@@ -160,7 +168,7 @@ async def _require_valid_gateway_key(
     raw_key = auth.replace("Bearer ", "").strip() if auth.startswith("Bearer ") else ""
     if not raw_key:
         raise HTTPException(status_code=401, detail="Missing API key")
-    if raw_key == settings.gateway_master_key:
+    if _is_master_key(raw_key):
         return
     user, source, router_key, user_api_key = await get_user_by_api_key(db, raw_key)
     if source == "alpha_router_key" and router_key:

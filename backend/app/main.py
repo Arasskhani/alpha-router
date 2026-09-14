@@ -163,6 +163,7 @@ def _assert_production_safe() -> None:
         http_bind=settings.alpharouter_http_bind,
         trusted_proxy_cidrs=settings.trusted_proxy_cidrs,
         trust_local_gateway_proxy=settings.trust_local_gateway_proxy,
+        allow_insecure_saml=bool(getattr(settings, "allow_insecure_saml", False)),
         guard_mode=settings.production_guard_mode,
     )
     if (
@@ -353,6 +354,7 @@ def _collect_production_insecurities(
     http_bind: str = "0.0.0.0",
     trusted_proxy_cidrs: str = "127.0.0.1/32,::1/128",
     trust_local_gateway_proxy: bool = True,
+    allow_insecure_saml: bool = False,
 ) -> list[str]:
     """Pure collector used by the startup guard and by tests.
 
@@ -411,6 +413,9 @@ def _collect_production_insecurities(
         insecure.append("OIDC_TLS")
     if smtp_host.strip() and not smtp_tls:
         insecure.append("SMTP_TLS")
+    if allow_insecure_saml:
+        # Lets admins switch off signed assertions: a forged login in production.
+        insecure.append("ALLOW_INSECURE_SAML")
     if (
         s3_endpoint_url.strip()
         and not s3_use_ssl
@@ -495,6 +500,7 @@ def _check_production_safe(
     http_bind: str = "0.0.0.0",
     trusted_proxy_cidrs: str = "127.0.0.1/32,::1/128",
     trust_local_gateway_proxy: bool = True,
+    allow_insecure_saml: bool = False,
     guard_mode: str = "hard-fail",
 ) -> None:
     """Pure check used by the startup guard and by tests.
@@ -539,6 +545,7 @@ def _check_production_safe(
         http_bind=http_bind,
         trusted_proxy_cidrs=trusted_proxy_cidrs,
         trust_local_gateway_proxy=trust_local_gateway_proxy,
+        allow_insecure_saml=allow_insecure_saml,
     )
     if not insecure:
         return
@@ -786,13 +793,12 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(OpenApiDocsGuardMiddleware)
 
 
+from app.services.csrf_protection import development_origins as _development_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        settings.frontend_url,
-        "http://127.0.0.1:8080",
-        "http://localhost:8080",
-    ],
+    # Loopback origins are a development convenience; production gets FRONTEND_URL only.
+    allow_origins=[settings.frontend_url, *sorted(_development_origins())],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=[

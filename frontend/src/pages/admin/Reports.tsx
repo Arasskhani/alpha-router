@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { localDateKey } from "../../components/activity/formatters";
 import AdminPage from "../../components/AdminPage";
 import UserOwnerSelect from "../../components/apiKeys/UserOwnerSelect";
 import { api, authFetch, formatApiError } from "../../api";
@@ -69,9 +70,10 @@ const emptyParams: ParamState = {
   group_by: "model",
 };
 
-function isoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
+// Calendar day in the admin's own timezone. toISOString() gave the UTC day,
+// so "last 7 days" started/ended a day off for anyone east of Greenwich in
+// the evening (and the preset never matched what the table showed).
+const isoDate = localDateKey;
 
 const DATE_PRESETS = [
   { value: "7", label: "Last 7 days", days: 7 },

@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { readSseEvents } from "../lib/sse";
 import { flushSync } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api, authFetch, formatApiError, getCachedSession, isApiAuthError } from "../api";
@@ -87,6 +88,7 @@ import {
   sidebarOlderThan3DaysCutoffMs,
   sidebarOlderThan7DaysCutoffMs,
   sidebarHydrateMinActivityMs,
+  stableMessageKeys,
 } from "../lib/chatStorage";
 import {
   PROJECT_MEDIA_ATTACH_EVENT,
@@ -743,6 +745,7 @@ export default function ChatPanel({
   const [selectedChatIds, setSelectedChatIds] = useState<Set<string>>(() => new Set());
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const messageKeys = useMemo(() => stableMessageKeys(messages, String(activeId ?? "")), [messages, activeId]);
   const [input, setInput] = useState("");
   const [inputDirection, setInputDirection] = useState<TextDirection>("ltr");
   const composerInputRef = useRef("");
@@ -3914,54 +3917,44 @@ export default function ChatPanel({
     const reader = res.body?.getReader();
     if (!reader) throw new Error("No response stream");
 
-    const decoder = new TextDecoder();
     let assistant = "";
-    let buffer = "";
     let requestLogId: number | undefined;
     let agentMetadata: AgentCompletionMetadata | undefined;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        const payload = line.slice(6).trim();
-        if (payload === "[DONE]") continue;
-        try {
-          const json = JSON.parse(payload);
-          if (json.error) {
-            const errMsg =
-              typeof json.error === "string"
-                ? json.error
-                : json.error?.message || JSON.stringify(json.error);
-            throw new Error(errMsg);
-          }
-          const metaLogId = json?.alpha_router?.request_log_id;
-          if (typeof metaLogId === "number" && Number.isFinite(metaLogId)) {
-            requestLogId = metaLogId;
-          }
-          const nextAgentMetadata = agentCompletionMetadataFromSse(
-            json?.alpha_router,
-          );
-          if (Object.keys(nextAgentMetadata).length) {
-            agentMetadata = {
-              ...(agentMetadata || {}),
-              ...nextAgentMetadata,
-            };
-          }
-          const delta = json.choices?.[0]?.delta?.content;
-          if (delta) {
-            assistant += delta;
-            onPartial(assistant);
-          }
-        } catch (err) {
-          if (err instanceof SyntaxError) continue;
-          throw err;
+    // readSseEvents also delivers a trailing `data:` line without a newline
+    // and cancels the reader if this loop exits early (error / Stop).
+    for await (const payload of readSseEvents(reader)) {
+      if (payload === "[DONE]") continue;
+      try {
+        const json = JSON.parse(payload);
+        if (json.error) {
+          const errMsg =
+            typeof json.error === "string"
+              ? json.error
+              : json.error?.message || JSON.stringify(json.error);
+          throw new Error(errMsg);
         }
+        const metaLogId = json?.alpha_router?.request_log_id;
+        if (typeof metaLogId === "number" && Number.isFinite(metaLogId)) {
+          requestLogId = metaLogId;
+        }
+        const nextAgentMetadata = agentCompletionMetadataFromSse(
+          json?.alpha_router,
+        );
+        if (Object.keys(nextAgentMetadata).length) {
+          agentMetadata = {
+            ...(agentMetadata || {}),
+            ...nextAgentMetadata,
+          };
+        }
+        const delta = json.choices?.[0]?.delta?.content;
+        if (delta) {
+          assistant += delta;
+          onPartial(assistant);
+        }
+      } catch (err) {
+        if (err instanceof SyntaxError) continue;
+        throw err;
       }
     }
     return {
@@ -6705,7 +6698,9 @@ export default function ChatPanel({
           )}
           {messages.map((m, i) => (
             <article
-              key={`${activeId}-${i}`}
+              // A stable identity per message: with the index as key, deleting or
+              // inserting one message re-mounted (and re-parsed) every row below it.
+              key={messageKeys[i]}
               className={`alpha-router-msg alpha-router-msg-${m.role}${m.modelId ? " alpha-router-msg-multi" : ""}`}
             >
               {m.role === "assistant" && m.agentName ? (

@@ -2348,3 +2348,22 @@ export async function enhanceImagePrompt(
 ): Promise<string | null> {
   return enhancePrompt(model, prompt, mode, "image");
 }
+
+/**
+ * React keys for a message list. Prefers the message's own identity
+ * (`clientMessageId`, then `id`) so inserting or removing a row does not
+ * re-mount every row below it; a user prompt and the assistant replies it
+ * produced can share a `clientMessageId`, so role and model are part of the
+ * key, and any remaining collision falls back to the index rather than
+ * handing React duplicate keys.
+ */
+export function stableMessageKeys(messages: ChatMessage[], scope: string): string[] {
+  const seen = new Set<string>();
+  return messages.map((m, i) => {
+    const identity = m.clientMessageId ?? m.id;
+    let key = identity ? `${scope}-${m.role}-${m.modelId ?? ""}-${identity}` : `${scope}-${i}`;
+    if (seen.has(key)) key = `${key}-${i}`;
+    seen.add(key);
+    return key;
+  });
+}

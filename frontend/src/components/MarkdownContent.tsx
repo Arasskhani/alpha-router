@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react";
+import { createContext, memo, useContext } from "react";
 import type { ComponentPropsWithoutRef, MouseEvent, ReactNode } from "react";
 import type { ExtraProps } from "react-markdown";
 import ReactMarkdown from "react-markdown";
@@ -100,25 +100,32 @@ function MarkdownCode({
   return <ChatCodeBlock code={code} language={lang} variant={variant} deferHighlight={parentStreaming} />;
 }
 
+// Module-level so their identity is stable: a new `components`/`remarkPlugins`
+// object per render made react-markdown re-create every element of every
+// message whenever the chat re-rendered (each streamed token).
+const REMARK_PLUGINS = [remarkGfm];
+const MARKDOWN_COMPONENTS = {
+  pre: ({ children }: { children?: ReactNode }) => <>{children}</>,
+  code: MarkdownCode,
+  a: SafeLink,
+  img: SafeImage,
+};
+
 /** Render assistant / AI text as GitHub-flavored Markdown. */
-export default function MarkdownContent({ content, className = "", streaming = false }: Props) {
+function MarkdownContent({ content, className = "", streaming = false }: Props) {
   if (!content) return null;
 
   return (
     <MarkdownStreamingContext.Provider value={streaming}>
       <div className={`markdown-body${className ? ` ${className}` : ""}`}>
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={{
-            pre: ({ children }) => <>{children}</>,
-            code: MarkdownCode,
-            a: SafeLink,
-            img: SafeImage,
-          }}
-        >
+        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
           {content}
         </ReactMarkdown>
       </div>
     </MarkdownStreamingContext.Provider>
   );
 }
+
+// Finished messages have identical props from one chat render to the next;
+// memo keeps their Markdown trees untouched while a sibling is streaming.
+export default memo(MarkdownContent);

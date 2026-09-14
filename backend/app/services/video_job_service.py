@@ -40,6 +40,20 @@ _ACTIVE_TASKS: dict[str, asyncio.Task] = {}
 _WORKER_TASK: asyncio.Task | None = None
 _WORKER_STOP = asyncio.Event()
 _TERMINAL = frozenset({"completed", "failed", "cancelled"})
+
+
+class LeaseLost(RuntimeError):
+    """Another worker now owns this job's lease; this runner must stop touching it.
+
+    Raised inside the poll loop when the row's ``lease_owner`` no longer
+    matches the claim this runner started with (the lease expired and
+    ``claim_due_video_jobs`` handed the job to someone else). The job row,
+    the reservation and billing all belong to the new owner from that point.
+    """
+
+
+class VideoJobAlreadyCompleted(RuntimeError):
+    """The provider finished the job before the cancel reached it."""
 # How long a claimed job stays leased to one worker, and how often a long
 # phase renews that lease. The heartbeat must stay well under the lease so a
 # single slow beat never lets a second worker claim a job that is running.
@@ -290,15 +304,29 @@ async def cancel_video_job(db: AsyncSession, job: VideoGenerationJob) -> VideoGe
             conn = await db.get(Connection, job.connection_id) if job.connection_id else None
             if model and conn and conn.is_active:
                 adapter = get_video_adapter(job.provider_type, adapter_key=job.adapter_key)
-                await adapter.cancel(
-                    api_key=decrypt_secret(conn.api_key_encrypted),
-                    base_url=conn.base_url,
-                    job=ProviderJobRef(
-                        provider_type=job.provider_type,
-                        provider_job_id=job.provider_job_id,
-                        polling_url=job.provider_polling_url,
-                    ),
+                api_key = decrypt_secret(conn.api_key_encrypted)
+                ref = ProviderJobRef(
+                    provider_type=job.provider_type,
+                    provider_job_id=job.provider_job_id,
+                    polling_url=job.provider_polling_url,
                 )
+                # The provider may already have finished (and charged for) the
+                # clip. Cancelling now would release the hold and drop a paid
+                # result on the floor; let the runner ingest and bill it.
+                try:
+                    snapshot = await adapter.poll(api_key=api_key, base_url=conn.base_url, job=ref)
+                except Exception:
+                    snapshot = None
+                if snapshot is not None and snapshot.state == "completed":
+                    job.cancel_requested_at = None
+                    raise VideoJobAlreadyCompleted(job.id)
+                await adapter.cancel(
+                    api_key=api_key,
+                    base_url=conn.base_url,
+                    job=ref,
+                )
+        except VideoJobAlreadyCompleted:
+            raise
         except Exception:
             _LOG.warning("Provider cancel failed for video job %s", job.id, exc_info=True)
     job.status = "cancelled"
@@ -496,6 +524,7 @@ async def _run_video_job(job_id: str) -> None:
 
         duration = parse_video_duration(params.get("duration"))
         success = False
+        lease_lost = False
         error_message: str | None = None
         settings = get_settings()
         deadline = time.monotonic() + float(settings.video_job_timeout_seconds or 600)
@@ -567,11 +596,16 @@ async def _run_video_job(job_id: str) -> None:
             while status not in _TERMINAL:
                 if time.monotonic() > deadline:
                     raise TimeoutError("Video generation timed out")
-                # Reload cancel state
+                # Reload cancel + ownership state
                 await db.refresh(job)
                 if job.status == "cancelled":
                     raise asyncio.CancelledError()
+                if lease_owner and job.lease_owner != lease_owner:
+                    raise LeaseLost(job_id)
                 job.lease_expires_at = _now() + datetime.timedelta(seconds=_LEASE_SECONDS)
+                # Commit before sleeping/polling: otherwise this transaction (and
+                # its pooled connection) stays open for the whole provider wait.
+                await db.commit()
                 await asyncio.sleep(poll_interval)
                 final_snapshot = await adapter.poll(
                     api_key=api_key,
@@ -691,6 +725,12 @@ async def _run_video_job(job_id: str) -> None:
             job.error_message = None
             success = True
             await db.commit()
+        except LeaseLost:
+            # Not ours any more: no status change, no release, no billing.
+            lease_lost = True
+            await db.rollback()
+            _LOG.warning("Video job %s lease taken over by another worker; runner %s stops", job_id, lease_owner)
+            increment("video_job_lease_lost")
         except asyncio.CancelledError:
             await db.refresh(job)
             if job.status != "cancelled":
@@ -718,6 +758,8 @@ async def _run_video_job(job_id: str) -> None:
             _LOG.warning("Video job %s failed: %s", job_id, error_message)
             increment("video_job_failed")
         finally:
+            if lease_lost:
+                return
             try:
                 elapsed_ms = (time.perf_counter() - started) * 1000.0
                 log_id = await log_video_usage(

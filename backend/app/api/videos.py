@@ -37,6 +37,7 @@ from app.services.openrouter_video_service import (
 )
 from app.services.secret_crypto import decrypt_secret
 from app.services.video_job_service import (
+    VideoJobAlreadyCompleted,
     cancel_video_job,
     create_video_job,
     kick_video_job,
@@ -335,6 +336,13 @@ async def cancel_video_job_endpoint(
     job = await db.get(VideoGenerationJob, job_id)
     if job is None or job.user_id != user.id:
         raise HTTPException(status_code=404, detail="Job not found")
-    job = await cancel_video_job(db, job)
+    try:
+        job = await cancel_video_job(db, job)
+    except VideoJobAlreadyCompleted:
+        await db.commit()
+        raise HTTPException(
+            status_code=409,
+            detail="The provider already finished this video; it will be delivered and billed.",
+        )
     await db.commit()
     return serialize_job(job)

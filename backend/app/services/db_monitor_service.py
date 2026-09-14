@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from pathlib import Path
@@ -107,6 +108,16 @@ async def _count_rows(db: AsyncSession, table: str) -> int | None:
     return int(val) if val is not None else 0
 
 
+async def collect_system_metrics() -> dict[str, Any]:
+    """``_collect_system_metrics`` off the event loop.
+
+    psutil's ``cpu_percent(interval=...)`` sleeps for the sampling window
+    (0.15 s + 0.1 s here). Called inline that stalled every request on the
+    worker for a quarter second per admin refresh and per metrics snapshot.
+    """
+    return await asyncio.to_thread(_collect_system_metrics)
+
+
 def _collect_system_metrics() -> dict[str, Any]:
     """Host and Alpharouter process CPU/RAM (machine or container running this API)."""
     out: dict[str, Any] = {
@@ -173,7 +184,7 @@ async def collect_snapshot_metrics(db: AsyncSession) -> dict[str, Any]:
             out["db_size_bytes"] = int(size) if size is not None else None
     except Exception:
         pass
-    system = _collect_system_metrics()
+    system = await collect_system_metrics()
     if system.get("available") and system.get("host"):
         out["host_cpu_percent"] = system["host"].get("cpu_percent")
         out["host_memory_percent"] = system["host"].get("memory_percent")
@@ -198,7 +209,7 @@ async def collect_database_monitor(db: AsyncSession) -> dict[str, Any]:
         "database_file_path": None,
         "postgres_connections": None,
         "tables": [],
-        "system": _collect_system_metrics(),
+        "system": await collect_system_metrics(),
         "error": None,
     }
 

@@ -18,6 +18,7 @@ instead of a size estimate.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from dataclasses import dataclass, field
 from typing import Any
@@ -126,10 +127,12 @@ async def transcribe_with_openrouter(
     if not audio_bytes:
         raise OpenRouterTranscriptionError("Empty audio file.")
 
+    # base64 of a 25 MB recording is ~100 ms of pure CPU; keep it off the loop.
+    encoded = await asyncio.to_thread(lambda: base64.b64encode(audio_bytes).decode("ascii"))
     payload: dict[str, Any] = {
         "model": model,
         "input_audio": {
-            "data": base64.b64encode(audio_bytes).decode("ascii"),
+            "data": encoded,
             "format": audio_format_for(filename, mime_type),
         },
     }

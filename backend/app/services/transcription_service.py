@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
 import os
@@ -112,6 +113,20 @@ def wav_duration_seconds(audio_bytes: bytes) -> float | None:
         return seconds if seconds > 0 else None
     except (struct.error, ZeroDivisionError, ValueError):
         return None
+
+
+def _write_temp_audio(audio_bytes: bytes, suffix: str) -> str:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(audio_bytes)
+        tmp.flush()
+        return tmp.name
+
+
+def _unlink_quietly(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 
 def resolve_billable_seconds(
@@ -449,10 +464,8 @@ async def transcribe_audio_bytes(
                 raise ValueError(str(exc)) from exc
         else:
             # Only the LiteLLM path needs the audio on disk as a file handle.
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(audio_bytes)
-                tmp.flush()
-                tmp_path = tmp.name
+            # Writing up to MAX_VOICE_UPLOAD_BYTES is disk I/O: off the loop.
+            tmp_path = await asyncio.to_thread(_write_temp_audio, audio_bytes, suffix)
 
             kwargs: dict = {
                 # A catalog id is not a LiteLLM route. See
@@ -497,10 +510,7 @@ async def transcribe_audio_bytes(
         raise
     finally:
         if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+            await asyncio.to_thread(_unlink_quietly, tmp_path)
         if user_id is not None and username is not None:
             logger.info(
                 "Transcription billed %.2fs (source=%s) model=%s via %s",

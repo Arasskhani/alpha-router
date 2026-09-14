@@ -62,6 +62,9 @@ def publish_request_body_limit_mb(body_mb: int) -> int:
         json.dumps(payload, indent=2) + "\n",
         mode=0o644,
     )
+    # The publishing worker must see its own change at once; the others pick
+    # it up within the cache TTL via the mtime check.
+    invalidate_published_cache()
     return clamped
 
 
@@ -103,7 +106,13 @@ LARGE_BODY_PATH_PREFIXES: tuple[str, ...] = (
 )
 
 _PUBLISHED_CACHE_TTL_SECONDS = 5.0
-_published_cache: tuple[float, float | None, int | None] = (0.0, None, None)  # (checked_at, mtime, mb)
+# (checked_at, path, mtime, mb) - keyed by path so a settings change is not served stale.
+_published_cache: tuple[float, str | None, float | None, int | None] = (0.0, None, None, None)
+
+
+def invalidate_published_cache() -> None:
+    global _published_cache
+    _published_cache = (0.0, None, None, None)
 
 
 def is_large_body_path(path: str) -> bool:
@@ -130,19 +139,20 @@ def _read_published_cached() -> int | None:
     import time
 
     now = time.monotonic()
-    checked_at, cached_mtime, cached_mb = _published_cache
-    if now - checked_at < _PUBLISHED_CACHE_TTL_SECONDS:
-        return cached_mb
     path = request_body_limit_path()
+    key = str(path)
+    checked_at, cached_key, cached_mtime, cached_mb = _published_cache
+    if cached_key == key and now - checked_at < _PUBLISHED_CACHE_TTL_SECONDS:
+        return cached_mb
     try:
         mtime: float | None = path.stat().st_mtime
     except OSError:
         mtime = None
-    if mtime is not None and mtime == cached_mtime:
-        _published_cache = (now, cached_mtime, cached_mb)
+    if cached_key == key and mtime is not None and mtime == cached_mtime:
+        _published_cache = (now, key, cached_mtime, cached_mb)
         return cached_mb
     value = read_published_request_body_limit_mb() if mtime is not None else None
-    _published_cache = (now, mtime, value)
+    _published_cache = (now, key, mtime, value)
     return value
 
 

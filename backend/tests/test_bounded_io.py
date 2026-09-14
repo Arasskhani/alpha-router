@@ -244,7 +244,7 @@ def test_published_limit_is_cached_by_mtime(tmp_path, monkeypatch) -> None:
     from app.services import request_body_limit_service as svc
 
     monkeypatch.setattr(svc, "request_body_limit_path", lambda: tmp_path / "request-body-limit.json")
-    monkeypatch.setattr(svc, "_published_cache", (0.0, None, None))
+    svc.invalidate_published_cache()
     reads = {"n": 0}
     real = svc.read_published_request_body_limit_mb
 
@@ -259,3 +259,32 @@ def test_published_limit_is_cached_by_mtime(tmp_path, monkeypatch) -> None:
     for _ in range(50):
         svc.effective_request_body_limit_bytes()
     assert reads["n"] == 1, "one parse per TTL window, not one per request"
+
+
+def test_publish_invalidates_cache_in_same_process(tmp_path, monkeypatch) -> None:
+    """The worker that publishes a new ceiling must not keep serving the old one."""
+    from types import SimpleNamespace
+
+    from app.services import request_body_limit_service as svc
+
+    monkeypatch.setattr(svc, "get_settings", lambda: SimpleNamespace(tls_state_dir=str(tmp_path)))
+    svc.invalidate_published_cache()
+    svc.publish_request_body_limit_mb(32)
+    assert svc.effective_request_body_limit_bytes() == 32 * 1024 * 1024
+    svc.publish_request_body_limit_mb(96)
+    assert svc.effective_request_body_limit_bytes() == 96 * 1024 * 1024
+
+
+def test_cache_is_keyed_by_path(tmp_path, monkeypatch) -> None:
+    from app.services import request_body_limit_service as svc
+
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    (a / "request-body-limit.json").write_text('{"request_body_mb": 10}', encoding="utf-8")
+    (b / "request-body-limit.json").write_text('{"request_body_mb": 20}', encoding="utf-8")
+    svc.invalidate_published_cache()
+    monkeypatch.setattr(svc, "request_body_limit_path", lambda: a / "request-body-limit.json")
+    assert svc.effective_request_body_limit_bytes() == 10 * 1024 * 1024
+    monkeypatch.setattr(svc, "request_body_limit_path", lambda: b / "request-body-limit.json")
+    assert svc.effective_request_body_limit_bytes() == 20 * 1024 * 1024

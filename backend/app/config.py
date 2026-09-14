@@ -244,12 +244,6 @@ class Settings(BaseSettings):
     # Conservative in-flight billing holds (USD) and stale recovery.
     budget_hold_buffer: float = 1.10
     budget_unpriced_hold_usd: float = 0.05
-    budget_chat_fallback_hold_usd: float = 0.05
-    budget_embedding_fallback_hold_usd: float = 0.01
-    budget_image_fallback_hold_usd: float = 0.25
-    budget_video_fallback_hold_usd: float = 1.50
-    budget_audio_fallback_hold_usd: float = 0.10
-    budget_tool_fallback_hold_usd: float = 0.05
     budget_max_hold_usd: float = 5.0
     budget_reservation_ttl_seconds: int = 7200
     # Chat is the one operation whose cost cannot be known before the call: the

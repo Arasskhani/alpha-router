@@ -5,7 +5,6 @@ from __future__ import annotations
 import datetime
 import uuid
 
-import litellm
 from fastapi import HTTPException
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,12 +42,6 @@ def _positive_float(value: float | int | None, fallback: float) -> float:
     except (TypeError, ValueError):
         amount = 0.0
     return amount if amount > 0 else fallback
-
-
-def _clamp_hold(amount: float, fallback: float) -> float:
-    settings = get_settings()
-    maximum = max(0.01, min(100.0, float(settings.budget_max_hold_usd or 5.0)))
-    return round(max(0.0001, min(maximum, _positive_float(amount, fallback))), 8)
 
 
 #: Flat per-image prompt-token estimate for multimodal turns. Providers tokenize
@@ -377,107 +370,6 @@ async def reservation_hold_usd(
         )
         total += float(extra.hold_usd)
     return round(total, 8)
-
-
-def estimate_chat_hold(ai_model: AIModel, body: dict) -> float:
-    """Estimate a hold without blocking stream start on model tokenization."""
-    settings = get_settings()
-    fallback = float(settings.budget_chat_fallback_hold_usd or 0.05)
-    messages = body.get("messages")
-    if isinstance(messages, list):
-        # UTF-8 bytes / 3 is deliberately conservative for both Latin and
-        # multi-byte scripts while remaining O(input size) and provider-free.
-        prompt_bytes = sum(
-            len(str(message.get("content") or "").encode("utf-8")) for message in messages if isinstance(message, dict)
-        )
-    else:
-        prompt_bytes = 0
-    prompt_tokens = max(1, (prompt_bytes + 2) // 3)
-    try:
-        output_tokens = max(1, min(8192, int(body.get("max_tokens") or 4096)))
-    except (TypeError, ValueError):
-        output_tokens = 4096
-    in_rate = _positive_float(ai_model.input_cost_per_1k, 0.0)
-    out_rate = _positive_float(ai_model.output_cost_per_1k, 0.0)
-    priced_estimate = (prompt_tokens / 1000) * in_rate + (output_tokens / 1000) * out_rate
-    estimate = max(fallback, priced_estimate * 1.25)
-    tools = body.get("tools") or {}
-    if isinstance(tools, dict) and tools.get("code_interpreter"):
-        estimate *= 4
-    return _clamp_hold(estimate, fallback)
-
-
-def estimate_embedding_hold(ai_model: AIModel, body: dict) -> float:
-    settings = get_settings()
-    fallback = float(settings.budget_embedding_fallback_hold_usd or 0.01)
-    try:
-        prompt_tokens = int(litellm.token_counter(model=ai_model.external_id, text=str(body.get("input") or "")) or 0)
-    except Exception:  # noqa: BLE001 -- falls back to a safe default value
-        prompt_tokens = 0
-    in_rate = _positive_float(ai_model.input_cost_per_1k, 0.0)
-    return _clamp_hold((prompt_tokens / 1000) * in_rate * 1.25, fallback)
-
-
-def estimate_image_hold(ai_model: AIModel | None, *, quantity: int = 1) -> float:
-    del ai_model
-    settings = get_settings()
-    return _clamp_hold(
-        float(settings.budget_image_fallback_hold_usd or 0.25) * max(1, int(quantity or 1)),
-        0.25,
-    )
-
-
-_VIDEO_RESOLUTION_HOLD_FACTOR = {
-    "480p": 0.75,
-    "720p": 1.0,
-    "1080p": 1.5,
-    "1k": 1.5,
-    "2k": 2.0,
-    "4k": 3.0,
-}
-
-
-def estimate_video_hold(
-    ai_model: AIModel | None,
-    *,
-    duration_seconds: int = 4,
-    resolution: str | None = "720p",
-) -> float:
-    """Conservative hold for async video generation (duration × resolution tier)."""
-    del ai_model
-    settings = get_settings()
-    base = float(settings.budget_video_fallback_hold_usd or 1.50)
-    try:
-        duration = max(1, int(duration_seconds or 0))
-    except (TypeError, ValueError):
-        duration = 1
-    res_key = (resolution or "720p").strip().lower()
-    factor = float(_VIDEO_RESOLUTION_HOLD_FACTOR.get(res_key, 1.0))
-    # Scale from a 4-second baseline clip.
-    amount = base * (duration / 4.0) * factor
-    return _clamp_hold(amount, base)
-
-
-def estimate_metered_service_hold(service_type: str) -> float:
-    """Conservative hold for non-token services without a quoted maximum."""
-
-    settings = get_settings()
-    service = (service_type or "").strip().lower()
-    if service in {"audio", "transcription", "speech"}:
-        fallback = float(settings.budget_audio_fallback_hold_usd or 0.10)
-    else:
-        fallback = float(settings.budget_tool_fallback_hold_usd or 0.05)
-    return _clamp_hold(fallback, fallback)
-
-
-def estimate_speech_hold(ai_model: AIModel | None, *, characters: int = 1) -> float:
-    """Conservative hold for synchronous text-to-speech generation."""
-    del ai_model
-    settings = get_settings()
-    base = float(settings.budget_audio_fallback_hold_usd or 0.10)
-    # Scale linearly with character count; 1000 chars ~= one base unit.
-    factor = max(1.0, (max(1, int(characters or 1)) / 1000.0))
-    return _clamp_hold(base * factor, base)
 
 
 def reservation_key(body: dict, *, operation: str) -> str:

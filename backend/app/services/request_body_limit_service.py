@@ -84,9 +84,71 @@ def read_published_request_body_limit_mb() -> int | None:
     return max(1, min(REQUEST_BODY_HARD_MAX_MB, value))
 
 
+# Routes whose bodies are allowed to be as large as the upload ceiling:
+# multipart file uploads, and the chat/gateway JSON bodies that carry inline
+# base64 images for vision models. Everything else is ordinary JSON and gets
+# ``max_json_body_bytes``.
+LARGE_BODY_PATH_PREFIXES: tuple[str, ...] = (
+    "/api/chat/",            # completions (inline images), attachments/process, voice
+    "/v1/",                  # OpenAI-compatible gateway (inline images, embeddings input)
+    "/api/images",           # image edit/reference payloads
+    "/api/videos",           # reference images
+    "/api/speech",           # long TTS inputs
+    "/api/projects/",        # resource / media uploads
+    "/api/user/media",       # media library uploads
+    "/api/user/chats",       # full-session sync payloads
+    "/api/user/chat-sessions",
+    "/api/admin/knowledge/", # document uploads
+    "/api/admin/security/tls/",  # certificate bundles
+)
+
+_PUBLISHED_CACHE_TTL_SECONDS = 5.0
+_published_cache: tuple[float, float | None, int | None] = (0.0, None, None)  # (checked_at, mtime, mb)
+
+
+def is_large_body_path(path: str) -> bool:
+    return path.startswith(LARGE_BODY_PATH_PREFIXES)
+
+
+def request_body_limit_for(path: str) -> int:
+    """Per-request ceiling: upload ceiling for known large-body routes, else JSON ceiling."""
+    if is_large_body_path(path):
+        return effective_request_body_limit_bytes()
+    settings = get_settings()
+    json_limit = int(getattr(settings, "max_json_body_bytes", 8 * 1024 * 1024) or 0)
+    # Never exceed the upload ceiling and never go below 64 KiB.
+    return max(64 * 1024, min(json_limit, effective_request_body_limit_bytes()))
+
+
+def _read_published_cached() -> int | None:
+    """read_published_request_body_limit_mb() with an mtime-aware short cache.
+
+    The middleware asks for the ceiling on every request; a stat() every 5s is
+    fine, a stat()+read()+json.loads() per request is not.
+    """
+    global _published_cache
+    import time
+
+    now = time.monotonic()
+    checked_at, cached_mtime, cached_mb = _published_cache
+    if now - checked_at < _PUBLISHED_CACHE_TTL_SECONDS:
+        return cached_mb
+    path = request_body_limit_path()
+    try:
+        mtime: float | None = path.stat().st_mtime
+    except OSError:
+        mtime = None
+    if mtime is not None and mtime == cached_mtime:
+        _published_cache = (now, cached_mtime, cached_mb)
+        return cached_mb
+    value = read_published_request_body_limit_mb() if mtime is not None else None
+    _published_cache = (now, mtime, value)
+    return value
+
+
 def effective_request_body_limit_bytes() -> int:
-    """Best-effort ceiling for RequestBodyLimitMiddleware (all workers)."""
-    published = read_published_request_body_limit_mb()
+    """Best-effort upload ceiling for RequestBodyLimitMiddleware (all workers)."""
+    published = _read_published_cached()
     if published is not None:
         return published * 1024 * 1024
 

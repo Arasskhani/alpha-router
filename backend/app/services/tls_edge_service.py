@@ -81,7 +81,33 @@ def render_nginx_config(
     has_chain: bool,
     upstream: str = "127.0.0.1:8080",
     max_body_mb: int = DEFAULT_MAX_BODY_MB,
+    json_body_mb: int | None = None,
 ) -> str:
+    """Render the edge config.
+
+    ``max_body_mb`` is the upload ceiling and stays on the http block (the
+    value read_nginx_client_max_body_mb() reads back). Ordinary JSON routes get
+    ``json_body_mb`` (defaults to MAX_JSON_BODY_BYTES) in ``location /``; the
+    large-body routes listed in request_body_limit_service inherit the upload
+    ceiling through a regex location, mirroring the app middleware tiers.
+    """
+    from app.services.request_body_limit_service import LARGE_BODY_PATH_PREFIXES
+
+    if json_body_mb is None:
+        json_body_mb = max(1, -(-int(get_settings().max_json_body_bytes) // (1024 * 1024)))
+    json_body_mb = max(1, min(int(json_body_mb), max(1, int(max_body_mb))))
+    large_paths = "|".join(re.escape(prefix.lstrip("/")) for prefix in LARGE_BODY_PATH_PREFIXES)
+    proxy_directives = f"""            proxy_pass http://{upstream};
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_buffering off;
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 3600s;"""
     hsts = ""
     if hsts_enabled:
         hsts = '    add_header Strict-Transport-Security "max-age=31536000" always;\n'
@@ -131,18 +157,14 @@ http {{
         ssl_session_timeout 1d;
         ssl_session_cache shared:SSL:10m;
 {stapling}{hsts}
+        # Ordinary JSON: small ceiling (mirrors MAX_JSON_BODY_BYTES).
         location / {{
-            proxy_pass http://{upstream};
-            proxy_http_version 1.1;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto https;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection $connection_upgrade;
-            proxy_buffering off;
-            proxy_read_timeout 3600s;
-            proxy_send_timeout 3600s;
+            client_max_body_size {json_body_mb}m;
+{proxy_directives}
+        }}
+        # Uploads and inline-image chat bodies: inherit the http-level ceiling.
+        location ~ ^/({large_paths}) {{
+{proxy_directives}
         }}
     }}
 }}

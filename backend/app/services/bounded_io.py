@@ -32,11 +32,11 @@ class RequestBodyLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        from app.services.request_body_limit_service import effective_request_body_limit_bytes
+        from app.services.request_body_limit_service import request_body_limit_for
 
         limit = clamp_limit(
-            effective_request_body_limit_bytes(),
-            minimum=1024 * 1024,
+            request_body_limit_for(scope.get("path") or ""),
+            minimum=64 * 1024,
             maximum=2048 * 1024 * 1024,
         )
         headers = {
@@ -55,6 +55,7 @@ class RequestBodyLimitMiddleware:
                 return
 
         received = 0
+        response_started = False
 
         async def limited_receive():
             nonlocal received
@@ -65,9 +66,20 @@ class RequestBodyLimitMiddleware:
                     raise _RequestTooLarge()
             return message
 
+        async def tracking_send(message):
+            nonlocal response_started
+            if message.get("type") == "http.response.start":
+                response_started = True
+            await send(message)
+
         try:
-            await self.app(scope, limited_receive, send)
+            await self.app(scope, limited_receive, tracking_send)
         except _RequestTooLarge:
+            if response_started:
+                # The handler already began answering (streaming body read);
+                # a second http.response.start would be a protocol error.
+                # Dropping the connection is the only honest outcome.
+                return
             response = JSONResponse(status_code=413, content={"detail": "Request body too large"})
             await response(scope, receive, send)
 

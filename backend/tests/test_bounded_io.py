@@ -159,3 +159,103 @@ def test_bounded_get_blocks_redirect_before_second_request() -> None:
     ):
         asyncio.run(run())
     assert requests == 1
+
+
+def _run_middleware(path: str, body: bytes, *, content_type: str):
+    """Drive RequestBodyLimitMiddleware with one chunked (no Content-Length) body."""
+    sent: list[dict] = []
+
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    async def app(scope, receive, send):
+        del scope
+        await receive()
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    scope = {
+        "type": "http",
+        "path": path,
+        "headers": [(b"content-type", content_type.encode())],
+    }
+    asyncio.run(RequestBodyLimitMiddleware(app)(scope, receive, send))
+    return sent
+
+
+def test_json_routes_get_the_small_ceiling_and_upload_routes_the_large_one() -> None:
+    five_mib = b"{" + b" " * (5 * 1024 * 1024) + b"}"
+    with (
+        patch(
+            "app.services.request_body_limit_service.effective_request_body_limit_bytes",
+            return_value=1024 * 1024 * 1024,
+        ),
+        patch(
+            "app.services.request_body_limit_service.get_settings",
+            return_value=type("S", (), {"max_json_body_bytes": 4 * 1024 * 1024})(),
+        ),
+    ):
+        # Pre-auth JSON route: 5 MiB must be refused although the upload ceiling is 1 GiB.
+        sent = _run_middleware("/api/auth/login", five_mib, content_type="application/json")
+        assert [m.get("status") for m in sent if m["type"] == "http.response.start"] == [413]
+
+        # Chat completions may carry inline images: same 5 MiB passes.
+        sent = _run_middleware("/api/chat/completions", five_mib, content_type="application/json")
+        assert [m.get("status") for m in sent if m["type"] == "http.response.start"] == [200]
+
+        # Multipart upload route: passes too.
+        sent = _run_middleware(
+            "/api/admin/knowledge/bases/1/documents", five_mib, content_type="multipart/form-data; boundary=x"
+        )
+        assert [m.get("status") for m in sent if m["type"] == "http.response.start"] == [200]
+
+
+def test_no_second_response_start_when_handler_already_answered() -> None:
+    sent: list[dict] = []
+    chunks = [b"x" * 1024, b"x" * (200 * 1024)]
+
+    async def receive():
+        body = chunks.pop(0)
+        return {"type": "http.request", "body": body, "more_body": bool(chunks)}
+
+    async def send(message):
+        sent.append(message)
+
+    async def app(scope, receive, send):
+        del scope
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        while (await receive()).get("more_body"):
+            pass
+
+    scope = {"type": "http", "path": "/api/auth/login", "headers": []}
+    with patch(
+        "app.services.request_body_limit_service.request_body_limit_for",
+        return_value=64 * 1024,
+    ):
+        asyncio.run(RequestBodyLimitMiddleware(app)(scope, receive, send))
+    starts = [m for m in sent if m["type"] == "http.response.start"]
+    assert len(starts) == 1 and starts[0]["status"] == 200
+
+
+def test_published_limit_is_cached_by_mtime(tmp_path, monkeypatch) -> None:
+    from app.services import request_body_limit_service as svc
+
+    monkeypatch.setattr(svc, "request_body_limit_path", lambda: tmp_path / "request-body-limit.json")
+    monkeypatch.setattr(svc, "_published_cache", (0.0, None, None))
+    reads = {"n": 0}
+    real = svc.read_published_request_body_limit_mb
+
+    def counting():
+        reads["n"] += 1
+        return real()
+
+    monkeypatch.setattr(svc, "read_published_request_body_limit_mb", counting)
+    (tmp_path / "request-body-limit.json").write_text('{"request_body_mb": 64}', encoding="utf-8")
+
+    assert svc.effective_request_body_limit_bytes() == 64 * 1024 * 1024
+    for _ in range(50):
+        svc.effective_request_body_limit_bytes()
+    assert reads["n"] == 1, "one parse per TTL window, not one per request"

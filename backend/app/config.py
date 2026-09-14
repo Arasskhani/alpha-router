@@ -239,7 +239,14 @@ class Settings(BaseSettings):
     )
 
     # Bounded I/O defaults. Callers clamp overrides to hard safety ceilings.
+    # Upload ceiling (multipart file routes and the chat/gateway JSON bodies
+    # that can legitimately carry inline images). Normally overridden by the
+    # Storage transfer limits published to the TLS state volume.
     max_request_body_bytes: int = 1024 * 1024 * 1024
+    # Ceiling for every other JSON request (auth, admin CRUD, settings...).
+    # FastAPI buffers and parses these bodies in full, so a large value here
+    # is a memory-exhaustion vector for anyone who can reach /api/auth/login.
+    max_json_body_bytes: int = 8 * 1024 * 1024  # env: MAX_JSON_BODY_BYTES
     max_attachment_bytes: int = 12 * 1024 * 1024
     max_attachments_total_bytes: int = 36 * 1024 * 1024
     max_voice_upload_bytes: int = 25 * 1024 * 1024

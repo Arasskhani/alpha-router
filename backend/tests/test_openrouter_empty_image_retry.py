@@ -4,6 +4,7 @@ import asyncio
 from unittest.mock import AsyncMock
 
 import httpx
+import pytest
 
 from app.services import openrouter_image_service as svc
 
@@ -77,7 +78,7 @@ def test_build_openrouter_payload_omits_sort_when_disabled():
     assert "sort" not in payload["provider"]
 
 
-def test_post_openrouter_json_retries_after_disconnect(monkeypatch):
+def test_post_openrouter_json_retries_after_connect_failure(monkeypatch):
     calls = {"n": 0}
 
     class FakeClient:
@@ -87,7 +88,7 @@ def test_post_openrouter_json_retries_after_disconnect(monkeypatch):
             calls["n"] += 1
             assert headers.get("Connection") == "close"
             if calls["n"] == 1:
-                raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+                raise httpx.ConnectError("connection refused")
             req = httpx.Request("POST", url)
             return httpx.Response(200, json={"ok": True}, request=req)
 
@@ -107,7 +108,8 @@ def test_post_openrouter_json_retries_after_disconnect(monkeypatch):
     assert calls["n"] == 2
 
 
-def test_post_openrouter_json_retries_read_timeout(monkeypatch):
+def test_post_openrouter_json_does_not_resend_after_read_timeout(monkeypatch):
+    """The body reached OpenRouter; a second send could be billed twice."""
     calls = {"n": 0}
 
     class FakeClient:
@@ -115,25 +117,18 @@ def test_post_openrouter_json_retries_read_timeout(monkeypatch):
 
         async def post(self, url, headers, json, timeout):
             calls["n"] += 1
-            if calls["n"] < 3:
-                raise httpx.ReadTimeout("read timed out")
-            req = httpx.Request("POST", url)
-            return httpx.Response(200, json={"ok": True}, request=req)
+            raise httpx.ReadTimeout("read timed out")
 
     monkeypatch.setattr(svc, "get_openrouter_http_client", lambda: FakeClient())
-    monkeypatch.setattr(svc, "close_openrouter_http_client", AsyncMock())
     monkeypatch.setattr(svc.asyncio, "sleep", AsyncMock())
 
-    resp = asyncio.run(
-        svc.post_openrouter_json(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={"Authorization": "Bearer test"},
-            json_payload={"model": "test"},
-            max_attempts=3,
+    with pytest.raises(httpx.ReadTimeout):
+        asyncio.run(
+            svc.post_openrouter_json(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={"Authorization": "Bearer test"},
+                json_payload={"model": "test"},
+                max_attempts=3,
+            )
         )
-    )
-    assert resp.status_code == 200
-    assert calls["n"] == 3
-    assert svc.is_retryable_openrouter_transport_error(
-        httpx.RemoteProtocolError("disconnected")
-    )
+    assert calls["n"] == 1

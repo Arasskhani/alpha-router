@@ -38,13 +38,13 @@ from app.config import get_settings
 from app.services.media_authorization_service import MediaAccessAction, load_authorized_media_asset
 from app.services.openrouter_image_service import (
     OPENROUTER_EMPTY_IMAGE_RETRY_DELAYS_SEC,
-    OPENROUTER_FALLBACK_TIMEOUT,
     OPENROUTER_IMAGE_ENDPOINT_PATHS,
     OPENROUTER_IMAGE_MAX_ATTEMPTS,
     build_fast_openrouter_payload,
     build_openrouter_headers,
     build_openrouter_image_endpoint_payload,
     gemini_image_size_for_model,
+    image_request_timeout,
     is_openai_gpt_image_model,
     is_openrouter_auto_model,
     is_retryable_openrouter_transport_error,
@@ -1010,7 +1010,7 @@ async def generate_image(
             llm_provider = resolve_litellm_provider(provider_type)
             if llm_provider:
                 kwargs["custom_llm_provider"] = llm_provider
-            kwargs["timeout"] = 180
+            kwargs["timeout"] = image_request_timeout()
 
             settings = get_settings()
 
@@ -1044,7 +1044,7 @@ async def generate_image(
                             f"{openrouter_base}{path}",
                             headers=headers,
                             json_payload=img_payload,
-                            read_timeout=OPENROUTER_FALLBACK_TIMEOUT,
+                            read_timeout=image_request_timeout(),
                             max_attempts=(
                                 1 if using_auto_router else OPENROUTER_IMAGE_MAX_ATTEMPTS
                             ),
@@ -1490,7 +1490,7 @@ async def generate_image(
             current_attempt_source_count = len(billing.usage_sources)
             attempt_started = time.perf_counter()
             try:
-                timeout_seconds = OPENROUTER_FALLBACK_TIMEOUT
+                timeout_seconds = image_request_timeout()
                 if auto_deadline is not None:
                     remaining = auto_deadline - time.perf_counter()
                     if remaining <= 0:

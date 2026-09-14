@@ -1604,6 +1604,7 @@ async def stream_chat(
             "api_key": api_key,
             "base_url": base_url,
             "caching": True,
+            "timeout": float(getattr(settings, "chat_provider_timeout_seconds", 600.0) or 600.0),
         }
         if agent_turn is not None and agent_turn.plan.policies is not None:
             completion_kwargs["max_tokens"] = (

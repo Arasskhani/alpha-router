@@ -288,12 +288,18 @@ class Settings(BaseSettings):
     # the generation is still running here -- the image is produced, persisted
     # and billed, but the response never reaches the user.
     image_request_timeout_seconds: float = 180.0  # env: IMAGE_REQUEST_TIMEOUT_SECONDS
+    # Shared OpenRouter HTTP client pool (image + transcription calls per worker).
+    openrouter_max_connections: int = 32  # env: OPENROUTER_MAX_CONNECTIONS
+    # Ceiling for one chat completion (connect + full stream). LiteLLM's default
+    # is 10 minutes; make it explicit so a stalled provider cannot pin a stream,
+    # its capacity permit and its budget hold for longer than this.
+    chat_provider_timeout_seconds: float = 600.0  # env: CHAT_PROVIDER_TIMEOUT_SECONDS
 
     # Video generation (OpenRouter /videos async jobs).
     # Clip length is the user's selected duration from the model's
-    # supported_durations. This env value is not applied as a generation cap;
-    # it is kept optional so existing .env files still parse.
-    video_max_duration_seconds: int | None = None
+    # supported_durations; when set, this is an absolute ceiling on top of
+    # that (a model may advertise 60s clips the operator does not want to pay for).
+    video_max_duration_seconds: int | None = None  # env: VIDEO_MAX_DURATION_SECONDS
     video_max_resolution: str = "1080p"
     video_max_output_bytes: int = 200 * 1024 * 1024
     video_max_concurrent_jobs_per_user: int = 1

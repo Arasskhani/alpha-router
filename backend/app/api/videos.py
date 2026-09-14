@@ -201,6 +201,12 @@ async def generate_video(
     supported_durations = catalog_video_durations(caps.get("supported_durations"))
     if supported_durations and duration not in set(supported_durations):
         raise HTTPException(status_code=400, detail="Requested duration is not supported by the selected video model")
+    max_duration = int(settings.video_max_duration_seconds or 0)
+    if max_duration > 0 and duration > max_duration:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Requested duration exceeds the deployment limit of {max_duration}s",
+        )
     supported_resolutions = {str(value).lower() for value in (caps.get("supported_resolutions") or [])}
     if supported_resolutions and resolution.lower() not in supported_resolutions:
         raise HTTPException(status_code=400, detail="Requested resolution is not supported by the selected video model")

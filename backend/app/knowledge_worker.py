@@ -33,9 +33,7 @@ async def run() -> None:
     _install_signal_handlers(stop)
     redis = create_knowledge_redis()
     qdrant = QdrantVectorService()
-    consumer_name = (
-        f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
-    )
+    consumer_name = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
     worker = KnowledgeWorker(
         session_factory=AsyncSessionLocal,
         redis=redis,

@@ -43,9 +43,7 @@ def _chat_model():
         connection_id=None,
         input_cost_per_1k=0.003,
         output_cost_per_1k=0.015,
-        pricing_raw=json.dumps(
-            {"pricing": {"prompt": "0.000003", "completion": "0.000015"}}
-        ),
+        pricing_raw=json.dumps({"pricing": {"prompt": "0.000003", "completion": "0.000015"}}),
     )
 
 
@@ -77,9 +75,7 @@ def _image_message(size_kb: int) -> dict:
 def test_prompt_tokens_ignore_base64_image_payload() -> None:
     """A 1 MB image must not be billed as ~455k prompt tokens."""
     tokens = _prompt_tokens_from_messages([_image_message(1024)])
-    text_tokens = _prompt_tokens_from_messages(
-        [{"role": "user", "content": "سلام"}]
-    )
+    text_tokens = _prompt_tokens_from_messages([{"role": "user", "content": "سلام"}])
     # Text bytes plus one flat image estimate — not the base64 length.
     assert tokens == text_tokens + IMAGE_PROMPT_TOKENS
     assert tokens < 2_000
@@ -107,15 +103,11 @@ def test_prompt_tokens_scale_with_image_count_not_image_size() -> None:
 
 
 def test_prompt_tokens_still_measure_plain_text_and_document_text() -> None:
-    plain = _prompt_tokens_from_messages(
-        [{"role": "user", "content": "x" * 3000}]
-    )
+    plain = _prompt_tokens_from_messages([{"role": "user", "content": "x" * 3000}])
     assert plain == 1000
 
     # Extracted document text arrives as a text part and must still be counted.
-    parts = _prompt_tokens_from_messages(
-        [{"role": "user", "content": [{"type": "text", "text": "x" * 3000}]}]
-    )
+    parts = _prompt_tokens_from_messages([{"role": "user", "content": [{"type": "text", "text": "x" * 3000}]}])
     assert parts == 1000
 
 
@@ -163,9 +155,7 @@ async def _user_with_budget(
         monthly_budget_usd=monthly,
         budget_used_usd=used,
         budget_reserved_usd=held,
-        budget_period_start=datetime.datetime(
-            datetime.datetime.utcnow().year, datetime.datetime.utcnow().month, 1
-        ),
+        budget_period_start=datetime.datetime(datetime.datetime.utcnow().year, datetime.datetime.utcnow().month, 1),
     )
     db.add(user)
     await db.flush()
@@ -282,9 +272,7 @@ def test_rejection_names_the_estimate_and_the_remaining_balance() -> None:
 
 def test_estimate_that_exactly_fits_is_admitted() -> None:
     """Boundary: estimate == remaining balance must be allowed, not refused."""
-    assert asyncio.run(
-        _reserve_amount(used=10.95, amount_usd=1.05)
-    ) == pytest.approx(1.05, abs=1e-9)
+    assert asyncio.run(_reserve_amount(used=10.95, amount_usd=1.05)) == pytest.approx(1.05, abs=1e-9)
 
 
 async def _reserve_amount(
@@ -323,30 +311,20 @@ def test_chat_estimate_slightly_over_balance_is_clamped_and_admitted() -> None:
     $12.00 limit, $11.70 used -> $0.30 left. A chat quoted at $0.55 misses by
     $0.25, inside the $0.50 tolerance, so it runs on a $0.30 hold.
     """
-    reserved = asyncio.run(
-        _reserve_amount(used=11.70, amount_usd=0.55, cost_is_estimated=True)
-    )
+    reserved = asyncio.run(_reserve_amount(used=11.70, amount_usd=0.55, cost_is_estimated=True))
     assert reserved == pytest.approx(0.30, abs=1e-6)
 
 
 def test_chat_estimate_far_over_balance_is_still_refused() -> None:
     """Beyond the tolerance the overshoot stops being bounded, so refuse."""
-    detail = asyncio.run(
-        _reserve_expecting_rejection(
-            used=11.70, amount_usd=2.50, cost_is_estimated=True
-        )
-    )
+    detail = asyncio.run(_reserve_expecting_rejection(used=11.70, amount_usd=2.50, cost_is_estimated=True))
     assert "2.5000" in detail, detail
     assert "0.3000" in detail, detail
 
 
 def test_strict_operations_get_no_tolerance() -> None:
     """The same shortfall that chat tolerates must refuse a video/image/speech job."""
-    detail = asyncio.run(
-        _reserve_expecting_rejection(
-            used=11.70, amount_usd=0.55, cost_is_estimated=False
-        )
-    )
+    detail = asyncio.run(_reserve_expecting_rejection(used=11.70, amount_usd=0.55, cost_is_estimated=False))
     assert "0.5500" in detail, detail
     assert "0.3000" in detail, detail
 
@@ -357,19 +335,13 @@ def test_video_overspend_scenario_stays_refused_under_the_soft_path() -> None:
     30s video quoted $7.6420 with $1.68 left. Even if it were ever mislabelled as
     an estimated cost, the shortfall dwarfs the tolerance, so it is refused.
     """
-    detail = asyncio.run(
-        _reserve_expecting_rejection(
-            used=10.32, amount_usd=7.642, cost_is_estimated=True
-        )
-    )
+    detail = asyncio.run(_reserve_expecting_rejection(used=10.32, amount_usd=7.642, cost_is_estimated=True))
     assert "7.6420" in detail, detail
 
 
 def test_soft_path_never_reserves_past_the_limit() -> None:
     """Whatever the tolerance allows, the hold itself still cannot exceed the limit."""
-    factory_reserved = asyncio.run(
-        _reserve_amount(used=11.70, amount_usd=0.55, cost_is_estimated=True)
-    )
+    factory_reserved = asyncio.run(_reserve_amount(used=11.70, amount_usd=0.55, cost_is_estimated=True))
     assert 11.70 + factory_reserved == pytest.approx(12.0, abs=1e-6)
 
 

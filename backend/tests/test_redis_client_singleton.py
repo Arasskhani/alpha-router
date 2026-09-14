@@ -60,6 +60,7 @@ def test_hot_paths_share_the_client_and_never_close_it(monkeypatch):
             def op(*a, **k):
                 self.ops.append(name)
                 return self
+
             return op
 
         async def execute(self):

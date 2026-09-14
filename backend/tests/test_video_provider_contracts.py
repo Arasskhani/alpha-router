@@ -1,6 +1,5 @@
 """Contract tests for provider-neutral video adapters."""
 
-
 from app.services.video_providers import NormalizedVideoRequest, get_video_adapter
 from app.services.video_providers.openrouter import OpenRouterVideoAdapter
 from app.services.video_providers.replicate import ReplicateVideoAdapter

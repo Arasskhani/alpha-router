@@ -96,11 +96,7 @@ async def get_stats(
     now = dt.datetime.utcnow()
     total = int(
         (
-            await db.execute(
-                select(func.count())
-                .select_from(UserMemory)
-                .where(UserMemory.deleted_at.is_(None))
-            )
+            await db.execute(select(func.count()).select_from(UserMemory).where(UserMemory.deleted_at.is_(None)))
         ).scalar_one()
         or 0
     )
@@ -117,18 +113,11 @@ async def get_stats(
         ).scalar_one()
         or 0
     )
-    jobs = (
-        await db.execute(
-            select(UserMemoryJob.status, func.count())
-            .group_by(UserMemoryJob.status)
-        )
-    ).all()
+    jobs = (await db.execute(select(UserMemoryJob.status, func.count()).group_by(UserMemoryJob.status))).all()
     jobs_by_status = {str(status): int(count) for status, count in jobs}
     oldest_pending = (
         await db.execute(
-            select(func.min(UserMemoryJob.created_at)).where(
-                UserMemoryJob.status.in_(("pending", "retry"))
-            )
+            select(func.min(UserMemoryJob.created_at)).where(UserMemoryJob.status.in_(("pending", "retry")))
         )
     ).scalar_one_or_none()
     oldest_age = None
@@ -183,11 +172,7 @@ async def get_stats(
         or 0
     )
     project_jobs = (
-        await db.execute(
-            select(ProjectMemoryJob.status, func.count()).group_by(
-                ProjectMemoryJob.status
-            )
-        )
+        await db.execute(select(ProjectMemoryJob.status, func.count()).group_by(ProjectMemoryJob.status))
     ).all()
     project_jobs_by_status = {str(status): int(count) for status, count in project_jobs}
     project_backlog = int(

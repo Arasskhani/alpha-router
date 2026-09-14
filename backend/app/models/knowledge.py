@@ -51,10 +51,7 @@ class KnowledgeBase(Base):
             name="chk_knowledge_bases_access_type",
         ),
         CheckConstraint(
-            "sensitivity IN ("
-            "'internal', 'confidential', 'hr_confidential', "
-            "'legal_privileged', 'finance_restricted'"
-            ")",
+            "sensitivity IN ('internal', 'confidential', 'hr_confidential', 'legal_privileged', 'finance_restricted')",
             name="chk_knowledge_bases_sensitivity",
         ),
         Index("ix_knowledge_bases_status_name", "status", "name"),
@@ -661,10 +658,7 @@ class IngestionJob(Base):
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_ingestion_jobs_idempotency"),
         CheckConstraint(
-            "status IN ("
-            "'pending', 'leased', 'processing', 'retry', "
-            "'succeeded', 'dead', 'cancelled'"
-            ")",
+            "status IN ('pending', 'leased', 'processing', 'retry', 'succeeded', 'dead', 'cancelled')",
             name="chk_ingestion_jobs_status",
         ),
         Index("ix_ingestion_jobs_due", "status", "next_attempt_at", "created_at"),

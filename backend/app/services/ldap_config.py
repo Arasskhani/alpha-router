@@ -19,6 +19,7 @@ def clean_bind_password(password: str | None) -> str:
         cleaned = cleaned.replace(ch, "")
     return cleaned.strip()
 
+
 _AD_USER_FILTER = (
     "(&"
     "(objectCategory=person)"

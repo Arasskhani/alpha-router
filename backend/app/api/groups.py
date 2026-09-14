@@ -52,9 +52,7 @@ def _clean_optional_str(value: str | None) -> str | None:
     return s if s else None
 
 
-async def _ensure_unique_local_group_name(
-    db: AsyncSession, name: str, *, exclude_id: int | None = None
-) -> None:
+async def _ensure_unique_local_group_name(db: AsyncSession, name: str, *, exclude_id: int | None = None) -> None:
     stmt = select(UserGroup).where(UserGroup.source == "local", UserGroup.name == name)
     if exclude_id is not None:
         stmt = stmt.where(UserGroup.id != exclude_id)
@@ -78,9 +76,7 @@ async def list_groups(
     groups = (await db.execute(stmt)).scalars().all()
     result = []
     for g in groups:
-        pa = (
-            await db.execute(select(PlanAssignment).where(PlanAssignment.group_id == g.id))
-        ).scalars().first()
+        pa = (await db.execute(select(PlanAssignment).where(PlanAssignment.group_id == g.id))).scalars().first()
         result.append(
             {
                 "id": g.id,
@@ -95,7 +91,9 @@ async def list_groups(
 
 
 @router.post("")
-async def create_local_group(body: GroupIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_groups_write)):
+async def create_local_group(
+    body: GroupIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_groups_write)
+):
     name = body.name.strip()
     if not name:
         raise HTTPException(400, detail="Name is required")
@@ -128,13 +126,17 @@ async def sync_ldap_groups(db: AsyncSession = Depends(get_db), _: User = Depends
     count = 0
     for item in items:
         existing = (
-            await db.execute(
-                select(UserGroup).where(
-                    UserGroup.source == "ldap",
-                    UserGroup.external_id == item["external_id"],
+            (
+                await db.execute(
+                    select(UserGroup).where(
+                        UserGroup.source == "ldap",
+                        UserGroup.external_id == item["external_id"],
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if existing:
             existing.name = item["name"]
             existing.description = item.get("description")
@@ -212,9 +214,7 @@ async def update_local_group(
 
     await db.commit()
     await db.refresh(group)
-    pa = (
-        await db.execute(select(PlanAssignment).where(PlanAssignment.group_id == group.id))
-    ).scalars().first()
+    pa = (await db.execute(select(PlanAssignment).where(PlanAssignment.group_id == group.id))).scalars().first()
     return {
         "id": group.id,
         "name": group.name,
@@ -249,9 +249,7 @@ async def group_activity(
     if not group:
         raise HTTPException(404, detail="Group not found")
     member_ids = await _group_member_ids(db, group_id)
-    filters = _activity_query_filters(
-        model_id=model_id, username=username, app=app, response_status=response_status
-    )
+    filters = _activity_query_filters(model_id=model_id, username=username, app=app, response_status=response_status)
     payload, options, prompts_card = await _build_scoped_activity(
         db,
         period=period,
@@ -311,9 +309,7 @@ async def group_activity_export(
     if not group:
         raise HTTPException(404, detail="Group not found")
     member_ids = await _group_member_ids(db, group_id)
-    filters = _activity_query_filters(
-        model_id=model_id, username=username, app=app, response_status=response_status
-    )
+    filters = _activity_query_filters(model_id=model_id, username=username, app=app, response_status=response_status)
     return await _activity_export_response(
         db,
         format=format,

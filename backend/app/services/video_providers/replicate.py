@@ -67,7 +67,9 @@ class ReplicateVideoAdapter:
         )
 
     async def poll(self, *, api_key: str, base_url: str | None, job: ProviderJobRef) -> ProviderJobSnapshot:
-        response = await self._request("GET", job.polling_url or urljoin(self._base(base_url), f"predictions/{job.provider_job_id}"), api_key)
+        response = await self._request(
+            "GET", job.polling_url or urljoin(self._base(base_url), f"predictions/{job.provider_job_id}"), api_key
+        )
         status = str(response.get("status") or "").lower()
         state = {
             "starting": "submitted",
@@ -93,7 +95,9 @@ class ReplicateVideoAdapter:
         response = await self._request("POST", url + "/cancel", api_key, allow_404=True)
         return bool(response is not None)
 
-    async def fetch_result(self, *, api_key: str, base_url: str | None, snapshot: ProviderJobSnapshot) -> ProviderAssetRef:
+    async def fetch_result(
+        self, *, api_key: str, base_url: str | None, snapshot: ProviderJobSnapshot
+    ) -> ProviderAssetRef:
         if not snapshot.asset_url:
             raise ValueError("Replicate completed without an output URL")
         return ProviderAssetRef(
@@ -133,4 +137,3 @@ class ReplicateVideoAdapter:
         if not isinstance(payload, dict):
             raise ValueError("Replicate returned an invalid response")
         return payload
-

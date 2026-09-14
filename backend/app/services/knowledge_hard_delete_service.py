@@ -54,13 +54,7 @@ async def _assert_not_held(db: AsyncSession, knowledge_base: KnowledgeBase) -> N
     ):
         raise ValueError("Hard delete is blocked by an active legal hold on this Knowledge Base")
     documents = (
-        (
-            await db.execute(
-                select(KnowledgeDocument.id).where(
-                    KnowledgeDocument.knowledge_base_id == knowledge_base.id
-                )
-            )
-        )
+        (await db.execute(select(KnowledgeDocument.id).where(KnowledgeDocument.knowledge_base_id == knowledge_base.id)))
         .scalars()
         .all()
     )
@@ -70,9 +64,7 @@ async def _assert_not_held(db: AsyncSession, knowledge_base: KnowledgeBase) -> N
             resource_type="knowledge_document",
             resource_id=document_id,
         ):
-            raise ValueError(
-                "Hard delete is blocked by an active legal hold on a document in this Knowledge Base"
-            )
+            raise ValueError("Hard delete is blocked by an active legal hold on a document in this Knowledge Base")
 
 
 async def hard_delete_knowledge_base(
@@ -113,58 +105,31 @@ async def hard_delete_knowledge_base(
     )
     version_ids = [version.id for version in versions]
     storage_keys = sorted(
-        {
-            (version.storage_key or "").strip()
-            for version in versions
-            if (version.storage_key or "").strip()
-        }
+        {(version.storage_key or "").strip() for version in versions if (version.storage_key or "").strip()}
     )
     indexes = (
         (
             await db.execute(
-                select(KnowledgeIndexVersion).where(
-                    KnowledgeIndexVersion.knowledge_base_id == knowledge_base.id
-                )
+                select(KnowledgeIndexVersion).where(KnowledgeIndexVersion.knowledge_base_id == knowledge_base.id)
             )
         )
         .scalars()
         .all()
     )
     collections = sorted(
-        {
-            name
-            for index in indexes
-            for name in (index.collection_name, index.collection_alias)
-            if (name or "").strip()
-        }
+        {name for index in indexes for name in (index.collection_name, index.collection_alias) if (name or "").strip()}
     )
 
     release_ids = (
-        (
-            await db.execute(
-                select(KnowledgeRelease.id).where(
-                    KnowledgeRelease.knowledge_base_id == knowledge_base.id
-                )
-            )
-        )
+        (await db.execute(select(KnowledgeRelease.id).where(KnowledgeRelease.knowledge_base_id == knowledge_base.id)))
         .scalars()
         .all()
     )
     if release_ids:
-        await db.execute(
-            delete(KnowledgeReleaseDocument).where(
-                KnowledgeReleaseDocument.release_id.in_(release_ids)
-            )
-        )
+        await db.execute(delete(KnowledgeReleaseDocument).where(KnowledgeReleaseDocument.release_id.in_(release_ids)))
 
-    await db.execute(
-        delete(AgentKnowledgeBinding).where(
-            AgentKnowledgeBinding.knowledge_base_id == knowledge_base.id
-        )
-    )
-    await db.execute(
-        delete(IngestionJob).where(IngestionJob.knowledge_base_id == knowledge_base.id)
-    )
+    await db.execute(delete(AgentKnowledgeBinding).where(AgentKnowledgeBinding.knowledge_base_id == knowledge_base.id))
+    await db.execute(delete(IngestionJob).where(IngestionJob.knowledge_base_id == knowledge_base.id))
     await db.execute(
         delete(KnowledgeBaseAccessAssignment).where(
             KnowledgeBaseAccessAssignment.knowledge_base_id == knowledge_base.id
@@ -178,36 +143,14 @@ async def hard_delete_knowledge_base(
             .where(KnowledgeChunk.document_version_id.in_(version_ids))
             .values(parent_chunk_id=None)
         )
-        await db.execute(
-            delete(KnowledgeChunk).where(
-                KnowledgeChunk.document_version_id.in_(version_ids)
-            )
-        )
-        await db.execute(
-            delete(KnowledgeDocumentVersion).where(
-                KnowledgeDocumentVersion.id.in_(version_ids)
-            )
-        )
+        await db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_version_id.in_(version_ids)))
+        await db.execute(delete(KnowledgeDocumentVersion).where(KnowledgeDocumentVersion.id.in_(version_ids)))
 
-    await db.execute(
-        delete(KnowledgeIndexVersion).where(
-            KnowledgeIndexVersion.knowledge_base_id == knowledge_base.id
-        )
-    )
-    await db.execute(
-        delete(KnowledgeConnector).where(
-            KnowledgeConnector.knowledge_base_id == knowledge_base.id
-        )
-    )
+    await db.execute(delete(KnowledgeIndexVersion).where(KnowledgeIndexVersion.knowledge_base_id == knowledge_base.id))
+    await db.execute(delete(KnowledgeConnector).where(KnowledgeConnector.knowledge_base_id == knowledge_base.id))
 
     documents = (
-        (
-            await db.execute(
-                select(KnowledgeDocument).where(
-                    KnowledgeDocument.knowledge_base_id == knowledge_base.id
-                )
-            )
-        )
+        (await db.execute(select(KnowledgeDocument).where(KnowledgeDocument.knowledge_base_id == knowledge_base.id)))
         .scalars()
         .all()
     )
@@ -221,13 +164,7 @@ async def hard_delete_knowledge_base(
             document.revoked_at = now
 
     releases = (
-        (
-            await db.execute(
-                select(KnowledgeRelease).where(
-                    KnowledgeRelease.knowledge_base_id == knowledge_base.id
-                )
-            )
-        )
+        (await db.execute(select(KnowledgeRelease).where(KnowledgeRelease.knowledge_base_id == knowledge_base.id)))
         .scalars()
         .all()
     )

@@ -126,9 +126,7 @@ def key_to_dict(
         "is_active": bool(key.is_active),
         "created_at": key.created_at.isoformat() + "Z" if key.created_at else None,
         "updated_at": (
-            (key.updated_at or key.created_at).isoformat() + "Z"
-            if (key.updated_at or key.created_at)
-            else None
+            (key.updated_at or key.created_at).isoformat() + "Z" if (key.updated_at or key.created_at) else None
         ),
         "last_used_at": key.last_used_at.isoformat() + "Z" if key.last_used_at else None,
         "owner_user_id": key.owner_user_id,

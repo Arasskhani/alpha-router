@@ -148,9 +148,7 @@ class OpenRouterSpeechAdapter:
             )
         # Guard against JSON error bodies returned with a 200 status.
         content_type = (response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-        if content_type.startswith("application/json") or (
-            len(blob) < 512 and blob.lstrip().startswith(b"{")
-        ):
+        if content_type.startswith("application/json") or (len(blob) < 512 and blob.lstrip().startswith(b"{")):
             try:
                 parsed = json.loads(blob.decode("utf-8", errors="replace"))
             except Exception:

@@ -16,9 +16,7 @@ from app.services.model_access_service import (
 )
 
 
-async def allowed_model_ids_for_key(
-    db: AsyncSession, alpha_router_api_key_id: int | None
-) -> set[int] | None:
+async def allowed_model_ids_for_key(db: AsyncSession, alpha_router_api_key_id: int | None) -> set[int] | None:
     """None = unrestricted. Empty set = restricted to no models."""
     if alpha_router_api_key_id is None:
         return None
@@ -29,8 +27,7 @@ async def allowed_model_ids_for_key(
         (
             await db.execute(
                 select(alpha_router_api_key_models.c.model_id).where(
-                    alpha_router_api_key_models.c.alpha_router_api_key_id
-                    == int(alpha_router_api_key_id)
+                    alpha_router_api_key_models.c.alpha_router_api_key_id == int(alpha_router_api_key_id)
                 )
             )
         )
@@ -40,9 +37,7 @@ async def allowed_model_ids_for_key(
     return {int(mid) for mid in rows}
 
 
-def filter_models_for_allowlist(
-    models: list[AIModel], allowed_model_ids: set[int] | None
-) -> list[AIModel]:
+def filter_models_for_allowlist(models: list[AIModel], allowed_model_ids: set[int] | None) -> list[AIModel]:
     if allowed_model_ids is None:
         return models
     allowed = allowed_model_ids
@@ -84,18 +79,12 @@ async def map_allowed_models(db: AsyncSession, key_ids: list[int]) -> dict[int, 
             )
             .join(AIModel, AIModel.id == alpha_router_api_key_models.c.model_id)
             .join(Connection, Connection.id == AIModel.connection_id)
-            .where(
-                alpha_router_api_key_models.c.alpha_router_api_key_id.in_(
-                    [int(kid) for kid in key_ids]
-                )
-            )
+            .where(alpha_router_api_key_models.c.alpha_router_api_key_id.in_([int(kid) for kid in key_ids]))
             .order_by(AIModel.external_id.asc(), AIModel.id.asc())
         )
     ).all()
     for key_id, model, connection_name in rows:
-        out.setdefault(int(key_id), []).append(
-            model_brief(model, connection_name=connection_name)
-        )
+        out.setdefault(int(key_id), []).append(model_brief(model, connection_name=connection_name))
     return out
 
 
@@ -118,10 +107,7 @@ async def list_picker_models(
     conn_names = {model.id: name for model, name in rows}
     subject = await resolve_access_subject(db, user_id=owner_user_id)
     filtered = await filter_models_for_subject(db, models, subject)
-    return [
-        model_brief(m, connection_name=conn_names.get(m.id))
-        for m in filtered
-    ]
+    return [model_brief(m, connection_name=conn_names.get(m.id)) for m in filtered]
 
 
 async def replace_key_allowed_models(
@@ -134,9 +120,7 @@ async def replace_key_allowed_models(
     """Apply policy, replace join rows, and return sorted model labels."""
     key.restrict_models = bool(restrict)
     await db.execute(
-        delete(alpha_router_api_key_models).where(
-            alpha_router_api_key_models.c.alpha_router_api_key_id == int(key.id)
-        )
+        delete(alpha_router_api_key_models).where(alpha_router_api_key_models.c.alpha_router_api_key_id == int(key.id))
     )
     if not restrict:
         return []
@@ -162,9 +146,7 @@ async def replace_key_allowed_models(
         for mid in clean:
             model, _ = found[mid]
             if int(model.connection_id) not in allowed_connection_ids:
-                raise ValueError(
-                    f"Model {model.external_id} is not on an allowed connection for this key"
-                )
+                raise ValueError(f"Model {model.external_id} is not on an allowed connection for this key")
 
     if key.owner_user_id is not None:
         subject = await resolve_access_subject(
@@ -174,18 +156,13 @@ async def replace_key_allowed_models(
         for mid in clean:
             model, _ = found[mid]
             if not await user_can_access_model(db, model, subject):
-                raise ValueError(
-                    f"Owner cannot access model {model.external_id}"
-                )
+                raise ValueError(f"Owner cannot access model {model.external_id}")
     elif clean:
         raise ValueError("Select an owner before restricting models on this key")
 
     await db.execute(
         insert(alpha_router_api_key_models),
-        [
-            {"alpha_router_api_key_id": int(key.id), "model_id": mid}
-            for mid in clean
-        ],
+        [{"alpha_router_api_key_id": int(key.id), "model_id": mid} for mid in clean],
     )
     labels: list[str] = []
     for mid in sorted(clean, key=lambda i: (found[i][0].external_id or "").lower()):

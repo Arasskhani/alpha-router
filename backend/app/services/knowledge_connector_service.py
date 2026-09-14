@@ -164,11 +164,7 @@ async def create_connector(
     ).scalar_one_or_none()
     if duplicate is not None:
         raise ValueError("Connector name already exists in this Knowledge Base")
-    interval = (
-        min(43_200, max(5, int(sync_interval_minutes)))
-        if sync_interval_minutes is not None
-        else None
-    )
+    interval = min(43_200, max(5, int(sync_interval_minutes))) if sync_interval_minutes is not None else None
     connector = KnowledgeConnector(
         id=str(uuid.uuid4()),
         knowledge_base_id=knowledge_base_id,
@@ -246,9 +242,7 @@ async def update_connector(
         connector.sync_interval_minutes = None
         changes["sync_interval_minutes"] = None
     elif sync_interval_minutes is not None:
-        connector.sync_interval_minutes = min(
-            43_200, max(5, int(sync_interval_minutes))
-        )
+        connector.sync_interval_minutes = min(43_200, max(5, int(sync_interval_minutes)))
         changes["sync_interval_minutes"] = connector.sync_interval_minutes
     connector.updated_at = datetime.datetime.utcnow()
     await record_knowledge_audit(
@@ -335,9 +329,7 @@ async def schedule_connector_sync(
     connector_id: str,
     requested_by_user_id: int | None,
 ) -> ConnectorSyncRun:
-    connector_statement = select(KnowledgeConnector).where(
-        KnowledgeConnector.id == connector_id
-    )
+    connector_statement = select(KnowledgeConnector).where(KnowledgeConnector.id == connector_id)
     if db.get_bind().dialect.name == "postgresql":
         connector_statement = connector_statement.with_for_update()
     connector = (await db.execute(connector_statement)).scalar_one_or_none()
@@ -405,8 +397,7 @@ async def schedule_due_connectors(
         interval = max(5, int(connector.sync_interval_minutes or 5))
         if (
             connector.last_synced_at is not None
-            and connector.last_synced_at + datetime.timedelta(minutes=interval)
-            > current
+            and connector.last_synced_at + datetime.timedelta(minutes=interval) > current
         ):
             continue
         active_run = (
@@ -506,11 +497,7 @@ async def _fetch_http_item(
         raise BoundedIOError("HTTP connector redirect limit exceeded")
     parsed = urlparse(url)
     file_name = unquote(PurePosixPath(parsed.path).name) or "index.html"
-    mime = (
-        response.headers.get("content-type", "application/octet-stream")
-        .split(";", 1)[0]
-        .strip()
-    )
+    mime = response.headers.get("content-type", "application/octet-stream").split(";", 1)[0].strip()
     digest = hashlib.sha256(data).hexdigest()
     key = f"{hashlib.sha256(url.encode()).hexdigest()[:20]}-{file_name}"
     checkpoint = {
@@ -569,9 +556,7 @@ def _list_s3_objects(config: dict, credentials: dict) -> list[dict]:
                     "etag": str(item.get("ETag") or "").strip('"'),
                     "size": int(item.get("Size") or 0),
                     "last_modified": (
-                        item["LastModified"].isoformat()
-                        if item.get("LastModified") is not None
-                        else None
+                        item["LastModified"].isoformat() if item.get("LastModified") is not None else None
                     ),
                 }
             )
@@ -739,13 +724,8 @@ async def process_connector_sync(
         async with safe_client() as client:
             for raw_url in config.get("urls", []):
                 url = str(raw_url)
-                source_file_name = (
-                    unquote(PurePosixPath(urlparse(url).path).name) or "index.html"
-                )
-                source_key = (
-                    f"{hashlib.sha256(url.encode()).hexdigest()[:20]}-"
-                    f"{source_file_name}"
-                )
+                source_file_name = unquote(PurePosixPath(urlparse(url).path).name) or "index.html"
+                source_key = f"{hashlib.sha256(url.encode()).hexdigest()[:20]}-{source_file_name}"
                 discovered_keys.add(_canonical_item_key(connector.id, source_key))
                 try:
                     item, checkpoint = await _fetch_http_item(
@@ -762,8 +742,7 @@ async def process_connector_sync(
                 except (BoundedIOError, ValueError, httpx.HTTPError) as exc:
                     failures += 1
                     if isinstance(exc, httpx.TransportError) or (
-                        isinstance(exc, httpx.HTTPStatusError)
-                        and exc.response.status_code >= 500
+                        isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500
                     ):
                         retryable_failures += 1
                     error_messages.append(f"{url}: {str(exc)[:300]}")

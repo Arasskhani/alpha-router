@@ -56,13 +56,9 @@ def test_openrouter_requests_complete_catalog():
 def test_google_catalog_normalizes_models_response_and_uses_api_key():
     async def run():
         _Client.calls = []
-        _Client.response = _Response(
-            {"models": [{"name": "models/gemini-2.5-flash", "displayName": "Gemini"}]}
-        )
+        _Client.response = _Response({"models": [{"name": "models/gemini-2.5-flash", "displayName": "Gemini"}]})
         with patch("app.services.model_sync.httpx.AsyncClient", _Client):
-            result = await fetch_provider_models(
-                "google", "google-key", "https://example.test/v1beta"
-            )
+            result = await fetch_provider_models("google", "google-key", "https://example.test/v1beta")
         assert result[0]["id"] == "gemini-2.5-flash"
         assert _Client.calls[0][1]["params"] == {"key": "google-key"}
         assert _Client.calls[0][1]["headers"]["Cache-Control"].startswith("no-cache")

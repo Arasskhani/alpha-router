@@ -201,13 +201,7 @@ async def _test_registry_lifecycle_and_schema_guards() -> None:
             assert reviewed_version.published_by_user_id == checker.id
 
             events = (
-                (
-                    await db.execute(
-                        select(AgentToolAuditEvent.event_type).where(
-                            AgentToolAuditEvent.tool_id == tool.id
-                        )
-                    )
-                )
+                (await db.execute(select(AgentToolAuditEvent.event_type).where(AgentToolAuditEvent.tool_id == tool.id)))
                 .scalars()
                 .all()
             )

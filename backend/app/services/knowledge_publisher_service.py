@@ -53,16 +53,10 @@ async def create_knowledge_release(
     change_summary: str,
 ) -> KnowledgeRelease:
     if not document_version_ids:
-        raise ValueError(
-            "A Knowledge release must include at least one document version"
-        )
+        raise ValueError("A Knowledge release must include at least one document version")
     if len(set(document_version_ids)) != len(document_version_ids):
-        raise ValueError(
-            "A Knowledge release cannot contain duplicate document versions"
-        )
-    kb_statement = select(KnowledgeBase).where(
-        KnowledgeBase.id == knowledge_base_id
-    )
+        raise ValueError("A Knowledge release cannot contain duplicate document versions")
+    kb_statement = select(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id)
     if db.get_bind().dialect.name == "postgresql":
         kb_statement = kb_statement.with_for_update()
     knowledge_base = (await db.execute(kb_statement)).scalar_one_or_none()
@@ -105,16 +99,8 @@ async def create_knowledge_release(
                 "sha256": version.sha256,
                 "classification": version.classification,
                 "authority": version.authority,
-                "effective_from": (
-                    version.effective_from.isoformat()
-                    if version.effective_from is not None
-                    else None
-                ),
-                "effective_to": (
-                    version.effective_to.isoformat()
-                    if version.effective_to is not None
-                    else None
-                ),
+                "effective_from": (version.effective_from.isoformat() if version.effective_from is not None else None),
+                "effective_to": (version.effective_to.isoformat() if version.effective_to is not None else None),
                 "parser_version": version.parser_version,
             }
         )
@@ -125,9 +111,7 @@ async def create_knowledge_release(
     }
     fingerprint = _fingerprint(manifest)
     existing = (
-        await db.execute(
-            select(KnowledgeRelease).where(KnowledgeRelease.fingerprint == fingerprint)
-        )
+        await db.execute(select(KnowledgeRelease).where(KnowledgeRelease.fingerprint == fingerprint))
     ).scalar_one_or_none()
     if existing is not None:
         return existing
@@ -192,18 +176,13 @@ async def submit_release_for_indexing(
     sparse_profile: dict,
     allow_self_submit: bool = False,
 ) -> KnowledgeIndexVersion:
-    release_statement = select(KnowledgeRelease).where(
-        KnowledgeRelease.id == release_id
-    )
+    release_statement = select(KnowledgeRelease).where(KnowledgeRelease.id == release_id)
     if db.get_bind().dialect.name == "postgresql":
         release_statement = release_statement.with_for_update()
     release = (await db.execute(release_statement)).scalar_one_or_none()
     if release is None or release.status != "draft":
         raise ValueError("Only a draft Knowledge release can be submitted")
-    if (
-        not allow_self_submit
-        and release.created_by_user_id == submitted_by_user_id
-    ):
+    if not allow_self_submit and release.created_by_user_id == submitted_by_user_id:
         raise ValueError("Maker-checker policy requires a different release submitter")
     if embedding_dimensions <= 0 or embedding_dimensions > 65_536:
         raise ValueError("Embedding dimensions must be between 1 and 65536")
@@ -213,9 +192,7 @@ async def submit_release_for_indexing(
     if not provider or not model or not model_fingerprint:
         raise ValueError("A complete embedding profile is required")
 
-    normalized_sparse_profile = SparseEncodingProfile.from_dict(
-        sparse_profile
-    ).as_dict()
+    normalized_sparse_profile = SparseEncodingProfile.from_dict(sparse_profile).as_dict()
     index_profile = {
         "release_fingerprint": release.fingerprint,
         "embedding_provider": provider,
@@ -227,18 +204,12 @@ async def submit_release_for_indexing(
     }
     index_fingerprint = _fingerprint(index_profile)
     existing = (
-        await db.execute(
-            select(KnowledgeIndexVersion).where(
-                KnowledgeIndexVersion.fingerprint == index_fingerprint
-            )
-        )
+        await db.execute(select(KnowledgeIndexVersion).where(KnowledgeIndexVersion.fingerprint == index_fingerprint))
     ).scalar_one_or_none()
     if existing is not None:
         return existing
 
-    kb_statement = select(KnowledgeBase).where(
-        KnowledgeBase.id == release.knowledge_base_id
-    )
+    kb_statement = select(KnowledgeBase).where(KnowledgeBase.id == release.knowledge_base_id)
     if db.get_bind().dialect.name == "postgresql":
         kb_statement = kb_statement.with_for_update()
     knowledge_base = (await db.execute(kb_statement)).scalar_one_or_none()
@@ -247,8 +218,7 @@ async def submit_release_for_indexing(
             (
                 await db.execute(
                     select(func.max(KnowledgeIndexVersion.version_number)).where(
-                        KnowledgeIndexVersion.knowledge_base_id
-                        == release.knowledge_base_id
+                        KnowledgeIndexVersion.knowledge_base_id == release.knowledge_base_id
                     )
                 )
             ).scalar()
@@ -260,28 +230,21 @@ async def submit_release_for_indexing(
     kb_component = _safe_collection_component(
         knowledge_base.slug if knowledge_base is not None else release.knowledge_base_id
     )
-    collection_name = (
-        f"{prefix}-{kb_component}-v{index_number}-{index_fingerprint[:10]}"
-    )[:255]
+    collection_name = (f"{prefix}-{kb_component}-v{index_number}-{index_fingerprint[:10]}")[:255]
     collection_alias = f"{prefix}-{kb_component}-active"[:255]
     document_version_ids = [
-        item["document_version_id"]
-        for item in dict(release.manifest_json or {}).get("documents", [])
+        item["document_version_id"] for item in dict(release.manifest_json or {}).get("documents", [])
     ]
     chunk_rows = (
         (
             await db.execute(
-                select(KnowledgeChunk.metadata_json).where(
-                    KnowledgeChunk.document_version_id.in_(document_version_ids)
-                )
+                select(KnowledgeChunk.metadata_json).where(KnowledgeChunk.document_version_id.in_(document_version_ids))
             )
         )
         .scalars()
         .all()
     )
-    expected_points = sum(
-        1 for metadata in chunk_rows if dict(metadata or {}).get("kind") != "parent"
-    )
+    expected_points = sum(1 for metadata in chunk_rows if dict(metadata or {}).get("kind") != "parent")
     if expected_points <= 0:
         raise ValueError("The release has no indexable chunks")
 
@@ -372,8 +335,7 @@ async def activate_release_after_index(
             await db.execute(
                 select(KnowledgeDocumentVersion).where(
                     KnowledgeDocumentVersion.document_id == version.document_id,
-                    KnowledgeDocumentVersion.active_scope_key
-                    == f"document:{version.document_id}",
+                    KnowledgeDocumentVersion.active_scope_key == f"document:{version.document_id}",
                     KnowledgeDocumentVersion.id != version.id,
                 )
             )

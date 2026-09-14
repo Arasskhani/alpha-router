@@ -86,10 +86,7 @@ def _sanitize_audit_value(
             for item_key, item_value in list(value.items())[:100]
         }
     if isinstance(value, (list, tuple, set)):
-        return [
-            _sanitize_audit_value(item, depth=depth + 1)
-            for item in list(value)[:100]
-        ]
+        return [_sanitize_audit_value(item, depth=depth + 1) for item in list(value)[:100]]
     return str(value)[:2_000]
 
 

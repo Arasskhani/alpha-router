@@ -105,8 +105,10 @@ def _error_message(status_code: int, body: str) -> str:
     snippet = (body or "").strip()
     if len(snippet) > 400:
         snippet = snippet[:400] + "…"
-    return f"OpenRouter transcription failed ({status_code}): {snippet}" if snippet else (
-        f"OpenRouter transcription failed ({status_code})."
+    return (
+        f"OpenRouter transcription failed ({status_code}): {snippet}"
+        if snippet
+        else (f"OpenRouter transcription failed ({status_code}).")
     )
 
 
@@ -153,21 +155,15 @@ async def transcribe_with_openrouter(
     try:
         data = response.json()
     except ValueError as exc:
-        raise OpenRouterTranscriptionError(
-            "OpenRouter returned a non-JSON transcription response."
-        ) from exc
+        raise OpenRouterTranscriptionError("OpenRouter returned a non-JSON transcription response.") from exc
     if not isinstance(data, dict):
-        raise OpenRouterTranscriptionError(
-            "OpenRouter returned an unexpected transcription response."
-        )
+        raise OpenRouterTranscriptionError("OpenRouter returned an unexpected transcription response.")
 
     text = str(data.get("text") or "").strip()
     if not text:
         # Distinguish "nothing was said" from a transport problem: this is a
         # successful call that simply found no speech.
-        raise OpenRouterTranscriptionError(
-            "No speech detected. Try speaking closer to the microphone."
-        )
+        raise OpenRouterTranscriptionError("No speech detected. Try speaking closer to the microphone.")
 
     return OpenRouterTranscriptionResult(
         text=text,

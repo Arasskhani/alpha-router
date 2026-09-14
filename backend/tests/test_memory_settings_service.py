@@ -181,9 +181,7 @@ async def _defaults_and_validation() -> None:
         db.add(embed_model)
         await db.flush()
 
-        filled = await update_memory_settings(
-            db, {"embedding_model": "openai:text-embedding-3-small"}
-        )
+        filled = await update_memory_settings(db, {"embedding_model": "openai:text-embedding-3-small"})
         assert filled["embedding_model"] == "openai:text-embedding-3-small"
         assert filled["embedding_dimensions"] == 1536
 

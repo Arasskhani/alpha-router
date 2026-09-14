@@ -84,9 +84,7 @@ def _load_private_key(pem: str, password: str | None):
         # passphrase supplied for an unencrypted key.
         if pwd is None:
             raise TlsCertificateError("The private key is encrypted. Provide the passphrase.") from exc
-        raise TlsCertificateError(
-            "This private key is not encrypted. Leave the passphrase empty."
-        ) from exc
+        raise TlsCertificateError("This private key is not encrypted. Leave the passphrase empty.") from exc
     except ValueError as exc:
         raise TlsCertificateError("The private key could not be parsed. Check the file and passphrase.") from exc
 
@@ -152,9 +150,7 @@ def parse_pem_bundle(
     not_before = getattr(leaf, "not_valid_before_utc", None) or leaf.not_valid_before.replace(
         tzinfo=datetime.timezone.utc
     )
-    not_after = getattr(leaf, "not_valid_after_utc", None) or leaf.not_valid_after.replace(
-        tzinfo=datetime.timezone.utc
-    )
+    not_after = getattr(leaf, "not_valid_after_utc", None) or leaf.not_valid_after.replace(tzinfo=datetime.timezone.utc)
     if now < not_before:
         raise TlsCertificateError("This certificate is not valid yet.")
     if now > not_after:
@@ -215,9 +211,7 @@ def parse_pkcs12(data: bytes, password: str | None) -> ParsedCertificate:
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
     ).decode("ascii")
-    chain_pem = "".join(
-        item.public_bytes(serialization.Encoding.PEM).decode("ascii") for item in (extra or [])
-    )
+    chain_pem = "".join(item.public_bytes(serialization.Encoding.PEM).decode("ascii") for item in (extra or []))
     return parse_pem_bundle(cert_pem=cert_pem, key_pem=key_pem, chain_pem=chain_pem)
 
 

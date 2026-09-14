@@ -32,4 +32,3 @@ def get_video_adapter(provider_type: str, *, adapter_key: str | None = None) -> 
 
 def registered_video_adapters() -> Mapping[str, VideoProviderAdapter]:
     return dict(_ADAPTERS)
-

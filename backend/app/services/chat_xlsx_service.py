@@ -145,7 +145,7 @@ def render_chat_xlsx(*, content: str, title: str | None = None) -> bytes:
     assert default is not None
     raw_title = (title or "Chat export").strip() or "Chat export"
     # Excel sheet titles: max 31 chars; forbid \ / * ? : [ ]
-    sheet_title = re.sub(r'[\\/*?:\[\]]+', "_", raw_title)[:31] or "Chat export"
+    sheet_title = re.sub(r"[\\/*?:\[\]]+", "_", raw_title)[:31] or "Chat export"
     default.title = sheet_title
 
     if len(tables) == 1:

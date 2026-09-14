@@ -63,8 +63,10 @@ def _build_app() -> FastAPI:
 
 def test_dispatch_blocks_anonymous_in_production():
     app = _build_app()
-    with patch("app.services.docs_guard.get_settings", lambda: _settings()), \
-         patch("app.services.docs_guard.request_has_super_admin", lambda req: _false()):
+    with (
+        patch("app.services.docs_guard.get_settings", lambda: _settings()),
+        patch("app.services.docs_guard.request_has_super_admin", lambda req: _false()),
+    ):
         client = TestClient(app)
         r = client.get("/docs")
     assert r.status_code == 404
@@ -73,8 +75,10 @@ def test_dispatch_blocks_anonymous_in_production():
 
 def test_dispatch_allows_super_admin_in_production():
     app = _build_app()
-    with patch("app.services.docs_guard.get_settings", lambda: _settings()), \
-         patch("app.services.docs_guard.request_has_super_admin", lambda req: _true()):
+    with (
+        patch("app.services.docs_guard.get_settings", lambda: _settings()),
+        patch("app.services.docs_guard.request_has_super_admin", lambda req: _true()),
+    ):
         client = TestClient(app)
         r = client.get("/docs")
         r2 = client.get("/openapi.json")
@@ -85,8 +89,10 @@ def test_dispatch_allows_super_admin_in_production():
 
 def test_dispatch_noop_when_openapi_not_admin_only():
     app = _build_app()
-    with patch("app.services.docs_guard.get_settings", lambda: _settings(openapi_admin_only=False)), \
-         patch("app.services.docs_guard.request_has_super_admin", lambda req: _false()):
+    with (
+        patch("app.services.docs_guard.get_settings", lambda: _settings(openapi_admin_only=False)),
+        patch("app.services.docs_guard.request_has_super_admin", lambda req: _false()),
+    ):
         client = TestClient(app)
         r = client.get("/docs")
     assert r.status_code == 200
@@ -97,8 +103,13 @@ def test_dispatch_locks_in_development_when_flag_explicitly_set():
     # dev/single-box deployment that sets the flag still locks docs (and keeps
     # cookie auth working over HTTP for localhost testing).
     app = _build_app()
-    with patch("app.services.docs_guard.get_settings", lambda: _settings(environment="development", openapi_admin_only=True)), \
-         patch("app.services.docs_guard.request_has_super_admin", lambda req: _false()):
+    with (
+        patch(
+            "app.services.docs_guard.get_settings",
+            lambda: _settings(environment="development", openapi_admin_only=True),
+        ),
+        patch("app.services.docs_guard.request_has_super_admin", lambda req: _false()),
+    ):
         client = TestClient(app)
         r = client.get("/docs")
     assert r.status_code == 404
@@ -106,8 +117,10 @@ def test_dispatch_locks_in_development_when_flag_explicitly_set():
 
 def test_dispatch_does_not_guard_non_docs_paths():
     app = _build_app()
-    with patch("app.services.docs_guard.get_settings", lambda: _settings()), \
-         patch("app.services.docs_guard.request_has_super_admin", lambda req: _false()):
+    with (
+        patch("app.services.docs_guard.get_settings", lambda: _settings()),
+        patch("app.services.docs_guard.request_has_super_admin", lambda req: _false()),
+    ):
         client = TestClient(app)
         r = client.get("/health")
     # /health is not a route on the minimal app -> 404 from the app itself, not the guard.

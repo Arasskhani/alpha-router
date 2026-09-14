@@ -63,31 +63,19 @@ def _sandbox_environment() -> dict[str, str]:
         "PATH": os.environ.get("PATH", ""),
         "PYTHONIOENCODING": "utf-8",
         "PYTHONDONTWRITEBYTECODE": "1",
-        "PYTHONPATH": os.pathsep.join(
-            [*site.getsitepackages(), site.getusersitepackages()]
-        ),
+        "PYTHONPATH": os.pathsep.join([*site.getsitepackages(), site.getusersitepackages()]),
         "KNOWLEDGE_MAX_UPLOAD_BYTES": str(settings.knowledge_max_upload_bytes),
         "KNOWLEDGE_MAX_ARCHIVE_ENTRIES": str(settings.knowledge_max_archive_entries),
-        "KNOWLEDGE_MAX_ARCHIVE_UNCOMPRESSED_BYTES": str(
-            settings.knowledge_max_archive_uncompressed_bytes
-        ),
+        "KNOWLEDGE_MAX_ARCHIVE_UNCOMPRESSED_BYTES": str(settings.knowledge_max_archive_uncompressed_bytes),
         "KNOWLEDGE_MAX_ARCHIVE_RATIO": str(settings.knowledge_max_archive_ratio),
-        "KNOWLEDGE_MAX_DOCUMENT_CHARACTERS": str(
-            settings.knowledge_max_document_characters
-        ),
+        "KNOWLEDGE_MAX_DOCUMENT_CHARACTERS": str(settings.knowledge_max_document_characters),
         "KNOWLEDGE_MAX_PDF_PAGES": str(settings.knowledge_max_pdf_pages),
-        "KNOWLEDGE_OCR_REQUIRED": "true"
-        if settings.knowledge_ocr_required
-        else "false",
+        "KNOWLEDGE_OCR_REQUIRED": "true" if settings.knowledge_ocr_required else "false",
         "KNOWLEDGE_OCR_LANGUAGES": settings.knowledge_ocr_languages,
         "KNOWLEDGE_OCR_DPI": str(settings.knowledge_ocr_dpi),
-        "KNOWLEDGE_OCR_PAGE_TIMEOUT_SECONDS": str(
-            settings.knowledge_ocr_page_timeout_seconds
-        ),
+        "KNOWLEDGE_OCR_PAGE_TIMEOUT_SECONDS": str(settings.knowledge_ocr_page_timeout_seconds),
         "KNOWLEDGE_OCR_MAX_PAGES": str(settings.knowledge_ocr_max_pages),
-        "KNOWLEDGE_OCR_MIN_TEXT_CHARACTERS": str(
-            settings.knowledge_ocr_min_text_characters
-        ),
+        "KNOWLEDGE_OCR_MIN_TEXT_CHARACTERS": str(settings.knowledge_ocr_min_text_characters),
     }
     for key in ("SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TESSDATA_PREFIX"):
         if os.environ.get(key):
@@ -147,9 +135,7 @@ async def parse_document_in_sandbox(
         message = error_text.split("UNSAFE:", 1)[-1].strip()
         raise UnsafeDocumentError(message or "Document parser rejected the source")
     if process.returncode != 0:
-        raise ParserSandboxError(
-            f"Document parser process failed ({error_text[:500] or 'no details'})"
-        )
+        raise ParserSandboxError(f"Document parser process failed ({error_text[:500] or 'no details'})")
     try:
         payload = json.loads(stdout)
         raw_segments = payload["segments"]
@@ -158,16 +144,8 @@ async def parse_document_in_sandbox(
         segments = tuple(
             ParsedSegment(
                 text=str(item["text"]),
-                page_number=(
-                    int(item["page_number"])
-                    if item.get("page_number") is not None
-                    else None
-                ),
-                section=(
-                    str(item["section"])[:512]
-                    if item.get("section") is not None
-                    else None
-                ),
+                page_number=(int(item["page_number"]) if item.get("page_number") is not None else None),
+                section=(str(item["section"])[:512] if item.get("section") is not None else None),
             )
             for item in raw_segments
         )

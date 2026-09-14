@@ -107,12 +107,10 @@ async def _test_agent_version_lifecycle() -> None:
         assert (await get_active_agent_version(db, agent.id)).id == first.id
 
         events = (
-            await db.execute(
-                select(AgentAuditEvent.event_type).where(
-                    AgentAuditEvent.agent_id == agent.id
-                )
-            )
-        ).scalars().all()
+            (await db.execute(select(AgentAuditEvent.event_type).where(AgentAuditEvent.agent_id == agent.id)))
+            .scalars()
+            .all()
+        )
         assert "agent.created" in events
         assert events.count("agent.version.published") == 2
         assert "agent.version.rolled_back" in events
@@ -194,13 +192,17 @@ async def _test_discard_agent_draft() -> None:
         assert draft.status == "archived"
         assert draft.published_at is None
         remaining = (
-            await db.execute(
-                select(AgentAuditEvent.event_type).where(
-                    AgentAuditEvent.agent_id == agent.id,
-                    AgentAuditEvent.event_type == "agent.version.discarded",
+            (
+                await db.execute(
+                    select(AgentAuditEvent.event_type).where(
+                        AgentAuditEvent.agent_id == agent.id,
+                        AgentAuditEvent.event_type == "agent.version.discarded",
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert remaining == ["agent.version.discarded"]
         alone = await create_agent(
             db,
@@ -344,12 +346,10 @@ async def _test_revoke_knowledge_binding_from_draft_only() -> None:
         )
         assert binding.status == "revoked"
         events = (
-            await db.execute(
-                select(AgentAuditEvent.event_type).where(
-                    AgentAuditEvent.agent_id == agent.id
-                )
-            )
-        ).scalars().all()
+            (await db.execute(select(AgentAuditEvent.event_type).where(AgentAuditEvent.agent_id == agent.id)))
+            .scalars()
+            .all()
+        )
         assert "agent.knowledge_binding.revoked" in events
 
         with pytest.raises(ValueError, match="already removed"):

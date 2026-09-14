@@ -101,28 +101,17 @@ def test_migration_idempotent_and_creates_table():
 
         conn = sqlite3.connect(database_path)
         try:
-            tables = {
-                row[0]
-                for row in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'table'"
-                )
-            }
-            revision = conn.execute(
-                "SELECT version_num FROM alembic_version"
-            ).fetchone()
+            tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+            revision = conn.execute("SELECT version_num FROM alembic_version").fetchone()
 
             assert revision == (_alembic_head(),)
             assert "project_media_assets" in tables
 
             # Verify project_id columns exist on image/video tables
-            img_cols = {
-                row[1] for row in conn.execute("PRAGMA table_info(image_generation_attempts)")
-            }
+            img_cols = {row[1] for row in conn.execute("PRAGMA table_info(image_generation_attempts)")}
             assert "project_id" in img_cols
 
-            vid_cols = {
-                row[1] for row in conn.execute("PRAGMA table_info(video_generation_jobs)")
-            }
+            vid_cols = {row[1] for row in conn.execute("PRAGMA table_info(video_generation_jobs)")}
             assert "project_id" in vid_cols
 
             # Verify project_media_assets has a unique constraint on (project_id, content_hash)

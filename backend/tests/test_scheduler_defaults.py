@@ -87,8 +87,14 @@ def test_budget_reset_trigger_is_utc_and_reset_has_no_day_guard(monkeypatch):
         try:
             async with factory() as db:
                 u = User(
-                    username="r", email="r@t", hashed_password="x", auth_provider="local", is_active=True,
-                    monthly_budget_usd=10.0, budget_used_usd=4.0, budget_reserved_usd=0.0,
+                    username="r",
+                    email="r@t",
+                    hashed_password="x",
+                    auth_provider="local",
+                    is_active=True,
+                    monthly_budget_usd=10.0,
+                    budget_used_usd=4.0,
+                    budget_reserved_usd=0.0,
                 )
                 db.add(u)
                 await db.commit()

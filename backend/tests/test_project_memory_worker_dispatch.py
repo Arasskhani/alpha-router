@@ -66,11 +66,7 @@ async def _dispatch() -> None:
                 acl_version=1,
             )
         )
-        db.add(
-            ProjectMember(
-                project_id=PROJ_ID, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER
-            )
-        )
+        db.add(ProjectMember(project_id=PROJ_ID, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))
         session = ChatSession(
             id="sess-proj-worker",
             user_id=owner.id,
@@ -97,18 +93,12 @@ async def _dispatch() -> None:
                     author_display_name="Sara" if role == "user" else None,
                 )
             )
-        job = await schedule_extraction(
-            db, project_id=PROJ_ID, session_id=session.id, watermark_sequence=2
-        )
+        job = await schedule_extraction(db, project_id=PROJ_ID, session_id=session.id, watermark_sequence=2)
         assert job is not None
         past = dt.datetime.utcnow() - dt.timedelta(seconds=1)
         job.run_after = past
         outbox = (
-            await db.execute(
-                select(OutboxEvent).where(
-                    OutboxEvent.event_type == "project_memory.job.ready"
-                )
-            )
+            await db.execute(select(OutboxEvent).where(OutboxEvent.event_type == "project_memory.job.ready"))
         ).scalar_one()
         outbox.available_at = past
         await db.commit()
@@ -117,9 +107,7 @@ async def _dispatch() -> None:
     await relay_outbox_once(factory, redis, worker_id="scheduler-1")
     await ensure_consumer_group(redis)
     messages = await read_new_messages(redis, consumer_name="worker-1")
-    assert {message.event_type for message in messages} == {
-        "project_memory.job.ready"
-    }
+    assert {message.event_type for message in messages} == {"project_memory.job.ready"}
 
     async def fake_extract(db, *, window, completer=None):
         del db, completer
@@ -144,8 +132,7 @@ async def _dispatch() -> None:
         context=KnowledgeJobContext(qdrant=qdrant),
     )
     with patch(
-        "app.services.project_memory_extraction_service."
-        "extract_project_memory_operations",
+        "app.services.project_memory_extraction_service.extract_project_memory_operations",
         fake_extract,
     ):
         results = [await worker.process_message(message) for message in messages]
@@ -156,14 +143,8 @@ async def _dispatch() -> None:
         persisted = await db.get(ProjectMemoryJob, job_id)
         assert persisted.status == "succeeded"
         assert persisted.extracted_sequence == 2
-        rows = (
-            await db.execute(
-                select(ProjectMemory).where(ProjectMemory.project_id == PROJ_ID)
-            )
-        ).scalars().all()
-        assert [row.content for row in rows] == [
-            "The team uses trunk-based development"
-        ]
+        rows = (await db.execute(select(ProjectMemory).where(ProjectMemory.project_id == PROJ_ID))).scalars().all()
+        assert [row.content for row in rows] == ["The team uses trunk-based development"]
         assert rows[0].source_type == "auto_chat"
         assert rows[0].category == "convention"
         # Nothing leaked into personal memory.

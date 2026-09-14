@@ -45,9 +45,7 @@ PROJECT_MEMORY_CATEGORIES = (
 )
 # Never stored in project scope, whatever the admin allow-list says. A member
 # would not expect teammates to read these back out of a shared prompt.
-PROJECT_DENIED_CATEGORIES = frozenset(
-    {"health", "financial", "personal", "family", "identity"}
-)
+PROJECT_DENIED_CATEGORIES = frozenset({"health", "financial", "personal", "family", "identity"})
 
 SETTING_KEYS = {
     "memory_feature_enabled": "true",
@@ -107,9 +105,7 @@ def _as_int(value: str | None, default: int, *, minimum: int, maximum: int) -> i
 
 def _as_float(value: str | None, default: float, *, minimum: float, maximum: float) -> float:
     try:
-        parsed = (
-            float(str(value).strip()) if value is not None and str(value).strip() else default
-        )
+        parsed = float(str(value).strip()) if value is not None and str(value).strip() else default
     except (TypeError, ValueError):
         parsed = default
     return max(minimum, min(maximum, parsed))
@@ -192,64 +188,32 @@ def parse_memory_settings(raw: dict[str, str]) -> dict[str, Any]:
         "extraction_model_id": extraction_id,
         "embedding_model": embedding_model,
         "embedding_dimensions": embedding_dimensions or None,
-        "extract_debounce_seconds": _as_int(
-            raw.get("memory_extract_debounce_seconds"), 30, minimum=5, maximum=3600
-        ),
-        "extract_max_wait_seconds": _as_int(
-            raw.get("memory_extract_max_wait_seconds"), 600, minimum=30, maximum=7200
-        ),
-        "extract_min_new_messages": _as_int(
-            raw.get("memory_extract_min_new_messages"), 2, minimum=1, maximum=20
-        ),
+        "extract_debounce_seconds": _as_int(raw.get("memory_extract_debounce_seconds"), 30, minimum=5, maximum=3600),
+        "extract_max_wait_seconds": _as_int(raw.get("memory_extract_max_wait_seconds"), 600, minimum=30, maximum=7200),
+        "extract_min_new_messages": _as_int(raw.get("memory_extract_min_new_messages"), 2, minimum=1, maximum=20),
         "max_per_user": _as_int(raw.get("memory_max_per_user"), 200, minimum=10, maximum=500),
-        "inject_max_items": _as_int(
-            raw.get("memory_inject_max_items"), 12, minimum=1, maximum=50
-        ),
-        "inject_max_chars": _as_int(
-            raw.get("memory_inject_max_chars"), 2500, minimum=200, maximum=8000
-        ),
+        "inject_max_items": _as_int(raw.get("memory_inject_max_items"), 12, minimum=1, maximum=50),
+        "inject_max_chars": _as_int(raw.get("memory_inject_max_chars"), 2500, minimum=200, maximum=8000),
         "core_items": _as_int(raw.get("memory_core_items"), 6, minimum=0, maximum=20),
-        "semantic_top_k": _as_int(
-            raw.get("memory_semantic_top_k"), 8, minimum=0, maximum=40
-        ),
+        "semantic_top_k": _as_int(raw.get("memory_semantic_top_k"), 8, minimum=0, maximum=40),
         "lexical_top_k": _as_int(raw.get("memory_lexical_top_k"), 6, minimum=0, maximum=40),
-        "min_similarity": _as_float(
-            raw.get("memory_min_similarity"), 0.25, minimum=0.0, maximum=1.0
-        ),
-        "retrieval_timeout_ms": _as_int(
-            raw.get("memory_retrieval_timeout_ms"), 600, minimum=50, maximum=5000
-        ),
+        "min_similarity": _as_float(raw.get("memory_min_similarity"), 0.25, minimum=0.0, maximum=1.0),
+        "retrieval_timeout_ms": _as_int(raw.get("memory_retrieval_timeout_ms"), 600, minimum=50, maximum=5000),
         "allowed_sensitive_categories": _as_string_list(
             raw.get("memory_allowed_sensitive_categories"),
             list(DEFAULT_SENSITIVE_CATEGORIES),
         ),
-        "stale_archive_days": _as_int(
-            raw.get("memory_stale_archive_days"), 540, minimum=0, maximum=3650
-        ),
-        "soft_delete_purge_days": _as_int(
-            raw.get("memory_soft_delete_purge_days"), 30, minimum=1, maximum=365
-        ),
-        "suppression_days": _as_int(
-            raw.get("memory_suppression_days"), 180, minimum=1, maximum=3650
-        ),
-        "qdrant_collection_version": _as_int(
-            raw.get("memory_qdrant_collection_version"), 1, minimum=1, maximum=10_000
-        ),
-        "project_feature_enabled": _as_bool(
-            raw.get("project_memory_feature_enabled"), True
-        ),
-        "project_max_per_project": _as_int(
-            raw.get("project_memory_max_per_project"), 500, minimum=10, maximum=2000
-        ),
-        "project_inject_max_items": _as_int(
-            raw.get("project_memory_inject_max_items"), 60, minimum=1, maximum=200
-        ),
+        "stale_archive_days": _as_int(raw.get("memory_stale_archive_days"), 540, minimum=0, maximum=3650),
+        "soft_delete_purge_days": _as_int(raw.get("memory_soft_delete_purge_days"), 30, minimum=1, maximum=365),
+        "suppression_days": _as_int(raw.get("memory_suppression_days"), 180, minimum=1, maximum=3650),
+        "qdrant_collection_version": _as_int(raw.get("memory_qdrant_collection_version"), 1, minimum=1, maximum=10_000),
+        "project_feature_enabled": _as_bool(raw.get("project_memory_feature_enabled"), True),
+        "project_max_per_project": _as_int(raw.get("project_memory_max_per_project"), 500, minimum=10, maximum=2000),
+        "project_inject_max_items": _as_int(raw.get("project_memory_inject_max_items"), 60, minimum=1, maximum=200),
         "project_inject_max_chars": _as_int(
             raw.get("project_memory_inject_max_chars"), 8000, minimum=200, maximum=24_000
         ),
-        "project_manual_items": _as_int(
-            raw.get("project_memory_manual_items"), 30, minimum=0, maximum=200
-        ),
+        "project_manual_items": _as_int(raw.get("project_memory_manual_items"), 30, minimum=0, maximum=200),
         "project_extract_debounce_seconds": _as_int(
             raw.get("project_memory_extract_debounce_seconds"),
             45,
@@ -265,15 +229,9 @@ def parse_memory_settings(raw: dict[str, str]) -> dict[str, Any]:
         "project_extract_min_new_messages": _as_int(
             raw.get("project_memory_extract_min_new_messages"), 2, minimum=1, maximum=20
         ),
-        "project_semantic_top_k": _as_int(
-            raw.get("project_memory_semantic_top_k"), 12, minimum=0, maximum=60
-        ),
-        "project_lexical_top_k": _as_int(
-            raw.get("project_memory_lexical_top_k"), 8, minimum=0, maximum=60
-        ),
-        "project_min_similarity": _as_float(
-            raw.get("project_memory_min_similarity"), 0.25, minimum=0.0, maximum=1.0
-        ),
+        "project_semantic_top_k": _as_int(raw.get("project_memory_semantic_top_k"), 12, minimum=0, maximum=60),
+        "project_lexical_top_k": _as_int(raw.get("project_memory_lexical_top_k"), 8, minimum=0, maximum=60),
+        "project_min_similarity": _as_float(raw.get("project_memory_min_similarity"), 0.25, minimum=0.0, maximum=1.0),
     }
 
 
@@ -305,16 +263,12 @@ async def _assert_extraction_model(db: AsyncSession, model_id: int) -> AIModel:
     return model
 
 
-async def _assert_embedding_model(
-    db: AsyncSession, spec: str, dimensions: int | None
-) -> tuple[str, str, int | None]:
+async def _assert_embedding_model(db: AsyncSession, spec: str, dimensions: int | None) -> tuple[str, str, int | None]:
     raw = (spec or "").strip()
     if ":" in raw:
         provider, model = raw.split(":", 1)
     else:
-        raise MemorySettingsError(
-            "Embedding model must be 'provider:external_id'"
-        )
+        raise MemorySettingsError("Embedding model must be 'provider:external_id'")
     provider = provider.strip().lower()
     model = model.strip()
     if not provider or not model:
@@ -347,9 +301,7 @@ def _raw_from_values(values: dict[str, Any]) -> dict[str, str]:
         ),
         "memory_embedding_model": str(values.get("embedding_model") or ""),
         "memory_embedding_dimensions": (
-            ""
-            if not values.get("embedding_dimensions")
-            else str(int(values["embedding_dimensions"]))
+            "" if not values.get("embedding_dimensions") else str(int(values["embedding_dimensions"]))
         ),
         "memory_extract_debounce_seconds": str(values["extract_debounce_seconds"]),
         "memory_extract_max_wait_seconds": str(values["extract_max_wait_seconds"]),
@@ -362,38 +314,26 @@ def _raw_from_values(values: dict[str, Any]) -> dict[str, str]:
         "memory_lexical_top_k": str(values["lexical_top_k"]),
         "memory_min_similarity": str(values["min_similarity"]),
         "memory_retrieval_timeout_ms": str(values["retrieval_timeout_ms"]),
-        "memory_allowed_sensitive_categories": json.dumps(
-            values["allowed_sensitive_categories"]
-        ),
+        "memory_allowed_sensitive_categories": json.dumps(values["allowed_sensitive_categories"]),
         "memory_stale_archive_days": str(values["stale_archive_days"]),
         "memory_soft_delete_purge_days": str(values["soft_delete_purge_days"]),
         "memory_suppression_days": str(values["suppression_days"]),
         "memory_qdrant_collection_version": str(values["qdrant_collection_version"]),
-        "project_memory_feature_enabled": (
-            "true" if values["project_feature_enabled"] else "false"
-        ),
+        "project_memory_feature_enabled": ("true" if values["project_feature_enabled"] else "false"),
         "project_memory_max_per_project": str(values["project_max_per_project"]),
         "project_memory_inject_max_items": str(values["project_inject_max_items"]),
         "project_memory_inject_max_chars": str(values["project_inject_max_chars"]),
         "project_memory_manual_items": str(values["project_manual_items"]),
-        "project_memory_extract_debounce_seconds": str(
-            values["project_extract_debounce_seconds"]
-        ),
-        "project_memory_extract_max_wait_seconds": str(
-            values["project_extract_max_wait_seconds"]
-        ),
-        "project_memory_extract_min_new_messages": str(
-            values["project_extract_min_new_messages"]
-        ),
+        "project_memory_extract_debounce_seconds": str(values["project_extract_debounce_seconds"]),
+        "project_memory_extract_max_wait_seconds": str(values["project_extract_max_wait_seconds"]),
+        "project_memory_extract_min_new_messages": str(values["project_extract_min_new_messages"]),
         "project_memory_semantic_top_k": str(values["project_semantic_top_k"]),
         "project_memory_lexical_top_k": str(values["project_lexical_top_k"]),
         "project_memory_min_similarity": str(values["project_min_similarity"]),
     }
 
 
-async def update_memory_settings(
-    db: AsyncSession, updates: dict[str, Any]
-) -> dict[str, Any]:
+async def update_memory_settings(db: AsyncSession, updates: dict[str, Any]) -> dict[str, Any]:
     current = await get_memory_settings(db)
     merged = dict(current)
     mapping = {

@@ -134,9 +134,7 @@ async def _test_handoff_state_machine_and_acl_recheck() -> None:
             assert proposal.event.turn_ordinal == 1
             assert proposal.event.consent_required
             assert proposal.event.context_digest == proposal.context.digest
-            assert proposal.event.context_payload["messages"] == list(
-                proposal.context.messages
-            )
+            assert proposal.event.context_payload["messages"] == list(proposal.context.messages)
             assert [message["role"] for message in proposal.context.messages] == [
                 "user",
                 "user",
@@ -207,13 +205,7 @@ async def _test_handoff_state_machine_and_acl_recheck() -> None:
                 )
 
             events = (
-                (
-                    await db.execute(
-                        select(AgentAuditEvent.event_type).order_by(
-                            AgentAuditEvent.created_at
-                        )
-                    )
-                )
+                (await db.execute(select(AgentAuditEvent.event_type).order_by(AgentAuditEvent.created_at)))
                 .scalars()
                 .all()
             )

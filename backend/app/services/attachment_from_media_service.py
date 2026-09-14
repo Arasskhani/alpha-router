@@ -221,10 +221,7 @@ async def attachments_from_existing_media(
         if total_bytes + size > total_limit:
             raise HTTPException(
                 status_code=413,
-                detail=(
-                    "Attachments exceed the total per-message limit "
-                    f"({max(1, total_limit // (1024 * 1024))} MB)."
-                ),
+                detail=(f"Attachments exceed the total per-message limit ({max(1, total_limit // (1024 * 1024))} MB)."),
             )
         total_bytes += size
 

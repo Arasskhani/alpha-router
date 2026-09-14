@@ -73,9 +73,7 @@ def _normalize_name(name: str) -> str:
     if not normalized:
         raise ProjectValidationError("Project name is required")
     if len(normalized) > PROJECT_NAME_MAX:
-        raise ProjectValidationError(
-            f"Project name must be at most {PROJECT_NAME_MAX} characters"
-        )
+        raise ProjectValidationError(f"Project name must be at most {PROJECT_NAME_MAX} characters")
     return normalized
 
 
@@ -84,15 +82,11 @@ def _normalize_description(description: str | None) -> str | None:
         return None
     text = description.strip()
     if len(text) > PROJECT_DESCRIPTION_MAX:
-        raise ProjectValidationError(
-            f"Project description must be at most {PROJECT_DESCRIPTION_MAX} characters"
-        )
+        raise ProjectValidationError(f"Project description must be at most {PROJECT_DESCRIPTION_MAX} characters")
     return text or None
 
 
-def _serialize_project(
-    project: Project, *, role: str | None = None, is_member: bool = False
-) -> dict[str, Any]:
+def _serialize_project(project: Project, *, role: str | None = None, is_member: bool = False) -> dict[str, Any]:
     return {
         "id": project.id,
         "name": project.name,
@@ -180,9 +174,7 @@ async def create_project(
     return _serialize_project(project, role=PROJECT_ROLE_PRIMARY_OWNER, is_member=True)
 
 
-async def get_project(
-    db: AsyncSession, *, project_id: str, user: User
-) -> dict[str, Any] | None:
+async def get_project(db: AsyncSession, *, project_id: str, user: User) -> dict[str, Any] | None:
     access = await resolve_project_access(db, project_id=project_id, user=user)
     if access is None:
         return None
@@ -241,9 +233,7 @@ async def list_public_projects(
     limit = max(1, min(limit, PROJECT_LIST_MAX_LIMIT))
     offset = max(0, offset)
 
-    member_ids_subq = (
-        select(ProjectMember.project_id).where(ProjectMember.user_id == user.id)
-    ).subquery()
+    member_ids_subq = (select(ProjectMember.project_id).where(ProjectMember.user_id == user.id)).subquery()
 
     base = select(Project).where(
         Project.visibility == PROJECT_VISIBILITY_PUBLIC,
@@ -254,12 +244,8 @@ async def list_public_projects(
         like = f"%{q.strip()}%"
         base = base.where(or_(Project.name.ilike(like), Project.description.ilike(like)))
 
-    total = int(
-        (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one() or 0
-    )
-    rows = (
-        await db.execute(base.order_by(Project.updated_at.desc()).limit(limit).offset(offset))
-    ).scalars().all()
+    total = int((await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one() or 0)
+    rows = (await db.execute(base.order_by(Project.updated_at.desc()).limit(limit).offset(offset))).scalars().all()
     return [_serialize_project(p, role=PROJECT_ROLE_VIEWER, is_member=False) for p in rows], total
 
 
@@ -291,17 +277,13 @@ async def list_recent_projects(
             continue
         if project.status != PROJECT_STATUS_ACTIVE:
             continue
-        out.append(
-            _serialize_project(project, role=access.role, is_member=access.is_member)
-        )
+        out.append(_serialize_project(project, role=access.role, is_member=access.is_member))
         if len(out) >= limit:
             break
     return out, len(out)
 
 
-async def get_project_overview(
-    db: AsyncSession, *, project_id: str, user: User
-) -> dict[str, Any] | None:
+async def get_project_overview(db: AsyncSession, *, project_id: str, user: User) -> dict[str, Any] | None:
     """Workspace overview: counts for all members; spend only with Activity ACL."""
     access = await resolve_project_access(db, project_id=project_id, user=user)
     if access is None:
@@ -313,9 +295,7 @@ async def get_project_overview(
     member_count = int(
         (
             await db.execute(
-                select(func.count())
-                .select_from(ProjectMember)
-                .where(ProjectMember.project_id == project_id)
+                select(func.count()).select_from(ProjectMember).where(ProjectMember.project_id == project_id)
             )
         ).scalar_one()
         or 0
@@ -350,18 +330,14 @@ async def get_project_overview(
     media_count = int(
         (
             await db.execute(
-                select(func.count())
-                .select_from(ProjectMediaAsset)
-                .where(ProjectMediaAsset.project_id == project_id)
+                select(func.count()).select_from(ProjectMediaAsset).where(ProjectMediaAsset.project_id == project_id)
             )
         ).scalar_one()
         or 0
     )
 
     payload: dict[str, Any] = {
-        "project": _serialize_project(
-            project, role=access.role, is_member=access.is_member
-        ),
+        "project": _serialize_project(project, role=access.role, is_member=access.is_member),
         "counts": {
             "members": member_count,
             "chats": chat_count,
@@ -397,9 +373,7 @@ async def update_project(
     visibility: str | None = None,
     confirm_public_name: str | None = None,
 ) -> dict[str, Any]:
-    access = await require_capability(
-        db, project_id=project_id, user=user, capability="project.edit"
-    )
+    access = await require_capability(db, project_id=project_id, user=user, capability="project.edit")
     project = await db.get(Project, project_id)
     if project is None:
         raise ProjectValidationError("Project not found")
@@ -410,9 +384,7 @@ async def update_project(
     ):
         # Going public exposes chats and knowledge to every active user. The
         # client must echo the project name back so a mis-click cannot do it.
-        raise ProjectValidationError(
-            "To make this project public, repeat its exact name in confirm_public_name"
-        )
+        raise ProjectValidationError("To make this project public, repeat its exact name in confirm_public_name")
 
     changes: dict[str, Any] = {}
     if name is not None:
@@ -451,13 +423,9 @@ async def update_project(
     return _serialize_project(project, role=access.role, is_member=access.is_member)
 
 
-async def delete_project(
-    db: AsyncSession, *, project_id: str, user: User
-) -> bool:
+async def delete_project(db: AsyncSession, *, project_id: str, user: User) -> bool:
     """Soft-delete: marks the project deletion_pending."""
-    await require_capability(
-        db, project_id=project_id, user=user, capability="project.delete"
-    )
+    await require_capability(db, project_id=project_id, user=user, capability="project.delete")
     project = await db.get(Project, project_id)
     if project is None:
         return False
@@ -479,13 +447,9 @@ async def delete_project(
     return True
 
 
-async def archive_project(
-    db: AsyncSession, *, project_id: str, user: User
-) -> dict[str, Any] | None:
+async def archive_project(db: AsyncSession, *, project_id: str, user: User) -> dict[str, Any] | None:
     """Hide a project from Explore while keeping membership and chats."""
-    access = await require_capability(
-        db, project_id=project_id, user=user, capability="project.delete"
-    )
+    access = await require_capability(db, project_id=project_id, user=user, capability="project.delete")
     project = await db.get(Project, project_id)
     if project is None:
         return None
@@ -505,13 +469,9 @@ async def archive_project(
     return _serialize_project(project, role=access.role, is_member=access.is_member)
 
 
-async def restore_project(
-    db: AsyncSession, *, project_id: str, user: User
-) -> dict[str, Any] | None:
+async def restore_project(db: AsyncSession, *, project_id: str, user: User) -> dict[str, Any] | None:
     """Restore an archived project to active."""
-    access = await require_capability(
-        db, project_id=project_id, user=user, capability="project.delete"
-    )
+    access = await require_capability(db, project_id=project_id, user=user, capability="project.delete")
     project = await db.get(Project, project_id)
     if project is None:
         return None
@@ -540,12 +500,8 @@ async def _purge_project_rows(
     from app.services.project_media_service import cleanup_project_media_storage
     from app.services.project_memory_service import purge_project_memory_index
 
-    await cleanup_project_media_storage(
-        db, project.id, object_store=object_store
-    )
-    await db.execute(
-        delete(ProjectMediaAsset).where(ProjectMediaAsset.project_id == project.id)
-    )
+    await cleanup_project_media_storage(db, project.id, object_store=object_store)
+    await db.execute(delete(ProjectMediaAsset).where(ProjectMediaAsset.project_id == project.id))
     # Qdrant is a derived index outside the Postgres cascade, so drop the
     # project's vectors explicitly before the rows disappear.
     await purge_project_memory_index(project.id)
@@ -567,9 +523,7 @@ async def hard_delete_project(
     known. Rows are then deleted explicitly (SQLite tests may not enforce
     FK CASCADE) before the project row itself is removed.
     """
-    await require_capability(
-        db, project_id=project_id, user=user, capability="project.delete"
-    )
+    await require_capability(db, project_id=project_id, user=user, capability="project.delete")
     project = await db.get(Project, project_id)
     if project is None:
         return False
@@ -591,13 +545,17 @@ async def purge_expired_deleted_projects(
     days = max(1, int(retention_days))
     cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=days)
     rows = (
-        await db.execute(
-            select(Project).where(
-                Project.status == PROJECT_STATUS_DELETION_PENDING,
-                Project.updated_at < cutoff,
+        (
+            await db.execute(
+                select(Project).where(
+                    Project.status == PROJECT_STATUS_DELETION_PENDING,
+                    Project.updated_at < cutoff,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     count = 0
     for project in rows:
         await _purge_project_rows(db, project, object_store=object_store)
@@ -605,17 +563,13 @@ async def purge_expired_deleted_projects(
     return count
 
 
-async def leave_project(
-    db: AsyncSession, *, project_id: str, user: User
-) -> bool:
+async def leave_project(db: AsyncSession, *, project_id: str, user: User) -> bool:
     """A member leaves the project. The Primary Owner cannot leave."""
     access = await resolve_project_access(db, project_id=project_id, user=user)
     if access is None or not access.is_member:
         return False
     try:
-        await ensure_not_last_owner(
-            db, project_id=project_id, user_id=user.id, new_role=None
-        )
+        await ensure_not_last_owner(db, project_id=project_id, user_id=user.id, new_role=None)
     except ProjectAccessError:
         if is_primary_owner_role(access.role):
             raise ProjectAccessError("The Primary Owner cannot leave the project")
@@ -666,18 +620,12 @@ async def _require_member_role_mutation(
             detail="The Primary Owner role cannot be assigned",
         )
     ensure_primary_owner_protected(target, new_role)
-    needs_owner_manage = new_role == PROJECT_ROLE_OWNER or (
-        target is not None and is_project_owner_role(target.role)
-    )
+    needs_owner_manage = new_role == PROJECT_ROLE_OWNER or (target is not None and is_project_owner_role(target.role))
     if needs_owner_manage:
-        await require_capability(
-            db, project_id=project_id, user=user, capability="member.manage_owners"
-        )
+        await require_capability(db, project_id=project_id, user=user, capability="member.manage_owners")
 
 
-async def list_members(
-    db: AsyncSession, *, project_id: str, user: User
-) -> list[dict[str, Any]] | None:
+async def list_members(db: AsyncSession, *, project_id: str, user: User) -> list[dict[str, Any]] | None:
     """Member roster. Members only: a public viewer gets 403, not the list."""
     await require_capability(db, project_id=project_id, user=user, capability="members.read")
     rows = (
@@ -700,23 +648,17 @@ async def add_member(
     role: str = PROJECT_ROLE_VIEWER,
 ) -> dict[str, Any]:
     """Primary Owner or Owner directly adds an existing active user as a member."""
-    await require_capability(
-        db, project_id=project_id, user=user, capability="member.manage"
-    )
+    await require_capability(db, project_id=project_id, user=user, capability="member.manage")
     normalized_role = validate_role(role)
     target = await db.get(User, target_user_id)
     if target is None or not target.is_active or target.deleted_at is not None:
         raise ProjectValidationError("User not found or inactive")
 
     existing = await db.get(ProjectMember, (project_id, target_user_id))
-    await _require_member_role_mutation(
-        db, project_id=project_id, user=user, target=existing, new_role=normalized_role
-    )
+    await _require_member_role_mutation(db, project_id=project_id, user=user, target=existing, new_role=normalized_role)
     if existing is not None:
         if existing.role != normalized_role:
-            await ensure_not_last_owner(
-                db, project_id=project_id, user_id=target_user_id, new_role=normalized_role
-            )
+            await ensure_not_last_owner(db, project_id=project_id, user_id=target_user_id, new_role=normalized_role)
             existing.role = normalized_role
             existing.updated_at = datetime.datetime.utcnow()
         await db.flush()
@@ -758,19 +700,13 @@ async def update_member_role(
     target_user_id: int,
     role: str,
 ) -> dict[str, Any] | None:
-    await require_capability(
-        db, project_id=project_id, user=user, capability="member.manage"
-    )
+    await require_capability(db, project_id=project_id, user=user, capability="member.manage")
     normalized_role = validate_role(role)
     member = await db.get(ProjectMember, (project_id, target_user_id))
     if member is None:
         return None
-    await _require_member_role_mutation(
-        db, project_id=project_id, user=user, target=member, new_role=normalized_role
-    )
-    await ensure_not_last_owner(
-        db, project_id=project_id, user_id=target_user_id, new_role=normalized_role
-    )
+    await _require_member_role_mutation(db, project_id=project_id, user=user, target=member, new_role=normalized_role)
+    await ensure_not_last_owner(db, project_id=project_id, user_id=target_user_id, new_role=normalized_role)
     member.role = normalized_role
     member.updated_at = datetime.datetime.utcnow()
     project = await db.get(Project, project_id)
@@ -792,21 +728,13 @@ async def update_member_role(
     )
 
 
-async def remove_member(
-    db: AsyncSession, *, project_id: str, user: User, target_user_id: int
-) -> bool:
-    await require_capability(
-        db, project_id=project_id, user=user, capability="member.manage"
-    )
+async def remove_member(db: AsyncSession, *, project_id: str, user: User, target_user_id: int) -> bool:
+    await require_capability(db, project_id=project_id, user=user, capability="member.manage")
     member = await db.get(ProjectMember, (project_id, target_user_id))
     if member is None:
         return False
-    await _require_member_role_mutation(
-        db, project_id=project_id, user=user, target=member, new_role=None
-    )
-    await ensure_not_last_owner(
-        db, project_id=project_id, user_id=target_user_id, new_role=None
-    )
+    await _require_member_role_mutation(db, project_id=project_id, user=user, target=member, new_role=None)
+    await ensure_not_last_owner(db, project_id=project_id, user_id=target_user_id, new_role=None)
     await db.delete(member)
     project = await db.get(Project, project_id)
     if project is not None:
@@ -833,9 +761,7 @@ async def list_invitable_users(
     """Active users not already members — for the Owner invite picker."""
     await require_capability(db, project_id=project_id, user=user, capability="member.manage")
     limit = max(1, min(limit, 50))
-    member_ids_subq = (
-        select(ProjectMember.user_id).where(ProjectMember.project_id == project_id)
-    ).subquery()
+    member_ids_subq = (select(ProjectMember.user_id).where(ProjectMember.project_id == project_id)).subquery()
     stmt = select(User.id, User.username, User.display_name).where(
         User.is_active.is_(True),
         User.deleted_at.is_(None),
@@ -883,9 +809,7 @@ async def create_invitation(
     ttl_days: int = INVITATION_DEFAULT_TTL_DAYS,
     notify_user_id: int | None = None,
 ) -> dict[str, Any]:
-    await require_capability(
-        db, project_id=project_id, user=user, capability="member.manage"
-    )
+    await require_capability(db, project_id=project_id, user=user, capability="member.manage")
     normalized_role = validate_invitation_role(role)
     max_uses = max(1, min(max_uses, 100))
     ttl_days = max(1, min(ttl_days, INVITATION_MAX_TTL_DAYS))
@@ -970,27 +894,25 @@ async def _maybe_email_invitation(
         result["emailWarning"] = "Email was not sent. Copy the invitation link."
 
 
-async def list_invitations(
-    db: AsyncSession, *, project_id: str, user: User
-) -> list[dict[str, Any]] | None:
+async def list_invitations(db: AsyncSession, *, project_id: str, user: User) -> list[dict[str, Any]] | None:
     """Pending invitations (tokens included) are for those who can manage members."""
     await require_capability(db, project_id=project_id, user=user, capability="member.manage")
     rows = (
-        await db.execute(
-            select(ProjectInvitation)
-            .where(ProjectInvitation.project_id == project_id)
-            .order_by(ProjectInvitation.created_at.desc())
+        (
+            await db.execute(
+                select(ProjectInvitation)
+                .where(ProjectInvitation.project_id == project_id)
+                .order_by(ProjectInvitation.created_at.desc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [_serialize_invitation(i) for i in rows]
 
 
-async def revoke_invitation(
-    db: AsyncSession, *, project_id: str, invitation_id: str, user: User
-) -> bool:
-    await require_capability(
-        db, project_id=project_id, user=user, capability="member.manage"
-    )
+async def revoke_invitation(db: AsyncSession, *, project_id: str, invitation_id: str, user: User) -> bool:
+    await require_capability(db, project_id=project_id, user=user, capability="member.manage")
     invitation = await db.get(ProjectInvitation, invitation_id)
     if invitation is None or invitation.project_id != project_id:
         return False
@@ -1008,16 +930,14 @@ async def revoke_invitation(
     return True
 
 
-async def claim_invitation(
-    db: AsyncSession, *, token: str, user: User
-) -> dict[str, Any] | None:
+async def claim_invitation(db: AsyncSession, *, token: str, user: User) -> dict[str, Any] | None:
     """Claim an invitation link and join the project with the granted role."""
     token_hash = _hash_token(token)
     invitation = (
-        await db.execute(
-            select(ProjectInvitation).where(ProjectInvitation.token_hash == token_hash)
-        )
-    ).scalars().first()
+        (await db.execute(select(ProjectInvitation).where(ProjectInvitation.token_hash == token_hash)))
+        .scalars()
+        .first()
+    )
     if invitation is None:
         return None
     now = datetime.datetime.utcnow()

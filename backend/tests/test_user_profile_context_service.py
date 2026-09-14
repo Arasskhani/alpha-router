@@ -74,9 +74,7 @@ async def _inject_roundtrip() -> None:
             {"role": "assistant", "content": "Hello"},
         ]
         original = [dict(m) for m in messages]
-        out = await augment_messages_with_profile(
-            db, messages, user_id=user.id, private_mode=False
-        )
+        out = await augment_messages_with_profile(db, messages, user_id=user.id, private_mode=False)
         assert out[0]["role"] == "system"
         assert "Company: Alpha" in out[0]["content"]
         assert "Department: Platform" in out[0]["content"]
@@ -84,9 +82,7 @@ async def _inject_roundtrip() -> None:
         assert "Report to: Manager One" in out[0]["content"]
         assert out[1:] == original
 
-        skipped = await augment_messages_with_profile(
-            db, original, user_id=user.id, private_mode=True
-        )
+        skipped = await augment_messages_with_profile(db, original, user_id=user.id, private_mode=True)
         assert skipped == original
 
         empty_user = User(
@@ -101,9 +97,7 @@ async def _inject_roundtrip() -> None:
         db.add(empty_user)
         await db.commit()
         await db.refresh(empty_user)
-        unchanged = await augment_messages_with_profile(
-            db, original, user_id=empty_user.id, private_mode=False
-        )
+        unchanged = await augment_messages_with_profile(db, original, user_id=empty_user.id, private_mode=False)
         assert unchanged == original
     await engine.dispose()
 

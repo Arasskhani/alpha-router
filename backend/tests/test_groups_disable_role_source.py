@@ -39,9 +39,7 @@ def test_disable_skips_admin_from_assignments():
                 await db.flush()
                 await set_user_roles(db, adminish, [DASHBOARD_VIEW_SLUG])
 
-                disabled, skipped = await _disable_users_skipping_admins(
-                    db, [adminish, regular]
-                )
+                disabled, skipped = await _disable_users_skipping_admins(db, [adminish, regular])
                 await db.commit()
 
                 assert skipped == 1

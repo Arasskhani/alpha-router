@@ -319,7 +319,9 @@ async def resolve_transcription_target(
                 )
                 .order_by(AIModel.id.desc())
             )
-        ).scalars().first()
+        )
+        .scalars()
+        .first()
         if connection_id is not None
         else None
     )
@@ -340,10 +342,14 @@ async def _resolve_transcription_provider(
     """Return provider credentials and connection id for speech-to-text."""
     preferred = ("openai", "azure", "openrouter")
     rows = (
-        await db.execute(
-            select(Connection).where(Connection.is_active == True).order_by(Connection.id)  # noqa: E712
+        (
+            await db.execute(
+                select(Connection).where(Connection.is_active == True).order_by(Connection.id)  # noqa: E712
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     by_type: dict[str, Connection] = {}
     for conn in rows:
         p = (conn.provider_type or "").lower()

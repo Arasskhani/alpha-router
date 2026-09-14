@@ -298,10 +298,7 @@ async def resolve_agent_model(
         if model is None:
             denied.append(f"{reference}:unavailable")
             continue
-        if (
-            is_auto_router_model_id(model.external_id)
-            and not policies.model.allow_auto_router
-        ):
+        if is_auto_router_model_id(model.external_id) and not policies.model.allow_auto_router:
             denied.append(f"{reference}:auto_router_disabled")
             continue
         if not _text_model(model):
@@ -312,8 +309,7 @@ async def resolve_agent_model(
             continue
         return model
     raise AgentModelUnavailable(
-        "No Agent model candidate is enabled and accessible"
-        + (f" ({', '.join(denied)})" if denied else "")
+        "No Agent model candidate is enabled and accessible" + (f" ({', '.join(denied)})" if denied else "")
     )
 
 
@@ -344,9 +340,7 @@ async def _guard(
     fail_closed: bool,
 ) -> GuardrailDecision:
     try:
-        async with asyncio.timeout(
-            max(1, min(get_settings().agent_guardrail_timeout_seconds, 30))
-        ):
+        async with asyncio.timeout(max(1, min(get_settings().agent_guardrail_timeout_seconds, 30))):
             decision = await hooks.evaluate(
                 GuardrailRequest(
                     hook=hook,
@@ -362,9 +356,7 @@ async def _guard(
         raise
     except Exception as exc:
         if fail_closed:
-            raise AgentRuntimeUnavailable(
-                f"Mandatory Guardrail hook failed: {hook}"
-            ) from exc
+            raise AgentRuntimeUnavailable(f"Mandatory Guardrail hook failed: {hook}") from exc
         return GuardrailDecision(
             allowed=True,
             reason_code="hook_error_fail_open",
@@ -372,9 +364,7 @@ async def _guard(
         )
     if not isinstance(decision, GuardrailDecision):
         if fail_closed:
-            raise AgentRuntimeUnavailable(
-                f"Mandatory Guardrail hook returned an invalid decision: {hook}"
-            )
+            raise AgentRuntimeUnavailable(f"Mandatory Guardrail hook returned an invalid decision: {hook}")
         return GuardrailDecision(
             allowed=True,
             reason_code="invalid_hook_result_fail_open",
@@ -395,18 +385,10 @@ def _egress_manifest(
     return AgentEgressManifest(
         provider_type=(model.provider_type or "").strip().lower(),
         model_id=model.external_id,
-        knowledge_base_ids=tuple(
-            sorted({citation.knowledge_base_id for citation in citations})
-        ),
-        document_version_ids=tuple(
-            sorted({citation.document_version_id for citation in citations})
-        ),
-        classifications=tuple(
-            sorted({citation.classification for citation in citations})
-        ),
-        prompt_character_count=sum(
-            len(str(message.get("content") or "")) for message in prompt.messages
-        ),
+        knowledge_base_ids=tuple(sorted({citation.knowledge_base_id for citation in citations})),
+        document_version_ids=tuple(sorted({citation.document_version_id for citation in citations})),
+        classifications=tuple(sorted({citation.classification for citation in citations})),
+        prompt_character_count=sum(len(str(message.get("content") or "")) for message in prompt.messages),
     )
 
 
@@ -497,8 +479,7 @@ async def plan_agent_turn(
     retrieval_outcome = "disabled"
     retrieval_started: float | None = None
     retrieval_allowed = bool(
-        policies.retrieval.enabled
-        and (not private_mode or policies.retrieval.allow_in_private_mode)
+        policies.retrieval.enabled and (not private_mode or policies.retrieval.allow_in_private_mode)
     )
     if policies.retrieval.enabled and not retrieval_allowed:
         retrieval_outcome = "private_mode_disabled"
@@ -519,9 +500,7 @@ async def plan_agent_turn(
         )
         if knowledge_retriever is None:
             if policies.retrieval.fail_closed:
-                raise AgentRuntimeUnavailable(
-                    "Knowledge retrieval is required but no retriever is configured"
-                )
+                raise AgentRuntimeUnavailable("Knowledge retrieval is required but no retriever is configured")
         else:
             try:
                 retrieval = await knowledge_retriever.retrieve(
@@ -534,13 +513,9 @@ async def plan_agent_turn(
             except KnowledgeRetrievalUnavailable as exc:
                 retrieval_outcome = "unavailable_fail_open"
                 if policies.retrieval.fail_closed:
-                    raise AgentRuntimeUnavailable(
-                        "Knowledge retrieval is unavailable"
-                    ) from exc
+                    raise AgentRuntimeUnavailable("Knowledge retrieval is unavailable") from exc
     retrieval_latency_ms = (
-        max(0, int((time.perf_counter() - retrieval_started) * 1000))
-        if retrieval_started is not None
-        else 0
+        max(0, int((time.perf_counter() - retrieval_started) * 1000)) if retrieval_started is not None else 0
     )
 
     runtime_context_blocks: list[str] = []
@@ -553,14 +528,8 @@ async def plan_agent_turn(
                     allowed_fields=policies.profile.allowed_fields,
                 )
                 if profile_facts:
-                    runtime_context_blocks.append(
-                        format_profile_system_block(profile_facts)
-                    )
-            if (
-                personal_memory_allowed
-                and policies.memory.enabled
-                and policies.memory.max_items > 0
-            ):
+                    runtime_context_blocks.append(format_profile_system_block(profile_facts))
+            if personal_memory_allowed and policies.memory.enabled and policies.memory.max_items > 0:
                 memories = await retrieve_memories(
                     db,
                     resource_subject.user_id,
@@ -568,13 +537,9 @@ async def plan_agent_turn(
                     max_items=policies.memory.max_items,
                 )
                 if memories:
-                    runtime_context_blocks.append(
-                        format_memory_system_block(memories)
-                    )
+                    runtime_context_blocks.append(format_memory_system_block(memories))
         except Exception as exc:
-            raise AgentRuntimeUnavailable(
-                "Approved Agent personalization context is unavailable"
-            ) from exc
+            raise AgentRuntimeUnavailable("Approved Agent personalization context is unavailable") from exc
 
     prompt = build_agent_prompt_plan(
         agent=target.agent,
@@ -635,9 +600,7 @@ async def plan_agent_turn(
                 "classifications": list(manifest.classifications),
                 "prompt_character_count": manifest.prompt_character_count,
             },
-            content_blocks=tuple(
-                str(message.get("content") or "") for message in prompt.messages
-            ),
+            content_blocks=tuple(str(message.get("content") or "") for message in prompt.messages),
             fail_closed=policies.guardrail.fail_closed,
         )
     )
@@ -683,12 +646,7 @@ async def finalize_agent_completion(
 ) -> AgentCompletionReview:
     """Fail closed before any provider-generated text is displayed to a user."""
 
-    if (
-        plan.status != "ready"
-        or plan.target is None
-        or plan.policies is None
-        or plan.prompt is None
-    ):
+    if plan.status != "ready" or plan.target is None or plan.policies is None or plan.prompt is None:
         raise AgentRuntimeError("Only a ready Agent turn may finalize a completion")
     if not isinstance(output_text, str) or not output_text.strip():
         return AgentCompletionReview(
@@ -723,16 +681,8 @@ async def finalize_agent_completion(
             query_sha256=plan.query_sha256,
             metadata={
                 "output_character_count": len(output_text),
-                "provider_type": (
-                    plan.egress_manifest.provider_type
-                    if plan.egress_manifest is not None
-                    else ""
-                ),
-                "model_id": (
-                    plan.egress_manifest.model_id
-                    if plan.egress_manifest is not None
-                    else ""
-                ),
+                "provider_type": (plan.egress_manifest.provider_type if plan.egress_manifest is not None else ""),
+                "model_id": (plan.egress_manifest.model_id if plan.egress_manifest is not None else ""),
             },
             content_blocks=(output_text,),
             fail_closed=plan.policies.guardrail.fail_closed,
@@ -751,10 +701,7 @@ async def finalize_agent_completion(
     verification = verify_answer_citations(
         output_text,
         citations,
-        citations_required=bool(
-            plan.policies.retrieval.enabled
-            and plan.policies.retrieval.citations_required
-        ),
+        citations_required=bool(plan.policies.retrieval.enabled and plan.policies.retrieval.citations_required),
     )
     if not verification.valid:
         query = _last_user_query(list(plan.prompt.messages))

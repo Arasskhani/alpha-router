@@ -78,9 +78,7 @@ async def _test_explicit_no_plan_blocks_group_inheritance() -> None:
         )
         db.add(user)
         await db.flush()
-        await db.execute(
-            user_group_members.insert().values(user_id=user.id, group_id=group.id)
-        )
+        await db.execute(user_group_members.insert().values(user_id=user.id, group_id=group.id))
         await upsert_group_plan(db, group.id, plan.id)
         await upsert_user_no_plan(db, user.id)
         await db.commit()
@@ -106,9 +104,7 @@ async def _test_inherit_group_plan_without_user_override() -> None:
         )
         db.add(user)
         await db.flush()
-        await db.execute(
-            user_group_members.insert().values(user_id=user.id, group_id=group.id)
-        )
+        await db.execute(user_group_members.insert().values(user_id=user.id, group_id=group.id))
         await upsert_group_plan(db, group.id, plan.id)
         await db.commit()
         user = (await db.execute(select(User))).scalar_one()

@@ -27,4 +27,3 @@ __all__ = [
     "register_video_adapter",
     "registered_video_adapters",
 ]
-

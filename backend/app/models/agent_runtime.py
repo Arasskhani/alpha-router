@@ -252,8 +252,7 @@ class AgentToolRun(Base):
     __tablename__ = "agent_tool_runs"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending', 'running', 'succeeded', 'failed', "
-            "'blocked', 'cancelled', 'cached')",
+            "status IN ('pending', 'running', 'succeeded', 'failed', 'blocked', 'cancelled', 'cached')",
             name="chk_agent_tool_runs_status",
         ),
         Index("ix_agent_tool_runs_run_time", "agent_run_id", "created_at"),

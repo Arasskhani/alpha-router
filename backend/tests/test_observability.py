@@ -120,9 +120,7 @@ def test_memory_metrics_use_bounded_labels_only():
 
 def test_memory_metrics_separate_user_and_project_scope():
     reset()
-    observe_memory_extract_job(
-        outcome="succeeded", duration_seconds=0.2, scope="project"
-    )
+    observe_memory_extract_job(outcome="succeeded", duration_seconds=0.2, scope="project")
     observe_memory_item("add", scope="project")
     observe_memory_item("add")
     observe_memory_retrieval(duration_seconds=0.01, injected=3, scope="project")
@@ -139,10 +137,5 @@ def test_memory_metrics_separate_user_and_project_scope():
     # rather than a value another test in this process may have bumped.
     assert 'alpharouter_memory_items_total{op="add",scope="project"}' in text
     assert 'alpharouter_memory_items_total{op="add",scope="user"}' in text
-    assert (
-        "alpharouter_memory_retrieval_fallback_total"
-        '{reason="unavailable",scope="project"}' in text
-    )
+    assert 'alpharouter_memory_retrieval_fallback_total{reason="unavailable",scope="project"}' in text
     reset()
-
-

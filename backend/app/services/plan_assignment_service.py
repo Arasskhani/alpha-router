@@ -16,9 +16,7 @@ USER_PLAN_ASSIGNED = "assigned"
 
 
 async def get_user_direct_assignment(db: AsyncSession, user_id: int) -> PlanAssignment | None:
-    return (
-        await db.execute(select(PlanAssignment).where(PlanAssignment.user_id == user_id))
-    ).scalars().first()
+    return (await db.execute(select(PlanAssignment).where(PlanAssignment.user_id == user_id))).scalars().first()
 
 
 def user_plan_mode(assignment: PlanAssignment | None) -> str:
@@ -31,9 +29,7 @@ def user_plan_mode(assignment: PlanAssignment | None) -> str:
 
 async def _member_user_ids(db: AsyncSession, group_id: int) -> list[int]:
     rows = (
-        await db.execute(
-            select(user_group_members.c.user_id).where(user_group_members.c.group_id == group_id)
-        )
+        await db.execute(select(user_group_members.c.user_id).where(user_group_members.c.group_id == group_id))
     ).all()
     return [int(r[0]) for r in rows if r[0] is not None]
 
@@ -66,9 +62,7 @@ async def clear_user_plan_override(db: AsyncSession, user_id: int) -> None:
 
 
 async def upsert_group_plan(db: AsyncSession, group_id: int, plan_id: int) -> None:
-    row = (
-        await db.execute(select(PlanAssignment).where(PlanAssignment.group_id == group_id))
-    ).scalars().first()
+    row = (await db.execute(select(PlanAssignment).where(PlanAssignment.group_id == group_id))).scalars().first()
     if row:
         row.plan_id = plan_id
         row.user_id = None
@@ -77,9 +71,7 @@ async def upsert_group_plan(db: AsyncSession, group_id: int, plan_id: int) -> No
         db.add(PlanAssignment(plan_id=plan_id, group_id=group_id))
 
 
-async def assign_plan_to_group_members(
-    db: AsyncSession, plan_id: int, group_id: int
-) -> dict[str, int]:
+async def assign_plan_to_group_members(db: AsyncSession, plan_id: int, group_id: int) -> dict[str, int]:
     """Assign plan to the group; members inherit unless they have a user-level override."""
     plan = await db.get(BudgetPlan, plan_id)
     if not plan:
@@ -117,9 +109,7 @@ async def clear_group_plan(db: AsyncSession, group_id: int) -> dict[str, int]:
     return {"users_assigned": len(member_ids), "group_id": group_id}
 
 
-async def assignment_labels(
-    db: AsyncSession, assignments: list[PlanAssignment]
-) -> list[dict]:
+async def assignment_labels(db: AsyncSession, assignments: list[PlanAssignment]) -> list[dict]:
     """Human-readable assignment rows for admin UI."""
     if not assignments:
         return []

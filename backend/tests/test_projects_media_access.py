@@ -45,8 +45,17 @@ async def _setup(db):
     owner = await _user(db, "owner")
     contrib = await _user(db, "contrib")
     viewer = await _user(db, "viewer")
-    db.add(Project(id=PROJ, name="P", status="active", visibility="private",
-                   created_by_user_id=owner.id, revision=1, acl_version=1))
+    db.add(
+        Project(
+            id=PROJ,
+            name="P",
+            status="active",
+            visibility="private",
+            created_by_user_id=owner.id,
+            revision=1,
+            acl_version=1,
+        )
+    )
     db.add(ProjectMember(project_id=PROJ, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))
     db.add(ProjectMember(project_id=PROJ, user_id=contrib.id, role=PROJECT_ROLE_CONTRIBUTOR))
     db.add(ProjectMember(project_id=PROJ, user_id=viewer.id, role=PROJECT_ROLE_VIEWER))
@@ -157,8 +166,17 @@ def test_public_viewer_can_read_but_not_upload():
         try:
             async with factory() as db:
                 owner = await _user(db, "owner")
-                db.add(Project(id=PROJ, name="P", status="active", visibility="public",
-                               created_by_user_id=owner.id, revision=1, acl_version=1))
+                db.add(
+                    Project(
+                        id=PROJ,
+                        name="P",
+                        status="active",
+                        visibility="public",
+                        created_by_user_id=owner.id,
+                        revision=1,
+                        acl_version=1,
+                    )
+                )
                 db.add(ProjectMember(project_id=PROJ, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))
                 await db.flush()
                 outsider = await _user(db, "outsider")

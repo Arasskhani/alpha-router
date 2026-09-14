@@ -39,17 +39,12 @@ def test_resolve_request_body_uses_max_plus_margin():
 
 
 def test_resolve_request_body_respects_hard_max():
-    assert (
-        resolve_request_body_limit_mb(upload_mb=1024, chat_total_mb=2048)
-        == REQUEST_BODY_HARD_MAX_MB
-    )
+    assert resolve_request_body_limit_mb(upload_mb=1024, chat_total_mb=2048) == REQUEST_BODY_HARD_MAX_MB
 
 
 def test_resolve_from_limits_dict():
     assert (
-        resolve_request_body_limit_mb_from_limits(
-            {"max_upload_file_mb": 25, "max_chat_attachments_total_mb": 36}
-        )
+        resolve_request_body_limit_mb_from_limits({"max_upload_file_mb": 25, "max_chat_attachments_total_mb": 36})
         == 36 + REQUEST_BODY_MARGIN_MB
     )
 

@@ -199,11 +199,7 @@ def _normalize_policy(
         operational_global,
         max(
             1,
-            int(
-                per_subject_max
-                if per_subject_max is not None
-                else base["per_subject_max"]
-            ),
+            int(per_subject_max if per_subject_max is not None else base["per_subject_max"]),
         ),
     )
     return {
@@ -214,11 +210,7 @@ def _normalize_policy(
             1,
             min(
                 300,
-                int(
-                    retry_after
-                    if retry_after is not None
-                    else base["retry_after"]
-                ),
+                int(retry_after if retry_after is not None else base["retry_after"]),
             ),
         ),
         "hard_global_max": hard_global,
@@ -324,11 +316,7 @@ async def acquire_code_interpreter_turn(
         )
         s_max = max(
             1,
-            int(
-                subject_limit
-                if subject_limit is not None
-                else cfg["per_subject_max"]
-            ),
+            int(subject_limit if subject_limit is not None else cfg["per_subject_max"]),
         )
         retry_after = cfg["retry_after"]
         result = await client.eval(

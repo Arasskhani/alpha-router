@@ -42,20 +42,22 @@ def _idempotency_key(job: ProjectMemoryJob, attempt: int, suffix: str) -> str:
     return f"project-memory:{job.id}:dispatch:{attempt}:{suffix}"
 
 
-async def _latest_extracted_sequence(
-    db: AsyncSession, project_id: str, session_id: str
-) -> int:
+async def _latest_extracted_sequence(db: AsyncSession, project_id: str, session_id: str) -> int:
     row = (
-        await db.execute(
-            select(ProjectMemoryJob.extracted_sequence)
-            .where(
-                ProjectMemoryJob.project_id == project_id,
-                ProjectMemoryJob.session_id == session_id,
+        (
+            await db.execute(
+                select(ProjectMemoryJob.extracted_sequence)
+                .where(
+                    ProjectMemoryJob.project_id == project_id,
+                    ProjectMemoryJob.session_id == session_id,
+                )
+                .order_by(ProjectMemoryJob.updated_at.desc())
+                .limit(1)
             )
-            .order_by(ProjectMemoryJob.updated_at.desc())
-            .limit(1)
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     return int(row or 0)
 
 
@@ -95,21 +97,23 @@ async def schedule_extraction(
     debounce = int(settings.get("project_extract_debounce_seconds") or 45)
     max_wait = int(settings.get("project_extract_max_wait_seconds") or 900)
     existing = (
-        await db.execute(
-            select(ProjectMemoryJob)
-            .where(
-                ProjectMemoryJob.project_id == project_id,
-                ProjectMemoryJob.session_id == session_id,
-                ProjectMemoryJob.status.in_(OPEN_STATUSES),
+        (
+            await db.execute(
+                select(ProjectMemoryJob)
+                .where(
+                    ProjectMemoryJob.project_id == project_id,
+                    ProjectMemoryJob.session_id == session_id,
+                    ProjectMemoryJob.status.in_(OPEN_STATUSES),
+                )
+                .order_by(ProjectMemoryJob.created_at.asc())
+                .limit(1)
             )
-            .order_by(ProjectMemoryJob.created_at.asc())
-            .limit(1)
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if existing is not None:
-        existing.watermark_sequence = max(
-            int(existing.watermark_sequence or 0), int(watermark_sequence)
-        )
+        existing.watermark_sequence = max(int(existing.watermark_sequence or 0), int(watermark_sequence))
         created = existing.created_at or now
         latest = now + dt.timedelta(seconds=debounce)
         deadline = created + dt.timedelta(seconds=max_wait)
@@ -140,19 +144,21 @@ async def schedule_extraction(
             await db.flush()
     except IntegrityError:
         raced = (
-            await db.execute(
-                select(ProjectMemoryJob).where(
-                    ProjectMemoryJob.project_id == project_id,
-                    ProjectMemoryJob.session_id == session_id,
-                    ProjectMemoryJob.status.in_(OPEN_STATUSES),
+            (
+                await db.execute(
+                    select(ProjectMemoryJob).where(
+                        ProjectMemoryJob.project_id == project_id,
+                        ProjectMemoryJob.session_id == session_id,
+                        ProjectMemoryJob.status.in_(OPEN_STATUSES),
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if raced is None:
             return None
-        raced.watermark_sequence = max(
-            int(raced.watermark_sequence or 0), int(watermark_sequence)
-        )
+        raced.watermark_sequence = max(int(raced.watermark_sequence or 0), int(watermark_sequence))
         raced.updated_at = now
         await db.flush()
         return raced
@@ -187,11 +193,7 @@ async def claim_job(
         return None
     if job.status in {"succeeded", "dead"}:
         return None
-    if (
-        job.status == "running"
-        and job.lease_expires_at is not None
-        and job.lease_expires_at > current
-    ):
+    if job.status == "running" and job.lease_expires_at is not None and job.lease_expires_at > current:
         return None
     if job.status not in CLAIMABLE_STATUSES:
         return None
@@ -233,9 +235,7 @@ async def heartbeat_job(
     if job.status != "running" or job.worker_id != worker_id:
         return False
     current = now or dt.datetime.utcnow()
-    job.lease_expires_at = current + dt.timedelta(
-        seconds=get_settings().memory_job_lease_seconds
-    )
+    job.lease_expires_at = current + dt.timedelta(seconds=get_settings().memory_job_lease_seconds)
     job.updated_at = current
     await db.flush()
     return True
@@ -341,9 +341,7 @@ async def recover_stale_jobs(
             aggregate_id=job.id,
             event_type=EVENT_TYPE,
             payload={"job_id": job.id, "attempt": int(job.attempt_count or 0)},
-            idempotency_key=_idempotency_key(
-                job, int(job.attempt_count or 0), "lease-expired"
-            ),
+            idempotency_key=_idempotency_key(job, int(job.attempt_count or 0), "lease-expired"),
             available_at=current,
         )
         recovered += 1
@@ -363,11 +361,7 @@ async def reset_watermarks_for_project(db: AsyncSession, project_id: str) -> Non
         )
     ).all()
     seq_by_session = {str(session_id): int(seq or 0) for session_id, seq in max_seq_rows}
-    jobs = (
-        await db.execute(
-            select(ProjectMemoryJob).where(ProjectMemoryJob.project_id == project_id)
-        )
-    ).scalars().all()
+    jobs = (await db.execute(select(ProjectMemoryJob).where(ProjectMemoryJob.project_id == project_id))).scalars().all()
     now = dt.datetime.utcnow()
     seen: set[str] = set()
     for job in jobs:

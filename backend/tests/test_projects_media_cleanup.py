@@ -115,16 +115,14 @@ def test_hard_delete_project_removes_media():
                 path = uploaded["storagePath"]
                 assert path in store._store
 
-                ok = await hard_delete_project(
-                    db, project_id=PROJ, user=owner, object_store=store
-                )
+                ok = await hard_delete_project(db, project_id=PROJ, user=owner, object_store=store)
                 assert ok is True
                 assert await db.get(Project, PROJ) is None
                 leftover = (
-                    await db.execute(
-                        select(ProjectMediaAsset).where(ProjectMediaAsset.project_id == PROJ)
-                    )
-                ).scalars().all()
+                    (await db.execute(select(ProjectMediaAsset).where(ProjectMediaAsset.project_id == PROJ)))
+                    .scalars()
+                    .all()
+                )
                 assert leftover == []
                 assert path in store.deleted
                 assert path not in store._store
@@ -140,9 +138,7 @@ def test_soft_delete_project_hides_media():
         store = InMemoryObjectStore()
         try:
             async with factory() as db:
-                owner, _, viewer = await _setup(
-                    db, pid=PROJ_PUB, visibility=PROJECT_VISIBILITY_PUBLIC
-                )
+                owner, _, viewer = await _setup(db, pid=PROJ_PUB, visibility=PROJECT_VISIBILITY_PUBLIC)
                 outsider = await _user(db, "outsider_pub")
                 uploaded = await upload_project_media(
                     db,
@@ -159,9 +155,7 @@ def test_soft_delete_project_hides_media():
                     assert False, "public viewer must not list media"
                 except HTTPException as exc:
                     assert exc.status_code == 403
-                before, total = await list_project_media(
-                    db, project_id=PROJ_PUB, user=viewer
-                )
+                before, total = await list_project_media(db, project_id=PROJ_PUB, user=viewer)
                 assert total == 1
                 assert before[0]["id"] == uploaded["id"]
 
@@ -177,9 +171,7 @@ def test_soft_delete_project_hides_media():
                 except HTTPException as exc:
                     assert exc.status_code == 404
 
-                items, remaining = await list_project_media(
-                    db, project_id=PROJ_PUB, user=owner
-                )
+                items, remaining = await list_project_media(db, project_id=PROJ_PUB, user=owner)
                 assert remaining == 1
                 assert items[0]["id"] == uploaded["id"]
                 assert uploaded["storagePath"] in store._store
@@ -251,9 +243,7 @@ def test_removed_member_media_preserved():
                 media_id = uploaded["id"]
                 contrib_id = contrib.id
 
-                assert await remove_member(
-                    db, project_id=PROJ, user=owner, target_user_id=contrib_id
-                )
+                assert await remove_member(db, project_id=PROJ, user=owner, target_user_id=contrib_id)
 
                 row = await db.get(ProjectMediaAsset, media_id)
                 assert row is not None

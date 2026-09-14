@@ -94,12 +94,14 @@ async def _run_cancel_roundtrip() -> None:
             await session.commit()
 
             row = (
-                await session.execute(
-                    select(ChatMessage)
-                    .where(ChatMessage.session_id == "s1")
-                    .order_by(ChatMessage.sequence.desc())
+                (
+                    await session.execute(
+                        select(ChatMessage).where(ChatMessage.session_id == "s1").order_by(ChatMessage.sequence.desc())
+                    )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             assert row is not None
             assert not (row.meta or {}).get("cancelRequested")
     await engine.dispose()
@@ -199,16 +201,16 @@ async def _run_stale_pending_reconcile() -> None:
 
         # Age the pending row past the stale threshold: reads now reconcile it.
         row = (
-            await session.execute(
-                select(ChatMessage)
-                .where(ChatMessage.session_id == "img2")
-                .order_by(ChatMessage.sequence.desc())
+            (
+                await session.execute(
+                    select(ChatMessage).where(ChatMessage.session_id == "img2").order_by(ChatMessage.sequence.desc())
+                )
             )
-        ).scalars().first()
-        assert row is not None
-        row.created_at = dt.datetime.utcnow() - dt.timedelta(
-            seconds=_STALE_IMAGE_PENDING_SEC + 5
+            .scalars()
+            .first()
         )
+        assert row is not None
+        row.created_at = dt.datetime.utcnow() - dt.timedelta(seconds=_STALE_IMAGE_PENDING_SEC + 5)
         await session.commit()
 
         msgs, _ = await list_session_messages(session, user.id, "img2")

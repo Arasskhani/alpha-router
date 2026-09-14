@@ -81,9 +81,7 @@ async def resolve_monthly_budgets_batch(db: AsyncSession, users: list[User]) -> 
             budgets[user_id] = float(amount)
             assigned_direct_ids.add(user_id)
 
-    unresolved_ids = [
-        uid for uid in user_ids if uid not in explicit_none_ids and uid not in assigned_direct_ids
-    ]
+    unresolved_ids = [uid for uid in user_ids if uid not in explicit_none_ids and uid not in assigned_direct_ids]
     if unresolved_ids:
         member_rows = (
             await db.execute(
@@ -114,11 +112,7 @@ async def resolve_monthly_budgets_batch(db: AsyncSession, users: list[User]) -> 
                         budgets[uid] = group_budgets[gid]
                         break
 
-    dept_users = [
-        u
-        for u in users
-        if u.id in unresolved_ids and budgets[u.id] <= 0 and u.department
-    ]
+    dept_users = [u for u in users if u.id in unresolved_ids and budgets[u.id] <= 0 and u.department]
     if dept_users:
         departments = {u.department for u in dept_users if u.department}
         dept_rows = (
@@ -159,9 +153,7 @@ async def resolve_inherited_plans_batch(db: AsyncSession, users: list[User]) -> 
     ).all()
     explicit_none_ids = {int(uid) for uid, plan_id in direct_rows if uid is not None and plan_id is None}
     assigned_direct_ids = {int(uid) for uid, plan_id in direct_rows if uid is not None and plan_id is not None}
-    inherit_ids = [
-        uid for uid in user_ids if uid not in explicit_none_ids and uid not in assigned_direct_ids
-    ]
+    inherit_ids = [uid for uid in user_ids if uid not in explicit_none_ids and uid not in assigned_direct_ids]
     if not inherit_ids:
         return out
 
@@ -205,9 +197,7 @@ async def resolve_inherited_plans_batch(db: AsyncSession, users: list[User]) -> 
                     break
 
     dept_candidates = [
-        uid
-        for uid in inherit_ids
-        if out[uid]["inherited_plan_id"] is None and users_by_id[uid].department
+        uid for uid in inherit_ids if out[uid]["inherited_plan_id"] is None and users_by_id[uid].department
     ]
     if dept_candidates:
         departments = {users_by_id[uid].department for uid in dept_candidates}
@@ -259,25 +249,15 @@ async def get_month_usage(db: AsyncSession, user_id: int) -> float:
     now = datetime.datetime.utcnow()
     month_start = datetime.datetime(now.year, now.month, 1)
     user_period_start = (
-        await db.execute(
-            select(User.budget_period_start).where(User.id == user_id)
-        )
+        await db.execute(select(User.budget_period_start).where(User.id == user_id))
     ).scalar_one_or_none()
-    start = (
-        user_period_start
-        if user_period_start is not None and user_period_start > month_start
-        else month_start
-    )
-    ledger_q = select(
-        func.coalesce(func.sum(LedgerEntry.amount_usd), 0.0)
-    ).where(
+    start = user_period_start if user_period_start is not None and user_period_start > month_start else month_start
+    ledger_q = select(func.coalesce(func.sum(LedgerEntry.amount_usd), 0.0)).where(
         LedgerEntry.subject_type == "user",
         LedgerEntry.subject_id == user_id,
         LedgerEntry.effective_at >= start,
     )
-    legacy_q = select(
-        func.coalesce(func.sum(RequestLog.total_cost_usd), 0.0)
-    ).where(
+    legacy_q = select(func.coalesce(func.sum(RequestLog.total_cost_usd), 0.0)).where(
         RequestLog.user_id == user_id,
         RequestLog.request_time >= start,
         RequestLog.usage_operation_id.is_(None),

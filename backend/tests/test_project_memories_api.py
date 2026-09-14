@@ -63,19 +63,9 @@ async def _seed(db: AsyncSession) -> tuple[User, User, User, ChatSession]:
             acl_version=1,
         )
     )
-    db.add(
-        ProjectMember(
-            project_id=PROJ_ID, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER
-        )
-    )
-    db.add(
-        ProjectMember(
-            project_id=PROJ_ID, user_id=contrib.id, role=PROJECT_ROLE_CONTRIBUTOR
-        )
-    )
-    db.add(
-        ProjectMember(project_id=PROJ_ID, user_id=viewer.id, role=PROJECT_ROLE_VIEWER)
-    )
+    db.add(ProjectMember(project_id=PROJ_ID, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))
+    db.add(ProjectMember(project_id=PROJ_ID, user_id=contrib.id, role=PROJECT_ROLE_CONTRIBUTOR))
+    db.add(ProjectMember(project_id=PROJ_ID, user_id=viewer.id, role=PROJECT_ROLE_VIEWER))
     session = ChatSession(
         id="sess-memories-api",
         user_id=owner.id,
@@ -91,9 +81,7 @@ async def _seed(db: AsyncSession) -> tuple[User, User, User, ChatSession]:
 
 
 async def _seed_facts(db: AsyncSession, owner: User, session: ChatSession) -> None:
-    await create_project_memory(
-        db, project_id=PROJ_ID, user=owner, content="Invoices are issued monthly"
-    )
+    await create_project_memory(db, project_id=PROJ_ID, user=owner, content="Invoices are issued monthly")
     await create_auto_project_memory(
         db,
         project_id=PROJ_ID,
@@ -122,23 +110,17 @@ async def _filters_and_source_links() -> None:
         await _seed_facts(db, owner, session)
         await db.commit()
 
-        everything, total = await list_project_memories(
-            db, project_id=PROJ_ID, user=contrib
-        )
+        everything, total = await list_project_memories(db, project_id=PROJ_ID, user=contrib)
         assert total == 3
         assert len(everything) == 3
 
-        manual, manual_total = await list_project_memories(
-            db, project_id=PROJ_ID, user=contrib, origin="manual"
-        )
+        manual, manual_total = await list_project_memories(db, project_id=PROJ_ID, user=contrib, origin="manual")
         assert manual_total == 1
         assert manual[0]["origin"] == "manual"
         assert manual[0]["content"] == "Invoices are issued monthly"
         assert manual[0]["sourceSessionId"] is None
 
-        learned, learned_total = await list_project_memories(
-            db, project_id=PROJ_ID, user=contrib, origin="auto"
-        )
+        learned, learned_total = await list_project_memories(db, project_id=PROJ_ID, user=contrib, origin="auto")
         assert learned_total == 2
         assert {item["origin"] for item in learned} == {"auto_chat"}
         assert all(item["sourceSessionId"] == session.id for item in learned)
@@ -151,12 +133,8 @@ async def _filters_and_source_links() -> None:
         assert category_total == 1
         assert by_category[0]["content"] == "The ledger runs on Postgres"
 
-        first_page, page_total = await list_project_memories(
-            db, project_id=PROJ_ID, user=contrib, limit=2, offset=0
-        )
-        second_page, _ = await list_project_memories(
-            db, project_id=PROJ_ID, user=contrib, limit=2, offset=2
-        )
+        first_page, page_total = await list_project_memories(db, project_id=PROJ_ID, user=contrib, limit=2, offset=0)
+        second_page, _ = await list_project_memories(db, project_id=PROJ_ID, user=contrib, limit=2, offset=2)
         assert page_total == 3
         assert len(first_page) == 2
         assert len(second_page) == 1
@@ -193,21 +171,15 @@ async def _delete_all_requires_owner_and_keeps_manual() -> None:
 
         for actor in (contrib, viewer):
             try:
-                await delete_all_auto_project_memories(
-                    db, project_id=PROJ_ID, user=actor
-                )
+                await delete_all_auto_project_memories(db, project_id=PROJ_ID, user=actor)
                 raise AssertionError("delete-all must require memory.manage")
             except HTTPException as exc:
                 assert exc.status_code == 403
 
-        deleted = await delete_all_auto_project_memories(
-            db, project_id=PROJ_ID, user=owner
-        )
+        deleted = await delete_all_auto_project_memories(db, project_id=PROJ_ID, user=owner)
         await db.commit()
         assert deleted == 2
-        remaining, total = await list_project_memories(
-            db, project_id=PROJ_ID, user=owner
-        )
+        remaining, total = await list_project_memories(db, project_id=PROJ_ID, user=owner)
         assert total == 1
         assert remaining[0]["origin"] == "manual"
     await engine.dispose()

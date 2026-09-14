@@ -53,9 +53,7 @@ class ChatFolder(Base):
     __tablename__ = "chat_folders"
 
     id = Column(String(36), primary_key=True)
-    user_id = Column(
-        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
-    )
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     name = Column(String(255), nullable=False)
     color = Column(String(32), nullable=True)
     sort_order = Column(Integer, nullable=False, default=0)
@@ -67,13 +65,9 @@ class ChatSession(Base):
     __tablename__ = "chat_sessions"
 
     id = Column(String(36), primary_key=True)
-    user_id = Column(
-        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
-    )
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     title = Column(String(512), nullable=False, default="New chat")
-    folder_id = Column(
-        String(36), ForeignKey("chat_folders.id", ondelete="SET NULL"), nullable=True
-    )
+    folder_id = Column(String(36), ForeignKey("chat_folders.id", ondelete="SET NULL"), nullable=True)
     model_id = Column(String(512), nullable=False, default="")
     current_agent_id = Column(
         String(36),
@@ -141,9 +135,7 @@ class ChatMessage(Base):
         index=True,
         nullable=False,
     )
-    user_id = Column(
-        Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True
-    )
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
     author_display_name = Column(String(255), nullable=True)
     role = Column(String(16), nullable=False)
     content = Column(Text, nullable=False, default="")
@@ -158,12 +150,8 @@ class ChatMessage(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint(
-            "session_id", "sequence", name="ux_chat_messages_session_sequence"
-        ),
-        UniqueConstraint(
-            "session_id", "client_message_id", name="ux_chat_messages_client_id"
-        ),
+        UniqueConstraint("session_id", "sequence", name="ux_chat_messages_session_sequence"),
+        UniqueConstraint("session_id", "client_message_id", name="ux_chat_messages_client_id"),
         Index("ix_chat_messages_session_sequence", "session_id", "sequence"),
         Index("ix_chat_messages_created_at", "created_at"),
     )
@@ -185,9 +173,7 @@ class ChatMessageFeedback(Base):
         index=True,
         nullable=False,
     )
-    user_id = Column(
-        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
-    )
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     rating = Column(SmallInteger, nullable=False)
     reason = Column(String(64), nullable=True)
     output_kind = Column(String(16), nullable=False)
@@ -204,9 +190,7 @@ class ChatMessageFeedback(Base):
 class UserChatPrefs(Base):
     __tablename__ = "user_chat_prefs"
 
-    user_id = Column(
-        Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
-    )
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     prefs = Column(JsonDocument, nullable=False, default=dict)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
 
@@ -217,16 +201,12 @@ class UserMemory(Base):
     __tablename__ = "user_memories"
 
     id = Column(String(36), primary_key=True)
-    user_id = Column(
-        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
-    )
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     content = Column(Text, nullable=False)
     enabled = Column(Boolean, nullable=False, default=True)
     origin = Column(String(16), nullable=False, default="auto", server_default="auto")
     category = Column(String(32), nullable=False, default="other", server_default="other")
-    sensitivity = Column(
-        String(16), nullable=False, default="normal", server_default="normal"
-    )
+    sensitivity = Column(String(16), nullable=False, default="normal", server_default="normal")
     confidence = Column(Float, nullable=False, default=0.5, server_default="0.5")
     salience = Column(Float, nullable=False, default=0.5, server_default="0.5")
     expires_at = Column(DateTime, nullable=True)
@@ -247,9 +227,7 @@ class UserMemory(Base):
         ForeignKey("user_memories.id", ondelete="SET NULL"),
         nullable=True,
     )
-    embedding_status = Column(
-        String(16), nullable=False, default="pending", server_default="pending"
-    )
+    embedding_status = Column(String(16), nullable=False, default="pending", server_default="pending")
     embedding_model = Column(String(255), nullable=True)
     embedding_dims = Column(Integer, nullable=True)
     indexed_at = Column(DateTime, nullable=True)
@@ -279,9 +257,7 @@ class UserMemoryJob(Base):
     __tablename__ = "user_memory_jobs"
 
     id = Column(String(36), primary_key=True)
-    user_id = Column(
-        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
-    )
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     session_id = Column(
         String(36),
         ForeignKey("chat_sessions.id", ondelete="CASCADE"),
@@ -319,9 +295,7 @@ class UserMemoryEvent(Base):
     __tablename__ = "user_memory_events"
 
     id = Column(String(36), primary_key=True)
-    user_id = Column(
-        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
-    )
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     memory_id = Column(
         String(36),
         ForeignKey("user_memories.id", ondelete="SET NULL"),
@@ -343,17 +317,13 @@ class UserMemorySuppression(Base):
     __tablename__ = "user_memory_suppressions"
 
     id = Column(String(36), primary_key=True)
-    user_id = Column(
-        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
-    )
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     content_hash = Column(String(64), nullable=False, index=True)
     vector_indexed = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
     expires_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
-        UniqueConstraint(
-            "user_id", "content_hash", name="ux_user_memory_suppressions_user_hash"
-        ),
+        UniqueConstraint("user_id", "content_hash", name="ux_user_memory_suppressions_user_hash"),
         Index("ix_user_memory_suppressions_expires", "expires_at"),
     )

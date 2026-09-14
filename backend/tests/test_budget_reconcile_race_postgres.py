@@ -44,9 +44,14 @@ def test_reconcile_waits_for_the_in_flight_reservation():
         try:
             async with factory() as db:
                 user = User(
-                    username=f"race-{suffix}", email=f"race-{suffix}@t", hashed_password="x",
-                    auth_provider="local", is_active=True, monthly_budget_usd=100.0,
-                    budget_used_usd=0.0, budget_reserved_usd=0.0,
+                    username=f"race-{suffix}",
+                    email=f"race-{suffix}@t",
+                    hashed_password="x",
+                    auth_provider="local",
+                    is_active=True,
+                    monthly_budget_usd=100.0,
+                    budget_used_usd=0.0,
+                    budget_reserved_usd=0.0,
                 )
                 plan = BudgetPlan(name=f"race-{suffix}", monthly_budget_usd=100.0)
                 db.add_all([user, plan])
@@ -62,10 +67,15 @@ def test_reconcile_waits_for_the_in_flight_reservation():
             async def tx_a():
                 async with factory() as db:
                     await brs.reserve(
-                        db, user_id=user_id, alpha_router_api_key_id=None, amount_usd=2.5,
-                        operation="chat", model_id="m", idempotency_key=f"race-{suffix}",
+                        db,
+                        user_id=user_id,
+                        alpha_router_api_key_id=None,
+                        amount_usd=2.5,
+                        operation="chat",
+                        model_id="m",
+                        idempotency_key=f"race-{suffix}",
                     )
-                    a_holding.set()          # row inserted, counter bumped, lock held
+                    a_holding.set()  # row inserted, counter bumped, lock held
                     await a_release.wait()
                     await db.commit()
 
@@ -86,13 +96,19 @@ def test_reconcile_waits_for_the_in_flight_reservation():
 
             async with factory() as db:
                 counter = (await db.execute(select(User.budget_reserved_usd).where(User.id == user_id))).scalar_one()
-                rows = (await db.execute(
-                    select(BudgetReservation.reserved_usd).where(
-                        BudgetReservation.subject_type == brs.SUBJECT_USER,
-                        BudgetReservation.subject_id == user_id,
-                        BudgetReservation.status == brs.STATUS_HELD,
+                rows = (
+                    (
+                        await db.execute(
+                            select(BudgetReservation.reserved_usd).where(
+                                BudgetReservation.subject_type == brs.SUBJECT_USER,
+                                BudgetReservation.subject_id == user_id,
+                                BudgetReservation.status == brs.STATUS_HELD,
+                            )
+                        )
                     )
-                )).scalars().all()
+                    .scalars()
+                    .all()
+                )
             assert rows == [2.5]
             assert float(counter) == 2.5, "counter must equal the sum of held rows after reconcile"
         finally:
@@ -116,9 +132,9 @@ def test_drift_repair_is_single_flight_via_advisory_lock():
         try:
             async with factory() as holder, factory() as other:
                 # Someone else holds the reconcile lock in an open transaction.
-                got = (await holder.execute(
-                    text("SELECT pg_try_advisory_xact_lock(:id)"), {"id": brs.RECONCILE_LOCK_ID}
-                )).scalar()
+                got = (
+                    await holder.execute(text("SELECT pg_try_advisory_xact_lock(:id)"), {"id": brs.RECONCILE_LOCK_ID})
+                ).scalar()
                 assert got is True
                 assert await brs.reconcile_drifted_reserved_counters(other) == 0
                 await holder.rollback()

@@ -42,7 +42,9 @@ async def _session_factory():
 
 
 async def _user(db, username, *, active=True):
-    user = User(username=username, email=f"{username}@test", hashed_password="x", auth_provider="local", is_active=active)
+    user = User(
+        username=username, email=f"{username}@test", hashed_password="x", auth_provider="local", is_active=active
+    )
     db.add(user)
     await db.flush()
     return user
@@ -52,7 +54,17 @@ async def _setup_project(db, *, visibility=PROJECT_VISIBILITY_PRIVATE):
     owner = await _user(db, "owner")
     contrib = await _user(db, "contrib")
     viewer = await _user(db, "viewer")
-    db.add(Project(id=PROJ_ID, name="Test", status="active", visibility=visibility, created_by_user_id=owner.id, revision=1, acl_version=1))
+    db.add(
+        Project(
+            id=PROJ_ID,
+            name="Test",
+            status="active",
+            visibility=visibility,
+            created_by_user_id=owner.id,
+            revision=1,
+            acl_version=1,
+        )
+    )
     db.add(ProjectMember(project_id=PROJ_ID, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))
     db.add(ProjectMember(project_id=PROJ_ID, user_id=contrib.id, role=PROJECT_ROLE_CONTRIBUTOR))
     db.add(ProjectMember(project_id=PROJ_ID, user_id=viewer.id, role=PROJECT_ROLE_VIEWER))
@@ -75,6 +87,7 @@ def test_create_chat_owner():
                 assert row.private_mode is False
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -88,6 +101,7 @@ def test_create_chat_contributor():
                 assert s is not None
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -98,6 +112,7 @@ def test_create_chat_viewer_denied():
             async with factory() as db:
                 _, _, viewer = await _setup_project(db)
                 from fastapi import HTTPException
+
                 try:
                     await create_project_chat_session(db, project_id=PROJ_ID, user=viewer)
                     assert False
@@ -105,6 +120,7 @@ def test_create_chat_viewer_denied():
                     assert exc.status_code == 403
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -116,6 +132,7 @@ def test_create_chat_non_member_hidden():
                 _, _, _ = await _setup_project(db)
                 stranger = await _user(db, "stranger")
                 from fastapi import HTTPException
+
                 try:
                     await create_project_chat_session(db, project_id=PROJ_ID, user=stranger)
                     assert False
@@ -123,6 +140,7 @@ def test_create_chat_non_member_hidden():
                     assert exc.status_code == 404
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -141,6 +159,7 @@ def test_list_chats():
                 assert len(sessions) == 2
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -162,6 +181,7 @@ def test_list_chats_pinned_first():
                 assert sessions[1]["pinned"] is False
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -180,6 +200,7 @@ def test_list_chats_search():
                 assert sessions[0]["title"] == "Sprint"
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -197,6 +218,7 @@ def test_list_chats_public_viewer():
                 assert total == 1
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -207,7 +229,15 @@ def test_append_message_owner():
             async with factory() as db:
                 owner, _, _ = await _setup_project(db)
                 s = await create_project_chat_session(db, project_id=PROJ_ID, user=owner)
-                msg = await append_project_chat_message(db, project_id=PROJ_ID, session_id=s["id"], user=owner, role="user", content="Hi", client_message_id="c1")
+                msg = await append_project_chat_message(
+                    db,
+                    project_id=PROJ_ID,
+                    session_id=s["id"],
+                    user=owner,
+                    role="user",
+                    content="Hi",
+                    client_message_id="c1",
+                )
                 assert msg is not None
                 assert msg["content"] == "Hi"
                 assert msg["sequence"] == 1
@@ -217,6 +247,7 @@ def test_append_message_owner():
                 assert row.revision == 2
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -227,11 +258,14 @@ def test_append_message_contributor():
             async with factory() as db:
                 _, contrib, _ = await _setup_project(db)
                 s = await create_project_chat_session(db, project_id=PROJ_ID, user=contrib)
-                msg = await append_project_chat_message(db, project_id=PROJ_ID, session_id=s["id"], user=contrib, role="user", content="C")
+                msg = await append_project_chat_message(
+                    db, project_id=PROJ_ID, session_id=s["id"], user=contrib, role="user", content="C"
+                )
                 assert msg is not None
                 assert msg["authorDisplayName"] == "contrib"
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -254,6 +288,7 @@ def test_list_session_messages_includes_author_display_name():
                 assert [m["content"] for m in msgs] == ["Hi", "Hello"]
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -265,13 +300,17 @@ def test_append_message_viewer_denied():
                 owner, _, viewer = await _setup_project(db)
                 s = await create_project_chat_session(db, project_id=PROJ_ID, user=owner)
                 from fastapi import HTTPException
+
                 try:
-                    await append_project_chat_message(db, project_id=PROJ_ID, session_id=s["id"], user=viewer, role="user", content="X")
+                    await append_project_chat_message(
+                        db, project_id=PROJ_ID, session_id=s["id"], user=viewer, role="user", content="X"
+                    )
                     assert False
                 except HTTPException as exc:
                     assert exc.status_code == 403
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -282,13 +321,30 @@ def test_append_message_idempotent():
             async with factory() as db:
                 owner, _, _ = await _setup_project(db)
                 s = await create_project_chat_session(db, project_id=PROJ_ID, user=owner)
-                m1 = await append_project_chat_message(db, project_id=PROJ_ID, session_id=s["id"], user=owner, role="user", content="A", client_message_id="dup")
-                m2 = await append_project_chat_message(db, project_id=PROJ_ID, session_id=s["id"], user=owner, role="user", content="B", client_message_id="dup")
+                m1 = await append_project_chat_message(
+                    db,
+                    project_id=PROJ_ID,
+                    session_id=s["id"],
+                    user=owner,
+                    role="user",
+                    content="A",
+                    client_message_id="dup",
+                )
+                m2 = await append_project_chat_message(
+                    db,
+                    project_id=PROJ_ID,
+                    session_id=s["id"],
+                    user=owner,
+                    role="user",
+                    content="B",
+                    client_message_id="dup",
+                )
                 assert m1["id"] == m2["id"]
                 row = await db.get(ChatSession, s["id"])
                 assert row.message_count == 1
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -300,8 +356,18 @@ def test_message_pagination():
                 owner, _, _ = await _setup_project(db)
                 s = await create_project_chat_session(db, project_id=PROJ_ID, user=owner)
                 for i in range(5):
-                    await append_project_chat_message(db, project_id=PROJ_ID, session_id=s["id"], user=owner, role="user", content=f"m{i}", client_message_id=f"c{i}")
-                result = await list_project_chat_messages(db, project_id=PROJ_ID, session_id=s["id"], user=owner, limit=3)
+                    await append_project_chat_message(
+                        db,
+                        project_id=PROJ_ID,
+                        session_id=s["id"],
+                        user=owner,
+                        role="user",
+                        content=f"m{i}",
+                        client_message_id=f"c{i}",
+                    )
+                result = await list_project_chat_messages(
+                    db, project_id=PROJ_ID, session_id=s["id"], user=owner, limit=3
+                )
                 assert result is not None
                 messages, has_more = result
                 assert has_more is True
@@ -309,13 +375,16 @@ def test_message_pagination():
                 # Latest 3 messages in ascending order: sequences 3,4,5
                 assert messages[0]["sequence"] == 3
                 assert messages[2]["sequence"] == 5
-                result = await list_project_chat_messages(db, project_id=PROJ_ID, session_id=s["id"], user=owner, limit=3, before=4)
+                result = await list_project_chat_messages(
+                    db, project_id=PROJ_ID, session_id=s["id"], user=owner, limit=3, before=4
+                )
                 messages, has_more = result
                 assert len(messages) == 3
                 assert messages[0]["sequence"] == 1
                 assert has_more is False
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -329,10 +398,13 @@ def test_pin_owner():
                 result = await pin_project_chat(db, project_id=PROJ_ID, session_id=s["id"], user=owner)
                 assert result is not None
                 assert result["pinned"] is True
-                pin = (await db.execute(select(ProjectChatPin).where(ProjectChatPin.session_id == s["id"]))).scalar_one_or_none()
+                pin = (
+                    await db.execute(select(ProjectChatPin).where(ProjectChatPin.session_id == s["id"]))
+                ).scalar_one_or_none()
                 assert pin is not None
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -348,6 +420,7 @@ def test_pin_contributor():
                 assert result["pinned"] is True
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -359,6 +432,7 @@ def test_pin_viewer_denied():
                 owner, _, viewer = await _setup_project(db)
                 s = await create_project_chat_session(db, project_id=PROJ_ID, user=owner)
                 from fastapi import HTTPException
+
                 try:
                     await pin_project_chat(db, project_id=PROJ_ID, session_id=s["id"], user=viewer)
                     assert False
@@ -366,6 +440,7 @@ def test_pin_viewer_denied():
                     assert exc.status_code == 403
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -378,10 +453,15 @@ def test_pin_idempotent():
                 s = await create_project_chat_session(db, project_id=PROJ_ID, user=owner)
                 await pin_project_chat(db, project_id=PROJ_ID, session_id=s["id"], user=owner)
                 await pin_project_chat(db, project_id=PROJ_ID, session_id=s["id"], user=owner)
-                pins = (await db.execute(select(ProjectChatPin).where(ProjectChatPin.session_id == s["id"]))).scalars().all()
+                pins = (
+                    (await db.execute(select(ProjectChatPin).where(ProjectChatPin.session_id == s["id"])))
+                    .scalars()
+                    .all()
+                )
                 assert len(pins) == 1
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -395,10 +475,15 @@ def test_unpin():
                 await pin_project_chat(db, project_id=PROJ_ID, session_id=s["id"], user=owner)
                 result = await unpin_project_chat(db, project_id=PROJ_ID, session_id=s["id"], user=owner)
                 assert result["pinned"] is False
-                pins = (await db.execute(select(ProjectChatPin).where(ProjectChatPin.session_id == s["id"]))).scalars().all()
+                pins = (
+                    (await db.execute(select(ProjectChatPin).where(ProjectChatPin.session_id == s["id"])))
+                    .scalars()
+                    .all()
+                )
                 assert len(pins) == 0
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -415,6 +500,7 @@ def test_list_pinned_visible_to_viewer():
                 assert s["id"] in pinned
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -431,6 +517,7 @@ def test_delete_chat_owner():
                 assert row is None
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -442,6 +529,7 @@ def test_delete_chat_viewer_denied():
                 owner, _, viewer = await _setup_project(db)
                 s = await create_project_chat_session(db, project_id=PROJ_ID, user=owner)
                 from fastapi import HTTPException
+
                 try:
                     await delete_project_chat_session(db, project_id=PROJ_ID, session_id=s["id"], user=viewer)
                     assert False
@@ -449,6 +537,7 @@ def test_delete_chat_viewer_denied():
                     assert exc.status_code == 403
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -460,7 +549,17 @@ def test_session_from_other_project_hidden():
                 owner, _, _ = await _setup_project(db)
                 await create_project_chat_session(db, project_id=PROJ_ID, user=owner)
                 # Create a second project with a session.
-                db.add(Project(id="proj-2", name="P2", status="active", visibility="private", created_by_user_id=owner.id, revision=1, acl_version=1))
+                db.add(
+                    Project(
+                        id="proj-2",
+                        name="P2",
+                        status="active",
+                        visibility="private",
+                        created_by_user_id=owner.id,
+                        revision=1,
+                        acl_version=1,
+                    )
+                )
                 db.add(ProjectMember(project_id="proj-2", user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))
                 await db.flush()
                 s2 = await create_project_chat_session(db, project_id="proj-2", user=owner, title="Other")
@@ -469,6 +568,7 @@ def test_session_from_other_project_hidden():
                 assert result is None
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -498,6 +598,7 @@ def test_create_chat_with_client_session_id():
                 assert again["title"] == "Client"
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -513,9 +614,7 @@ def test_contributor_can_persist_via_user_chat_storage():
         try:
             async with factory() as db:
                 owner, contrib, viewer = await _setup_project(db)
-                s = await create_project_chat_session(
-                    db, project_id=PROJ_ID, user=owner, title="Shared"
-                )
+                s = await create_project_chat_session(db, project_id=PROJ_ID, user=owner, title="Shared")
                 assert s is not None
                 sid = s["id"]
 
@@ -549,6 +648,7 @@ def test_contributor_can_persist_via_user_chat_storage():
                 assert await get_chat_session(db, stranger.id, sid) is None
         finally:
             await engine.dispose()
+
     asyncio.run(run())
 
 
@@ -580,4 +680,5 @@ def test_create_chat_session_with_project_id_scopes_thread():
                 assert personal == []
         finally:
             await engine.dispose()
+
     asyncio.run(run())

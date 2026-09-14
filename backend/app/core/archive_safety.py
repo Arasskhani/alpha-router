@@ -39,12 +39,7 @@ def validate_ooxml_archive(data: bytes, extension: str) -> None:
         for entry in entries:
             normalized = entry.filename.replace("\\", "/")
             path = PurePosixPath(normalized)
-            if (
-                not normalized
-                or normalized.startswith("/")
-                or ".." in path.parts
-                or "\x00" in normalized
-            ):
+            if not normalized or normalized.startswith("/") or ".." in path.parts or "\x00" in normalized:
                 raise ArchiveSafetyError("Office document contains an unsafe archive path")
             mode = (entry.external_attr >> 16) & 0xFFFF
             if mode and stat.S_ISLNK(mode):
@@ -55,18 +50,13 @@ def validate_ooxml_archive(data: bytes, extension: str) -> None:
             total_uncompressed += int(entry.file_size or 0)
             names.add(normalized)
             lowered = normalized.casefold()
-            if (
-                lowered.endswith("vbaproject.bin")
-                or "/embeddings/" in lowered
-                or lowered.startswith("customxml/")
-            ):
+            if lowered.endswith("vbaproject.bin") or "/embeddings/" in lowered or lowered.startswith("customxml/"):
                 raise ArchiveSafetyError("Active or embedded Office content is not allowed")
         if total_uncompressed > settings.knowledge_max_archive_uncompressed_bytes:
             raise ArchiveSafetyError("Office document expands beyond the allowed size")
         if (
             total_uncompressed > 0
-            and total_uncompressed / max(1, total_compressed)
-            > settings.knowledge_max_archive_ratio
+            and total_uncompressed / max(1, total_compressed) > settings.knowledge_max_archive_ratio
         ):
             raise ArchiveSafetyError("Office document has an unsafe compression ratio")
 

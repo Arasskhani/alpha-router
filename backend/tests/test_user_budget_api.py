@@ -94,9 +94,7 @@ async def _flow() -> None:
                 PlanAssignment(plan_id=group_plan.id, group_id=group.id),
             ]
         )
-        await db.execute(
-            user_group_members.insert().values(user_id=inheritor.id, group_id=group.id)
-        )
+        await db.execute(user_group_members.insert().values(user_id=inheritor.id, group_id=group.id))
         db.add_all(
             [
                 RequestLog(

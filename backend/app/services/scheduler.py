@@ -69,9 +69,7 @@ async def job_expire_budget_reservations():
         repaired = await reconcile_drifted_reserved_counters(db)
         await db.commit()
     if repaired:
-        logger.warning(
-            "Repaired drifted reserved budget counters for %s subject(s)", repaired
-        )
+        logger.warning("Repaired drifted reserved budget counters for %s subject(s)", repaired)
 
 
 async def job_reconcile_provider_costs():
@@ -88,13 +86,17 @@ async def job_reconcile_provider_costs():
         return
     async with AsyncSessionLocal() as db:
         connection_ids = (
-            await db.execute(
-                select(Connection.id).where(
-                    Connection.is_active.is_(True),
-                    Connection.provider_type.in_(providers),
+            (
+                await db.execute(
+                    select(Connection.id).where(
+                        Connection.is_active.is_(True),
+                        Connection.provider_type.in_(providers),
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     for connection_id in connection_ids:
         async with AsyncSessionLocal() as db:
             connection = await db.get(Connection, connection_id)
@@ -152,10 +154,14 @@ async def job_user_media_cleanup():
     now = datetime.utcnow()
     async with AsyncSessionLocal() as db:
         prefs_rows = (
-            await db.execute(
-                select(UserMediaPreferences).where(UserMediaPreferences.cleanup_enabled == True)  # noqa: E712
+            (
+                await db.execute(
+                    select(UserMediaPreferences).where(UserMediaPreferences.cleanup_enabled == True)  # noqa: E712
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         for prefs in prefs_rows:
             if not user_media_cleanup_due(prefs, now):
                 continue
@@ -327,9 +333,7 @@ def start_scheduler():
     scheduler.add_job(job_sync_all_models, "interval", minutes=30, id="model_sync")
     # Budget periods are month-of-UTC everywhere else (ensure_budget_period,
     # get_month_usage), so the reset fires at 00:05 UTC on the 1st, not local.
-    scheduler.add_job(
-        job_reset_budgets, "cron", day=1, hour=0, minute=5, id="budget_reset", timezone=timezone.utc
-    )
+    scheduler.add_job(job_reset_budgets, "cron", day=1, hour=0, minute=5, id="budget_reset", timezone=timezone.utc)
     scheduler.add_job(
         job_expire_budget_reservations,
         "interval",

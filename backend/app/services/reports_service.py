@@ -39,9 +39,7 @@ async def _provider_map(db: AsyncSession) -> dict[str, str]:
 
 
 async def users_for_plan(db: AsyncSession, plan_id: int) -> list[int]:
-    assigns = (
-        await db.execute(select(PlanAssignment).where(PlanAssignment.plan_id == plan_id))
-    ).scalars().all()
+    assigns = (await db.execute(select(PlanAssignment).where(PlanAssignment.plan_id == plan_id))).scalars().all()
     user_ids: set[int] = set()
     group_ids: set[int] = set()
     departments: set[str] = set()
@@ -54,9 +52,7 @@ async def users_for_plan(db: AsyncSession, plan_id: int) -> list[int]:
             departments.add(str(a.department))
     if group_ids:
         rows = (
-            await db.execute(
-                select(user_group_members.c.user_id).where(user_group_members.c.group_id.in_(group_ids))
-            )
+            await db.execute(select(user_group_members.c.user_id).where(user_group_members.c.group_id.in_(group_ids)))
         ).all()
         user_ids.update(int(r[0]) for r in rows if r[0] is not None)
     if departments:
@@ -194,13 +190,17 @@ async def report_org_cost_summary(db: AsyncSession, start: datetime, end: dateti
 
 async def report_users_near_budget_limit(db: AsyncSession, threshold_pct: float) -> pd.DataFrame:
     users = (
-        await db.execute(
-            select(User).where(
-                User.deleted_at.is_(None),
-                User.monthly_budget_usd > 0,
+        (
+            await db.execute(
+                select(User).where(
+                    User.deleted_at.is_(None),
+                    User.monthly_budget_usd > 0,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     rows = []
     for u in users:
         budget = float(u.monthly_budget_usd or 0)
@@ -223,9 +223,7 @@ async def report_users_near_budget_limit(db: AsyncSession, threshold_pct: float)
 
 
 async def report_users_without_budget(db: AsyncSession) -> pd.DataFrame:
-    users = (
-        await db.execute(select(User).where(User.deleted_at.is_(None)))
-    ).scalars().all()
+    users = (await db.execute(select(User).where(User.deleted_at.is_(None)))).scalars().all()
     rows = []
     for u in users:
         direct = await get_user_direct_assignment(db, u.id)
@@ -250,9 +248,7 @@ async def report_department_top_models(
     user_ids = [
         int(r[0])
         for r in (
-            await db.execute(
-                select(User.id).where(User.deleted_at.is_(None), User.department == department)
-            )
+            await db.execute(select(User.id).where(User.deleted_at.is_(None), User.department == department))
         ).all()
         if r[0] is not None
     ]
@@ -465,9 +461,7 @@ async def report_agent_usage(
     )
 
 
-async def report_usage_by_app(
-    db: AsyncSession, start: datetime, end: datetime, app: str | None
-) -> pd.DataFrame:
+async def report_usage_by_app(db: AsyncSession, start: datetime, end: datetime, app: str | None) -> pd.DataFrame:
     q = (
         select(
             RequestLog.client_app,
@@ -733,9 +727,7 @@ async def report_slow_requests(
     )
 
 
-async def report_activity_summary(
-    db: AsyncSession, start: datetime, end: datetime, group_by: str
-) -> pd.DataFrame:
+async def report_activity_summary(db: AsyncSession, start: datetime, end: datetime, group_by: str) -> pd.DataFrame:
     if group_by == "user":
         col = RequestLog.username
         label = "username"
@@ -773,10 +765,14 @@ async def report_activity_summary(
 
 async def report_deactivated_users(db: AsyncSession) -> pd.DataFrame:
     users = (
-        await db.execute(
-            select(User).where(User.deleted_at.is_(None), User.is_active == False)  # noqa: E712
+        (
+            await db.execute(
+                select(User).where(User.deleted_at.is_(None), User.is_active == False)  # noqa: E712
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return pd.DataFrame(
         [
             {
@@ -791,19 +787,21 @@ async def report_deactivated_users(db: AsyncSession) -> pd.DataFrame:
     )
 
 
-async def report_users_no_recent_login(
-    db: AsyncSession, end: datetime, inactive_days: int
-) -> pd.DataFrame:
+async def report_users_no_recent_login(db: AsyncSession, end: datetime, inactive_days: int) -> pd.DataFrame:
     cutoff = end - timedelta(days=inactive_days)
     users = (
-        await db.execute(
-            select(User).where(
-                User.deleted_at.is_(None),
-                User.is_active == True,  # noqa: E712
-                or_(User.last_login_at.is_(None), User.last_login_at < cutoff),
+        (
+            await db.execute(
+                select(User).where(
+                    User.deleted_at.is_(None),
+                    User.is_active == True,  # noqa: E712
+                    or_(User.last_login_at.is_(None), User.last_login_at < cutoff),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return pd.DataFrame(
         [
             {
@@ -819,13 +817,17 @@ async def report_users_no_recent_login(
 
 async def report_new_users(db: AsyncSession, start: datetime, end: datetime) -> pd.DataFrame:
     users = (
-        await db.execute(
-            select(User).where(
-                User.created_at >= start,
-                User.created_at <= end,
+        (
+            await db.execute(
+                select(User).where(
+                    User.created_at >= start,
+                    User.created_at <= end,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return pd.DataFrame(
         [
             {
@@ -842,14 +844,18 @@ async def report_new_users(db: AsyncSession, start: datetime, end: datetime) -> 
 
 async def report_deleted_users(db: AsyncSession, start: datetime, end: datetime) -> pd.DataFrame:
     users = (
-        await db.execute(
-            select(User).where(
-                User.deleted_at.isnot(None),
-                User.deleted_at >= start,
-                User.deleted_at <= end,
+        (
+            await db.execute(
+                select(User).where(
+                    User.deleted_at.isnot(None),
+                    User.deleted_at >= start,
+                    User.deleted_at <= end,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return pd.DataFrame(
         [
             {
@@ -872,17 +878,12 @@ async def report_auth_provider_distribution(db: AsyncSession) -> pd.DataFrame:
             .order_by(func.count().desc())
         )
     ).all()
-    return pd.DataFrame(
-        [{"auth_provider": r[0] or "—", "user_count": int(r[1] or 0)} for r in rows]
-    )
+    return pd.DataFrame([{"auth_provider": r[0] or "—", "user_count": int(r[1] or 0)} for r in rows])
 
 
 async def report_users_without_group(db: AsyncSession, auth_provider: str | None) -> pd.DataFrame:
     member_exists = (
-        select(user_group_members.c.user_id)
-        .where(user_group_members.c.user_id == User.id)
-        .correlate(User)
-        .exists()
+        select(user_group_members.c.user_id).where(user_group_members.c.user_id == User.id).correlate(User).exists()
     )
     q = select(User).where(
         User.deleted_at.is_(None),
@@ -905,18 +906,14 @@ async def report_users_without_group(db: AsyncSession, auth_provider: str | None
     )
 
 
-async def report_group_members_usage(
-    db: AsyncSession, group_id: int, start: datetime, end: datetime
-) -> pd.DataFrame:
+async def report_group_members_usage(db: AsyncSession, group_id: int, start: datetime, end: datetime) -> pd.DataFrame:
     group = await db.get(UserGroup, group_id)
     if not group:
         raise HTTPException(404, "Group not found")
     member_ids = [
         int(r[0])
         for r in (
-            await db.execute(
-                select(user_group_members.c.user_id).where(user_group_members.c.group_id == group_id)
-            )
+            await db.execute(select(user_group_members.c.user_id).where(user_group_members.c.group_id == group_id))
         ).all()
         if r[0] is not None
     ]
@@ -1016,9 +1013,7 @@ async def report_alpha_router_api_key_usage(
         .order_by(func.sum(RequestLog.total_cost_usd).desc())
     )
     if alpha_router_api_key_id:
-        q = q.where(
-            RequestLog.alpha_router_api_key_id == alpha_router_api_key_id
-        )
+        q = q.where(RequestLog.alpha_router_api_key_id == alpha_router_api_key_id)
     rows = (await db.execute(q)).all()
     data = []
     for key_id, cost, count in rows:
@@ -1039,10 +1034,14 @@ async def report_alpha_router_api_keys_near_credit_limit(
     threshold_pct: float,
 ) -> pd.DataFrame:
     keys = (
-        await db.execute(
-            select(AlphaRouterApiKey).where(AlphaRouterApiKey.is_active == True)  # noqa: E712
+        (
+            await db.execute(
+                select(AlphaRouterApiKey).where(AlphaRouterApiKey.is_active == True)  # noqa: E712
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     rows = []
     for k in keys:
         limit = float(k.credit_limit_usd or 0)
@@ -1112,9 +1111,7 @@ async def build_report(db: AsyncSession, report_type: str, params: dict[str, Any
     if report_type == "model_error_rates":
         return await report_model_error_rates(db, start, end, params.get("model_id"))
     if report_type == "failed_requests":
-        return await report_failed_requests(
-            db, start, end, params.get("user_id"), params.get("model_id")
-        )
+        return await report_failed_requests(db, start, end, params.get("user_id"), params.get("model_id"))
     if report_type == "slow_models_latency":
         return await report_slow_models_latency(db, start, end, float(params.get("latency_ms") or 10000))
     if report_type == "slow_requests":
@@ -1178,6 +1175,7 @@ async def build_report(db: AsyncSession, report_type: str, params: dict[str, Any
 
 
 # --- export helpers (unchanged surface) ---
+
 
 def _table_style_header() -> list[tuple]:
     from reportlab.lib import colors

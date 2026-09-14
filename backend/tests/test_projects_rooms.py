@@ -121,12 +121,8 @@ def test_rooms_do_not_appear_in_project_chats():
                 sessions, total = listed
                 assert total == 0
                 assert sessions == []
-                assert await get_project_chat_session(
-                    db, project_id=PROJ_ID, session_id=room["id"], user=owner
-                ) is None
-                sync = await sync_project_chats(
-                    db, project_id=PROJ_ID, user=owner, session_id=room["id"]
-                )
+                assert await get_project_chat_session(db, project_id=PROJ_ID, session_id=room["id"], user=owner) is None
+                sync = await sync_project_chats(db, project_id=PROJ_ID, user=owner, session_id=room["id"])
                 assert sync is not None
                 assert sync["sessions"] == []
                 assert sync["goneSessionId"] == room["id"]
@@ -167,9 +163,7 @@ def test_viewer_member_can_read_but_not_write_or_handoff():
                 rooms, total = listed
                 assert total == 1
                 assert rooms[0]["id"] == room["id"]
-                messages = await list_project_room_messages(
-                    db, project_id=PROJ_ID, room_id=room["id"], user=viewer
-                )
+                messages = await list_project_room_messages(db, project_id=PROJ_ID, room_id=room["id"], user=viewer)
                 assert messages is not None
                 assert messages[0][0]["content"] == "hello"
                 assert messages[0][0]["userId"] == owner.id
@@ -203,12 +197,8 @@ def test_contributor_rooms_do_not_leak_messages():
         try:
             async with factory() as db:
                 _, contrib, _ = await _setup_project(db)
-                teaser = await create_project_room(
-                    db, project_id=PROJ_ID, user=contrib, title="Nowruz teaser"
-                )
-                campaign = await create_project_room(
-                    db, project_id=PROJ_ID, user=contrib, title="Instagram campaign"
-                )
+                teaser = await create_project_room(db, project_id=PROJ_ID, user=contrib, title="Nowruz teaser")
+                campaign = await create_project_room(db, project_id=PROJ_ID, user=contrib, title="Instagram campaign")
                 await append_project_room_message(
                     db, project_id=PROJ_ID, room_id=teaser["id"], user=contrib, content="teaser only"
                 )
@@ -263,19 +253,21 @@ def test_handoff_creates_ai_session_from_brief_only():
                 assert target.channel_kind == "ai"
                 assert target.project_id == PROJ_ID
                 first = (
-                    await db.execute(
-                        select(ChatMessage)
-                        .where(ChatMessage.session_id == target.id)
-                        .order_by(ChatMessage.sequence.asc())
+                    (
+                        await db.execute(
+                            select(ChatMessage)
+                            .where(ChatMessage.session_id == target.id)
+                            .order_by(ChatMessage.sequence.asc())
+                        )
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
                 assert first == []
                 assert target.message_count == 0
                 handoff = (
                     await db.execute(
-                        select(ProjectRoomHandoff).where(
-                            ProjectRoomHandoff.target_session_id == target.id
-                        )
+                        select(ProjectRoomHandoff).where(ProjectRoomHandoff.target_session_id == target.id)
                     )
                 ).scalar_one()
                 assert handoff.brief == brief
@@ -301,17 +293,13 @@ def test_room_messages_do_not_create_project_memory():
                 count = int(
                     (
                         await db.execute(
-                            select(func.count())
-                            .select_from(ProjectMemory)
-                            .where(ProjectMemory.project_id == PROJ_ID)
+                            select(func.count()).select_from(ProjectMemory).where(ProjectMemory.project_id == PROJ_ID)
                         )
                     ).scalar_one()
                     or 0
                 )
                 assert count == 0
-                created = await create_project_memory(
-                    db, project_id=PROJ_ID, user=owner, content="explicit memory"
-                )
+                created = await create_project_memory(db, project_id=PROJ_ID, user=owner, content="explicit memory")
                 assert created is not None
                 memories = await list_project_memories(db, project_id=PROJ_ID, user=owner)
                 assert memories is not None
@@ -346,9 +334,7 @@ def test_planner_skips_member_rooms():
                     chat_session_id=room["id"],
                 )
                 assert out == messages
-                joined = "\n".join(
-                    str(item.get("content") or "") for item in out if isinstance(item, dict)
-                )
+                joined = "\n".join(str(item.get("content") or "") for item in out if isinstance(item, dict))
                 assert "ProjectBot" not in joined
         finally:
             await engine.dispose()
@@ -396,9 +382,7 @@ def test_sender_can_edit_and_delete_own_message():
                     message_id=posted["id"],
                     user=contrib,
                 )
-                leftover, _ = await list_project_room_messages(
-                    db, project_id=PROJ_ID, room_id=room["id"], user=contrib
-                )
+                leftover, _ = await list_project_room_messages(db, project_id=PROJ_ID, room_id=room["id"], user=contrib)
                 assert leftover == []
         finally:
             await engine.dispose()

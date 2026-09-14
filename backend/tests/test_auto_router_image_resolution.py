@@ -328,9 +328,7 @@ async def _run_runtime_signals_prefer_reliable_model() -> None:
             )
         await session.commit()
 
-        candidates = await list_auto_router_image_candidates(
-            session, connection_id=conn.id, limit=3
-        )
+        candidates = await list_auto_router_image_candidates(session, connection_id=conn.id, limit=3)
         assert len(candidates) == 1
         assert candidates[0].external_id == "google/gemini-2.5-flash-image"
     await engine.dispose()

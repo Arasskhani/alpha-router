@@ -29,9 +29,10 @@ def test_is_transient_empty_openrouter_image_response_with_images():
             }
         ],
     }
-    assert svc.is_transient_empty_openrouter_image_response(
-        data, collected=[{"url": "data:image/png;base64,abc"}]
-    ) is False
+    assert (
+        svc.is_transient_empty_openrouter_image_response(data, collected=[{"url": "data:image/png;base64,abc"}])
+        is False
+    )
     # Until the collector yields items, keep retrying other strategies.
     assert svc.is_transient_empty_openrouter_image_response(data, collected=None) is True
 

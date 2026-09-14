@@ -73,9 +73,7 @@ def _parse_bool(raw: str | None, default: bool = False) -> bool:
 
 
 async def get_chat_retention_settings(db: AsyncSession) -> dict[str, Any]:
-    rows = (
-        await db.execute(select(SystemSetting).where(SystemSetting.key.in_(_CHAT_SETTING_KEYS)))
-    ).scalars().all()
+    rows = (await db.execute(select(SystemSetting).where(SystemSetting.key.in_(_CHAT_SETTING_KEYS)))).scalars().all()
     kv = {r.key: (r.value or "") for r in rows}
     retention_enabled = _parse_bool(kv.get(_KEY_CHAT_RETENTION_ENABLED))
     schedule_enabled = _parse_bool(kv.get(_KEY_CHAT_CLEAR_SCHEDULE_ENABLED))
@@ -125,12 +123,8 @@ async def set_chat_retention_settings(
 
 
 async def chat_retention_stats(db: AsyncSession) -> dict[str, int]:
-    session_count = (
-        await db.execute(select(func.count()).select_from(ChatSession))
-    ).scalar() or 0
-    message_count = (
-        await db.execute(select(func.count()).select_from(ChatMessage))
-    ).scalar() or 0
+    session_count = (await db.execute(select(func.count()).select_from(ChatSession))).scalar() or 0
+    message_count = (await db.execute(select(func.count()).select_from(ChatMessage))).scalar() or 0
     settings_data = await get_chat_retention_settings(db)
     expired_messages = 0
     held_expired_messages = 0
@@ -190,13 +184,9 @@ async def _sync_affected_session_stats(db: AsyncSession, session_ids: set[str]) 
             {"ids": ids},
         )
         empty_ids = set(ids) - set(
-            (
-                await db.execute(
-                    select(ChatMessage.session_id)
-                    .where(ChatMessage.session_id.in_(ids))
-                    .distinct()
-                )
-            ).scalars().all()
+            (await db.execute(select(ChatMessage.session_id).where(ChatMessage.session_id.in_(ids)).distinct()))
+            .scalars()
+            .all()
         )
         if empty_ids:
             await db.execute(
@@ -215,17 +205,11 @@ async def _sync_affected_session_stats(db: AsyncSession, session_ids: set[str]) 
                 continue
             count = (
                 await db.execute(
-                    select(func.count())
-                    .select_from(ChatMessage)
-                    .where(ChatMessage.session_id == session_id)
+                    select(func.count()).select_from(ChatMessage).where(ChatMessage.session_id == session_id)
                 )
             ).scalar() or 0
             last_at = (
-                await db.execute(
-                    select(func.max(ChatMessage.created_at)).where(
-                        ChatMessage.session_id == session_id
-                    )
-                )
+                await db.execute(select(func.max(ChatMessage.created_at)).where(ChatMessage.session_id == session_id))
             ).scalar()
             row.message_count = int(count)
             row.last_message_at = last_at
@@ -237,14 +221,18 @@ async def cleanup_empty_sessions_after_purge(db: AsyncSession, session_ids: set[
     if not session_ids:
         return 0
     rows = (
-        await db.execute(
-            select(ChatSession).where(
-                ChatSession.id.in_(session_ids),
-                ChatSession.message_count == 0,
-                ChatSession.archived_at.is_(None),
+        (
+            await db.execute(
+                select(ChatSession).where(
+                    ChatSession.id.in_(session_ids),
+                    ChatSession.message_count == 0,
+                    ChatSession.archived_at.is_(None),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     removed = 0
     for row in rows:
         await db.delete(row)

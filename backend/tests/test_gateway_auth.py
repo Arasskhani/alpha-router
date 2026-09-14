@@ -114,6 +114,7 @@ async def _seed_alpha_router_key(
 
 # ---- _resolve_gateway_auth ----
 
+
 async def _test_missing_authorization_raises_401():
     _, sf = await _setup_db()
     async with sf() as db:
@@ -144,9 +145,7 @@ async def _test_master_key_ignores_body_user_and_uses_service_account():
     _, sf = await _setup_db()
     async with sf() as db:
         # Attacker tries to impersonate "admin@evil" via body.user — must be ignored.
-        auth = await gateway._resolve_gateway_auth(
-            _FakeRequest(f"Bearer {MASTER_KEY}"), db
-        )
+        auth = await gateway._resolve_gateway_auth(_FakeRequest(f"Bearer {MASTER_KEY}"), db)
         assert auth.source == "master"
         assert auth.username == GATEWAY_SERVICE_USERNAME
         assert auth.skip_budget is False
@@ -154,24 +153,20 @@ async def _test_master_key_ignores_body_user_and_uses_service_account():
 
         # No impersonation: the attacker identity must NOT exist in the DB.
         evil = (
-            await db.execute(
-                select(User).where((User.email == "admin@evil") | (User.username == "admin@evil"))
-            )
-        ).scalars().first()
+            (await db.execute(select(User).where((User.email == "admin@evil") | (User.username == "admin@evil"))))
+            .scalars()
+            .first()
+        )
         assert evil is None
 
         # Idempotent: a second call returns the same service user.
         async with sf() as db2:
-            auth2 = await gateway._resolve_gateway_auth(
-                _FakeRequest(f"Bearer {MASTER_KEY}"), db2
-            )
+            auth2 = await gateway._resolve_gateway_auth(_FakeRequest(f"Bearer {MASTER_KEY}"), db2)
             assert auth2.user_id == auth.user_id
             # And there is exactly one gateway-service user.
             svc_count = (
-                await db2.execute(
-                    select(User).where(User.username == GATEWAY_SERVICE_USERNAME)
-                )
-            ).scalars().all()
+                (await db2.execute(select(User).where(User.username == GATEWAY_SERVICE_USERNAME))).scalars().all()
+            )
             assert len(svc_count) == 1
 
 
@@ -213,6 +208,7 @@ async def _test_alpha_router_api_key_over_credit_limit_raises_402():
 
 
 # ---- _require_valid_gateway_key (read gate) ----
+
 
 async def _test_read_gate_rejects_missing():
     _, sf = await _setup_db()
@@ -316,6 +312,7 @@ async def _test_chat_completions_personal_key_preflight_and_stream():
 
 
 # ---- sync wrappers ----
+
 
 def test_missing_authorization_raises_401():
     asyncio.run(_test_missing_authorization_raises_401())

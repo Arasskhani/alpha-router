@@ -54,6 +54,8 @@ class LeaseLost(RuntimeError):
 
 class VideoJobAlreadyCompleted(RuntimeError):
     """The provider finished the job before the cancel reached it."""
+
+
 # How long a claimed job stays leased to one worker, and how often a long
 # phase renews that lease. The heartbeat must stay well under the lease so a
 # single slow beat never lets a second worker claim a job that is running.
@@ -154,9 +156,7 @@ async def create_video_job(
     max_concurrent = max(1, int(settings.video_max_concurrent_jobs_per_user or 1))
     active = await count_active_jobs(db, user.id)
     if active >= max_concurrent:
-        raise PermissionError(
-            f"Video generation concurrency limit reached ({max_concurrent} active job(s))"
-        )
+        raise PermissionError(f"Video generation concurrency limit reached ({max_concurrent} active job(s))")
 
     duration = parse_video_duration(params.get("duration"))
     if duration is None:
@@ -356,25 +356,27 @@ async def reclaim_stale_video_jobs() -> int:
             if not bool(locked.scalar()):
                 return 0
         rows = (
-            await db.execute(
-                select(VideoGenerationJob).where(
-                    # "submitted" and "ingesting" belong here too: a worker that
-                    # dies mid-submit or mid-ingest used to leave the job stuck
-                    # in those states forever, holding its budget reservation
-                    # and leaving the chat bubble pending with nothing to heal
-                    # it. Safe to sweep now only because a live run heartbeats
-                    # its lease, and the lease guard below skips those.
-                    VideoGenerationJob.status.in_(
-                        ("queued", "submitted", "running", "ingesting")
-                    ),
-                    VideoGenerationJob.updated_at < cutoff,
-                    (
-                        VideoGenerationJob.lease_expires_at.is_(None)
-                        | (VideoGenerationJob.lease_expires_at < _now())
-                    ),
+            (
+                await db.execute(
+                    select(VideoGenerationJob).where(
+                        # "submitted" and "ingesting" belong here too: a worker that
+                        # dies mid-submit or mid-ingest used to leave the job stuck
+                        # in those states forever, holding its budget reservation
+                        # and leaving the chat bubble pending with nothing to heal
+                        # it. Safe to sweep now only because a live run heartbeats
+                        # its lease, and the lease guard below skips those.
+                        VideoGenerationJob.status.in_(("queued", "submitted", "running", "ingesting")),
+                        VideoGenerationJob.updated_at < cutoff,
+                        (
+                            VideoGenerationJob.lease_expires_at.is_(None)
+                            | (VideoGenerationJob.lease_expires_at < _now())
+                        ),
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         for job in rows:
             job.status = "failed"
             job.error_code = "timeout"
@@ -641,6 +643,7 @@ async def _run_video_job(job_id: str) -> None:
                 )
 
                 from app.services.video_media_ingest_service import fetch_video_asset
+
                 blob, mime = await fetch_video_asset(
                     url=asset_ref.url,
                     api_key=api_key,
@@ -651,11 +654,7 @@ async def _run_video_job(job_id: str) -> None:
                 # Ensure provider cost/duration land under usage.* so
                 # extract_normalized_usage can treat OpenRouter cost as exact.
                 usage_payload: dict = dict(usage.raw) if isinstance(usage.raw, dict) else {}
-                usage_obj = (
-                    dict(usage_payload["usage"])
-                    if isinstance(usage_payload.get("usage"), dict)
-                    else {}
-                )
+                usage_obj = dict(usage_payload["usage"]) if isinstance(usage_payload.get("usage"), dict) else {}
                 if usage.quantity is not None:
                     usage_obj.setdefault("duration_seconds", usage.quantity)
                 if usage.cost_usd is not None:

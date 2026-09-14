@@ -143,5 +143,6 @@ class OpenRouterVideoAdapter:
             cost_value = float(cost) if cost is not None else None
         except (TypeError, ValueError):
             cost_value = None
-        return VideoUsage(quantity=quantity_value, unit="second" if quantity_value else "clip", cost_usd=cost_value, raw=payload)
-
+        return VideoUsage(
+            quantity=quantity_value, unit="second" if quantity_value else "clip", cost_usd=cost_value, raw=payload
+        )

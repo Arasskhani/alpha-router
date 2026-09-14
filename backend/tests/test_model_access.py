@@ -103,9 +103,7 @@ async def _test_private_user_and_group_assignment() -> None:
 
         assert await user_can_access_model(db, model, await resolve_access_subject(db, user_id=owner.id))
         assert await user_can_access_model(db, model, await resolve_access_subject(db, user_id=member.id))
-        assert not await user_can_access_model(
-            db, model, await resolve_access_subject(db, user_id=outsider.id)
-        )
+        assert not await user_can_access_model(db, model, await resolve_access_subject(db, user_id=outsider.id))
     await engine.dispose()
 
 
@@ -121,9 +119,7 @@ async def _test_private_empty_super_admin_only() -> None:
 
         assert not await user_can_access_model(db, model, await resolve_access_subject(db, user_id=user.id))
         assert await user_can_access_model(db, model, await resolve_access_subject(db, user_id=admin.id))
-        filtered = await filter_models_for_subject(
-            db, [model], await resolve_access_subject(db, user_id=user.id)
-        )
+        filtered = await filter_models_for_subject(db, [model], await resolve_access_subject(db, user_id=user.id))
         assert filtered == []
     await engine.dispose()
 
@@ -142,8 +138,10 @@ async def _test_bulk_public_clears_assignments_private_keeps() -> None:
         await bulk_set_access_type(db, [a.id, b.id], ACCESS_PRIVATE)
         await db.commit()
         still = (
-            await db.execute(select(ModelAccessAssignment).where(ModelAccessAssignment.model_id == a.id))
-        ).scalars().all()
+            (await db.execute(select(ModelAccessAssignment).where(ModelAccessAssignment.model_id == a.id)))
+            .scalars()
+            .all()
+        )
         assert len(still) == 1
         await db.refresh(a)
         assert a.access_type == ACCESS_PRIVATE
@@ -151,8 +149,10 @@ async def _test_bulk_public_clears_assignments_private_keeps() -> None:
         await bulk_set_access_type(db, [a.id, b.id], ACCESS_PUBLIC)
         await db.commit()
         cleared = (
-            await db.execute(select(ModelAccessAssignment).where(ModelAccessAssignment.model_id.in_([a.id, b.id])))
-        ).scalars().all()
+            (await db.execute(select(ModelAccessAssignment).where(ModelAccessAssignment.model_id.in_([a.id, b.id]))))
+            .scalars()
+            .all()
+        )
         assert cleared == []
         await db.refresh(a)
         await db.refresh(b)
@@ -234,8 +234,10 @@ async def _test_sync_preserves_access_type() -> None:
         assert model.access_type == ACCESS_PRIVATE
         assert model.display_name == "GPT-4o Updated"
         assigns = (
-            await db.execute(select(ModelAccessAssignment).where(ModelAccessAssignment.model_id == model.id))
-        ).scalars().all()
+            (await db.execute(select(ModelAccessAssignment).where(ModelAccessAssignment.model_id == model.id)))
+            .scalars()
+            .all()
+        )
         assert assigns == []
     await engine.dispose()
 

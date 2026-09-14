@@ -66,9 +66,16 @@ async def _seed(db, *, status="submitted", lease_owner="worker-A", provider_job_
     db.add(user)
     await db.flush()
     job = VideoGenerationJob(
-        id=str(uuid.uuid4()), user_id=user.id, model_id="video-model", provider_type="openrouter",
-        adapter_key="openrouter", status=status, prompt="p", persist=1,
-        params_json=json.dumps({"duration": 5}), lease_owner=lease_owner,
+        id=str(uuid.uuid4()),
+        user_id=user.id,
+        model_id="video-model",
+        provider_type="openrouter",
+        adapter_key="openrouter",
+        status=status,
+        prompt="p",
+        persist=1,
+        params_json=json.dumps({"duration": 5}),
+        lease_owner=lease_owner,
         provider_job_id=provider_job_id,
     )
     db.add(job)
@@ -112,7 +119,13 @@ def test_runner_stops_without_billing_when_lease_is_taken_over():
                     conn = Connection(name="c", provider_type="openrouter", api_key_encrypted="enc", is_active=True)
                     db.add(conn)
                     await db.flush()
-                    model = AIModel(connection_id=conn.id, external_id="video-model", provider_type="openrouter", display_name="v", is_video_model=True)
+                    model = AIModel(
+                        connection_id=conn.id,
+                        external_id="video-model",
+                        provider_type="openrouter",
+                        display_name="v",
+                        is_video_model=True,
+                    )
                     db.add(model)
                     await db.flush()
                     row = await db.get(VideoGenerationJob, job_id)
@@ -150,7 +163,13 @@ def test_cancel_yields_when_provider_already_completed():
                 conn = Connection(name="c", provider_type="openrouter", api_key_encrypted="enc", is_active=True)
                 db.add(conn)
                 await db.flush()
-                model = AIModel(connection_id=conn.id, external_id="video-model", provider_type="openrouter", display_name="v", is_video_model=True)
+                model = AIModel(
+                    connection_id=conn.id,
+                    external_id="video-model",
+                    provider_type="openrouter",
+                    display_name="v",
+                    is_video_model=True,
+                )
                 db.add(model)
                 await db.flush()
                 job.catalog_model_id = model.id

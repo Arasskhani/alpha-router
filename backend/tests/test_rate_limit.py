@@ -53,9 +53,7 @@ class _FakeRedisOk:
                     elif kind == "zremrangebyscore":
                         lo, hi = op[2], op[3]
                         before = dict(outer._store[key])
-                        outer._store[key] = {
-                            m: t for m, t in before.items() if not (lo <= t <= hi)
-                        }
+                        outer._store[key] = {m: t for m, t in before.items() if not (lo <= t <= hi)}
                         results.append(len(before) - len(outer._store[key]))
                     elif kind == "zcard":
                         results.append(len(outer._store[key]))

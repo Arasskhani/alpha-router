@@ -146,10 +146,12 @@ async def list_user_chats(
     q: str | None = Query(None, description="Search session titles (min 2 chars)"),
     since: int | None = Query(None, description="Return sessions updated after this Unix ms timestamp"),
     min_activity_ms: int | None = Query(
-        None, description="Sessions with last activity at or after this Unix ms timestamp",
+        None,
+        description="Sessions with last activity at or after this Unix ms timestamp",
     ),
     max_activity_ms: int | None = Query(
-        None, description="Sessions with last activity before this Unix ms timestamp",
+        None,
+        description="Sessions with last activity before this Unix ms timestamp",
     ),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_read_db),
@@ -319,9 +321,7 @@ async def get_session_messages(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    messages, has_more = await list_session_messages(
-        db, user.id, session_id, limit=limit, before=before
-    )
+    messages, has_more = await list_session_messages(db, user.id, session_id, limit=limit, before=before)
     await db.commit()
     session = await get_chat_session(db, user.id, session_id)
     if not messages and before is None:

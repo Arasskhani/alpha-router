@@ -25,9 +25,7 @@ _BASE64URL_RE = re.compile(r"^[A-Za-z0-9_-]+={0,2}$")
 
 def _derive_key(secret: str) -> bytes:
     if not secret:
-        raise RuntimeError(
-            "DATA_ENCRYPTION_KEY is not configured; cannot encrypt stored secrets."
-        )
+        raise RuntimeError("DATA_ENCRYPTION_KEY is not configured; cannot encrypt stored secrets.")
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,
@@ -65,9 +63,7 @@ def _decrypt_token(value: str) -> str:
     try:
         return _get_fernet().decrypt(value.encode("ascii")).decode("utf-8")
     except (InvalidToken, UnicodeError, ValueError) as exc:
-        raise ValueError(
-            "Stored secret cannot be decrypted with DATA_ENCRYPTION_KEY."
-        ) from exc
+        raise ValueError("Stored secret cannot be decrypted with DATA_ENCRYPTION_KEY.") from exc
 
 
 def encrypt_secret(plaintext: str | None) -> str:

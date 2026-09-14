@@ -99,9 +99,7 @@ class KnowledgeWorker:
             return JobProcessResult(outcome="dead", error=error)
         return await self._process_knowledge_job(message)
 
-    async def _process_memory_job(
-        self, message: QueueMessage, *, scope: str
-    ) -> JobProcessResult:
+    async def _process_memory_job(self, message: QueueMessage, *, scope: str) -> JobProcessResult:
         from app.services.memory_extraction_service import ExtractionParseError
         from app.services.observability import observe_memory_extract_job
 
@@ -166,9 +164,7 @@ class KnowledgeWorker:
                 try:
                     async with self.session_factory() as db:
                         current = await db.get(job_model, job.id)
-                        if current is None or not await heartbeat_job(
-                            db, current, worker_id=self.consumer_name
-                        ):
+                        if current is None or not await heartbeat_job(db, current, worker_id=self.consumer_name):
                             await db.rollback()
                             return
                         await db.commit()
@@ -227,9 +223,7 @@ class KnowledgeWorker:
             if result_status == "dead":
                 await publish_dead_letter(self.redis, message, error=str(failure))
             await acknowledge_message(self.redis, message.stream_id)
-            observe_memory_extract_job(
-                outcome=result_status, duration_seconds=duration, scope=scope
-            )
+            observe_memory_extract_job(outcome=result_status, duration_seconds=duration, scope=scope)
             return JobProcessResult(
                 outcome=result_status,
                 job_id=job.id,
@@ -237,9 +231,7 @@ class KnowledgeWorker:
             )
 
         await acknowledge_message(self.redis, message.stream_id)
-        observe_memory_extract_job(
-            outcome="succeeded", duration_seconds=duration, scope=scope
-        )
+        observe_memory_extract_job(outcome="succeeded", duration_seconds=duration, scope=scope)
         return JobProcessResult(outcome="succeeded", job_id=job.id)
 
     async def _process_knowledge_job(self, message: QueueMessage) -> JobProcessResult:
@@ -269,9 +261,7 @@ class KnowledgeWorker:
 
         handler = self.handlers.get(job.job_type)
         stop_heartbeat = asyncio.Event()
-        heartbeat_task = asyncio.create_task(
-            self._heartbeat_loop(job.id, stop_heartbeat)
-        )
+        heartbeat_task = asyncio.create_task(self._heartbeat_loop(job.id, stop_heartbeat))
         failure: Exception | None = None
         retryable = True
         if handler is None:
@@ -300,9 +290,7 @@ class KnowledgeWorker:
                     worker_id=self.consumer_name,
                 ):
                     await db.rollback()
-                    failure = RuntimeError(
-                        "Knowledge job lease was lost before completion"
-                    )
+                    failure = RuntimeError("Knowledge job lease was lost before completion")
                 else:
                     await db.commit()
 
@@ -346,15 +334,10 @@ class KnowledgeWorker:
                                 KnowledgeIndexVersion,
                                 current.index_version_id,
                             )
-                            if (
-                                index_version is not None
-                                and index_version.status != "active"
-                            ):
+                            if index_version is not None and index_version.status != "active":
                                 index_version.status = "failed"
                                 index_version.active_scope_key = None
-                                index_version.failure_reason = (
-                                    f"Indexing retries exhausted: {str(failure)[:7900]}"
-                                )
+                                index_version.failure_reason = f"Indexing retries exhausted: {str(failure)[:7900]}"
                     await db.commit()
             if result_status == "dead":
                 await publish_dead_letter(self.redis, message, error=str(failure))

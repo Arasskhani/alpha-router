@@ -82,9 +82,7 @@ async def _table_exists(db: AsyncSession, table: str, kind: str) -> bool:
     if kind == "sqlite":
         row = (
             await db.execute(
-                text(
-                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :name LIMIT 1"
-                ),
+                text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :name LIMIT 1"),
                 {"name": table},
             )
         ).first()
@@ -92,8 +90,7 @@ async def _table_exists(db: AsyncSession, table: str, kind: str) -> bool:
     row = (
         await db.execute(
             text(
-                "SELECT 1 FROM information_schema.tables "
-                "WHERE table_schema = 'public' AND table_name = :name LIMIT 1"
+                "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = :name LIMIT 1"
             ),
             {"name": table},
         )

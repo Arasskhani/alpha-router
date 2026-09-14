@@ -90,19 +90,13 @@ async def resolve_embedding_model(
         .first()
     )
     if row is None:
-        raise ValueError(
-            f"Embedding model is not enabled in the catalog: {requested_model}"
-        )
+        raise ValueError(f"Embedding model is not enabled in the catalog: {requested_model}")
     connection = await db.get(Connection, row.connection_id)
     if connection is None or not bool(connection.is_active):
         raise ValueError("Embedding model connection is unavailable")
-    actual_provider = (
-        (connection.provider_type or row.provider_type or "").strip().lower()
-    )
+    actual_provider = (connection.provider_type or row.provider_type or "").strip().lower()
     if requested_provider != actual_provider:
-        raise ValueError(
-            "Knowledge index embedding provider does not match the model connection"
-        )
+        raise ValueError("Knowledge index embedding provider does not match the model connection")
     kinds = model_kinds(
         external_id=row.external_id or "",
         is_image_model=bool(row.is_image_model),
@@ -120,9 +114,7 @@ async def resolve_embedding_model(
     )
 
 
-def _response_vectors(
-    response: object, *, expected: int, dimensions: int
-) -> list[list[float]]:
+def _response_vectors(response: object, *, expected: int, dimensions: int) -> list[list[float]]:
     if hasattr(response, "model_dump"):
         payload = response.model_dump()
     elif isinstance(response, dict):
@@ -142,9 +134,7 @@ def _response_vectors(
         index = int(item.get("index", fallback_index))
         vector = [float(value) for value in item["embedding"]]
         if len(vector) != dimensions:
-            raise ValueError(
-                f"Embedding dimension mismatch: expected {dimensions}, received {len(vector)}"
-            )
+            raise ValueError(f"Embedding dimension mismatch: expected {dimensions}, received {len(vector)}")
         if any(not math.isfinite(value) for value in vector):
             raise ValueError("Embedding provider returned a non-finite vector")
         ordered.append((index, vector))
@@ -172,16 +162,10 @@ class CatalogKnowledgeEmbeddingBackend:
             return []
         if len(bounded) > settings.knowledge_embedding_batch_size:
             raise ValueError("Knowledge embedding batch exceeds the configured limit")
-        if any(
-            not text.strip()
-            or len(text) > settings.knowledge_embedding_max_input_characters
-            for text in bounded
-        ):
+        if any(not text.strip() or len(text) > settings.knowledge_embedding_max_input_characters for text in bounded):
             raise ValueError("Knowledge embedding input is empty or too large")
         if dimensions < 1 or dimensions > 65_536:
-            raise ValueError(
-                "Knowledge embedding dimensions are outside the safe range"
-            )
+            raise ValueError("Knowledge embedding dimensions are outside the safe range")
 
         resolved = await resolve_embedding_model(db, provider=provider, model=model)
         kwargs: dict = {

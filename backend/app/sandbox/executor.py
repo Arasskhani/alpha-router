@@ -77,11 +77,7 @@ class DockerBrokerSandboxExecutor:
         return SandboxExecutorError(
             status_code=response.status_code,
             detail=detail[:500],
-            error_code=(
-                str(payload.get("error_code"))
-                if payload.get("error_code") is not None
-                else None
-            ),
+            error_code=(str(payload.get("error_code")) if payload.get("error_code") is not None else None),
             retry_after_seconds=retry_after,
         )
 
@@ -133,16 +129,10 @@ class DockerBrokerSandboxExecutor:
                         raise SandboxExecutorError(
                             504 if state == JobState.TIMEOUT else 502,
                             str(payload.get("detail") or f"Sandbox job {state.value}"),
-                            (
-                                str(payload.get("error_code"))
-                                if payload.get("error_code") is not None
-                                else None
-                            ),
+                            (str(payload.get("error_code")) if payload.get("error_code") is not None else None),
                         )
                     if time.monotonic() >= deadline:
-                        cancel_task = asyncio.create_task(
-                            self._cancel_with_client(client, resolved_job_id)
-                        )
+                        cancel_task = asyncio.create_task(self._cancel_with_client(client, resolved_job_id))
                         await asyncio.shield(cancel_task)
                         raise SandboxExecutorError(
                             504,
@@ -151,9 +141,7 @@ class DockerBrokerSandboxExecutor:
                         )
                     await asyncio.sleep(self.poll_interval_seconds)
             except asyncio.CancelledError:
-                cancel_task = asyncio.create_task(
-                    self._cancel_with_client(client, resolved_job_id)
-                )
+                cancel_task = asyncio.create_task(self._cancel_with_client(client, resolved_job_id))
                 try:
                     await asyncio.shield(cancel_task)
                 except Exception:

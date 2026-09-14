@@ -106,11 +106,7 @@ class CsrfProtectionMiddleware:
         settings = get_settings()
         method = str(scope.get("method") or "").upper()
         path = str(scope.get("path") or "")
-        if (
-            not settings.enable_csrf
-            or method not in UNSAFE_METHODS
-            or not path.startswith("/api/")
-        ):
+        if not settings.enable_csrf or method not in UNSAFE_METHODS or not path.startswith("/api/"):
             await self.app(scope, receive, send)
             return
 
@@ -147,11 +143,7 @@ class CsrfProtectionMiddleware:
 
         cookie_token = request.cookies.get(settings.csrf_cookie_name) or ""
         header_token = request.headers.get(settings.csrf_header_name) or ""
-        if (
-            not cookie_token
-            or not header_token
-            or not hmac.compare_digest(cookie_token, header_token)
-        ):
+        if not cookie_token or not header_token or not hmac.compare_digest(cookie_token, header_token):
             increment("csrf_failure")
             response = JSONResponse(status_code=403, content={"detail": "CSRF validation failed"})
             await response(scope, receive, send)

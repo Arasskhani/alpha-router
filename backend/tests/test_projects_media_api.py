@@ -29,7 +29,6 @@ from app.models.user import User
 PROJ = "media-api-1"
 
 
-
 @pytest.fixture(autouse=True)
 def _no_clamav(monkeypatch):
     """Uploads are screened by ClamAV now; these tests cover the API, not the scanner."""
@@ -105,9 +104,7 @@ def _upload(name: str, data: bytes, content_type: str = "application/octet-strea
 
 def test_api_upload_media_success(monkeypatch):
     store = InMemoryObjectStore()
-    monkeypatch.setattr(
-        "app.api.projects.default_project_media_store", lambda: store
-    )
+    monkeypatch.setattr("app.api.projects.default_project_media_store", lambda: store)
 
     async def run():
         factory, engine = await _factory()
@@ -223,13 +220,9 @@ def test_api_download_media_success(monkeypatch):
                     user=owner,
                     db=db,
                 )
-                meta = await get_project_media_endpoint(
-                    project_id=PROJ, media_id=item["id"], user=viewer, db=db
-                )
+                meta = await get_project_media_endpoint(project_id=PROJ, media_id=item["id"], user=viewer, db=db)
                 assert meta["fileName"] == "doc.pdf"
-                resp = await download_project_media_endpoint(
-                    project_id=PROJ, media_id=item["id"], user=viewer, db=db
-                )
+                resp = await download_project_media_endpoint(project_id=PROJ, media_id=item["id"], user=viewer, db=db)
                 assert resp.body == b"%PDF-bytes"
                 assert resp.media_type == "application/pdf"
                 assert "doc.pdf" in resp.headers["content-disposition"]
@@ -258,9 +251,7 @@ def test_api_delete_media_owner_success(monkeypatch):
                     user=contrib,
                     db=db,
                 )
-                result = await delete_project_media_endpoint(
-                    project_id=PROJ, media_id=item["id"], user=owner, db=db
-                )
+                result = await delete_project_media_endpoint(project_id=PROJ, media_id=item["id"], user=owner, db=db)
                 assert result == {"deleted": True}
                 listed = await list_project_media_endpoint(
                     project_id=PROJ, user=owner, db=db, kind=None, q=None, limit=50, offset=0
@@ -292,9 +283,7 @@ def test_api_delete_media_contributor_other_403(monkeypatch):
                     db=db,
                 )
                 try:
-                    await delete_project_media_endpoint(
-                        project_id=PROJ, media_id=item["id"], user=contrib, db=db
-                    )
+                    await delete_project_media_endpoint(project_id=PROJ, media_id=item["id"], user=contrib, db=db)
                     assert False
                 except HTTPException as e:
                     assert e.status_code == 403
@@ -314,23 +303,17 @@ def test_api_media_not_found_404(monkeypatch):
             async with factory() as db:
                 owner, _, _ = await _setup(db)
                 try:
-                    await get_project_media_endpoint(
-                        project_id=PROJ, media_id=99999, user=owner, db=db
-                    )
+                    await get_project_media_endpoint(project_id=PROJ, media_id=99999, user=owner, db=db)
                     assert False
                 except HTTPException as e:
                     assert e.status_code == 404
                 try:
-                    await download_project_media_endpoint(
-                        project_id=PROJ, media_id=99999, user=owner, db=db
-                    )
+                    await download_project_media_endpoint(project_id=PROJ, media_id=99999, user=owner, db=db)
                     assert False
                 except HTTPException as e:
                     assert e.status_code == 404
                 try:
-                    await delete_project_media_endpoint(
-                        project_id=PROJ, media_id=99999, user=owner, db=db
-                    )
+                    await delete_project_media_endpoint(project_id=PROJ, media_id=99999, user=owner, db=db)
                     assert False
                 except HTTPException as e:
                     assert e.status_code == 404

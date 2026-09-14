@@ -22,12 +22,8 @@ def _client() -> TestClient:
 
 def test_compose_prepares_sandbox_before_starting_broker() -> None:
     compose = (Path(__file__).parents[2] / "docker-compose.yml").read_text(encoding="utf-8")
-    sandbox_section = compose.split("  alpha-router-sandbox:", 1)[1].split(
-        "  alpha-router-sandbox-broker:", 1
-    )[0]
-    broker_section = compose.split("  alpha-router-sandbox-broker:", 1)[1].split(
-        "  alpha-router:", 1
-    )[0]
+    sandbox_section = compose.split("  alpha-router-sandbox:", 1)[1].split("  alpha-router-sandbox-broker:", 1)[0]
+    broker_section = compose.split("  alpha-router-sandbox-broker:", 1)[1].split("  alpha-router:", 1)[0]
     assert 'entrypoint: ["/bin/true"]' in sandbox_section
     assert 'network_mode: "none"' in sandbox_section
     assert "profiles:" not in sandbox_section
@@ -85,9 +81,7 @@ def _artifact_payload(name: str, content: bytes, mime_type: str) -> dict:
 
 def test_broker_returns_artifacts_with_non_english_names() -> None:
     pdf = b"%PDF-1.4\n%%EOF"
-    artifacts = broker._validated_artifacts(
-        [_artifact_payload("گزارش-مدیریتی.pdf", pdf, "application/pdf")]
-    )
+    artifacts = broker._validated_artifacts([_artifact_payload("گزارش-مدیریتی.pdf", pdf, "application/pdf")])
     assert [item["name"] for item in artifacts] == ["گزارش-مدیریتی.pdf"]
 
 
@@ -347,9 +341,7 @@ def test_broker_hardcodes_container_security_policy() -> None:
 
     async def run():
         with patch.object(asyncio, "create_subprocess_exec", fake_spawn):
-            return await broker._run_container(
-                broker.ExecuteRequest(code="print(1)", files={"data.txt": "ok"})
-            )
+            return await broker._run_container(broker.ExecuteRequest(code="print(1)", files={"data.txt": "ok"}))
 
     result = asyncio.run(run())
     assert result["stdout"] == "ok"

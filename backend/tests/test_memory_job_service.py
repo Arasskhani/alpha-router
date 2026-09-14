@@ -60,28 +60,28 @@ async def _coalesce_retry_recover() -> None:
     factory, engine = await _session_factory()
     async with factory() as db:
         user, session = await _seed_user_session(db)
-        first = await schedule_extraction(
-            db, user_id=user.id, session_id=session.id, watermark_sequence=2
-        )
+        first = await schedule_extraction(db, user_id=user.id, session_id=session.id, watermark_sequence=2)
         assert first is not None
         first_id = first.id
         first_run = first.run_after
-        second = await schedule_extraction(
-            db, user_id=user.id, session_id=session.id, watermark_sequence=5
-        )
+        second = await schedule_extraction(db, user_id=user.id, session_id=session.id, watermark_sequence=5)
         await db.commit()
         assert second is not None
         assert second.id == first_id
         assert second.watermark_sequence == 5
         assert second.run_after >= first_run
         open_jobs = (
-            await db.execute(
-                select(UserMemoryJob).where(
-                    UserMemoryJob.user_id == user.id,
-                    UserMemoryJob.status.in_(("pending", "retry")),
+            (
+                await db.execute(
+                    select(UserMemoryJob).where(
+                        UserMemoryJob.user_id == user.id,
+                        UserMemoryJob.status.in_(("pending", "retry")),
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(open_jobs) == 1
         events = (await db.execute(select(OutboxEvent))).scalars().all()
         assert any(event.event_type == "memory.job.ready" for event in events)
@@ -97,9 +97,7 @@ async def _coalesce_retry_recover() -> None:
         dup = await claim_job(db, job_id=first_id, worker_id="w2")
         assert dup is None
 
-        result = await fail_job(
-            db, claimed, worker_id="w1", error="boom", retryable=True
-        )
+        result = await fail_job(db, claimed, worker_id="w1", error="boom", retryable=True)
         await db.commit()
         assert result.status == "retry"
         assert result.next_attempt_at is not None
@@ -110,9 +108,7 @@ async def _coalesce_retry_recover() -> None:
         await db.flush()
         claimed2 = await claim_job(db, job_id=first_id, worker_id="w1")
         assert claimed2 is not None
-        dead = await fail_job(
-            db, claimed2, worker_id="w1", error="still boom", retryable=True
-        )
+        dead = await fail_job(db, claimed2, worker_id="w1", error="still boom", retryable=True)
         await db.commit()
         assert dead.status == "dead"
 
@@ -149,9 +145,7 @@ async def _coalesce_retry_recover() -> None:
         )
         db.add(private)
         await db.commit()
-        skipped = await schedule_extraction(
-            db, user_id=user.id, session_id=private.id, watermark_sequence=2
-        )
+        skipped = await schedule_extraction(db, user_id=user.id, session_id=private.id, watermark_sequence=2)
         assert skipped is None
     await engine.dispose()
 
@@ -180,9 +174,7 @@ async def _watermark_reset() -> None:
                 sequence=2,
             )
         )
-        job = await schedule_extraction(
-            db, user_id=user.id, session_id=session.id, watermark_sequence=2
-        )
+        job = await schedule_extraction(db, user_id=user.id, session_id=session.id, watermark_sequence=2)
         await create_memory(db, user.id, "Something durable")
         await db.commit()
         assert job is not None
@@ -199,16 +191,12 @@ async def _complete_job_happy_path() -> None:
     factory, engine = await _session_factory()
     async with factory() as db:
         user, session = await _seed_user_session(db)
-        job = await schedule_extraction(
-            db, user_id=user.id, session_id=session.id, watermark_sequence=4
-        )
+        job = await schedule_extraction(db, user_id=user.id, session_id=session.id, watermark_sequence=4)
         job.run_after = dt.datetime.utcnow() - dt.timedelta(seconds=1)
         await db.flush()
         claimed = await claim_job(db, job_id=job.id, worker_id="w1")
         assert claimed is not None
-        ok = await complete_job(
-            db, claimed, worker_id="w1", extracted_sequence=4
-        )
+        ok = await complete_job(db, claimed, worker_id="w1", extracted_sequence=4)
         await db.commit()
         assert ok is True
         done = await db.get(UserMemoryJob, job.id)
@@ -222,9 +210,7 @@ async def _race_keeps_caller_transaction_usable() -> None:
     factory, engine = await _session_factory()
     async with factory() as db:
         user, session = await _seed_user_session(db)
-        winner = await schedule_extraction(
-            db, user_id=user.id, session_id=session.id, watermark_sequence=2
-        )
+        winner = await schedule_extraction(db, user_id=user.id, session_id=session.id, watermark_sequence=2)
         await db.commit()
         assert winner is not None
 
@@ -261,18 +247,12 @@ async def _race_keeps_caller_transaction_usable() -> None:
             pass
 
         # The savepoint rollback leaves the outer transaction writable.
-        again = await schedule_extraction(
-            db, user_id=user.id, session_id=session.id, watermark_sequence=3
-        )
+        again = await schedule_extraction(db, user_id=user.id, session_id=session.id, watermark_sequence=3)
         await db.commit()
         assert again is not None
         assert again.id == winner.id
         assert again.watermark_sequence == 3
-        persisted = (
-            await db.execute(
-                select(ChatMessage).where(ChatMessage.session_id == session.id)
-            )
-        ).scalars().all()
+        persisted = (await db.execute(select(ChatMessage).where(ChatMessage.session_id == session.id))).scalars().all()
         assert [row.sequence for row in persisted] == [3]
     await engine.dispose()
 

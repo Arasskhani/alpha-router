@@ -10,11 +10,7 @@ from __future__ import annotations
 
 # C0 controls other than tab/newline/carriage return carry no meaning in
 # extracted text and corrupt both rendering and downstream diffing.
-_STRIPPED_CONTROLS = {
-    code: None
-    for code in range(0x20)
-    if code not in (0x09, 0x0A, 0x0D)
-}
+_STRIPPED_CONTROLS = {code: None for code in range(0x20) if code not in (0x09, 0x0A, 0x0D)}
 _STRIPPED_CONTROLS[0x7F] = None
 
 _NUL_ONLY = {0x00: None}

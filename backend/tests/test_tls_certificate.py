@@ -36,9 +36,7 @@ def _self_signed(days: int = 30, key_size: int = 2048) -> tuple[str, str]:
         .not_valid_before(now - datetime.timedelta(minutes=1))
         .not_valid_after(now + datetime.timedelta(days=days))
         .add_extension(
-            x509.SubjectAlternativeName(
-                [x509.DNSName("localhost"), x509.IPAddress(IPv4Address("127.0.0.1"))]
-            ),
+            x509.SubjectAlternativeName([x509.DNSName("localhost"), x509.IPAddress(IPv4Address("127.0.0.1"))]),
             critical=False,
         )
         .sign(key, hashes.SHA256())
@@ -145,23 +143,19 @@ def test_tls_health_url_brackets_ipv6():
 def test_edge_listener_applied_requires_matching_generation(tmp_path, monkeypatch):
     monkeypatch.setattr("app.services.tls_edge_service.tls_state_dir", lambda: tmp_path)
     assert edge_listener_applied() is False
-    (tmp_path / "desired-state.json").write_text(
-        '{"enabled": true, "generation": 3}\n', encoding="utf-8"
-    )
-    (tmp_path / "apply-status.json").write_text(
-        '{"generation": 2, "ok": true}\n', encoding="utf-8"
-    )
+    (tmp_path / "desired-state.json").write_text('{"enabled": true, "generation": 3}\n', encoding="utf-8")
+    (tmp_path / "apply-status.json").write_text('{"generation": 2, "ok": true}\n', encoding="utf-8")
     assert edge_listener_applied() is False
-    (tmp_path / "apply-status.json").write_text(
-        '{"generation": 3, "ok": true}\n', encoding="utf-8"
-    )
+    (tmp_path / "apply-status.json").write_text('{"generation": 3, "ok": true}\n', encoding="utf-8")
     assert edge_listener_applied() is True
 
 
 def test_nginx_config_is_hardened():
     from app.services.tls_edge_service import render_nginx_config
 
-    conf = render_nginx_config(https_port=443, http_mode="redirect", hsts_enabled=True, has_chain=False, max_body_mb=100)
+    conf = render_nginx_config(
+        https_port=443, http_mode="redirect", hsts_enabled=True, has_chain=False, max_body_mb=100
+    )
     assert "server_tokens off;" in conf
     assert "access_log off;" in conf
     assert "ssl_session_tickets off;" in conf

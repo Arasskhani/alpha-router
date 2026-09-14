@@ -30,6 +30,8 @@ PURGED_AGENT_SLUG_PREFIX = "purged-"
 
 def is_purged_agent(agent: Agent) -> bool:
     return (agent.slug or "").startswith(PURGED_AGENT_SLUG_PREFIX)
+
+
 _POLICY_FIELDS = (
     "model_policy",
     "tool_policy",
@@ -48,9 +50,7 @@ def normalize_agent_slug(value: str) -> str:
     slug = (value or "").strip().lower().replace("_", "-").replace(" ", "-")
     slug = re.sub(r"-+", "-", slug).strip("-")
     if not slug or len(slug) > 128 or not _SLUG_RE.fullmatch(slug):
-        raise ValueError(
-            "Agent slug must contain lowercase letters, numbers, and single hyphens"
-        )
+        raise ValueError("Agent slug must contain lowercase letters, numbers, and single hyphens")
     return slug
 
 
@@ -120,9 +120,7 @@ async def create_agent(
     clean_slug = normalize_agent_slug(slug)
     if access_type not in {"public", "private"}:
         raise ValueError("access_type must be 'public' or 'private'")
-    existing = (
-        await db.execute(select(Agent.id).where(Agent.slug == clean_slug))
-    ).scalar_one_or_none()
+    existing = (await db.execute(select(Agent.id).where(Agent.slug == clean_slug))).scalar_one_or_none()
     if existing is not None:
         raise ValueError(f"Agent slug already exists: {clean_slug}")
 
@@ -162,9 +160,7 @@ async def create_agent_version(
     prompt = (system_prompt or "").strip()
     if not prompt:
         raise ValueError("system_prompt is required")
-    normalized_policies = {
-        field: dict(policies.get(field) or {}) for field in _POLICY_FIELDS
-    }
+    normalized_policies = {field: dict(policies.get(field) or {}) for field in _POLICY_FIELDS}
     # Discarded drafts stay archived (audit table is append-only), so reuse their
     # version numbers instead of forever incrementing past them.
     reusable = (
@@ -180,11 +176,7 @@ async def create_agent_version(
         )
     ).scalar_one_or_none()
     if reusable is not None:
-        await db.execute(
-            delete(AgentKnowledgeBinding).where(
-                AgentKnowledgeBinding.agent_version_id == reusable.id
-            )
-        )
+        await db.execute(delete(AgentKnowledgeBinding).where(AgentKnowledgeBinding.agent_version_id == reusable.id))
         reusable.status = "draft"
         reusable.archived_at = None
         reusable.submitted_at = None
@@ -350,9 +342,7 @@ async def discard_agent_draft(
         or 0
     )
     if sibling_count < 1:
-        raise ValueError(
-            "Cannot discard the only Agent version; archive or delete the Agent instead"
-        )
+        raise ValueError("Cannot discard the only Agent version; archive or delete the Agent instead")
     preferred = (
         await db.execute(
             select(AgentVersion.id)
@@ -445,9 +435,7 @@ async def publish_agent_version(
         and version.created_by_user_id is not None
         and int(version.created_by_user_id) == int(actor_user_id)
     ):
-        raise ValueError(
-            "Maker-checker violation: creator cannot publish this Agent version"
-        )
+        raise ValueError("Maker-checker violation: creator cannot publish this Agent version")
     agent = await db.get(Agent, version.agent_id)
     if agent is None:
         raise ValueError("Agent no longer exists")
@@ -513,9 +501,7 @@ async def rollback_agent_version(
         reason=clean_reason,
         payload={
             "restored_version_number": target.version_number,
-            "replaced_version_id": current.id
-            if current and current.id != target.id
-            else None,
+            "replaced_version_id": current.id if current and current.id != target.id else None,
         },
     )
     return target
@@ -586,34 +572,12 @@ async def purge_agent(
     original_name = agent.name
     original_slug = agent.slug
 
-    version_ids = (
-        (
-            await db.execute(
-                select(AgentVersion.id).where(AgentVersion.agent_id == agent.id)
-            )
-        )
-        .scalars()
-        .all()
-    )
+    version_ids = (await db.execute(select(AgentVersion.id).where(AgentVersion.agent_id == agent.id))).scalars().all()
     if version_ids:
-        await db.execute(
-            delete(AgentKnowledgeBinding).where(
-                AgentKnowledgeBinding.agent_version_id.in_(version_ids)
-            )
-        )
-    await db.execute(
-        delete(AgentAccessAssignment).where(AgentAccessAssignment.agent_id == agent.id)
-    )
+        await db.execute(delete(AgentKnowledgeBinding).where(AgentKnowledgeBinding.agent_version_id.in_(version_ids)))
+    await db.execute(delete(AgentAccessAssignment).where(AgentAccessAssignment.agent_id == agent.id))
 
-    versions = (
-        (
-            await db.execute(
-                select(AgentVersion).where(AgentVersion.agent_id == agent.id)
-            )
-        )
-        .scalars()
-        .all()
-    )
+    versions = (await db.execute(select(AgentVersion).where(AgentVersion.agent_id == agent.id))).scalars().all()
     for version in versions:
         version.status = "archived"
         version.active_scope_key = None

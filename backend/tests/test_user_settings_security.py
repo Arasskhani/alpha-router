@@ -74,12 +74,7 @@ def test_prefs_timezone_and_language_normalization():
 
 
 def test_import_format_detection_and_reject_garbage():
-    assert (
-        detect_import_format(
-            {"format": "alpha-router-chats", "version": 1, "sessions": []}
-        )
-        == "alpha-router-chats"
-    )
+    assert detect_import_format({"format": "alpha-router-chats", "version": 1, "sessions": []}) == "alpha-router-chats"
     assert detect_import_format([{"mapping": {}, "title": "t"}]) == "chatgpt"
     assert detect_import_format({"chats": []}) == "openwebui"
     for invalid in ({"format": "unknown", "version": 1, "sessions": []}, {"foo": 1}):
@@ -179,9 +174,7 @@ def test_import_assistant_messages_have_received_at():
             assert result["imported"] == 1
             from app.models.chat import ChatSession
 
-            session = (
-                await db.execute(select(ChatSession).where(ChatSession.user_id == user.id))
-            ).scalar_one()
+            session = (await db.execute(select(ChatSession).where(ChatSession.user_id == user.id))).scalar_one()
             msgs, _ = await list_session_messages(db, user.id, session.id)
             assert msgs[-1]["role"] == "assistant"
             assert msgs[-1].get("receivedAt") is not None

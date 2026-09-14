@@ -66,4 +66,3 @@ async def fetch_video_asset(
                         raise ValueError("Provider returned an unsupported video MIME type")
                 return blob, mime
     raise ValueError("Too many provider redirects")
-

@@ -116,9 +116,7 @@ def test_cancelling_executor_deletes_active_broker_job() -> None:
             execution_timeout_seconds=20,
         )
         with patch("app.sandbox.executor.httpx.AsyncClient", Client):
-            task = asyncio.create_task(
-                executor.execute("print(1)", {}, job_id="job-cancel")
-            )
+            task = asyncio.create_task(executor.execute("print(1)", {}, job_id="job-cancel"))
             await get_started.wait()
             task.cancel()
             with pytest.raises(asyncio.CancelledError):

@@ -42,24 +42,15 @@ def _run_migrate(database_path: Path) -> subprocess.CompletedProcess[str]:
 
 
 def test_agent_platform_migration_is_complete_and_idempotent():
-    database_path = (
-        Path(__file__).resolve().parent / f".agent-platform-{uuid.uuid4().hex}.sqlite"
-    )
+    database_path = Path(__file__).resolve().parent / f".agent-platform-{uuid.uuid4().hex}.sqlite"
     try:
         _run_migrate(database_path)
         _run_migrate(database_path)
 
         connection = sqlite3.connect(database_path)
         try:
-            tables = {
-                row[0]
-                for row in connection.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'table'"
-                )
-            }
-            revision = connection.execute(
-                "SELECT version_num FROM alembic_version"
-            ).fetchone()
+            tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+            revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()
         finally:
             connection.close()
 

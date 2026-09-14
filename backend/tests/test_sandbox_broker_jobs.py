@@ -103,9 +103,7 @@ def test_timeout_maps_to_terminal_timeout_state() -> None:
 def test_submit_rejects_oversized_workspace_file_with_invalid_request() -> None:
     async def run():
         big = "x" * (broker.MAX_FILE_BYTES + 1)
-        resp = await broker.submit_job(
-            JobSubmitRequest(code="print(1)", files={"large.txt": big})
-        )
+        resp = await broker.submit_job(JobSubmitRequest(code="print(1)", files={"large.txt": big}))
         assert resp.status_code == 422
         assert _body(resp)["error_code"] == "invalid_request"
         assert broker._jobs == {}

@@ -42,12 +42,14 @@ async def list_user_keys(user: User = Depends(get_current_user), db: AsyncSessio
     from app.config import get_settings
 
     rows = (
-        await db.execute(
-            select(UserApiKey)
-            .where(UserApiKey.user_id == user.id)
-            .order_by(UserApiKey.created_at.desc())
+        (
+            await db.execute(
+                select(UserApiKey).where(UserApiKey.user_id == user.id).order_by(UserApiKey.created_at.desc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     base = get_settings().api_public_url
     return [_serialize_user_key(k, base_url=base) for k in rows]
 
@@ -163,9 +165,7 @@ async def my_activity(
     user_api_key_id = None
     if personal_api_key_only:
         personal_key = (
-            await db.execute(
-                select(UserApiKey.id).where(UserApiKey.user_id == user.id).limit(1)
-            )
+            await db.execute(select(UserApiKey.id).where(UserApiKey.user_id == user.id).limit(1))
         ).scalar_one_or_none()
         user_api_key_id = int(personal_key) if personal_key else -1
     filters = _activity_query_filters(
@@ -213,9 +213,7 @@ async def my_activity_export(
     user_api_key_id = None
     if personal_api_key_only:
         personal_key = (
-            await db.execute(
-                select(UserApiKey.id).where(UserApiKey.user_id == user.id).limit(1)
-            )
+            await db.execute(select(UserApiKey.id).where(UserApiKey.user_id == user.id).limit(1))
         ).scalar_one_or_none()
         user_api_key_id = int(personal_key) if personal_key else -1
     filters = _activity_query_filters(

@@ -102,8 +102,7 @@ _OWNER_CAPABILITIES: frozenset[Capability] = MEMBER_READ_CAPABILITIES | frozense
     }
 )
 _CAPABILITIES: dict[str, frozenset[Capability]] = {
-    PROJECT_ROLE_PRIMARY_OWNER: _OWNER_CAPABILITIES
-    | frozenset({"project.delete", "member.manage_owners"}),
+    PROJECT_ROLE_PRIMARY_OWNER: _OWNER_CAPABILITIES | frozenset({"project.delete", "member.manage_owners"}),
     PROJECT_ROLE_OWNER: _OWNER_CAPABILITIES,
     PROJECT_ROLE_CONTRIBUTOR: MEMBER_READ_CAPABILITIES
     | frozenset(
@@ -223,7 +222,9 @@ async def require_capability(
 async def count_owners(db: AsyncSession, project_id: str) -> int:
     """Count Primary Owner and Owner members (management roles)."""
     result = await db.execute(
-        select(func.count()).select_from(ProjectMember).where(
+        select(func.count())
+        .select_from(ProjectMember)
+        .where(
             ProjectMember.project_id == project_id,
             ProjectMember.role.in_(PROJECT_OWNER_ROLES),
         )
@@ -233,7 +234,9 @@ async def count_owners(db: AsyncSession, project_id: str) -> int:
 
 async def count_primary_owners(db: AsyncSession, project_id: str) -> int:
     result = await db.execute(
-        select(func.count()).select_from(ProjectMember).where(
+        select(func.count())
+        .select_from(ProjectMember)
+        .where(
             ProjectMember.project_id == project_id,
             ProjectMember.role == PROJECT_ROLE_PRIMARY_OWNER,
         )

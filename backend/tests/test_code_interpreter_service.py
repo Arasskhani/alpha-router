@@ -59,7 +59,7 @@ def test_workspace_manifest_accepts_one_hundred_small_files():
         }
         for index in range(100)
     ]
-    payload = f'__ALPHA_ROUTER_ATTACH_JSON__:{json.dumps({"userText": "analyze", "attachments": attachments})}'
+    payload = f"__ALPHA_ROUTER_ATTACH_JSON__:{json.dumps({'userText': 'analyze', 'attachments': attachments})}"
 
     manifest = build_workspace_manifest(
         [{"role": "user", "content": payload}],
@@ -83,7 +83,7 @@ def test_workspace_manifest_rejects_file_count_without_silent_drop():
         }
         for index in range(101)
     ]
-    payload = f'__ALPHA_ROUTER_ATTACH_JSON__:{json.dumps({"userText": "analyze", "attachments": attachments})}'
+    payload = f"__ALPHA_ROUTER_ATTACH_JSON__:{json.dumps({'userText': 'analyze', 'attachments': attachments})}"
 
     with pytest.raises(WorkspaceLimitError) as exc:
         build_workspace_manifest(
@@ -163,9 +163,7 @@ def test_code_interpreter_nudge_lists_workspace_files():
 
 
 def test_format_code_output_uses_text_fence():
-    out = format_code_output_for_chat(
-        SandboxExecutionResult(output="hello\nworld", exit_code=0)
-    )
+    out = format_code_output_for_chat(SandboxExecutionResult(output="hello\nworld", exit_code=0))
     assert "```text\nhello\nworld\n```" in out
 
 
@@ -207,10 +205,7 @@ def test_workspace_keeps_non_english_filenames():
     messages = [
         {
             "role": "user",
-            "content": (
-                "Analyze\n\n--- داده (1).csv ---\nname,value\na,1\nb,2\n\n"
-                "--- report (2).csv ---\nx,y\n3,4"
-            ),
+            "content": ("Analyze\n\n--- داده (1).csv ---\nname,value\na,1\nb,2\n\n--- report (2).csv ---\nx,y\n3,4"),
         }
     ]
     files = workspace_files_from_messages(messages)
@@ -267,9 +262,7 @@ def test_decode_broker_artifacts_accepts_valid_pdf_and_csv():
 
 def test_decode_broker_artifacts_accepts_persian_filenames():
     pdf = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF"
-    artifacts = cis._decode_broker_artifacts(
-        [_artifact_payload("گزارش-مدیریتی.pdf", pdf, "application/pdf")]
-    )
+    artifacts = cis._decode_broker_artifacts([_artifact_payload("گزارش-مدیریتی.pdf", pdf, "application/pdf")])
     assert [item.name for item in artifacts] == ["گزارش-مدیریتی.pdf"]
 
 
@@ -293,6 +286,7 @@ def test_decode_broker_artifacts_rejects_tampering(mutate):
 
 
 # ---- broker routing (no real Docker needed) ----
+
 
 def _clear_settings_cache():
     get_settings.cache_clear()

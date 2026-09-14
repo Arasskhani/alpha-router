@@ -64,9 +64,7 @@ class DocumentSubmission:
 def _safe_file_name(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", value or "")
     normalized = PurePath(normalized.replace("\\", "/")).name
-    normalized = "".join(
-        char for char in normalized if char.isprintable() and char not in {"/", "\\"}
-    ).strip(" .")
+    normalized = "".join(char for char in normalized if char.isprintable() and char not in {"/", "\\"}).strip(" .")
     if not normalized:
         raise ValueError("A valid file name is required")
     return normalized[:512]
@@ -171,9 +169,7 @@ async def submit_document_bytes(
     digest = plaintext_sha256(data)
     canonical = _safe_canonical_key(canonical_key or safe_name)
     if db.get_bind().dialect.name == "postgresql":
-        lock_digest = hashlib.sha256(
-            f"{knowledge_base_id}\0{canonical}".encode()
-        ).digest()
+        lock_digest = hashlib.sha256(f"{knowledge_base_id}\0{canonical}".encode()).digest()
         lock_key = int.from_bytes(lock_digest[:8], "big", signed=True)
         await db.execute(
             sql_text("SELECT pg_advisory_xact_lock(:lock_key)"),
@@ -210,9 +206,7 @@ async def submit_document_bytes(
                 )
             ).scalar_one_or_none()
             return DocumentSubmission(document, existing, job, True)
-        document_statement = select(KnowledgeDocument).where(
-            KnowledgeDocument.id == document.id
-        )
+        document_statement = select(KnowledgeDocument).where(KnowledgeDocument.id == document.id)
         if db.get_bind().dialect.name == "postgresql":
             document_statement = document_statement.with_for_update()
         document = (await db.execute(document_statement)).scalar_one()
@@ -333,11 +327,7 @@ async def process_document_version(
     object_store: KnowledgeObjectStoreProtocol | None = None,
     malware_scanner: MalwareScanner = scan_bytes,
 ) -> None:
-    version_id = str(
-        job.document_version_id
-        or dict(job.payload_json or {}).get("document_version_id")
-        or ""
-    )
+    version_id = str(job.document_version_id or dict(job.payload_json or {}).get("document_version_id") or "")
     version = await db.get(KnowledgeDocumentVersion, version_id)
     if version is None:
         raise ValueError(f"Document version not found: {version_id}")
@@ -398,9 +388,7 @@ async def process_document_version(
     malware = await malware_scanner(data)
     metadata = dict(version.metadata_json or {})
     metadata["malware_scan"] = {
-        "status": "skipped"
-        if malware.skipped
-        else ("clean" if malware.clean else "infected"),
+        "status": "skipped" if malware.skipped else ("clean" if malware.clean else "infected"),
         "signature": malware.signature,
     }
     version.metadata_json = metadata
@@ -449,13 +437,8 @@ async def process_document_version(
 
     safety = scan_knowledge_text(tuple(segment.text for segment in parsed))
     drafts = chunk_segments(parsed)
-    await db.execute(
-        delete(KnowledgeChunk).where(KnowledgeChunk.document_version_id == version.id)
-    )
-    chunk_ids = {
-        draft.local_key: str(uuid.uuid5(uuid.UUID(version.id), draft.local_key))
-        for draft in drafts
-    }
+    await db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_version_id == version.id))
+    chunk_ids = {draft.local_key: str(uuid.uuid5(uuid.UUID(version.id), draft.local_key)) for draft in drafts}
     for index, draft in enumerate(drafts):
         chunk_id = chunk_ids[draft.local_key]
         plaintext_digest = chunk_plaintext_hash(index, draft.text)
@@ -468,11 +451,7 @@ async def process_document_version(
             KnowledgeChunk(
                 id=chunk_id,
                 document_version_id=version.id,
-                parent_chunk_id=(
-                    chunk_ids[draft.parent_local_key]
-                    if draft.parent_local_key is not None
-                    else None
-                ),
+                parent_chunk_id=(chunk_ids[draft.parent_local_key] if draft.parent_local_key is not None else None),
                 chunk_index=index,
                 content=encrypted_content,
                 content_hash=plaintext_digest,
@@ -505,9 +484,7 @@ async def process_document_version(
     version.storage_key = trusted_key
     version.status = "review"
     version.parser_version = PARSER_VERSION
-    version.language = version.language or _infer_language(
-        tuple(segment.text for segment in parsed)
-    )
+    version.language = version.language or _infer_language(tuple(segment.text for segment in parsed))
     version.failure_reason = None
     version.metadata_json = {
         **dict(version.metadata_json or {}),
@@ -523,10 +500,7 @@ async def process_document_version(
         "prompt_injection_scan": {
             "status": safety.status,
             "score": safety.score,
-            "matches": [
-                {"rule_id": match.rule_id, "severity": match.severity}
-                for match in safety.matches
-            ],
+            "matches": [{"rule_id": match.rule_id, "severity": match.severity} for match in safety.matches],
         },
     }
     await _schedule_purge(
@@ -555,17 +529,13 @@ async def purge_knowledge_object(
     *,
     object_store: KnowledgeObjectStoreProtocol | None = None,
 ) -> None:
-    storage_key = (
-        str(job.payload_json.get("storage_key") or "").replace("\\", "/").lstrip("/")
-    )
+    storage_key = str(job.payload_json.get("storage_key") or "").replace("\\", "/").lstrip("/")
     settings = get_settings()
     allowed_prefixes = {
         settings.knowledge_quarantine_prefix.strip("/"),
         settings.knowledge_object_prefix.strip("/"),
     }
-    if not storage_key or not any(
-        storage_key.startswith(f"{prefix}/") for prefix in allowed_prefixes
-    ):
+    if not storage_key or not any(storage_key.startswith(f"{prefix}/") for prefix in allowed_prefixes):
         raise ValueError("Object purge key is outside Knowledge storage")
     await (object_store or default_knowledge_object_store()).delete(storage_key)
 
@@ -579,26 +549,17 @@ async def approve_document_version(
     allow_safety_override: bool = False,
     allow_self_review: bool = False,
 ) -> KnowledgeDocumentVersion:
-    statement = select(KnowledgeDocumentVersion).where(
-        KnowledgeDocumentVersion.id == document_version_id
-    )
+    statement = select(KnowledgeDocumentVersion).where(KnowledgeDocumentVersion.id == document_version_id)
     if db.get_bind().dialect.name == "postgresql":
         statement = statement.with_for_update()
     version = (await db.execute(statement)).scalar_one_or_none()
     if version is None or version.status != "review":
         raise ValueError("Document version is not awaiting review")
-    if (
-        not allow_self_review
-        and version.uploaded_by_user_id == reviewer_user_id
-    ):
+    if not allow_self_review and version.uploaded_by_user_id == reviewer_user_id:
         raise ValueError("Maker-checker policy requires a different reviewer")
-    safety_status = (
-        dict(version.metadata_json or {}).get("prompt_injection_scan", {}).get("status")
-    )
+    safety_status = dict(version.metadata_json or {}).get("prompt_injection_scan", {}).get("status")
     if safety_status == "blocked" and not allow_safety_override:
-        raise ValueError(
-            "Blocked prompt-injection findings require an explicit override"
-        )
+        raise ValueError("Blocked prompt-injection findings require an explicit override")
     normalized_reason = (reason or "").strip()
     if not normalized_reason:
         raise ValueError("Review reason is required")

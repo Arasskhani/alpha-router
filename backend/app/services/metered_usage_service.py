@@ -70,11 +70,7 @@ async def start_metered_usage(
     async with AsyncSessionLocal() as db:
         if not resolved_username and user_id is not None:
             user = await db.get(User, int(user_id))
-            resolved_username = (
-                str(getattr(user, "username", "") or "").strip()
-                if user is not None
-                else ""
-            )
+            resolved_username = str(getattr(user, "username", "") or "").strip() if user is not None else ""
         if reserve_budget:
             hold_amount = await reservation_hold_usd(
                 db,
@@ -102,11 +98,8 @@ async def start_metered_usage(
         user_id=int(user_id) if user_id is not None else None,
         alpha_router_api_key_id=alpha_router_api_key_id,
         connection_id=connection_id,
-        username=resolved_username or (
-            f"user-{user_id}"
-            if user_id is not None
-            else f"api-key-{alpha_router_api_key_id}"
-        ),
+        username=resolved_username
+        or (f"user-{user_id}" if user_id is not None else f"api-key-{alpha_router_api_key_id}"),
         provider_type=(provider_type or "unknown").strip().lower() or "unknown",
         service_type=(service_type or "tool").strip().lower() or "tool",
         operation_name=(operation_name or "tool_call").strip()[:64] or "tool_call",
@@ -188,8 +181,7 @@ async def finish_metered_usage(
                     continue
                 increment("budget_hold_leak")
                 logger.exception(
-                    "Metered usage settlement failed after retries "
-                    "provider=%s operation=%s; reservation remains held",
+                    "Metered usage settlement failed after retries provider=%s operation=%s; reservation remains held",
                     call.provider_type,
                     call.operation_name,
                 )

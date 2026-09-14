@@ -185,6 +185,7 @@ def test_upload_resource_viewer_denied():
                 _, _, viewer = await _setup_project(db)
                 data, name, mime = _fake_upload_bytes()
                 from fastapi import HTTPException
+
                 try:
                     await upload_project_resource(
                         db,
@@ -212,6 +213,7 @@ def test_upload_resource_non_member_hidden():
                 stranger = await _user(db, "stranger")
                 data, name, mime = _fake_upload_bytes()
                 from fastapi import HTTPException
+
                 try:
                     await upload_project_resource(
                         db,
@@ -238,11 +240,23 @@ def test_list_resources_owner():
                 owner, _, _ = await _setup_project(db)
                 data, name, mime = _fake_upload_bytes()
                 await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
-                    object_store=InMemoryObjectStore(), title="A"
+                    db,
+                    project_id=PROJ_ID,
+                    user=owner,
+                    file_name=name,
+                    declared_mime=mime,
+                    data=data,
+                    object_store=InMemoryObjectStore(),
+                    title="A",
                 )
                 await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name="b.txt", declared_mime=mime, data=data, title="B",
+                    db,
+                    project_id=PROJ_ID,
+                    user=owner,
+                    file_name="b.txt",
+                    declared_mime=mime,
+                    data=data,
+                    title="B",
                     object_store=InMemoryObjectStore(),
                 )
                 await db.flush()
@@ -265,7 +279,12 @@ def test_list_resources_viewer_can_see():
                 owner, _, viewer = await _setup_project(db)
                 data, name, mime = _fake_upload_bytes()
                 await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
+                    db,
+                    project_id=PROJ_ID,
+                    user=owner,
+                    file_name=name,
+                    declared_mime=mime,
+                    data=data,
                     object_store=InMemoryObjectStore(),
                 )
                 await db.flush()
@@ -289,7 +308,12 @@ def test_list_resources_shows_knowledge_review_status():
                 owner, _, _ = await _setup_project(db)
                 data, name, mime = _fake_upload_bytes()
                 result = await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
+                    db,
+                    project_id=PROJ_ID,
+                    user=owner,
+                    file_name=name,
+                    declared_mime=mime,
+                    data=data,
                     object_store=InMemoryObjectStore(),
                 )
                 result.submission.version.status = "review"
@@ -314,7 +338,12 @@ def test_list_resources_public_project():
                 owner, _, _ = await _setup_project(db, visibility=PROJECT_VISIBILITY_PUBLIC)
                 data, name, mime = _fake_upload_bytes()
                 await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
+                    db,
+                    project_id=PROJ_ID,
+                    user=owner,
+                    file_name=name,
+                    declared_mime=mime,
+                    data=data,
                     object_store=InMemoryObjectStore(),
                 )
                 await db.flush()
@@ -337,6 +366,7 @@ def test_list_resources_non_member_private_hidden():
                 _, _, _ = await _setup_project(db)
                 stranger = await _user(db, "stranger")
                 from fastapi import HTTPException
+
                 try:
                     await list_project_resources(db, project_id=PROJ_ID, user=stranger)
                     assert False
@@ -356,7 +386,12 @@ def test_list_resources_status_filter():
                 owner, _, _ = await _setup_project(db)
                 data, name, mime = _fake_upload_bytes()
                 await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
+                    db,
+                    project_id=PROJ_ID,
+                    user=owner,
+                    file_name=name,
+                    declared_mime=mime,
+                    data=data,
                     object_store=InMemoryObjectStore(),
                 )
                 await db.flush()
@@ -365,9 +400,7 @@ def test_list_resources_status_filter():
                     db, project_id=PROJ_ID, user=owner, status=PROJECT_RESOURCE_STATUS_PROCESSING
                 )
                 assert total == 1
-                items, total = await list_project_resources(
-                    db, project_id=PROJ_ID, user=owner, status="active"
-                )
+                items, total = await list_project_resources(db, project_id=PROJ_ID, user=owner, status="active")
                 assert total == 0
             async with factory() as db:
                 pass
@@ -385,14 +418,17 @@ def test_delete_resource_owner():
                 owner, _, _ = await _setup_project(db)
                 data, name, mime = _fake_upload_bytes()
                 result = await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
+                    db,
+                    project_id=PROJ_ID,
+                    user=owner,
+                    file_name=name,
+                    declared_mime=mime,
+                    data=data,
                     object_store=InMemoryObjectStore(),
                 )
                 await db.flush()
                 resource_id = result.resource.id
-                deleted = await delete_project_resource(
-                    db, project_id=PROJ_ID, resource_id=resource_id, user=owner
-                )
+                deleted = await delete_project_resource(db, project_id=PROJ_ID, resource_id=resource_id, user=owner)
                 assert deleted is True
                 resource = await db.get(ProjectResource, resource_id)
                 assert resource.status == PROJECT_RESOURCE_STATUS_REVOKED
@@ -412,14 +448,17 @@ def test_delete_resource_contributor_own():
                 _, contrib, _ = await _setup_project(db)
                 data, name, mime = _fake_upload_bytes()
                 result = await upload_project_resource(
-                    db, project_id=PROJ_ID, user=contrib, file_name=name, declared_mime=mime, data=data,
+                    db,
+                    project_id=PROJ_ID,
+                    user=contrib,
+                    file_name=name,
+                    declared_mime=mime,
+                    data=data,
                     object_store=InMemoryObjectStore(),
                 )
                 await db.flush()
                 resource_id = result.resource.id
-                deleted = await delete_project_resource(
-                    db, project_id=PROJ_ID, resource_id=resource_id, user=contrib
-                )
+                deleted = await delete_project_resource(db, project_id=PROJ_ID, resource_id=resource_id, user=contrib)
                 assert deleted is True
             async with factory() as db:
                 pass
@@ -437,16 +476,20 @@ def test_delete_resource_contributor_other_denied():
                 owner, contrib, _ = await _setup_project(db)
                 data, name, mime = _fake_upload_bytes()
                 result = await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
+                    db,
+                    project_id=PROJ_ID,
+                    user=owner,
+                    file_name=name,
+                    declared_mime=mime,
+                    data=data,
                     object_store=InMemoryObjectStore(),
                 )
                 await db.flush()
                 resource_id = result.resource.id
                 from fastapi import HTTPException
+
                 try:
-                    await delete_project_resource(
-                        db, project_id=PROJ_ID, resource_id=resource_id, user=contrib
-                    )
+                    await delete_project_resource(db, project_id=PROJ_ID, resource_id=resource_id, user=contrib)
                     assert False
                 except HTTPException as exc:
                     assert exc.status_code == 403
@@ -466,16 +509,20 @@ def test_delete_resource_viewer_denied():
                 owner, _, viewer = await _setup_project(db)
                 data, name, mime = _fake_upload_bytes()
                 result = await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
+                    db,
+                    project_id=PROJ_ID,
+                    user=owner,
+                    file_name=name,
+                    declared_mime=mime,
+                    data=data,
                     object_store=InMemoryObjectStore(),
                 )
                 await db.flush()
                 resource_id = result.resource.id
                 from fastapi import HTTPException
+
                 try:
-                    await delete_project_resource(
-                        db, project_id=PROJ_ID, resource_id=resource_id, user=viewer
-                    )
+                    await delete_project_resource(db, project_id=PROJ_ID, resource_id=resource_id, user=viewer)
                     assert False
                 except HTTPException as exc:
                     assert exc.status_code == 403
@@ -493,7 +540,12 @@ def test_delete_resource_wrong_project_returns_false():
                 owner, _, _ = await _setup_project(db)
                 data, name, mime = _fake_upload_bytes()
                 result = await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
+                    db,
+                    project_id=PROJ_ID,
+                    user=owner,
+                    file_name=name,
+                    declared_mime=mime,
+                    data=data,
                     object_store=InMemoryObjectStore(),
                 )
                 await db.flush()
@@ -529,7 +581,12 @@ def test_resource_links_to_knowledge_base():
                 owner, _, _ = await _setup_project(db)
                 data, name, mime = _fake_upload_bytes()
                 result = await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
+                    db,
+                    project_id=PROJ_ID,
+                    user=owner,
+                    file_name=name,
+                    declared_mime=mime,
+                    data=data,
                     object_store=InMemoryObjectStore(),
                 )
                 await db.flush()
@@ -580,9 +637,7 @@ def test_list_promotes_published_resource_to_active():
                 )
                 await _mark_latest_version_published(db, result.resource.document_id)
                 assert result.resource.status == PROJECT_RESOURCE_STATUS_PROCESSING
-                items, _total = await list_project_resources(
-                    db, project_id=PROJ_ID, user=owner
-                )
+                items, _total = await list_project_resources(db, project_id=PROJ_ID, user=owner)
                 assert items[0]["status"] == PROJECT_RESOURCE_STATUS_ACTIVE
                 assert items[0]["versionStatus"] == "published"
                 resource = await db.get(ProjectResource, result.resource.id)
@@ -610,9 +665,7 @@ def test_approve_path_syncs_project_resource():
                     object_store=InMemoryObjectStore(),
                 )
                 await _mark_latest_version_published(db, result.resource.document_id)
-                updated = await sync_project_resources_for_document(
-                    db, document_id=result.resource.document_id
-                )
+                updated = await sync_project_resources_for_document(db, document_id=result.resource.document_id)
                 assert updated == 1
                 resource = await db.get(ProjectResource, result.resource.id)
                 assert resource.status == PROJECT_RESOURCE_STATUS_ACTIVE

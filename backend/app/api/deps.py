@@ -30,11 +30,7 @@ async def get_current_user(
 ) -> User:
     """Resolve user from JWT. Inactive users remain authenticated (read-only chat/media/logs)."""
     settings = get_settings()
-    token = (
-        request.cookies.get(settings.session_cookie_name)
-        if settings.enable_cookie_auth
-        else None
-    )
+    token = request.cookies.get(settings.session_cookie_name) if settings.enable_cookie_auth else None
     if not token and settings.allow_legacy_bearer_auth and creds:
         token = creds.credentials
     if not token:
@@ -216,11 +212,7 @@ async def get_bearer_token(
     creds: HTTPAuthorizationCredentials | None = Depends(bearer),
 ) -> str:
     settings = get_settings()
-    token = (
-        request.cookies.get(settings.session_cookie_name)
-        if settings.enable_cookie_auth
-        else None
-    )
+    token = request.cookies.get(settings.session_cookie_name) if settings.enable_cookie_auth else None
     if not token and settings.allow_legacy_bearer_auth and creds:
         token = creds.credentials
     if not token:

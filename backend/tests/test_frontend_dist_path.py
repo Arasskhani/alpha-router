@@ -1,6 +1,5 @@
 """Frontend dist path resolution for Docker vs local dev layouts."""
 
-
 from app.main import resolve_frontend_dist
 
 

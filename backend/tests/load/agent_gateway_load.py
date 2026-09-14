@@ -118,7 +118,8 @@ async def _run(args: argparse.Namespace) -> Result:
                 request_index += 1
                 should_cancel = (
                     args.cancel_ratio > 0
-                    and (worker_index + request_index) % max(
+                    and (worker_index + request_index)
+                    % max(
                         1,
                         round(1 / args.cancel_ratio),
                     )
@@ -135,9 +136,7 @@ async def _run(args: argparse.Namespace) -> Result:
                         cancel_after_first_token=should_cancel,
                     )
                     async with lock:
-                        result.status_codes[str(status)] = (
-                            result.status_codes.get(str(status), 0) + 1
-                        )
+                        result.status_codes[str(status)] = result.status_codes.get(str(status), 0) + 1
                         result.latencies_ms.append(latency)
                         if first is not None:
                             result.first_token_ms.append(first)
@@ -156,9 +155,7 @@ async def _run(args: argparse.Namespace) -> Result:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Run a privacy-safe Alpharouter Agent gateway load gate."
-    )
+    parser = argparse.ArgumentParser(description="Run a privacy-safe Alpharouter Agent gateway load gate.")
     parser.add_argument(
         "--url",
         default="http://127.0.0.1:8080/v1/chat/completions",
@@ -203,9 +200,7 @@ def main() -> int:
         "requests_per_second": round(attempted / elapsed, 2),
         "error_rate": round(error_rate, 6),
         "latency_ms": {
-            "mean": round(statistics.fmean(result.latencies_ms), 2)
-            if result.latencies_ms
-            else None,
+            "mean": round(statistics.fmean(result.latencies_ms), 2) if result.latencies_ms else None,
             "p50": _percentile(result.latencies_ms, 0.50),
             "p95": p95,
             "p99": _percentile(result.latencies_ms, 0.99),
@@ -221,12 +216,7 @@ def main() -> int:
         },
     }
     print(json.dumps(report, indent=2, sort_keys=True))
-    passed = (
-        attempted > 0
-        and error_rate <= args.max_error_rate
-        and p95 is not None
-        and p95 <= args.max_p95_ms
-    )
+    passed = attempted > 0 and error_rate <= args.max_error_rate and p95 is not None and p95 <= args.max_p95_ms
     return 0 if passed else 1
 
 

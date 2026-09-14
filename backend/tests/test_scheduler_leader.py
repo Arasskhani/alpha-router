@@ -89,8 +89,12 @@ def test_postgres_lock_is_exclusive_and_hands_over():
         engine = create_async_engine(get_settings().database_url, connect_args=asyncpg_connect_args())
         a_events: list[str] = []
         b_events: list[str] = []
-        a = SchedulerLeader(engine, on_acquire=lambda: a_events.append("acq"), on_release=lambda: a_events.append("rel"))
-        b = SchedulerLeader(engine, on_acquire=lambda: b_events.append("acq"), on_release=lambda: b_events.append("rel"))
+        a = SchedulerLeader(
+            engine, on_acquire=lambda: a_events.append("acq"), on_release=lambda: a_events.append("rel")
+        )
+        b = SchedulerLeader(
+            engine, on_acquire=lambda: b_events.append("acq"), on_release=lambda: b_events.append("rel")
+        )
         try:
             assert await a.try_acquire() is True
             # Second process (separate connection, separate transaction) must not win.

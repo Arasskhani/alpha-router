@@ -162,9 +162,7 @@ class EvaluationRun(Base):
             name="uq_evaluation_runs_idempotency_key",
         ),
         CheckConstraint(
-            "status IN ("
-            "'running', 'awaiting_review', 'passed', 'failed', 'error', 'cancelled'"
-            ")",
+            "status IN ('running', 'awaiting_review', 'passed', 'failed', 'error', 'cancelled')",
             name="chk_evaluation_runs_status",
         ),
         CheckConstraint(

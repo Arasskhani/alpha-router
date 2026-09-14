@@ -98,18 +98,11 @@ def test_resolve_project_id_from_chat_session():
             async with factory() as db:
                 owner, outsider = await _setup(db)
                 await _session(db, owner, project_id=PROJ, sid="proj-sess")
-                resolved = await resolve_project_id_for_request(
-                    db, user=owner, chat_session_id="proj-sess"
-                )
+                resolved = await resolve_project_id_for_request(db, user=owner, chat_session_id="proj-sess")
                 assert resolved == PROJ
                 # personal chat → None
                 await _session(db, owner, project_id=None, sid="personal")
-                assert (
-                    await resolve_project_id_for_request(
-                        db, user=owner, chat_session_id="personal"
-                    )
-                    is None
-                )
+                assert await resolve_project_id_for_request(db, user=owner, chat_session_id="personal") is None
                 # session wins over a spoofed project_id
                 spoofed = await resolve_project_id_for_request(
                     db,
@@ -130,18 +123,8 @@ def test_resolve_explicit_project_id_requires_access():
         try:
             async with factory() as db:
                 owner, outsider = await _setup(db)
-                assert (
-                    await resolve_project_id_for_request(
-                        db, user=owner, project_id=PROJ
-                    )
-                    == PROJ
-                )
-                assert (
-                    await resolve_project_id_for_request(
-                        db, user=outsider, project_id=PROJ
-                    )
-                    is None
-                )
+                assert await resolve_project_id_for_request(db, user=owner, project_id=PROJ) == PROJ
+                assert await resolve_project_id_for_request(db, user=outsider, project_id=PROJ) is None
         finally:
             await engine.dispose()
 
@@ -195,9 +178,7 @@ def test_image_generation_attributed_to_project():
                     )
                 )
                 await db.flush()
-                attempt = (
-                    await db.execute(select(ImageGenerationAttempt))
-                ).scalar_one()
+                attempt = (await db.execute(select(ImageGenerationAttempt))).scalar_one()
                 assert attempt.project_id == PROJ
         finally:
             await engine.dispose()

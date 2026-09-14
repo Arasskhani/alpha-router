@@ -119,9 +119,8 @@ def search_with_identity_attrs(conn: Any, base: str, search_filter: str, attribu
         )
         return conn.search(base, search_filter, attributes=reduced, **kwargs)
 
-LDAP_UNAVAILABLE_MESSAGE = (
-    "LDAP directory is not available right now. Please try again later or use a local account."
-)
+
+LDAP_UNAVAILABLE_MESSAGE = "LDAP directory is not available right now. Please try again later or use a local account."
 
 
 class LdapUnavailableError(RuntimeError):
@@ -522,9 +521,7 @@ def _open_connection_ldap3(cfg: dict, *, user: str | None = None, password: str 
         p = urlparse(cfg["server"])
         host = p.hostname or ""
     bind_pw = _clean_bind_password(password if password is not None else cfg.get("bind_password") or "")
-    domain = (cfg.get("domain") or "").strip() or infer_domain(
-        cfg.get("bind_username", ""), cfg.get("base_dn")
-    )
+    domain = (cfg.get("domain") or "").strip() or infer_domain(cfg.get("bind_username", ""), cfg.get("base_dn"))
     candidates = [user] if user else bind_candidates(cfg)
     bind_errors: list[str] = []
     unreachable_modes: list[str] = []
@@ -770,10 +767,7 @@ def authenticate_ldap_sync(username: str, password: str, config: dict | None = N
 
     esc_sam = _escape_filter(sam)
     esc_upn = _escape_filter(upn)
-    filt = (
-        f"(&(objectCategory=person)(objectClass=user)"
-        f"(|(sAMAccountName={esc_sam})(userPrincipalName={esc_upn})))"
-    )
+    filt = f"(&(objectCategory=person)(objectClass=user)(|(sAMAccountName={esc_sam})(userPrincipalName={esc_upn})))"
     search_with_identity_attrs(conn, base, filt, user_attrs_for(conn), size_limit=1)
     if conn.entries:
         profile = _entry_to_profile(conn.entries[0], sam)

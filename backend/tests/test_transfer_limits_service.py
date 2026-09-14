@@ -169,8 +169,6 @@ def test_public_view_includes_workspace_fields() -> None:
 def test_media_input_limit_uses_transfer_cache(monkeypatch) -> None:
     from app.services import storage_service as storage
 
-    tls._store_cache(
-        tls._normalize_limits(40, 80, 200)
-    )
+    tls._store_cache(tls._normalize_limits(40, 80, 200))
     assert storage.media_input_limit() == 40 * 1024 * 1024
     tls.invalidate_transfer_limits_cache()

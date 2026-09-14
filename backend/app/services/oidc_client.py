@@ -453,6 +453,7 @@ def build_profile_from_claims(
     info = userinfo or {}
     if info.get("sub") and claims.get("sub") and str(info.get("sub")) != str(claims.get("sub")):
         raise ValueError("OIDC subject mismatch")
+
     # Prefer ID token for identity fields; fill gaps from userinfo.
     def pick(claim_key: str, *alts: str) -> str | None:
         for key in (claim_key, *alts):

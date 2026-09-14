@@ -68,8 +68,4 @@ AGENT_PLATFORM_TABLE_NAMES: frozenset[str] = frozenset(
 def legacy_metadata_tables(metadata) -> list:
     """Tables still bootstrapped by the legacy create-all compatibility path."""
 
-    return [
-        table
-        for table in metadata.sorted_tables
-        if table.name not in AGENT_PLATFORM_TABLE_NAMES
-    ]
+    return [table for table in metadata.sorted_tables if table.name not in AGENT_PLATFORM_TABLE_NAMES]

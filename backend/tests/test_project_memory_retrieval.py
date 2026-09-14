@@ -67,11 +67,7 @@ async def _seed(db: AsyncSession) -> tuple[User, ChatSession]:
             acl_version=1,
         )
     )
-    db.add(
-        ProjectMember(
-            project_id=PROJ_ID, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER
-        )
-    )
+    db.add(ProjectMember(project_id=PROJ_ID, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))
     session = ChatSession(
         id="sess-retrieval",
         user_id=owner.id,
@@ -90,9 +86,7 @@ async def _manual_facts_stay_pinned() -> None:
     factory, engine = await _session_factory()
     async with factory() as db:
         owner, _session = await _seed(db)
-        await create_project_memory(
-            db, project_id=PROJ_ID, user=owner, content="Invoices are issued monthly"
-        )
+        await create_project_memory(db, project_id=PROJ_ID, user=owner, content="Invoices are issued monthly")
         for index in range(3):
             await create_auto_project_memory(
                 db,
@@ -208,11 +202,7 @@ async def _personal_memory_never_reaches_a_project_turn() -> None:
             query="coffee",
             injected_memory_ids=injected,
         )
-        blob = "\n".join(
-            str(item.get("content") or "")
-            for item in augmented
-            if item.get("role") == "system"
-        )
+        blob = "\n".join(str(item.get("content") or "") for item in augmented if item.get("role") == "system")
         assert "## Project memory" in blob
         assert "/v2" in blob
         assert "black coffee" not in blob

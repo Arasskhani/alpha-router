@@ -63,16 +63,11 @@ def _point_acl_payload(
     document_acl = compile_acl_payload(document_assignments)
     kb_allows = list(kb_acl["allow_principal_tokens"])
     document_allows = list(document_acl["allow_principal_tokens"])
-    denies = sorted(
-        set(kb_acl["deny_principal_tokens"])
-        | set(document_acl["deny_principal_tokens"])
-    )
+    denies = sorted(set(kb_acl["deny_principal_tokens"]) | set(document_acl["deny_principal_tokens"]))
     return {
         # Explicitly model both ACL layers. A union of allow lists is unsafe:
         # a principal must satisfy a private KB and a restrictive document.
-        "kb_access_scope": (
-            "public" if knowledge_base.access_type == "public" else "restricted"
-        ),
+        "kb_access_scope": ("public" if knowledge_base.access_type == "public" else "restricted"),
         "kb_allow_principal_tokens": kb_allows,
         "document_access_scope": ("restricted" if document_allows else "inherited"),
         "document_allow_principal_tokens": document_allows,
@@ -95,8 +90,7 @@ async def _release_rows(
             select(KnowledgeDocumentVersion, KnowledgeDocument)
             .join(
                 KnowledgeReleaseDocument,
-                KnowledgeReleaseDocument.document_version_id
-                == KnowledgeDocumentVersion.id,
+                KnowledgeReleaseDocument.document_version_id == KnowledgeDocumentVersion.id,
             )
             .join(
                 KnowledgeDocument,
@@ -138,9 +132,7 @@ async def build_and_activate_knowledge_index(
     release = await db.get(KnowledgeRelease, index_version.release_id)
     knowledge_base = await db.get(KnowledgeBase, index_version.knowledge_base_id)
     if release is None or knowledge_base is None:
-        raise ValueError(
-            "Knowledge index references a missing release or Knowledge Base"
-        )
+        raise ValueError("Knowledge index references a missing release or Knowledge Base")
     if release.knowledge_base_id != knowledge_base.id:
         raise ValueError("Knowledge index release belongs to another Knowledge Base")
     if release.status not in {"indexing", "published"}:
@@ -152,9 +144,7 @@ async def build_and_activate_knowledge_index(
     version_ids = [str(version.id) for version, _ in release_rows]
     for version, document in release_rows:
         if version.status not in {"review", "published"}:
-            raise ValueError(
-                "Knowledge release contains an unapproved document version"
-            )
+            raise ValueError("Knowledge release contains an unapproved document version")
         if document.status in {"revoked", "deleted"} or document.revoked_at is not None:
             raise ValueError("Knowledge release contains a revoked document")
 
@@ -173,9 +163,7 @@ async def build_and_activate_knowledge_index(
         (
             await db.execute(
                 select(KnowledgeDocumentAccessAssignment).where(
-                    KnowledgeDocumentAccessAssignment.document_id.in_(
-                        list(documents)
-                    )
+                    KnowledgeDocumentAccessAssignment.document_id.in_(list(documents))
                 )
             )
         )
@@ -186,9 +174,7 @@ async def build_and_activate_knowledge_index(
         document_id: [] for document_id in documents
     }
     for assignment in document_assignments:
-        assignments_by_document.setdefault(str(assignment.document_id), []).append(
-            assignment
-        )
+        assignments_by_document.setdefault(str(assignment.document_id), []).append(assignment)
     version_by_id = {str(version.id): version for version, _ in release_rows}
 
     profile = SparseEncodingProfile.from_dict(index_version.sparse_profile)
@@ -302,12 +288,8 @@ async def build_and_activate_knowledge_index(
     await flush_batch()
 
     if indexed != int(index_version.expected_point_count or 0):
-        raise ValueError(
-            "Knowledge index build count does not match the immutable release manifest"
-        )
-    persisted_count = await qdrant.count_points(
-        collection_name=index_version.collection_name
-    )
+        raise ValueError("Knowledge index build count does not match the immutable release manifest")
+    persisted_count = await qdrant.count_points(collection_name=index_version.collection_name)
     if persisted_count != indexed:
         raise ValueError("Qdrant point count does not match the completed index build")
 
@@ -325,8 +307,7 @@ async def build_and_activate_knowledge_index(
         await db.execute(
             select(KnowledgeIndexVersion).where(
                 KnowledgeIndexVersion.knowledge_base_id == knowledge_base.id,
-                KnowledgeIndexVersion.active_scope_key
-                == f"kb-index:{knowledge_base.id}",
+                KnowledgeIndexVersion.active_scope_key == f"kb-index:{knowledge_base.id}",
                 KnowledgeIndexVersion.id != index_version.id,
             )
         )

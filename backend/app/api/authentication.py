@@ -88,7 +88,9 @@ async def get_ldap(db: AsyncSession = Depends(get_db), _: User = Depends(require
 
 
 @router.put("/ldap")
-async def save_ldap(body: LdapSimpleIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_authentication_write)):
+async def save_ldap(
+    body: LdapSimpleIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_authentication_write)
+):
     existing_row = await db.get(AuthProviderConfig, "ldap")
     existing: dict = {}
     if existing_row and existing_row.config_json:
@@ -195,7 +197,9 @@ async def get_saml(db: AsyncSession = Depends(get_db), _: User = Depends(require
 
 
 @router.put("/saml")
-async def save_saml(body: SamlConfigIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_authentication_write)):
+async def save_saml(
+    body: SamlConfigIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_authentication_write)
+):
     try:
         data = validate_saml_config(body.model_dump())
     except ValueError as exc:
@@ -211,7 +215,9 @@ async def get_oidc(db: AsyncSession = Depends(get_db), _: User = Depends(require
 
 
 @router.put("/oidc")
-async def save_oidc(body: OidcConfigIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_authentication_write)):
+async def save_oidc(
+    body: OidcConfigIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_authentication_write)
+):
     existing = await get_provider_config(db, "oidc")
     data = body.model_dump()
     if data.get("client_secret") == "********":

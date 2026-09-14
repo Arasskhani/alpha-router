@@ -145,12 +145,8 @@ STREAM_SSE_HEADERS = {
 }
 
 
-def _apply_litellm_provider_kwargs(
-    kwargs: dict, provider_type: str | None, model_id: str
-) -> str:
-    litellm_model = litellm_model_for_provider(
-        normalize_model_id(model_id), provider_type
-    )
+def _apply_litellm_provider_kwargs(kwargs: dict, provider_type: str | None, model_id: str) -> str:
+    litellm_model = litellm_model_for_provider(normalize_model_id(model_id), provider_type)
     kwargs["model"] = litellm_model
     llm_provider = resolve_litellm_provider(provider_type)
     if llm_provider:
@@ -330,15 +326,9 @@ async def resolve_model_and_key(
             )
     if not row:
         return None, None, None, None
-    if (
-        allowed_connection_ids is not None
-        and int(row.connection_id) not in allowed_connection_ids
-    ):
+    if allowed_connection_ids is not None and int(row.connection_id) not in allowed_connection_ids:
         return None, None, None, None
-    if (
-        allowed_model_ids is not None
-        and int(row.id) not in allowed_model_ids
-    ):
+    if allowed_model_ids is not None and int(row.id) not in allowed_model_ids:
         return None, None, None, None
     conn = await db.get(Connection, row.connection_id)
     if not conn or not conn.is_active:
@@ -376,8 +366,7 @@ def assert_model_supports_text_chat(ai_model: AIModel) -> None:
         status_code=400,
         detail={
             "message": (
-                "This model is not available for text chat "
-                f"(capabilities: {kind_label}). Choose a text model instead."
+                f"This model is not available for text chat (capabilities: {kind_label}). Choose a text model instead."
             ),
             "code": "model_not_for_chat",
             "kinds": kinds,
@@ -422,11 +411,7 @@ def _format_provider_error(exc: Exception, provider: str) -> str:
         return msg
     for attr in ("message", "body", "text"):
         val = getattr(exc, attr, None)
-        if (
-            isinstance(val, str)
-            and val.strip()
-            and not _message_has_stream_body_read_error(val)
-        ):
+        if isinstance(val, str) and val.strip() and not _message_has_stream_body_read_error(val):
             return val.strip()
     if _is_stream_body_read_error(exc):
         return "OpenRouter request failed. Check model availability, context size, and API key."
@@ -538,10 +523,7 @@ def _agent_citation_metadata(
         or agent_turn.plan.retrieval is None
     ):
         return []
-    by_id = {
-        citation.citation_id: citation
-        for citation in agent_turn.plan.retrieval.context.citations
-    }
+    by_id = {citation.citation_id: citation for citation in agent_turn.plan.retrieval.context.citations}
     payloads: list[dict[str, object]] = []
     for citation_id in verification.cited_ids:
         citation = by_id.get(citation_id)
@@ -571,10 +553,8 @@ def _agent_identity_metadata(agent_turn: PreparedAgentTurn) -> dict[str, object]
     agent = getattr(target, "agent", None)
     version = getattr(target, "version", None)
     return {
-        "agent_id": getattr(plan, "selected_agent_id", None)
-        or getattr(agent, "id", None),
-        "agent_version_id": getattr(plan, "selected_agent_version_id", None)
-        or getattr(version, "id", None),
+        "agent_id": getattr(plan, "selected_agent_id", None) or getattr(agent, "id", None),
+        "agent_version_id": getattr(plan, "selected_agent_version_id", None) or getattr(version, "id", None),
         "agent_name": getattr(agent, "name", None),
     }
 
@@ -755,9 +735,7 @@ async def _record_code_interpreter_success(
             outcome = await _openrouter_generation_outcome(
                 base_url=base_url,
                 api_key=api_key,
-                upstream_request_id=(
-                    event.usage.upstream_request_id if event is not None else None
-                ),
+                upstream_request_id=(event.usage.upstream_request_id if event is not None else None),
             )
             selected = outcome.get("model") if outcome else None
             if selected:
@@ -770,9 +748,7 @@ async def _record_code_interpreter_success(
             ai_model=ai_model,
             external_model_id=observed,
             success=True,
-            upstream_request_id=(
-                event.usage.upstream_request_id if event is not None else None
-            ),
+            upstream_request_id=(event.usage.upstream_request_id if event is not None else None),
             evidence={"source_request_model": ai_model.external_id},
         )
 
@@ -799,14 +775,8 @@ async def _record_code_interpreter_failure(
         selected = evidence.get("model") if evidence else None
         if selected:
             target = str(selected)
-    native_reason = (
-        str(evidence.get("native_finish_reason") or evidence.get("finish_reason") or "")
-        if evidence
-        else ""
-    )
-    reason_code = reason_code_override or classify_failure_reason(
-        f"{detail} {native_reason}"
-    )
+    native_reason = str(evidence.get("native_finish_reason") or evidence.get("finish_reason") or "") if evidence else ""
+    reason_code = reason_code_override or classify_failure_reason(f"{detail} {native_reason}")
     await _record_runtime_compatibility(
         ai_model=ai_model,
         external_model_id=target or ai_model.external_id,
@@ -860,9 +830,7 @@ async def _code_interpreter_capacity_subject(
 
 
 def _code_interpreter_capacity_lease_id(body: dict, subject: str) -> str | None:
-    request_key = body.get("_idempotency_key") or body.get(
-        "assistant_client_message_id"
-    )
+    request_key = body.get("_idempotency_key") or body.get("assistant_client_message_id")
     if not request_key:
         return None
     return str(
@@ -893,9 +861,7 @@ async def preflight_stream_chat(
         user_can_access_model,
     )
 
-    await assert_session_allows_model_generation(
-        db, str(body.get("chat_session_id") or "").strip() or None
-    )
+    await assert_session_allows_model_generation(db, str(body.get("chat_session_id") or "").strip() or None)
 
     agent_turn: PreparedAgentTurn | None = None
     try:
@@ -960,9 +926,7 @@ async def preflight_stream_chat(
         body["model"] = selected_model
         if agent_turn.plan.policies is not None:
             body["max_tokens"] = agent_turn.plan.policies.model.max_output_tokens
-    allowed_connection_ids = await allowed_connection_ids_for_key(
-        db, alpha_router_api_key_id
-    )
+    allowed_connection_ids = await allowed_connection_ids_for_key(db, alpha_router_api_key_id)
     allowed_model_ids = await allowed_model_ids_for_key(db, alpha_router_api_key_id)
     ai_model, api_key, base_url, provider_type = await resolve_model_and_key(
         db,
@@ -971,9 +935,7 @@ async def preflight_stream_chat(
         allowed_model_ids=allowed_model_ids,
     )
     if not ai_model or not api_key:
-        raise HTTPException(
-            status_code=404, detail=f"Model not enabled: {selected_model}"
-        )
+        raise HTTPException(status_code=404, detail=f"Model not enabled: {selected_model}")
     assert_model_supports_text_chat(ai_model)
     subject = await resolve_access_subject(
         db,
@@ -982,9 +944,7 @@ async def preflight_stream_chat(
         source=source,
     )
     if not await user_can_access_model(db, ai_model, subject):
-        raise HTTPException(
-            status_code=404, detail=f"Model not enabled: {selected_model}"
-        )
+        raise HTTPException(status_code=404, detail=f"Model not enabled: {selected_model}")
     tools = parse_tools_config({} if agent_turn is not None else body)
     workspace_files: dict[str, str] | None = None
     capacity_permit: CapacityPermit | None = None
@@ -1059,9 +1019,7 @@ async def preflight_stream_chat(
         api_key=api_key,
         base_url=base_url or "",
         provider_type=provider_type or ai_model.provider_type or "",
-        model_id=litellm_model_for_provider(
-            ai_model.external_id, provider_type or ai_model.provider_type
-        ),
+        model_id=litellm_model_for_provider(ai_model.external_id, provider_type or ai_model.provider_type),
         budget_reservation_id=hold.id if hold else None,
         code_interpreter_workspace_files=workspace_files,
         code_interpreter_capacity_permit=capacity_permit,
@@ -1086,9 +1044,7 @@ async def _apply_cost_to_user(db: AsyncSession, user_id: int, cost: float) -> No
     # lost. The single UPDATE statement is atomic at the row level under both
     # PostgreSQL (row lock) and SQLite (database lock), so no lost updates.
     await db.execute(
-        text(
-            "UPDATE users SET budget_used_usd = COALESCE(budget_used_usd, 0) + :cost WHERE id = :uid"
-        ),
+        text("UPDATE users SET budget_used_usd = COALESCE(budget_used_usd, 0) + :cost WHERE id = :uid"),
         {"cost": float(cost), "uid": user_id},
     )
 
@@ -1345,9 +1301,7 @@ async def settle_auxiliary_usage(
                         (event.completed_at - event.started_at).total_seconds() * 1000,
                     ),
                     prompt_language=detect_prompt_language(
-                        _extract_prompt_text(prompt)
-                        if isinstance(prompt, list)
-                        else str(prompt or "")
+                        _extract_prompt_text(prompt) if isinstance(prompt, list) else str(prompt or "")
                     ),
                     source_ip=None,
                     source="alpha_router_chat",
@@ -1358,9 +1312,7 @@ async def settle_auxiliary_usage(
                     usage_events=[event],
                     operation_type=operation_name,
                     operation_idempotency_key=(
-                        f"aux:{budget_reservation_id}"
-                        if budget_reservation_id
-                        else f"aux:{event.idempotency_key}"
+                        f"aux:{budget_reservation_id}" if budget_reservation_id else f"aux:{event.idempotency_key}"
                     ),
                 )
                 await log_db.commit()
@@ -1371,8 +1323,7 @@ async def settle_auxiliary_usage(
                 continue
             increment("budget_hold_leak")
             logger.exception(
-                "Auxiliary usage settlement failed after retries operation=%s; "
-                "reservation remains held for recovery",
+                "Auxiliary usage settlement failed after retries operation=%s; reservation remains held for recovery",
                 operation_name,
             )
 
@@ -1396,9 +1347,7 @@ async def _resolve_private_mode_for_memory(
     ).effective
 
 
-async def _resolve_session_project_id(
-    db: AsyncSession, chat_session_id: str | None
-) -> str | None:
+async def _resolve_session_project_id(db: AsyncSession, chat_session_id: str | None) -> str | None:
     """Server-side project of a chat session; the client value is never trusted."""
     sid = (chat_session_id or "").strip()
     if not sid:
@@ -1445,9 +1394,7 @@ async def stream_chat(
 
             sess_row = (
                 await db.execute(
-                    select(ChatSession.id, ChatSession.project_id).where(
-                        ChatSession.id == chat_session_id_for_billing
-                    )
+                    select(ChatSession.id, ChatSession.project_id).where(ChatSession.id == chat_session_id_for_billing)
                 )
             ).first()
             if sess_row is not None:
@@ -1474,10 +1421,7 @@ async def stream_chat(
         if agent_turn is not None:
             body["_agent_run_id"] = agent_turn.run_id
             if agent_turn.plan.status != "ready":
-                safe_response = (
-                    agent_turn.plan.safe_response
-                    or "This Agent turn could not be completed safely."
-                )
+                safe_response = agent_turn.plan.safe_response or "This Agent turn could not be completed safely."
                 persister = None
                 if source == "alpha_router_chat" and user_id:
                     persister = persister_from_body(
@@ -1490,9 +1434,7 @@ async def stream_chat(
                             else None
                         ),
                         model_name=(
-                            agent_turn.plan.target.agent.name
-                            if agent_turn.plan.target is not None
-                            else "Alpharouter"
+                            agent_turn.plan.target.agent.name if agent_turn.plan.target is not None else "Alpharouter"
                         ),
                     )
                 if persister is not None:
@@ -1501,9 +1443,7 @@ async def stream_chat(
                             {
                                 "agentRunId": agent_turn.run_id,
                                 "agentId": agent_turn.plan.selected_agent_id,
-                                "agentVersionId": (
-                                    agent_turn.plan.selected_agent_version_id
-                                ),
+                                "agentVersionId": (agent_turn.plan.selected_agent_version_id),
                                 "agentStatus": agent_turn.plan.status,
                                 "routingOutcome": agent_turn.plan.routing_outcome,
                             }
@@ -1625,20 +1565,12 @@ async def stream_chat(
             "timeout": float(getattr(settings, "chat_provider_timeout_seconds", 600.0) or 600.0),
         }
         if agent_turn is not None and agent_turn.plan.policies is not None:
-            completion_kwargs["max_tokens"] = (
-                agent_turn.plan.policies.model.max_output_tokens
-            )
+            completion_kwargs["max_tokens"] = agent_turn.plan.policies.model.max_output_tokens
             if agent_turn.plan.policies.model.temperature is not None:
-                completion_kwargs["temperature"] = (
-                    agent_turn.plan.policies.model.temperature
-                )
+                completion_kwargs["temperature"] = agent_turn.plan.policies.model.temperature
         model = _apply_litellm_provider_kwargs(completion_kwargs, provider_type, model)
         provider = (provider_type or ai_model.provider_type or "").lower()
-        if (
-            tools.code_interpreter
-            and provider == "openrouter"
-            and is_auto_router_model_id(ai_model.external_id)
-        ):
+        if tools.code_interpreter and provider == "openrouter" and is_auto_router_model_id(ai_model.external_id):
             auto_router_extra_body = await _adaptive_openrouter_extra_body(ai_model)
             if auto_router_extra_body:
                 completion_kwargs["extra_body"] = auto_router_extra_body
@@ -1660,9 +1592,7 @@ async def stream_chat(
                 try:
                     await asyncio.shield(_release_stream_reservation())
                 except Exception:
-                    logger.exception(
-                        "Failed to release chat reservation after tool setup error"
-                    )
+                    logger.exception("Failed to release chat reservation after tool setup error")
                 if capacity_heartbeat_task is not None:
                     capacity_heartbeat_task.cancel()
                 await asyncio.shield(_release_capacity_permit())
@@ -1670,12 +1600,8 @@ async def stream_chat(
         private_mode = await _resolve_private_mode_for_memory(db, body, user_id=user_id)
         if agent_turn is None:
             try:
-                chat_session_id = (
-                    str(body.get("chat_session_id") or "").strip() or None
-                )
-                session_project_id = await _resolve_session_project_id(
-                    db, chat_session_id
-                )
+                chat_session_id = str(body.get("chat_session_id") or "").strip() or None
+                session_project_id = await _resolve_session_project_id(db, chat_session_id)
                 project_memory_project_id = session_project_id
                 messages = await augment_messages_with_profile(
                     db,
@@ -1699,10 +1625,7 @@ async def stream_chat(
                     messages,
                     user_id=user_id,
                     chat_session_id=chat_session_id,
-                    client_project_id=str(
-                        body.get("project_id") or body.get("projectId") or ""
-                    ).strip()
-                    or None,
+                    client_project_id=str(body.get("project_id") or body.get("projectId") or "").strip() or None,
                     query=extract_query_text(messages),
                     injected_memory_ids=injected_project_memory_ids,
                 )
@@ -1710,9 +1633,7 @@ async def stream_chat(
                 try:
                     await asyncio.shield(_release_stream_reservation())
                 except Exception:
-                    logger.exception(
-                        "Failed to release chat reservation after memory setup error"
-                    )
+                    logger.exception("Failed to release chat reservation after memory setup error")
                 if capacity_heartbeat_task is not None:
                     capacity_heartbeat_task.cancel()
                 await asyncio.shield(_release_capacity_permit())
@@ -1727,21 +1648,13 @@ async def stream_chat(
         workspace_files = (
             resolved_workspace_files
             if tools.code_interpreter and resolved_workspace_files is not None
-            else (
-                workspace_files_from_messages(original_messages)
-                if tools.code_interpreter
-                else {}
-            )
+            else (workspace_files_from_messages(original_messages) if tools.code_interpreter else {})
         )
         if tools.code_interpreter and workspace_files:
             inventory = code_interpreter_workspace_message(workspace_files)
             if inventory:
                 messages = list(messages)
-                if (
-                    messages
-                    and messages[0].get("role") == "system"
-                    and isinstance(messages[0].get("content"), str)
-                ):
+                if messages and messages[0].get("role") == "system" and isinstance(messages[0].get("content"), str):
                     messages[0] = {
                         "role": "system",
                         "content": f"{messages[0]['content']}\n\n{inventory}",
@@ -1779,13 +1692,9 @@ async def stream_chat(
                             {
                                 "agentRunId": agent_turn.run_id,
                                 "agentId": agent_turn.plan.selected_agent_id,
-                                "agentVersionId": (
-                                    agent_turn.plan.selected_agent_version_id
-                                ),
+                                "agentVersionId": (agent_turn.plan.selected_agent_version_id),
                                 "agentName": (
-                                    agent_turn.plan.target.agent.name
-                                    if agent_turn.plan.target is not None
-                                    else None
+                                    agent_turn.plan.target.agent.name if agent_turn.plan.target is not None else None
                                 ),
                                 "routingOutcome": agent_turn.plan.routing_outcome,
                             }
@@ -1808,9 +1717,7 @@ async def stream_chat(
             if prompt_tokens == 0 and collected_content:
                 try:
                     tc_kwargs: dict = {"messages": msgs_for_count}
-                    litellm_model = _apply_litellm_provider_kwargs(
-                        tc_kwargs, provider_type, model
-                    )
+                    litellm_model = _apply_litellm_provider_kwargs(tc_kwargs, provider_type, model)
                     prompt_tokens = litellm.token_counter(**tc_kwargs)
                     ct_kwargs: dict = {
                         "model": litellm_model,
@@ -1931,11 +1838,7 @@ async def stream_chat(
                         await _close_upstream_stream(response)
                         break
                     pt, ct, cache = _usage_from_chunk(chunk)
-                    chunk_usage = (
-                        chunk.get("usage")
-                        if isinstance(chunk, dict)
-                        else getattr(chunk, "usage", None)
-                    )
+                    chunk_usage = chunk.get("usage") if isinstance(chunk, dict) else getattr(chunk, "usage", None)
                     if pt or ct or cache or chunk_usage is not None:
                         active_last_chunk = chunk
                     (
@@ -1969,15 +1872,13 @@ async def stream_chat(
                         persister.schedule_content(collected_content)
 
                 pt, ct, cache = _usage_from_stream_wrapper(response)
-                active_prompt_tokens, active_completion_tokens, active_cached_tokens = (
-                    _merge_stream_usage(
-                        active_prompt_tokens,
-                        active_completion_tokens,
-                        active_cached_tokens,
-                        pt,
-                        ct,
-                        cache,
-                    )
+                active_prompt_tokens, active_completion_tokens, active_cached_tokens = _merge_stream_usage(
+                    active_prompt_tokens,
+                    active_completion_tokens,
+                    active_cached_tokens,
+                    pt,
+                    ct,
+                    cache,
                 )
                 if active_prompt_tokens == 0 and iteration_content:
                     try:
@@ -1987,29 +1888,19 @@ async def stream_chat(
                             provider_type,
                             model,
                         )
-                        active_prompt_tokens = int(
-                            litellm.token_counter(**token_kwargs) or 0
-                        )
+                        active_prompt_tokens = int(litellm.token_counter(**token_kwargs) or 0)
                         completion_kwargs_for_count: dict = {
                             "model": model,
                             "text": iteration_content,
                         }
                         llm_provider = resolve_litellm_provider(provider_type)
                         if llm_provider:
-                            completion_kwargs_for_count["custom_llm_provider"] = (
-                                llm_provider
-                            )
-                        active_completion_tokens = int(
-                            litellm.token_counter(**completion_kwargs_for_count) or 0
-                        )
+                            completion_kwargs_for_count["custom_llm_provider"] = llm_provider
+                        active_completion_tokens = int(litellm.token_counter(**completion_kwargs_for_count) or 0)
                     except Exception:
                         pass
                 empty_completion = not iteration_content.strip()
-                attempt_error = (
-                    "Upstream model returned an empty completion."
-                    if empty_completion
-                    else None
-                )
+                attempt_error = "Upstream model returned an empty completion." if empty_completion else None
                 active_event = capture_usage_event(
                     response,
                     fallback_response=active_last_chunk,
@@ -2058,27 +1949,18 @@ async def stream_chat(
                             detail=attempt_error or "Empty Code Interpreter response",
                         )
                     except Exception:
-                        logger.exception(
-                            "Failed to record Code Interpreter compatibility failure"
-                        )
-                    if provider == "openrouter" and is_auto_router_model_id(
-                        ai_model.external_id
-                    ):
-                        retry_extra_body = await _adaptive_openrouter_extra_body(
-                            ai_model
-                        )
+                        logger.exception("Failed to record Code Interpreter compatibility failure")
+                    if provider == "openrouter" and is_auto_router_model_id(ai_model.external_id):
+                        retry_extra_body = await _adaptive_openrouter_extra_body(ai_model)
                         if retry_extra_body:
                             completion_kwargs["extra_body"] = retry_extra_body
 
                 if empty_completion and (
-                    not tools.code_interpreter
-                    or code_nudge_sent
-                    or code_iterations >= MAX_CODE_ITERATIONS
+                    not tools.code_interpreter or code_nudge_sent or code_iterations >= MAX_CODE_ITERATIONS
                 ):
                     success = False
                     error_message = (
-                        "The upstream model returned no usable content. "
-                        "Retry the request or select a different model."
+                        "The upstream model returned no usable content. Retry the request or select a different model."
                     )
                     yield f"data: {json.dumps({'error': error_message})}\n\n".encode()
                     break
@@ -2101,16 +1983,11 @@ async def stream_chat(
                                 base_url=base_url,
                                 api_key=api_key,
                                 event=active_event,
-                                detail=(
-                                    "The model did not emit a runnable Python block "
-                                    "after an explicit nudge."
-                                ),
+                                detail=("The model did not emit a runnable Python block after an explicit nudge."),
                                 reason_code_override="no_python_block",
                             )
                         except Exception:
-                            logger.exception(
-                                "Failed to record Code Interpreter compatibility failure"
-                            )
+                            logger.exception("Failed to record Code Interpreter compatibility failure")
                         break
                     code_nudge_sent = True
                     current_messages = apply_prompt_cache_breakpoints(
@@ -2119,9 +1996,7 @@ async def stream_chat(
                             {"role": "assistant", "content": iteration_content},
                             {
                                 "role": "user",
-                                "content": code_interpreter_nudge_message(
-                                    workspace_files
-                                ),
+                                "content": code_interpreter_nudge_message(workspace_files),
                             },
                         ]
                     )
@@ -2134,9 +2009,7 @@ async def stream_chat(
                     break
 
                 try:
-                    exec_result = await _run_sandbox_until_stopped(
-                        code, workspace_files
-                    )
+                    exec_result = await _run_sandbox_until_stopped(code, workspace_files)
                 except ValueError as exc:
                     exec_result = SandboxExecutionResult(
                         output=f"Code interpreter error: {exc}",
@@ -2178,43 +2051,30 @@ async def stream_chat(
                     )
                     if can_persist_artifacts:
                         try:
-                            stored_artifacts = (
-                                await _persist_code_interpreter_artifacts(
-                                    exec_result.artifacts,
-                                    user_id=int(user_id),
-                                    username=username,
-                                    chat_session_id=str(body["chat_session_id"]),
-                                    model_id=model,
-                                    source_prompt=_extract_prompt_text(messages),
-                                )
+                            stored_artifacts = await _persist_code_interpreter_artifacts(
+                                exec_result.artifacts,
+                                user_id=int(user_id),
+                                username=username,
+                                chat_session_id=str(body["chat_session_id"]),
+                                model_id=model,
+                                source_prompt=_extract_prompt_text(messages),
                             )
                             new_artifacts = [
-                                item
-                                for item in stored_artifacts
-                                if item.asset_id not in emitted_artifact_ids
+                                item for item in stored_artifacts if item.asset_id not in emitted_artifact_ids
                             ]
-                            emitted_artifact_ids.update(
-                                item.asset_id for item in new_artifacts
-                            )
+                            emitted_artifact_ids.update(item.asset_id for item in new_artifacts)
                             formatted += _artifact_links_markdown(new_artifacts)
                             artifact_context = (
                                 "Platform-stored artifacts (use only these exact download links):\n"
-                                + "\n".join(
-                                    f"- {item.name}: {item.url}"
-                                    for item in stored_artifacts
-                                )
+                                + "\n".join(f"- {item.name}: {item.url}" for item in stored_artifacts)
                             )
                         except Exception:
-                            logger.exception(
-                                "Failed to persist code interpreter artifacts"
-                            )
+                            logger.exception("Failed to persist code interpreter artifacts")
                             artifact_context = (
-                                "The generated files could not be stored in Media. "
-                                "Do not invent download links."
+                                "The generated files could not be stored in Media. Do not invent download links."
                             )
                             formatted += (
-                                "\n> Generated files could not be stored in Media. "
-                                "No download link was created.\n\n"
+                                "\n> Generated files could not be stored in Media. No download link was created.\n\n"
                             )
                     else:
                         artifact_context = (
@@ -2222,8 +2082,7 @@ async def stream_chat(
                             "Do not invent download links."
                         )
                         formatted += (
-                            "\n> Generated files are not persisted for Private Mode or "
-                            "non-persisted API chats.\n\n"
+                            "\n> Generated files are not persisted for Private Mode or non-persisted API chats.\n\n"
                         )
                 collected_content += formatted
                 if persister:
@@ -2235,11 +2094,7 @@ async def stream_chat(
                 if not client_disconnected:
                     yield _sse_delta_chunk(formatted)
 
-                remediation = (
-                    code_interpreter_error_hint(exec_result.output)
-                    if exec_result.exit_code != 0
-                    else ""
-                )
+                remediation = code_interpreter_error_hint(exec_result.output) if exec_result.exit_code != 0 else ""
                 feedback_parts = [
                     part
                     for part in (
@@ -2267,30 +2122,20 @@ async def stream_chat(
             await _compute_cost()
             if agent_turn is not None and not client_disconnected and success:
                 if agent_resource_subject is None:
-                    raise AgentRuntimeUnavailable(
-                        "Agent authorization context is unavailable"
-                    )
+                    raise AgentRuntimeUnavailable("Agent authorization context is unavailable")
                 agent_review = await finalize_agent_completion(
                     plan=agent_turn.plan,
                     output_text=collected_content,
                     resource_subject=agent_resource_subject,
                 )
                 reviewed_content = (
-                    agent_review.display_text
-                    if agent_review.status == "ready"
-                    else agent_review.safe_response
+                    agent_review.display_text if agent_review.status == "ready" else agent_review.safe_response
                 )
-                collected_content = reviewed_content or (
-                    "This Agent response could not be displayed safely."
-                )
+                collected_content = reviewed_content or ("This Agent response could not be displayed safely.")
                 if persister:
                     persister.set_completion_metadata(
                         {
-                            "agentStatus": (
-                                "succeeded"
-                                if agent_review.status == "ready"
-                                else "blocked"
-                            ),
+                            "agentStatus": ("succeeded" if agent_review.status == "ready" else "blocked"),
                             "completionReasonCode": agent_review.reason_code,
                             "citations": _agent_citation_metadata(
                                 agent_turn,
@@ -2379,9 +2224,7 @@ async def stream_chat(
                             detail=str(exc),
                         )
                     except Exception:
-                        logger.exception(
-                            "Failed to record Code Interpreter compatibility failure"
-                        )
+                        logger.exception("Failed to record Code Interpreter compatibility failure")
             active_response = None
             active_last_chunk = None
             active_started_at = None
@@ -2397,15 +2240,11 @@ async def stream_chat(
                     retry_kwargs.pop("stream_options", None)
                     retry_response = await acompletion(**retry_kwargs)
                     stream_end_at = time.perf_counter()
-                    content, (pt, ct, cache) = _extract_non_stream_content(
-                        retry_response
-                    )
+                    content, (pt, ct, cache) = _extract_non_stream_content(retry_response)
                     collected_content = content
                     if pt == 0 and content:
                         try:
-                            prompt_count_kwargs: dict = {
-                                "messages": retry_kwargs.get("messages", messages)
-                            }
+                            prompt_count_kwargs: dict = {"messages": retry_kwargs.get("messages", messages)}
                             _apply_litellm_provider_kwargs(
                                 prompt_count_kwargs,
                                 provider_type,
@@ -2418,12 +2257,8 @@ async def stream_chat(
                             }
                             llm_provider = resolve_litellm_provider(provider_type)
                             if llm_provider:
-                                completion_count_kwargs["custom_llm_provider"] = (
-                                    llm_provider
-                                )
-                            ct = int(
-                                litellm.token_counter(**completion_count_kwargs) or 0
-                            )
+                                completion_count_kwargs["custom_llm_provider"] = llm_provider
+                            ct = int(litellm.token_counter(**completion_count_kwargs) or 0)
                         except Exception:
                             pass
                     usage_events.append(
@@ -2459,30 +2294,20 @@ async def stream_chat(
                     await _compute_cost()
                     if agent_turn is not None:
                         if agent_resource_subject is None:
-                            raise AgentRuntimeUnavailable(
-                                "Agent authorization context is unavailable"
-                            )
+                            raise AgentRuntimeUnavailable("Agent authorization context is unavailable")
                         agent_review = await finalize_agent_completion(
                             plan=agent_turn.plan,
                             output_text=collected_content,
                             resource_subject=agent_resource_subject,
                         )
                         reviewed_content = (
-                            agent_review.display_text
-                            if agent_review.status == "ready"
-                            else agent_review.safe_response
+                            agent_review.display_text if agent_review.status == "ready" else agent_review.safe_response
                         )
-                        collected_content = reviewed_content or (
-                            "This Agent response could not be displayed safely."
-                        )
+                        collected_content = reviewed_content or ("This Agent response could not be displayed safely.")
                         if persister:
                             persister.set_completion_metadata(
                                 {
-                                    "agentStatus": (
-                                        "succeeded"
-                                        if agent_review.status == "ready"
-                                        else "blocked"
-                                    ),
+                                    "agentStatus": ("succeeded" if agent_review.status == "ready" else "blocked"),
                                     "completionReasonCode": agent_review.reason_code,
                                     "citations": _agent_citation_metadata(
                                         agent_turn,
@@ -2523,250 +2348,215 @@ async def stream_chat(
                 error_message = _format_provider_error(exc, provider)[:500]
                 yield f"data: {json.dumps({'error': error_message})}\n\n".encode()
         finally:
-          # Starlette cancels a streaming response through an anyio cancel
-          # scope when the client disconnects. anyio delivers that
-          # cancellation at *every* subsequent await until the scope exits, so
-          # without a shield the first await below re-raises CancelledError and
-          # settlement (release hold, RequestLog, persister.finalize, agent
-          # finalization) is skipped: the hold leaks until TTL and consumed
-          # tokens are never charged. asyncio.shield() alone protects the inner
-          # coroutine but not this frame, so shield the whole finalizer.
-          with anyio.CancelScope(shield=True):
-            if capacity_heartbeat_task is not None:
-                capacity_heartbeat_task.cancel()
-                await asyncio.gather(
-                    capacity_heartbeat_task,
-                    return_exceptions=True,
-                )
-            try:
-                await _release_capacity_permit()
-            except Exception:
-                logger.exception("Failed to release Code Interpreter capacity permit")
-            if persister:
-                try:
-                    await persister.finalize(
-                        success=success,
-                        error_message=error_message,
+            # Starlette cancels a streaming response through an anyio cancel
+            # scope when the client disconnects. anyio delivers that
+            # cancellation at *every* subsequent await until the scope exits, so
+            # without a shield the first await below re-raises CancelledError and
+            # settlement (release hold, RequestLog, persister.finalize, agent
+            # finalization) is skipped: the hold leaks until TTL and consumed
+            # tokens are never charged. asyncio.shield() alone protects the inner
+            # coroutine but not this frame, so shield the whole finalizer.
+            with anyio.CancelScope(shield=True):
+                if capacity_heartbeat_task is not None:
+                    capacity_heartbeat_task.cancel()
+                    await asyncio.gather(
+                        capacity_heartbeat_task,
+                        return_exceptions=True,
                     )
-                except Exception:
-                    await db.rollback()
-            if stream_end_at is not None:
-                elapsed_ms = (stream_end_at - generation_start) * 1000
-            else:
-                elapsed_ms = (time.perf_counter() - generation_start) * 1000
-            # Usage/cost accounting is logged in an INDEPENDENT session so that a
-            # persister rollback (which reverts the assistant message content)
-            # cannot also drop the RequestLog / budget increment — otherwise a
-            # user could be charged for a response whose stored message was
-            # lost, or conversely get a response for free. This decouples the
-            # two concerns (message persistence vs cost accounting).
-            accounting_key = (
-                f"chat:{stream_reservation_id}"
-                if stream_reservation_id
-                else (
-                    f"chat:{usage_events[0].idempotency_key}" if usage_events else None
-                )
-            )
-            if user_id and injected_memory_ids:
                 try:
-                    async with AsyncSessionLocal() as mem_db:
-                        await record_memory_usage(
-                            mem_db, int(user_id), injected_memory_ids
-                        )
-                        await mem_db.commit()
+                    await _release_capacity_permit()
                 except Exception:
-                    logger.exception("Failed to record memory usage")
-            if project_memory_project_id and injected_project_memory_ids:
-                try:
-                    from app.services.project_memory_service import (
-                        record_project_memory_usage,
-                    )
-
-                    async with AsyncSessionLocal() as mem_db:
-                        await record_project_memory_usage(
-                            mem_db,
-                            project_memory_project_id,
-                            injected_project_memory_ids,
-                        )
-                        await mem_db.commit()
-                except Exception:
-                    logger.exception("Failed to record project memory usage")
-
-            stream_request_log_id: int | None = None
-
-            async def _persist_stream_usage() -> int | None:
-                for attempt in range(3):
+                    logger.exception("Failed to release Code Interpreter capacity permit")
+                if persister:
                     try:
-                        async with AsyncSessionLocal() as log_db:
-                            log_id = await log_usage(
-                                log_db,
-                                user_id=user_id,
-                                username=username,
-                                model_id=model,
-                                prompt_tokens=prompt_tokens,
-                                completion_tokens=completion_tokens,
-                                cached_tokens=cached_tokens,
-                                total_cost_usd=total_cost,
-                                response_time_ms=elapsed_ms,
-                                prompt_language=prompt_lang,
-                                source_ip=request.client.host
-                                if request.client
-                                else None,
-                                source=source,
-                                success=success,
-                                error_message=error_message,
-                                alpha_router_api_key_id=alpha_router_api_key_id,
-                                user_api_key_id=user_api_key_id,
-                                client_app=client_app,
-                                budget_reservation_id=stream_reservation_id,
-                                usage_events=usage_events,
-                                operation_type="chat",
-                                operation_idempotency_key=accounting_key,
-                                project_id=project_id_for_billing,
-                            )
-                            chat_session_id = str(
-                                body.get("chat_session_id") or ""
-                            ).strip()
-                            assistant_cid = str(
-                                body.get("assistant_client_message_id") or ""
-                            ).strip()
-                            if (
-                                log_id
-                                and success
-                                and source == "alpha_router_chat"
-                                and user_id
-                                and chat_session_id
-                            ):
-                                from app.services.user_chat_storage_service import (
-                                    attach_request_log_id_to_chat_message,
-                                )
-
-                                await attach_request_log_id_to_chat_message(
-                                    log_db,
-                                    int(user_id),
-                                    chat_session_id,
-                                    int(log_id),
-                                    client_message_id=assistant_cid or None,
-                                )
-                            await log_db.commit()
-                        return log_id
-                    except Exception:
-                        if attempt < 2:
-                            await asyncio.sleep(0.1 * (attempt + 1))
-                            continue
-                        # The hold stays "held" until TTL: the one signal ops
-                        # has that money is stuck.
-                        increment("budget_hold_leak")
-                        logger.exception(
-                            "Chat usage settlement failed after retries; "
-                            "reservation remains held for recovery"
+                        await persister.finalize(
+                            success=success,
+                            error_message=error_message,
                         )
-                return None
-
-            stream_request_log_id = await _persist_stream_usage()
-            agent_terminal_status: str | None = None
-            if agent_turn is not None:
-                if was_cancelled or client_disconnected:
-                    agent_terminal_status = "cancelled"
-                elif not success:
-                    agent_terminal_status = "failed"
-                elif agent_review is not None and agent_review.status == "blocked":
-                    agent_terminal_status = "blocked"
+                    except Exception:
+                        await db.rollback()
+                if stream_end_at is not None:
+                    elapsed_ms = (stream_end_at - generation_start) * 1000
                 else:
-                    agent_terminal_status = "succeeded"
+                    elapsed_ms = (time.perf_counter() - generation_start) * 1000
+                # Usage/cost accounting is logged in an INDEPENDENT session so that a
+                # persister rollback (which reverts the assistant message content)
+                # cannot also drop the RequestLog / budget increment — otherwise a
+                # user could be charged for a response whose stored message was
+                # lost, or conversely get a response for free. This decouples the
+                # two concerns (message persistence vs cost accounting).
+                accounting_key = (
+                    f"chat:{stream_reservation_id}"
+                    if stream_reservation_id
+                    else (f"chat:{usage_events[0].idempotency_key}" if usage_events else None)
+                )
+                if user_id and injected_memory_ids:
+                    try:
+                        async with AsyncSessionLocal() as mem_db:
+                            await record_memory_usage(mem_db, int(user_id), injected_memory_ids)
+                            await mem_db.commit()
+                    except Exception:
+                        logger.exception("Failed to record memory usage")
+                if project_memory_project_id and injected_project_memory_ids:
+                    try:
+                        from app.services.project_memory_service import (
+                            record_project_memory_usage,
+                        )
 
-                async def _persist_agent_finalization() -> None:
+                        async with AsyncSessionLocal() as mem_db:
+                            await record_project_memory_usage(
+                                mem_db,
+                                project_memory_project_id,
+                                injected_project_memory_ids,
+                            )
+                            await mem_db.commit()
+                    except Exception:
+                        logger.exception("Failed to record project memory usage")
+
+                stream_request_log_id: int | None = None
+
+                async def _persist_stream_usage() -> int | None:
                     for attempt in range(3):
                         try:
-                            async with AsyncSessionLocal() as agent_db:
-                                await finalize_agent_run(
-                                    agent_db,
-                                    run_id=agent_turn.run_id,
-                                    status=agent_terminal_status or "failed",
-                                    review=agent_review,
-                                    request_log_id=stream_request_log_id,
+                            async with AsyncSessionLocal() as log_db:
+                                log_id = await log_usage(
+                                    log_db,
+                                    user_id=user_id,
+                                    username=username,
+                                    model_id=model,
                                     prompt_tokens=prompt_tokens,
                                     completion_tokens=completion_tokens,
                                     cached_tokens=cached_tokens,
                                     total_cost_usd=total_cost,
-                                    provider_latency_ms=max(0, int(elapsed_ms)),
-                                    total_latency_ms=max(
-                                        0,
-                                        int(
-                                            elapsed_ms
-                                            + agent_turn.plan.total_planning_latency_ms
-                                        ),
-                                    ),
-                                    output_displayed=agent_output_displayed,
-                                    error_code=(
-                                        agent_review.reason_code
-                                        if agent_terminal_status == "blocked"
-                                        and agent_review is not None
-                                        else (
-                                            "client_disconnected"
-                                            if agent_terminal_status == "cancelled"
-                                            else (
-                                                "provider_error"
-                                                if agent_terminal_status == "failed"
-                                                else None
-                                            )
-                                        )
-                                    ),
-                                    error_message=(
-                                        error_message
-                                        if agent_terminal_status
-                                        in {"failed", "cancelled"}
-                                        else None
-                                    ),
+                                    response_time_ms=elapsed_ms,
+                                    prompt_language=prompt_lang,
+                                    source_ip=request.client.host if request.client else None,
+                                    source=source,
+                                    success=success,
+                                    error_message=error_message,
+                                    alpha_router_api_key_id=alpha_router_api_key_id,
+                                    user_api_key_id=user_api_key_id,
+                                    client_app=client_app,
+                                    budget_reservation_id=stream_reservation_id,
+                                    usage_events=usage_events,
+                                    operation_type="chat",
+                                    operation_idempotency_key=accounting_key,
+                                    project_id=project_id_for_billing,
                                 )
-                                await agent_db.commit()
-                            return
+                                chat_session_id = str(body.get("chat_session_id") or "").strip()
+                                assistant_cid = str(body.get("assistant_client_message_id") or "").strip()
+                                if log_id and success and source == "alpha_router_chat" and user_id and chat_session_id:
+                                    from app.services.user_chat_storage_service import (
+                                        attach_request_log_id_to_chat_message,
+                                    )
+
+                                    await attach_request_log_id_to_chat_message(
+                                        log_db,
+                                        int(user_id),
+                                        chat_session_id,
+                                        int(log_id),
+                                        client_message_id=assistant_cid or None,
+                                    )
+                                await log_db.commit()
+                            return log_id
                         except Exception:
                             if attempt < 2:
                                 await asyncio.sleep(0.1 * (attempt + 1))
                                 continue
+                            # The hold stays "held" until TTL: the one signal ops
+                            # has that money is stuck.
+                            increment("budget_hold_leak")
                             logger.exception(
-                                "Agent run finalization failed after retries run=%s",
-                                agent_turn.run_id,
+                                "Chat usage settlement failed after retries; reservation remains held for recovery"
                             )
+                    return None
 
-                await _persist_agent_finalization()
+                stream_request_log_id = await _persist_stream_usage()
+                agent_terminal_status: str | None = None
+                if agent_turn is not None:
+                    if was_cancelled or client_disconnected:
+                        agent_terminal_status = "cancelled"
+                    elif not success:
+                        agent_terminal_status = "failed"
+                    elif agent_review is not None and agent_review.status == "blocked":
+                        agent_terminal_status = "blocked"
+                    else:
+                        agent_terminal_status = "succeeded"
 
-            response_metadata: dict[str, object] = {}
-            if (
-                not was_cancelled
-                and success
-                and stream_request_log_id
-                and source == "alpha_router_chat"
-            ):
-                response_metadata["request_log_id"] = int(stream_request_log_id)
-            if agent_turn is not None and not was_cancelled:
-                response_metadata.update(
-                    {
-                        "agent_run_id": agent_turn.run_id,
-                        **_agent_identity_metadata(agent_turn),
-                        "agent_status": agent_terminal_status,
-                        "routing_outcome": agent_turn.plan.routing_outcome,
-                    }
-                )
-                if agent_review is not None:
-                    response_metadata["completion_reason_code"] = (
-                        agent_review.reason_code
+                    async def _persist_agent_finalization() -> None:
+                        for attempt in range(3):
+                            try:
+                                async with AsyncSessionLocal() as agent_db:
+                                    await finalize_agent_run(
+                                        agent_db,
+                                        run_id=agent_turn.run_id,
+                                        status=agent_terminal_status or "failed",
+                                        review=agent_review,
+                                        request_log_id=stream_request_log_id,
+                                        prompt_tokens=prompt_tokens,
+                                        completion_tokens=completion_tokens,
+                                        cached_tokens=cached_tokens,
+                                        total_cost_usd=total_cost,
+                                        provider_latency_ms=max(0, int(elapsed_ms)),
+                                        total_latency_ms=max(
+                                            0,
+                                            int(elapsed_ms + agent_turn.plan.total_planning_latency_ms),
+                                        ),
+                                        output_displayed=agent_output_displayed,
+                                        error_code=(
+                                            agent_review.reason_code
+                                            if agent_terminal_status == "blocked" and agent_review is not None
+                                            else (
+                                                "client_disconnected"
+                                                if agent_terminal_status == "cancelled"
+                                                else ("provider_error" if agent_terminal_status == "failed" else None)
+                                            )
+                                        ),
+                                        error_message=(
+                                            error_message if agent_terminal_status in {"failed", "cancelled"} else None
+                                        ),
+                                    )
+                                    await agent_db.commit()
+                                return
+                            except Exception:
+                                if attempt < 2:
+                                    await asyncio.sleep(0.1 * (attempt + 1))
+                                    continue
+                                logger.exception(
+                                    "Agent run finalization failed after retries run=%s",
+                                    agent_turn.run_id,
+                                )
+
+                    await _persist_agent_finalization()
+
+                response_metadata: dict[str, object] = {}
+                if not was_cancelled and success and stream_request_log_id and source == "alpha_router_chat":
+                    response_metadata["request_log_id"] = int(stream_request_log_id)
+                if agent_turn is not None and not was_cancelled:
+                    response_metadata.update(
+                        {
+                            "agent_run_id": agent_turn.run_id,
+                            **_agent_identity_metadata(agent_turn),
+                            "agent_status": agent_terminal_status,
+                            "routing_outcome": agent_turn.plan.routing_outcome,
+                        }
                     )
-                    citations = _agent_citation_metadata(agent_turn, agent_review)
-                    if citations:
-                        response_metadata["citations"] = citations
-          # Yields must stay outside the shielded scope and never run once the
-          # consumer is gone: yielding from a cancelled/closed generator would
-          # swallow the cancellation or raise "generator ignored GeneratorExit".
-          if response_metadata and not was_cancelled and not client_disconnected:
-              meta_payload = json.dumps(
-                  {"alpha_router": response_metadata},
-                  separators=(",", ":"),
-              )
-              yield f"data: {meta_payload}\n\n".encode()
-          if not was_cancelled and not client_disconnected:
-              yield b"data: [DONE]\n\n"
+                    if agent_review is not None:
+                        response_metadata["completion_reason_code"] = agent_review.reason_code
+                        citations = _agent_citation_metadata(agent_turn, agent_review)
+                        if citations:
+                            response_metadata["citations"] = citations
+            # Yields must stay outside the shielded scope and never run once the
+            # consumer is gone: yielding from a cancelled/closed generator would
+            # swallow the cancellation or raise "generator ignored GeneratorExit".
+            if response_metadata and not was_cancelled and not client_disconnected:
+                meta_payload = json.dumps(
+                    {"alpha_router": response_metadata},
+                    separators=(",", ":"),
+                )
+                yield f"data: {meta_payload}\n\n".encode()
+            if not was_cancelled and not client_disconnected:
+                yield b"data: [DONE]\n\n"
 
 
 async def _end_request_transaction(db: AsyncSession) -> None:
@@ -2910,9 +2700,7 @@ async def create_embedding(
             )
         )
         total_cost = sum(
-            float(event.quote.final_cost_usd)
-            for event in usage_events
-            if event.quote.final_cost_usd is not None
+            float(event.quote.final_cost_usd) for event in usage_events if event.quote.final_cost_usd is not None
         )
         if hasattr(response, "model_dump"):
             payload = response.model_dump()

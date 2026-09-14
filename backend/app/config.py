@@ -48,9 +48,7 @@ DEFAULT_CSP_REPORT_ONLY = (
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = PRODUCT_NAME
     debug: bool = False
@@ -84,26 +82,16 @@ class Settings(BaseSettings):
     service_admin_password: str = "changeme"
 
     database_url: str = "postgresql+asyncpg://alpha_router:changeme@postgres:5432/alpha_router"  # env: DATABASE_URL
-    database_read_url: str = (
-        ""  # env: DATABASE_READ_URL — optional read replica for GET chat routes
-    )
-    db_pool_size: int = (
-        12  # env: DB_POOL_SIZE — per worker behind PgBouncer (5k concurrent profile)
-    )
+    database_read_url: str = ""  # env: DATABASE_READ_URL — optional read replica for GET chat routes
+    db_pool_size: int = 12  # env: DB_POOL_SIZE — per worker behind PgBouncer (5k concurrent profile)
     db_max_overflow: int = 20  # env: DB_MAX_OVERFLOW
     db_pool_timeout: int = 45  # env: DB_POOL_TIMEOUT
     chat_empty_session_hide_days: int = 30  # env: CHAT_EMPTY_SESSION_HIDE_DAYS
     chat_list_rate_limit_per_min: int = 200  # env: CHAT_LIST_RATE_LIMIT_PER_MIN
-    chat_list_since_rate_limit_per_min: int = (
-        600  # env: CHAT_LIST_SINCE_RATE_LIMIT_PER_MIN
-    )
+    chat_list_since_rate_limit_per_min: int = 600  # env: CHAT_LIST_SINCE_RATE_LIMIT_PER_MIN
     chat_search_rate_limit_per_min: int = 45  # env: CHAT_SEARCH_RATE_LIMIT_PER_MIN
-    chat_message_search_rate_limit_per_min: int = (
-        45  # env: CHAT_MESSAGE_SEARCH_RATE_LIMIT_PER_MIN
-    )
-    uvicorn_workers: int = (
-        4  # env: UVICORN_WORKERS — process count in Docker/production
-    )
+    chat_message_search_rate_limit_per_min: int = 45  # env: CHAT_MESSAGE_SEARCH_RATE_LIMIT_PER_MIN
+    uvicorn_workers: int = 4  # env: UVICORN_WORKERS — process count in Docker/production
     redis_url: str = "redis://redis:6379/0"  # env: REDIS_URL
     # Phase 9: Redis auth. When set, the connection URL is rebuilt with this
     # password so rate-limit and OIDC state caches authenticate to Redis.
@@ -222,28 +210,16 @@ class Settings(BaseSettings):
     # Explicit development-only escape hatch. Production always fails closed.
     allow_insecure_code_subprocess: bool = False
     # Retained only to detect and reject a legacy image-only configuration.
-    code_sandbox_image: str = (
-        ""  # env: CODE_SANDBOX_IMAGE (e.g. alpha-router-sandbox:latest)
-    )
+    code_sandbox_image: str = ""  # env: CODE_SANDBOX_IMAGE (e.g. alpha-router-sandbox:latest)
     code_sandbox_timeout_seconds: int = 20  # env: CODE_SANDBOX_TIMEOUT_SECONDS
     # Cross-worker Code Interpreter turn admission (Redis leased semaphore).
     # Global hard ceiling for concurrent CI turns; request over capacity is
     # rejected immediately (no queue) with HTTP 429 + Retry-After.
-    code_interpreter_capacity_global_max: int = (
-        200  # env: CODE_INTERPRETER_CAPACITY_GLOBAL_MAX
-    )
-    code_interpreter_capacity_per_subject_max: int = (
-        2  # env: CODE_INTERPRETER_CAPACITY_PER_SUBJECT_MAX
-    )
-    code_interpreter_capacity_lease_ttl_seconds: int = (
-        900  # env: CODE_INTERPRETER_CAPACITY_LEASE_TTL_SECONDS
-    )
-    code_interpreter_capacity_heartbeat_seconds: int = (
-        30  # env: CODE_INTERPRETER_CAPACITY_HEARTBEAT_SECONDS
-    )
-    code_interpreter_capacity_retry_after_seconds: int = (
-        30  # env: CODE_INTERPRETER_CAPACITY_RETRY_AFTER_SECONDS
-    )
+    code_interpreter_capacity_global_max: int = 200  # env: CODE_INTERPRETER_CAPACITY_GLOBAL_MAX
+    code_interpreter_capacity_per_subject_max: int = 2  # env: CODE_INTERPRETER_CAPACITY_PER_SUBJECT_MAX
+    code_interpreter_capacity_lease_ttl_seconds: int = 900  # env: CODE_INTERPRETER_CAPACITY_LEASE_TTL_SECONDS
+    code_interpreter_capacity_heartbeat_seconds: int = 30  # env: CODE_INTERPRETER_CAPACITY_HEARTBEAT_SECONDS
+    code_interpreter_capacity_retry_after_seconds: int = 30  # env: CODE_INTERPRETER_CAPACITY_RETRY_AFTER_SECONDS
 
     # Bounded I/O defaults. Callers clamp overrides to hard safety ceilings.
     # Upload ceiling (multipart file routes and the chat/gateway JSON bodies
@@ -442,9 +418,7 @@ def build_redis_url(redis_url: str, redis_password: str) -> str:
     netloc = f"{userinfo}{host}"
     if parsed.port:
         netloc += f":{parsed.port}"
-    return urlunsplit(
-        (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
-    )
+    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
 
 
 def effective_redis_url() -> str:

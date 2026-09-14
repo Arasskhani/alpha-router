@@ -44,14 +44,14 @@ async def get_user_by_api_key(db: AsyncSession, raw_key: str):
         return None, "unknown", None, None
 
     h = hash_api_key(raw_key)
-    router_key = (
-        await db.execute(
-            select(AlphaRouterApiKey).where(AlphaRouterApiKey.key_hash == h)
-        )
-    ).scalars().first()
+    router_key = (await db.execute(select(AlphaRouterApiKey).where(AlphaRouterApiKey.key_hash == h))).scalars().first()
     if router_key:
         return None, "alpha_router_key", router_key, None
-    uk = (await db.execute(select(UserApiKey).where(UserApiKey.key_hash == h, UserApiKey.is_active == True))).scalars().first()  # noqa: E712
+    uk = (
+        (await db.execute(select(UserApiKey).where(UserApiKey.key_hash == h, UserApiKey.is_active == True)))
+        .scalars()
+        .first()
+    )  # noqa: E712
     if uk:
         user = await db.get(User, uk.user_id)
         return user, "user_key", None, uk

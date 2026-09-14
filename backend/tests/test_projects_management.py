@@ -63,9 +63,7 @@ def test_create_project_makes_creator_owner():
                 assert proj["myRole"] == "primary_owner"
                 assert proj["isMember"] is True
                 assert proj["visibility"] == "private"
-                members = await db.execute(
-                    ProjectMember.__table__.select()
-                )
+                members = await db.execute(ProjectMember.__table__.select())
                 rows = members.all()
                 assert len(rows) == 1
                 assert rows[0].role == "primary_owner"
@@ -161,13 +159,18 @@ def test_update_project_owner_only():
                 pid = proj["id"]
                 await add_member(db, project_id=pid, user=owner, target_user_id=contrib.id, role="contributor")
                 updated = await update_project(
-                    db, project_id=pid, user=owner, name="Alpha2", visibility="public",
+                    db,
+                    project_id=pid,
+                    user=owner,
+                    name="Alpha2",
+                    visibility="public",
                     confirm_public_name="Alpha",  # the *current* name is what must be echoed
                 )
                 assert updated["name"] == "Alpha2"
                 assert updated["visibility"] == "public"
                 # contributor cannot edit
                 from fastapi import HTTPException
+
                 try:
                     await update_project(db, project_id=pid, user=contrib, name="Hack")
                     assert False
@@ -247,7 +250,9 @@ def test_add_member_and_update_role():
                 pid = proj["id"]
                 m = await add_member(db, project_id=pid, user=owner, target_user_id=contrib.id, role="viewer")
                 assert m["role"] == "viewer"
-                m2 = await update_member_role(db, project_id=pid, user=owner, target_user_id=contrib.id, role="contributor")
+                m2 = await update_member_role(
+                    db, project_id=pid, user=owner, target_user_id=contrib.id, role="contributor"
+                )
                 assert m2["role"] == "contributor"
         finally:
             await engine.dispose()

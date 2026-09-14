@@ -103,8 +103,7 @@ def sanitize_document_filename(file_name: str) -> str:
     base = "".join(
         character
         for character in unicodedata.normalize("NFC", base)
-        if character not in _BIDI_CONTROLS
-        and (character.isprintable() or character in {" ", "\t"})
+        if character not in _BIDI_CONTROLS and (character.isprintable() or character in {" ", "\t"})
     )
     base = re.sub(r"\s+", " ", base).strip(" .")
     if not base or len(base) > 240:
@@ -205,9 +204,7 @@ def _normalize_extracted_text(value: str) -> str:
     value = unicodedata.normalize("NFC", (value or "").replace("\r\n", "\n").replace("\r", "\n"))
     value = value.replace("\x00", "")
     value = "".join(
-        character
-        for character in value
-        if character in {"\n", "\t"} or unicodedata.category(character) != "Cc"
+        character for character in value if character in {"\n", "\t"} or unicodedata.category(character) != "Cc"
     )
     value = re.sub(r"[ \t]+", " ", value)
     value = re.sub(r"\n{4,}", "\n\n\n", value)
@@ -350,9 +347,7 @@ def parse_document(data: bytes, document: ValidatedDocument) -> ParsedDocument:
                     text = ""
                 if len(text) < settings.knowledge_ocr_min_text_characters:
                     if page_number > settings.knowledge_ocr_max_pages:
-                        raise UnsafeDocumentError(
-                            "Scanned PDF exceeds the OCR page limit"
-                        )
+                        raise UnsafeDocumentError("Scanned PDF exceeds the OCR page limit")
                     try:
                         normalized_ocr = _ocr_pdf_page_text(
                             data=data,
@@ -368,13 +363,10 @@ def parse_document(data: bytes, document: ValidatedDocument) -> ParsedDocument:
                     except Exception as exc:
                         if settings.knowledge_ocr_required:
                             raise UnsafeDocumentError(
-                                f"OCR failed for PDF page {page_number}: "
-                                f"{type(exc).__name__}: {exc}"
+                                f"OCR failed for PDF page {page_number}: {type(exc).__name__}: {exc}"
                             ) from exc
                 if text:
-                    segments.append(
-                        ParsedSegment(text=text, page_number=page_number)
-                    )
+                    segments.append(ParsedSegment(text=text, page_number=page_number))
         finally:
             if ocr_document_holder[0] is not None:
                 ocr_document_holder[0].close()
@@ -405,9 +397,7 @@ def parse_document(data: bytes, document: ValidatedDocument) -> ParsedDocument:
                 cells = [_normalize_extracted_text(cell.text) for cell in row.cells]
                 buffer.append(" | ".join(cell for cell in cells if cell))
         if buffer:
-            segments.append(
-                ParsedSegment(text="\n\n".join(buffer), section=current_heading)
-            )
+            segments.append(ParsedSegment(text="\n\n".join(buffer), section=current_heading))
     elif document.format_name == "pptx":
         presentation = Presentation(BytesIO(data))
         metadata["slide_count"] = len(presentation.slides)
@@ -433,11 +423,7 @@ def parse_document(data: bytes, document: ValidatedDocument) -> ParsedDocument:
             for sheet in workbook.worksheets:
                 rows: list[str] = []
                 for values in sheet.iter_rows(values_only=True):
-                    cells = [
-                        _normalize_extracted_text(str(value))
-                        for value in values
-                        if value is not None
-                    ]
+                    cells = [_normalize_extracted_text(str(value)) for value in values if value is not None]
                     if cells:
                         rows.append(" | ".join(cells))
                 if rows:
@@ -464,10 +450,7 @@ def parse_document(data: bytes, document: ValidatedDocument) -> ParsedDocument:
             )
         elif document.format_name == "csv":
             reader = csv.reader(StringIO(text))
-            text = "\n".join(
-                " | ".join(_normalize_extracted_text(cell) for cell in row)
-                for row in reader
-            )
+            text = "\n".join(" | ".join(_normalize_extracted_text(cell) for cell in row) for row in reader)
         normalized = _normalize_extracted_text(text)
         if normalized:
             segments.append(ParsedSegment(text=normalized))

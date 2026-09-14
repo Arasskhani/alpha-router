@@ -504,12 +504,8 @@ def test_outsider_session_cannot_spoof_project_id():
                     user=owner,
                     content="Internal launch date is March.",
                 )
-                project_session = await _chat(
-                    db, owner, project_id=PROJ, sid="owner-proj"
-                )
-                personal = await _chat(
-                    db, outsider, project_id=None, sid="outsider-personal"
-                )
+                project_session = await _chat(db, owner, project_id=PROJ, sid="owner-proj")
+                personal = await _chat(db, outsider, project_id=None, sid="outsider-personal")
 
                 spoofed = await plan_project_turn(
                     db,

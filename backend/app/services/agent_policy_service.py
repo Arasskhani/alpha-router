@@ -48,11 +48,7 @@ class _StrictPolicy(BaseModel):
         if not isinstance(value, dict):
             return value
         for name, field_info in cls.model_fields.items():
-            if (
-                field_info.annotation is bool
-                and name in value
-                and not isinstance(value[name], bool)
-            ):
+            if field_info.annotation is bool and name in value and not isinstance(value[name], bool):
                 raise ValueError(f"{name} must be a JSON boolean")
         return value
 
@@ -68,9 +64,7 @@ def _clean_slug(value: str) -> str:
     normalized = (value or "").strip().lower().replace("_", "-").replace(" ", "-")
     normalized = re.sub(r"-+", "-", normalized).strip("-")
     if not normalized or len(normalized) > 128 or not _SLUG_RE.fullmatch(normalized):
-        raise ValueError(
-            "tool and Agent slugs must use lowercase letters, numbers, and hyphens"
-        )
+        raise ValueError("tool and Agent slugs must use lowercase letters, numbers, and hyphens")
     return normalized
 
 
@@ -104,11 +98,7 @@ class AgentModelPolicy(_StrictPolicy):
 
     @property
     def candidates(self) -> tuple[str, ...]:
-        return (
-            (self.primary_model_id,) + self.fallback_model_ids
-            if self.primary_model_id
-            else self.fallback_model_ids
-        )
+        return (self.primary_model_id,) + self.fallback_model_ids if self.primary_model_id else self.fallback_model_ids
 
 
 class AgentToolGrant(_StrictPolicy):
@@ -148,9 +138,7 @@ class AgentToolPolicy(_StrictPolicy):
             raise ValueError("tool grants must use unique slugs")
         overlap = set(slugs) & set(self.denied_tools)
         if overlap:
-            raise ValueError(
-                f"tools cannot be both allowed and denied: {sorted(overlap)}"
-            )
+            raise ValueError(f"tools cannot be both allowed and denied: {sorted(overlap)}")
         return self
 
 
@@ -178,9 +166,7 @@ class AgentRetrievalPolicy(_StrictPolicy):
     @model_validator(mode="after")
     def evidence_requires_retrieval(self) -> AgentRetrievalPolicy:
         if self.require_evidence and not self.enabled:
-            raise ValueError(
-                "require_evidence cannot be used when retrieval is disabled"
-            )
+            raise ValueError("require_evidence cannot be used when retrieval is disabled")
         if self.require_evidence and not self.fail_closed:
             raise ValueError("evidence-required Agents must fail closed")
         return self
@@ -237,9 +223,7 @@ class AgentRoutingPolicy(_StrictPolicy):
     def validate_handoff_targets(cls, values: tuple[str, ...]) -> tuple[str, ...]:
         cleaned = tuple(_clean_slug(value) for value in values)
         if len(cleaned) > 32 or len(set(cleaned)) != len(cleaned):
-            raise ValueError(
-                "handoff targets must be a unique list of at most 32 slugs"
-            )
+            raise ValueError("handoff targets must be a unique list of at most 32 slugs")
         return cleaned
 
 
@@ -253,9 +237,7 @@ class AgentEscalationPolicy(_StrictPolicy):
     @classmethod
     def validate_reason_codes(cls, values: tuple[str, ...]) -> tuple[str, ...]:
         cleaned = tuple(value.strip().lower() for value in values if value.strip())
-        if len(cleaned) > 32 or any(
-            not _PERMISSION_RE.fullmatch(value) for value in cleaned
-        ):
+        if len(cleaned) > 32 or any(not _PERMISSION_RE.fullmatch(value) for value in cleaned):
             raise ValueError("escalation reason codes are invalid or exceed the limit")
         return cleaned
 
@@ -271,8 +253,7 @@ class AgentDisclaimerPolicy(_StrictPolicy):
         if self.required and not self.text and not self.localized_text:
             raise ValueError("a required disclaimer must contain text")
         if len(self.localized_text) > 16 or any(
-            not key.strip() or len(value) > 4_000
-            for key, value in self.localized_text.items()
+            not key.strip() or len(value) > 4_000 for key, value in self.localized_text.items()
         ):
             raise ValueError("localized disclaimer entries are invalid")
         return self
@@ -288,12 +269,8 @@ class AgentGuardrailPolicy(_StrictPolicy):
     @field_validator("hooks")
     @classmethod
     def validate_hooks(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        if len(set(values)) != len(values) or any(
-            value not in _GUARDRAIL_HOOKS for value in values
-        ):
-            raise ValueError(
-                "guardrail hooks contain an unsupported or duplicate value"
-            )
+        if len(set(values)) != len(values) or any(value not in _GUARDRAIL_HOOKS for value in values):
+            raise ValueError("guardrail hooks contain an unsupported or duplicate value")
         return values
 
 
@@ -420,9 +397,7 @@ def resolve_agent_policies(version: AgentVersion) -> ResolvedAgentPolicies:
     if guardrail.require_evidence and not retrieval.require_evidence:
         retrieval = retrieval.model_copy(update={"require_evidence": True})
     if retrieval.require_evidence and not retrieval.fail_closed:
-        raise AgentPolicyValidationError(
-            "Evidence-required Agent versions must use fail-closed retrieval"
-        )
+        raise AgentPolicyValidationError("Evidence-required Agent versions must use fail-closed retrieval")
     return ResolvedAgentPolicies(
         model=model,
         tools=tools,
@@ -445,14 +420,10 @@ def validate_agent_version_policies(
     policies = resolve_agent_policies(version)
     settings = get_settings()
     if require_model and not policies.model.primary_model_id:
-        raise AgentPolicyValidationError(
-            "Published Agent versions require model_policy.primary_model_id"
-        )
+        raise AgentPolicyValidationError("Published Agent versions require model_policy.primary_model_id")
     prompt = (version.system_prompt or "").strip()
     if not prompt:
         raise AgentPolicyValidationError("Agent system_prompt cannot be empty")
     if len(prompt) > max(1, min(250_000, settings.agent_max_system_prompt_characters)):
-        raise AgentPolicyValidationError(
-            "Agent system_prompt exceeds the configured limit"
-        )
+        raise AgentPolicyValidationError("Agent system_prompt exceeds the configured limit")
     return policies

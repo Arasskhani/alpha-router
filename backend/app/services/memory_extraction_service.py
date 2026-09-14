@@ -28,6 +28,7 @@ from app.services.user_memory_service import (
     record_memory_event,
     update_memory,
 )
+
 logger = logging.getLogger(__name__)
 
 MAX_MESSAGE_CHARS = 4_000
@@ -325,9 +326,7 @@ def parse_operations(payload: dict[str, Any] | str) -> list[MemoryOperation]:
     return out
 
 
-async def _semantic_near_dupe(
-    db: AsyncSession, user_id: int, content: str
-) -> UserMemory | None:
+async def _semantic_near_dupe(db: AsyncSession, user_id: int, content: str) -> UserMemory | None:
     try:
         from app.services.memory_embedding_service import (
             MemoryEmbeddingUnavailable,
@@ -348,11 +347,7 @@ async def _semantic_near_dupe(
         )
         for hit in hits:
             row = await db.get(UserMemory, hit.point_id)
-            if (
-                row is not None
-                and row.user_id == user_id
-                and row.deleted_at is None
-            ):
+            if row is not None and row.user_id == user_id and row.deleted_at is None:
                 return row
     except MemoryEmbeddingUnavailable:
         return None
@@ -400,9 +395,7 @@ async def apply_memory_operations(
     source_message_id: str | None = None,
 ) -> MemoryApplyResult:
     settings = await get_memory_settings(db)
-    allowed_sensitive = {
-        str(item).lower() for item in settings.get("allowed_sensitive_categories") or []
-    }
+    allowed_sensitive = {str(item).lower() for item in settings.get("allowed_sensitive_categories") or []}
     result = MemoryApplyResult()
     now = dt.datetime.utcnow()
     for operation in operations[:MAX_OPS]:
@@ -439,10 +432,7 @@ async def apply_memory_operations(
                 detail={"reason": "suppressed_semantic"},
             )
             continue
-        if (
-            operation.sensitivity == "sensitive"
-            and operation.category not in allowed_sensitive
-        ):
+        if operation.sensitivity == "sensitive" and operation.category not in allowed_sensitive:
             result.skipped += 1
             await record_memory_event(
                 db,
@@ -639,10 +629,9 @@ async def extract_memory_operations(
     settings = await get_memory_settings(db)
     model_id = settings.get("extraction_model_id")
     user_content = _window_prompt(window)
-    repair_nudge = (
-        "Your previous reply was not valid JSON. Reply with a JSON object only."
-    )
+    repair_nudge = "Your previous reply was not valid JSON. Reply with a JSON object only."
     if completer is not None:
+
         async def _completer_once(*, repair: bool) -> str:
             messages = [{"role": "user", "content": user_content}]
             if repair:
@@ -671,9 +660,7 @@ async def extract_memory_operations(
         persist_usage_operation,
     )
 
-    ai_model, api_key, base_url, provider_type = await resolve_model_and_key(
-        db, f"model::{int(model_id)}"
-    )
+    ai_model, api_key, base_url, provider_type = await resolve_model_and_key(db, f"model::{int(model_id)}")
     if not ai_model or not api_key:
         raise RuntimeError("Memory extraction model is unavailable")
 
@@ -682,9 +669,7 @@ async def extract_memory_operations(
         {"role": "user", "content": user_content},
     ]
     kwargs: dict[str, Any] = {
-        "model": litellm_model_for_provider(
-            ai_model.external_id, provider_type or ai_model.provider_type
-        ),
+        "model": litellm_model_for_provider(ai_model.external_id, provider_type or ai_model.provider_type),
         "messages": messages,
         "max_tokens": EXTRACT_MAX_TOKENS,
         "temperature": 0,
@@ -743,9 +728,7 @@ async def extract_memory_operations(
             raise ExtractionParseError(str(exc)) from exc
 
 
-async def handle_memory_extraction(
-    db: AsyncSession, job, *, completer: Any | None = None
-) -> None:
+async def handle_memory_extraction(db: AsyncSession, job, *, completer: Any | None = None) -> None:
     from app.models.chat import UserMemoryJob
     from app.services.memory_settings_service import get_memory_settings
     from app.config import get_settings
@@ -780,9 +763,7 @@ async def handle_memory_extraction(
         (turn.message_id for turn in reversed(window.turns) if turn.role == "user"),
         None,
     )
-    operations = await extract_memory_operations(
-        db, window=window, completer=completer
-    )
+    operations = await extract_memory_operations(db, window=window, completer=completer)
     result = await apply_memory_operations(
         db,
         user_id=job.user_id,

@@ -19,11 +19,7 @@ DEFAULT_PERSONAL_KEY_NAME = "Personal API Key"
 async def count_active_user_keys(db: AsyncSession, user_id: int) -> int:
     return int(
         (
-            await db.execute(
-                select(func.count())
-                .select_from(UserApiKey)
-                .where(UserApiKey.user_id == user_id)
-            )
+            await db.execute(select(func.count()).select_from(UserApiKey).where(UserApiKey.user_id == user_id))
         ).scalar_one()
         or 0
     )

@@ -240,11 +240,7 @@ async def list_knowledge_bases(
 ):
     bases = [
         knowledge_base
-        for knowledge_base in (
-            await db.execute(select(KnowledgeBase).order_by(KnowledgeBase.name))
-        )
-        .scalars()
-        .all()
+        for knowledge_base in (await db.execute(select(KnowledgeBase).order_by(KnowledgeBase.name))).scalars().all()
         if not is_purged_knowledge_base(knowledge_base)
     ]
     if not bases:
@@ -347,9 +343,7 @@ async def get_knowledge_base(
     )
     versions_by_document: dict[str, list[dict]] = {}
     for version in versions:
-        versions_by_document.setdefault(version.document_id, []).append(
-            _version_response(version)
-        )
+        versions_by_document.setdefault(version.document_id, []).append(_version_response(version))
     connectors = (
         (
             await db.execute(
@@ -544,9 +538,7 @@ async def get_knowledge_access(
         (
             await db.execute(
                 select(KnowledgeBaseAccessAssignment)
-                .where(
-                    KnowledgeBaseAccessAssignment.knowledge_base_id == knowledge_base.id
-                )
+                .where(KnowledgeBaseAccessAssignment.knowledge_base_id == knowledge_base.id)
                 .order_by(KnowledgeBaseAccessAssignment.id)
             )
         )
@@ -616,9 +608,7 @@ async def create_knowledge_base(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_agent_permission("knowledge.create")),
 ):
-    existing = (
-        await db.execute(select(KnowledgeBase).where(KnowledgeBase.slug == body.slug))
-    ).scalar_one_or_none()
+    existing = (await db.execute(select(KnowledgeBase).where(KnowledgeBase.slug == body.slug))).scalar_one_or_none()
     if existing is not None:
         raise HTTPException(409, "Knowledge Base slug already exists")
     knowledge_base = KnowledgeBase(
@@ -793,20 +783,17 @@ async def list_knowledge_embedding_models(
     _user: User = Depends(require_agent_permission("knowledge.read")),
 ):
     rows = (
-        (
-            await db.execute(
-                select(AIModel, Connection)
-                .join(Connection, Connection.id == AIModel.connection_id)
-                .where(
-                    AIModel.is_enabled.is_(True),
-                    AIModel.admin_disabled.is_(False),
-                    Connection.is_active.is_(True),
-                )
-                .order_by(AIModel.external_id)
+        await db.execute(
+            select(AIModel, Connection)
+            .join(Connection, Connection.id == AIModel.connection_id)
+            .where(
+                AIModel.is_enabled.is_(True),
+                AIModel.admin_disabled.is_(False),
+                Connection.is_active.is_(True),
             )
+            .order_by(AIModel.external_id)
         )
-        .all()
-    )
+    ).all()
     models = []
     for model, connection in rows:
         provider = (connection.provider_type or model.provider_type or "").strip().lower()

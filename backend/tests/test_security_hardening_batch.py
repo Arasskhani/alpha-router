@@ -27,13 +27,17 @@ async def _factory():
 def test_private_and_loopback_origins_rejected_in_production(monkeypatch):
     from app.services import csrf_protection as csrf
 
-    monkeypatch.setattr(csrf, "get_settings", lambda: SimpleNamespace(environment="production", frontend_url="https://app.example.com"))
+    monkeypatch.setattr(
+        csrf, "get_settings", lambda: SimpleNamespace(environment="production", frontend_url="https://app.example.com")
+    )
     assert csrf.origin_allowed("https://app.example.com")
     assert not csrf.origin_allowed("http://localhost:8080")
     assert not csrf.origin_allowed("http://192.168.1.20:8080")
     assert csrf.development_origins() == set()
 
-    monkeypatch.setattr(csrf, "get_settings", lambda: SimpleNamespace(environment="development", frontend_url="https://app.example.com"))
+    monkeypatch.setattr(
+        csrf, "get_settings", lambda: SimpleNamespace(environment="development", frontend_url="https://app.example.com")
+    )
     assert csrf.origin_allowed("http://localhost:8080")
     assert csrf.origin_allowed("http://192.168.1.20:8080")
 
@@ -96,7 +100,7 @@ def test_admin_ip_guard_answers_503_without_policy_and_db():
 def test_xlsx_cells_starting_with_formula_characters_are_escaped():
     from app.services.chat_xlsx_service import _safe_cell
 
-    assert _safe_cell("=HYPERLINK(\"http://evil\",\"click\")") == "'=HYPERLINK(\"http://evil\",\"click\")"
+    assert _safe_cell('=HYPERLINK("http://evil","click")') == '\'=HYPERLINK("http://evil","click")'
     assert _safe_cell("+1") == "'+1"
     assert _safe_cell("-1") == "'-1"
     assert _safe_cell("@SUM(A1)") == "'@SUM(A1)"
@@ -150,7 +154,9 @@ def test_transcription_suffix_whitelist_and_wav_sanity():
 
     def wav(rate, channels, bits, data_len):
         fmt = struct.pack("<HHIIHH", 1, channels, rate, rate * channels * bits // 8, channels * bits // 8, bits)
-        body = b"WAVE" + b"fmt " + struct.pack("<I", 16) + fmt + b"data" + struct.pack("<I", data_len) + b"\0" * data_len
+        body = (
+            b"WAVE" + b"fmt " + struct.pack("<I", 16) + fmt + b"data" + struct.pack("<I", data_len) + b"\0" * data_len
+        )
         return b"RIFF" + struct.pack("<I", len(body)) + body
 
     assert abs(ts.wav_duration_seconds(wav(16000, 1, 16, 32000)) - 1.0) < 1e-6
@@ -171,16 +177,33 @@ def test_ldap_prune_refuses_empty_directory_and_mass_removal(monkeypatch):
         try:
             async with factory() as db:
                 for i in range(4):
-                    db.add(User(username=f"ldap{i}", email=f"l{i}@t", auth_provider="ldap", external_id=f"ext{i}", is_active=True))
+                    db.add(
+                        User(
+                            username=f"ldap{i}",
+                            email=f"l{i}@t",
+                            auth_provider="ldap",
+                            external_id=f"ext{i}",
+                            is_active=True,
+                        )
+                    )
                 await db.commit()
                 with (
                     patch.object(ldap_sync, "fetch_ldap_users", return_value=users_data),
                     patch.object(ldap_sync, "fetch_ldap_groups", return_value=[]),
-                    patch.object(ldap_sync, "get_settings", lambda: SimpleNamespace(ldap_link_local_password_accounts=False, ldap_prune_max_ratio=0.5)),
+                    patch.object(
+                        ldap_sync,
+                        "get_settings",
+                        lambda: SimpleNamespace(ldap_link_local_password_accounts=False, ldap_prune_max_ratio=0.5),
+                    ),
                 ):
                     result = await ldap_sync.sync_ldap_directory(
                         db,
-                        {"enabled": True, "server": "ldaps://dc.example.com", "base_dn": "DC=example,DC=com", "sync_ous_prune": True},
+                        {
+                            "enabled": True,
+                            "server": "ldaps://dc.example.com",
+                            "base_dn": "DC=example,DC=com",
+                            "sync_ous_prune": True,
+                        },
                     )
                 assert result["prune_skipped"] is True
                 assert expect_reason in str(result["prune_reason"])
@@ -199,7 +222,9 @@ def test_ldap_prune_refuses_empty_directory_and_mass_removal(monkeypatch):
 def test_report_schedule_validation():
     from app.api import reports
 
-    good = reports.ScheduleIn(report_type=reports.REPORT_CATALOG[0]["id"], cron_expression="0 9 * * 1", recipients="a@b.co, c@d.io")
+    good = reports.ScheduleIn(
+        report_type=reports.REPORT_CATALOG[0]["id"], cron_expression="0 9 * * 1", recipients="a@b.co, c@d.io"
+    )
     clean = reports._validate_schedule(good)
     assert clean["recipients"] == "a@b.co,c@d.io"
     for bad in (
@@ -253,7 +278,9 @@ def test_chat_session_must_belong_to_caller_or_writable_project():
 def test_connection_base_url_rejects_internal_targets(monkeypatch):
     from app.api import admin
 
-    monkeypatch.setattr("app.services.ssrf_guard.get_settings", lambda: SimpleNamespace(allow_ssrf_private_ranges=False))
+    monkeypatch.setattr(
+        "app.services.ssrf_guard.get_settings", lambda: SimpleNamespace(allow_ssrf_private_ranges=False)
+    )
 
     async def run():
         for bad in ("http://169.254.169.254/latest", "http://127.0.0.1:6333", "http://10.1.2.3/v1", "ftp://x.test"):
@@ -261,7 +288,10 @@ def test_connection_base_url_rejects_internal_targets(monkeypatch):
                 await admin._validated_connection_base_url(bad)
             assert exc.value.status_code == 400
         with patch("app.services.ssrf_guard.socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 0))]):
-            assert await admin._validated_connection_base_url(" https://api.provider.test/v1 ") == "https://api.provider.test/v1"
+            assert (
+                await admin._validated_connection_base_url(" https://api.provider.test/v1 ")
+                == "https://api.provider.test/v1"
+            )
         assert await admin._validated_connection_base_url("") is None
 
     asyncio.run(run())
@@ -274,10 +304,17 @@ def test_allow_insecure_saml_is_a_production_insecurity():
     from app.main import _collect_production_insecurities
 
     base = dict(
-        environment="production", secret_key="s" * 40, admin_password="p" * 20, service_admin_password="q" * 20,
-        gateway_master_key="g" * 40, code_sandbox_broker_url="http://sandbox-broker:8081",
-        code_sandbox_broker_token="t" * 40, redis_url="redis://:pw@redis:6379/0", redis_password="pw",
-        data_encryption_key="d" * 40, openapi_admin_only=True,
+        environment="production",
+        secret_key="s" * 40,
+        admin_password="p" * 20,
+        service_admin_password="q" * 20,
+        gateway_master_key="g" * 40,
+        code_sandbox_broker_url="http://sandbox-broker:8081",
+        code_sandbox_broker_token="t" * 40,
+        redis_url="redis://:pw@redis:6379/0",
+        redis_password="pw",
+        data_encryption_key="d" * 40,
+        openapi_admin_only=True,
         database_url="postgresql+asyncpg://alpha_router:StrongPw123456@pgbouncer:6432/alpha_router",
     )
     assert "ALLOW_INSECURE_SAML" not in _collect_production_insecurities(**base)
@@ -300,7 +337,13 @@ def test_system_default_requires_connection_with_api_key():
                 db.add(no_key)
                 await db.flush()
                 orphan = AIModel(external_id="m1", provider_type="openai", is_enabled=True, access_type="public")
-                keyless = AIModel(connection_id=no_key.id, external_id="m2", provider_type="openai", is_enabled=True, access_type="public")
+                keyless = AIModel(
+                    connection_id=no_key.id,
+                    external_id="m2",
+                    provider_type="openai",
+                    is_enabled=True,
+                    access_type="public",
+                )
                 db.add_all([orphan, keyless])
                 await db.commit()
                 entry = SimpleNamespace(supports=lambda m: True, requirement="x")

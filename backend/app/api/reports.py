@@ -111,12 +111,17 @@ def _report_params(body: ReportRequest) -> dict:
         raise HTTPException(400, "department required")
     if "group" in meta["params"] and body.report_type == "group_members_usage" and not body.group_id:
         raise HTTPException(400, "group_id required")
-    if "project" in meta["params"] and body.report_type in {
-        "project_usage_summary",
-        "project_usage_by_model",
-        "project_usage_by_member",
-        "project_media_usage_summary",
-    } and not body.project_id:
+    if (
+        "project" in meta["params"]
+        and body.report_type
+        in {
+            "project_usage_summary",
+            "project_usage_by_model",
+            "project_usage_by_member",
+            "project_media_usage_summary",
+        }
+        and not body.project_id
+    ):
         raise HTTPException(400, "project_id required")
 
     return params
@@ -166,32 +171,20 @@ async def report_options(db: AsyncSession = Depends(get_db), _: User = Depends(r
             .order_by(RequestLog.client_app)
         )
     ).all()
-    provider_rows = (
-        await db.execute(select(AIModel.provider_type).distinct().order_by(AIModel.provider_type))
-    ).all()
+    provider_rows = (await db.execute(select(AIModel.provider_type).distinct().order_by(AIModel.provider_type))).all()
     model_rows = (
-        await db.execute(
-            select(RequestLog.model_id).distinct().order_by(RequestLog.model_id).limit(500)
-        )
+        await db.execute(select(RequestLog.model_id).distinct().order_by(RequestLog.model_id).limit(500))
     ).all()
     keys = (
-        await db.execute(
-            select(AlphaRouterApiKey.id, AlphaRouterApiKey.name).order_by(
-                AlphaRouterApiKey.name
-            )
-        )
+        await db.execute(select(AlphaRouterApiKey.id, AlphaRouterApiKey.name).order_by(AlphaRouterApiKey.name))
     ).all()
-    agents = (
-        await db.execute(select(Agent).order_by(Agent.name, Agent.sort_order))
-    ).scalars().all()
+    agents = (await db.execute(select(Agent).order_by(Agent.name, Agent.sort_order))).scalars().all()
 
     from app.models.project import Project
 
     project_rows = (
         await db.execute(
-            select(Project.id, Project.name)
-            .where(Project.status != "deletion_pending")
-            .order_by(Project.name)
+            select(Project.id, Project.name).where(Project.status != "deletion_pending").order_by(Project.name)
         )
     ).all()
 
@@ -220,7 +213,9 @@ async def report_options(db: AsyncSession = Depends(get_db), _: User = Depends(r
 
 
 @router.post("/preview")
-async def preview_report(body: ReportRequest, db: AsyncSession = Depends(get_db), _: User = Depends(require_reports_write)):
+async def preview_report(
+    body: ReportRequest, db: AsyncSession = Depends(get_db), _: User = Depends(require_reports_write)
+):
     df = await _build_report_df(body, db)
     rows = df.to_dict(orient="records") if not df.empty else []
     columns = list(df.columns) if not df.empty else []
@@ -228,10 +223,14 @@ async def preview_report(body: ReportRequest, db: AsyncSession = Depends(get_db)
 
 
 @router.post("/export")
-async def export_report(body: ReportRequest, db: AsyncSession = Depends(get_db), _: User = Depends(require_reports_write)):
+async def export_report(
+    body: ReportRequest, db: AsyncSession = Depends(get_db), _: User = Depends(require_reports_write)
+):
     df = await _build_report_df(body, db)
     content, media, filename = reports_service.export_dataframe(df, body.format, body.report_type)
-    return Response(content=content, media_type=media, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    return Response(
+        content=content, media_type=media, headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
 
 
 class ScheduleIn(BaseModel):
@@ -311,7 +310,9 @@ async def list_schedules(db: AsyncSession = Depends(get_db), _: User = Depends(r
 
 
 @router.post("/schedules")
-async def create_schedule(body: ScheduleIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_reports_write)):
+async def create_schedule(
+    body: ScheduleIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_reports_write)
+):
     clean = _validate_schedule(body)
     db.add(ReportSchedule(**clean, is_active=True))
     await db.commit()

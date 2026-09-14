@@ -160,9 +160,7 @@ def test_async_payload_uses_bounded_extraction(monkeypatch):
     from app.services import attachment_extract
 
     async def run():
-        with patch.object(
-            attachment_extract, "extract_document_text_bounded", new=AsyncMock(return_value="TEXT")
-        ):
+        with patch.object(attachment_extract, "extract_document_text_bounded", new=AsyncMock(return_value="TEXT")):
             payload = await attachment_extract.processed_attachment_payload_async(
                 filename="a.txt", kind="document", mime_type="text/plain", url="u", raw=b"abc"
             )

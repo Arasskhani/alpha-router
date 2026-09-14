@@ -71,9 +71,7 @@ _correlation_id: contextvars.ContextVar[str] = contextvars.ContextVar(
     default="",
 )
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
-_HTTP_METHODS = frozenset(
-    {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
-)
+_HTTP_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"})
 _AGENT_STATUSES = frozenset(
     {
         "route_required",
@@ -107,12 +105,8 @@ _RETRIEVAL_OUTCOMES = frozenset(
         "unavailable",
     }
 )
-_EVALUATION_STATUSES = frozenset(
-    {"awaiting_review", "passed", "failed", "error", "cancelled"}
-)
-_DEPENDENCIES = frozenset(
-    {"postgres", "redis", "qdrant", "seaweedfs", "clamav", "provider"}
-)
+_EVALUATION_STATUSES = frozenset({"awaiting_review", "passed", "failed", "error", "cancelled"})
+_DEPENDENCIES = frozenset({"postgres", "redis", "qdrant", "seaweedfs", "clamav", "provider"})
 _MULTIPROCESS = bool(os.getenv("PROMETHEUS_MULTIPROC_DIR"))
 _registry = None if _MULTIPROCESS else CollectorRegistry(auto_describe=True)
 _metric_kwargs = {} if _registry is None else {"registry": _registry}
@@ -311,26 +305,18 @@ def record_evaluation_run(*, status: str, trigger: str) -> None:
         increment("evaluation_gate_failed")
 
 
-_MEMORY_EXTRACT_OUTCOMES = frozenset(
-    {"succeeded", "failed", "skipped", "dead", "retry", "duplicate"}
-)
-_MEMORY_ITEM_OPS = frozenset(
-    {"add", "update", "supersede", "evict", "suppress-hit", "reject"}
-)
+_MEMORY_EXTRACT_OUTCOMES = frozenset({"succeeded", "failed", "skipped", "dead", "retry", "duplicate"})
+_MEMORY_ITEM_OPS = frozenset({"add", "update", "supersede", "evict", "suppress-hit", "reject"})
 _MEMORY_FALLBACK_REASONS = frozenset({"timeout_or_error", "unavailable", "unconfigured"})
 _MEMORY_SCOPES = frozenset({"user", "project"})
 
 
-def observe_memory_extract_job(
-    *, outcome: str, duration_seconds: float | None = None, scope: str = "user"
-) -> None:
+def observe_memory_extract_job(*, outcome: str, duration_seconds: float | None = None, scope: str = "user") -> None:
     label = _bounded_label(outcome, _MEMORY_EXTRACT_OUTCOMES)
     scope_label = _bounded_label(scope, _MEMORY_SCOPES)
     _MEMORY_EXTRACT_JOBS.labels(outcome=label, scope=scope_label).inc()
     if duration_seconds is not None:
-        _MEMORY_EXTRACT_DURATION.labels(scope=scope_label).observe(
-            max(0.0, float(duration_seconds))
-        )
+        _MEMORY_EXTRACT_DURATION.labels(scope=scope_label).observe(max(0.0, float(duration_seconds)))
     if label == "failed":
         increment("memory_extract_failed")
 
@@ -342,13 +328,9 @@ def observe_memory_item(op: str, *, scope: str = "user") -> None:
     ).inc()
 
 
-def observe_memory_retrieval(
-    *, duration_seconds: float, injected: int, scope: str = "user"
-) -> None:
+def observe_memory_retrieval(*, duration_seconds: float, injected: int, scope: str = "user") -> None:
     scope_label = _bounded_label(scope, _MEMORY_SCOPES)
-    _MEMORY_RETRIEVAL_DURATION.labels(scope=scope_label).observe(
-        max(0.0, float(duration_seconds))
-    )
+    _MEMORY_RETRIEVAL_DURATION.labels(scope=scope_label).observe(max(0.0, float(duration_seconds)))
     _MEMORY_INJECTED.labels(scope=scope_label).observe(max(0, int(injected)))
 
 
@@ -496,15 +478,10 @@ class ObservabilityMiddleware:
         method = str(scope.get("method") or "").upper()
         method_label = method if method in _HTTP_METHODS else "OTHER"
         request_headers = {
-            key.decode("latin-1").lower(): value.decode("latin-1")
-            for key, value in scope.get("headers", [])
+            key.decode("latin-1").lower(): value.decode("latin-1") for key, value in scope.get("headers", [])
         }
         supplied_id = request_headers.get("x-request-id", "")
-        request_id = (
-            supplied_id
-            if _REQUEST_ID_RE.fullmatch(supplied_id)
-            else str(uuid.uuid4())
-        )
+        request_id = supplied_id if _REQUEST_ID_RE.fullmatch(supplied_id) else str(uuid.uuid4())
         token = _correlation_id.set(request_id)
         status_code = 500
         started = time.perf_counter()

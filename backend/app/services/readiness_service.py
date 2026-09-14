@@ -74,9 +74,7 @@ async def _timed(name: str, required: bool, coro) -> CheckResult:
         return CheckResult(name, False, required, (time.perf_counter() - start) * 1000, "timeout")
     except Exception as exc:  # noqa: BLE001 - the probe must report, not raise
         # Keep the detail short and free of connection strings.
-        return CheckResult(
-            name, False, required, (time.perf_counter() - start) * 1000, type(exc).__name__
-        )
+        return CheckResult(name, False, required, (time.perf_counter() - start) * 1000, type(exc).__name__)
 
 
 async def _check_database() -> None:

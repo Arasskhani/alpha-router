@@ -134,11 +134,7 @@ async def generate_chat_title(
             {"role": "system", "content": _TITLE_SYSTEM},
             {
                 "role": "user",
-                "content": (
-                    "Conversation excerpt:\n\n"
-                    f"{_format_turns(messages)}\n\n"
-                    "Title:"
-                ),
+                "content": (f"Conversation excerpt:\n\n{_format_turns(messages)}\n\nTitle:"),
             },
         ],
         "api_key": api_key,

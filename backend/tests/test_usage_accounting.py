@@ -114,14 +114,10 @@ async def _openrouter_adapter_reads_generation_total_cost() -> None:
             json={"data": {"id": "gen-test", "total_cost": 0.1234}},
         )
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         cost = await OpenRouterReconciliationAdapter().fetch_actual_cost(
             client,
-            connection=SimpleNamespace(
-                base_url="https://openrouter.ai/api/v1"
-            ),
+            connection=SimpleNamespace(base_url="https://openrouter.ai/api/v1"),
             api_key="secret",
             upstream_request_id="gen-test",
         )
@@ -153,9 +149,7 @@ async def _openai_adapter_reads_direct_cost_from_responses() -> None:
             },
         )
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         cost = await OpenAIReconciliationAdapter().fetch_actual_cost(
             client,
             connection=SimpleNamespace(base_url="https://api.openai.com/v1"),
@@ -210,9 +204,7 @@ async def _openai_adapter_quotes_catalog_from_responses_usage() -> None:
         async def execute(self, _stmt):
             return _FakeResult(ai_model)
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         cost = await OpenAIReconciliationAdapter().fetch_actual_cost(
             client,
             connection=SimpleNamespace(base_url="https://api.openai.com/v1"),
@@ -237,9 +229,7 @@ async def _openai_adapter_skips_chat_completion_ids() -> None:
         called = True
         return httpx.Response(500)
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         cost = await OpenAIReconciliationAdapter().fetch_actual_cost(
             client,
             connection=SimpleNamespace(base_url="https://api.openai.com/v1"),
@@ -377,11 +367,7 @@ async def _ledger_accumulates_and_reconciliation_adjusts_budget() -> None:
         await db.refresh(user)
         await db.refresh(log_row)
 
-        ledger_total = (
-            await db.execute(
-                select(func.coalesce(func.sum(LedgerEntry.amount_usd), 0))
-            )
-        ).scalar_one()
+        ledger_total = (await db.execute(select(func.coalesce(func.sum(LedgerEntry.amount_usd), 0)))).scalar_one()
         assert delta == pytest.approx(0.15)
         assert float(ledger_total) == pytest.approx(0.25)
         assert user.budget_used_usd == pytest.approx(0.25)
@@ -448,15 +434,9 @@ async def _idempotent_log_replay_does_not_charge_twice() -> None:
         await db.refresh(user)
 
         assert user.budget_used_usd == pytest.approx(0.1)
-        assert (
-            await db.execute(select(func.count()).select_from(UsageOperation))
-        ).scalar_one() == 1
-        assert (
-            await db.execute(select(func.count()).select_from(RequestLog))
-        ).scalar_one() == 1
-        assert (
-            await db.execute(select(func.count()).select_from(LedgerEntry))
-        ).scalar_one() == 1
+        assert (await db.execute(select(func.count()).select_from(UsageOperation))).scalar_one() == 1
+        assert (await db.execute(select(func.count()).select_from(RequestLog))).scalar_one() == 1
+        assert (await db.execute(select(func.count()).select_from(LedgerEntry))).scalar_one() == 1
 
     await engine.dispose()
 

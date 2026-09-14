@@ -24,48 +24,52 @@ from app.services.user_media_service import delete_all_user_media
 logger = logging.getLogger(__name__)
 
 
-async def _remaining_project_assignee_id(
-    db: AsyncSession, project_id: str, *, exclude_user_id: int
-) -> int | None:
+async def _remaining_project_assignee_id(db: AsyncSession, project_id: str, *, exclude_user_id: int) -> int | None:
     """Pick a remaining Primary Owner, else Owner, else any remaining member."""
     for role in (PROJECT_ROLE_PRIMARY_OWNER, PROJECT_ROLE_OWNER):
         owner_id = (
             await db.execute(
-                select(ProjectMember.user_id).where(
+                select(ProjectMember.user_id)
+                .where(
                     ProjectMember.project_id == project_id,
                     ProjectMember.user_id != exclude_user_id,
                     ProjectMember.role == role,
-                ).limit(1)
+                )
+                .limit(1)
             )
         ).scalar_one_or_none()
         if owner_id is not None:
             return int(owner_id)
     member_id = (
         await db.execute(
-            select(ProjectMember.user_id).where(
+            select(ProjectMember.user_id)
+            .where(
                 ProjectMember.project_id == project_id,
                 ProjectMember.user_id != exclude_user_id,
-            ).limit(1)
+            )
+            .limit(1)
         )
     ).scalar_one_or_none()
     return int(member_id) if member_id is not None else None
 
 
-async def _transfer_primary_owner_if_departing(
-    db: AsyncSession, *, departing_user_id: int
-) -> None:
+async def _transfer_primary_owner_if_departing(db: AsyncSession, *, departing_user_id: int) -> None:
     """If the departing user is Primary Owner, promote a remaining member first.
 
     Demote-then-promote keeps the partial unique index (one Primary Owner).
     """
     rows = (
-        await db.execute(
-            select(ProjectMember).where(
-                ProjectMember.user_id == departing_user_id,
-                ProjectMember.role == PROJECT_ROLE_PRIMARY_OWNER,
+        (
+            await db.execute(
+                select(ProjectMember).where(
+                    ProjectMember.user_id == departing_user_id,
+                    ProjectMember.role == PROJECT_ROLE_PRIMARY_OWNER,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     for membership in rows:
         successor_id = await _remaining_project_assignee_id(
             db, membership.project_id, exclude_user_id=departing_user_id
@@ -82,22 +86,22 @@ async def _transfer_primary_owner_if_departing(
         await db.flush()
 
 
-async def _reassign_project_chat_sessions(
-    db: AsyncSession, user_id: int
-) -> int:
+async def _reassign_project_chat_sessions(db: AsyncSession, user_id: int) -> int:
     sessions = (
-        await db.execute(
-            select(ChatSession).where(
-                ChatSession.user_id == user_id,
-                ChatSession.project_id.is_not(None),
+        (
+            await db.execute(
+                select(ChatSession).where(
+                    ChatSession.user_id == user_id,
+                    ChatSession.project_id.is_not(None),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     moved = 0
     for session in sessions:
-        assignee = await _remaining_project_assignee_id(
-            db, session.project_id, exclude_user_id=user_id
-        )
+        assignee = await _remaining_project_assignee_id(db, session.project_id, exclude_user_id=user_id)
         if assignee is None:
             continue
         session.user_id = assignee
@@ -141,19 +145,15 @@ async def purge_user_account_data(
                     ChatSession.project_id.is_(None),
                 )
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     if personal_session_ids:
-        await db.execute(
-            delete(ChatMessage).where(ChatMessage.session_id.in_(personal_session_ids))
-        )
-        await db.execute(
-            delete(ChatSession).where(ChatSession.id.in_(personal_session_ids))
-        )
+        await db.execute(delete(ChatMessage).where(ChatMessage.session_id.in_(personal_session_ids)))
+        await db.execute(delete(ChatSession).where(ChatSession.id.in_(personal_session_ids)))
 
-    await db.execute(
-        update(ChatMessage).where(ChatMessage.user_id == user_id).values(user_id=None)
-    )
+    await db.execute(update(ChatMessage).where(ChatMessage.user_id == user_id).values(user_id=None))
 
     await db.execute(delete(UserMemory).where(UserMemory.user_id == user_id))
     try:

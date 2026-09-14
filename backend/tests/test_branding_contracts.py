@@ -59,9 +59,7 @@ def test_application_identity_contracts():
 
 
 def test_infrastructure_identity_contracts():
-    assert _default("database_url") == (
-        "postgresql+asyncpg://alpha_router:changeme@postgres:5432/alpha_router"
-    )
+    assert _default("database_url") == ("postgresql+asyncpg://alpha_router:changeme@postgres:5432/alpha_router")
     assert _default("s3_access_key") == "alpha_router"
     assert _default("s3_bucket") == "alpha-router-media"
     assert SANDBOX_IMAGE == "alpha-router-sandbox:latest"
@@ -94,21 +92,12 @@ def test_totp_and_provider_attribution_contracts():
 
 def test_database_naming_contracts():
     assert AlphaRouterApiKey.__tablename__ == "alpha_router_api_keys"
-    assert (
-        AlphaRouterApiKeyAuditLog.__tablename__
-        == "alpha_router_api_key_audit_logs"
-    )
+    assert AlphaRouterApiKeyAuditLog.__tablename__ == "alpha_router_api_key_audit_logs"
     assert "alpha_router_api_key_id" in AlphaRouterApiKeyAuditLog.__table__.c
     assert "alpha_router_api_key_id" in RequestLog.__table__.c
 
-    audit_fk = next(
-        iter(
-            AlphaRouterApiKeyAuditLog.__table__.c.alpha_router_api_key_id.foreign_keys
-        )
-    )
-    request_fk = next(
-        iter(RequestLog.__table__.c.alpha_router_api_key_id.foreign_keys)
-    )
+    audit_fk = next(iter(AlphaRouterApiKeyAuditLog.__table__.c.alpha_router_api_key_id.foreign_keys))
+    request_fk = next(iter(RequestLog.__table__.c.alpha_router_api_key_id.foreign_keys))
     assert audit_fk.target_fullname == "alpha_router_api_keys.id"
     assert request_fk.target_fullname == "alpha_router_api_keys.id"
     assert SUBJECT_ALPHA_ROUTER_KEY == "alpha_router_key"
@@ -134,20 +123,9 @@ async def _test_fresh_database_schema_contracts() -> None:
             def snapshot(sync_conn):
                 inspector = inspect(sync_conn)
                 tables = set(inspector.get_table_names())
-                request_columns = {
-                    column["name"]
-                    for column in inspector.get_columns("request_logs")
-                }
-                audit_columns = {
-                    column["name"]
-                    for column in inspector.get_columns(
-                        "alpha_router_api_key_audit_logs"
-                    )
-                }
-                usage_event_columns = {
-                    column["name"]
-                    for column in inspector.get_columns("usage_events")
-                }
+                request_columns = {column["name"] for column in inspector.get_columns("request_logs")}
+                audit_columns = {column["name"] for column in inspector.get_columns("alpha_router_api_key_audit_logs")}
+                usage_event_columns = {column["name"] for column in inspector.get_columns("usage_events")}
                 return tables, request_columns, audit_columns, usage_event_columns
 
             (
@@ -185,38 +163,26 @@ def test_fresh_database_schema_contracts() -> None:
 def test_chat_wire_and_export_contracts():
     assert user_chat_storage_service.IMAGE_MESSAGE_PREFIX == "__ALPHA_ROUTER_IMAGE_JSON__:"
     assert user_chat_storage_service.IMAGE_PENDING_MARKER == "__ALPHA_ROUTER_IMAGE_PENDING__"
-    assert (
-        user_chat_storage_service.ATTACHMENT_MESSAGE_PREFIX
-        == "__ALPHA_ROUTER_ATTACH_JSON__:"
-    )
+    assert user_chat_storage_service.ATTACHMENT_MESSAGE_PREFIX == "__ALPHA_ROUTER_ATTACH_JSON__:"
     assert AUDIO_MESSAGE_PREFIX == "__ALPHA_ROUTER_AUDIO_JSON__:"
     assert chat_title_service._IMAGE_PREFIX == "__ALPHA_ROUTER_IMAGE_JSON__:"
     assert chat_title_service._IMAGE_PENDING == "__ALPHA_ROUTER_IMAGE_PENDING__"
     assert chat_feedback_service.IMAGE_MESSAGE_PREFIX == "__ALPHA_ROUTER_IMAGE_JSON__:"
     assert chat_feedback_service.IMAGE_PENDING_MARKER == "__ALPHA_ROUTER_IMAGE_PENDING__"
     assert ATTACH_PREFIX == "__ALPHA_ROUTER_ATTACH_JSON__:"
-    assert (
-        detect_import_format({"format": CHAT_EXPORT_FORMAT, "version": 1, "sessions": []})
-        == "alpha-router-chats"
-    )
+    assert detect_import_format({"format": CHAT_EXPORT_FORMAT, "version": 1, "sessions": []}) == "alpha-router-chats"
 
 
 def test_chat_title_marker_parsing_uses_current_contracts():
     assert (
-        chat_title_service._normalize_content_for_title(
-            '__ALPHA_ROUTER_IMAGE_JSON__:{"prompt":"Draw a fox"}'
-        )
+        chat_title_service._normalize_content_for_title('__ALPHA_ROUTER_IMAGE_JSON__:{"prompt":"Draw a fox"}')
         == "Draw a fox"
     )
     assert (
-        chat_title_service._normalize_content_for_title(
-            '__ALPHA_ROUTER_ATTACH_JSON__:{"userText":"Review this"}'
-        )
+        chat_title_service._normalize_content_for_title('__ALPHA_ROUTER_ATTACH_JSON__:{"userText":"Review this"}')
         == "Review this"
     )
     assert (
-        chat_title_service._normalize_content_for_title(
-            '__ALPHA_ROUTER_AUDIO_JSON__:{"transcript":"Voice note"}'
-        )
+        chat_title_service._normalize_content_for_title('__ALPHA_ROUTER_AUDIO_JSON__:{"transcript":"Voice note"}')
         == "Voice note"
     )

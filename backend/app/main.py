@@ -171,15 +171,9 @@ def _assert_production_safe() -> None:
     if (
         settings.environment == "production"
         and settings.metrics_enabled
-        and (
-            not settings.metrics_bearer_token.strip()
-            or settings.metrics_bearer_token in INSECURE_DEFAULTS
-        )
+        and (not settings.metrics_bearer_token.strip() or settings.metrics_bearer_token in INSECURE_DEFAULTS)
     ):
-        message = (
-            "METRICS_BEARER_TOKEN must be a non-placeholder secret when "
-            "METRICS_ENABLED=true in production"
-        )
+        message = "METRICS_BEARER_TOKEN must be a non-placeholder secret when METRICS_ENABLED=true in production"
         if settings.production_guard_mode == "warning":
             increment("production_guard_warning")
             _PRODUCTION_GUARD_LOG.warning(message)
@@ -261,11 +255,7 @@ def _redis_url_has_password(redis_url: str, *, redis_password: str = "") -> bool
         parsed = urlsplit(url)
     except ValueError:
         return False
-    return (
-        parsed.scheme in {"redis", "rediss"}
-        and bool(parsed.password)
-        and parsed.password not in INSECURE_DEFAULTS
-    )
+    return parsed.scheme in {"redis", "rediss"} and bool(parsed.password) and parsed.password not in INSECURE_DEFAULTS
 
 
 def _url_uses_tls(url: str) -> bool:
@@ -393,9 +383,7 @@ def _collect_production_insecurities(
     if database_url in {
         "postgresql+asyncpg://alpha_router:changeme@postgres:5432/alpha_router",
         "postgresql+asyncpg://alpha_router:changeme@pgbouncer:6432/alpha_router",
-    } | LEGACY_DATABASE_URLS or (
-        database_url.strip() and not _url_has_secure_password(database_url)
-    ):
+    } | LEGACY_DATABASE_URLS or (database_url.strip() and not _url_has_secure_password(database_url)):
         insecure.append("DATABASE_URL")
     # SAML ACS/metadata are derived from api_public_url; require HTTPS when enabled.
     if (
@@ -406,11 +394,7 @@ def _collect_production_insecurities(
         insecure.append("SAML_TLS")
     if oidc_enabled and (
         (oidc_issuer.strip() and not _url_uses_tls(oidc_issuer))
-        or (
-            api_public_url.strip()
-            and not _url_uses_tls(api_public_url)
-            and not _url_is_loopback(api_public_url)
-        )
+        or (api_public_url.strip() and not _url_uses_tls(api_public_url) and not _url_is_loopback(api_public_url))
     ):
         insecure.append("OIDC_TLS")
     if smtp_host.strip() and not smtp_tls:
@@ -418,30 +402,15 @@ def _collect_production_insecurities(
     if allow_insecure_saml:
         # Lets admins switch off signed assertions: a forged login in production.
         insecure.append("ALLOW_INSECURE_SAML")
-    if (
-        s3_endpoint_url.strip()
-        and not s3_use_ssl
-        and not _url_host_is_internal(s3_endpoint_url)
-    ):
+    if s3_endpoint_url.strip() and not s3_use_ssl and not _url_host_is_internal(s3_endpoint_url):
         insecure.append("S3_TLS")
     if s3_access_key in INSECURE_DEFAULTS or s3_secret_key in INSECURE_DEFAULTS:
         insecure.append("S3_CREDENTIALS")
-    if (
-        frontend_url.strip()
-        and not _url_uses_tls(frontend_url)
-        and not _url_is_loopback(frontend_url)
-    ):
+    if frontend_url.strip() and not _url_uses_tls(frontend_url) and not _url_is_loopback(frontend_url):
         insecure.append("FRONTEND_TLS")
-    if (
-        api_public_url.strip()
-        and not _url_uses_tls(api_public_url)
-        and not _url_is_loopback(api_public_url)
-    ):
+    if api_public_url.strip() and not _url_uses_tls(api_public_url) and not _url_is_loopback(api_public_url):
         insecure.append("API_PUBLIC_TLS")
-    public_surface = any(
-        url.strip() and not _url_is_loopback(url)
-        for url in (frontend_url, api_public_url)
-    )
+    public_surface = any(url.strip() and not _url_is_loopback(url) for url in (frontend_url, api_public_url))
     if public_surface and not enable_hsts:
         insecure.append("HSTS")
     if allow_insecure_code_subprocess:
@@ -558,9 +527,7 @@ def _check_production_safe(
     )
     if guard_mode == "warning":
         increment("production_guard_warning")
-        _PRODUCTION_GUARD_LOG.warning(
-            "Production guard warning (non-blocking): %s", message
-        )
+        _PRODUCTION_GUARD_LOG.warning("Production guard warning (non-blocking): %s", message)
         return
     raise RuntimeError(message)
 
@@ -606,40 +573,21 @@ async def lifespan(app: FastAPI):
         # race on the unique username/email indexes.
         if db.get_bind().dialect.name == "postgresql":
             await db.execute(text("SELECT pg_advisory_xact_lock(56023114)"))
-        admin_username = (
-            normalize_username(settings.admin_username)
-            or settings.admin_username.strip()
-        )
+        admin_username = normalize_username(settings.admin_username) or settings.admin_username.strip()
         admin_user = await find_user_by_username_ci(db, admin_username)
         bootstrap_admin_created = False
         if not admin_user:
             # A seed admin may already exist under a previous ADMIN_USERNAME.
             # Reuse it by current or legacy bootstrap email instead of creating
             # a duplicate administrator.
-            admin_user = (
-                (
-                    await db.execute(
-                        select(User).where(User.email == DEFAULT_ADMIN_EMAIL)
-                    )
-                )
-                .scalars()
-                .first()
-            )
+            admin_user = (await db.execute(select(User).where(User.email == DEFAULT_ADMIN_EMAIL))).scalars().first()
         if not admin_user:
             legacy_admin_emails = (
                 "alpharouter@alpharouter.ent",
                 f"admin@{INTERNAL_DOMAIN}",
             )
             for legacy_admin_email in legacy_admin_emails:
-                admin_user = (
-                    (
-                        await db.execute(
-                            select(User).where(User.email == legacy_admin_email)
-                        )
-                    )
-                    .scalars()
-                    .first()
-                )
+                admin_user = (await db.execute(select(User).where(User.email == legacy_admin_email))).scalars().first()
                 if admin_user:
                     admin_user.email = DEFAULT_ADMIN_EMAIL
                     break
@@ -680,9 +628,7 @@ async def lifespan(app: FastAPI):
         from app.services.user_role_service import ensure_super_admin_roles
 
         for row in (await db.execute(select(User))).scalars().all():
-            await ensure_super_admin_roles(
-                db, row, admin_username=settings.admin_username
-            )
+            await ensure_super_admin_roles(db, row, admin_username=settings.admin_username)
             await ensure_user_chat_store(db, row.id)  # ensures user_chat_prefs row
         await db.commit()
 
@@ -887,11 +833,7 @@ if settings.metrics_enabled:
         configured_token = settings.metrics_bearer_token.strip()
         if configured_token:
             authorization = request.headers.get("authorization", "")
-            supplied_token = (
-                authorization[7:].strip()
-                if authorization.lower().startswith("bearer ")
-                else ""
-            )
+            supplied_token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
             if not secrets.compare_digest(supplied_token, configured_token):
                 raise HTTPException(401, "Metrics authentication required")
         body, content_type = prometheus_payload()
@@ -951,18 +893,14 @@ async def root():
 
 # Static assets (JS/CSS) - must be after explicit routes like /health
 if _FRONTEND_DIST.is_dir():
-    app.mount(
-        "/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="assets"
-    )
+    app.mount("/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="assets")
 
     @app.get("/{full_path:path}")
     async def spa_fallback(full_path: str):
         """React Router: serve index.html for client-side routes (never shadow /api - those are separate routes)."""
         # Never let the SPA mask unmatched API/gateway paths - return JSON 404
         # so API clients get a predictable error instead of the HTML shell.
-        if full_path.startswith(
-            ("api/", "v1/", "health", "docs", "openapi.json", "redoc")
-        ):
+        if full_path.startswith(("api/", "v1/", "health", "docs", "openapi.json", "redoc")):
             return JSONResponse(
                 status_code=404,
                 content={"detail": "Not Found", "path": f"/{full_path}"},

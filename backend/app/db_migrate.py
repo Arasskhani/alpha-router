@@ -20,11 +20,7 @@ def _ensure_missing_indexes(
     Columns owned by Alembic may be absent while the legacy schema bootstrap
     runs, so their indexes must be deferred to the versioned migration.
     """
-    existing = {
-        index["name"]
-        for index in inspector.get_indexes(table.name)
-        if index.get("name")
-    }
+    existing = {index["name"] for index in inspector.get_indexes(table.name) if index.get("name")}
     for index in table.indexes:
         if not index.name or index.name in existing:
             continue
@@ -113,9 +109,7 @@ async def apply_schema_column_patches() -> None:
                 if retired_table not in tables:
                     continue
                 try:
-                    connection.execute(
-                        text(f"DROP TABLE IF EXISTS {retired_table} CASCADE")
-                    )
+                    connection.execute(text(f"DROP TABLE IF EXISTS {retired_table} CASCADE"))
                 except Exception as exc:
                     message = str(exc).lower()
                     if "does not exist" in message or "no such table" in message:
@@ -128,9 +122,7 @@ async def apply_schema_column_patches() -> None:
                     continue
                 if table.name not in tables:
                     continue
-                existing = {
-                    column["name"] for column in inspector.get_columns(table.name)
-                }
+                existing = {column["name"] for column in inspector.get_columns(table.name)}
                 for column in table.columns:
                     if column.name in versioned_columns.get(table.name, ()):
                         continue
@@ -138,12 +130,7 @@ async def apply_schema_column_patches() -> None:
                         continue
                     ddl = column.type.compile(dialect=connection.dialect)
                     try:
-                        connection.execute(
-                            text(
-                                f"ALTER TABLE {table.name} "
-                                f"ADD COLUMN {column.name} {ddl}"
-                            )
-                        )
+                        connection.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {column.name} {ddl}"))
                         existing.add(column.name)
                     except Exception as exc:
                         message = str(exc).lower()
@@ -155,9 +142,7 @@ async def apply_schema_column_patches() -> None:
                     if retired not in existing:
                         continue
                     try:
-                        connection.execute(
-                            text(f"ALTER TABLE {table.name} DROP COLUMN {retired}")
-                        )
+                        connection.execute(text(f"ALTER TABLE {table.name} DROP COLUMN {retired}"))
                         existing.discard(retired)
                     except Exception as exc:
                         message = str(exc).lower()
@@ -426,13 +411,8 @@ async def validate_agent_platform_schema() -> None:
                 if table_name not in tables:
                     missing.append(f"table:{table_name}")
                     continue
-                present = {
-                    column["name"] for column in inspector.get_columns(table_name)
-                }
-                missing.extend(
-                    f"column:{table_name}.{column}"
-                    for column in sorted(expected_columns - present)
-                )
+                present = {column["name"] for column in inspector.get_columns(table_name)}
+                missing.extend(f"column:{table_name}.{column}" for column in sorted(expected_columns - present))
             return missing
 
         missing = await conn.run_sync(validate)
@@ -492,13 +472,8 @@ async def validate_accounting_schema() -> None:
                 if table_name not in tables:
                     missing.append(f"table:{table_name}")
                     continue
-                present = {
-                    column["name"] for column in inspector.get_columns(table_name)
-                }
-                missing.extend(
-                    f"column:{table_name}.{column}"
-                    for column in sorted(expected_columns - present)
-                )
+                present = {column["name"] for column in inspector.get_columns(table_name)}
+                missing.extend(f"column:{table_name}.{column}" for column in sorted(expected_columns - present))
             return missing
 
         missing = await conn.run_sync(validate)

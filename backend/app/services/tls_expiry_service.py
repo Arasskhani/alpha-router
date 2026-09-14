@@ -23,25 +23,27 @@ KEY_LAST_NOTICE = "tls_expiry_last_notice"
 
 async def _notice_recipients(db: AsyncSession) -> list[str]:
     rows = (
-        await db.execute(
-            select(User.email)
-            .join(UserRoleAssignment, UserRoleAssignment.user_id == User.id)
-            .where(
-                UserRoleAssignment.role_slug == SUPER_ADMIN_SLUG,
-                User.email.isnot(None),
-                User.deleted_at.is_(None),
+        (
+            await db.execute(
+                select(User.email)
+                .join(UserRoleAssignment, UserRoleAssignment.user_id == User.id)
+                .where(
+                    UserRoleAssignment.role_slug == SUPER_ADMIN_SLUG,
+                    User.email.isnot(None),
+                    User.deleted_at.is_(None),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return sorted({(email or "").strip() for email in rows if (email or "").strip()})
 
 
 async def notify_expiring_certificates(db: AsyncSession, *, now: datetime.datetime | None = None) -> dict[str, int]:
     moment = now or datetime.datetime.utcnow()
     today = moment.date().isoformat()
-    row = (
-        await db.execute(select(TlsCertificate).where(TlsCertificate.is_active.is_(True)))
-    ).scalars().first()
+    row = (await db.execute(select(TlsCertificate).where(TlsCertificate.is_active.is_(True)))).scalars().first()
     if row is None or row.not_after is None:
         return {"sent": 0}
     days = int((row.not_after - moment).total_seconds() // 86400)

@@ -103,9 +103,7 @@ def _score_chunk(query: str, text: str) -> int:
     return len(q_tokens & t_tokens)
 
 
-async def _load_active_config(
-    db: AsyncSession, project_id: str
-) -> tuple[str | None, bool, dict]:
+async def _load_active_config(db: AsyncSession, project_id: str) -> tuple[str | None, bool, dict]:
     """Return (custom_prompt, memory_enabled, grounding_policy) without HTTP errors."""
 
     project = await db.get(Project, project_id)
@@ -240,15 +238,11 @@ async def plan_project_turn(
     user = await db.get(User, user_id)
     if user is None:
         return messages
-    access = await resolve_project_access(
-        db, project_id=session.project_id, user=user
-    )
+    access = await resolve_project_access(db, project_id=session.project_id, user=user)
     if access is None or not access.can("project.view"):
         return messages
 
-    custom_prompt, memory_enabled, grounding_policy = await _load_active_config(
-        db, session.project_id
-    )
+    custom_prompt, memory_enabled, grounding_policy = await _load_active_config(db, session.project_id)
     blocks: list[str] = []
     if custom_prompt:
         blocks.append(_format_custom_prompt_block(custom_prompt))

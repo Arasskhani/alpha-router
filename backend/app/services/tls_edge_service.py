@@ -353,9 +353,7 @@ async def sync_edge_body_limit(db: AsyncSession) -> dict[str, Any]:
 
     https_port = int(desired.get("https_port") or 0)
     http_mode_raw = str(desired.get("http_mode") or "loopback_only")
-    http_mode: HttpMode = (
-        "redirect" if http_mode_raw == "redirect" else "loopback_only"
-    )
+    http_mode: HttpMode = "redirect" if http_mode_raw == "redirect" else "loopback_only"
     hsts_enabled = bool(desired.get("hsts"))
     certificate_id = desired.get("certificate_id")
     if not https_port or not certificate_id:
@@ -536,9 +534,7 @@ def tls_status_payload(
 
 
 async def current_tls_status(db: AsyncSession) -> dict[str, Any]:
-    row = (
-        await db.execute(select(TlsCertificate).where(TlsCertificate.is_active.is_(True)))
-    ).scalars().first()
+    row = (await db.execute(select(TlsCertificate).where(TlsCertificate.is_active.is_(True)))).scalars().first()
     desired = read_desired_state()
     return tls_status_payload(
         active_certificate=row,

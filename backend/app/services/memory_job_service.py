@@ -30,9 +30,7 @@ class JobResult:
     next_attempt_at: dt.datetime | None
 
 
-async def _latest_extracted_sequence(
-    db: AsyncSession, user_id: int, session_id: str
-) -> int:
+async def _latest_extracted_sequence(db: AsyncSession, user_id: int, session_id: str) -> int:
     row = (
         await db.execute(
             select(UserMemoryJob.extracted_sequence)
@@ -78,21 +76,23 @@ async def schedule_extraction(
     debounce = int(settings.get("extract_debounce_seconds") or 30)
     max_wait = int(settings.get("extract_max_wait_seconds") or 600)
     existing = (
-        await db.execute(
-            select(UserMemoryJob)
-            .where(
-                UserMemoryJob.user_id == user_id,
-                UserMemoryJob.session_id == session_id,
-                UserMemoryJob.status.in_(OPEN_STATUSES),
+        (
+            await db.execute(
+                select(UserMemoryJob)
+                .where(
+                    UserMemoryJob.user_id == user_id,
+                    UserMemoryJob.session_id == session_id,
+                    UserMemoryJob.status.in_(OPEN_STATUSES),
+                )
+                .order_by(UserMemoryJob.created_at.asc())
+                .limit(1)
             )
-            .order_by(UserMemoryJob.created_at.asc())
-            .limit(1)
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if existing is not None:
-        existing.watermark_sequence = max(
-            int(existing.watermark_sequence or 0), int(watermark_sequence)
-        )
+        existing.watermark_sequence = max(int(existing.watermark_sequence or 0), int(watermark_sequence))
         created = existing.created_at or now
         latest = now + dt.timedelta(seconds=debounce)
         deadline = created + dt.timedelta(seconds=max_wait)
@@ -123,19 +123,21 @@ async def schedule_extraction(
             await db.flush()
     except IntegrityError:
         raced = (
-            await db.execute(
-                select(UserMemoryJob).where(
-                    UserMemoryJob.user_id == user_id,
-                    UserMemoryJob.session_id == session_id,
-                    UserMemoryJob.status.in_(OPEN_STATUSES),
+            (
+                await db.execute(
+                    select(UserMemoryJob).where(
+                        UserMemoryJob.user_id == user_id,
+                        UserMemoryJob.session_id == session_id,
+                        UserMemoryJob.status.in_(OPEN_STATUSES),
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if raced is None:
             return None
-        raced.watermark_sequence = max(
-            int(raced.watermark_sequence or 0), int(watermark_sequence)
-        )
+        raced.watermark_sequence = max(int(raced.watermark_sequence or 0), int(watermark_sequence))
         raced.updated_at = now
         await db.flush()
         return raced
@@ -170,11 +172,7 @@ async def claim_job(
         return None
     if job.status in {"succeeded", "dead"}:
         return None
-    if (
-        job.status == "running"
-        and job.lease_expires_at is not None
-        and job.lease_expires_at > current
-    ):
+    if job.status == "running" and job.lease_expires_at is not None and job.lease_expires_at > current:
         return None
     if job.status not in CLAIMABLE_STATUSES:
         return None
@@ -186,8 +184,7 @@ async def claim_job(
             event_type="memory.job.ready",
             payload={"job_id": job.id, "attempt": int(job.attempt_count or 0)},
             idempotency_key=(
-                f"user-memory:{job.id}:dispatch:{int(job.attempt_count or 0)}:"
-                f"deferred:{int(job.run_after.timestamp())}"
+                f"user-memory:{job.id}:dispatch:{int(job.attempt_count or 0)}:deferred:{int(job.run_after.timestamp())}"
             ),
             available_at=job.run_after,
         )
@@ -215,9 +212,7 @@ async def heartbeat_job(
     if job.status != "running" or job.worker_id != worker_id:
         return False
     current = now or dt.datetime.utcnow()
-    job.lease_expires_at = current + dt.timedelta(
-        seconds=get_settings().memory_job_lease_seconds
-    )
+    job.lease_expires_at = current + dt.timedelta(seconds=get_settings().memory_job_lease_seconds)
     job.updated_at = current
     await db.flush()
     return True
@@ -323,9 +318,7 @@ async def recover_stale_jobs(
             aggregate_id=job.id,
             event_type="memory.job.ready",
             payload={"job_id": job.id, "attempt": int(job.attempt_count or 0)},
-            idempotency_key=(
-                f"user-memory:{job.id}:dispatch:{int(job.attempt_count or 0)}:lease-expired"
-            ),
+            idempotency_key=(f"user-memory:{job.id}:dispatch:{int(job.attempt_count or 0)}:lease-expired"),
             available_at=current,
         )
         recovered += 1
@@ -345,9 +338,7 @@ async def reset_watermarks_for_user(db: AsyncSession, user_id: int) -> None:
         )
     ).all()
     seq_by_session = {str(session_id): int(seq or 0) for session_id, seq in max_seq_rows}
-    jobs = (
-        await db.execute(select(UserMemoryJob).where(UserMemoryJob.user_id == user_id))
-    ).scalars().all()
+    jobs = (await db.execute(select(UserMemoryJob).where(UserMemoryJob.user_id == user_id))).scalars().all()
     now = dt.datetime.utcnow()
     seen: set[str] = set()
     for job in jobs:

@@ -77,9 +77,7 @@ async def _count_media(db) -> int:
     return int(
         (
             await db.execute(
-                select(func.count()).select_from(ProjectMediaAsset).where(
-                    ProjectMediaAsset.project_id == PROJ
-                )
+                select(func.count()).select_from(ProjectMediaAsset).where(ProjectMediaAsset.project_id == PROJ)
             )
         ).scalar()
         or 0

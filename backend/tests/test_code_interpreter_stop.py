@@ -100,9 +100,7 @@ async def _run_stop_during_sandbox() -> dict:
     )
 
     fake_db = AsyncMock()
-    fake_db.execute = AsyncMock(
-        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
-    )
+    fake_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
     fake_ctx = MagicMock()
     fake_ctx.__aenter__ = AsyncMock(return_value=fake_db)
     fake_ctx.__aexit__ = AsyncMock(return_value=None)
@@ -218,9 +216,7 @@ async def _run_stop_before_sandbox() -> dict:
     )
 
     fake_db = AsyncMock()
-    fake_db.execute = AsyncMock(
-        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
-    )
+    fake_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
     fake_ctx = MagicMock()
     fake_ctx.__aenter__ = AsyncMock(return_value=fake_db)
     fake_ctx.__aexit__ = AsyncMock(return_value=None)
@@ -309,9 +305,7 @@ async def _run_partial_flush_stops_after_cancel() -> list[str]:
     )
 
     fake_db = AsyncMock()
-    fake_db.execute = AsyncMock(
-        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
-    )
+    fake_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
     fake_ctx = MagicMock()
     fake_ctx.__aenter__ = AsyncMock(return_value=fake_db)
     fake_ctx.__aexit__ = AsyncMock(return_value=None)

@@ -220,9 +220,7 @@ def code_interpreter_workspace_message(workspace_files: dict[str, str]) -> str:
     for name in sorted(workspace_files):
         size = len(workspace_files[name].encode("utf-8"))
         lines.append(f"- {name} ({size} bytes)")
-    lines.append(
-        "Example: df = pd.read_csv('filename.csv'); print(df.head()); print(df.describe())."
-    )
+    lines.append("Example: df = pd.read_csv('filename.csv'); print(df.head()); print(df.describe()).")
     return "\n".join(lines)
 
 
@@ -582,19 +580,13 @@ def _broker_http_error_message(response: httpx.Response) -> str:
     if status == 401:
         message = "Code interpreter error: sandbox broker authentication failed."
     elif status == 422:
-        message = (
-            "Code interpreter error: sandbox rejected the workspace payload "
-            "(invalid filename or size)."
-        )
+        message = "Code interpreter error: sandbox rejected the workspace payload (invalid filename or size)."
     elif status == 429:
         message = "Code interpreter error: sandbox capacity is busy; try again shortly."
     elif status == 502:
         message = "Code interpreter error: sandbox container failed to run."
     elif status == 503:
-        message = (
-            "Code interpreter error: sandbox runtime unavailable "
-            "(missing image or Docker access)."
-        )
+        message = "Code interpreter error: sandbox runtime unavailable (missing image or Docker access)."
     else:
         message = f"Code interpreter error: sandbox execution unavailable (HTTP {status})."
     if detail and status in {422, 429, 502, 503}:
@@ -642,14 +634,10 @@ async def run_python_sandbox(
     broker_url = (settings.code_sandbox_broker_url or "").strip()
     if broker_url:
         if len((settings.code_sandbox_broker_token or "").strip()) < 32:
-            return _error_result(
-                "Code interpreter error: sandbox broker authentication is not configured."
-            )
+            return _error_result("Code interpreter error: sandbox broker authentication is not configured.")
         return await _run_via_broker(code, workspace_files, settings, broker_url)
     if (settings.code_sandbox_image or "").strip():
-        return _error_result(
-            "Code interpreter error: legacy sandbox image configuration requires the sandbox broker."
-        )
+        return _error_result("Code interpreter error: legacy sandbox image configuration requires the sandbox broker.")
     if settings.environment == "development" and settings.allow_insecure_code_subprocess:
         return await _run_in_subprocess(code, workspace_files)
     return _error_result("Code interpreter error: sandbox broker is required.")
@@ -688,9 +676,7 @@ async def _run_via_broker(
         if exc.status_code == 504:
             return _error_result("Code interpreter error: execution timed out.")
         if exc.status_code == 413:
-            return _error_result(
-                "Code interpreter error: sandbox input or output exceeds the allowed limit."
-            )
+            return _error_result("Code interpreter error: sandbox input or output exceeds the allowed limit.")
         if exc.status_code == 422:
             detail = " ".join(str(exc.detail).split())[:200]
             return _error_result(
@@ -698,30 +684,21 @@ async def _run_via_broker(
                 f"(invalid filename or size). Detail: {detail}"
             )
         if exc.status_code == 401:
-            return _error_result(
-                "Code interpreter error: sandbox broker authentication failed."
-            )
+            return _error_result("Code interpreter error: sandbox broker authentication failed.")
         if exc.status_code == 429:
             detail = " ".join(str(exc.detail).split())[:200]
             return _error_result(
-                "Code interpreter error: sandbox capacity is busy; try again shortly. "
-                f"Detail: {detail}"
+                f"Code interpreter error: sandbox capacity is busy; try again shortly. Detail: {detail}"
             )
         detail = " ".join(str(exc.detail).split())[:200]
         suffix = f" Detail: {detail}" if detail else ""
         if exc.status_code == 502:
-            return _error_result(
-                f"Code interpreter error: sandbox container failed to run.{suffix}"
-            )
+            return _error_result(f"Code interpreter error: sandbox container failed to run.{suffix}")
         if exc.status_code == 503:
             return _error_result(
-                "Code interpreter error: sandbox runtime unavailable "
-                f"(missing image or Docker access).{suffix}"
+                f"Code interpreter error: sandbox runtime unavailable (missing image or Docker access).{suffix}"
             )
-        return _error_result(
-            f"Code interpreter error: sandbox execution unavailable "
-            f"(HTTP {exc.status_code}).{suffix}"
-        )
+        return _error_result(f"Code interpreter error: sandbox execution unavailable (HTTP {exc.status_code}).{suffix}")
     if not isinstance(result, dict):
         return _error_result("Code interpreter error: invalid sandbox response.")
     try:

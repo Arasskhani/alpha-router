@@ -109,9 +109,7 @@ def _patches(provider: _SlowProvider, persister: _FakePersister, log_usage: Asyn
         return provider
 
     fake_db = AsyncMock()
-    fake_db.execute = AsyncMock(
-        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
-    )
+    fake_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
     fake_ctx = MagicMock()
     fake_ctx.__aenter__ = AsyncMock(return_value=fake_db)
     fake_ctx.__aexit__ = AsyncMock(return_value=None)

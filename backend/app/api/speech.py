@@ -111,9 +111,7 @@ async def _resolve_speech_model(
     access_user_id: int | None = None,
 ) -> tuple[str, str | None, str | None, str | None, AIModel | None]:
     model_id = _normalize_model_id(raw_model)
-    subject = (
-        await resolve_access_subject(db, user_id=access_user_id) if access_user_id is not None else None
-    )
+    subject = await resolve_access_subject(db, user_id=access_user_id) if access_user_id is not None else None
     row: AIModel | None = None
     if model_id.startswith("model::"):
         try:
@@ -122,10 +120,14 @@ async def _resolve_speech_model(
             model_pk = None
         if model_pk is not None:
             row = (
-                await db.execute(
-                    select(AIModel).where(AIModel.id == model_pk, AIModel.is_enabled == True)  # noqa: E712
+                (
+                    await db.execute(
+                        select(AIModel).where(AIModel.id == model_pk, AIModel.is_enabled == True)  # noqa: E712
+                    )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
         if row:
             conn = await db.get(Connection, row.connection_id)
             if conn and conn.is_active:
@@ -142,17 +144,21 @@ async def _resolve_speech_model(
     if not row:
         id_candidates = external_id_lookup_candidates(model_id)
         candidates = (
-            await db.execute(
-                select(AIModel, Connection)
-                .join(Connection, Connection.id == AIModel.connection_id)
-                .where(
-                    AIModel.external_id.in_(id_candidates),
-                    AIModel.is_enabled == True,  # noqa: E712
-                    Connection.is_active == True,  # noqa: E712
+            (
+                await db.execute(
+                    select(AIModel, Connection)
+                    .join(Connection, Connection.id == AIModel.connection_id)
+                    .where(
+                        AIModel.external_id.in_(id_candidates),
+                        AIModel.is_enabled == True,  # noqa: E712
+                        Connection.is_active == True,  # noqa: E712
+                    )
+                    .order_by(AIModel.id.desc())
                 )
-                .order_by(AIModel.id.desc())
-            )
-        ).all() if id_candidates else []
+            ).all()
+            if id_candidates
+            else []
+        )
         for cand_row, conn in candidates:
             if subject is None or await user_can_access_model(db, cand_row, subject):
                 return (
@@ -413,9 +419,7 @@ async def generate_speech(
         except Exception as exc:
             import logging
 
-            logging.getLogger("app.api.speech").exception(
-                "Failed to close speech request transaction before billing"
-            )
+            logging.getLogger("app.api.speech").exception("Failed to close speech request transaction before billing")
             try:
                 await db.rollback()
             except Exception:
@@ -465,8 +469,7 @@ async def generate_speech(
 
                     increment("budget_hold_leak")
                     logging.getLogger("app.api.speech").exception(
-                        "Speech usage settlement failed after retries; "
-                        "reservation remains held for recovery"
+                        "Speech usage settlement failed after retries; reservation remains held for recovery"
                     )
             return None
 
@@ -478,4 +481,3 @@ async def generate_speech(
                 status_code=500,
                 detail="Speech persistence failed due to an internal error",
             ) from commit_error
-

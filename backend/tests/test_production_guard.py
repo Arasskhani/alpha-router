@@ -50,11 +50,13 @@ def test_development_environment_is_noop_with_defaults():
 
 def test_production_refuses_when_all_defaults_present():
     with pytest.raises(RuntimeError) as exc:
-        _check_production_safe(**_prod_kwargs(
-            secret_key="change-me-in-production",
-            admin_password="admin",
-            gateway_master_key="sk-alpha-router-master",
-        ))
+        _check_production_safe(
+            **_prod_kwargs(
+                secret_key="change-me-in-production",
+                admin_password="admin",
+                gateway_master_key="sk-alpha-router-master",
+            )
+        )
     msg = str(exc.value)
     assert "SECRET_KEY" in msg
     assert "ADMIN_PASSWORD" in msg
@@ -78,9 +80,7 @@ def test_production_refuses_when_only_admin_password_is_default():
 
 def test_production_refuses_when_only_gateway_master_key_is_default():
     with pytest.raises(RuntimeError) as exc:
-        _check_production_safe(
-            **_prod_kwargs(gateway_master_key="sk-alpha-router-master")
-        )
+        _check_production_safe(**_prod_kwargs(gateway_master_key="sk-alpha-router-master"))
     assert "GATEWAY_MASTER_KEY" in str(exc.value)
 
 
@@ -205,8 +205,22 @@ def test_production_warning_mode_clean_when_secure(caplog):
         ({"service_admin_password": "changeme"}, "SERVICE_ADMIN_PASSWORD"),
         ({"database_url": "postgresql+asyncpg://alpha_router:changeme@postgres:5432/alpha_router"}, "DATABASE_URL"),
         ({"saml_enabled": True, "api_public_url": "http://api.example.com"}, "SAML_TLS"),
-        ({"oidc_enabled": True, "oidc_issuer": "http://idp.example.com", "api_public_url": "https://api.example.com"}, "OIDC_TLS"),
-        ({"oidc_enabled": True, "oidc_issuer": "https://idp.example.com", "api_public_url": "http://api.example.com"}, "OIDC_TLS"),
+        (
+            {
+                "oidc_enabled": True,
+                "oidc_issuer": "http://idp.example.com",
+                "api_public_url": "https://api.example.com",
+            },
+            "OIDC_TLS",
+        ),
+        (
+            {
+                "oidc_enabled": True,
+                "oidc_issuer": "https://idp.example.com",
+                "api_public_url": "http://api.example.com",
+            },
+            "OIDC_TLS",
+        ),
         ({"smtp_host": "smtp.internal", "smtp_tls": False}, "SMTP_TLS"),
         ({"s3_endpoint_url": "http://objects.example.com", "s3_use_ssl": False}, "S3_TLS"),
         ({"s3_access_key": "alpha_router", "s3_secret_key": "changeme"}, "S3_CREDENTIALS"),

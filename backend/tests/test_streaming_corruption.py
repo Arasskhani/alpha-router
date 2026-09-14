@@ -110,7 +110,11 @@ async def _test_on_content_does_not_skip_after_reset() -> None:
     uid = await _bootstrap_user_and_session(factory)
     async with factory() as db:
         p = ChatCompletionPersister(
-            db, user_id=uid, session_id="s1", model_id="m", model_name="M",
+            db,
+            user_id=uid,
+            session_id="s1",
+            model_id="m",
+            model_name="M",
             assistant_client_message_id="a2",
         )
         await p.prepare()
@@ -137,7 +141,11 @@ async def _test_finalize_on_failure_writes_error_message() -> None:
     uid = await _bootstrap_user_and_session(factory)
     async with factory() as db:
         p = ChatCompletionPersister(
-            db, user_id=uid, session_id="s1", model_id="m", model_name="M",
+            db,
+            user_id=uid,
+            session_id="s1",
+            model_id="m",
+            model_name="M",
             assistant_client_message_id="a3",
         )
         await p.prepare()

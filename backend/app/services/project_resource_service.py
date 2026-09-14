@@ -69,11 +69,7 @@ async def ensure_project_knowledge_base(
             return kb
 
     slug = f"{_PROJECT_KB_SLUG_PREFIX}{project.id}"
-    existing = (
-        await db.execute(
-            select(KnowledgeBase).where(KnowledgeBase.slug == slug)
-        )
-    ).scalar_one_or_none()
+    existing = (await db.execute(select(KnowledgeBase).where(KnowledgeBase.slug == slug))).scalar_one_or_none()
     if existing is not None and existing.status != "archived":
         kb = existing
     else:
@@ -243,15 +239,7 @@ async def sync_project_resources_for_document(
     doc_id = (document_id or "").strip()
     if not doc_id:
         return 0
-    rows = (
-        (
-            await db.execute(
-                select(ProjectResource).where(ProjectResource.document_id == doc_id)
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = (await db.execute(select(ProjectResource).where(ProjectResource.document_id == doc_id))).scalars().all()
     updated = 0
     for resource in rows:
         synced = await sync_project_resource_status(db, resource_id=resource.id)
@@ -302,8 +290,7 @@ def _resource_to_client(
         "status": resource.status,
         "versionStatus": version.status if version else None,
         "documentStatus": document.status if document else None,
-        "failureReason": resource.failure_reason
-        or (version.failure_reason if version else None),
+        "failureReason": resource.failure_reason or (version.failure_reason if version else None),
         "uploadedByUserId": resource.uploaded_by_user_id,
         "createdAt": resource.created_at.isoformat() if resource.created_at else None,
         "updatedAt": resource.updated_at.isoformat() if resource.updated_at else None,
@@ -328,14 +315,16 @@ async def list_project_resources(
         capability="resource.read",
     )
 
-    base = select(ProjectResource, KnowledgeDocument).outerjoin(
-        KnowledgeDocument,
-        KnowledgeDocument.id == ProjectResource.document_id,
-    ).where(ProjectResource.project_id == project_id)
-
-    count_stmt = select(func.count()).select_from(ProjectResource).where(
-        ProjectResource.project_id == project_id
+    base = (
+        select(ProjectResource, KnowledgeDocument)
+        .outerjoin(
+            KnowledgeDocument,
+            KnowledgeDocument.id == ProjectResource.document_id,
+        )
+        .where(ProjectResource.project_id == project_id)
     )
+
+    count_stmt = select(func.count()).select_from(ProjectResource).where(ProjectResource.project_id == project_id)
 
     if status is not None:
         base = base.where(ProjectResource.status == status)
@@ -344,9 +333,7 @@ async def list_project_resources(
     base = base.order_by(ProjectResource.created_at.desc()).limit(limit).offset(offset)
     rows = (await db.execute(base)).all()
     total = (await db.execute(count_stmt)).scalar() or 0
-    versions = await _latest_versions_by_document(
-        db, [resource.document_id for resource, _document in rows]
-    )
+    versions = await _latest_versions_by_document(db, [resource.document_id for resource, _document in rows])
     dirty = False
     for resource, _document in rows:
         version = versions.get(resource.document_id)
@@ -431,6 +418,7 @@ async def delete_project_resource(
     is_uploader = resource.uploaded_by_user_id == access.user_id
     if not is_owner and not is_uploader:
         from fastapi import HTTPException, status
+
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only delete resources you uploaded",

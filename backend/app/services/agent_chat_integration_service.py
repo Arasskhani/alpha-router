@@ -110,9 +110,7 @@ def parse_agent_request(body: dict[str, Any]) -> AgentRequestOptions | None:
     )
     raw_slug = body.get("agent_slug", nested.get("slug"))
     agent_slug = str(raw_slug or "").strip().lower() or None
-    if agent_slug is not None and (
-        len(agent_slug) > 128 or not _SLUG_RE.fullmatch(agent_slug)
-    ):
+    if agent_slug is not None and (len(agent_slug) > 128 or not _SLUG_RE.fullmatch(agent_slug)):
         raise AgentRequestError("agent_slug is invalid")
     if agent_id and agent_slug:
         raise AgentRequestError("Only one of agent_id or agent_slug may be supplied")
@@ -126,18 +124,14 @@ def parse_agent_request(body: dict[str, Any]) -> AgentRequestOptions | None:
         maximum=36,
     )
     if pinned_version_id and not (agent_id or agent_slug):
-        raise AgentRequestError(
-            "agent_version_id requires an explicit Agent selection"
-        )
+        raise AgentRequestError("agent_version_id requires an explicit Agent selection")
     auto_route = _strict_bool(
         body.get("agent_auto_route", extension.get("auto_route")),
         label="agent_auto_route",
         default=not bool(agent_id or agent_slug),
     )
     if auto_route and (agent_id or agent_slug):
-        raise AgentRequestError(
-            "agent_auto_route cannot be combined with an explicit Agent"
-        )
+        raise AgentRequestError("agent_auto_route cannot be combined with an explicit Agent")
     if not agent_id and not agent_slug and not auto_route:
         return None
     include_citations = _strict_bool(
@@ -175,15 +169,9 @@ async def _owned_or_new_chat_session(
     )
     if session_id is None:
         return None
-    session = (
-        await db.execute(
-            select(ChatSession).where(ChatSession.id == session_id)
-        )
-    ).scalar_one_or_none()
+    session = (await db.execute(select(ChatSession).where(ChatSession.id == session_id))).scalar_one_or_none()
     if session is not None:
-        authorized = await _owned_or_project_session(
-            db, session, user_id, write=True
-        )
+        authorized = await _owned_or_project_session(db, session, user_id, write=True)
         if authorized is None:
             raise AgentRequestError("Chat session is unavailable")
         return authorized
@@ -236,10 +224,7 @@ async def prepare_agent_turn(
             messages,
             user_id=user_id,
             chat_session_id=session.id,
-            client_project_id=str(
-                body.get("project_id") or body.get("projectId") or ""
-            ).strip()
-            or None,
+            client_project_id=str(body.get("project_id") or body.get("projectId") or "").strip() or None,
             query=extract_query_text(messages),
         )
     agent_id = options.agent_id
@@ -297,9 +282,7 @@ async def prepare_agent_turn(
         client_app=client_app,
         user_id=user_id,
         alpha_router_api_key_id=alpha_router_api_key_id,
-        chat_session_id=(
-            session.id if session is not None and not private_mode else None
-        ),
+        chat_session_id=(session.id if session is not None and not private_mode else None),
         external_session_id=options.external_session_id,
         private_mode=private_mode,
     )
@@ -308,7 +291,5 @@ async def prepare_agent_turn(
         plan=plan,
         options=options,
         run_id=run.id,
-        chat_session_id=(
-            session.id if session is not None and not private_mode else None
-        ),
+        chat_session_id=(session.id if session is not None and not private_mode else None),
     )

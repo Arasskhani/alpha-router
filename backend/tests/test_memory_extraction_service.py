@@ -79,12 +79,7 @@ def test_denylist_and_injection_patterns() -> None:
 
 
 def test_parse_caps_at_five_operations() -> None:
-    payload = {
-        "operations": [
-            {"op": "add", "content": f"Fact number {i} about the user"}
-            for i in range(12)
-        ]
-    }
+    payload = {"operations": [{"op": "add", "content": f"Fact number {i} about the user"} for i in range(12)]}
     ops = parse_operations(payload)
     assert len(ops) == MAX_OPS
 
@@ -310,10 +305,7 @@ async def _lab_then_pizza() -> None:
                                     "operations": [
                                         {
                                             "op": "add",
-                                            "content": (
-                                                "Fasting blood sugar is elevated "
-                                                "(per Aug 2026 lab report)."
-                                            ),
+                                            "content": ("Fasting blood sugar is elevated (per Aug 2026 lab report)."),
                                             "category": "health",
                                             "sensitivity": "sensitive",
                                             "confidence": 0.9,
@@ -337,20 +329,11 @@ async def _lab_then_pizza() -> None:
         )
         await db.commit()
         assert result.added == 1
-        rows = (
-            await db.execute(
-                select(UserMemory).where(UserMemory.user_id == user.id)
-            )
-        ).scalars().all()
+        rows = (await db.execute(select(UserMemory).where(UserMemory.user_id == user.id))).scalars().all()
         assert rows[0].category == "health"
 
-        retrieved = await retrieve_memories(
-            db, user.id, query="I want pizza and soda for lunch"
-        )
-        assert any(
-            "blood sugar" in item.content.lower() and item.category == "health"
-            for item in retrieved
-        )
+        retrieved = await retrieve_memories(db, user.id, query="I want pizza and soda for lunch")
+        assert any("blood sugar" in item.content.lower() and item.category == "health" for item in retrieved)
     await engine.dispose()
 
 

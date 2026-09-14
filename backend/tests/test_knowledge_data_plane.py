@@ -63,11 +63,7 @@ class FakeRedis:
 
     async def xreadgroup(self, group, consumer, streams, count, block):
         del group, consumer, count, block
-        pending = [
-            item
-            for item in self.messages
-            if item[0] not in self.delivered and item[0] not in self.acked
-        ]
+        pending = [item for item in self.messages if item[0] not in self.delivered and item[0] not in self.acked]
         for stream_id, _fields in pending:
             self.delivered.add(stream_id)
         if not pending:

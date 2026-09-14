@@ -98,9 +98,7 @@ class WinLdapConnection:
             def _accept_server_cert(_connection, _certificate):
                 return True
 
-            conn.SessionOptions.VerifyServerCertificate = VerifyServerCertificateCallback(
-                _accept_server_cert
-            )
+            conn.SessionOptions.VerifyServerCertificate = VerifyServerCertificateCallback(_accept_server_cert)
         conn.Bind(cred)
 
         self._conn = conn

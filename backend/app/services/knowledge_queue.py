@@ -134,10 +134,7 @@ async def reclaim_stale_messages(
     )
     next_id = str(response[0]) if response else "0-0"
     entries = response[1] if len(response) > 1 else []
-    return next_id, [
-        _decode_message(str(stream_id), fields)
-        for stream_id, fields in entries
-    ]
+    return next_id, [_decode_message(str(stream_id), fields) for stream_id, fields in entries]
 
 
 async def acknowledge_message(redis: Redis, stream_id: str) -> None:

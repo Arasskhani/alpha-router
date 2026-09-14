@@ -138,9 +138,7 @@ def get_object_range(key: str, range_spec: str) -> tuple[bytes, int, int, int]:
     """
     settings = get_settings()
     try:
-        resp = _client().get_object(
-            Bucket=settings.s3_bucket, Key=_normalize_key(key), Range=f"bytes={range_spec}"
-        )
+        resp = _client().get_object(Bucket=settings.s3_bucket, Key=_normalize_key(key), Range=f"bytes={range_spec}")
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code", "")
         if code in ("NoSuchKey", "404", "NotFound"):

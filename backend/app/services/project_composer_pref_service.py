@@ -63,9 +63,7 @@ def _normalize_agent_slug(raw: Any) -> str | None:
     return slug
 
 
-async def _load_project_session(
-    db: AsyncSession, *, project_id: str, session_id: str
-) -> ChatSession | None:
+async def _load_project_session(db: AsyncSession, *, project_id: str, session_id: str) -> ChatSession | None:
     row = await db.get(ChatSession, session_id)
     if row is None or row.project_id != project_id or is_member_channel(row):
         return None
@@ -89,9 +87,7 @@ async def get_project_chat_composer_prefs(
     user_id = getattr(user, "id", None)
     if user_id is None:
         return _empty_pref_payload()
-    pref = await db.get(
-        ProjectChatComposerPref, (project_id, session_id, int(user_id))
-    )
+    pref = await db.get(ProjectChatComposerPref, (project_id, session_id, int(user_id)))
     return _pref_to_client(pref)
 
 
@@ -104,9 +100,7 @@ async def upsert_project_chat_composer_prefs(
     payload: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Create or replace this user's composer prefs for a project chat."""
-    await require_capability(
-        db, project_id=project_id, user=user, capability="chat.write"
-    )
+    await require_capability(db, project_id=project_id, user=user, capability="chat.write")
     session = await _load_project_session(db, project_id=project_id, session_id=session_id)
     if session is None:
         return None
@@ -121,9 +115,7 @@ async def upsert_project_chat_composer_prefs(
     if model_raw is None:
         model_raw = payload.get("model_id")
     model_id = str(model_raw or "").strip()[:512] or None
-    agent_slug = _normalize_agent_slug(
-        payload.get("selectedAgentSlug", payload.get("selected_agent_slug"))
-    )
+    agent_slug = _normalize_agent_slug(payload.get("selectedAgentSlug", payload.get("selected_agent_slug")))
 
     now = dt.datetime.utcnow()
     key = (project_id, session_id, int(user_id))

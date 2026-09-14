@@ -104,14 +104,22 @@ def test_upload_and_list_media():
             async with factory() as db:
                 owner, _, _ = await _setup(db)
                 a = await upload_project_media(
-                    db, project_id=PROJ, user=owner,
-                    file_name="a.png", mime_type="image/png",
-                    content_bytes=b"png-one", object_store=store,
+                    db,
+                    project_id=PROJ,
+                    user=owner,
+                    file_name="a.png",
+                    mime_type="image/png",
+                    content_bytes=b"png-one",
+                    object_store=store,
                 )
                 b = await upload_project_media(
-                    db, project_id=PROJ, user=owner,
-                    file_name="b.jpg", mime_type="image/jpeg",
-                    content_bytes=b"jpg-two", object_store=store,
+                    db,
+                    project_id=PROJ,
+                    user=owner,
+                    file_name="b.jpg",
+                    mime_type="image/jpeg",
+                    content_bytes=b"jpg-two",
+                    object_store=store,
                 )
                 items, total = await list_project_media(db, project_id=PROJ, user=owner)
                 assert total == 2
@@ -134,14 +142,22 @@ def test_upload_dedup_same_hash():
             async with factory() as db:
                 owner, _, _ = await _setup(db)
                 first = await upload_project_media(
-                    db, project_id=PROJ, user=owner,
-                    file_name="one.bin", mime_type="application/octet-stream",
-                    content_bytes=b"same-bytes", object_store=store,
+                    db,
+                    project_id=PROJ,
+                    user=owner,
+                    file_name="one.bin",
+                    mime_type="application/octet-stream",
+                    content_bytes=b"same-bytes",
+                    object_store=store,
                 )
                 second = await upload_project_media(
-                    db, project_id=PROJ, user=owner,
-                    file_name="two.bin", mime_type="application/octet-stream",
-                    content_bytes=b"same-bytes", object_store=store,
+                    db,
+                    project_id=PROJ,
+                    user=owner,
+                    file_name="two.bin",
+                    mime_type="application/octet-stream",
+                    content_bytes=b"same-bytes",
+                    object_store=store,
                 )
                 assert first["id"] == second["id"]
                 items, total = await list_project_media(db, project_id=PROJ, user=owner)
@@ -162,18 +178,26 @@ def test_upload_different_projects_isolated():
                 owner, _, _ = await _setup(db, PROJ)
                 owner2, _, _ = await _setup(db, PROJ2)
                 await upload_project_media(
-                    db, project_id=PROJ, user=owner,
-                    file_name="a.bin", mime_type="application/octet-stream",
-                    content_bytes=b"secret-a", object_store=store,
+                    db,
+                    project_id=PROJ,
+                    user=owner,
+                    file_name="a.bin",
+                    mime_type="application/octet-stream",
+                    content_bytes=b"secret-a",
+                    object_store=store,
                 )
                 items, total = await list_project_media(db, project_id=PROJ2, user=owner2)
                 assert total == 0
                 assert items == []
                 # same hash in a different project is a separate asset
                 other = await upload_project_media(
-                    db, project_id=PROJ2, user=owner2,
-                    file_name="a.bin", mime_type="application/octet-stream",
-                    content_bytes=b"secret-a", object_store=store,
+                    db,
+                    project_id=PROJ2,
+                    user=owner2,
+                    file_name="a.bin",
+                    mime_type="application/octet-stream",
+                    content_bytes=b"secret-a",
+                    object_store=store,
                 )
                 assert other["projectId"] == PROJ2
                 a_items, a_total = await list_project_media(db, project_id=PROJ, user=owner)
@@ -192,13 +216,20 @@ def test_delete_by_owner_any_file():
             async with factory() as db:
                 owner, contrib, _ = await _setup(db)
                 uploaded = await upload_project_media(
-                    db, project_id=PROJ, user=contrib,
-                    file_name="c.bin", mime_type="application/octet-stream",
-                    content_bytes=b"contrib-file", object_store=store,
+                    db,
+                    project_id=PROJ,
+                    user=contrib,
+                    file_name="c.bin",
+                    mime_type="application/octet-stream",
+                    content_bytes=b"contrib-file",
+                    object_store=store,
                 )
                 ok = await delete_project_media(
-                    db, project_id=PROJ, media_id=uploaded["id"],
-                    user=owner, object_store=store,
+                    db,
+                    project_id=PROJ,
+                    media_id=uploaded["id"],
+                    user=owner,
+                    object_store=store,
                 )
                 assert ok is True
                 items, total = await list_project_media(db, project_id=PROJ, user=owner)
@@ -218,24 +249,38 @@ def test_delete_by_contributor_own_file_only():
             async with factory() as db:
                 owner, contrib, _ = await _setup(db)
                 own = await upload_project_media(
-                    db, project_id=PROJ, user=contrib,
-                    file_name="mine.bin", mime_type="application/octet-stream",
-                    content_bytes=b"mine", object_store=store,
+                    db,
+                    project_id=PROJ,
+                    user=contrib,
+                    file_name="mine.bin",
+                    mime_type="application/octet-stream",
+                    content_bytes=b"mine",
+                    object_store=store,
                 )
                 others = await upload_project_media(
-                    db, project_id=PROJ, user=owner,
-                    file_name="theirs.bin", mime_type="application/octet-stream",
-                    content_bytes=b"theirs", object_store=store,
+                    db,
+                    project_id=PROJ,
+                    user=owner,
+                    file_name="theirs.bin",
+                    mime_type="application/octet-stream",
+                    content_bytes=b"theirs",
+                    object_store=store,
                 )
                 ok = await delete_project_media(
-                    db, project_id=PROJ, media_id=own["id"],
-                    user=contrib, object_store=store,
+                    db,
+                    project_id=PROJ,
+                    media_id=own["id"],
+                    user=contrib,
+                    object_store=store,
                 )
                 assert ok is True
                 try:
                     await delete_project_media(
-                        db, project_id=PROJ, media_id=others["id"],
-                        user=contrib, object_store=store,
+                        db,
+                        project_id=PROJ,
+                        media_id=others["id"],
+                        user=contrib,
+                        object_store=store,
                     )
                     assert False, "contributor must not delete others' files"
                 except HTTPException as e:
@@ -254,14 +299,21 @@ def test_delete_by_viewer_denied():
             async with factory() as db:
                 owner, _, viewer = await _setup(db)
                 uploaded = await upload_project_media(
-                    db, project_id=PROJ, user=owner,
-                    file_name="x.bin", mime_type="application/octet-stream",
-                    content_bytes=b"x", object_store=store,
+                    db,
+                    project_id=PROJ,
+                    user=owner,
+                    file_name="x.bin",
+                    mime_type="application/octet-stream",
+                    content_bytes=b"x",
+                    object_store=store,
                 )
                 try:
                     await delete_project_media(
-                        db, project_id=PROJ, media_id=uploaded["id"],
-                        user=viewer, object_store=store,
+                        db,
+                        project_id=PROJ,
+                        media_id=uploaded["id"],
+                        user=viewer,
+                        object_store=store,
                     )
                     assert False
                 except HTTPException as e:
@@ -281,13 +333,20 @@ def test_get_hidden_for_non_member():
                 owner, _, _ = await _setup(db)
                 outsider = await _user(db, "outsider")
                 uploaded = await upload_project_media(
-                    db, project_id=PROJ, user=owner,
-                    file_name="x.bin", mime_type="application/octet-stream",
-                    content_bytes=b"x", object_store=store,
+                    db,
+                    project_id=PROJ,
+                    user=owner,
+                    file_name="x.bin",
+                    mime_type="application/octet-stream",
+                    content_bytes=b"x",
+                    object_store=store,
                 )
                 try:
                     await get_project_media(
-                        db, project_id=PROJ, media_id=uploaded["id"], user=outsider,
+                        db,
+                        project_id=PROJ,
+                        media_id=uploaded["id"],
+                        user=outsider,
                     )
                     assert False
                 except HTTPException as e:
@@ -306,15 +365,25 @@ def test_upload_quota_enforced():
             async with factory() as db:
                 owner, _, _ = await _setup(db)
                 await upload_project_media(
-                    db, project_id=PROJ, user=owner,
-                    file_name="a.bin", mime_type="application/octet-stream",
-                    content_bytes=b"12345", object_store=store, quota_bytes=8,
+                    db,
+                    project_id=PROJ,
+                    user=owner,
+                    file_name="a.bin",
+                    mime_type="application/octet-stream",
+                    content_bytes=b"12345",
+                    object_store=store,
+                    quota_bytes=8,
                 )
                 try:
                     await upload_project_media(
-                        db, project_id=PROJ, user=owner,
-                        file_name="b.bin", mime_type="application/octet-stream",
-                        content_bytes=b"67890", object_store=store, quota_bytes=8,
+                        db,
+                        project_id=PROJ,
+                        user=owner,
+                        file_name="b.bin",
+                        mime_type="application/octet-stream",
+                        content_bytes=b"67890",
+                        object_store=store,
+                        quota_bytes=8,
                     )
                     assert False
                 except ProjectMediaQuotaError:
@@ -333,9 +402,13 @@ def test_storage_path_uses_project_prefix():
             async with factory() as db:
                 owner, _, _ = await _setup(db)
                 uploaded = await upload_project_media(
-                    db, project_id=PROJ, user=owner,
-                    file_name="pic.png", mime_type="image/png",
-                    content_bytes=b"png-bytes", object_store=store,
+                    db,
+                    project_id=PROJ,
+                    user=owner,
+                    file_name="pic.png",
+                    mime_type="image/png",
+                    content_bytes=b"png-bytes",
+                    object_store=store,
                 )
                 path = uploaded["storagePath"].replace("\\", "/")
                 assert f"/p/{PROJ}/" in path
@@ -356,9 +429,13 @@ def test_viewer_cannot_upload():
                 _, _, viewer = await _setup(db)
                 try:
                     await upload_project_media(
-                        db, project_id=PROJ, user=viewer,
-                        file_name="x.bin", mime_type="application/octet-stream",
-                        content_bytes=b"x", object_store=store,
+                        db,
+                        project_id=PROJ,
+                        user=viewer,
+                        file_name="x.bin",
+                        mime_type="application/octet-stream",
+                        content_bytes=b"x",
+                        object_store=store,
                     )
                     assert False
                 except HTTPException as e:
@@ -377,14 +454,21 @@ def test_read_bytes_and_empty_rejected():
             async with factory() as db:
                 owner, _, viewer = await _setup(db)
                 uploaded = await upload_project_media(
-                    db, project_id=PROJ, user=owner,
-                    file_name="doc.pdf", mime_type="application/pdf",
-                    content_bytes=b"%PDF-fake", object_store=store,
+                    db,
+                    project_id=PROJ,
+                    user=owner,
+                    file_name="doc.pdf",
+                    mime_type="application/pdf",
+                    content_bytes=b"%PDF-fake",
+                    object_store=store,
                 )
                 assert uploaded["kind"] == "document"
                 result = await read_project_media_bytes(
-                    db, project_id=PROJ, media_id=uploaded["id"],
-                    user=viewer, object_store=store,
+                    db,
+                    project_id=PROJ,
+                    media_id=uploaded["id"],
+                    user=viewer,
+                    object_store=store,
                 )
                 assert result is not None
                 row, blob = result
@@ -392,9 +476,13 @@ def test_read_bytes_and_empty_rejected():
                 assert row.file_name == "doc.pdf"
                 try:
                     await upload_project_media(
-                        db, project_id=PROJ, user=owner,
-                        file_name="empty.bin", mime_type="application/octet-stream",
-                        content_bytes=b"", object_store=store,
+                        db,
+                        project_id=PROJ,
+                        user=owner,
+                        file_name="empty.bin",
+                        mime_type="application/octet-stream",
+                        content_bytes=b"",
+                        object_store=store,
                     )
                     assert False
                 except ProjectMediaValidationError:
@@ -414,12 +502,19 @@ def test_get_wrong_project_returns_none():
                 owner, _, _ = await _setup(db, PROJ)
                 owner2, _, _ = await _setup(db, PROJ2)
                 uploaded = await upload_project_media(
-                    db, project_id=PROJ, user=owner,
-                    file_name="x.bin", mime_type="application/octet-stream",
-                    content_bytes=b"x", object_store=store,
+                    db,
+                    project_id=PROJ,
+                    user=owner,
+                    file_name="x.bin",
+                    mime_type="application/octet-stream",
+                    content_bytes=b"x",
+                    object_store=store,
                 )
                 result = await get_project_media(
-                    db, project_id=PROJ2, media_id=uploaded["id"], user=owner2,
+                    db,
+                    project_id=PROJ2,
+                    media_id=uploaded["id"],
+                    user=owner2,
                 )
                 assert result is None
         finally:
@@ -446,14 +541,14 @@ def test_persist_scoped_chat_media_project_only():
                     db,
                     user=owner,
                     project_id=PROJ,
-                    kind='document',
-                    blob=b'project-only-bytes',
-                    mime='application/pdf',
-                    file_name='note.pdf',
+                    kind="document",
+                    blob=b"project-only-bytes",
+                    mime="application/pdf",
+                    file_name="note.pdf",
                     object_store=store,
                 )
-                assert url.startswith(f'/api/projects/{PROJ}/media/')
-                assert '/api/chat/media/' not in url
+                assert url.startswith(f"/api/projects/{PROJ}/media/")
+                assert "/api/chat/media/" not in url
                 assert await _count_rows(db, ProjectMediaAsset, project_id=PROJ) == 1
                 assert await _count_rows(db, MediaAsset) == 0
         finally:
@@ -473,33 +568,33 @@ def test_persist_scoped_chat_media_personal_when_no_project():
 
                 async def fake_store(db_sess, **kwargs):
                     row = MediaAsset(
-                        user_id=kwargs['user_id'],
-                        kind=kwargs['kind'],
-                        mime_type=kwargs.get('mime') or 'application/octet-stream',
-                        file_name=kwargs.get('file_name_hint') or 'x.bin',
-                        storage_path='u/test/x.bin',
-                        content_hash=kwargs.get('content_hash') or 'a' * 64,
-                        size_bytes=len(kwargs.get('blob') or b''),
+                        user_id=kwargs["user_id"],
+                        kind=kwargs["kind"],
+                        mime_type=kwargs.get("mime") or "application/octet-stream",
+                        file_name=kwargs.get("file_name_hint") or "x.bin",
+                        storage_path="u/test/x.bin",
+                        content_hash=kwargs.get("content_hash") or "a" * 64,
+                        size_bytes=len(kwargs.get("blob") or b""),
                     )
                     db_sess.add(row)
                     await db_sess.flush()
                     return row
 
                 with patch(
-                    'app.services.storage_service.store_media_from_blob',
+                    "app.services.storage_service.store_media_from_blob",
                     side_effect=fake_store,
                 ):
                     url = await persist_scoped_chat_media(
                         db,
                         user=owner,
                         project_id=None,
-                        kind='document',
-                        blob=b'personal-only',
-                        mime='application/pdf',
-                        file_name='me.pdf',
+                        kind="document",
+                        blob=b"personal-only",
+                        mime="application/pdf",
+                        file_name="me.pdf",
                     )
-                assert url.startswith('/api/chat/media/')
-                assert url.endswith('/file')
+                assert url.startswith("/api/chat/media/")
+                assert url.endswith("/file")
                 assert await _count_rows(db, ProjectMediaAsset) == 0
                 assert await _count_rows(db, MediaAsset) == 1
         finally:
@@ -520,34 +615,34 @@ def test_persist_scoped_chat_media_quota_falls_back_to_user():
 
                 async def fake_store(db_sess, **kwargs):
                     row = MediaAsset(
-                        user_id=kwargs['user_id'],
-                        kind=kwargs['kind'],
-                        mime_type=kwargs.get('mime') or 'application/octet-stream',
-                        file_name=kwargs.get('file_name_hint') or 'x.bin',
-                        storage_path='u/test/fallback.bin',
-                        content_hash=kwargs.get('content_hash') or 'b' * 64,
-                        size_bytes=len(kwargs.get('blob') or b''),
+                        user_id=kwargs["user_id"],
+                        kind=kwargs["kind"],
+                        mime_type=kwargs.get("mime") or "application/octet-stream",
+                        file_name=kwargs.get("file_name_hint") or "x.bin",
+                        storage_path="u/test/fallback.bin",
+                        content_hash=kwargs.get("content_hash") or "b" * 64,
+                        size_bytes=len(kwargs.get("blob") or b""),
                     )
                     db_sess.add(row)
                     await db_sess.flush()
                     return row
 
                 with patch(
-                    'app.services.storage_service.store_media_from_blob',
+                    "app.services.storage_service.store_media_from_blob",
                     side_effect=fake_store,
                 ):
                     url = await persist_scoped_chat_media(
                         db,
                         user=owner,
                         project_id=PROJ,
-                        kind='document',
-                        blob=b'12345',
-                        mime='application/pdf',
-                        file_name='over.pdf',
+                        kind="document",
+                        blob=b"12345",
+                        mime="application/pdf",
+                        file_name="over.pdf",
                         object_store=store,
                         quota_bytes=3,
                     )
-                assert url.startswith('/api/chat/media/')
+                assert url.startswith("/api/chat/media/")
                 assert await _count_rows(db, ProjectMediaAsset, project_id=PROJ) == 0
                 assert await _count_rows(db, MediaAsset) == 1
         finally:
@@ -563,13 +658,13 @@ def test_rewrite_personal_media_urls_when_hash_matches():
         try:
             async with factory() as db:
                 owner, _, _ = await _setup(db)
-                digest = 'ab' * 32
+                digest = "ab" * 32
                 personal = MediaAsset(
                     user_id=owner.id,
-                    kind='image',
-                    mime_type='image/png',
-                    file_name='old.png',
-                    storage_path='u/owner/old.png',
+                    kind="image",
+                    mime_type="image/png",
+                    file_name="old.png",
+                    storage_path="u/owner/old.png",
                     content_hash=digest,
                     size_bytes=12,
                 )
@@ -579,23 +674,21 @@ def test_rewrite_personal_media_urls_when_hash_matches():
                     db,
                     project_id=PROJ,
                     user=owner,
-                    file_name='copy.png',
-                    mime_type='image/png',
-                    content_bytes=b'project-copy',
+                    file_name="copy.png",
+                    mime_type="image/png",
+                    content_bytes=b"project-copy",
                     object_store=store,
                     content_hash=digest,
                 )
                 messages = [
                     {
-                        'content': f'![img](/api/chat/media/{personal.id}/file)',
+                        "content": f"![img](/api/chat/media/{personal.id}/file)",
                     }
                 ]
-                rewritten = await rewrite_personal_media_urls_in_messages(
-                    db, project_id=PROJ, messages=messages
-                )
-                expected = project_media_public_url(PROJ, int(saved['id']))
-                assert expected in rewritten[0]['content']
-                assert f'/api/chat/media/{personal.id}/file' not in rewritten[0]['content']
+                rewritten = await rewrite_personal_media_urls_in_messages(db, project_id=PROJ, messages=messages)
+                expected = project_media_public_url(PROJ, int(saved["id"]))
+                assert expected in rewritten[0]["content"]
+                assert f"/api/chat/media/{personal.id}/file" not in rewritten[0]["content"]
         finally:
             await engine.dispose()
 

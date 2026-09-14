@@ -153,9 +153,7 @@ def test_purge_deletion_pending_cleans_storage():
                 row = await db.get(Project, pid)
                 row.updated_at = datetime.datetime.utcnow() - datetime.timedelta(days=40)
                 await db.flush()
-                n = await purge_expired_deleted_projects(
-                    db, retention_days=30, object_store=store
-                )
+                n = await purge_expired_deleted_projects(db, retention_days=30, object_store=store)
                 assert n == 1
                 assert await db.get(Project, pid) is None
                 assert await db.get(ProjectMediaAsset, uploaded["id"]) is None
@@ -171,6 +169,7 @@ def test_user_delete_keeps_project_chat_session(monkeypatch):
         "app.services.user_account_cleanup_service.oss.purge_user_cdn_objects",
         lambda slug, user_id: 0,
     )
+
     async def run():
         factory, engine = await _factory()
         try:
@@ -191,9 +190,7 @@ def test_user_delete_keeps_project_chat_session(monkeypatch):
                 db.add(ProjectMember(project_id=PROJ, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))
                 db.add(ProjectMember(project_id=PROJ, user_id=contrib.id, role="contributor"))
                 await db.flush()
-                session = await create_project_chat_session(
-                    db, project_id=PROJ, user=contrib, title="Shared"
-                )
+                session = await create_project_chat_session(db, project_id=PROJ, user=contrib, title="Shared")
                 sid = session["id"]
                 await append_project_chat_message(
                     db,
@@ -209,9 +206,7 @@ def test_user_delete_keeps_project_chat_session(monkeypatch):
                 assert row.project_id == PROJ
                 from sqlalchemy import select
 
-                kept = (
-                    await db.execute(select(ChatMessage).where(ChatMessage.session_id == sid))
-                ).scalars().all()
+                kept = (await db.execute(select(ChatMessage).where(ChatMessage.session_id == sid))).scalars().all()
                 assert len(kept) == 1
                 assert kept[0].content == "hello from contrib"
                 assert kept[0].user_id is None
@@ -226,6 +221,7 @@ def test_session_user_id_reassigned_to_remaining_owner(monkeypatch):
         "app.services.user_account_cleanup_service.oss.purge_user_cdn_objects",
         lambda slug, user_id: 0,
     )
+
     async def run():
         factory, engine = await _factory()
         try:
@@ -246,9 +242,7 @@ def test_session_user_id_reassigned_to_remaining_owner(monkeypatch):
                 db.add(ProjectMember(project_id=PROJ, user_id=owner_a.id, role=PROJECT_ROLE_PRIMARY_OWNER))
                 db.add(ProjectMember(project_id=PROJ, user_id=owner_b.id, role=PROJECT_ROLE_OWNER))
                 await db.flush()
-                session = await create_project_chat_session(
-                    db, project_id=PROJ, user=owner_a, title="A's thread"
-                )
+                session = await create_project_chat_session(db, project_id=PROJ, user=owner_a, title="A's thread")
                 sid = session["id"]
                 await permanently_delete_user(db, owner_a)
                 row = await db.get(ChatSession, sid)

@@ -137,9 +137,7 @@ async def log_video_usage(
         )
 
     total_cost = sum(
-        float(event.quote.final_cost_usd)
-        for event in usage_events
-        if event.quote.final_cost_usd is not None
+        float(event.quote.final_cost_usd) for event in usage_events if event.quote.final_cost_usd is not None
     )
     client_app = f"{CHAT_CLIENT_APP} (video:{op})"
     return await log_usage(

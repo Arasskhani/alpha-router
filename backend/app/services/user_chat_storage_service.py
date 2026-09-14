@@ -75,9 +75,7 @@ async def _owned_or_project_session(
         user = await db.get(User, user_id)
         if user is None:
             return None
-        access = await resolve_project_access(
-            db, project_id=session.project_id, user=user
-        )
+        access = await resolve_project_access(db, project_id=session.project_id, user=user)
         if access is None:
             return None
         if write and not access.can("chat.write"):
@@ -90,15 +88,14 @@ async def _owned_or_project_session(
     return session
 
 
-async def _project_author_display_name(
-    db: AsyncSession, user_id: int
-) -> str | None:
+async def _project_author_display_name(db: AsyncSession, user_id: int) -> str | None:
     from app.models.user import User
 
     user = await db.get(User, user_id)
     if user is None:
         return None
     return user.display_name or user.username or None
+
 
 # Orphan placeholders (container restart / dead stream) — reconcile on read after this age.
 # Must exceed the OpenRouter read timeout (180s) plus the frontend client timeout (240s)
@@ -126,9 +123,7 @@ def _compact_attachment_content_for_storage(content: str) -> str:
         else:
             compact.append(item)
     payload["attachments"] = compact
-    return ATTACHMENT_MESSAGE_PREFIX + json.dumps(
-        payload, ensure_ascii=False, separators=(",", ":")
-    )
+    return ATTACHMENT_MESSAGE_PREFIX + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
 def _compact_message_content_for_storage(content: str, role: str) -> str:
@@ -262,27 +257,17 @@ def _normalize_prefs(raw: dict[str, Any] | None) -> dict[str, Any]:
                 base["persian_font"] = ""
             else:
                 # Allow only safe slug characters matching generated font ids.
-                cleaned = "".join(
-                    ch
-                    for ch in token.lower().replace("_", "-")
-                    if ch.isalnum() or ch == "-"
-                )
+                cleaned = "".join(ch for ch in token.lower().replace("_", "-") if ch.isalnum() or ch == "-")
                 base["persian_font"] = cleaned[:64]
 
     if "reply_notify_away" in raw:
-        base["reply_notify_away"] = _coerce_bool(
-            raw.get("reply_notify_away"), default=False
-        )
+        base["reply_notify_away"] = _coerce_bool(raw.get("reply_notify_away"), default=False)
     if "reply_notify_sound" in raw:
-        base["reply_notify_sound"] = _coerce_bool(
-            raw.get("reply_notify_sound"), default=True
-        )
+        base["reply_notify_sound"] = _coerce_bool(raw.get("reply_notify_sound"), default=True)
     if "memory_enabled" in raw:
         base["memory_enabled"] = _coerce_bool(raw.get("memory_enabled"), default=True)
     if "memory_auto_capture" in raw:
-        base["memory_auto_capture"] = _coerce_bool(
-            raw.get("memory_auto_capture"), default=True
-        )
+        base["memory_auto_capture"] = _coerce_bool(raw.get("memory_auto_capture"), default=True)
     return base
 
 
@@ -453,9 +438,7 @@ def _session_to_client(
         "model": row.model_id or "",
         "currentAgentId": row.current_agent_id,
         "currentAgentVersionId": row.current_agent_version_id,
-        "agentSelectedAt": (
-            _dt_to_ms(row.agent_selected_at) if row.agent_selected_at else None
-        ),
+        "agentSelectedAt": (_dt_to_ms(row.agent_selected_at) if row.agent_selected_at else None),
         "tools": tools,
         "toolsTouched": bool(row.tools_touched),
         "privateMode": bool(row.private_mode),
@@ -463,9 +446,7 @@ def _session_to_client(
         "revision": int(row.revision or 1),
         "createdAt": _dt_to_ms(row.created_at),
         "updatedAt": _dt_to_ms(row.updated_at),
-        "lastMessageAt": _dt_to_ms(row.last_message_at)
-        if row.last_message_at
-        else None,
+        "lastMessageAt": _dt_to_ms(row.last_message_at) if row.last_message_at else None,
     }
     if include_messages:
         out["messages"] = messages or []
@@ -509,10 +490,7 @@ async def ensure_user_chat_prefs(db: AsyncSession, user_id: int) -> UserChatPref
         )
     else:
         await db.execute(
-            text(
-                "INSERT OR IGNORE INTO user_chat_prefs (user_id, prefs, updated_at) "
-                "VALUES (:uid, :prefs, :now)"
-            ),
+            text("INSERT OR IGNORE INTO user_chat_prefs (user_id, prefs, updated_at) VALUES (:uid, :prefs, :now)"),
             {"uid": user_id, "prefs": prefs_json, "now": now},
         )
     await db.flush()
@@ -536,9 +514,7 @@ async def load_user_prefs(db: AsyncSession, user_id: int) -> dict[str, Any]:
     return _normalize_prefs(row.prefs if isinstance(row.prefs, dict) else {})
 
 
-async def save_user_prefs(
-    db: AsyncSession, user_id: int, updates: dict[str, Any]
-) -> dict[str, Any]:
+async def save_user_prefs(db: AsyncSession, user_id: int, updates: dict[str, Any]) -> dict[str, Any]:
     row = await ensure_user_chat_prefs(db, user_id)
     current = _normalize_prefs(row.prefs if isinstance(row.prefs, dict) else {})
     merged = _normalize_prefs({**current, **updates})
@@ -564,9 +540,7 @@ async def list_chat_folders(db: AsyncSession, user_id: int) -> list[dict[str, An
     return [_folder_to_client(r) for r in rows]
 
 
-async def create_chat_folder(
-    db: AsyncSession, user_id: int, payload: dict[str, Any]
-) -> dict[str, Any]:
+async def create_chat_folder(db: AsyncSession, user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     folder_id = str(payload.get("id") or uuid.uuid4())
     now = dt.datetime.utcnow()
     row = ChatFolder(
@@ -575,12 +549,8 @@ async def create_chat_folder(
         name=str(payload.get("name") or "Folder")[:255],
         color=payload.get("color"),
         sort_order=int(payload.get("sort_order") or 0),
-        created_at=_ms_to_dt(payload.get("createdAt"))
-        if payload.get("createdAt")
-        else now,
-        updated_at=_ms_to_dt(payload.get("updatedAt"))
-        if payload.get("updatedAt")
-        else now,
+        created_at=_ms_to_dt(payload.get("createdAt")) if payload.get("createdAt") else now,
+        updated_at=_ms_to_dt(payload.get("updatedAt")) if payload.get("updatedAt") else now,
     )
     db.add(row)
     await db.flush()
@@ -611,9 +581,7 @@ async def delete_chat_folder(db: AsyncSession, user_id: int, folder_id: str) -> 
     sessions = (
         (
             await db.execute(
-                select(ChatSession).where(
-                    ChatSession.folder_id == folder_id, ChatSession.user_id == user_id
-                )
+                select(ChatSession).where(ChatSession.folder_id == folder_id, ChatSession.user_id == user_id)
             )
         )
         .scalars()
@@ -663,11 +631,7 @@ async def list_chat_sessions(
 
     personal = _personal_session_filter()
     base = select(ChatSession).where(ChatSession.user_id == user_id, personal)
-    count_q = (
-        select(func.count())
-        .select_from(ChatSession)
-        .where(ChatSession.user_id == user_id, personal)
-    )
+    count_q = select(func.count()).select_from(ChatSession).where(ChatSession.user_id == user_id, personal)
 
     visible = None
     if exclude_empty_old:
@@ -709,26 +673,14 @@ async def list_chat_sessions(
     older_total: int | None = None
     if min_activity_ms is not None and not search and since_ms is None:
         older_cutoff = _ms_to_dt(min_activity_ms)
-        older_q = (
-            select(func.count())
-            .select_from(ChatSession)
-            .where(ChatSession.user_id == user_id, personal)
-        )
+        older_q = select(func.count()).select_from(ChatSession).where(ChatSession.user_id == user_id, personal)
         if visible is not None:
             older_q = older_q.where(visible)
-        older_total = int(
-            (await db.execute(older_q.where(activity < older_cutoff))).scalar_one()
-        )
+        older_total = int((await db.execute(older_q.where(activity < older_cutoff))).scalar_one())
 
     total = (await db.execute(count_q)).scalar_one()
     rows = (
-        (
-            await db.execute(
-                base.order_by(activity.desc(), ChatSession.created_at.desc())
-                .limit(limit)
-                .offset(offset)
-            )
-        )
+        (await db.execute(base.order_by(activity.desc(), ChatSession.created_at.desc()).limit(limit).offset(offset)))
         .scalars()
         .all()
     )
@@ -817,9 +769,7 @@ async def search_chat_messages(
     return out
 
 
-async def get_chat_session(
-    db: AsyncSession, user_id: int, session_id: str
-) -> dict[str, Any] | None:
+async def get_chat_session(db: AsyncSession, user_id: int, session_id: str) -> dict[str, Any] | None:
     row = await db.get(ChatSession, session_id)
     row = await _owned_or_project_session(db, row, user_id, write=False)
     if row is None:
@@ -827,18 +777,14 @@ async def get_chat_session(
     return _session_to_client(row)
 
 
-async def create_chat_session(
-    db: AsyncSession, user_id: int, payload: dict[str, Any]
-) -> dict[str, Any]:
+async def create_chat_session(db: AsyncSession, user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     session_id = str(payload.get("id") or uuid.uuid4())
     project_id_raw = payload.get("projectId") or payload.get("project_id")
     project_id = str(project_id_raw).strip() if project_id_raw else ""
     existing = await db.get(ChatSession, session_id)
     if existing is not None:
         if existing.project_id:
-            accessed = await _owned_or_project_session(
-                db, existing, user_id, write=True
-            )
+            accessed = await _owned_or_project_session(db, existing, user_id, write=True)
             if accessed is None:
                 raise ValueError("Session id already in use")
             if project_id and existing.project_id != project_id:
@@ -855,9 +801,7 @@ async def create_chat_session(
         user = await db.get(User, user_id)
         if user is None:
             raise ValueError("User not found")
-        access = await resolve_project_access(
-            db, project_id=project_id, user=user
-        )
+        access = await resolve_project_access(db, project_id=project_id, user=user)
         if access is None or not access.can("chat.write"):
             raise ValueError("Project chat is unavailable")
         now = dt.datetime.utcnow()
@@ -872,18 +816,12 @@ async def create_chat_session(
             tools={},
             private_mode=False,
             title_locked=bool(payload.get("titleLocked") or payload.get("title_locked")),
-            title_generated=bool(
-                payload.get("titleGenerated") or payload.get("title_generated")
-            ),
+            title_generated=bool(payload.get("titleGenerated") or payload.get("title_generated")),
             tools_touched=False,
             message_count=0,
             revision=1,
-            created_at=_ms_to_dt(payload.get("createdAt"))
-            if payload.get("createdAt")
-            else now,
-            updated_at=_ms_to_dt(payload.get("updatedAt"))
-            if payload.get("updatedAt")
-            else now,
+            created_at=_ms_to_dt(payload.get("createdAt")) if payload.get("createdAt") else now,
+            updated_at=_ms_to_dt(payload.get("updatedAt")) if payload.get("updatedAt") else now,
         )
         try:
             async with db.begin_nested():
@@ -891,9 +829,7 @@ async def create_chat_session(
                 await db.flush()
         except IntegrityError:
             raced = await db.get(ChatSession, session_id)
-            accessed = await _owned_or_project_session(
-                db, raced, user_id, write=True
-            )
+            accessed = await _owned_or_project_session(db, raced, user_id, write=True)
             if accessed is None:
                 raise
             return _session_to_client(accessed)
@@ -916,18 +852,12 @@ async def create_chat_session(
         tools=tools,
         private_mode=bool(payload.get("privateMode") or payload.get("private_mode")),
         title_locked=bool(payload.get("titleLocked") or payload.get("title_locked")),
-        title_generated=bool(
-            payload.get("titleGenerated") or payload.get("title_generated")
-        ),
+        title_generated=bool(payload.get("titleGenerated") or payload.get("title_generated")),
         tools_touched=bool(payload.get("toolsTouched") or payload.get("tools_touched")),
         message_count=0,
         revision=1,
-        created_at=_ms_to_dt(payload.get("createdAt"))
-        if payload.get("createdAt")
-        else now,
-        updated_at=_ms_to_dt(payload.get("updatedAt"))
-        if payload.get("updatedAt")
-        else now,
+        created_at=_ms_to_dt(payload.get("createdAt")) if payload.get("createdAt") else now,
+        updated_at=_ms_to_dt(payload.get("updatedAt")) if payload.get("updatedAt") else now,
     )
     try:
         async with db.begin_nested():
@@ -959,19 +889,13 @@ async def update_chat_session(
         updates.get("private_mode"),
     )
     if row.project_id and requested_private is True:
-        raise PrivateModePersistenceError(
-            "Private Mode is not allowed in project chats"
-        )
+        raise PrivateModePersistenceError("Private Mode is not allowed in project chats")
     if requested_private is not None:
         next_private = bool(requested_private)
         if row.private_mode and not next_private:
-            raise PrivateModePersistenceError(
-                "Private Mode is permanent for a session; create a new chat instead"
-            )
+            raise PrivateModePersistenceError("Private Mode is permanent for a session; create a new chat instead")
         if not row.private_mode and next_private and int(row.message_count or 0) > 0:
-            raise PrivateModePersistenceError(
-                "A persisted chat with messages cannot be converted to Private Mode"
-            )
+            raise PrivateModePersistenceError("A persisted chat with messages cannot be converted to Private Mode")
 
     field_map = {
         "title": "title",
@@ -1073,20 +997,14 @@ async def _try_reconcile_inflight_assistant(
     if content == VIDEO_PENDING_MARKER:
         if meta.get("receivedAt") is not None or age >= _STALE_VIDEO_PENDING_SEC:
             force = True
-    if (
-        not force
-        and not content.strip()
-        and meta.get("streaming")
-        and age >= _STALE_TEXT_STREAMING_SEC
-    ):
+    if not force and not content.strip() and meta.get("streaming") and age >= _STALE_TEXT_STREAMING_SEC:
         force = True
     # Imported / legacy rows: completed assistant text without receivedAt is treated
     # by the UI as an in-flight generation (STOP). Finalize when not actively streaming.
     if (
         not force
         and content.strip()
-        and content
-        not in (IMAGE_PENDING_MARKER, SPEECH_PENDING_MARKER, VIDEO_PENDING_MARKER)
+        and content not in (IMAGE_PENDING_MARKER, SPEECH_PENDING_MARKER, VIDEO_PENDING_MARKER)
         and meta.get("receivedAt") is None
         and meta.get("streaming") is not True
     ):
@@ -1145,9 +1063,7 @@ async def list_session_messages(
     if session.project_id:
         from app.services.project_media_service import rewrite_personal_media_urls_in_messages
 
-        messages = await rewrite_personal_media_urls_in_messages(
-            db, project_id=session.project_id, messages=messages
-        )
+        messages = await rewrite_personal_media_urls_in_messages(db, project_id=session.project_id, messages=messages)
     message_ids = [row.id for row in rows]
     if message_ids:
         feedback_rows = (
@@ -1175,11 +1091,7 @@ async def list_session_messages(
 
 async def _next_sequence(db: AsyncSession, session_id: str) -> int:
     current = (
-        await db.execute(
-            select(func.max(ChatMessage.sequence)).where(
-                ChatMessage.session_id == session_id
-            )
-        )
+        await db.execute(select(func.max(ChatMessage.sequence)).where(ChatMessage.session_id == session_id))
     ).scalar_one()
     return int(current or 0) + 1
 
@@ -1218,11 +1130,7 @@ async def append_session_messages(
     new_count = 0
     seq = await _next_sequence(db, session_id)
     last_created = dt.datetime.utcnow()
-    author_name = (
-        await _project_author_display_name(db, user_id)
-        if session.project_id
-        else None
-    )
+    author_name = await _project_author_display_name(db, user_id) if session.project_id else None
     for msg in messages:
         client_id = msg.get("clientMessageId") or msg.get("client_message_id")
         if client_id:
@@ -1238,9 +1146,7 @@ async def append_session_messages(
                 inserted.append(existing)
                 continue
 
-        content = _compact_message_content_for_storage(
-            str(msg.get("content") or ""), str(msg.get("role") or "user")
-        )
+        content = _compact_message_content_for_storage(str(msg.get("content") or ""), str(msg.get("role") or "user"))
         if len(content.encode("utf-8")) > _MAX_MESSAGE_BYTES:
             raise ValueError("Message content exceeds storage limit")
 
@@ -1264,9 +1170,7 @@ async def append_session_messages(
 
     await db.flush()
     if new_count:
-        await _touch_session_messages(
-            db, session, added=new_count, last_at=last_created
-        )
+        await _touch_session_messages(db, session, added=new_count, last_at=last_created)
         await db.flush()
         try:
             watermark = max((row.sequence for row in inserted), default=0)
@@ -1317,20 +1221,8 @@ async def replace_session_messages(
     assert_session_persistence_allowed(session)
     _check_expected_revision(session, expected_revision)
 
-    existing_rows = (
-        (
-            await db.execute(
-                select(ChatMessage).where(ChatMessage.session_id == session_id)
-            )
-        )
-        .scalars()
-        .all()
-    )
-    existing_by_client_id = {
-        row.client_message_id: row
-        for row in existing_rows
-        if row.client_message_id
-    }
+    existing_rows = (await db.execute(select(ChatMessage).where(ChatMessage.session_id == session_id))).scalars().all()
+    existing_by_client_id = {row.client_message_id: row for row in existing_rows if row.client_message_id}
     existing_by_id = {row.id: row for row in existing_rows}
     await db.execute(delete(ChatMessage).where(ChatMessage.session_id == session_id))
     await db.flush()
@@ -1346,16 +1238,11 @@ async def replace_session_messages(
     last_created = dt.datetime.utcnow()
     for idx, msg in enumerate(messages, start=1):
         role = str(msg.get("role") or "user")
-        content = _compact_message_content_for_storage(
-            str(msg.get("content") or ""), role
-        )
+        content = _compact_message_content_for_storage(str(msg.get("content") or ""), role)
         if len(content.encode("utf-8")) > _MAX_MESSAGE_BYTES:
             raise ValueError("Message content exceeds storage limit")
         last_created = dt.datetime.utcnow()
-        client_message_id = (
-            str(msg.get("clientMessageId") or msg.get("client_message_id") or "")
-            or None
-        )
+        client_message_id = str(msg.get("clientMessageId") or msg.get("client_message_id") or "") or None
         previous = (
             existing_by_client_id.get(client_message_id)
             if client_message_id
@@ -1364,9 +1251,7 @@ async def replace_session_messages(
         message_meta = _message_meta_from_client(msg)
         agent_run_id = None
         if previous is not None and role == "assistant":
-            previous_meta = (
-                previous.meta if isinstance(previous.meta, dict) else {}
-            )
+            previous_meta = previous.meta if isinstance(previous.meta, dict) else {}
             for key in _SERVER_OWNED_AGENT_META_KEYS:
                 if previous_meta.get(key) is not None:
                     message_meta[key] = previous_meta[key]
@@ -1748,17 +1633,11 @@ async def reconcile_session_message_stats(db: AsyncSession) -> int:
                 continue
             count = (
                 await db.execute(
-                    select(func.count())
-                    .select_from(ChatMessage)
-                    .where(ChatMessage.session_id == session_id)
+                    select(func.count()).select_from(ChatMessage).where(ChatMessage.session_id == session_id)
                 )
             ).scalar() or 0
             last_at = (
-                await db.execute(
-                    select(func.max(ChatMessage.created_at)).where(
-                        ChatMessage.session_id == session_id
-                    )
-                )
+                await db.execute(select(func.max(ChatMessage.created_at)).where(ChatMessage.session_id == session_id))
             ).scalar()
             row.message_count = int(count)
             row.last_message_at = last_at

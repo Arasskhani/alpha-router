@@ -133,17 +133,19 @@ def test_viewer_cannot_write_chat():
         try:
             async with factory() as db:
                 owner, contrib, viewer = await _setup_project(db)
-                sess = await create_project_chat_session(
-                    db, project_id=PROJ, user=owner, title="T"
-                )
+                sess = await create_project_chat_session(db, project_id=PROJ, user=owner, title="T")
                 sid = sess["id"]
                 # viewer cannot append
                 from fastapi import HTTPException
 
                 try:
                     await append_project_chat_message(
-                        db, project_id=PROJ, session_id=sid, user=viewer,
-                        role="user", content="hi",
+                        db,
+                        project_id=PROJ,
+                        session_id=sid,
+                        user=viewer,
+                        role="user",
+                        content="hi",
                     )
                     assert False, "viewer should not write"
                 except HTTPException as e:
@@ -156,18 +158,21 @@ def test_viewer_cannot_write_chat():
 
 def test_contributor_can_write_chat_but_not_pin_globally_restricted():
     """Contributor CAN pin (per requirements). This confirms the capability."""
+
     async def run():
         factory, engine = await _factory()
         try:
             async with factory() as db:
                 owner, contrib, viewer = await _setup_project(db)
-                sess = await create_project_chat_session(
-                    db, project_id=PROJ, user=contrib, title="T"
-                )
+                sess = await create_project_chat_session(db, project_id=PROJ, user=contrib, title="T")
                 sid = sess["id"]
                 msg = await append_project_chat_message(
-                    db, project_id=PROJ, session_id=sid, user=contrib,
-                    role="user", content="hello",
+                    db,
+                    project_id=PROJ,
+                    session_id=sid,
+                    user=contrib,
+                    role="user",
+                    content="hello",
                 )
                 assert msg is not None
                 pinned = await pin_project_chat(db, project_id=PROJ, session_id=sid, user=contrib)
@@ -180,20 +185,17 @@ def test_contributor_can_write_chat_but_not_pin_globally_restricted():
 
 def test_cross_project_session_isolation():
     """A chat session from project A cannot be accessed via project B."""
+
     async def run():
         factory, engine = await _factory()
         try:
             async with factory() as db:
                 owner, _, _ = await _setup_project(db, PROJ)
                 owner2, _, _ = await _setup_project(db, PROJ2, owner_name="owner2")
-                sess = await create_project_chat_session(
-                    db, project_id=PROJ, user=owner, title="T"
-                )
+                sess = await create_project_chat_session(db, project_id=PROJ, user=owner, title="T")
                 sid = sess["id"]
                 # owner2 (member of PROJ2 only) tries to read PROJ's session via PROJ2
-                result = await list_project_chat_messages(
-                    db, project_id=PROJ2, session_id=sid, user=owner2, limit=50
-                )
+                result = await list_project_chat_messages(db, project_id=PROJ2, session_id=sid, user=owner2, limit=50)
                 assert result is None
         finally:
             await engine.dispose()
@@ -264,8 +266,11 @@ def test_owner_cannot_demote_self_to_create_zero_owners():
                 owner, _, _ = await _setup_project(db)
                 try:
                     await update_member_role(
-                        db, project_id=PROJ, user=owner,
-                        target_user_id=owner.id, role="viewer",
+                        db,
+                        project_id=PROJ,
+                        user=owner,
+                        target_user_id=owner.id,
+                        role="viewer",
                     )
                     assert False
                 except ProjectAccessError:
@@ -349,7 +354,11 @@ def test_invitation_multi_use_exhaustion():
             async with factory() as db:
                 owner, _, _ = await _setup_project(db)
                 inv = await create_invitation(
-                    db, project_id=PROJ, user=owner, role="viewer", max_uses=2,
+                    db,
+                    project_id=PROJ,
+                    user=owner,
+                    role="viewer",
+                    max_uses=2,
                 )
                 u1 = await _user(db, "u1")
                 u2 = await _user(db, "u2")
@@ -374,7 +383,10 @@ def test_invitation_claim_does_not_downgrade_existing_member():
             async with factory() as db:
                 owner, contrib, _ = await _setup_project(db)
                 inv = await create_invitation(
-                    db, project_id=PROJ, user=owner, role="viewer",
+                    db,
+                    project_id=PROJ,
+                    user=owner,
+                    role="viewer",
                 )
                 # contrib is already a contributor; claiming a viewer invite must not downgrade
                 result = await claim_invitation(db, token=inv["token"], user=contrib)
@@ -415,8 +427,12 @@ def test_concurrent_message_append_unique_sequences():
                         async with factory() as db:
                             user = await db.get(User, owner_id)
                             msg = await append_project_chat_message(
-                                db, project_id=PROJ, session_id=sid, user=user,
-                                role="user", content=f"msg-{i}",
+                                db,
+                                project_id=PROJ,
+                                session_id=sid,
+                                user=user,
+                                role="user",
+                                content=f"msg-{i}",
                             )
                             await db.commit()
                             return msg
@@ -457,8 +473,13 @@ def test_concurrent_idempotent_append_dedup():
                         async with factory() as db:
                             user = await db.get(User, owner_id)
                             msg = await append_project_chat_message(
-                                db, project_id=PROJ, session_id=sid, user=user,
-                                role="user", content="dup", client_message_id=cid,
+                                db,
+                                project_id=PROJ,
+                                session_id=sid,
+                                user=user,
+                                role="user",
+                                content="dup",
+                                client_message_id=cid,
                             )
                             await db.commit()
                             return msg
@@ -495,7 +516,9 @@ def test_memory_injection_only_loads_own_project_memories():
                 await create_project_memory(db, project_id=PROJ2, user=owner2, content="secret-B")
                 # PROJ should only see secret-A
                 injection = await load_injectable_project_memories(
-                    db, project_id=PROJ, memory_enabled=True,
+                    db,
+                    project_id=PROJ,
+                    memory_enabled=True,
                 )
                 assert "secret-A" in injection.own_facts
                 assert "secret-B" not in injection.own_facts
@@ -513,19 +536,42 @@ def test_memory_grant_enables_cross_project_read():
             async with factory() as db:
                 # one user owns both PROJ (consumer) and PROJ2 (source)
                 owner = await _user(db, "owner_both")
-                db.add(Project(id=PROJ, name="Consumer", status="active", visibility="private",
-                               created_by_user_id=owner.id, revision=1, acl_version=1))
-                db.add(Project(id=PROJ2, name="Source", status="active", visibility="private",
-                               created_by_user_id=owner.id, revision=1, acl_version=1))
+                db.add(
+                    Project(
+                        id=PROJ,
+                        name="Consumer",
+                        status="active",
+                        visibility="private",
+                        created_by_user_id=owner.id,
+                        revision=1,
+                        acl_version=1,
+                    )
+                )
+                db.add(
+                    Project(
+                        id=PROJ2,
+                        name="Source",
+                        status="active",
+                        visibility="private",
+                        created_by_user_id=owner.id,
+                        revision=1,
+                        acl_version=1,
+                    )
+                )
                 db.add(ProjectMember(project_id=PROJ, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))
                 db.add(ProjectMember(project_id=PROJ2, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))
                 await db.flush()
                 await create_project_memory(db, project_id=PROJ2, user=owner, content="source-fact")
                 await create_memory_grant(
-                    db, consumer_project_id=PROJ, source_project_id=PROJ2, user=owner,
+                    db,
+                    consumer_project_id=PROJ,
+                    source_project_id=PROJ2,
+                    user=owner,
                 )
                 injection = await load_injectable_project_memories(
-                    db, project_id=PROJ, memory_enabled=True,
+                    db,
+                    project_id=PROJ,
+                    memory_enabled=True,
                 )
                 assert "source-fact" in injection.granted_facts
         finally:
@@ -546,7 +592,10 @@ def test_memory_grant_requires_owner_in_both_projects():
 
                 try:
                     await create_memory_grant(
-                        db, consumer_project_id=PROJ, source_project_id=PROJ2, user=contrib,
+                        db,
+                        consumer_project_id=PROJ,
+                        source_project_id=PROJ2,
+                        user=contrib,
                     )
                     assert False
                 except (ProjectMemoryGrantError, Exception):
@@ -563,24 +612,50 @@ def test_revoked_grant_stops_cross_project_memory_read():
         try:
             async with factory() as db:
                 owner = await _user(db, "owner_both")
-                db.add(Project(id=PROJ, name="Consumer", status="active", visibility="private",
-                               created_by_user_id=owner.id, revision=1, acl_version=1))
-                db.add(Project(id=PROJ2, name="Source", status="active", visibility="private",
-                               created_by_user_id=owner.id, revision=1, acl_version=1))
+                db.add(
+                    Project(
+                        id=PROJ,
+                        name="Consumer",
+                        status="active",
+                        visibility="private",
+                        created_by_user_id=owner.id,
+                        revision=1,
+                        acl_version=1,
+                    )
+                )
+                db.add(
+                    Project(
+                        id=PROJ2,
+                        name="Source",
+                        status="active",
+                        visibility="private",
+                        created_by_user_id=owner.id,
+                        revision=1,
+                        acl_version=1,
+                    )
+                )
                 db.add(ProjectMember(project_id=PROJ, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))
                 db.add(ProjectMember(project_id=PROJ2, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))
                 await db.flush()
                 await create_project_memory(db, project_id=PROJ2, user=owner, content="source-fact")
                 await create_memory_grant(
-                    db, consumer_project_id=PROJ, source_project_id=PROJ2, user=owner,
+                    db,
+                    consumer_project_id=PROJ,
+                    source_project_id=PROJ2,
+                    user=owner,
                 )
                 from app.services.project_memory_service import revoke_memory_grant
 
                 await revoke_memory_grant(
-                    db, consumer_project_id=PROJ, source_project_id=PROJ2, user=owner,
+                    db,
+                    consumer_project_id=PROJ,
+                    source_project_id=PROJ2,
+                    user=owner,
                 )
                 injection = await load_injectable_project_memories(
-                    db, project_id=PROJ, memory_enabled=True,
+                    db,
+                    project_id=PROJ,
+                    memory_enabled=True,
                 )
                 assert "source-fact" not in injection.granted_facts
         finally:
@@ -608,22 +683,46 @@ def test_billing_summary_isolates_projects():
                 owner2, _, _ = await _setup_project(db, PROJ2, owner_name="owner2")
                 now = datetime.datetime.utcnow()
                 for cost in (0.1, 0.2, 0.3):
-                    db.add(RequestLog(
-                        user_id=owner.id, username="owner", model_id="gpt-4",
-                        project_id=PROJ, total_cost_usd=cost, prompt_tokens=10,
-                        completion_tokens=20, request_time=now, success=True,
-                    ))
-                db.add(RequestLog(
-                    user_id=owner2.id, username="owner2", model_id="gpt-4",
-                    project_id=PROJ2, total_cost_usd=5.0, prompt_tokens=100,
-                    completion_tokens=200, request_time=now, success=True,
-                ))
+                    db.add(
+                        RequestLog(
+                            user_id=owner.id,
+                            username="owner",
+                            model_id="gpt-4",
+                            project_id=PROJ,
+                            total_cost_usd=cost,
+                            prompt_tokens=10,
+                            completion_tokens=20,
+                            request_time=now,
+                            success=True,
+                        )
+                    )
+                db.add(
+                    RequestLog(
+                        user_id=owner2.id,
+                        username="owner2",
+                        model_id="gpt-4",
+                        project_id=PROJ2,
+                        total_cost_usd=5.0,
+                        prompt_tokens=100,
+                        completion_tokens=200,
+                        request_time=now,
+                        success=True,
+                    )
+                )
                 # Unattributed log (regular chat)
-                db.add(RequestLog(
-                    user_id=owner.id, username="owner", model_id="gpt-4",
-                    project_id=None, total_cost_usd=99.0, prompt_tokens=1,
-                    completion_tokens=1, request_time=now, success=True,
-                ))
+                db.add(
+                    RequestLog(
+                        user_id=owner.id,
+                        username="owner",
+                        model_id="gpt-4",
+                        project_id=None,
+                        total_cost_usd=99.0,
+                        prompt_tokens=1,
+                        completion_tokens=1,
+                        request_time=now,
+                        success=True,
+                    )
+                )
                 await db.flush()
                 start = now - datetime.timedelta(days=30)
                 df1 = await report_project_usage_summary(db, PROJ, start, now)
@@ -738,8 +837,12 @@ def test_private_mode_forbidden_in_project_chat():
                 row.private_mode = True
                 await db.flush()
                 msg = await append_project_chat_message(
-                    db, project_id=PROJ, session_id=sid, user=owner,
-                    role="user", content="should be rejected",
+                    db,
+                    project_id=PROJ,
+                    session_id=sid,
+                    user=owner,
+                    role="user",
+                    content="should be rejected",
                 )
                 assert msg is None
         finally:

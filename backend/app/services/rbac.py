@@ -66,9 +66,7 @@ AGENT_OPERATIONS_ADMIN_SLUG = "agent_operations_administrator"
 AGENT_AUDITOR_SLUG = "agent_auditor"
 
 # Explicitly re-enabled scoped roles (must stay assignable; not section-bundle generated).
-REENABLED_SCOPED_ROLE_SLUGS: frozenset[str] = frozenset(
-    {DASHBOARD_VIEW_SLUG, REPORTS_ACCESS_SLUG}
-)
+REENABLED_SCOPED_ROLE_SLUGS: frozenset[str] = frozenset({DASHBOARD_VIEW_SLUG, REPORTS_ACCESS_SLUG})
 
 MENU_DEFINITIONS: tuple[tuple[MenuKey, str, CategoryKey], ...] = (
     ("dashboard", "Dashboard", "overview"),
@@ -112,6 +110,7 @@ USER_APP_MENUS: frozenset[MenuKey] = frozenset(
     }
 )
 
+
 def _all_historical_menu_role_slugs() -> frozenset[str]:
     slugs: set[str] = set()
     for menu, _, _ in MENU_DEFINITIONS:
@@ -129,20 +128,14 @@ REMOVED_ASSIGNABLE_ROLE_SLUGS: frozenset[str] = frozenset(
         "recommendations_full_administrator",
         "recommendations_read_only_administrator",
     }
-    | (
-        _all_historical_menu_role_slugs()
-        - {API_KEY_ADMIN_SLUG}
-        - REENABLED_SCOPED_ROLE_SLUGS
-    )
+    | (_all_historical_menu_role_slugs() - {API_KEY_ADMIN_SLUG} - REENABLED_SCOPED_ROLE_SLUGS)
 )
 
 LEGACY_SUPER_ADMIN_SLUGS: frozenset[str] = frozenset(
     {FULL_ADMIN_SLUG, READ_ONLY_FULL_ADMIN_SLUG, LEGACY_READ_ONLY_ADMIN_SLUG, LEGACY_ADMIN_SLUG}
 )
 
-GLOBAL_FULL_ADMIN_SLUGS: frozenset[str] = frozenset(
-    {SUPER_ADMIN_SLUG, FULL_ADMIN_SLUG, LEGACY_ADMIN_SLUG}
-)
+GLOBAL_FULL_ADMIN_SLUGS: frozenset[str] = frozenset({SUPER_ADMIN_SLUG, FULL_ADMIN_SLUG, LEGACY_ADMIN_SLUG})
 
 MENU_LABELS: dict[MenuKey, str] = {m[0]: m[1] for m in MENU_DEFINITIONS}
 MENU_GROUP_KEYS: dict[MenuKey, CategoryKey] = {m[0]: m[2] for m in MENU_DEFINITIONS}
@@ -609,9 +602,8 @@ def agent_permissions_for_slugs(slugs: list[str]) -> frozenset[str]:
 
 def user_has_agent_permission(slugs: list[str], permission: str) -> bool:
     normalized_permission = (permission or "").strip().lower()
-    return (
-        normalized_permission in AGENT_DOMAIN_PERMISSIONS
-        and normalized_permission in agent_permissions_for_slugs(slugs)
+    return normalized_permission in AGENT_DOMAIN_PERMISSIONS and normalized_permission in agent_permissions_for_slugs(
+        slugs
     )
 
 

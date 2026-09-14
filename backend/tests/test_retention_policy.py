@@ -62,9 +62,7 @@ async def _run_purge_roundtrip() -> None:
             )
         )
         await session.flush()
-        user_id = (
-            await session.execute(select(User.id).where(User.username == "tester"))
-        ).scalar_one()
+        user_id = (await session.execute(select(User.id).where(User.username == "tester"))).scalar_one()
         session.add(
             ChatSession(
                 id="sess-1",
@@ -127,9 +125,7 @@ async def _run_purge_removes_empty_sessions() -> None:
             )
         )
         await session.flush()
-        user_id = (
-            await session.execute(select(User.id).where(User.username == "purge_user"))
-        ).scalar_one()
+        user_id = (await session.execute(select(User.id).where(User.username == "purge_user"))).scalar_one()
 
         session.add(
             ChatSession(

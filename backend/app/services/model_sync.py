@@ -254,22 +254,14 @@ def _openrouter_snapshot(
     if isinstance(architecture, dict):
         outputs = architecture.get("output_modalities")
         if isinstance(outputs, list):
-            allowed_outputs = {
-                str(value).lower()
-                for value in outputs
-                if str(value).lower() not in {"video", "image"}
-            }
+            allowed_outputs = {str(value).lower() for value in outputs if str(value).lower() not in {"video", "image"}}
             if video_meta:
                 allowed_outputs.add("video")
             if image_meta:
                 allowed_outputs.add("image")
             snapshot["architecture"] = {
                 **architecture,
-                "output_modalities": [
-                                    value
-                                    for value in outputs
-                    if str(value).lower() in allowed_outputs
-                ],
+                "output_modalities": [value for value in outputs if str(value).lower() in allowed_outputs],
             }
     return snapshot
 
@@ -339,13 +331,17 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
             pricing = m.get("pricing") or {}
             in_1k, out_1k = _per_1k_from_openrouter_pricing(pricing)
             existing = (
-                await db.execute(
-                    select(AIModel).where(
-                        AIModel.connection_id == conn.id,
-                        AIModel.external_id == ext_id,
+                (
+                    await db.execute(
+                        select(AIModel).where(
+                            AIModel.connection_id == conn.id,
+                            AIModel.external_id == ext_id,
+                        )
                     )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             video_meta = video_models.get(str(ext_id))
             image_meta = image_models.get(str(ext_id))
             snapshot = _openrouter_snapshot(m, video_meta, image_meta)
@@ -370,11 +366,7 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
         # Upsert video-only catalog entries that appear on /videos/models but not /models.
         video_only_seen: set[str] = set()
         for lookup_id, video_meta in video_models.items():
-            canonical_id = str(
-                video_meta.get("id")
-                or video_meta.get("canonical_slug")
-                or lookup_id
-            )
+            canonical_id = str(video_meta.get("id") or video_meta.get("canonical_slug") or lookup_id)
             aliases = {
                 str(value)
                 for value in (
@@ -389,20 +381,22 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
             video_only_seen.update(aliases)
             ext_id = canonical_id
             existing = (
-                await db.execute(
-                    select(AIModel).where(
-                        AIModel.connection_id == conn.id,
-                        AIModel.external_id == ext_id,
+                (
+                    await db.execute(
+                        select(AIModel).where(
+                            AIModel.connection_id == conn.id,
+                            AIModel.external_id == ext_id,
+                        )
                     )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             snapshot = {
                 "id": ext_id,
                 "name": video_meta.get("name") or ext_id,
                 "architecture": {
-                    "input_modalities": ["text", "image"]
-                    if video_meta.get("supported_frame_images")
-                    else ["text"],
+                    "input_modalities": ["text", "image"] if video_meta.get("supported_frame_images") else ["text"],
                     "output_modalities": ["video"],
                 },
                 "video_generation": video_meta,
@@ -450,13 +444,17 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
             if not ext_id:
                 continue
             existing = (
-                await db.execute(
-                    select(AIModel).where(
-                        AIModel.connection_id == conn.id,
-                        AIModel.external_id == ext_id,
+                (
+                    await db.execute(
+                        select(AIModel).where(
+                            AIModel.connection_id == conn.id,
+                            AIModel.external_id == ext_id,
+                        )
                     )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             payload = {
                 "connection_id": conn.id,
                 "external_id": ext_id,
@@ -472,16 +470,12 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
 
     conn.last_sync_at = datetime.utcnow()
     await db.flush()
-    synced_models = (
-        await db.execute(select(AIModel).where(AIModel.connection_id == conn.id))
-    ).scalars().all()
+    synced_models = (await db.execute(select(AIModel).where(AIModel.connection_id == conn.id))).scalars().all()
     await ensure_model_compatibility_rows(db, synced_models)
     return synced
 
 
-async def sync_connection_with_flash(
-    db: AsyncSession, conn: Connection, api_key: str
-) -> dict[str, int]:
+async def sync_connection_with_flash(db: AsyncSession, conn: Connection, api_key: str) -> dict[str, int]:
     """Sync one connection's catalog without flipping enable state on any models.
 
     Historically this briefly disabled then re-enabled the entire catalog (all
@@ -494,9 +488,7 @@ async def sync_connection_with_flash(
 
 async def disable_models_for_connection(db: AsyncSession, connection_id: int) -> int:
     """Turn off all catalog models tied to a connection (e.g. when connection is disabled)."""
-    result = await db.execute(
-        update(AIModel).where(AIModel.connection_id == connection_id).values(is_enabled=False)
-    )
+    result = await db.execute(update(AIModel).where(AIModel.connection_id == connection_id).values(is_enabled=False))
     return result.rowcount or 0
 
 

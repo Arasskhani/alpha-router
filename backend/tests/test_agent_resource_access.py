@@ -130,9 +130,7 @@ async def _test_private_assignments_cover_all_principal_types() -> None:
         group = UserGroup(name="legal", source="local")
         db.add(group)
         await db.flush()
-        await db.execute(
-            user_group_members.insert().values(user_id=group_member.id, group_id=group.id)
-        )
+        await db.execute(user_group_members.insert().values(user_id=group_member.id, group_id=group.id))
         agent = await _agent(db, "private")
         await set_agent_access(
             db,

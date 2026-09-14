@@ -41,9 +41,7 @@ async def run() -> None:
     stop = asyncio.Event()
     _install_signal_handlers(stop)
     redis = create_knowledge_redis()
-    scheduler_id = (
-        f"scheduler-{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
-    )
+    scheduler_id = f"scheduler-{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
     next_reaper_at = 0.0
     next_connector_poll_at = 0.0
     next_retention_poll_at = 0.0
@@ -72,13 +70,9 @@ async def run() -> None:
                         memory_recovered += await recover_stale_project_memory_jobs(db)
                         await db.commit()
                     if recovered:
-                        logger.warning(
-                            "Recovered %s expired Knowledge job leases", recovered
-                        )
+                        logger.warning("Recovered %s expired Knowledge job leases", recovered)
                     if memory_recovered:
-                        logger.warning(
-                            "Recovered %s expired memory job leases", memory_recovered
-                        )
+                        logger.warning("Recovered %s expired memory job leases", memory_recovered)
                     next_reaper_at = now + settings.knowledge_reaper_interval_seconds
                 if now >= next_connector_poll_at:
                     async with AsyncSessionLocal() as db:
@@ -89,9 +83,7 @@ async def run() -> None:
                             "Scheduled %s due Knowledge connector syncs",
                             scheduled,
                         )
-                    next_connector_poll_at = (
-                        now + settings.knowledge_connector_poll_interval_seconds
-                    )
+                    next_connector_poll_at = now + settings.knowledge_connector_poll_interval_seconds
                 if now >= next_retention_poll_at:
                     async with AsyncSessionLocal() as db:
                         retention = await schedule_expired_knowledge_retention(
@@ -105,12 +97,9 @@ async def run() -> None:
                             retention["scheduled_versions"],
                             retention["held_resources"],
                         )
-                    next_retention_poll_at = (
-                        now
-                        + max(
-                            60,
-                            int(settings.knowledge_retention_poll_interval_seconds),
-                        )
+                    next_retention_poll_at = now + max(
+                        60,
+                        int(settings.knowledge_retention_poll_interval_seconds),
                     )
                 await asyncio.wait_for(
                     stop.wait(),

@@ -247,9 +247,7 @@ async def fetch_api_key_changelog(
     actor_ids = {row.actor_user_id for row in rows if row.actor_user_id}
     actors: dict[int, User] = {}
     if actor_ids:
-        actor_rows = (
-            await db.execute(select(User).where(User.id.in_(actor_ids)))
-        ).scalars().all()
+        actor_rows = (await db.execute(select(User).where(User.id.in_(actor_ids)))).scalars().all()
         actors = {user.id: user for user in actor_rows}
 
     out: list[dict[str, Any]] = []

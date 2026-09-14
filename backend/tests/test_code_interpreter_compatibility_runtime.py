@@ -69,9 +69,7 @@ async def _run_empty_completion_records_failure() -> tuple[list[dict], list[dict
     )
 
     fake_db = AsyncMock()
-    fake_db.execute = AsyncMock(
-        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
-    )
+    fake_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
     fake_ctx = MagicMock()
     fake_ctx.__aenter__ = AsyncMock(return_value=fake_db)
     fake_ctx.__aexit__ = AsyncMock(return_value=None)
@@ -177,9 +175,7 @@ async def _run_alias_evidence_is_dropped() -> list[dict]:
         recorded.append(kwargs)
 
     fake_db = AsyncMock()
-    fake_db.execute = AsyncMock(
-        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
-    )
+    fake_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
     fake_ctx = MagicMock()
     fake_ctx.__aenter__ = AsyncMock(return_value=fake_db)
     fake_ctx.__aexit__ = AsyncMock(return_value=None)
@@ -220,9 +216,7 @@ async def _run_success_resolves_concrete_model() -> list[dict]:
     event = _pending_event({"model": "openrouter/auto"}, upstream_id="gen-1")
 
     with (
-        patch.object(
-            proxy_service, "_record_runtime_compatibility", side_effect=fake_record
-        ),
+        patch.object(proxy_service, "_record_runtime_compatibility", side_effect=fake_record),
         patch.object(
             proxy_service,
             "_openrouter_generation_outcome",
@@ -292,9 +286,7 @@ async def _run_final_answer_after_execution() -> tuple[list[dict], int]:
     )
 
     fake_db = AsyncMock()
-    fake_db.execute = AsyncMock(
-        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
-    )
+    fake_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
     fake_ctx = MagicMock()
     fake_ctx.__aenter__ = AsyncMock(return_value=fake_db)
     fake_ctx.__aexit__ = AsyncMock(return_value=None)
@@ -305,9 +297,7 @@ async def _run_final_answer_after_execution() -> tuple[list[dict], int]:
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
-        patch.object(
-            proxy_service, "parse_tools_config", return_value=SimpleNamespace(code_interpreter=True)
-        ),
+        patch.object(proxy_service, "parse_tools_config", return_value=SimpleNamespace(code_interpreter=True)),
         patch.object(
             proxy_service,
             "augment_messages_with_tools",
@@ -322,9 +312,7 @@ async def _run_final_answer_after_execution() -> tuple[list[dict], int]:
         patch.object(
             proxy_service,
             "run_python_sandbox",
-            AsyncMock(
-                return_value=proxy_service.SandboxExecutionResult(output="4", exit_code=0)
-            ),
+            AsyncMock(return_value=proxy_service.SandboxExecutionResult(output="4", exit_code=0)),
         ),
         patch.object(proxy_service, "openrouter_auto_plugin", AsyncMock(return_value=None)),
     ):
@@ -356,7 +344,5 @@ def test_final_answer_after_code_execution_is_not_a_failure():
     # No third call: a completed flow must not be nudged for more Python.
     assert calls == 2
     assert recorded, "the successful execution must be recorded"
-    assert all(entry["success"] for entry in recorded), (
-        f"a completed flow must not record failures: {recorded}"
-    )
+    assert all(entry["success"] for entry in recorded), f"a completed flow must not record failures: {recorded}"
     assert {entry["external_model_id"] for entry in recorded} == {"vendor/good"}

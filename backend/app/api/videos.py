@@ -79,9 +79,7 @@ async def _resolve_video_model(
     access_user_id: int | None = None,
 ) -> tuple[str, str | None, str | None, str | None, AIModel | None]:
     model_id = _normalize_model_id(raw_model)
-    subject = (
-        await resolve_access_subject(db, user_id=access_user_id) if access_user_id is not None else None
-    )
+    subject = await resolve_access_subject(db, user_id=access_user_id) if access_user_id is not None else None
     row: AIModel | None = None
     if model_id.startswith("model::"):
         try:
@@ -90,10 +88,14 @@ async def _resolve_video_model(
             model_pk = None
         if model_pk is not None:
             row = (
-                await db.execute(
-                    select(AIModel).where(AIModel.id == model_pk, AIModel.is_enabled == True)  # noqa: E712
+                (
+                    await db.execute(
+                        select(AIModel).where(AIModel.id == model_pk, AIModel.is_enabled == True)  # noqa: E712
+                    )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
         if row:
             conn = await db.get(Connection, row.connection_id)
             if conn and conn.is_active:
@@ -212,7 +214,9 @@ async def generate_video(
         raise HTTPException(status_code=400, detail="Requested resolution is not supported by the selected video model")
     supported_aspects = {str(value) for value in (caps.get("supported_aspect_ratios") or [])}
     if supported_aspects and aspect_ratio not in supported_aspects:
-        raise HTTPException(status_code=400, detail="Requested aspect ratio is not supported by the selected video model")
+        raise HTTPException(
+            status_code=400, detail="Requested aspect ratio is not supported by the selected video model"
+        )
 
     hold_body = body.model_dump()
     if request.headers.get("Idempotency-Key"):
@@ -259,8 +263,7 @@ async def generate_video(
                 "aspect_ratio": aspect_ratio,
                 "generate_audio": bool(body.generate_audio),
                 "seed": body.seed,
-                "assistant_client_message_id": (body.assistant_client_message_id or "").strip()
-                or None,
+                "assistant_client_message_id": (body.assistant_client_message_id or "").strip() or None,
             },
             chat_session_id=body.chat_session_id,
             persist=bool(body.persist),

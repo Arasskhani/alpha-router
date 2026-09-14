@@ -77,9 +77,7 @@ def _catalog_payload(agent: Agent, version: AgentVersion) -> dict:
     }
 
 
-async def _catalog_rows(
-    db: AsyncSession, user: User
-) -> list[tuple[Agent, AgentVersion]]:
+async def _catalog_rows(db: AsyncSession, user: User) -> list[tuple[Agent, AgentVersion]]:
     rows = (
         await db.execute(
             select(Agent, AgentVersion)
@@ -96,12 +94,7 @@ async def _catalog_rows(
         )
     ).all()
     subject = await resolve_resource_access_subject(db, user_id=user.id)
-    allowed = {
-        agent.id
-        for agent in await filter_agents_for_subject(
-            db, [agent for agent, _version in rows], subject
-        )
-    }
+    allowed = {agent.id for agent in await filter_agents_for_subject(db, [agent for agent, _version in rows], subject)}
     return [(agent, version) for agent, version in rows if agent.id in allowed]
 
 
@@ -114,9 +107,7 @@ async def list_available_agents(
     items = [_catalog_payload(agent, version) for agent, version in rows]
     return {
         "items": items,
-        "auto_route_available": any(
-            not bool((item.get("routing") or {}).get("explicit_only")) for item in items
-        ),
+        "auto_route_available": any(not bool((item.get("routing") or {}).get("explicit_only")) for item in items),
     }
 
 
@@ -154,11 +145,7 @@ async def get_citation_detail(
         raise HTTPException(404, "Citation not found")
     # Run ownership already authorized this evidence during the agent turn.
     # Do not re-require direct Knowledge Base ACL for Open source / Download.
-    knowledge_base = (
-        await db.get(KnowledgeBase, citation.knowledge_base_id)
-        if citation.knowledge_base_id
-        else None
-    )
+    knowledge_base = await db.get(KnowledgeBase, citation.knowledge_base_id) if citation.knowledge_base_id else None
     if knowledge_base is None:
         raise HTTPException(404, "Citation not found")
     return {
@@ -177,9 +164,7 @@ async def get_citation_detail(
         "knowledge_base_id": citation.knowledge_base_id,
         "knowledge_base_name": knowledge_base.name,
         "download_url": (
-            f"/api/agents/citations/{run.id}/{citation.citation_id}/content"
-            if citation.document_version_id
-            else None
+            f"/api/agents/citations/{run.id}/{citation.citation_id}/content" if citation.document_version_id else None
         ),
     }
 
@@ -210,9 +195,7 @@ async def download_citation_source(
         )
     except (FileNotFoundError, ObjectNotFoundError, ValueError):
         raise HTTPException(404, "Citation source not found") from None
-    safe_name = (version.file_name or "source").replace('"', "").replace("\r", "").replace(
-        "\n", ""
-    )
+    safe_name = (version.file_name or "source").replace('"', "").replace("\r", "").replace("\n", "")
     ascii_name = "".join(ch if 32 <= ord(ch) < 127 else "_" for ch in safe_name) or "source"
     return Response(
         content=data,
@@ -251,11 +234,7 @@ async def list_pending_handoffs(
         return {"items": []}
     from_ids = {row.from_agent_id for row in rows if row.from_agent_id}
     to_ids = {row.to_agent_id for row in rows if row.to_agent_id}
-    agents = (
-        (await db.execute(select(Agent).where(Agent.id.in_(from_ids | to_ids))))
-        .scalars()
-        .all()
-    )
+    agents = (await db.execute(select(Agent).where(Agent.id.in_(from_ids | to_ids)))).scalars().all()
     names = {agent.id: agent.name for agent in agents}
     # The handoff service performs authoritative ownership and ACL checks on decision.
     return {

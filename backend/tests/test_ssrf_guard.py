@@ -21,6 +21,7 @@ from app.services import ssrf_guard
 def _patch_settings(allow_private: bool = False):
     class _S:
         allow_ssrf_private_ranges = allow_private
+
     return patch("app.services.ssrf_guard.get_settings", return_value=_S())
 
 

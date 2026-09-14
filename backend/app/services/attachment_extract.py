@@ -89,11 +89,7 @@ def _extract_tabular(raw: bytes, ext: str) -> str:
 
 def extract_document_text(raw: bytes, filename: str) -> str:
     ext = _extension(filename)
-    if (
-        ext in ALLOWED_IMAGE_EXTENSIONS
-        or ext in ALLOWED_VIDEO_EXTENSIONS
-        or ext in ALLOWED_AUDIO_EXTENSIONS
-    ):
+    if ext in ALLOWED_IMAGE_EXTENSIONS or ext in ALLOWED_VIDEO_EXTENSIONS or ext in ALLOWED_AUDIO_EXTENSIONS:
         raise ValueError("Not a document file.")
 
     try:

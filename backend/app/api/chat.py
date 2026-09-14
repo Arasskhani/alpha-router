@@ -110,12 +110,8 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
 @router.get("/models")
-async def chat_models(
-    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
-):
-    conn_count = (
-        await db.execute(select(func.count()).select_from(Connection))
-    ).scalar() or 0
+async def chat_models(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    conn_count = (await db.execute(select(func.count()).select_from(Connection))).scalar() or 0
     if conn_count == 0:
         # No connections -> no usable models. Orphan catalog rows (FK cascade
         # off) are removed by DELETE /api/admin/connections/{id}; a GET must
@@ -147,9 +143,7 @@ async def chat_models(
             # Admin-chosen defaults per capability, so the client stops falling
             # back to "first capable model in catalog order".
             "default_kinds": [
-                key
-                for key, value in system_defaults.items()
-                if value is not None and int(value) == int(m.id)
+                key for key, value in system_defaults.items() if value is not None and int(value) == int(m.id)
             ],
             "code_interpreter": compatibility_payload(
                 compatibility.get((int(m.connection_id), m.external_id)),
@@ -286,9 +280,7 @@ async def enhance_prompt(
     if body.context not in ENHANCE_CONTEXTS:
         raise HTTPException(status_code=400, detail="Invalid enhancement context")
     try:
-        text = await enhance_user_prompt(
-            db, user, body.model, body.prompt, body.mode, context=body.context
-        )
+        text = await enhance_user_prompt(db, user, body.model, body.prompt, body.mode, context=body.context)
     except PromptEnhanceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"prompt": text}
@@ -304,9 +296,7 @@ async def enhance_image_prompt(
     if body.mode not in ENHANCE_MODES:
         raise HTTPException(status_code=400, detail="Invalid enhancement mode")
     try:
-        text = await enhance_image_generation_prompt(
-            db, user, body.model, body.prompt, body.mode
-        )
+        text = await enhance_image_generation_prompt(db, user, body.model, body.prompt, body.mode)
     except PromptEnhanceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"prompt": text}
@@ -388,9 +378,7 @@ async def chat_completions(
         gen,
         media_type="text/event-stream",
         headers=STREAM_SSE_HEADERS,
-        background=BackgroundTask(release_capacity_fallback)
-        if permit is not None
-        else None,
+        background=BackgroundTask(release_capacity_fallback) if permit is not None else None,
     )
 
 
@@ -497,9 +485,7 @@ async def voice_message(
         # A "clean" failure (provider rejected the model, no speech, bad audio)
         # used to return 400 with no server-side trace at all, which made these
         # invisible in the logs while the client only saw a generic notice.
-        logging.getLogger("app.api.chat").warning(
-            "Transcription rejected: %s", exc, exc_info=True
-        )
+        logging.getLogger("app.api.chat").warning("Transcription rejected: %s", exc, exc_info=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         # Log the full provider error server-side; return a generic message so
@@ -507,9 +493,7 @@ async def voice_message(
         import logging
 
         logging.getLogger("app.api.chat").exception("Transcription failed")
-        raise HTTPException(
-            status_code=502, detail="Transcription failed. Please try again."
-        ) from exc
+        raise HTTPException(status_code=502, detail="Transcription failed. Please try again.") from exc
 
     # The quota check is one cheap SUM; do it now so the caller learns *in
     # the response* when the recording will not be kept, instead of getting
@@ -614,8 +598,7 @@ async def process_attachments(
             remaining = total_limit - total_bytes
             if remaining <= 0:
                 raise BoundedIOError(
-                    f"Attachments exceed the total per-message limit "
-                    f"({max(1, total_limit // (1024 * 1024))} MB)."
+                    f"Attachments exceed the total per-message limit ({max(1, total_limit // (1024 * 1024))} MB)."
                 )
             raw = await read_upload_bounded(
                 upload,
@@ -655,11 +638,7 @@ async def process_attachments(
         except ProjectMediaValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except ValueError as exc:
-            status_code = (
-                413
-                if "limit" in str(exc).lower() or "quota" in str(exc).lower()
-                else 400
-            )
+            status_code = 413 if "limit" in str(exc).lower() or "quota" in str(exc).lower() else 400
             raise HTTPException(status_code=status_code, detail=str(exc)) from exc
         out.append(
             await processed_attachment_payload_async(
@@ -714,11 +693,7 @@ async def store_media(
         )
     except ValueError as exc:
         detail = str(exc)
-        if (
-            "quota" in detail.lower()
-            or "limit" in detail.lower()
-            or "too large" in detail.lower()
-        ):
+        if "quota" in detail.lower() or "limit" in detail.lower() or "too large" in detail.lower():
             raise HTTPException(status_code=413, detail=str(exc)) from exc
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
@@ -895,18 +870,14 @@ async def export_chat_docx(
     if not payload.content or not payload.content.strip():
         raise HTTPException(status_code=400, detail="content must not be empty")
     try:
-        docx_bytes = await asyncio.to_thread(
-            render_chat_docx, content=payload.content, title=payload.title
-        )
+        docx_bytes = await asyncio.to_thread(render_chat_docx, content=payload.content, title=payload.title)
     except DocxExportError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={
-            "Content-Disposition": build_download_content_disposition(
-                payload.title, "docx"
-            ),
+            "Content-Disposition": build_download_content_disposition(payload.title, "docx"),
             "Cache-Control": "no-store",
         },
     )
@@ -930,18 +901,14 @@ async def export_chat_xlsx(
     if not payload.content or not payload.content.strip():
         raise HTTPException(status_code=400, detail="content must not be empty")
     try:
-        xlsx_bytes = await asyncio.to_thread(
-            render_chat_xlsx, content=payload.content, title=payload.title
-        )
+        xlsx_bytes = await asyncio.to_thread(render_chat_xlsx, content=payload.content, title=payload.title)
     except XlsxExportError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return Response(
         content=xlsx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
-            "Content-Disposition": build_download_content_disposition(
-                payload.title, "xlsx"
-            ),
+            "Content-Disposition": build_download_content_disposition(payload.title, "xlsx"),
             "Cache-Control": "no-store",
         },
     )

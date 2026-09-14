@@ -91,9 +91,7 @@ def normalize_memory_content(text: str | None) -> str:
     if not cleaned:
         raise ProjectMemoryValidationError("Memory content is required")
     if len(cleaned) > MAX_MEMORY_CHARS:
-        raise ProjectMemoryValidationError(
-            f"Memory content exceeds {MAX_MEMORY_CHARS} characters"
-        )
+        raise ProjectMemoryValidationError(f"Memory content exceeds {MAX_MEMORY_CHARS} characters")
     return cleaned
 
 
@@ -168,17 +166,11 @@ def _alive_filter():
     return ProjectMemory.deleted_at.is_(None)
 
 
-async def _session_titles(
-    db: AsyncSession, session_ids: Sequence[str]
-) -> dict[str, str]:
+async def _session_titles(db: AsyncSession, session_ids: Sequence[str]) -> dict[str, str]:
     ids = sorted({str(item) for item in session_ids if item})
     if not ids:
         return {}
-    rows = (
-        await db.execute(
-            select(ChatSession.id, ChatSession.title).where(ChatSession.id.in_(ids))
-        )
-    ).all()
+    rows = (await db.execute(select(ChatSession.id, ChatSession.title).where(ChatSession.id.in_(ids)))).all()
     return {str(sid): (title or "") for sid, title in rows}
 
 
@@ -222,9 +214,7 @@ async def list_project_memories(
         .offset(max(0, int(offset)))
     )
     rows = (await db.execute(base)).scalars().all()
-    total = (
-        await db.execute(select(func.count()).select_from(ProjectMemory).where(*filters))
-    ).scalar() or 0
+    total = (await db.execute(select(func.count()).select_from(ProjectMemory).where(*filters))).scalar() or 0
     titles = await _session_titles(db, [row.source_session_id for row in rows])
     return [
         memory_to_client(
@@ -237,9 +227,7 @@ async def list_project_memories(
 
 async def _count_project_memories(db: AsyncSession, project_id: str) -> int:
     result = await db.execute(
-        select(func.count())
-        .select_from(ProjectMemory)
-        .where(ProjectMemory.project_id == project_id, _alive_filter())
+        select(func.count()).select_from(ProjectMemory).where(ProjectMemory.project_id == project_id, _alive_filter())
     )
     return int(result.scalar_one() or 0)
 
@@ -281,14 +269,9 @@ async def create_project_memory(
             await db.flush()
         return memory_to_client(existing), False
 
-    cap = int(
-        (await get_memory_settings(db)).get("project_max_per_project")
-        or MAX_MEMORIES_PER_PROJECT
-    )
+    cap = int((await get_memory_settings(db)).get("project_max_per_project") or MAX_MEMORIES_PER_PROJECT)
     if await _count_project_memories(db, project_id) >= cap:
-        raise ProjectMemoryLimitError(
-            f"Memory limit of {cap} reached for this project"
-        )
+        raise ProjectMemoryLimitError(f"Memory limit of {cap} reached for this project")
 
     now = datetime.datetime.utcnow()
     row = ProjectMemory(
@@ -391,9 +374,7 @@ async def update_project_memory(
                 )
             ).scalar_one_or_none()
             if conflict is not None:
-                raise ProjectMemoryValidationError(
-                    "Another memory with the same content already exists"
-                )
+                raise ProjectMemoryValidationError("Another memory with the same content already exists")
             row.content = normalized
             row.content_hash = digest
             row.embedding_status = "pending"
@@ -444,9 +425,7 @@ async def delete_project_memory(
     if auto:
         # Only learned facts can come back on their own, so only they need a
         # suppression tombstone.
-        await add_project_suppression(
-            db, project_id=project_id, content_hash=digest, content=content
-        )
+        await add_project_suppression(db, project_id=project_id, content_hash=digest, content=content)
     await append_project_audit(
         db,
         project_id=project_id,
@@ -479,13 +458,17 @@ async def delete_all_auto_project_memories(
         capability="memory.manage",
     )
     rows = (
-        await db.execute(
-            select(ProjectMemory).where(
-                ProjectMemory.project_id == project_id,
-                ProjectMemory.source_type != SOURCE_MANUAL,
+        (
+            await db.execute(
+                select(ProjectMemory).where(
+                    ProjectMemory.project_id == project_id,
+                    ProjectMemory.source_type != SOURCE_MANUAL,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     if not rows:
         return 0
     await _drop_project_memory_vectors(db, [row.id for row in rows])
@@ -493,9 +476,7 @@ async def delete_all_auto_project_memories(
         digest = row.content_hash
         content = row.content or ""
         await db.delete(row)
-        await add_project_suppression(
-            db, project_id=project_id, content_hash=digest, content=content
-        )
+        await add_project_suppression(db, project_id=project_id, content_hash=digest, content=content)
     await db.flush()
     from app.services.project_memory_job_service import reset_watermarks_for_project
 
@@ -518,9 +499,7 @@ async def delete_all_auto_project_memories(
     return len(rows)
 
 
-async def export_project_memories(
-    db: AsyncSession, *, project_id: str, user: object
-) -> list[dict]:
+async def export_project_memories(db: AsyncSession, *, project_id: str, user: object) -> list[dict]:
     """Every live fact for this project, paging past the per-request cap."""
     # A full dump of what the assistant learned about the team is owner-only,
     # even though the in-app list is readable by every member.
@@ -534,9 +513,7 @@ async def export_project_memories(
     items: list[dict] = []
     offset = 0
     while True:
-        chunk, total = await list_project_memories(
-            db, project_id=project_id, user=user, limit=page, offset=offset
-        )
+        chunk, total = await list_project_memories(db, project_id=project_id, user=user, limit=page, offset=offset)
         items.extend(chunk)
         offset += len(chunk)
         if not chunk or offset >= total:
@@ -657,33 +634,31 @@ async def add_project_suppression(
     except MemoryEmbeddingUnavailable:
         return
     except Exception:
-        logger.exception(
-            "Failed to index project suppression vector project_id=%s", project_id
-        )
+        logger.exception("Failed to index project suppression vector project_id=%s", project_id)
 
 
-async def is_project_hash_suppressed(
-    db: AsyncSession, project_id: str, content_hash: str
-) -> bool:
+async def is_project_hash_suppressed(db: AsyncSession, project_id: str, content_hash: str) -> bool:
     now = datetime.datetime.utcnow()
     row = (
-        await db.execute(
-            select(ProjectMemorySuppression.id).where(
-                ProjectMemorySuppression.project_id == project_id,
-                ProjectMemorySuppression.content_hash == content_hash,
-                or_(
-                    ProjectMemorySuppression.expires_at.is_(None),
-                    ProjectMemorySuppression.expires_at > now,
-                ),
+        (
+            await db.execute(
+                select(ProjectMemorySuppression.id).where(
+                    ProjectMemorySuppression.project_id == project_id,
+                    ProjectMemorySuppression.content_hash == content_hash,
+                    or_(
+                        ProjectMemorySuppression.expires_at.is_(None),
+                        ProjectMemorySuppression.expires_at > now,
+                    ),
+                )
             )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     return row is not None
 
 
-async def _resolve_project_collection(
-    db: AsyncSession, *, dims: int
-) -> str | None:
+async def _resolve_project_collection(db: AsyncSession, *, dims: int) -> str | None:
     """Alias target for memory vectors, shared with the user-memory index."""
     from app.services.memory_vector_service import MemoryVectorService
     from app.services.user_memory_service import _resolve_memory_collection
@@ -753,14 +728,10 @@ async def index_project_memory_vector(
     except Exception:
         row.embedding_status = "failed"
         await db.flush()
-        logger.exception(
-            "Failed to index project memory vector project_id=%s", row.project_id
-        )
+        logger.exception("Failed to index project memory vector project_id=%s", row.project_id)
 
 
-async def sync_project_vector_enabled(
-    db: AsyncSession, row: ProjectMemory, *, enabled: bool
-) -> None:
+async def sync_project_vector_enabled(db: AsyncSession, row: ProjectMemory, *, enabled: bool) -> None:
     """Mirror the enabled flag into the vector payload so search skips it."""
     if row.embedding_status != "indexed":
         return
@@ -777,14 +748,10 @@ async def sync_project_vector_enabled(
         )
     except Exception:
         # Postgres stays the source of truth; retrieval re-filters by row.
-        logger.warning(
-            "Failed to sync project memory vector payload memory_id=%s", row.id
-        )
+        logger.warning("Failed to sync project memory vector payload memory_id=%s", row.id)
 
 
-async def _drop_project_memory_vectors(
-    db: AsyncSession, memory_ids: Sequence[str]
-) -> None:
+async def _drop_project_memory_vectors(db: AsyncSession, memory_ids: Sequence[str]) -> None:
     ids = [str(item) for item in memory_ids if item]
     if not ids:
         return
@@ -806,9 +773,7 @@ async def purge_project_memory_index(project_id: str) -> None:
         collection = await service.resolve_target_collection()
         await service.delete_project(collection_name=collection, project_id=project_id)
     except Exception:
-        logger.exception(
-            "Failed to purge memory index for deleted project_id=%s", project_id
-        )
+        logger.exception("Failed to purge memory index for deleted project_id=%s", project_id)
 
 
 async def evict_lowest_project_memories(
@@ -824,21 +789,25 @@ async def evict_lowest_project_memories(
     if overflow <= 0:
         return 0
     rows = (
-        await db.execute(
-            select(ProjectMemory)
-            .where(
-                ProjectMemory.project_id == project_id,
-                ProjectMemory.source_type != SOURCE_MANUAL,
-                _alive_filter(),
+        (
+            await db.execute(
+                select(ProjectMemory)
+                .where(
+                    ProjectMemory.project_id == project_id,
+                    ProjectMemory.source_type != SOURCE_MANUAL,
+                    _alive_filter(),
+                )
+                .order_by(
+                    ProjectMemory.salience.asc(),
+                    ProjectMemory.last_used_at.asc().nullsfirst(),
+                    ProjectMemory.created_at.asc(),
+                )
+                .limit(overflow)
             )
-            .order_by(
-                ProjectMemory.salience.asc(),
-                ProjectMemory.last_used_at.asc().nullsfirst(),
-                ProjectMemory.created_at.asc(),
-            )
-            .limit(overflow)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     now = datetime.datetime.utcnow()
     for row in rows:
         row.enabled = False
@@ -955,9 +924,7 @@ async def create_auto_project_memory(
     return row, True
 
 
-async def record_project_memory_usage(
-    db: AsyncSession, project_id: str, memory_ids: Sequence[str]
-) -> None:
+async def record_project_memory_usage(db: AsyncSession, project_id: str, memory_ids: Sequence[str]) -> None:
     ids = [str(item) for item in memory_ids if item]
     if not ids:
         return
@@ -1002,15 +969,19 @@ async def list_memory_grants(
         capability="memory.grant",
     )
     rows = (
-        await db.execute(
-            select(ProjectMemoryGrant)
-            .where(
-                ProjectMemoryGrant.consumer_project_id == project_id,
-                ProjectMemoryGrant.status == "active",
+        (
+            await db.execute(
+                select(ProjectMemoryGrant)
+                .where(
+                    ProjectMemoryGrant.consumer_project_id == project_id,
+                    ProjectMemoryGrant.status == "active",
+                )
+                .order_by(ProjectMemoryGrant.created_at.desc())
             )
-            .order_by(ProjectMemoryGrant.created_at.desc())
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [grant_to_client(row) for row in rows]
 
 
@@ -1037,9 +1008,7 @@ async def create_memory_grant(
     )
 
     if not await _is_owner(db, source_project_id, access.user_id):
-        raise ProjectMemoryGrantError(
-            "You must be an Owner of the source project to grant access to its memory"
-        )
+        raise ProjectMemoryGrantError("You must be an Owner of the source project to grant access to its memory")
 
     # Check the source project exists and is accessible.
     source_project = await db.get(Project, source_project_id)
@@ -1175,69 +1144,71 @@ def _injectable_filters(project_id: str, now: datetime.datetime) -> list:
     ]
 
 
-async def _manual_rows(
-    db: AsyncSession, project_id: str, *, limit: int
-) -> list[ProjectMemory]:
+async def _manual_rows(db: AsyncSession, project_id: str, *, limit: int) -> list[ProjectMemory]:
     if limit <= 0:
         return []
     now = datetime.datetime.utcnow()
     return (
-        await db.execute(
-            select(ProjectMemory)
-            .where(
-                *_injectable_filters(project_id, now),
-                ProjectMemory.source_type == SOURCE_MANUAL,
+        (
+            await db.execute(
+                select(ProjectMemory)
+                .where(
+                    *_injectable_filters(project_id, now),
+                    ProjectMemory.source_type == SOURCE_MANUAL,
+                )
+                .order_by(ProjectMemory.updated_at.desc(), ProjectMemory.id.desc())
+                .limit(limit)
             )
-            .order_by(ProjectMemory.updated_at.desc(), ProjectMemory.id.desc())
-            .limit(limit)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
 
-async def _auto_recency_rows(
-    db: AsyncSession, project_id: str, *, limit: int
-) -> list[ProjectMemory]:
+async def _auto_recency_rows(db: AsyncSession, project_id: str, *, limit: int) -> list[ProjectMemory]:
     if limit <= 0:
         return []
     now = datetime.datetime.utcnow()
     return (
-        await db.execute(
-            select(ProjectMemory)
-            .where(
-                *_injectable_filters(project_id, now),
-                ProjectMemory.source_type != SOURCE_MANUAL,
+        (
+            await db.execute(
+                select(ProjectMemory)
+                .where(
+                    *_injectable_filters(project_id, now),
+                    ProjectMemory.source_type != SOURCE_MANUAL,
+                )
+                .order_by(ProjectMemory.updated_at.desc(), ProjectMemory.id.desc())
+                .limit(limit)
             )
-            .order_by(ProjectMemory.updated_at.desc(), ProjectMemory.id.desc())
-            .limit(limit)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
 
-async def _auto_lexical_rows(
-    db: AsyncSession, project_id: str, query: str, *, limit: int
-) -> list[ProjectMemory]:
+async def _auto_lexical_rows(db: AsyncSession, project_id: str, query: str, *, limit: int) -> list[ProjectMemory]:
     if limit <= 0 or not query.strip():
         return []
-    tokens = [
-        token
-        for token in re.findall(r"[\w\u0600-\u06FF]{3,}", normalize_memory_text(query))
-        if token
-    ][:8]
+    tokens = [token for token in re.findall(r"[\w\u0600-\u06FF]{3,}", normalize_memory_text(query)) if token][:8]
     if not tokens:
         return []
     now = datetime.datetime.utcnow()
     return (
-        await db.execute(
-            select(ProjectMemory)
-            .where(
-                *_injectable_filters(project_id, now),
-                ProjectMemory.source_type != SOURCE_MANUAL,
-                or_(*[ProjectMemory.content.ilike(f"%{token}%") for token in tokens]),
+        (
+            await db.execute(
+                select(ProjectMemory)
+                .where(
+                    *_injectable_filters(project_id, now),
+                    ProjectMemory.source_type != SOURCE_MANUAL,
+                    or_(*[ProjectMemory.content.ilike(f"%{token}%") for token in tokens]),
+                )
+                .order_by(ProjectMemory.salience.desc(), ProjectMemory.updated_at.desc())
+                .limit(limit)
             )
-            .order_by(ProjectMemory.salience.desc(), ProjectMemory.updated_at.desc())
-            .limit(limit)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
 
 async def _auto_semantic_rows(
@@ -1282,33 +1253,30 @@ async def _auto_semantic_rows(
         return []
     now = datetime.datetime.utcnow()
     rows = (
-        await db.execute(
-            select(ProjectMemory).where(
-                ProjectMemory.id.in_(ids),
-                *_injectable_filters(project_id, now),
-                ProjectMemory.source_type != SOURCE_MANUAL,
+        (
+            await db.execute(
+                select(ProjectMemory).where(
+                    ProjectMemory.id.in_(ids),
+                    *_injectable_filters(project_id, now),
+                    ProjectMemory.source_type != SOURCE_MANUAL,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     by_id = {row.id: row for row in rows}
     return [by_id[item] for item in ids if item in by_id]
 
 
-def _rrf_fuse(
-    semantic: Sequence[ProjectMemory], lexical: Sequence[ProjectMemory]
-) -> list[ProjectMemory]:
+def _rrf_fuse(semantic: Sequence[ProjectMemory], lexical: Sequence[ProjectMemory]) -> list[ProjectMemory]:
     scores: dict[str, float] = {}
     order: dict[str, ProjectMemory] = {}
     for ranked_list in (semantic, lexical):
         for rank, row in enumerate(ranked_list, start=1):
             scores[row.id] = scores.get(row.id, 0.0) + 1.0 / (RRF_K + rank)
             order[row.id] = row
-    return [
-        order[memory_id]
-        for memory_id, _ in sorted(
-            scores.items(), key=lambda item: item[1], reverse=True
-        )
-    ]
+    return [order[memory_id] for memory_id, _ in sorted(scores.items(), key=lambda item: item[1], reverse=True)]
 
 
 async def _retrieve_auto_facts(
@@ -1348,9 +1316,7 @@ async def _retrieve_auto_facts(
     try:
         fused = await asyncio.wait_for(_hybrid(), timeout=timeout)
     except Exception:
-        logger.warning(
-            "Project memory hybrid retrieval failed project_id=%s", project_id
-        )
+        logger.warning("Project memory hybrid retrieval failed project_id=%s", project_id)
         try:
             from app.services.observability import observe_memory_retrieval_fallback
 
@@ -1379,13 +1345,17 @@ async def _load_granted_memories(
     """
 
     grants = (
-        await db.execute(
-            select(ProjectMemoryGrant).where(
-                ProjectMemoryGrant.consumer_project_id == consumer_project_id,
-                ProjectMemoryGrant.status == "active",
+        (
+            await db.execute(
+                select(ProjectMemoryGrant).where(
+                    ProjectMemoryGrant.consumer_project_id == consumer_project_id,
+                    ProjectMemoryGrant.status == "active",
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     if not grants:
         return []
@@ -1395,18 +1365,22 @@ async def _load_granted_memories(
     total_chars = 0
     for grant in grants:
         rows = (
-            await db.execute(
-                select(ProjectMemory)
-                .where(
-                    ProjectMemory.project_id == grant.source_project_id,
-                    ProjectMemory.enabled.is_(True),
-                    _alive_filter(),
-                    ProjectMemory.source_type == SOURCE_MANUAL,
+            (
+                await db.execute(
+                    select(ProjectMemory)
+                    .where(
+                        ProjectMemory.project_id == grant.source_project_id,
+                        ProjectMemory.enabled.is_(True),
+                        _alive_filter(),
+                        ProjectMemory.source_type == SOURCE_MANUAL,
+                    )
+                    .order_by(ProjectMemory.updated_at.desc(), ProjectMemory.id.desc())
+                    .limit(per_grant_items)
                 )
-                .order_by(ProjectMemory.updated_at.desc(), ProjectMemory.id.desc())
-                .limit(per_grant_items)
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         for row in rows:
             text = (row.content or "").strip()
             if not text:
@@ -1477,11 +1451,7 @@ async def load_injectable_project_memories(
             cost = len(text) + 2
             if total_chars + cost > char_limit:
                 break
-            auto_facts.append(
-                ProjectFact(
-                    id=row.id, content=text, category=row.category or "other"
-                )
-            )
+            auto_facts.append(ProjectFact(id=row.id, content=text, category=row.category or "other"))
             memory_ids.append(row.id)
             total_chars += cost
 
@@ -1538,12 +1508,9 @@ def format_project_memory_block(injection: ProjectMemoryInjection) -> str:
         )
     if injection.granted_facts:
         lines.append("")
+        lines.append("## Cross-project memory (read-only grants)")
         lines.append(
-            "## Cross-project memory (read-only grants)"
-        )
-        lines.append(
-            "The following facts come from other projects via memory grants. "
-            "Use them as supplementary context only."
+            "The following facts come from other projects via memory grants. Use them as supplementary context only."
         )
         for fact in injection.granted_facts:
             lines.append(f"- {fact}")

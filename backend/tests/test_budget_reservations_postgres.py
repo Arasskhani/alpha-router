@@ -55,9 +55,7 @@ def test_image_transaction_releases_user_lock_before_settlement() -> None:
                 plan_id = plan.id
 
             async with AsyncSessionLocal() as request_db:
-                await request_db.execute(
-                    select(User).where(User.id == user_id).with_for_update()
-                )
+                await request_db.execute(select(User).where(User.id == user_id).with_for_update())
                 await images._close_image_request_transaction(request_db, success=True)
 
                 async def independent_billing() -> str:
@@ -86,9 +84,7 @@ def test_image_transaction_releases_user_lock_before_settlement() -> None:
                             BudgetReservation.subject_id == user_id,
                         )
                     )
-                    await db.execute(
-                        delete(PlanAssignment).where(PlanAssignment.user_id == user_id)
-                    )
+                    await db.execute(delete(PlanAssignment).where(PlanAssignment.user_id == user_id))
                     await db.execute(delete(User).where(User.id == user_id))
                 if plan_id is not None:
                     await db.execute(delete(BudgetPlan).where(BudgetPlan.id == plan_id))
@@ -320,16 +316,8 @@ def test_postgres_concurrent_user_and_key_reservations() -> None:
                         await db.execute(delete(PlanAssignment).where(PlanAssignment.user_id == user_id))
                         await db.execute(delete(User).where(User.id == user_id))
                     if key_id is not None:
-                        await db.execute(
-                            delete(RequestLog).where(
-                                RequestLog.alpha_router_api_key_id == key_id
-                            )
-                        )
-                        await db.execute(
-                            delete(AlphaRouterApiKey).where(
-                                AlphaRouterApiKey.id == key_id
-                            )
-                        )
+                        await db.execute(delete(RequestLog).where(RequestLog.alpha_router_api_key_id == key_id))
+                        await db.execute(delete(AlphaRouterApiKey).where(AlphaRouterApiKey.id == key_id))
                     if plan_id is not None:
                         await db.execute(delete(BudgetPlan).where(BudgetPlan.id == plan_id))
                     await db.commit()

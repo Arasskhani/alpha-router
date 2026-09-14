@@ -237,9 +237,7 @@ async def web_fetch_context(
     urls = list(dict.fromkeys(URL_RE.findall(text)))[:3]
     if not urls:
         return ""
-    blocks: list[str] = [
-        "Fetched page content for URLs in the user message. " + untrusted_preamble("page content")
-    ]
+    blocks: list[str] = ["Fetched page content for URLs in the user message. " + untrusted_preamble("page content")]
     for url in urls:
         try:
             content = await fetch_url_text(

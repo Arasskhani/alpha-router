@@ -66,8 +66,13 @@ async def _public_project(db):
     outsider = await _user(db, "outsider")
     db.add(
         Project(
-            id=PROJ, name="Shared notes", status="active", visibility="public",
-            created_by_user_id=owner.id, revision=1, acl_version=1,
+            id=PROJ,
+            name="Shared notes",
+            status="active",
+            visibility="public",
+            created_by_user_id=owner.id,
+            revision=1,
+            acl_version=1,
         )
     )
     db.add(ProjectMember(project_id=PROJ, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))
@@ -137,25 +142,27 @@ def test_public_viewer_chat_does_not_receive_project_memory():
                 from app.services.project_turn_planner import plan_project_turn
 
                 sess = ChatSession(
-                    id="pub-scope-sess", user_id=outsider.id, project_id=PROJ, title="t",
+                    id="pub-scope-sess",
+                    user_id=outsider.id,
+                    project_id=PROJ,
+                    title="t",
                 )
                 db.add(sess)
                 await db.flush()
                 msgs = [{"role": "user", "content": "what is the budget code?"}]
 
-                as_outsider = await plan_project_turn(
-                    db, msgs, user_id=outsider.id, chat_session_id=sess.id
-                )
+                as_outsider = await plan_project_turn(db, msgs, user_id=outsider.id, chat_session_id=sess.id)
                 assert "4711" not in "\n".join(str(m.get("content", "")) for m in as_outsider)
 
                 sess_member = ChatSession(
-                    id="pub-scope-sess-2", user_id=viewer.id, project_id=PROJ, title="t",
+                    id="pub-scope-sess-2",
+                    user_id=viewer.id,
+                    project_id=PROJ,
+                    title="t",
                 )
                 db.add(sess_member)
                 await db.flush()
-                as_member = await plan_project_turn(
-                    db, msgs, user_id=viewer.id, chat_session_id=sess_member.id
-                )
+                as_member = await plan_project_turn(db, msgs, user_id=viewer.id, chat_session_id=sess_member.id)
                 assert "4711" in "\n".join(str(m.get("content", "")) for m in as_member)
         finally:
             await engine.dispose()
@@ -171,8 +178,13 @@ def test_going_public_requires_typed_name_and_is_audited():
                 owner = await _user(db, "o2")
                 db.add(
                     Project(
-                        id="priv-1", name="Quarterly plan", status="active", visibility="private",
-                        created_by_user_id=owner.id, revision=1, acl_version=1,
+                        id="priv-1",
+                        name="Quarterly plan",
+                        status="active",
+                        visibility="private",
+                        created_by_user_id=owner.id,
+                        revision=1,
+                        acl_version=1,
                     )
                 )
                 db.add(ProjectMember(project_id="priv-1", user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))
@@ -182,21 +194,31 @@ def test_going_public_requires_typed_name_and_is_audited():
                     await update_project(db, project_id="priv-1", user=owner, visibility="public")
                 with pytest.raises(ProjectValidationError):
                     await update_project(
-                        db, project_id="priv-1", user=owner, visibility="public",
+                        db,
+                        project_id="priv-1",
+                        user=owner,
+                        visibility="public",
                         confirm_public_name="quarterly plan",  # case matters: it is a typed confirmation
                     )
                 assert (await db.get(Project, "priv-1")).visibility == "private"
 
                 out = await update_project(
-                    db, project_id="priv-1", user=owner, visibility="public",
+                    db,
+                    project_id="priv-1",
+                    user=owner,
+                    visibility="public",
                     confirm_public_name="Quarterly plan",
                 )
                 assert out["visibility"] == "public"
                 events = (
-                    await db.execute(
-                        select(ProjectAuditEvent.event_type).where(ProjectAuditEvent.project_id == "priv-1")
+                    (
+                        await db.execute(
+                            select(ProjectAuditEvent.event_type).where(ProjectAuditEvent.project_id == "priv-1")
+                        )
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
                 assert "project.visibility.public" in events
 
                 # Back to private and other edits never need the confirmation.

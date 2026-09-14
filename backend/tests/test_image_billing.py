@@ -85,9 +85,7 @@ async def _test_log_image_usage_writes_request_log_and_budget() -> None:
             model_id="google/gemini-2.5-flash-image-preview",
             ai_model=ai_model,
             provider_type="openrouter",
-            usage_source={
-                "usage": {"prompt_tokens": 1000, "completion_tokens": 500, "prompt_tokens_details": {}}
-            },
+            usage_source={"usage": {"prompt_tokens": 1000, "completion_tokens": 500, "prompt_tokens_details": {}}},
         )
         await log_image_usage(
             db,
@@ -209,9 +207,7 @@ async def _test_image_attempts_keep_individual_outcomes_and_quantities() -> None
         )
         await db.commit()
 
-        events = (
-            await db.execute(select(UsageEvent).order_by(UsageEvent.attempt_index))
-        ).scalars().all()
+        events = (await db.execute(select(UsageEvent).order_by(UsageEvent.attempt_index))).scalars().all()
         log_row = (await db.execute(select(RequestLog))).scalar_one()
         assert [(event.status, event.quantity) for event in events] == [
             ("failed", None),

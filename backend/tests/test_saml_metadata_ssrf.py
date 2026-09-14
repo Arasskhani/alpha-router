@@ -61,10 +61,7 @@ def test_validate_accepts_public_metadata_url_with_dns():
 
 
 def test_validate_accepts_xml_only_without_url_fetch():
-    xml = (
-        '<?xml version="1.0"?><EntityDescriptor entityID="https://idp.local">'
-        "</EntityDescriptor>"
-    )
+    xml = '<?xml version="1.0"?><EntityDescriptor entityID="https://idp.local"></EntityDescriptor>'
     data = saml_sp.validate_saml_config(
         {
             "enabled": True,

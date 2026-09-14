@@ -75,13 +75,9 @@ class ModelAccessAssignment(Base):
     )
 
     id = Column(Integer, primary_key=True)
-    model_id = Column(
-        Integer, ForeignKey("ai_models.id", ondelete="CASCADE"), nullable=False, index=True
-    )
+    model_id = Column(Integer, ForeignKey("ai_models.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
-    group_id = Column(
-        Integer, ForeignKey("user_groups.id", ondelete="CASCADE"), nullable=True, index=True
-    )
+    group_id = Column(Integer, ForeignKey("user_groups.id", ondelete="CASCADE"), nullable=True, index=True)
     assigned_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     model = relationship("AIModel", back_populates="access_assignments")

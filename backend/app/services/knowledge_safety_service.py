@@ -106,9 +106,7 @@ def scan_knowledge_text(texts: tuple[str, ...]) -> KnowledgeSafetyResult:
             start = max(0, match.start() - 80)
             end = min(len(text), match.end() + 80)
             excerpt = re.sub(r"\s+", " ", text[start:end]).strip()[:300]
-            matches.append(
-                SafetyMatch(rule_id=rule_id, severity=severity, excerpt=excerpt)
-            )
+            matches.append(SafetyMatch(rule_id=rule_id, severity=severity, excerpt=excerpt))
             score += weight
             if len(matches) >= 25:
                 break

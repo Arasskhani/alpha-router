@@ -190,6 +190,4 @@ class AgentToolAuditEvent(Base):
     event_type = Column(String(64), nullable=False, index=True)
     reason = Column(Text, nullable=True)
     payload = Column(JsonDocument, nullable=False, default=dict)
-    created_at = Column(
-        DateTime, nullable=False, default=datetime.datetime.utcnow, index=True
-    )
+    created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow, index=True)

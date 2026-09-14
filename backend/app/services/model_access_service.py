@@ -60,10 +60,10 @@ async def resolve_access_subject(
 
 async def _user_group_ids(db: AsyncSession, user_id: int) -> set[int]:
     rows = (
-        await db.execute(
-            select(user_group_members.c.group_id).where(user_group_members.c.user_id == user_id)
-        )
-    ).scalars().all()
+        (await db.execute(select(user_group_members.c.group_id).where(user_group_members.c.user_id == user_id)))
+        .scalars()
+        .all()
+    )
     return {int(g) for g in rows}
 
 
@@ -87,9 +87,7 @@ async def user_can_access_model(
                 or_(
                     ModelAccessAssignment.user_id == subject.user_id,
                     ModelAccessAssignment.group_id.in_(
-                        select(user_group_members.c.group_id).where(
-                            user_group_members.c.user_id == subject.user_id
-                        )
+                        select(user_group_members.c.group_id).where(user_group_members.c.user_id == subject.user_id)
                     ),
                 ),
             )
@@ -109,13 +107,9 @@ async def filter_models_for_subject(
     if not models:
         return []
     if subject.public_only or subject.user_id is None:
-        return [
-            m for m in models if (m.access_type or ACCESS_PUBLIC).strip().lower() != ACCESS_PRIVATE
-        ]
+        return [m for m in models if (m.access_type or ACCESS_PUBLIC).strip().lower() != ACCESS_PRIVATE]
 
-    private_ids = [
-        m.id for m in models if (m.access_type or ACCESS_PUBLIC).strip().lower() == ACCESS_PRIVATE
-    ]
+    private_ids = [m.id for m in models if (m.access_type or ACCESS_PUBLIC).strip().lower() == ACCESS_PRIVATE]
     if not private_ids:
         return models
 
@@ -168,11 +162,7 @@ async def set_model_access(
 
     if clean_users:
         existing_users = set(
-            (
-                await db.execute(
-                    select(User.id).where(User.id.in_(clean_users), User.deleted_at.is_(None))
-                )
-            )
+            (await db.execute(select(User.id).where(User.id.in_(clean_users), User.deleted_at.is_(None))))
             .scalars()
             .all()
         )
@@ -190,9 +180,7 @@ async def set_model_access(
 
     if clean_groups:
         existing_groups = set(
-            (await db.execute(select(UserGroup.id).where(UserGroup.id.in_(clean_groups))))
-            .scalars()
-            .all()
+            (await db.execute(select(UserGroup.id).where(UserGroup.id.in_(clean_groups)))).scalars().all()
         )
         for gid in clean_groups:
             if gid not in existing_groups:
@@ -224,9 +212,7 @@ async def bulk_set_access_type(
     return result.rowcount or 0
 
 
-async def list_assignment_counts(
-    db: AsyncSession, model_ids: list[int]
-) -> dict[int, dict[str, int]]:
+async def list_assignment_counts(db: AsyncSession, model_ids: list[int]) -> dict[int, dict[str, int]]:
     if not model_ids:
         return {}
     rows = (
@@ -251,18 +237,16 @@ async def get_model_access_detail(db: AsyncSession, model_id: int) -> dict | Non
     if not model:
         return None
     assignments = (
-        await db.execute(
-            select(ModelAccessAssignment).where(ModelAccessAssignment.model_id == model_id)
-        )
-    ).scalars().all()
+        (await db.execute(select(ModelAccessAssignment).where(ModelAccessAssignment.model_id == model_id)))
+        .scalars()
+        .all()
+    )
     user_ids = [a.user_id for a in assignments if a.user_id is not None]
     group_ids = [a.group_id for a in assignments if a.group_id is not None]
 
     users: list[dict] = []
     if user_ids:
-        urows = (
-            await db.execute(select(User).where(User.id.in_(user_ids), User.deleted_at.is_(None)))
-        ).scalars().all()
+        urows = (await db.execute(select(User).where(User.id.in_(user_ids), User.deleted_at.is_(None)))).scalars().all()
         users = [
             {
                 "id": u.id,

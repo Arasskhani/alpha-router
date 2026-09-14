@@ -154,9 +154,7 @@ def test_viewer_cannot_write_composer_prefs():
         try:
             async with factory() as db:
                 owner, _contrib, viewer = await _setup(db)
-                created = await create_project_chat_session(
-                    db, project_id=PROJ_ID, user=owner, title="Shared"
-                )
+                created = await create_project_chat_session(db, project_id=PROJ_ID, user=owner, title="Shared")
                 try:
                     await upsert_project_chat_composer_prefs(
                         db,

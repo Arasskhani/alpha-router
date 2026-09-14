@@ -68,12 +68,8 @@ async def _api_flow() -> None:
                 sequence=2,
             )
         )
-        created, _ = await create_memory(
-            db, user.id, "Prefers dark mode", source_session_id=session.id
-        )
-        job = await schedule_extraction(
-            db, user_id=user.id, session_id=session.id, watermark_sequence=2
-        )
+        created, _ = await create_memory(db, user.id, "Prefers dark mode", source_session_id=session.id)
+        job = await schedule_extraction(db, user_id=user.id, session_id=session.id, watermark_sequence=2)
         await db.commit()
         user_id = user.id
         memory_id = created["id"]
@@ -100,14 +96,10 @@ async def _api_flow() -> None:
         posted = await client.post("/api/user/memories", json={"content": "manual"})
         assert posted.status_code in (404, 405)
 
-        patched_content = await client.patch(
-            f"/api/user/memories/{memory_id}", json={"content": "hacked"}
-        )
+        patched_content = await client.patch(f"/api/user/memories/{memory_id}", json={"content": "hacked"})
         assert patched_content.status_code == 400
 
-        patched = await client.patch(
-            f"/api/user/memories/{memory_id}", json={"enabled": False}
-        )
+        patched = await client.patch(f"/api/user/memories/{memory_id}", json={"enabled": False})
         assert patched.status_code == 200
         assert patched.json()["enabled"] is False
 

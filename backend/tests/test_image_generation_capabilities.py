@@ -185,93 +185,126 @@ def _raw(input_modalities, output_modalities=("text",)):
 
 def test_supports_vision_true_from_catalog_modalities():
     # Multimodal chat model that accepts image input.
-    assert supports_vision(
-        external_id="google/gemini-2.5-flash",
-        is_image_model=False,
-        pricing_raw=_raw(["text", "image"], ["text"]),
-    ) is True
+    assert (
+        supports_vision(
+            external_id="google/gemini-2.5-flash",
+            is_image_model=False,
+            pricing_raw=_raw(["text", "image"], ["text"]),
+        )
+        is True
+    )
 
 
 def test_supports_vision_false_for_text_only_catalog():
     # Catalog says text-only input -> not a vision model.
-    assert supports_vision(
-        external_id="meta-llama/llama-3.1-70b-instruct",
-        is_image_model=False,
-        pricing_raw=_raw(["text"], ["text"]),
-    ) is False
+    assert (
+        supports_vision(
+            external_id="meta-llama/llama-3.1-70b-instruct",
+            is_image_model=False,
+            pricing_raw=_raw(["text"], ["text"]),
+        )
+        is False
+    )
 
 
 def test_supports_vision_false_for_image_generation_model():
     # Image-generation models go through a separate image-to-image path.
-    assert supports_vision(
-        external_id="black-forest-labs/flux-1.1-pro",
-        is_image_model=True,
-        pricing_raw=_raw(["text"], ["image"]),
-    ) is False
+    assert (
+        supports_vision(
+            external_id="black-forest-labs/flux-1.1-pro",
+            is_image_model=True,
+            pricing_raw=_raw(["text"], ["image"]),
+        )
+        is False
+    )
     # Even without the stored flag, the image-id heuristic should exclude it.
-    assert supports_vision(
-        external_id="openai/dall-e-3",
-        is_image_model=False,
-        pricing_raw=None,
-    ) is False
+    assert (
+        supports_vision(
+            external_id="openai/dall-e-3",
+            is_image_model=False,
+            pricing_raw=None,
+        )
+        is False
+    )
 
 
 def test_supports_vision_auto_router_from_catalog():
     # OpenRouter auto-router advertises image input modality.
-    assert supports_vision(
-        external_id="openrouter/auto",
-        is_image_model=False,
-        pricing_raw=_raw(["image", "text"], ["text"]),
-    ) is True
+    assert (
+        supports_vision(
+            external_id="openrouter/auto",
+            is_image_model=False,
+            pricing_raw=_raw(["image", "text"], ["text"]),
+        )
+        is True
+    )
 
 
 def test_supports_vision_auto_router_without_catalog():
     # Fallback heuristic: auto-router should be treated as vision-capable.
-    assert supports_vision(
-        external_id="openrouter/auto",
-        is_image_model=False,
-        pricing_raw=None,
-    ) is True
+    assert (
+        supports_vision(
+            external_id="openrouter/auto",
+            is_image_model=False,
+            pricing_raw=None,
+        )
+        is True
+    )
 
 
 def test_supports_vision_heuristic_gemini_without_catalog():
-    assert supports_vision(
-        external_id="google/gemini-2.5-flash",
-        is_image_model=False,
-        pricing_raw=None,
-    ) is True
+    assert (
+        supports_vision(
+            external_id="google/gemini-2.5-flash",
+            is_image_model=False,
+            pricing_raw=None,
+        )
+        is True
+    )
 
 
 def test_supports_vision_heuristic_claude_without_catalog():
-    assert supports_vision(
-        external_id="anthropic/claude-3.5-sonnet",
-        is_image_model=False,
-        pricing_raw=None,
-    ) is True
+    assert (
+        supports_vision(
+            external_id="anthropic/claude-3.5-sonnet",
+            is_image_model=False,
+            pricing_raw=None,
+        )
+        is True
+    )
 
 
 def test_supports_vision_heuristic_gpt4o_without_catalog():
-    assert supports_vision(
-        external_id="openai/gpt-4o",
-        is_image_model=False,
-        pricing_raw=None,
-    ) is True
+    assert (
+        supports_vision(
+            external_id="openai/gpt-4o",
+            is_image_model=False,
+            pricing_raw=None,
+        )
+        is True
+    )
 
 
 def test_supports_vision_false_for_plain_text_model_without_catalog():
-    assert supports_vision(
-        external_id="meta-llama/llama-3.1-70b-instruct",
-        is_image_model=False,
-        pricing_raw=None,
-    ) is False
+    assert (
+        supports_vision(
+            external_id="meta-llama/llama-3.1-70b-instruct",
+            is_image_model=False,
+            pricing_raw=None,
+        )
+        is False
+    )
 
 
 def test_supports_vision_false_for_embedding_model():
-    assert supports_vision(
-        external_id="openai/text-embedding-3-large",
-        is_image_model=False,
-        pricing_raw=_raw(["text"], []),
-    ) is False
+    assert (
+        supports_vision(
+            external_id="openai/text-embedding-3-large",
+            is_image_model=False,
+            pricing_raw=_raw(["text"], []),
+        )
+        is False
+    )
 
 
 def test_supports_vision_invalid_legacy_id_not_forced_true():
@@ -292,8 +325,11 @@ def test_supports_vision_invalid_legacy_id_not_forced_true():
 
 def test_supports_vision_text_only_with_image_output_excluded():
     # A text-to-image model (text in, image out) is not a chat vision model.
-    assert supports_vision(
-        external_id="black-forest-labs/flux-1.1-pro",
-        is_image_model=False,
-        pricing_raw=_raw(["text"], ["image"]),
-    ) is False
+    assert (
+        supports_vision(
+            external_id="black-forest-labs/flux-1.1-pro",
+            is_image_model=False,
+            pricing_raw=_raw(["text"], ["image"]),
+        )
+        is False
+    )

@@ -85,8 +85,7 @@ class VideoProviderAdapter(Protocol):
         api_key: str,
         base_url: str | None,
         request: NormalizedVideoRequest,
-    ) -> ProviderJobRef:
-        ...
+    ) -> ProviderJobRef: ...
 
     async def poll(
         self,
@@ -94,8 +93,7 @@ class VideoProviderAdapter(Protocol):
         api_key: str,
         base_url: str | None,
         job: ProviderJobRef,
-    ) -> ProviderJobSnapshot:
-        ...
+    ) -> ProviderJobSnapshot: ...
 
     async def cancel(
         self,
@@ -103,8 +101,7 @@ class VideoProviderAdapter(Protocol):
         api_key: str,
         base_url: str | None,
         job: ProviderJobRef,
-    ) -> bool:
-        ...
+    ) -> bool: ...
 
     async def fetch_result(
         self,
@@ -112,9 +109,6 @@ class VideoProviderAdapter(Protocol):
         api_key: str,
         base_url: str | None,
         snapshot: ProviderJobSnapshot,
-    ) -> ProviderAssetRef:
-        ...
+    ) -> ProviderAssetRef: ...
 
-    def normalize_usage(self, snapshot: ProviderJobSnapshot) -> VideoUsage:
-        ...
-
+    def normalize_usage(self, snapshot: ProviderJobSnapshot) -> VideoUsage: ...

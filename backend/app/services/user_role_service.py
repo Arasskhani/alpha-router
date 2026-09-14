@@ -25,12 +25,16 @@ async def get_user_role_slugs(db: AsyncSession, user_id: int) -> list[str]:
     Users with no assignment rows are treated as the end-user role.
     """
     rows = (
-        await db.execute(
-            select(UserRoleAssignment.role_slug)
-            .where(UserRoleAssignment.user_id == user_id)
-            .order_by(UserRoleAssignment.role_slug)
+        (
+            await db.execute(
+                select(UserRoleAssignment.role_slug)
+                .where(UserRoleAssignment.user_id == user_id)
+                .order_by(UserRoleAssignment.role_slug)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     if rows:
         return _normalize_role_list([str(r) for r in rows])
     return [USER_SLUG]
@@ -105,9 +109,7 @@ async def count_full_administrators(db: AsyncSession) -> int:
 
 
 async def count_active_full_administrators(db: AsyncSession) -> int:
-    user_ids = (
-        await db.execute(select(User.id).where(User.is_active.is_(True)))
-    ).scalars().all()
+    user_ids = (await db.execute(select(User.id).where(User.is_active.is_(True)))).scalars().all()
     total = 0
     for uid in user_ids:
         if uid is not None and await user_has_full_administrator(db, int(uid)):

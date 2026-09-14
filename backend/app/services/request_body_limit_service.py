@@ -92,16 +92,16 @@ def read_published_request_body_limit_mb() -> int | None:
 # base64 images for vision models. Everything else is ordinary JSON and gets
 # ``max_json_body_bytes``.
 LARGE_BODY_PATH_PREFIXES: tuple[str, ...] = (
-    "/api/chat/",            # completions (inline images), attachments/process, voice
-    "/v1/",                  # OpenAI-compatible gateway (inline images, embeddings input)
-    "/api/images",           # image edit/reference payloads
-    "/api/videos",           # reference images
-    "/api/speech",           # long TTS inputs
-    "/api/projects/",        # resource / media uploads
-    "/api/user/media",       # media library uploads
-    "/api/user/chats",       # full-session sync payloads
+    "/api/chat/",  # completions (inline images), attachments/process, voice
+    "/v1/",  # OpenAI-compatible gateway (inline images, embeddings input)
+    "/api/images",  # image edit/reference payloads
+    "/api/videos",  # reference images
+    "/api/speech",  # long TTS inputs
+    "/api/projects/",  # resource / media uploads
+    "/api/user/media",  # media library uploads
+    "/api/user/chats",  # full-session sync payloads
     "/api/user/chat-sessions",
-    "/api/admin/knowledge/", # document uploads
+    "/api/admin/knowledge/",  # document uploads
     "/api/admin/security/tls/",  # certificate bundles
 )
 

@@ -93,8 +93,7 @@ def test_failure_reasons_are_classified_without_vendor_names():
     assert classify_failure_reason("boom") == "provider_error"
     assert (
         classify_failure_reason(
-            'NotFoundError - {"error":{"message":"This model is only available via '
-            'the Batch API"}}'
+            'NotFoundError - {"error":{"message":"This model is only available via the Batch API"}}'
         )
         == "model_unavailable"
     )
@@ -209,8 +208,7 @@ async def _run_unavailable_model_backs_off() -> None:
                 model_id=model.id,
                 success=False,
                 source="probe",
-                detail='NotFoundError - {"error":{"message":"This model is only available '
-                'via the Batch API"}}',
+                detail='NotFoundError - {"error":{"message":"This model is only available via the Batch API"}}',
             )
             await db.commit()
 
@@ -257,7 +255,9 @@ async def _run_override_is_audited() -> list[ModelToolCompatibilityEvent]:
                         .where(ModelToolCompatibilityEvent.compatibility_id == row.id)
                         .order_by(ModelToolCompatibilityEvent.id)
                     )
-                ).scalars().all()
+                )
+                .scalars()
+                .all()
             )
     finally:
         await engine.dispose()
@@ -324,12 +324,16 @@ async def _run_hard_failure_quarantine() -> None:
             assert blocked.value.status_code == 409
 
             events = (
-                await db.execute(
-                    select(ModelToolCompatibilityEvent).where(
-                        ModelToolCompatibilityEvent.compatibility_id == row.id
+                (
+                    await db.execute(
+                        select(ModelToolCompatibilityEvent).where(
+                            ModelToolCompatibilityEvent.compatibility_id == row.id
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             assert len(events) == 1
             assert events[0].source == "runtime"
     finally:
@@ -523,15 +527,11 @@ async def _run_registry_bootstrap() -> None:
             image_model = await _model(db, connection, "vendor/flux", is_image_model=True)
             await db.commit()
 
-            created = await ensure_model_compatibility_rows(
-                db, [text_model, image_model]
-            )
+            created = await ensure_model_compatibility_rows(db, [text_model, image_model])
             await db.commit()
             assert created == 1
 
-            rows = (
-                await db.execute(select(ModelToolCompatibility))
-            ).scalars().all()
+            rows = (await db.execute(select(ModelToolCompatibility))).scalars().all()
             assert [row.external_model_id for row in rows] == ["vendor/text"]
             assert rows[0].tool == CODE_INTERPRETER_TOOL
             assert rows[0].status == STATUS_UNKNOWN
@@ -567,9 +567,7 @@ async def _run_event_pruning() -> None:
             )
             event = (
                 await db.execute(
-                    select(ModelToolCompatibilityEvent).where(
-                        ModelToolCompatibilityEvent.compatibility_id == row.id
-                    )
+                    select(ModelToolCompatibilityEvent).where(ModelToolCompatibilityEvent.compatibility_id == row.id)
                 )
             ).scalar_one()
             event.created_at = datetime.datetime.utcnow() - datetime.timedelta(days=200)
@@ -578,11 +576,14 @@ async def _run_event_pruning() -> None:
             removed = await prune_compatibility_events(db, retention_days=90)
             await db.commit()
             assert removed == 1
-            assert await get_compatibility(
-                db,
-                connection_id=connection.id,
-                external_model_id=model.external_id,
-            ) is not None
+            assert (
+                await get_compatibility(
+                    db,
+                    connection_id=connection.id,
+                    external_model_id=model.external_id,
+                )
+                is not None
+            )
     finally:
         await engine.dispose()
 

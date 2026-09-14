@@ -84,9 +84,7 @@ def normalize_image(blob: bytes) -> tuple[bytes, str, str]:
                 pixels = rgb.tobytes()
                 output = io.BytesIO()
                 rgb.save(output, format="PNG", optimize=True)
-                digest = sha256(
-                    f"{width}x{height}".encode() + rgb.mode.encode() + pixels
-                ).hexdigest()
+                digest = sha256(f"{width}x{height}".encode() + rgb.mode.encode() + pixels).hexdigest()
                 return output.getvalue(), "image/png", digest
     except ImagePolicyError:
         raise

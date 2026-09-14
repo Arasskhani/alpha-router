@@ -136,9 +136,7 @@ def test_viewer_upload_denied():
             async with factory() as db:
                 _, _, viewer = await _setup(db, PROJ_A)
                 try:
-                    await require_capability(
-                        db, project_id=PROJ_A, user=viewer, capability="media.upload"
-                    )
+                    await require_capability(db, project_id=PROJ_A, user=viewer, capability="media.upload")
                     assert False
                 except HTTPException as exc:
                     assert exc.status_code == 403
@@ -213,9 +211,7 @@ def test_cross_project_media_isolation():
                     content_bytes=b"secret-a",
                     object_store=store,
                 )
-                items_b, total_b = await list_project_media(
-                    db, project_id=PROJ_B, user=owner_b
-                )
+                items_b, total_b = await list_project_media(db, project_id=PROJ_B, user=owner_b)
                 assert total_b == 0
                 assert items_b == []
 
@@ -354,9 +350,7 @@ def test_hard_delete_cascade_vs_user_delete(monkeypatch):
                 assert row is not None
                 assert row.uploaded_by_user_id is None
 
-                await hard_delete_project(
-                    db, project_id=PROJ_A, user=owner, object_store=store
-                )
+                await hard_delete_project(db, project_id=PROJ_A, user=owner, object_store=store)
                 assert await db.get(ProjectMediaAsset, media_id) is None
                 assert uploaded["storagePath"] in store.deleted
         finally:
@@ -381,9 +375,7 @@ def test_removed_member_cannot_read_but_file_remains():
                     content_bytes=b"kept-bytes",
                     object_store=store,
                 )
-                await remove_member(
-                    db, project_id=PROJ_A, user=owner, target_user_id=contrib.id
-                )
+                await remove_member(db, project_id=PROJ_A, user=owner, target_user_id=contrib.id)
                 row = await db.get(ProjectMediaAsset, uploaded["id"])
                 assert row is not None
                 try:

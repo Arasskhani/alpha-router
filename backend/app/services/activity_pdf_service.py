@@ -174,8 +174,7 @@ def _launch_browser(playwright):
         return playwright.chromium.launch(**launch_kwargs)
     except Exception as bundled_exc:
         raise ActivityPdfError(
-            "No Chromium browser available for PDF export. Install Google Chrome or run: "
-            "playwright install chromium"
+            "No Chromium browser available for PDF export. Install Google Chrome or run: playwright install chromium"
         ) from bundled_exc
 
 

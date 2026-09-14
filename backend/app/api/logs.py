@@ -169,12 +169,8 @@ def _apply_log_filters(
         q = q.where(RequestLog.user_api_key_id == user_api_key_id)
     if username:
         term = username.strip()
-        key_match = select(AlphaRouterApiKey.id).where(
-            AlphaRouterApiKey.name.contains(term)
-        )
-        personal_key_match = select(UserApiKey.id).where(
-            UserApiKey.name.contains(term)
-        )
+        key_match = select(AlphaRouterApiKey.id).where(AlphaRouterApiKey.name.contains(term))
+        personal_key_match = select(UserApiKey.id).where(UserApiKey.name.contains(term))
         q = q.where(
             or_(
                 RequestLog.username.contains(term),
@@ -291,17 +287,13 @@ async def _serialize_log_rows(db: AsyncSession, rows: list[RequestLog]) -> list[
     key_ids = {r.alpha_router_api_key_id for r in rows if r.alpha_router_api_key_id}
     key_map: dict[int, AlphaRouterApiKey] = {}
     if key_ids:
-        keys = (
-            await db.execute(select(AlphaRouterApiKey).where(AlphaRouterApiKey.id.in_(key_ids)))
-        ).scalars().all()
+        keys = (await db.execute(select(AlphaRouterApiKey).where(AlphaRouterApiKey.id.in_(key_ids)))).scalars().all()
         key_map = {k.id: k for k in keys}
 
     user_key_ids = {r.user_api_key_id for r in rows if r.user_api_key_id}
     user_key_map: dict[int, UserApiKey] = {}
     if user_key_ids:
-        user_keys = (
-            await db.execute(select(UserApiKey).where(UserApiKey.id.in_(user_key_ids)))
-        ).scalars().all()
+        user_keys = (await db.execute(select(UserApiKey).where(UserApiKey.id.in_(user_key_ids)))).scalars().all()
         user_key_map = {k.id: k for k in user_keys}
 
     items = []
@@ -413,36 +405,48 @@ async def admin_logs_filter_options(
 ):
     """Distinct usernames, API key names, and models present in request logs (for filter comboboxes)."""
     usernames = (
-        await db.execute(
-            select(RequestLog.username)
-            .where(RequestLog.username.isnot(None), RequestLog.username != "")
-            .distinct()
-            .order_by(RequestLog.username)
+        (
+            await db.execute(
+                select(RequestLog.username)
+                .where(RequestLog.username.isnot(None), RequestLog.username != "")
+                .distinct()
+                .order_by(RequestLog.username)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     models = (
-        await db.execute(
-            select(RequestLog.model_id)
-            .where(RequestLog.model_id.isnot(None), RequestLog.model_id != "")
-            .distinct()
-            .order_by(RequestLog.model_id)
+        (
+            await db.execute(
+                select(RequestLog.model_id)
+                .where(RequestLog.model_id.isnot(None), RequestLog.model_id != "")
+                .distinct()
+                .order_by(RequestLog.model_id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     api_keys = (
-        await db.execute(
-            select(AlphaRouterApiKey.name)
-            .join(
-                RequestLog,
-                RequestLog.alpha_router_api_key_id == AlphaRouterApiKey.id,
+        (
+            await db.execute(
+                select(AlphaRouterApiKey.name)
+                .join(
+                    RequestLog,
+                    RequestLog.alpha_router_api_key_id == AlphaRouterApiKey.id,
+                )
+                .where(
+                    AlphaRouterApiKey.name.isnot(None),
+                    AlphaRouterApiKey.name != "",
+                )
+                .distinct()
+                .order_by(AlphaRouterApiKey.name)
             )
-            .where(
-                AlphaRouterApiKey.name.isnot(None),
-                AlphaRouterApiKey.name != "",
-            )
-            .distinct()
-            .order_by(AlphaRouterApiKey.name)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     identity_options: list[str] = []
     seen: set[str] = set()
@@ -586,13 +590,17 @@ async def configured_cost_pricing(
     _: User = Depends(require_api_logs),
 ):
     rows = (
-        await db.execute(
-            select(PricingSnapshot)
-            .where(PricingSnapshot.source.in_(("admin", "contract")))
-            .order_by(PricingSnapshot.effective_at.desc(), PricingSnapshot.id.desc())
-            .limit(500)
+        (
+            await db.execute(
+                select(PricingSnapshot)
+                .where(PricingSnapshot.source.in_(("admin", "contract")))
+                .order_by(PricingSnapshot.effective_at.desc(), PricingSnapshot.id.desc())
+                .limit(500)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return {
         "items": [
             {
@@ -604,9 +612,7 @@ async def configured_cost_pricing(
                 "currency": row.currency,
                 "source": row.source,
                 "pricing": json.loads(row.pricing_json),
-                "effective_at": (
-                    row.effective_at.isoformat() if row.effective_at else None
-                ),
+                "effective_at": (row.effective_at.isoformat() if row.effective_at else None),
                 "expires_at": row.expires_at.isoformat() if row.expires_at else None,
             }
             for row in rows
@@ -624,10 +630,7 @@ async def create_cost_pricing(
         connection = await db.get(Connection, body.connection_id)
         if connection is None:
             raise HTTPException(status_code=404, detail="Connection not found")
-        if (
-            (connection.provider_type or "").strip().lower()
-            != body.provider_type.strip().lower()
-        ):
+        if (connection.provider_type or "").strip().lower() != body.provider_type.strip().lower():
             raise HTTPException(
                 status_code=400,
                 detail="connection_id does not belong to provider_type",
@@ -679,42 +682,25 @@ async def cost_accounting_summary(
         )
     ).all()
     unpriced = (
-        await db.execute(
-            select(func.count(UsageEvent.id)).where(
-                UsageEvent.final_cost_usd.is_(None)
-            )
-        )
+        await db.execute(select(func.count(UsageEvent.id)).where(UsageEvent.final_cost_usd.is_(None)))
     ).scalar_one()
-    ledger_total = (
-        await db.execute(
-            select(func.coalesce(func.sum(LedgerEntry.amount_usd), 0))
-        )
-    ).scalar_one()
+    ledger_total = (await db.execute(select(func.coalesce(func.sum(LedgerEntry.amount_usd), 0)))).scalar_one()
     legacy_total = (
         await db.execute(
-            select(func.coalesce(func.sum(RequestLog.total_cost_usd), 0)).where(
-                RequestLog.usage_operation_id.is_(None)
-            )
+            select(func.coalesce(func.sum(RequestLog.total_cost_usd), 0)).where(RequestLog.usage_operation_id.is_(None))
         )
     ).scalar_one()
-    ledger_started_at = (
-        await db.execute(select(func.min(UsageOperation.started_at)))
-    ).scalar_one()
+    ledger_started_at = (await db.execute(select(func.min(UsageOperation.started_at)))).scalar_one()
     recent_runs = (
-        await db.execute(
-            select(ReconciliationRun)
-            .order_by(ReconciliationRun.started_at.desc())
-            .limit(10)
-        )
-    ).scalars().all()
+        (await db.execute(select(ReconciliationRun).order_by(ReconciliationRun.started_at.desc()).limit(10)))
+        .scalars()
+        .all()
+    )
     return {
         "ledger_total_usd": float(ledger_total or 0),
         "legacy_total_usd": float(legacy_total or 0),
-        "combined_total_usd": float(ledger_total or 0)
-        + float(legacy_total or 0),
-        "ledger_started_at": (
-            ledger_started_at.isoformat() if ledger_started_at else None
-        ),
+        "combined_total_usd": float(ledger_total or 0) + float(legacy_total or 0),
+        "ledger_started_at": (ledger_started_at.isoformat() if ledger_started_at else None),
         "unpriced_event_count": int(unpriced or 0),
         "by_source": [
             {
@@ -758,11 +744,7 @@ async def admin_log_export(
 
     provider_map, key_map, user_key_map = await resolve_log_export_maps(db, [log_row])
     provider = provider_map.get((log_row.model_id or "").strip())
-    router_key = (
-        key_map.get(log_row.alpha_router_api_key_id)
-        if log_row.alpha_router_api_key_id
-        else None
-    )
+    router_key = key_map.get(log_row.alpha_router_api_key_id) if log_row.alpha_router_api_key_id else None
 
     operation = None
     events: list[UsageEvent] = []
@@ -770,17 +752,17 @@ async def admin_log_export(
     if log_row.usage_operation_id:
         operation = await db.get(UsageOperation, log_row.usage_operation_id)
         events = (
-            await db.execute(
-                select(UsageEvent)
-                .where(UsageEvent.operation_id == log_row.usage_operation_id)
-                .order_by(UsageEvent.attempt_index, UsageEvent.started_at)
+            (
+                await db.execute(
+                    select(UsageEvent)
+                    .where(UsageEvent.operation_id == log_row.usage_operation_id)
+                    .order_by(UsageEvent.attempt_index, UsageEvent.started_at)
+                )
             )
-        ).scalars().all()
-        providers = {
-            (event.provider_type or "").strip()
-            for event in events
-            if (event.provider_type or "").strip()
-        }
+            .scalars()
+            .all()
+        )
+        providers = {(event.provider_type or "").strip() for event in events if (event.provider_type or "").strip()}
         if len(providers) == 1:
             provider = next(iter(providers))
         elif len(providers) > 1:
@@ -788,12 +770,14 @@ async def admin_log_export(
         event_ids = [event.id for event in events]
         if event_ids:
             line_rows = (
-                await db.execute(
-                    select(CostLineItem)
-                    .where(CostLineItem.usage_event_id.in_(event_ids))
-                    .order_by(CostLineItem.id)
+                (
+                    await db.execute(
+                        select(CostLineItem).where(CostLineItem.usage_event_id.in_(event_ids)).order_by(CostLineItem.id)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             for line in line_rows:
                 lines_by_event.setdefault(line.usage_event_id, []).append(line)
 
@@ -827,21 +811,25 @@ async def _cost_details_payload(db: AsyncSession, log_row: RequestLog) -> dict:
     if operation is None:
         raise HTTPException(status_code=404, detail="Usage operation not found")
     events = (
-        await db.execute(
-            select(UsageEvent)
-            .where(UsageEvent.operation_id == operation.id)
-            .order_by(UsageEvent.attempt_index, UsageEvent.started_at)
+        (
+            await db.execute(
+                select(UsageEvent)
+                .where(UsageEvent.operation_id == operation.id)
+                .order_by(UsageEvent.attempt_index, UsageEvent.started_at)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     event_ids = [event.id for event in events]
     line_rows = (
         (
             await db.execute(
-                select(CostLineItem)
-                .where(CostLineItem.usage_event_id.in_(event_ids))
-                .order_by(CostLineItem.id)
+                select(CostLineItem).where(CostLineItem.usage_event_id.in_(event_ids)).order_by(CostLineItem.id)
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
         if event_ids
         else []
     )
@@ -855,21 +843,13 @@ async def _cost_details_payload(db: AsyncSession, log_row: RequestLog) -> dict:
             "status": operation.status,
             "total_cost_usd": float(operation.total_cost_usd or 0),
             "provider_cost_usd": (
-                float(operation.provider_cost_usd)
-                if operation.provider_cost_usd is not None
-                else None
+                float(operation.provider_cost_usd) if operation.provider_cost_usd is not None else None
             ),
             "calculated_cost_usd": (
-                float(operation.calculated_cost_usd)
-                if operation.calculated_cost_usd is not None
-                else None
+                float(operation.calculated_cost_usd) if operation.calculated_cost_usd is not None else None
             ),
             "unpriced_event_count": int(operation.unpriced_event_count or 0),
-            "reconciled_at": (
-                operation.reconciled_at.isoformat()
-                if operation.reconciled_at
-                else None
-            ),
+            "reconciled_at": (operation.reconciled_at.isoformat() if operation.reconciled_at else None),
         },
         "events": [
             {
@@ -886,30 +866,16 @@ async def _cost_details_payload(db: AsyncSession, log_row: RequestLog) -> dict:
                 "cached_tokens": event.cached_tokens,
                 "cache_write_tokens": event.cache_write_tokens,
                 "reasoning_tokens": event.reasoning_tokens,
-                "provider_cost_usd": (
-                    float(event.provider_cost_usd)
-                    if event.provider_cost_usd is not None
-                    else None
-                ),
+                "provider_cost_usd": (float(event.provider_cost_usd) if event.provider_cost_usd is not None else None),
                 "calculated_cost_usd": (
-                    float(event.calculated_cost_usd)
-                    if event.calculated_cost_usd is not None
-                    else None
+                    float(event.calculated_cost_usd) if event.calculated_cost_usd is not None else None
                 ),
-                "final_cost_usd": (
-                    float(event.final_cost_usd)
-                    if event.final_cost_usd is not None
-                    else None
-                ),
+                "final_cost_usd": (float(event.final_cost_usd) if event.final_cost_usd is not None else None),
                 "cost_source": event.cost_source,
                 "cost_confidence": event.cost_confidence,
-                "reconciliation_attempts": int(
-                    event.reconciliation_attempts or 0
-                ),
+                "reconciliation_attempts": int(event.reconciliation_attempts or 0),
                 "last_reconciliation_attempt_at": (
-                    event.last_reconciliation_attempt_at.isoformat()
-                    if event.last_reconciliation_attempt_at
-                    else None
+                    event.last_reconciliation_attempt_at.isoformat() if event.last_reconciliation_attempt_at else None
                 ),
                 "error_message": event.error_message,
                 "line_items": [
@@ -917,16 +883,8 @@ async def _cost_details_payload(db: AsyncSession, log_row: RequestLog) -> dict:
                         "category": line.category,
                         "quantity": line.quantity,
                         "unit": line.unit,
-                        "unit_price_usd": (
-                            float(line.unit_price_usd)
-                            if line.unit_price_usd is not None
-                            else None
-                        ),
-                        "cost_usd": (
-                            float(line.cost_usd)
-                            if line.cost_usd is not None
-                            else None
-                        ),
+                        "unit_price_usd": (float(line.unit_price_usd) if line.unit_price_usd is not None else None),
+                        "cost_usd": (float(line.cost_usd) if line.cost_usd is not None else None),
                         "pricing_source": line.pricing_source,
                     }
                     for line in lines_by_event.get(event.id, [])
@@ -1020,10 +978,7 @@ async def reconcile_costs(
         if (
             event is None
             or (event.provider_type or "").lower() != provider
-            or (
-                body.connection_id is not None
-                and event.connection_id != body.connection_id
-            )
+            or (body.connection_id is not None and event.connection_id != body.connection_id)
         ):
             unmatched += 1
             continue
@@ -1099,13 +1054,17 @@ async def user_logs_route(
     limit: int = Query(200, le=500),
 ):
     rows = (
-        await db.execute(
-            select(RequestLog)
-            .where(RequestLog.user_id == user.id)
-            .order_by(RequestLog.request_time.desc())
-            .limit(limit)
+        (
+            await db.execute(
+                select(RequestLog)
+                .where(RequestLog.user_id == user.id)
+                .order_by(RequestLog.request_time.desc())
+                .limit(limit)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [_log_row(r) for r in rows]
 
 

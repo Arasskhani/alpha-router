@@ -46,9 +46,7 @@ def _validate_custom_prompt(text: str | None) -> str | None:
         return None
     cleaned = text.strip()
     if len(cleaned) > MAX_CUSTOM_PROMPT_CHARS:
-        raise ValueError(
-            f"Custom prompt exceeds {MAX_CUSTOM_PROMPT_CHARS} characters"
-        )
+        raise ValueError(f"Custom prompt exceeds {MAX_CUSTOM_PROMPT_CHARS} characters")
     return cleaned or None
 
 
@@ -58,9 +56,7 @@ def _validate_grounding_policy(policy: dict | None) -> dict:
     if not isinstance(policy, dict):
         raise ValueError("Grounding policy must be a JSON object")
     if len(policy) > MAX_GROUNDING_POLICY_KEYS:
-        raise ValueError(
-            f"Grounding policy exceeds {MAX_GROUNDING_POLICY_KEYS} keys"
-        )
+        raise ValueError(f"Grounding policy exceeds {MAX_GROUNDING_POLICY_KEYS} keys")
     # Shallow-copy and ensure all keys/values are JSON-serialisable.
     try:
         return json.loads(json.dumps(policy, ensure_ascii=False))
@@ -160,9 +156,7 @@ async def update_project_config(
         int(
             (
                 await db.execute(
-                    select(func.max(ProjectConfigVersion.revision)).where(
-                        ProjectConfigVersion.project_id == project_id
-                    )
+                    select(func.max(ProjectConfigVersion.revision)).where(ProjectConfigVersion.project_id == project_id)
                 )
             ).scalar()
             or 0
@@ -206,9 +200,7 @@ async def update_project_config(
     return version
 
 
-async def load_project_memory_flags(
-    db: AsyncSession, project_id: str
-) -> tuple[bool, bool]:
+async def load_project_memory_flags(db: AsyncSession, project_id: str) -> tuple[bool, bool]:
     """(memory_enabled, memory_auto_capture) with no ACL check, for background jobs."""
 
     project = await db.get(Project, project_id)
@@ -247,9 +239,7 @@ async def list_config_versions(
     rows = (await db.execute(base)).scalars().all()
 
     count_stmt = (
-        select(func.count())
-        .select_from(ProjectConfigVersion)
-        .where(ProjectConfigVersion.project_id == project_id)
+        select(func.count()).select_from(ProjectConfigVersion).where(ProjectConfigVersion.project_id == project_id)
     )
     total = (await db.execute(count_stmt)).scalar() or 0
 

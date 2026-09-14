@@ -354,9 +354,7 @@ async def saml_acs(
     slugs = await get_user_role_slugs(db, user.id)
     await record_user_login(db, user)
     await db.commit()
-    jwt_token = create_access_token(
-        user.username, primary_role_slug(slugs), token_version=user.token_version
-    )
+    jwt_token = create_access_token(user.username, primary_role_slug(slugs), token_version=user.token_version)
     xchg_code = generate_code()
     await store_token(
         xchg_code,
@@ -460,9 +458,7 @@ async def oidc_callback(
     if flow is None or not code:
         raise HTTPException(status_code=400, detail="Invalid or expired OIDC state")
     try:
-        tokens = await asyncio.to_thread(
-            exchange_code_for_tokens, cfg, code=code, code_verifier=flow.code_verifier
-        )
+        tokens = await asyncio.to_thread(exchange_code_for_tokens, cfg, code=code, code_verifier=flow.code_verifier)
         claims = await asyncio.to_thread(
             validate_id_token,
             tokens["id_token"],
@@ -484,9 +480,7 @@ async def oidc_callback(
     slugs = await get_user_role_slugs(db, user.id)
     await record_user_login(db, user)
     await db.commit()
-    jwt_token = create_access_token(
-        user.username, primary_role_slug(slugs), token_version=user.token_version
-    )
+    jwt_token = create_access_token(user.username, primary_role_slug(slugs), token_version=user.token_version)
     xchg_code = generate_code()
     await store_token(
         xchg_code,
@@ -515,9 +509,7 @@ async def oidc_logout(request: Request, db: AsyncSession = Depends(get_db)):
         payload = decode_access_token(token)
         username = payload.get("sub") if payload else None
         if username:
-            user = (
-                await db.execute(select(User).where(User.username == username))
-            ).scalars().first()
+            user = (await db.execute(select(User).where(User.username == username))).scalars().first()
             if user:
                 user.token_version = int(user.token_version or 0) + 1
                 await db.commit()
@@ -567,9 +559,7 @@ async def saml_logout(request: Request, db: AsyncSession = Depends(get_db)):
         payload = decode_access_token(token)
         username = payload.get("sub") if payload else None
         if username:
-            user = (
-                await db.execute(select(User).where(User.username == username))
-            ).scalars().first()
+            user = (await db.execute(select(User).where(User.username == username))).scalars().first()
             if user:
                 name_id = user.external_id
                 user.token_version = int(user.token_version or 0) + 1
@@ -584,9 +574,7 @@ async def saml_logout(request: Request, db: AsyncSession = Depends(get_db)):
     slo_url = None
     if cfg.get("enabled"):
         try:
-            slo_url = await asyncio.to_thread(
-                logout_redirect_url, cfg, _request_public_url(request), name_id
-            )
+            slo_url = await asyncio.to_thread(logout_redirect_url, cfg, _request_public_url(request), name_id)
         except Exception:
             slo_url = None
 
@@ -639,18 +627,22 @@ async def _upsert_directory_user(db: AsyncSession, profile: dict, provider: str)
     # still recognised at login instead of colliding with their own row.
     if provider in {"saml", "oidc", "ldap"} and external_id:
         user = (
-            await db.execute(
-                select(User).where(
-                    User.auth_provider == provider,
-                    User.external_id == external_id,
+            (
+                await db.execute(
+                    select(User).where(
+                        User.auth_provider == provider,
+                        User.external_id == external_id,
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
 
     if user is None:
         by_username = await find_user_by_username_ci(db, username)
         if by_username is not None:
-            existing_provider = (by_username.auth_provider or "local")
+            existing_provider = by_username.auth_provider or "local"
             if existing_provider != provider:
                 raise HTTPException(
                     status_code=409,

@@ -73,6 +73,4 @@ def is_safe_filename(name: object) -> bool:
 def scrub_filename_chars(value: str, *, replacement: str = "_") -> str:
     """Fold every character the policy rejects into ``replacement``."""
     normalized = unicodedata.normalize("NFC", value)
-    return "".join(
-        ch if is_allowed_filename_char(ch) else replacement for ch in normalized
-    )
+    return "".join(ch if is_allowed_filename_char(ch) else replacement for ch in normalized)

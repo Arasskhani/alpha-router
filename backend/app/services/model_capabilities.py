@@ -413,9 +413,7 @@ def speech_generation_capabilities(
     if has_metadata:
         supports_tts = "speech" in outputs
     else:
-        supports_tts = is_speech_model or any(
-            x in ext for x in ("tts", "/speech", "text-to-speech")
-        )
+        supports_tts = is_speech_model or any(x in ext for x in ("tts", "/speech", "text-to-speech"))
 
     # OpenRouter stores voices on the model root as ``supported_voices``.
     voices = (
@@ -424,14 +422,10 @@ def speech_generation_capabilities(
         or _coerce_str_list(raw.get("supported_voices"))
     )
     # Product UI only exposes mp3; keep catalog formats if present, else mp3.
-    formats = _coerce_str_list(speech_meta.get("formats")) or (
-        ["mp3"] if supports_tts else None
-    )
+    formats = _coerce_str_list(speech_meta.get("formats")) or (["mp3"] if supports_tts else None)
     if formats:
         formats = [f for f in formats if f == "mp3"] or ["mp3"]
-    speeds = _coerce_float_pair(speech_meta.get("speeds")) or (
-        (0.5, 4.0) if supports_tts else None
-    )
+    speeds = _coerce_float_pair(speech_meta.get("speeds")) or ((0.5, 4.0) if supports_tts else None)
     sample_rates = _coerce_str_list(speech_meta.get("sample_rates"))
     max_text = speech_meta.get("max_text_length")
     if not isinstance(max_text, int) or max_text <= 0:
@@ -479,8 +473,10 @@ def model_media_flags(
     )
     arch = _architecture_from_raw(pricing_raw)
     _, outputs = _modalities(arch)
-    is_speech = "speech" in outputs if outputs else any(
-        x in (external_id or "").lower() for x in ("tts", "/speech", "text-to-speech")
+    is_speech = (
+        "speech" in outputs
+        if outputs
+        else any(x in (external_id or "").lower() for x in ("tts", "/speech", "text-to-speech"))
     )
     return {
         "is_image_model": auth_image,

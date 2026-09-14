@@ -100,11 +100,13 @@ def test_resolve_project_access_owner_can_view_and_edit():
             async with factory() as db:
                 owner = await _user(db, "owner")
                 await _project(db, created_by=owner.id)
-                db.add(ProjectMember(
-                    project_id="proj-1",
-                    user_id=owner.id,
-                    role=PROJECT_ROLE_OWNER,
-                ))
+                db.add(
+                    ProjectMember(
+                        project_id="proj-1",
+                        user_id=owner.id,
+                        role=PROJECT_ROLE_OWNER,
+                    )
+                )
                 await db.flush()
 
                 access = await resolve_project_access(db, project_id="proj-1", user=owner)
@@ -261,6 +263,7 @@ def test_require_capability_raises_404_for_hidden_project():
                 await db.flush()
 
                 from fastapi import HTTPException
+
                 try:
                     await require_capability(db, project_id="proj-1", user=stranger, capability="project.view")
                     assert False, "expected 404"
@@ -285,6 +288,7 @@ def test_require_capability_raises_403_for_insufficient_role():
                 await db.flush()
 
                 from fastapi import HTTPException
+
                 try:
                     await require_capability(db, project_id="proj-1", user=viewer, capability="project.edit")
                     assert False, "expected 403"

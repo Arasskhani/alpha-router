@@ -26,9 +26,15 @@ async def _db():
 
 def _key(name, *, limit, unlimited):
     return AlphaRouterApiKey(
-        name=name, key_prefix=f"ar_{name}"[:16], key_hash=f"h_{name}" + "0" * 20, is_active=True,
-        credit_limit_usd=limit, unlimited_budget=unlimited, reset_period="monthly",
-        period_used_usd=0.0, period_started_at=datetime.datetime.utcnow(),
+        name=name,
+        key_prefix=f"ar_{name}"[:16],
+        key_hash=f"h_{name}" + "0" * 20,
+        is_active=True,
+        credit_limit_usd=limit,
+        unlimited_budget=unlimited,
+        reset_period="monthly",
+        period_used_usd=0.0,
+        period_started_at=datetime.datetime.utcnow(),
     )
 
 
@@ -99,7 +105,9 @@ def test_admin_api_refuses_a_key_with_neither_limit_nor_unlimited():
                     await patch_alpha_router_key(key_id, ApiKeyPatch(unlimited_budget=False), db, admin)
                 assert exc2.value.status_code == 400
                 # Off + a real limit is fine.
-                await patch_alpha_router_key(key_id, ApiKeyPatch(unlimited_budget=False, credit_limit_usd=10), db, admin)
+                await patch_alpha_router_key(
+                    key_id, ApiKeyPatch(unlimited_budget=False, credit_limit_usd=10), db, admin
+                )
                 row = await db.get(AlphaRouterApiKey, key_id)
                 assert row.unlimited_budget is False and row.credit_limit_usd == 10.0
         finally:
@@ -130,9 +138,9 @@ def test_backfill_keeps_existing_keys_working():
                 rows = dict(
                     (await conn.execute(text("SELECT name, unlimited_budget FROM alpha_router_api_keys"))).all()
                 )
-            assert bool(rows["old-nocap"]) is True   # kept working, now explicit
+            assert bool(rows["old-nocap"]) is True  # kept working, now explicit
             assert bool(rows["old-cap"]) is False
-            assert bool(rows["new"]) is False        # explicit values are never touched
+            assert bool(rows["new"]) is False  # explicit values are never touched
         finally:
             db_migrate.engine = original
             await engine.dispose()

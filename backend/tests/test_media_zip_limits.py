@@ -78,9 +78,7 @@ def test_zip_streams_valid_temp_file_and_removes_it() -> None:
     get_settings.cache_clear()
 
     async def run():
-        with _patch_transfer_limits(), patch.object(
-            media, "read_media_bytes", AsyncMock(side_effect=[b"one", b"two"])
-        ):
+        with _patch_transfer_limits(), patch.object(media, "read_media_bytes", AsyncMock(side_effect=[b"one", b"two"])):
             path, packed = await media.build_media_zip_file(
                 FakeDb([_row(1, 3), _row(2, 3)]),
                 1,

@@ -31,11 +31,7 @@ def _split_units(text: str) -> list[str]:
         if len(paragraph) <= DEFAULT_CHILD_CHARACTERS:
             units.append(paragraph)
             continue
-        sentences = [
-            part.strip()
-            for part in re.split(r"(?<=[.!?؟])\s+", paragraph)
-            if part.strip()
-        ]
+        sentences = [part.strip() for part in re.split(r"(?<=[.!?؟])\s+", paragraph) if part.strip()]
         units.extend(sentences or [paragraph])
     return units
 
@@ -120,9 +116,7 @@ def chunk_segments(
             if len(child_windows) == 1:
                 drafts.append(
                     ChunkDraft(
-                        local_key=_key(
-                            "leaf", segment_index, parent_index, parent_text
-                        ),
+                        local_key=_key("leaf", segment_index, parent_index, parent_text),
                         text=parent_text,
                         page_number=segment.page_number,
                         section=segment.section,

@@ -81,9 +81,7 @@ class ImageBillingCapture:
                 if isinstance(existing.payload, dict)
                 else getattr(existing.payload, "id", None)
             )
-            if payload is existing.payload or (
-                payload_id is not None and existing_id == payload_id
-            ):
+            if payload is existing.payload or (payload_id is not None and existing_id == payload_id):
                 existing.success = existing.success or success
                 if quantity is not None:
                     existing.quantity = quantity
@@ -231,9 +229,7 @@ async def log_image_usage(
     completion_tokens = sum(event.usage.completion_tokens for event in usage_events)
     cached_tokens = sum(event.usage.cached_tokens for event in usage_events)
     total_cost = sum(
-        float(event.quote.final_cost_usd)
-        for event in usage_events
-        if event.quote.final_cost_usd is not None
+        float(event.quote.final_cost_usd) for event in usage_events if event.quote.final_cost_usd is not None
     )
     client_app = f"{CHAT_CLIENT_APP} (image:{op})"
     return await log_usage(

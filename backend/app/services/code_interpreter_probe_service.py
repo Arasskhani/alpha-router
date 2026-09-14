@@ -57,7 +57,7 @@ _PROBE_REQUEST = (
     "This is an automated capability check. Use the attached probe.csv with the "
     "Code Interpreter. Return exactly one runnable ```python fenced block that reads "
     "probe.csv, verifies the values sum to 3, prints "
-    f"{PROBE_SENTINEL}, and writes probe.json containing {{\"total\": 3}}. "
+    f'{PROBE_SENTINEL}, and writes probe.json containing {{"total": 3}}. '
     "Do not return prose before the Python block."
 )
 
@@ -163,10 +163,7 @@ async def probe_model_compatibility(
     messages = [
         {
             "role": "system",
-            "content": (
-                code_interpreter_system_message()
-                + "\n\nWorkspace files:\n- probe.csv (CSV text)"
-            ),
+            "content": (code_interpreter_system_message() + "\n\nWorkspace files:\n- probe.csv (CSV text)"),
         },
         {"role": "user", "content": _PROBE_REQUEST},
     ]
@@ -185,10 +182,7 @@ async def probe_model_compatibility(
             api_key=api_key,
             messages=messages,
         )
-        if (
-            (connection.provider_type or "").lower() == "openrouter"
-            and is_auto_router_model_id(model.external_id)
-        ):
+        if (connection.provider_type or "").lower() == "openrouter" and is_auto_router_model_id(model.external_id):
             first_kwargs["extra_body"] = {
                 "plugins": [
                     await openrouter_auto_plugin(
@@ -246,22 +240,12 @@ async def probe_model_compatibility(
                     artifact_valid = False
                     if probe_artifact is not None:
                         try:
-                            artifact_valid = (
-                                json.loads(probe_artifact.content.decode("utf-8")).get("total")
-                                == 3
-                            )
+                            artifact_valid = json.loads(probe_artifact.content.decode("utf-8")).get("total") == 3
                         except (UnicodeDecodeError, ValueError, AttributeError):
                             artifact_valid = False
-                    if (
-                        execution.exit_code != 0
-                        or PROBE_SENTINEL not in execution.output
-                        or not artifact_valid
-                    ):
+                    if execution.exit_code != 0 or PROBE_SENTINEL not in execution.output or not artifact_valid:
                         reason_code = "sandbox_protocol_error"
-                        detail = (
-                            "Generated code did not complete the deterministic sandbox "
-                            "and artifact checks."
-                        )
+                        detail = "Generated code did not complete the deterministic sandbox and artifact checks."
                     else:
                         followup_messages = [
                             *messages,
@@ -295,11 +279,7 @@ async def probe_model_compatibility(
                                 operation_name="compatibility_probe_followup",
                                 model_id=model.external_id,
                                 attempt_index=1,
-                                status=(
-                                    "succeeded"
-                                    if PROBE_FINISH_SENTINEL in second_content
-                                    else "failed"
-                                ),
+                                status=("succeeded" if PROBE_FINISH_SENTINEL in second_content else "failed"),
                                 started_at=second_started,
                                 completed_at=datetime.datetime.utcnow(),
                                 prompt=followup_messages,

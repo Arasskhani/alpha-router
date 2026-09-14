@@ -92,9 +92,7 @@ def test_agent_citation_metadata_only_exposes_verified_citations():
         content_hash="a" * 64,
     )
     turn = PreparedAgentTurn(
-        plan=SimpleNamespace(
-            retrieval=SimpleNamespace(context=SimpleNamespace(citations=(citation,)))
-        ),
+        plan=SimpleNamespace(retrieval=SimpleNamespace(context=SimpleNamespace(citations=(citation,)))),
         options=SimpleNamespace(include_citations=True),
         run_id="run-citations",
         chat_session_id=None,
@@ -211,9 +209,7 @@ async def _test_agent_stream_is_buffered_until_post_generation_review() -> None:
 
         return chunks()
 
-    policies = SimpleNamespace(
-        model=SimpleNamespace(max_output_tokens=321, temperature=0.25)
-    )
+    policies = SimpleNamespace(model=SimpleNamespace(max_output_tokens=321, temperature=0.25))
     prompt = SimpleNamespace(
         messages=(
             {"role": "system", "content": "Approved immutable Agent prompt."},
@@ -335,10 +331,7 @@ async def _test_agent_stream_is_buffered_until_post_generation_review() -> None:
     assert completion_kwargs["temperature"] == 0.25
     mark_started.assert_awaited_once_with(db, turn.run_id)
     finalize_completion.assert_awaited_once()
-    assert (
-        finalize_completion.await_args.kwargs["output_text"]
-        == "unverified provider output"
-    )
+    assert finalize_completion.await_args.kwargs["output_text"] == "unverified provider output"
     finalize_run.assert_awaited_once()
     assert finalize_run.await_args.kwargs["status"] == "blocked"
     assert finalize_run.await_args.kwargs["request_log_id"] == 42

@@ -133,11 +133,7 @@ async def _exercise_audit_chain_and_legal_holds() -> None:
                 .scalars()
                 .all()
             )
-            redaction = next(
-                event
-                for event in events
-                if event.event_type == "governance.test.redaction"
-            )
+            redaction = next(event for event in events if event.event_type == "governance.test.redaction")
             assert redaction.payload_json["authorization"] == "[REDACTED]"
             assert redaction.payload_json["nested"]["api_key"] == "[REDACTED]"
             assert redaction.payload_json["safe"] == "retained"
@@ -230,9 +226,7 @@ async def _exercise_chat_retention_holds() -> None:
             assert await db.get(ChatSession, "not-held") is None
             assert await db.get(ChatSession, "held-by-agent") is not None
             assert await db.get(ChatSession, "held-directly") is not None
-            remaining = (
-                await db.execute(select(func.count()).select_from(ChatMessage))
-            ).scalar_one()
+            remaining = (await db.execute(select(func.count()).select_from(ChatMessage))).scalar_one()
             assert remaining == 2
     finally:
         await engine.dispose()
@@ -296,9 +290,7 @@ async def _exercise_knowledge_retention_holds() -> None:
                     sha256="b" * 64,
                 ),
             ]
-            db.add_all(
-                [knowledge_base, held_document, purge_document, *versions]
-            )
+            db.add_all([knowledge_base, held_document, purge_document, *versions])
             await db.flush()
             await place_legal_hold(
                 db,
@@ -316,18 +308,12 @@ async def _exercise_knowledge_retention_holds() -> None:
             assert result["scheduled_versions"] == 1
             assert result["held_resources"] == 1
 
-            tombstones = (
-                (await db.execute(select(DeletionTombstone))).scalars().all()
-            )
+            tombstones = (await db.execute(select(DeletionTombstone))).scalars().all()
             assert len(tombstones) == 1
             assert tombstones[0].resource_id == "version-purge"
             assert tombstones[0].status == "pending"
             assert (
-                await db.execute(
-                    select(func.count())
-                    .select_from(LegalHold)
-                    .where(LegalHold.status == "active")
-                )
+                await db.execute(select(func.count()).select_from(LegalHold).where(LegalHold.status == "active"))
             ).scalar_one() == 1
     finally:
         await engine.dispose()

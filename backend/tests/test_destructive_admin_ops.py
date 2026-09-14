@@ -89,7 +89,9 @@ def test_clear_all_media_needs_phrase_and_records_count_and_bytes():
             async with factory() as db:
                 admin = await _admin(db)
                 for i in range(2):
-                    db.add(MediaAsset(user_id=admin.id, file_name=f"f{i}", storage_path=f"cdn/u/{i}", size_bytes=1000 + i))
+                    db.add(
+                        MediaAsset(user_id=admin.id, file_name=f"f{i}", storage_path=f"cdn/u/{i}", size_bytes=1000 + i)
+                    )
                 await db.commit()
 
                 with pytest.raises(HTTPException) as exc:
@@ -102,7 +104,10 @@ def test_clear_all_media_needs_phrase_and_records_count_and_bytes():
                 with patch("app.services.storage_service.oss.delete_object"):
                     out = await admin_api.admin_clear_storage_cache(
                         admin_api.DestructiveConfirmIn(confirm=admin_api.CLEAR_ALL_MEDIA_PHRASE),
-                        _request(), db, admin, admin,
+                        _request(),
+                        db,
+                        admin,
+                        admin,
                     )
                 assert out["removed_files"] == 2
                 events = await _events(db, "media_cleared_all")
@@ -121,12 +126,18 @@ def test_connection_and_key_deletions_leave_an_audit_row_that_survives():
         try:
             async with factory() as db:
                 admin = await _admin(db)
-                conn = Connection(name="OpenRouter prod", provider_type="openrouter", api_key_encrypted="enc", is_active=True)
+                conn = Connection(
+                    name="OpenRouter prod", provider_type="openrouter", api_key_encrypted="enc", is_active=True
+                )
                 db.add(conn)
                 await db.flush()
                 key = AlphaRouterApiKey(
-                    name="ci-bot", key_prefix="ar_abc123", key_hash="h" * 20, owner_user_id=admin.id,
-                    credit_limit_usd=25.0, is_active=True,
+                    name="ci-bot",
+                    key_prefix="ar_abc123",
+                    key_hash="h" * 20,
+                    owner_user_id=admin.id,
+                    credit_limit_usd=25.0,
+                    is_active=True,
                 )
                 db.add(key)
                 await db.flush()
@@ -143,17 +154,17 @@ def test_connection_and_key_deletions_leave_an_audit_row_that_survives():
                 assert await db.get(AlphaRouterApiKey, key_id) is None
                 assert await db.get(UserApiKey, ukey_id) is None
 
-                (rid, detail), = await _events(db, "connection_deleted")
+                ((rid, detail),) = await _events(db, "connection_deleted")
                 assert rid == str(conn_id)
                 assert detail["name"] == "OpenRouter prod" and detail["provider_type"] == "openrouter"
                 assert "api_key" not in json.dumps(detail).lower().replace("api_key_encrypted", "")
 
-                (rid, detail), = await _events(db, "api_key_deleted")
+                ((rid, detail),) = await _events(db, "api_key_deleted")
                 assert rid == str(key_id)
                 assert detail["name"] == "ci-bot" and detail["key_prefix"] == "ar_abc123"
                 assert "key_hash" not in detail
 
-                (rid, detail), = await _events(db, "user_api_key_deleted")
+                ((rid, detail),) = await _events(db, "user_api_key_deleted")
                 assert rid == str(ukey_id) and detail["user_id"] == admin.id
         finally:
             await engine.dispose()
@@ -182,7 +193,7 @@ def test_self_service_key_deletion_is_audited():
                 assert exc.value.status_code == 404
 
                 await delete_user_key(mine.id, _request(), me, db)
-                (rid, detail), = await _events(db, "user_api_key_deleted")
+                ((rid, detail),) = await _events(db, "user_api_key_deleted")
                 assert rid == str(mine.id) and detail["self_service"] is True
         finally:
             await engine.dispose()

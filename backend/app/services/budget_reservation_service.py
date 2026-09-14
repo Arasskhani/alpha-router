@@ -144,12 +144,7 @@ def _locked_user_stmt(user_id: int):
     resurrects an already-released hold — which is how ``budget_reserved_usd``
     drifted to $5.05 with zero ``held`` rows and locked the account out.
     """
-    return (
-        select(User)
-        .where(User.id == int(user_id))
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
+    return select(User).where(User.id == int(user_id)).with_for_update().execution_options(populate_existing=True)
 
 
 def _locked_key_stmt(key_id: int):
@@ -298,16 +293,8 @@ async def _admit_hold(
 
     def evaluate(current_held: float) -> float | None:
         if cost_is_estimated:
-            return _soft_hold_allowance(
-                amount=amount, limit=limit, used=used, held=current_held
-            )
-        return (
-            amount
-            if _hold_fits_balance(
-                amount=amount, limit=limit, used=used, held=current_held
-            )
-            else None
-        )
+            return _soft_hold_allowance(amount=amount, limit=limit, used=used, held=current_held)
+        return amount if _hold_fits_balance(amount=amount, limit=limit, used=used, held=current_held) else None
 
     allowed = evaluate(held)
     if allowed is None and held > 0:
@@ -401,9 +388,7 @@ def estimate_chat_hold(ai_model: AIModel, body: dict) -> float:
         # UTF-8 bytes / 3 is deliberately conservative for both Latin and
         # multi-byte scripts while remaining O(input size) and provider-free.
         prompt_bytes = sum(
-            len(str(message.get("content") or "").encode("utf-8"))
-            for message in messages
-            if isinstance(message, dict)
+            len(str(message.get("content") or "").encode("utf-8")) for message in messages if isinstance(message, dict)
         )
     else:
         prompt_bytes = 0
@@ -426,10 +411,7 @@ def estimate_embedding_hold(ai_model: AIModel, body: dict) -> float:
     settings = get_settings()
     fallback = float(settings.budget_embedding_fallback_hold_usd or 0.01)
     try:
-        prompt_tokens = int(
-            litellm.token_counter(model=ai_model.external_id, text=str(body.get("input") or ""))
-            or 0
-        )
+        prompt_tokens = int(litellm.token_counter(model=ai_model.external_id, text=str(body.get("input") or "")) or 0)
     except Exception:
         prompt_tokens = 0
     in_rate = _positive_float(ai_model.input_cost_per_1k, 0.0)
@@ -440,8 +422,7 @@ def estimate_image_hold(ai_model: AIModel | None, *, quantity: int = 1) -> float
     del ai_model
     settings = get_settings()
     return _clamp_hold(
-        float(settings.budget_image_fallback_hold_usd or 0.25)
-        * max(1, int(quantity or 1)),
+        float(settings.budget_image_fallback_hold_usd or 0.25) * max(1, int(quantity or 1)),
         0.25,
     )
 
@@ -500,11 +481,7 @@ def estimate_speech_hold(ai_model: AIModel | None, *, characters: int = 1) -> fl
 
 
 def reservation_key(body: dict, *, operation: str) -> str:
-    explicit = (
-        body.get("_idempotency_key")
-        or body.get("assistant_client_message_id")
-        or ""
-    )
+    explicit = body.get("_idempotency_key") or body.get("assistant_client_message_id") or ""
     if explicit:
         return f"{operation}:{str(explicit).strip()[:128]}"
     return f"{operation}:{uuid.uuid4()}"
@@ -515,9 +492,7 @@ async def _existing_reservation(
     key: str,
 ) -> BudgetReservation | None:
     return (
-        await db.execute(
-            select(BudgetReservation).where(BudgetReservation.idempotency_key == key)
-        )
+        await db.execute(select(BudgetReservation).where(BudgetReservation.idempotency_key == key))
     ).scalar_one_or_none()
 
 
@@ -541,14 +516,8 @@ async def reserve(
     """
     if user_id is None and alpha_router_api_key_id is None:
         return None
-    subject_type = (
-        SUBJECT_ALPHA_ROUTER_KEY
-        if alpha_router_api_key_id is not None
-        else SUBJECT_USER
-    )
-    subject_id = int(
-        alpha_router_api_key_id if alpha_router_api_key_id is not None else user_id
-    )
+    subject_type = SUBJECT_ALPHA_ROUTER_KEY if alpha_router_api_key_id is not None else SUBJECT_USER
+    subject_id = int(alpha_router_api_key_id if alpha_router_api_key_id is not None else user_id)
     scoped_key = f"{subject_type}:{subject_id}:{idempotency_key}"[:160]
     # No upper cap here. Every caller derives ``amount_usd`` from
     # ``reservation_hold_usd`` -> ``quote_hold``, which already bounds an
@@ -560,11 +529,7 @@ async def reserve(
     # $5.00, so it could overshoot the budget even when admission was strict.
     amount = round(max(0.0001, float(amount_usd or 0)), 8)
     if alpha_router_api_key_id is not None:
-        key = (
-            await db.execute(
-                _locked_key_stmt(alpha_router_api_key_id)
-            )
-        ).scalar_one_or_none()
+        key = (await db.execute(_locked_key_stmt(alpha_router_api_key_id))).scalar_one_or_none()
         if key is None:
             raise HTTPException(status_code=401, detail="Invalid API key")
         await ensure_key_usable(db, key)
@@ -590,11 +555,7 @@ async def reserve(
             )
         key.period_reserved_usd = round(held + amount, 8)
     else:
-        user = (
-            await db.execute(
-                _locked_user_stmt(user_id)
-            )
-        ).scalar_one_or_none()
+        user = (await db.execute(_locked_user_stmt(user_id))).scalar_one_or_none()
         if user is None or not user.is_active:
             raise HTTPException(status_code=403, detail="Account disabled")
         await ensure_budget_period(db, user)
@@ -658,17 +619,9 @@ async def _lock_subject(
     subject_id: int,
 ) -> bool:
     if subject_type == SUBJECT_USER:
-        return (
-            await db.execute(
-                _locked_user_stmt(subject_id)
-            )
-        ).scalar_one_or_none() is not None
+        return (await db.execute(_locked_user_stmt(subject_id))).scalar_one_or_none() is not None
     if subject_type == SUBJECT_ALPHA_ROUTER_KEY:
-        return (
-            await db.execute(
-                _locked_key_stmt(subject_id)
-            )
-        ).scalar_one_or_none() is not None
+        return (await db.execute(_locked_key_stmt(subject_id))).scalar_one_or_none() is not None
     return False
 
 
@@ -693,11 +646,7 @@ async def _apply_release_to_subject(
     reserved = max(0.0, float(row.reserved_usd or 0))
     actual = max(0.0, float(actual_usd or 0))
     if row.subject_type == SUBJECT_USER:
-        user = (
-            await db.execute(
-                _locked_user_stmt(row.subject_id)
-            )
-        ).scalar_one_or_none()
+        user = (await db.execute(_locked_user_stmt(row.subject_id))).scalar_one_or_none()
         if user:
             user.budget_reserved_usd = round(
                 max(0.0, float(user.budget_reserved_usd or 0) - reserved),
@@ -709,11 +658,7 @@ async def _apply_release_to_subject(
                     8,
                 )
     elif row.subject_type == SUBJECT_ALPHA_ROUTER_KEY:
-        key = (
-            await db.execute(
-                _locked_key_stmt(row.subject_id)
-            )
-        ).scalar_one_or_none()
+        key = (await db.execute(_locked_key_stmt(row.subject_id))).scalar_one_or_none()
         if key:
             key.period_reserved_usd = round(
                 max(0.0, float(key.period_reserved_usd or 0) - reserved),
@@ -769,14 +714,17 @@ async def release(
 
 async def expire_stale_reservations(db: AsyncSession) -> int:
     reservation_ids = (
-        await db.execute(
-            select(BudgetReservation.id)
-            .where(
-                BudgetReservation.status == STATUS_HELD,
-                BudgetReservation.expires_at < _now(),
+        (
+            await db.execute(
+                select(BudgetReservation.id).where(
+                    BudgetReservation.status == STATUS_HELD,
+                    BudgetReservation.expires_at < _now(),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     expired = 0
     for reservation_id in reservation_ids:
         if await release(db, reservation_id, expired=True):
@@ -924,16 +872,20 @@ async def release_open_holds_for_subject(
     """
     await _lock_subject(db, subject_type, int(subject_id))
     rows = (
-        await db.execute(
-            select(BudgetReservation)
-            .where(
-                BudgetReservation.subject_type == subject_type,
-                BudgetReservation.subject_id == int(subject_id),
-                BudgetReservation.status == STATUS_HELD,
+        (
+            await db.execute(
+                select(BudgetReservation)
+                .where(
+                    BudgetReservation.subject_type == subject_type,
+                    BudgetReservation.subject_id == int(subject_id),
+                    BudgetReservation.status == STATUS_HELD,
+                )
+                .with_for_update()
             )
-            .with_for_update()
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     released = 0
     for row in rows:
         if await release(db, row.id, expired=True):

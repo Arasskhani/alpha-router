@@ -134,10 +134,7 @@ def validate_saml_config(cfg: dict[str, Any]) -> dict[str, Any]:
     if view["enabled"] and not url and not xml:
         raise ValueError("IdP Metadata URL or IdP Metadata XML is required when SAML is enabled")
     if xml and len(xml.encode("utf-8")) > IDP_METADATA_MAX_BYTES:
-        raise ValueError(
-            f"IdP Metadata XML exceeds the maximum size "
-            f"({IDP_METADATA_MAX_BYTES // (1024 * 1024)} MB)."
-        )
+        raise ValueError(f"IdP Metadata XML exceeds the maximum size ({IDP_METADATA_MAX_BYTES // (1024 * 1024)} MB).")
     if url:
         url = validate_idp_metadata_url(url)
     entity_id = (view.get("entity_id") or "").strip()
@@ -296,14 +293,18 @@ def build_saml_settings(cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def prepare_request_data(request_url: str, form: dict[str, Any] | None = None, query: dict[str, Any] | None = None) -> dict:
+def prepare_request_data(
+    request_url: str, form: dict[str, Any] | None = None, query: dict[str, Any] | None = None
+) -> dict:
     """Build the request dict expected by python3-saml from a FastAPI Request."""
     parsed = urlsplit(request_url)
     https = "on" if parsed.scheme == "https" else "off"
     # Prefer X-Forwarded headers when behind a reverse proxy — callers should
     # pass the public URL already; fall back to parsed components.
     host = parsed.hostname or "localhost"
-    if parsed.port and not ((parsed.scheme == "https" and parsed.port == 443) or (parsed.scheme == "http" and parsed.port == 80)):
+    if parsed.port and not (
+        (parsed.scheme == "https" and parsed.port == 443) or (parsed.scheme == "http" and parsed.port == 80)
+    ):
         server_port = str(parsed.port)
     else:
         server_port = "443" if https == "on" else "80"

@@ -270,14 +270,18 @@ async def _run_activity_filters() -> None:
 
         cutoff_ms = _dt_to_ms(dt.datetime.utcnow() - dt.timedelta(days=7))
         recent, recent_total, older_total = await list_chat_sessions(
-            session, user.id, min_activity_ms=cutoff_ms,
+            session,
+            user.id,
+            min_activity_ms=cutoff_ms,
         )
         assert recent_total >= 1
         assert any(s["id"] == "new" for s in recent)
         assert older_total >= 1
 
         older, older_count, _ = await list_chat_sessions(
-            session, user.id, max_activity_ms=cutoff_ms,
+            session,
+            user.id,
+            max_activity_ms=cutoff_ms,
         )
         assert older_count >= 1
         assert any(s["id"] == "old" for s in older)

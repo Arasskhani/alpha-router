@@ -147,11 +147,7 @@ def log_row_to_export(
         "Provider Cost $": _money(r.provider_cost_usd),
         "Calculated Cost $": _money(r.calculated_cost_usd),
         "Cost Source": r.cost_source or "",
-        "Cost Confidence": (
-            "unpriced"
-            if r.has_unpriced_usage
-            else (r.cost_confidence or "")
-        ),
+        "Cost Confidence": ("unpriced" if r.has_unpriced_usage else (r.cost_confidence or "")),
         "Duration ms": round(float(r.response_time_ms or 0), 1),
         "Response Status": "Success" if r.success else "Fail",
         "Source IP": r.source_ip or "",
@@ -177,27 +173,15 @@ async def resolve_log_export_maps(
             if external_id and external_id not in provider_map:
                 provider_map[str(external_id)] = str(provider or "")
 
-    key_ids = {
-        r.alpha_router_api_key_id
-        for r in rows
-        if r.alpha_router_api_key_id
-    }
+    key_ids = {r.alpha_router_api_key_id for r in rows if r.alpha_router_api_key_id}
     key_map: dict[int, AlphaRouterApiKey] = {}
     if key_ids:
-        keys = (
-            await db.execute(
-                select(AlphaRouterApiKey).where(AlphaRouterApiKey.id.in_(key_ids))
-            )
-        ).scalars().all()
+        keys = (await db.execute(select(AlphaRouterApiKey).where(AlphaRouterApiKey.id.in_(key_ids)))).scalars().all()
         key_map = {k.id: k for k in keys}
     user_key_ids = {r.user_api_key_id for r in rows if r.user_api_key_id}
     user_key_map: dict[int, UserApiKey] = {}
     if user_key_ids:
-        user_keys = (
-            await db.execute(
-                select(UserApiKey).where(UserApiKey.id.in_(user_key_ids))
-            )
-        ).scalars().all()
+        user_keys = (await db.execute(select(UserApiKey).where(UserApiKey.id.in_(user_key_ids)))).scalars().all()
         user_key_map = {k.id: k for k in user_keys}
     return provider_map, key_map, user_key_map
 
@@ -219,16 +203,8 @@ def request_logs_to_export_dataframe(
             r,
             tz_mode=tz_mode,
             provider=provider_map.get((r.model_id or "").strip()),
-            router_key=(
-                key_map.get(r.alpha_router_api_key_id)
-                if r.alpha_router_api_key_id
-                else None
-            ),
-            user_key=(
-                user_key_map.get(r.user_api_key_id)
-                if getattr(r, "user_api_key_id", None)
-                else None
-            ),
+            router_key=(key_map.get(r.alpha_router_api_key_id) if r.alpha_router_api_key_id else None),
+            user_key=(user_key_map.get(r.user_api_key_id) if getattr(r, "user_api_key_id", None) else None),
         )
         for r in sorted_rows
     ]

@@ -23,9 +23,16 @@ class _Boom:
 
 def test_metered_settlement_failure_counts_a_hold_leak():
     call = mus.MeteredUsageCall(
-        id="m1", user_id=1, alpha_router_api_key_id=None, connection_id=None, username="u",
-        provider_type="duckduckgo", service_type="web_search", operation_name="web_search",
-        model_id="duckduckgo-search", budget_reservation_id="r1",
+        id="m1",
+        user_id=1,
+        alpha_router_api_key_id=None,
+        connection_id=None,
+        username="u",
+        provider_type="duckduckgo",
+        service_type="web_search",
+        operation_name="web_search",
+        model_id="duckduckgo-search",
+        budget_reservation_id="r1",
         started_at=datetime.datetime.utcnow(),
     )
 

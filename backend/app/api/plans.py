@@ -103,10 +103,7 @@ async def list_departments(db: AsyncSession = Depends(get_db), _: User = Depends
             continue
         by_name.setdefault(name, 0)
 
-    return [
-        {"name": name, "user_count": count}
-        for name, count in sorted(by_name.items(), key=lambda x: x[0].lower())
-    ]
+    return [{"name": name, "user_count": count} for name, count in sorted(by_name.items(), key=lambda x: x[0].lower())]
 
 
 @router.get("/{plan_id}/members")
@@ -116,9 +113,7 @@ async def plan_members(plan_id: int, db: AsyncSession = Depends(get_db), _: User
     plan = await db.get(BudgetPlan, plan_id)
     if not plan:
         raise HTTPException(404, "Plan not found")
-    assigns = (
-        await db.execute(select(PlanAssignment).where(PlanAssignment.plan_id == plan_id))
-    ).scalars().all()
+    assigns = (await db.execute(select(PlanAssignment).where(PlanAssignment.plan_id == plan_id))).scalars().all()
 
     user_ids = {a.user_id for a in assigns if a.user_id}
     group_ids = {a.group_id for a in assigns if a.group_id}
@@ -193,13 +188,17 @@ async def assign_plan(body: AssignIn, db: AsyncSession = Depends(get_db), _: Use
         return {"ok": True}
     if body.department and not body.user_id and not body.group_id:
         existing = (
-            await db.execute(
-                select(PlanAssignment).where(
-                    PlanAssignment.plan_id == body.plan_id,
-                    PlanAssignment.department == body.department,
+            (
+                await db.execute(
+                    select(PlanAssignment).where(
+                        PlanAssignment.plan_id == body.plan_id,
+                        PlanAssignment.department == body.department,
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if not existing:
             db.add(PlanAssignment(plan_id=body.plan_id, department=body.department))
         await db.commit()
@@ -222,13 +221,17 @@ async def assign_department(
     _: User = Depends(require_plans_write),
 ):
     existing = (
-        await db.execute(
-            select(PlanAssignment).where(
-                PlanAssignment.plan_id == body.plan_id,
-                PlanAssignment.department == body.department,
+        (
+            await db.execute(
+                select(PlanAssignment).where(
+                    PlanAssignment.plan_id == body.plan_id,
+                    PlanAssignment.department == body.department,
+                )
             )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if existing:
         return {"ok": True}
     db.add(PlanAssignment(plan_id=body.plan_id, department=body.department))
@@ -262,8 +265,10 @@ async def update_plan(
         if not next_name:
             raise HTTPException(400, "Plan name cannot be empty")
         clash = (
-            await db.execute(select(BudgetPlan).where(BudgetPlan.name == next_name, BudgetPlan.id != plan_id))
-        ).scalars().first()
+            (await db.execute(select(BudgetPlan).where(BudgetPlan.name == next_name, BudgetPlan.id != plan_id)))
+            .scalars()
+            .first()
+        )
         if clash:
             raise HTTPException(400, "Plan name already exists")
         plan.name = next_name

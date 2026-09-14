@@ -223,6 +223,7 @@ def test_alpha_router_key_reservation_and_log_settlement_are_atomic() -> None:
 
 def test_period_rollover_releases_inflight_holds() -> None:
     """F-20: month/key period reset must expire open holds and clear reserved."""
+
     async def run():
         engine, factory, user_id, key_id = await _bootstrap()
         async with factory() as db:
@@ -261,6 +262,7 @@ def test_period_rollover_releases_inflight_holds() -> None:
 
 def test_settle_after_rollover_charges_new_period_via_fallback() -> None:
     """After rollover expires a hold, log_usage still applies cost once."""
+
     async def run():
         engine, factory, user_id, _ = await _bootstrap()
         async with factory() as db:
@@ -296,11 +298,7 @@ def test_settle_after_rollover_charges_new_period_via_fallback() -> None:
         async with factory() as db:
             user = await db.get(User, user_id)
             row = await db.get(BudgetReservation, hold_id)
-            log = (
-                await db.execute(
-                    select(RequestLog).where(RequestLog.budget_reservation_id == hold_id)
-                )
-            ).scalar_one()
+            log = (await db.execute(select(RequestLog).where(RequestLog.budget_reservation_id == hold_id))).scalar_one()
             assert row.status == reservations.STATUS_EXPIRED
             assert user.budget_reserved_usd == pytest.approx(0.0)
             assert user.budget_used_usd == pytest.approx(0.11)
@@ -356,13 +354,7 @@ def test_embedding_failure_settles_committed_hold_independently() -> None:
         async with factory() as db:
             user = await db.get(User, user_id)
             row = await db.get(BudgetReservation, hold.id)
-            log = (
-                await db.execute(
-                    select(RequestLog).where(
-                        RequestLog.budget_reservation_id == hold.id
-                    )
-                )
-            ).scalar_one()
+            log = (await db.execute(select(RequestLog).where(RequestLog.budget_reservation_id == hold.id))).scalar_one()
             assert user.budget_reserved_usd == 0
             assert row.status == reservations.STATUS_SETTLED
             assert log.success is False
@@ -431,20 +423,10 @@ def test_image_failure_settles_committed_hold_independently() -> None:
             await db.rollback()
         async with factory() as db:
             row = (
-                await db.execute(
-                    select(BudgetReservation).where(
-                        BudgetReservation.operation == "image"
-                    )
-                )
+                await db.execute(select(BudgetReservation).where(BudgetReservation.operation == "image"))
             ).scalar_one()
             user = await db.get(User, user_id)
-            log = (
-                await db.execute(
-                    select(RequestLog).where(
-                        RequestLog.budget_reservation_id == row.id
-                    )
-                )
-            ).scalar_one()
+            log = (await db.execute(select(RequestLog).where(RequestLog.budget_reservation_id == row.id))).scalar_one()
             assert row.status == reservations.STATUS_SETTLED
             assert user.budget_reserved_usd == 0
             assert log.success is False

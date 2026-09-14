@@ -39,10 +39,7 @@ class RequestBodyLimitMiddleware:
             minimum=64 * 1024,
             maximum=2048 * 1024 * 1024,
         )
-        headers = {
-            key.decode("latin-1").lower(): value.decode("latin-1")
-            for key, value in scope.get("headers", [])
-        }
+        headers = {key.decode("latin-1").lower(): value.decode("latin-1") for key, value in scope.get("headers", [])}
         raw_length = headers.get("content-length")
         if raw_length:
             try:

@@ -21,12 +21,15 @@ from app.services.model_sync import (
 @pytest.fixture(autouse=True)
 def isolate_specialized_openrouter_catalog():
     """These tests exercise generic upsert semantics, not live video catalog data."""
-    with patch(
-        "app.services.model_sync.fetch_openrouter_video_models",
-        new=AsyncMock(return_value={}),
-    ), patch(
-        "app.services.model_sync.fetch_openrouter_image_models",
-        new=AsyncMock(return_value={}),
+    with (
+        patch(
+            "app.services.model_sync.fetch_openrouter_video_models",
+            new=AsyncMock(return_value={}),
+        ),
+        patch(
+            "app.services.model_sync.fetch_openrouter_image_models",
+            new=AsyncMock(return_value={}),
+        ),
     ):
         yield
 
@@ -107,12 +110,8 @@ async def _test_admin_off_survives_connection_enable() -> None:
     factory, engine = await _session_factory()
     async with factory() as db:
         conn = await _seed_connection(db, active=False)
-        locked = await _seed_model(
-            db, conn, external_id="openai/gpt-4o", enabled=False, admin_disabled=True
-        )
-        unlocked = await _seed_model(
-            db, conn, external_id="openai/gpt-4o-mini", enabled=False, admin_disabled=False
-        )
+        locked = await _seed_model(db, conn, external_id="openai/gpt-4o", enabled=False, admin_disabled=True)
+        unlocked = await _seed_model(db, conn, external_id="openai/gpt-4o-mini", enabled=False, admin_disabled=False)
         await db.commit()
 
         conn.is_active = True
@@ -133,9 +132,7 @@ async def _test_admin_on_respects_connection_active() -> None:
     factory, engine = await _session_factory()
     async with factory() as db:
         conn = await _seed_connection(db, active=True)
-        model = await _seed_model(
-            db, conn, external_id="openai/gpt-4o", enabled=False, admin_disabled=True
-        )
+        model = await _seed_model(db, conn, external_id="openai/gpt-4o", enabled=False, admin_disabled=True)
         await set_model_admin_enabled(db, model, True)
         await db.commit()
         await db.refresh(model)
@@ -144,9 +141,7 @@ async def _test_admin_on_respects_connection_active() -> None:
 
         conn.is_active = False
         await db.commit()
-        model2 = await _seed_model(
-            db, conn, external_id="openai/o1", enabled=False, admin_disabled=True
-        )
+        model2 = await _seed_model(db, conn, external_id="openai/o1", enabled=False, admin_disabled=True)
         await set_model_admin_enabled(db, model2, True)
         await db.commit()
         await db.refresh(model2)
@@ -175,9 +170,7 @@ async def _test_sync_flash_does_not_touch_other_connection() -> None:
     async with factory() as db:
         conn_a = await _seed_connection(db, name="a")
         conn_b = await _seed_connection(db, name="b")
-        other = await _seed_model(
-            db, conn_b, external_id="other/model", enabled=False, admin_disabled=True
-        )
+        other = await _seed_model(db, conn_b, external_id="other/model", enabled=False, admin_disabled=True)
         await _seed_model(db, conn_a, external_id="openai/gpt-4o")
         await db.commit()
 
@@ -224,13 +217,17 @@ async def _test_new_model_from_sync_defaults() -> None:
             await db.commit()
 
         row = (
-            await db.execute(
-                select(AIModel).where(
-                    AIModel.connection_id == conn.id,
-                    AIModel.external_id == "openai/new-model",
+            (
+                await db.execute(
+                    select(AIModel).where(
+                        AIModel.connection_id == conn.id,
+                        AIModel.external_id == "openai/new-model",
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         assert row is not None
         assert row.is_enabled is True
         assert row.admin_disabled is False
@@ -253,10 +250,8 @@ async def _test_new_model_from_sync_defaults() -> None:
             await db.commit()
 
         inactive_new = (
-            await db.execute(
-                select(AIModel).where(AIModel.external_id == "openai/inactive-new")
-            )
-        ).scalars().first()
+            (await db.execute(select(AIModel).where(AIModel.external_id == "openai/inactive-new"))).scalars().first()
+        )
         assert inactive_new is not None
         assert inactive_new.is_enabled is False
         assert inactive_new.admin_disabled is False

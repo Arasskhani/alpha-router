@@ -53,9 +53,7 @@ async def scan_for_malware(raw: bytes, filename: str) -> None:
     try:
         result = await scan_bytes(raw)
     except MalwareScannerUnavailable as exc:
-        raise UploadRejected(
-            "Malware scanning is unavailable; upload refused.", status_code=503
-        ) from exc
+        raise UploadRejected("Malware scanning is unavailable; upload refused.", status_code=503) from exc
     except MalwareScanError as exc:
         if settings.clamav_required:
             raise UploadRejected("Malware scan failed; upload refused.", status_code=503) from exc

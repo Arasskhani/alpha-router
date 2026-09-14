@@ -112,16 +112,12 @@ def test_persist_agent_plan_inserts_run_before_trace_under_fk_enforcement():
                 )
                 await db.commit()
                 assert row.id == plan.plan_id
-                runs = (
-                    await db.execute(select(AgentRun).where(AgentRun.id == row.id))
-                ).scalars().all()
+                runs = (await db.execute(select(AgentRun).where(AgentRun.id == row.id))).scalars().all()
                 traces = (
-                    await db.execute(
-                        select(AgentRetrievalTrace).where(
-                            AgentRetrievalTrace.agent_run_id == row.id
-                        )
-                    )
-                ).scalars().all()
+                    (await db.execute(select(AgentRetrievalTrace).where(AgentRetrievalTrace.agent_run_id == row.id)))
+                    .scalars()
+                    .all()
+                )
                 assert len(runs) == 1
                 assert len(traces) == 1
                 assert traces[0].outcome == "no_evidence"

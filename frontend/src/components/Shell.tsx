@@ -1,5 +1,6 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import RouteErrorBoundary from "./RouteErrorBoundary";
 import AlphaRouterLogo from "./AlphaRouterLogo";
 import ModelProviderIcon from "./ModelProviderIcon";
 import SidebarNav from "./SidebarNav";
@@ -157,7 +158,11 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
             <div className="main-column">
               {readOnly && !isChatLayout && <ReadOnlyBanner />}
               <main className={`content${contentClass}${readOnly && path.startsWith("/admin") ? " admin-write-locked" : ""}`}>
-                <Outlet context={{ theme, setTheme }} />
+                <RouteErrorBoundary resetKey={path}>
+                  <Suspense fallback={<div className="app-loading">Loading…</div>}>
+                    <Outlet context={{ theme, setTheme }} />
+                  </Suspense>
+                </RouteErrorBoundary>
               </main>
             </div>
           </div>

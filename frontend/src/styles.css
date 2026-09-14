@@ -15922,3 +15922,32 @@ body.login-route #root {
   font-weight: 400;
 }
 
+
+/* Route-level loading fallback and error boundary (Phase 4.6) */
+.app-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40vh;
+  color: var(--muted, #6b7280);
+  font-size: 0.95rem;
+}
+
+.route-error {
+  max-width: 560px;
+  margin: 3rem auto;
+  padding: 1.5rem;
+  text-align: center;
+}
+
+.route-error h2 {
+  margin-top: 0;
+}
+
+.route-error__actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+}

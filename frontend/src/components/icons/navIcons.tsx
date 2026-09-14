@@ -20,7 +20,7 @@ const svgProps = {
   "aria-hidden": true as const,
 };
 
-export function IconChat({ className = "" }: IconProps) {
+function IconChat({ className = "" }: IconProps) {
   return (
     <svg {...svgProps} className={className}>
       <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
@@ -28,7 +28,7 @@ export function IconChat({ className = "" }: IconProps) {
   );
 }
 
-export function IconMedia({ className = "" }: IconProps) {
+function IconMedia({ className = "" }: IconProps) {
   return (
     <svg {...svgProps} className={className}>
       <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -61,7 +61,7 @@ export function IconLogs({ className = "" }: IconProps) {
   );
 }
 
-export function IconManual({ className = "" }: IconProps) {
+function IconManual({ className = "" }: IconProps) {
   return (
     <svg {...svgProps} className={className}>
       <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
@@ -70,7 +70,7 @@ export function IconManual({ className = "" }: IconProps) {
   );
 }
 
-export function IconAdmin({ className = "" }: IconProps) {
+function IconAdmin({ className = "" }: IconProps) {
   return (
     <svg {...svgProps} className={className}>
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
@@ -88,7 +88,7 @@ export function IconFolder({ className = "" }: IconProps) {
   );
 }
 
-export function IconProjects({ className = "" }: IconProps) {
+function IconProjects({ className = "" }: IconProps) {
   return (
     <svg {...svgProps} className={className}>
       <path d="M9 11H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2z" />

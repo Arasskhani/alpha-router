@@ -7,7 +7,7 @@ import type { ChatToolsState } from "./chatTools";
 
 export type ProjectRole = "primary_owner" | "owner" | "contributor" | "viewer";
 export type ProjectVisibility = "private" | "public";
-export type ProjectStatus = "active" | "archived" | "deletion_pending";
+type ProjectStatus = "active" | "archived" | "deletion_pending";
 
 export function isProjectOwnerRole(role?: string | null): boolean {
   return role === "primary_owner" || role === "owner";
@@ -54,14 +54,14 @@ export function needsPublicTypedConfirm(
   return current !== "public" && next === "public";
 }
 
-export type ProjectOverviewCounts = {
+type ProjectOverviewCounts = {
   members: number;
   chats: number;
   resources: number;
   media: number;
 };
 
-export type ProjectOverviewUsage = {
+type ProjectOverviewUsage = {
   windowDays: number;
   totalCostUsd: number;
   mediaCostUsd: number;
@@ -142,7 +142,7 @@ export function projectResourceKnowledgeStatus(resource: ProjectResource): strin
   return (resource.versionStatus || resource.documentStatus || resource.status || "").trim();
 }
 
-export const PROJECT_RESOURCE_WAITING_LABEL = "Waiting for Admin Approval";
+const PROJECT_RESOURCE_WAITING_LABEL = "Waiting for Admin Approval";
 
 /** User-facing resource status: hide KB pipeline until the file is Published. */
 export function projectResourceUserStatus(resource: ProjectResource): string {
@@ -167,7 +167,7 @@ export function projectResourceTooManyFilesMessage(selectedCount: number): strin
   );
 }
 
-export type ProjectMemoryOrigin = "manual" | "auto_chat";
+type ProjectMemoryOrigin = "manual" | "auto_chat";
 
 export type ProjectMemory = {
   id: string;
@@ -509,13 +509,6 @@ export async function deleteAllAutoProjectMemories(
     method: "DELETE",
   });
 }
-
-export async function exportProjectMemories(
-  projectId: string,
-): Promise<{ memories: ProjectMemory[]; total: number }> {
-  return api(`/api/projects/${encodeURIComponent(projectId)}/memories/export`);
-}
-
 export async function createProjectMemory(
   projectId: string,
   content: string,
@@ -593,7 +586,7 @@ export type ProjectMediaItem = {
 };
 
 /** sessionStorage key for queuing a project media file into the next chat turn. */
-export const PROJECT_MEDIA_ATTACH_KEY = "alphaRouter.projectMediaAttach";
+const PROJECT_MEDIA_ATTACH_KEY = "alphaRouter.projectMediaAttach";
 export const PROJECT_MEDIA_ATTACH_EVENT = "alpharouter:project-media-attach";
 export const PROJECT_MEDIA_ATTACH_CONSUMED_EVENT = "alpharouter:project-media-attach-consumed";
 
@@ -675,19 +668,6 @@ export async function uploadProjectMedia(
     method: "POST",
     body: form,
   });
-}
-
-export async function getProjectMedia(
-  projectId: string,
-  mediaId: number,
-): Promise<ProjectMediaItem> {
-  return api(
-    `/api/projects/${encodeURIComponent(projectId)}/media/${encodeURIComponent(String(mediaId))}`,
-  );
-}
-
-export function projectMediaDownloadUrl(projectId: string, mediaId: number): string {
-  return `/api/projects/${encodeURIComponent(projectId)}/media/${encodeURIComponent(String(mediaId))}/download`;
 }
 
 export type ProjectChatSession = {

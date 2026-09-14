@@ -4,7 +4,7 @@ import Modal from "../Modal";
 import ModelName from "../ModelName";
 import type { CatalogModel } from "../../lib/modelCatalog";
 
-export type DefaultKindKey = "chat" | "voice" | "image" | "video";
+type DefaultKindKey = "chat" | "voice" | "image" | "video";
 
 export type DefaultKind = {
   key: DefaultKindKey;

@@ -38,7 +38,7 @@ export function topbarShortcutsForSession(session: SessionRbac | null): NavItem[
 }
 
 /** Routes allowed for disabled (read-only) users besides direct URL blocking. */
-export const USER_READ_ONLY_PATHS = [
+const USER_READ_ONLY_PATHS = [
   "/app/chat",
   "/app/projects",
   "/app/media",

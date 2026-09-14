@@ -40,7 +40,6 @@ export type UserPrefs = {
   default_model: string | null;
   theme: UserTheme;
   timezone: string;
-  language: string;
   /** "auto" sends no language hint to speech-to-text; "en"/"fa" force one. */
   voice_recording_language: VoiceLang;
   /** Catalog ref for speech-to-text; empty = the admin-selected default. */
@@ -136,9 +135,6 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
   const timezone = typeof raw?.timezone === "string" && raw.timezone.trim()
     ? raw.timezone.trim()
     : "UTC";
-  const language = typeof raw?.language === "string" && raw.language.trim()
-    ? raw.language.trim().toLowerCase()
-    : "en";
   const voiceRecordingLang = normalizeVoiceLang(
     typeof raw?.voice_recording_language === "string" ? raw.voice_recording_language : null,
   );
@@ -157,7 +153,6 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
     default_model: model,
     theme,
     timezone,
-    language: language === "en" ? "en" : "en",
     voice_recording_language: voiceRecordingLang,
     transcription_model: transcriptionModel,
     persian_font: persianFont,
@@ -431,14 +426,6 @@ export function setCachedSessionMessages(
   data: CachedMessages,
 ): void {
   messageCache.set(cacheKey(sessionId), data);
-  try {
-    sessionStorage.setItem(
-      `${STORAGE_KEYS.privateChats}:msgcache:${sessionId}`,
-      JSON.stringify({ revision: data.revision, oldestSequence: data.oldestSequence }),
-    );
-  } catch {
-    /* optional */
-  }
 }
 
 function markSessionDirty(sessionId: string, metadataOnly = false) {

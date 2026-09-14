@@ -1,5 +1,5 @@
 /** Shown in Chat when no models are enabled / available. */
-export const CHAT_NO_MODELS_MESSAGE =
+const CHAT_NO_MODELS_MESSAGE =
   "No models are currently available. Contact your administrator";
 
 const LEGACY_NO_MODELS_PATTERNS = [

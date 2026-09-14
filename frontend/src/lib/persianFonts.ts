@@ -18,7 +18,7 @@ export function listPersianFontOptions(): PersianFontOption[] {
   return Array.isArray(data.families) ? data.families : [];
 }
 
-export function isKnownPersianFontId(id: string | null | undefined): boolean {
+function isKnownPersianFontId(id: string | null | undefined): boolean {
   const trimmed = (id || "").trim();
   if (!trimmed) return false;
   return listPersianFontOptions().some((f) => f.id === trimmed);

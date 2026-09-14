@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 
-export type ChatModelChromeSelection = {
+type ChatModelChromeSelection = {
   id: string;
   name: string;
   external_id?: string;

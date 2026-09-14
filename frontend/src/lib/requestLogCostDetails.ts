@@ -31,7 +31,7 @@ export type RequestLogSummary = {
   success: boolean;
 };
 
-export type CostLineItem = {
+type CostLineItem = {
   category: string;
   quantity: number;
   unit: string;
@@ -40,7 +40,7 @@ export type CostLineItem = {
   pricing_source: string;
 };
 
-export type CostEvent = {
+type CostEvent = {
   id: string;
   provider_type: string;
   service_type: string;

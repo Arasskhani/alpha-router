@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { NavIcon } from "./icons/navIcons";
-import { flattenNav, isNavGrouped, type NavItem, type NavSection } from "../nav/types";
+import { isNavGrouped, type NavItem, type NavSection } from "../nav/types";
 import { STORAGE_KEYS } from "../lib/brand";
 
 type Props = {
@@ -171,4 +171,4 @@ export default function SidebarNav({ nav, className = "", linkClassName, onNavig
 }
 
 /** Flat list for mobile drawer title search etc. */
-export { flattenNav };
+;

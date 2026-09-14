@@ -1,7 +1,7 @@
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 
-export type DocNavItem = { id: string; title: string };
+type DocNavItem = { id: string; title: string };
 export type DocNavGroup = [string, DocNavItem[]];
 export type DocSectionDef = { id: string; title: string; group?: string; content: ReactNode };
 

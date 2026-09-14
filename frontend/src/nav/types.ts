@@ -8,8 +8,6 @@ export type CategoryKey =
   | "agents_knowledge"
   | "developer";
 
-
-
 export type MenuKey =
 
   | "dashboard"
@@ -56,8 +54,6 @@ export type MenuKey =
 
   | "security_settings";
 
-
-
 export type NavIconKey = "chat" | "media" | "activity" | "manual" | "admin" | "folder" | "projects";
 
 export type NavItem = {
@@ -67,8 +63,6 @@ export type NavItem = {
   /** Optional leading outline icon (user panel / topbar). */
   icon?: NavIconKey;
 };
-
-
 
 export type NavSection = {
 
@@ -86,26 +80,8 @@ export type NavSection = {
 
 };
 
-
-
 export function isNavGrouped(nav: NavItem[] | NavSection[]): nav is NavSection[] {
 
   return nav.length > 0 && "items" in nav[0];
 
 }
-
-
-
-export function flattenNav(nav: NavItem[] | NavSection[]): NavItem[] {
-
-  if (isNavGrouped(nav)) {
-
-    return nav.flatMap((s) => s.items);
-
-  }
-
-  return nav;
-
-}
-
-

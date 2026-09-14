@@ -1,4 +1,4 @@
-import type { HeatmapMetric, MetricKind, Period } from "./types";
+import type { HeatmapMetric, Period } from "./types";
 
 export function formatSpend(v: number) {
   if (v >= 10_000) return `$${Math.round(v / 1000)}K`;
@@ -25,18 +25,6 @@ export function formatHeatmapValue(metric: HeatmapMetric, v: number) {
   if (metric === "spend") return formatSpend(v);
   if (metric === "tokens") return formatTokens(v);
   return formatRequests(v);
-}
-
-export function formatMetricValue(kind: MetricKind, v: number) {
-  if (kind === "spend") return formatSpend(v);
-  if (kind === "tokens") return formatTokens(v);
-  return formatRequests(v);
-}
-
-export function formatBreakdownValue(kind: MetricKind, v: number) {
-  if (kind === "spend") return formatSpend(v);
-  if (kind === "tokens") return formatTokens(v);
-  return String(v);
 }
 
 export function periodLabel(period: Period) {
@@ -68,13 +56,6 @@ export function periodShortBadge(period: Period) {
   };
   return badges[period] ?? "1d";
 }
-
-export function promptsCardPeriodLabel(period: import("./types").PromptsPeriod) {
-  if (period === "day") return "Today";
-  if (period === "week") return "Last 7 Days";
-  return "Last 30 Days";
-}
-
 export function groupByLabel(groupBy: string) {
   if (groupBy === "app") return "By API Key";
   if (groupBy === "user") return "By Creator";

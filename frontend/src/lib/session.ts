@@ -70,9 +70,6 @@ export async function logout() {
     for (const key of Object.keys(localStorage)) {
       if (key.startsWith(`${STORAGE_KEYS.privateChats}:`)) localStorage.removeItem(key);
     }
-    for (const key of Object.keys(sessionStorage)) {
-      if (key.startsWith(`${STORAGE_KEYS.privateChats}:msgcache:`)) sessionStorage.removeItem(key);
-    }
     try {
       await clearPrivateMediaStore();
     } catch {

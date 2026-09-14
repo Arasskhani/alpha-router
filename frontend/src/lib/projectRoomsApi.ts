@@ -144,14 +144,6 @@ export async function createProjectRoom(
   );
   return normalizeProjectRoom(data);
 }
-
-export async function getProjectRoom(projectId: string, roomId: string): Promise<ProjectRoom> {
-  const data = await api<Record<string, unknown>>(
-    `/api/projects/${encodeURIComponent(projectId)}/rooms/${encodeURIComponent(roomId)}`,
-  );
-  return normalizeProjectRoom(data);
-}
-
 export async function deleteProjectRoom(
   projectId: string,
   roomId: string,

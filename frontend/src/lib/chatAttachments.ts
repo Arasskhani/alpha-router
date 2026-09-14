@@ -23,9 +23,6 @@ export type AttachmentMessagePayload = {
 };
 
 export const DEFAULT_MAX_ATTACHMENTS = 5;
-/** @deprecated Prefer the admin-configured limit from `/api/chat/attachment-limits`. */
-export const MAX_ATTACHMENTS = DEFAULT_MAX_ATTACHMENTS;
-
 const BLOCKED_EXTENSIONS = new Set([
   "apk", "app", "application", "asp", "aspx", "bat", "bin", "cab", "cmd", "com", "cpl", "crt",
   "deb", "dll", "dmg", "exe", "gadget", "hta", "htm", "html", "inf", "ins", "iso", "jar", "js",
@@ -206,7 +203,7 @@ const IMAGE_EDIT_PROMPT_HINTS: RegExp[] = [
   /(قسمت|بخش).*(عکس|تصویر)/,
 ];
 
-export function promptTextFromUserContent(content: string): string {
+function promptTextFromUserContent(content: string): string {
   const attach = readAttachmentMessage(content);
   if (attach) return attach.userText.trim();
   return content.trim();
@@ -372,7 +369,7 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-export async function resolveAttachmentImageUrlForApi(raw: string): Promise<string | undefined> {
+async function resolveAttachmentImageUrlForApi(raw: string): Promise<string | undefined> {
   const trimmed = (raw || "").trim();
   if (!trimmed) return undefined;
   if (isPrivateBlobRef(trimmed) || trimmed.startsWith("blob:")) {

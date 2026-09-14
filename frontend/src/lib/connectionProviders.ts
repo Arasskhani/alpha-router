@@ -11,7 +11,7 @@ export type ConnectionProviderPreset = {
   aliases?: string[];
 };
 
-export const CONNECTION_PROVIDER_PRESETS: readonly ConnectionProviderPreset[] = [
+const CONNECTION_PROVIDER_PRESETS: readonly ConnectionProviderPreset[] = [
   {
     id: "openrouter",
     label: "OpenRouter",

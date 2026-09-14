@@ -46,13 +46,7 @@ const AGENT_PLATFORM_ROLES = new Set([
 ]);
 
 /** End-user features — not gated by scoped admin read-only roles. */
-export const USER_APP_MENUS: MenuKey[] = ["chat", "media", "user_manual"];
-
-export function isUserAppPath(pathname: string): boolean {
-  const path = pathname.replace(/\/$/, "") || "/";
-  return path === "/app" || path.startsWith("/app/");
-}
-
+const USER_APP_MENUS: MenuKey[] = ["chat", "media", "user_manual"];
 export function normalizeRole(role: string | undefined | null): string {
   const slug = (role || USER).trim().toLowerCase();
   if (slug === LEGACY_ADMIN) return FULL_ADMIN;
@@ -63,16 +57,6 @@ export function normalizeRole(role: string | undefined | null): string {
 export function isAdminPanelRole(role: string | undefined | null): boolean {
   const slug = normalizeRole(role);
   return slug !== USER && !slug.endsWith("_user");
-}
-
-export function isReadOnlyAdminRole(role: string | undefined | null): boolean {
-  const slug = normalizeRole(role);
-  return slug === READ_ONLY_FULL_ADMIN || slug.endsWith("_read_only_administrator");
-}
-
-export function isFullAdministrator(role: string | undefined | null): boolean {
-  const slug = normalizeRole(role);
-  return slug === FULL_ADMIN || slug === SUPER_ADMIN;
 }
 
 /** Matches backend ``user_has_super_admin_access`` (super_admin or full/legacy admin). */
@@ -172,7 +156,7 @@ export function isAdminUserFeaturePath(pathname: string): boolean {
   return menu !== null && USER_APP_MENUS.includes(menu);
 }
 
-export function accessibleMenuKeys(role: string | undefined | null): MenuKey[] | null {
+function accessibleMenuKeys(role: string | undefined | null): MenuKey[] | null {
   const slug = normalizeRole(role);
   if (slug === FULL_ADMIN || slug === READ_ONLY_FULL_ADMIN || slug === SUPER_ADMIN) return null;
   if (AGENT_PLATFORM_ROLES.has(slug)) return ["agents"];
@@ -191,7 +175,7 @@ export function canAccessMenu(role: string | undefined | null, menu: MenuKey): b
   return allowed.includes(menu);
 }
 
-export function accessibleMenuKeysFromRoles(roles: string[] | undefined | null): MenuKey[] | null {
+function accessibleMenuKeysFromRoles(roles: string[] | undefined | null): MenuKey[] | null {
   const slugs = (roles ?? []).map(normalizeRole).filter(Boolean);
   if (!slugs.length) return [];
   let all = false;
@@ -230,7 +214,7 @@ export function filterAdminNav(sections: NavSection[], role: string | undefined 
     .filter((section) => section.items.length > 0);
 }
 
-export function isAdminPathAllowed(pathname: string, role: string | undefined | null): boolean {
+function isAdminPathAllowed(pathname: string, role: string | undefined | null): boolean {
   const path = pathname.replace(/\/$/, "") || "/";
   if (!path.startsWith("/admin")) return false;
   const allowed = accessibleMenuKeys(role);
@@ -245,17 +229,6 @@ export function getMyActivityPath(role: string): string {
 export function roleLabel(catalog: RoleRecord[], slug: string): string {
   return catalog.find((r) => r.slug === normalizeRole(slug))?.name ?? normalizeRole(slug);
 }
-
-export function groupRolesByCategory(roles: RoleRecord[]): Map<string, RoleRecord[]> {
-  const map = new Map<string, RoleRecord[]>();
-  for (const role of roles) {
-    const group = role.category;
-    if (!map.has(group)) map.set(group, []);
-    map.get(group)!.push(role);
-  }
-  return map;
-}
-
 export function filterAdminNavFromSession(
   sections: NavSection[],
   session: SessionRbac | null,
@@ -292,7 +265,7 @@ export function isAdminPathAllowedForSession(
   return isAdminPathAllowed(path, session?.role ?? fallbackRole);
 }
 
-export function canWriteMenu(role: string | undefined | null, menu: MenuKey): boolean {
+function canWriteMenu(role: string | undefined | null, menu: MenuKey): boolean {
   const slug = normalizeRole(role);
   if (!isAdminPanelRole(slug)) return false;
   if (USER_APP_MENUS.includes(menu)) return true;
@@ -302,7 +275,7 @@ export function canWriteMenu(role: string | undefined | null, menu: MenuKey): bo
   return true;
 }
 
-export function userCanWriteMenu(roles: string[] | undefined | null, menu: MenuKey): boolean {
+function userCanWriteMenu(roles: string[] | undefined | null, menu: MenuKey): boolean {
   const slugs = (roles ?? []).map(normalizeRole).filter(isAdminPanelRole);
   if (!slugs.length) return false;
   const contributors = slugs.filter((slug) => canAccessMenu(slug, menu));

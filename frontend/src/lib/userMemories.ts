@@ -27,7 +27,7 @@ function trimOrNull(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-export type UserMemoriesPayload = {
+type UserMemoriesPayload = {
   memories: UserMemory[];
   total: number;
   limit?: number;
@@ -70,15 +70,6 @@ export async function fetchUserMemoriesBundle(opts?: {
       reporting_to: trimOrNull(data.profile?.reporting_to),
     },
   };
-}
-
-export async function fetchUserMemoriesPage(limit: number, offset: number) {
-  return fetchUserMemoriesBundle({ limit, offset });
-}
-
-export async function listUserMemories(): Promise<UserMemory[]> {
-  const data = await fetchUserMemoriesBundle();
-  return data.memories;
 }
 
 export async function updateUserMemory(

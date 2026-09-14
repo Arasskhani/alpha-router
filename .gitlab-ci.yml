@@ -160,6 +160,8 @@ frontend-tests-and-build:
     # eslint: errors fail; the warning budget (--max-warnings in package.json)
     # is the Phase 3 baseline and may only be lowered.
     - npm run lint
+    # Unused exports/types/dependencies fail the build (knip.json).
+    - npm run knip
     - npm test
     - npm run build
 

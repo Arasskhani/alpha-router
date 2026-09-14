@@ -1,7 +1,6 @@
 /** Speech-capable chat model detection for Text-to-Speech tool. */
 
 import {
-  AUTO_ROUTER_EXTERNAL_ID,
   isAutoRouterModel,
   type ChatModelRef,
 } from "./chatModels";
@@ -39,7 +38,7 @@ export function modelSupportsSpeech(
   return modelSupportsTextToSpeech(m, catalog);
 }
 
-export function findConcreteSpeechGenerationModel<T extends SpeechCapableModelRef>(
+function findConcreteSpeechGenerationModel<T extends SpeechCapableModelRef>(
   models: T[],
 ): T | undefined {
   return models.find((m) => !isAutoRouterModel(m) && dedicatedTextToSpeech(m));
@@ -117,4 +116,4 @@ export function resolveSessionModelForSpeechTools<T extends SpeechCapableModelRe
   return fallbackToDefault(undefined);
 }
 
-export { AUTO_ROUTER_EXTERNAL_ID, isAutoRouterModel };
+;

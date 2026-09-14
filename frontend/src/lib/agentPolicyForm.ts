@@ -16,7 +16,7 @@ function asPolicyObject(value: unknown): Record<string, unknown> {
   return { ...value } as Record<string, unknown>;
 }
 
-export function asStringList(value: unknown): string[] {
+function asStringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
   const items: string[] = [];

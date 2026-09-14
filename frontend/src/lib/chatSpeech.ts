@@ -33,16 +33,16 @@ type SpeechResponse = {
 };
 
 /** Must exceed the backend speech timeout (120s) so server errors win. */
-export const SPEECH_GENERATION_TIMEOUT_MS = 150_000;
-export const SPEECH_PREPARATION_TIMEOUT_MS = 15_000;
-export const SPEECH_TIMEOUT_MESSAGE = "Speech generation timed out.";
-export const SPEECH_PREPARATION_TIMEOUT_MESSAGE =
+const SPEECH_GENERATION_TIMEOUT_MS = 150_000;
+const SPEECH_PREPARATION_TIMEOUT_MS = 15_000;
+const SPEECH_TIMEOUT_MESSAGE = "Speech generation timed out.";
+const SPEECH_PREPARATION_TIMEOUT_MESSAGE =
   "Preparing the speech request timed out. Please retry.";
 
 const activeJobs = new Map<string, AbortController>();
 const listeners = new Set<(sessionId: string) => void>();
 
-export class SpeechPreparationTimeoutError extends Error {
+class SpeechPreparationTimeoutError extends Error {
   constructor() {
     super(SPEECH_PREPARATION_TIMEOUT_MESSAGE);
     this.name = "SpeechPreparationTimeoutError";
@@ -54,7 +54,7 @@ function speechAbortError(): DOMException {
 }
 
 /** Bound pre-request chat sync and release immediately when the speech job stops. */
-export async function awaitSpeechPreparation<T>(
+async function awaitSpeechPreparation<T>(
   work: (signal: AbortSignal) => Promise<T>,
   jobSignal: AbortSignal,
   timeoutMs = SPEECH_PREPARATION_TIMEOUT_MS,
@@ -109,11 +109,6 @@ export function subscribeBackgroundSpeechUpdates(listener: (sessionId: string) =
 export function isBackgroundSpeechRunning(sessionId: string): boolean {
   return activeJobs.has(sessionId);
 }
-
-export function getBackgroundSpeechSessionIds(): string[] {
-  return [...activeJobs.keys()];
-}
-
 export function stopBackgroundSpeechGeneration(sessionId: string) {
   const controller = activeJobs.get(sessionId);
   if (controller) {
@@ -123,7 +118,7 @@ export function stopBackgroundSpeechGeneration(sessionId: string) {
   }
 }
 
-export function buildSpeechMessage(payload: SpeechPayload): string {
+function buildSpeechMessage(payload: SpeechPayload): string {
   return `${SPEECH_MESSAGE_PREFIX}${JSON.stringify(payload)}`;
 }
 
@@ -135,12 +130,6 @@ export function parseSpeechMessage(content: string): SpeechPayload | null {
     return null;
   }
 }
-
-export function sessionHasPendingSpeech(messages: ChatMessage[]): boolean {
-  const last = messages.at(-1);
-  return last?.role === "assistant" && last.content === SPEECH_PENDING_MARKER;
-}
-
 export function shouldRouteToSpeechGeneration(args: {
   speechGenerationEnabled: boolean;
   modelSupportsSpeech: boolean;
@@ -149,7 +138,7 @@ export function shouldRouteToSpeechGeneration(args: {
 }
 
 /** Drop stale pending placeholders superseded by a later assistant message. */
-export function stripOrphanSpeechPending(messages: ChatMessage[]): ChatMessage[] {
+function stripOrphanSpeechPending(messages: ChatMessage[]): ChatMessage[] {
   const last = messages.at(-1);
   if (last?.content === SPEECH_PENDING_MARKER) return messages;
   return messages.filter((m) => m.content !== SPEECH_PENDING_MARKER);

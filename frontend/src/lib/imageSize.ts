@@ -1,4 +1,3 @@
-import { safeBrowserUrl } from "./browserUrlPolicy";
 
 /** Image aspect-ratio presets — aligned with OpenRouter `image_config.aspect_ratio`. */
 
@@ -28,7 +27,7 @@ export const SUPPORTED_ASPECT_RATIOS = [
   "21:9",
 ] as const;
 
-export type SupportedAspectRatio = (typeof SUPPORTED_ASPECT_RATIOS)[number];
+type SupportedAspectRatio = (typeof SUPPORTED_ASPECT_RATIOS)[number];
 
 export const IMAGE_ASPECT_PRESETS: ImageAspectPreset[] = [
   { id: "square", label: "Square", shortLabel: "1:1", aspectRatio: "1:1" },
@@ -37,10 +36,6 @@ export const IMAGE_ASPECT_PRESETS: ImageAspectPreset[] = [
   { id: "landscape", label: "Landscape", shortLabel: "3:2", aspectRatio: "3:2" },
   { id: "portrait", label: "Portrait", shortLabel: "2:3", aspectRatio: "2:3" },
 ];
-
-/** @deprecated Use IMAGE_ASPECT_PRESETS */
-export const IMAGE_SIZE_PRESETS = IMAGE_ASPECT_PRESETS;
-
 const PRESET_BY_ID = Object.fromEntries(
   IMAGE_ASPECT_PRESETS.map((p) => [p.id, p]),
 ) as Record<Exclude<ImageAspectPresetId, "custom">, ImageAspectPreset>;
@@ -52,21 +47,6 @@ const ASPECT_RATIO_TO_PRESET: Record<string, ImageAspectPresetId> = {
   "3:2": "landscape",
   "2:3": "portrait",
 };
-
-/** Default WxH per aspect ratio for providers that still require `size`. */
-const ASPECT_RATIO_TO_DEFAULT_SIZE: Record<string, string> = {
-  "1:1": "1024x1024",
-  "16:9": "1344x768",
-  "9:16": "768x1344",
-  "3:2": "1248x832",
-  "2:3": "832x1248",
-  "4:3": "1184x888",
-  "3:4": "888x1184",
-  "4:5": "896x1120",
-  "5:4": "1120x896",
-  "21:9": "1536x656",
-};
-
 const ASPECT_PATTERN = /^(\d+)\s*:\s*(\d+)$/i;
 const LEGACY_SIZE_PATTERN = /^(\d+)\s*x\s*(\d+)$/i;
 
@@ -127,17 +107,6 @@ export function normalizeImageAspectPreset(raw?: string | null): ImageAspectPres
   if (raw && raw in PRESET_BY_ID) return raw as ImageAspectPresetId;
   return DEFAULT_IMAGE_ASPECT_PRESET;
 }
-
-export function aspectRatioFromPreset(
-  preset: ImageAspectPresetId,
-  customAspect?: string,
-): string {
-  if (preset === "custom") {
-    return normalizeCustomAspectRatio(customAspect) ?? DEFAULT_CUSTOM_ASPECT_RATIO;
-  }
-  return PRESET_BY_ID[preset].aspectRatio;
-}
-
 export function presetFromAspectRatio(aspectRatio?: string | null): ImageAspectPresetId | undefined {
   if (!aspectRatio) return undefined;
   const normalized = normalizeCustomAspectRatio(aspectRatio);
@@ -145,19 +114,7 @@ export function presetFromAspectRatio(aspectRatio?: string | null): ImageAspectP
   return ASPECT_RATIO_TO_PRESET[normalized] ?? "custom";
 }
 
-export function aspectLabelForPreset(preset: ImageAspectPresetId, customAspect?: string): string {
-  if (preset === "custom") {
-    return normalizeCustomAspectRatio(customAspect) ?? DEFAULT_CUSTOM_ASPECT_RATIO;
-  }
-  return PRESET_BY_ID[preset].shortLabel;
-}
-
-export function defaultSizeForAspectRatio(aspectRatio: string): string {
-  const normalized = normalizeCustomAspectRatio(aspectRatio) ?? aspectRatio;
-  return ASPECT_RATIO_TO_DEFAULT_SIZE[normalized] ?? "1024x1024";
-}
-
-export function resolveSessionAspectRatio(tools: {
+function resolveSessionAspectRatio(tools: {
   imageAspectRatio: ImageAspectPresetId;
   imageCustomAspectRatio?: string;
   /** @deprecated legacy WxH field */
@@ -194,7 +151,7 @@ function applyAspectToken(token: string, found: { preset?: ImageAspectPresetId; 
 }
 
 /** Parse explicit aspect hints from prompt; strip matched tokens from cleaned prompt. */
-export function parseAspectRatioFromPrompt(prompt: string): {
+function parseAspectRatioFromPrompt(prompt: string): {
   cleanedPrompt: string;
   preset?: ImageAspectPresetId;
   aspectRatio?: string;
@@ -306,33 +263,5 @@ export function resolveRegenerateImageGeneration(opts: {
     sessionCustomAspect: opts.sessionCustomAspect,
     sessionCustomSize: opts.sessionCustomSize,
     hasReference: false,
-  });
-}
-
-/** Read pixel dimensions from a data URL or same-origin/http(s) image URL. */
-export function readReferenceImageDimensions(
-  referenceUrl: string,
-): Promise<{ width: number; height: number } | null> {
-  const ref = safeBrowserUrl(referenceUrl, "image");
-  if (!ref) return Promise.resolve(null);
-
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const w = img.naturalWidth;
-      const h = img.naturalHeight;
-      resolve(w > 0 && h > 0 ? { width: w, height: h } : null);
-    };
-    img.onerror = () => resolve(null);
-    if (ref.startsWith("data:") || ref.startsWith("blob:")) {
-      img.src = ref;
-      return;
-    }
-    if (ref.startsWith("http://") || ref.startsWith("https://") || ref.startsWith("/")) {
-      img.crossOrigin = "anonymous";
-      img.src = ref;
-      return;
-    }
-    resolve(null);
   });
 }

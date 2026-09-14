@@ -1,5 +1,5 @@
 /** Distance from bottom (px) still treated as "pinned" for auto-scroll. */
-export const CHAT_SCROLL_PIN_THRESHOLD = 96;
+const CHAT_SCROLL_PIN_THRESHOLD = 96;
 
 export function isNearScrollBottom(
   el: Pick<HTMLElement, "scrollHeight" | "scrollTop" | "clientHeight">,
@@ -8,7 +8,7 @@ export function isNearScrollBottom(
   return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
 }
 
-export function isChatScrollable(
+function isChatScrollable(
   el: Pick<HTMLElement, "scrollHeight" | "clientHeight">,
   slack = 24,
 ): boolean {

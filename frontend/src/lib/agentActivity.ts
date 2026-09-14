@@ -1,6 +1,6 @@
 import { humanAgentStatus } from "./agentPlatform";
 
-export const AGENT_ACTIVITY_PATH = "/admin/agent-activity";
+const AGENT_ACTIVITY_PATH = "/admin/agent-activity";
 
 export type RuntimeHealthStatus = "blocked" | "failed";
 

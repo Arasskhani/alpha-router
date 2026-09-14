@@ -15,7 +15,7 @@ const LOCAL_DATE: Intl.DateTimeFormatOptions = {
 };
 
 /** Parse API datetimes stored as naive UTC (ISO without timezone suffix). */
-export function parseApiDateTime(iso: string | null | undefined): Date | null {
+function parseApiDateTime(iso: string | null | undefined): Date | null {
   if (!iso) return null;
   const trimmed = iso.trim();
   if (!trimmed) return null;

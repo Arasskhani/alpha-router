@@ -31,7 +31,7 @@ type SpeechRecognitionInstance = {
 
 type SpeechRecognitionCtor = new () => SpeechRecognitionInstance;
 
-export function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
+function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
   const w = window as Window & {
     SpeechRecognition?: SpeechRecognitionCtor;
     webkitSpeechRecognition?: SpeechRecognitionCtor;
@@ -57,7 +57,7 @@ export function normalizeVoiceLang(lang?: string | null): VoiceLang {
 }
 
 /** Map a voice-recording language code to a BCP-47 locale for the browser recognizer. */
-export function voiceLangToLocale(lang?: string | null): string {
+function voiceLangToLocale(lang?: string | null): string {
   const norm = normalizeVoiceLang(lang);
   if (norm === "fa") return "fa-IR";
   if (norm === "en") return "en-US";

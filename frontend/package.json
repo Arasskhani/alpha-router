@@ -9,12 +9,12 @@
     "typecheck": "tsc -b",
     "lint": "eslint . --max-warnings 286",
     "lint:strict": "eslint . --max-warnings 0",
+    "knip": "knip",
     "test": "vitest run",
     "fonts:generate": "node scripts/generate-persian-fonts.mjs"
   },
   "dependencies": {
     "@lobehub/icons-static-svg": "^1.94.0",
-    "@tanstack/react-virtual": "^3.13.12",
     "highlight.js": "^11.11.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

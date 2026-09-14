@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+
+import anyio
 import datetime
 import logging
 import uuid
@@ -191,9 +193,8 @@ async def finish_metered_usage(
                 )
         return False
 
-    task = asyncio.create_task(_persist())
-    try:
-        await asyncio.shield(task)
-    except asyncio.CancelledError:
-        await task
-        raise
+    # Shield the frame, not just the coroutine: under Starlette's anyio cancel
+    # scope a plain 'await task' in the except branch is re-cancelled before the
+    # settlement finishes (see proxy_service.stream_chat finalizer).
+    with anyio.CancelScope(shield=True):
+        await _persist()

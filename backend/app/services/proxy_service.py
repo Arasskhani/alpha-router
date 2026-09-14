@@ -4,6 +4,8 @@ Costs are taken from provider usage objects — never adjusted by Alpharouter.
 """
 
 import asyncio
+
+import anyio
 import datetime
 import json
 import logging
@@ -1894,6 +1896,13 @@ async def stream_chat(
                             client_disconnected = True
                         else:
                             persister.schedule_cancel_poll()
+                    if client_disconnected:
+                        # Stop consuming the provider stream now: every further
+                        # chunk is generated (and billed upstream) for nobody.
+                        # The post-loop code estimates usage for what was
+                        # received so the partial turn is still settled.
+                        await _close_upstream_stream(response)
+                        break
                     pt, ct, cache = _usage_from_chunk(chunk)
                     chunk_usage = (
                         chunk.get("usage")
@@ -2269,6 +2278,14 @@ async def stream_chat(
                         persister.reset_persist_state()
                 yield _sse_delta_chunk(collected_content)
                 agent_output_displayed = True
+        except GeneratorExit:
+            # The ASGI server closed the generator (client gone). Nothing may be
+            # yielded from here on; the finally block below still settles.
+            was_cancelled = True
+            client_disconnected = True
+            success = False
+            error_message = "Request cancelled"
+            raise
         except asyncio.CancelledError as exc:
             was_cancelled = True
             success = False
@@ -2479,6 +2496,15 @@ async def stream_chat(
                 error_message = _format_provider_error(exc, provider)[:500]
                 yield f"data: {json.dumps({'error': error_message})}\n\n".encode()
         finally:
+          # Starlette cancels a streaming response through an anyio cancel
+          # scope when the client disconnects. anyio delivers that
+          # cancellation at *every* subsequent await until the scope exits, so
+          # without a shield the first await below re-raises CancelledError and
+          # settlement (release hold, RequestLog, persister.finalize, agent
+          # finalization) is skipped: the hold leaks until TTL and consumed
+          # tokens are never charged. asyncio.shield() alone protects the inner
+          # coroutine but not this frame, so shield the whole finalizer.
+          with anyio.CancelScope(shield=True):
             if capacity_heartbeat_task is not None:
                 capacity_heartbeat_task.cancel()
                 await asyncio.gather(
@@ -2486,16 +2512,14 @@ async def stream_chat(
                     return_exceptions=True,
                 )
             try:
-                await asyncio.shield(_release_capacity_permit())
+                await _release_capacity_permit()
             except Exception:
                 logger.exception("Failed to release Code Interpreter capacity permit")
             if persister:
                 try:
-                    await asyncio.shield(
-                        persister.finalize(
-                            success=success,
-                            error_message=error_message,
-                        )
+                    await persister.finalize(
+                        success=success,
+                        error_message=error_message,
                     )
                 except Exception:
                     await db.rollback()
@@ -2609,7 +2633,7 @@ async def stream_chat(
                         )
                 return None
 
-            stream_request_log_id = await asyncio.shield(_persist_stream_usage())
+            stream_request_log_id = await _persist_stream_usage()
             agent_terminal_status: str | None = None
             if agent_turn is not None:
                 if was_cancelled or client_disconnected:
@@ -2676,7 +2700,7 @@ async def stream_chat(
                                 agent_turn.run_id,
                             )
 
-                await asyncio.shield(_persist_agent_finalization())
+                await _persist_agent_finalization()
 
             response_metadata: dict[str, object] = {}
             if (
@@ -2702,14 +2726,35 @@ async def stream_chat(
                     citations = _agent_citation_metadata(agent_turn, agent_review)
                     if citations:
                         response_metadata["citations"] = citations
-            if response_metadata:
-                meta_payload = json.dumps(
-                    {"alpha_router": response_metadata},
-                    separators=(",", ":"),
-                )
-                yield f"data: {meta_payload}\n\n".encode()
-            if not was_cancelled:
-                yield b"data: [DONE]\n\n"
+          # Yields must stay outside the shielded scope and never run once the
+          # consumer is gone: yielding from a cancelled/closed generator would
+          # swallow the cancellation or raise "generator ignored GeneratorExit".
+          if response_metadata and not was_cancelled and not client_disconnected:
+              meta_payload = json.dumps(
+                  {"alpha_router": response_metadata},
+                  separators=(",", ":"),
+              )
+              yield f"data: {meta_payload}\n\n".encode()
+          if not was_cancelled and not client_disconnected:
+              yield b"data: [DONE]\n\n"
+
+
+async def _close_upstream_stream(response) -> None:
+    """Best-effort close of a LiteLLM stream wrapper and its underlying iterator."""
+    seen: set[int] = set()
+    for target in (response, getattr(response, "completion_stream", None)):
+        if target is None or id(target) in seen:
+            continue
+        seen.add(id(target))
+        aclose = getattr(target, "aclose", None)
+        if aclose is None:
+            continue
+        try:
+            result = aclose()
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:
+            logger.debug("Ignoring error while closing upstream stream", exc_info=True)
 
 
 def _embedding_input_text(input_value) -> str:

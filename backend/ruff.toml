@@ -3,6 +3,8 @@
 target-version = "py312"
 line-length = 120
 extend-exclude = ["alembic/versions"]
+# Also honour the exclusion when files are passed explicitly (pre-commit does that).
+force-exclude = true
 
 [lint]
 select = [

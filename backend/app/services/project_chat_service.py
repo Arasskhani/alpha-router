@@ -520,11 +520,15 @@ async def append_project_chat_message(
                 created_at=dt.datetime.utcnow(),
             )
             db.add(msg)
-            row.message_count = int(row.message_count or 0) + 1
+            # SQL-side increments: two concurrent appends each read the same
+            # stale Python value, so ``count + 1`` in Python loses one update
+            # (unique sequences, wrong message_count). Let the database add.
+            row.message_count = func.coalesce(ChatSession.message_count, 0) + 1
             row.last_message_at = dt.datetime.utcnow()
-            row.revision = int(row.revision or 1) + 1
+            row.revision = func.coalesce(ChatSession.revision, 1) + 1
             row.updated_at = dt.datetime.utcnow()
             await db.flush()
+            await db.refresh(row, attribute_names=["message_count", "revision"])
             if msg.role == "assistant":
                 # Only a completed exchange is worth mining, and the check stays
                 # ahead of the import so member turns pay nothing on this path.

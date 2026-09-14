@@ -683,9 +683,12 @@ def test_deleted_project_excluded_from_my_list():
             async with factory() as db:
                 owner, _, _ = await _setup_project(db, PROJ)
                 await delete_project(db, project_id=PROJ, user=owner)
+                # Soft-delete is reversible: members keep seeing the project
+                # (status "deletion_pending", with a Restore action in the UI)
+                # until purge_expired_deleted_projects removes it.
                 mine, total = await list_my_projects(db, user=owner)
-                assert total == 0
-                assert mine == []
+                assert total == 1
+                assert [p["status"] for p in mine] == ["deletion_pending"]
         finally:
             await engine.dispose()
 

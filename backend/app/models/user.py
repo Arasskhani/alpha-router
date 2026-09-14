@@ -1,12 +1,12 @@
 """User accounts, RBAC, and directory profile fields."""
 
 import datetime
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Table, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Table, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.types import JSON
 
-from app.database import Base
+from app.database import Base, MoneyUSD
 
 JsonDocument = JSON().with_variant(JSONB(), "postgresql")
 
@@ -67,9 +67,9 @@ class User(Base):
     reporting_to = Column(String(255), nullable=True)
 
     # Budget: resolved from plan assignment; cached monthly remaining
-    monthly_budget_usd = Column(Float, default=0.0)
-    budget_used_usd = Column(Float, default=0.0)
-    budget_reserved_usd = Column(Float, nullable=False, server_default="0", default=0.0)
+    monthly_budget_usd = Column(MoneyUSD, default=0.0)
+    budget_used_usd = Column(MoneyUSD, default=0.0)
+    budget_reserved_usd = Column(MoneyUSD, nullable=False, server_default="0", default=0.0)
     budget_period_start = Column(DateTime, nullable=True)
 
     # Local-account TOTP (2FA). Secret is Fernet-encrypted at rest.

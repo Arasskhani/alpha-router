@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 from uuid import uuid4
 
+from sqlalchemy import Numeric
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -82,3 +83,15 @@ async def get_read_db() -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await session.rollback()
             raise
+
+
+# --- Money column types (Phase 4.2) -----------------------------------------
+# Balances, holds, limits and per-request costs are stored as exact decimals
+# so SQL-side arithmetic (``budget_used_usd = budget_used_usd + :x``) never
+# accumulates binary-float error. ``asdecimal=False`` keeps the Python side on
+# floats: the accounting code, the JSON API and the tests all speak float, and
+# the rounding on the way in (12 places) is far below any billing unit.
+# Ledger tables (``usage_events`` etc.) already use Numeric(20, 12) with
+# Decimal results and are the source of truth for reconciliation.
+MoneyUSD = Numeric(20, 12, asdecimal=False)
+UnitPriceUSD = Numeric(24, 14, asdecimal=False)

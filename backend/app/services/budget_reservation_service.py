@@ -14,6 +14,7 @@ from app.models.api_key import AlphaRouterApiKey
 from app.models.budget_reservation import BudgetReservation
 from app.models.model_catalog import AIModel
 from app.models.user import User
+from app.services.observability import increment, observe_budget_reserved_drift
 from app.services.budget_service import (
     BUDGET_EXCEEDED_DETAIL,
     NO_PLAN_BUDGET_DETAIL,
@@ -672,8 +673,8 @@ async def _drifted_subject_ids(
     counter_column,
     id_column,
     tolerance: float = 1e-6,
-) -> list[int]:
-    """Subject ids whose reserved counter sits above their open ``held`` rows."""
+) -> list[tuple[int, float]]:
+    """(subject id, drift USD) for counters that sit above their open ``held`` rows."""
     held_totals = (
         select(
             BudgetReservation.subject_id.label("sid"),
@@ -698,7 +699,7 @@ async def _drifted_subject_ids(
         )
     ).all()
     return [
-        int(subject_id)
+        (int(subject_id), float(counter or 0) - float(held_sum or 0))
         for subject_id, counter, held_sum in rows
         if float(counter or 0) - float(held_sum or 0) > tolerance
     ]
@@ -730,6 +731,7 @@ async def reconcile_drifted_reserved_counters(db: AsyncSession) -> int:
         if not got:
             return 0
     repaired = 0
+    drift_total = 0.0
     for subject_type, id_column, counter_column in (
         (SUBJECT_USER, User.id, User.budget_reserved_usd),
         (
@@ -738,15 +740,19 @@ async def reconcile_drifted_reserved_counters(db: AsyncSession) -> int:
             AlphaRouterApiKey.period_reserved_usd,
         ),
     ):
-        subject_ids = await _drifted_subject_ids(
+        drifted = await _drifted_subject_ids(
             db,
             subject_type=subject_type,
             counter_column=counter_column,
             id_column=id_column,
         )
-        for subject_id in subject_ids:
+        for subject_id, drift_usd in drifted:
             await reconcile_subject_reserved(db, subject_type, subject_id)
             repaired += 1
+            drift_total += drift_usd
+            increment("budget_reserved_drift_repaired")
+    # Reported even when zero so the dashboard shows "checked, exact".
+    observe_budget_reserved_drift(drift_total)
     return repaired
 
 

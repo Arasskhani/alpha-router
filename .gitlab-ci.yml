@@ -90,7 +90,7 @@ backend-postgres-canary:
     - python -m pip install --no-cache-dir -r backend/requirements-dev.txt
     - cd backend
     - python -m app.migrate
-    - PYTHONPATH=. python -m pytest tests/test_budget_reservations_postgres.py tests/test_budget_reconcile_race_postgres.py tests/test_scheduler_leader.py tests/test_readiness.py tests/test_schema_baseline.py -q -rs
+    - PYTHONPATH=. python -m pytest tests/test_budget_reservations_postgres.py tests/test_budget_reconcile_race_postgres.py tests/test_scheduler_leader.py tests/test_readiness.py tests/test_schema_baseline.py tests/test_money_numeric_postgres.py -q -rs
 
 deployment-config:
   stage: verify

@@ -41,6 +41,7 @@ _KNOWN_EVENTS = frozenset(
         "csrf_failure",
         "repeated_401",
         "budget_hold_leak",
+        "budget_reserved_drift_repaired",
         "code_interpreter_capacity_rejected",
         "code_interpreter_lease_expired",
         "code_interpreter_cancelled",
@@ -206,6 +207,12 @@ _MEMORY_EMBEDDING_BACKLOG = Gauge(
     multiprocess_mode="livemostrecent",
     **_metric_kwargs,
 )
+_BUDGET_RESERVED_DRIFT = Gauge(
+    "alpharouter_budget_reserved_drift_usd",
+    "USD by which reserved counters exceeded their open holds at the last reconciliation run.",
+    multiprocess_mode="livemostrecent",
+    **_metric_kwargs,
+)
 _DEPENDENCY_READY = Gauge(
     "alpharouter_dependency_ready",
     "Dependency readiness (1 ready, 0 unavailable).",
@@ -344,6 +351,15 @@ def observe_memory_retrieval_fallback(reason: str, *, scope: str = "user") -> No
 
 def set_memory_embedding_backlog(count: int) -> None:
     _MEMORY_EMBEDDING_BACKLOG.set(max(0, int(count)))
+
+
+def observe_budget_reserved_drift(total_usd: float) -> None:
+    """Record the drift the reconciliation job found (0 when counters were exact).
+
+    Phase 4.2 moved the counters to NUMERIC; once this stays at zero for a
+    month the repair job can be retired (plan step 4.2).
+    """
+    _BUDGET_RESERVED_DRIFT.set(max(0.0, float(total_usd or 0.0)))
 
 
 def set_dependency_ready(component: str, ready: bool) -> None:

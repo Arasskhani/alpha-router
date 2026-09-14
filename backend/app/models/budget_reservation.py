@@ -2,9 +2,9 @@
 
 import datetime
 
-from sqlalchemy import Column, DateTime, Float, Integer, String
+from sqlalchemy import Column, DateTime, Integer, String
 
-from app.database import Base
+from app.database import Base, MoneyUSD
 
 
 class BudgetReservation(Base):
@@ -16,8 +16,8 @@ class BudgetReservation(Base):
     idempotency_key = Column(String(160), nullable=False, unique=True, index=True)
     operation = Column(String(32), nullable=False)
     model_id = Column(String(512), nullable=True)
-    reserved_usd = Column(Float, nullable=False)
-    actual_usd = Column(Float, nullable=True)
+    reserved_usd = Column(MoneyUSD, nullable=False)
+    actual_usd = Column(MoneyUSD, nullable=True)
     status = Column(String(16), nullable=False, default="held", index=True)
     request_log_id = Column(Integer, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)

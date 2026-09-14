@@ -322,10 +322,13 @@ async def ensure_budget_period(db: AsyncSession, user: User) -> None:
 
 
 async def reset_all_monthly_budgets(db: AsyncSession) -> int:
-    """Called on the 1st of each month by scheduler."""
+    """Called at 00:05 UTC on the 1st of each month by the scheduler.
+
+    No ``now.day != 1`` guard: the cron trigger (UTC, with misfire grace) is
+    the authority on *when*. The guard used to turn a run that fired a few
+    minutes late - or fired in a non-UTC server zone - into a silent no-op.
+    """
     now = datetime.datetime.utcnow()
-    if now.day != 1:
-        return 0
     from app.services.budget_reservation_service import (
         SUBJECT_USER,
         release_open_holds_for_subject,

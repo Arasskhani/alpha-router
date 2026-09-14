@@ -12,6 +12,8 @@ import asyncio
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import app.models  # noqa: F401
 from app.database import Base
@@ -40,8 +42,6 @@ from app.services.project_service import (
     list_members,
     update_project,
 )
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 PROJ = "pub-scope-1"
 

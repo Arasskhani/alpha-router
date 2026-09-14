@@ -14,6 +14,7 @@ from app.services.openrouter_image_service import (
     get_openrouter_http_client,
 )
 from app.services.storage_service import video_output_limit
+import contextlib
 
 
 ALLOWED_VIDEO_RESOLUTIONS = frozenset({"480p", "720p", "1080p", "1K", "2K", "4K"})
@@ -106,10 +107,8 @@ def build_video_generation_payload(
     if frame_images:
         payload["frame_images"] = frame_images
     if seed is not None:
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             payload["seed"] = int(seed)
-        except (TypeError, ValueError):
-            pass
     return payload
 
 
@@ -124,7 +123,7 @@ def frame_image_from_data_url(data_url: str, *, frame_type: str = "first_frame")
 def _is_allowed_openrouter_url(url: str, *, base_url: str | None) -> bool:
     try:
         parsed = urlparse(url)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return False)
         return False
     if parsed.scheme not in ("https", "http"):
         return False
@@ -134,7 +133,7 @@ def _is_allowed_openrouter_url(url: str, *, base_url: str | None) -> bool:
     if base_url:
         try:
             base_host = (urlparse(base_url).hostname or "").lower()
-        except Exception:
+        except Exception:  # noqa: BLE001 -- falls back to a safe default value
             base_host = ""
         if base_host and host == base_host:
             return True
@@ -270,7 +269,7 @@ def extract_video_download_url(payload: dict[str, Any], *, base_url: str | None 
         # Some providers return CDN URLs; allow https only and rely on SSRF guard at fetch time.
         try:
             parsed = urlparse(url)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- one bad item must not abort the batch
             continue
         if parsed.scheme == "https" and parsed.hostname:
             return url

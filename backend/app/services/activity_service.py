@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from typing import Any
 
 import pandas as pd
@@ -78,8 +78,8 @@ def _uses_hourly_buckets(period: str) -> bool:
 
 def _as_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def _display_dt(dt: datetime, tz_mode: str) -> datetime:
@@ -398,7 +398,7 @@ def _entity_metric(row: RequestLog, metric: str) -> float:
     return float(row.total_cost_usd or 0)
 
 
-def _build_dimension_trends(
+def _build_dimension_trends(  # noqa: C901 -- Phase 4 split; complexity must not grow
     rows: list[RequestLog],
     prev_rows: list[RequestLog],
     *,
@@ -738,10 +738,7 @@ def _explore_rollup_labels(rollup: str, since: datetime, now: datetime, tz_mode:
         t = since_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         while t <= now_local:
             keys.append(_explore_rollup_key(t, rollup, tz_mode))
-            if t.month == 12:
-                t = t.replace(year=t.year + 1, month=1)
-            else:
-                t = t.replace(month=t.month + 1)
+            t = t.replace(year=t.year + 1, month=1) if t.month == 12 else t.replace(month=t.month + 1)
         return keys
     t = since_local.replace(hour=0, minute=0, second=0, microsecond=0)
     while t <= now_local:
@@ -776,7 +773,7 @@ def _percentile_50(values: list[float]) -> float:
     return float((ordered[mid - 1] + ordered[mid]) / 2.0)
 
 
-def build_explore(
+def build_explore(  # noqa: C901 -- Phase 4 split; complexity must not grow
     rows: list[RequestLog],
     *,
     since: datetime,
@@ -955,11 +952,8 @@ def build_explore(
             totals_for_pct[ekey] = entity_metric_total(ekey)
         grand_total += abs(totals_for_pct[ekey]) if not is_latency else 0.0
 
-    if is_latency:
-        # % of total for latency: share of requests
-        req_total = sum(entity_req.get(k, 0) for k in ranked) or 1.0
-    else:
-        req_total = grand_total or 1.0
+    # % of total for latency: share of requests
+    req_total = (sum(entity_req.get(k, 0) for k in ranked) or 1.0) if is_latency else (grand_total or 1.0)
 
     for idx, ekey in enumerate(table_targets):
         series = entity_bucket_series(ekey)
@@ -1216,10 +1210,7 @@ def _build_overview(
             if tokens <= 0:
                 continue
             parts = [p for p in key.replace(".", " ").replace("@", " ").split() if p]
-            if len(parts) >= 2:
-                initials = (parts[0][0] + parts[1][0]).upper()
-            else:
-                initials = (key[:2] or "?").upper()
+            initials = (parts[0][0] + parts[1][0]).upper() if len(parts) >= 2 else (key[:2] or "?").upper()
             out.append({"key": key, "label": key, "initials": initials, "tokens": int(tokens)})
         return out
 
@@ -1378,7 +1369,7 @@ def build_activity_payload(
         chart.append(row)
 
     stack_order = list(top_segments)
-    if any(m not in top_set for m in segment_stats.keys()):
+    if any(m not in top_set for m in segment_stats):
         stack_order.append("__others__")
 
     segments_meta: list[dict[str, Any]] = []

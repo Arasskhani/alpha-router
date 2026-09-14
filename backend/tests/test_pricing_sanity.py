@@ -1,7 +1,8 @@
 """OpenRouter pricing sentinels must not produce negative logged spend."""
 
-import pytest
 from types import SimpleNamespace
+
+import pytest
 
 from app.services.model_sync import _per_1k_from_openrouter_pricing
 from app.services.proxy_service import _compute_token_cost_usd, _sanitize_cost_usd

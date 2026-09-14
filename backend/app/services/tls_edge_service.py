@@ -367,7 +367,7 @@ async def sync_edge_body_limit(db: AsyncSession) -> dict[str, Any]:
 
     try:
         cert = await get_certificate(db, int(certificate_id))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
         LOGGER.warning("Edge body sync could not load certificate: %s", exc)
         return {
             "attempted": True,
@@ -425,7 +425,7 @@ async def reconcile_edge_body_limit(db: AsyncSession) -> dict[str, Any]:
     """Startup/admin reconcile: publish limits and refresh edge conf if needed."""
     try:
         return await sync_edge_body_limit(db)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
         LOGGER.warning("Edge body-limit reconcile failed: %s", exc)
         return {
             "attempted": True,

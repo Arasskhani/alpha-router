@@ -311,7 +311,7 @@ async def enhance_user_prompt(
             messages=kwargs["messages"],
             max_tokens=int(kwargs["max_tokens"]),
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return _fail_or_fallback()
         return _fail_or_fallback(
             normalized_mode,
             "Could not reserve budget for translation. Try again shortly.",
@@ -344,7 +344,7 @@ async def enhance_user_prompt(
     except PromptEnhanceError as exc:
         error_message = str(exc)[:500]
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
         error_message = str(exc)[:500]
         return _fail_or_fallback(
             normalized_mode,

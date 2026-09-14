@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 import asyncio
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -98,7 +99,7 @@ async def _defaults_and_validation() -> None:
 
         try:
             await update_memory_settings(db, {"extraction_model_id": 99999})
-            assert False, "expected missing model"
+            pytest.fail("expected missing model")
         except MemorySettingsError:
             pass
 
@@ -121,7 +122,7 @@ async def _defaults_and_validation() -> None:
         await db.flush()
         try:
             await update_memory_settings(db, {"extraction_model_id": disabled.id})
-            assert False, "expected disabled model"
+            pytest.fail("expected disabled model")
         except MemorySettingsError:
             pass
 
@@ -148,13 +149,13 @@ async def _defaults_and_validation() -> None:
 
         try:
             await update_memory_settings(db, {"embedding_model": "not-a-spec"})
-            assert False, "expected embedding spec error"
+            pytest.fail("expected embedding spec error")
         except MemorySettingsError:
             pass
 
         try:
             await update_memory_settings(db, {"not_a_real_key": True})
-            assert False, "expected unknown setting"
+            pytest.fail("expected unknown setting")
         except MemorySettingsError:
             pass
 

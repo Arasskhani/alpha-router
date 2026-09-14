@@ -37,9 +37,9 @@ backend-lint:
   image: python:3.12-slim
   <<: *backend-rules
   script:
-    - python -m pip install --no-cache-dir ruff
-    # Defect-class rules only (see backend/ruff.toml); style rules arrive in Phase 3.
-    - cd backend && ruff check .
+    - python -m pip install --no-cache-dir "ruff==0.16.7"
+    # Full rule set (backend/ruff.toml) plus formatting; both are hard gates.
+    - cd backend && ruff check . && ruff format --check .
 
 backend-tests:
   stage: verify

@@ -7,10 +7,10 @@ import datetime as dt
 import uuid
 from unittest.mock import patch
 
+from qdrant_client import AsyncQdrantClient
 from redis.exceptions import ResponseError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from qdrant_client import AsyncQdrantClient
 
 import app.models  # noqa: F401
 from app.database import Base

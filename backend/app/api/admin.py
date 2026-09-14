@@ -79,20 +79,6 @@ from app.services.system_default_models import (
 )
 
 
-async def clear_global_default_if_ids(db: AsyncSession, model_ids) -> None:
-    """Clear every system default that points at one of these catalog rows.
-
-    Kept under the original name so all seven call sites (model delete, disable,
-    make-private, connection delete…) cover every kind of default automatically.
-    """
-    await clear_defaults_if_ids(db, model_ids)
-
-
-async def drop_unusable_global_default(db: AsyncSession) -> None:
-    """Drop any system default whose model is gone or no longer eligible."""
-    await drop_unusable_defaults(db)
-
-
 from app.services.model_sync import (
     disable_models_for_connection,
     enable_models_for_connection,
@@ -164,7 +150,7 @@ from app.services.user_role_service import (
     user_has_full_administrator,
 )
 
-API_KEY_PAGE_SIZES = {10, 20, 30, 50}
+
 from app.services.storage_service import (
     clear_all_media,
     get_storage_settings,
@@ -195,14 +181,33 @@ from app.services.project_media_service import (
     set_project_media_quota_gb,
 )
 
+
+async def clear_global_default_if_ids(db: AsyncSession, model_ids) -> None:
+    """Clear every system default that points at one of these catalog rows.
+
+    Kept under the original name so all seven call sites (model delete, disable,
+    make-private, connection delete…) cover every kind of default automatically.
+    """
+    await clear_defaults_if_ids(db, model_ids)
+
+
+async def drop_unusable_global_default(db: AsyncSession) -> None:
+    """Drop any system default whose model is gone or no longer eligible."""
+    await drop_unusable_defaults(db)
+
+
+API_KEY_PAGE_SIZES = {10, 20, 30, 50}
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
 async def _ensure_not_last_full_admin_removal(db: AsyncSession, user_id: int, new_slugs: list[str]) -> None:
     current = await get_user_role_slugs(db, user_id)
-    if user_has_super_admin_access(current) and not user_has_super_admin_access(new_slugs):
-        if await count_full_administrators(db) <= 1:
-            raise HTTPException(400, detail="Cannot demote the last Full Administrator account")
+    if (
+        user_has_super_admin_access(current)
+        and not user_has_super_admin_access(new_slugs)
+        and await count_full_administrators(db) <= 1
+    ):
+        raise HTTPException(400, detail="Cannot demote the last Full Administrator account")
 
 
 async def _ensure_actor_may_assign_roles(
@@ -276,7 +281,7 @@ async def create_connection(
     if sync_now:
         try:
             synced = await sync_connection_models(db, conn, body.api_key)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
             sync_error = str(exc)[:300]
     await db.commit()
     return {"id": conn.id, "synced": synced, "sync_error": sync_error}
@@ -296,7 +301,7 @@ async def list_connections(db: AsyncSession = Depends(get_db), _: User = Depends
             .group_by(UsageEvent.connection_id)
         )
         usage_map = {r[0]: float(r[1]) for r in (await db.execute(usage_q)).all()}
-    except Exception:
+    except Exception:  # noqa: BLE001 -- falls back to a safe default value
         usage_map = {}
     return [
         {
@@ -2024,9 +2029,12 @@ async def patch_user(
     if body.reporting_to is not None:
         user.reporting_to = _clean_optional_str(body.reporting_to)
     if body.is_active is not None and user.is_active != body.is_active:
-        if not body.is_active and await user_has_full_administrator(db, user.id):
-            if await count_active_full_administrators(db) <= 1:
-                raise HTTPException(400, detail="Cannot disable the last active Full Administrator account")
+        if (
+            not body.is_active
+            and await user_has_full_administrator(db, user.id)
+            and await count_active_full_administrators(db) <= 1
+        ):
+            raise HTTPException(400, detail="Cannot disable the last active Full Administrator account")
         user.is_active = body.is_active
         # Disabling a user revokes their active sessions immediately so a
         # disabled account cannot keep making (even read-only) requests on
@@ -2116,7 +2124,7 @@ class UsersBulkIn(BaseModel):
 
 
 @router.post("/users/bulk")
-async def bulk_update_users(
+async def bulk_update_users(  # noqa: C901 -- Phase 4 split; complexity must not grow
     body: UsersBulkIn,
     db: AsyncSession = Depends(get_db),
     actor: User = Depends(require_users_write),
@@ -2239,9 +2247,8 @@ async def delete_local_user(
         raise HTTPException(404)
     if user.deleted_at is not None:
         raise HTTPException(400, detail="User is already in Deleted Users")
-    if await user_has_full_administrator(db, user.id):
-        if await count_full_administrators(db) <= 1:
-            raise HTTPException(400, detail="Cannot delete the last Full Administrator account")
+    if await user_has_full_administrator(db, user.id) and await count_full_administrators(db) <= 1:
+        raise HTTPException(400, detail="Cannot delete the last Full Administrator account")
     await soft_delete_user(db, user)
     await db.commit()
     return {"ok": True, "soft_deleted": True}
@@ -3098,8 +3105,8 @@ def _parse_changelog_date(raw: str | None) -> date | None:
         return None
     try:
         return date.fromisoformat(raw.strip()[:10])
-    except ValueError:
-        raise HTTPException(400, detail="Invalid date; use YYYY-MM-DD")
+    except ValueError as exc:
+        raise HTTPException(400, detail="Invalid date; use YYYY-MM-DD") from exc
 
 
 @router.get("/api-keys/{key_id}/changelog")
@@ -3384,7 +3391,7 @@ async def patch_storage_settings(
         # Fire-and-queue only: never await edge nginx apply (avoids admin Save timeouts).
         try:
             edge_sync = await sync_edge_body_limit(db)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
             edge_sync = {
                 "attempted": True,
                 "queued": False,
@@ -3467,7 +3474,7 @@ async def _validated_connection_base_url(raw: str | None) -> str | None:
 def _client_ip(request: Request) -> str | None:
     try:
         return resolve_client_ip(request)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return request.client.host if request.cl)
         return request.client.host if request.client else None
 
 

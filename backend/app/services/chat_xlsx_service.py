@@ -46,16 +46,16 @@ def _split_pipe_row(line: str) -> list[str]:
 
 
 def _parse_markdown_table(block: str) -> _Table | None:
-    lines = [l.strip() for l in block.splitlines() if l.strip()]
+    lines = [line.strip() for line in block.splitlines() if line.strip()]
     if len(lines) < 2:
         return None
-    if not all(l.startswith("|") or l.endswith("|") for l in lines):
+    if not all(line.startswith("|") or line.endswith("|") for line in lines):
         return None
     sep_cells = _split_pipe_row(lines[1])
     if not sep_cells or not all(re.fullmatch(r":?-+:?", c) for c in sep_cells):
         return None
     header = _split_pipe_row(lines[0])
-    rows = [_split_pipe_row(l) for l in lines[2:]]
+    rows = [_split_pipe_row(line) for line in lines[2:]]
     return _Table(header=header, rows=rows)
 
 
@@ -73,8 +73,8 @@ def extract_xlsx_tables(content: str) -> list[_Table]:
         raw = m.group(1).strip()
         if not raw:
             continue
-        lines = [l for l in raw.splitlines() if l.strip()]
-        rows = [[c.strip() for c in l.split(",")] for l in lines]
+        lines = [line for line in raw.splitlines() if line.strip()]
+        rows = [[c.strip() for c in line.split(",")] for line in lines]
         if rows:
             tables.append(_Table(header=rows[0], rows=rows[1:]))
     if tables:

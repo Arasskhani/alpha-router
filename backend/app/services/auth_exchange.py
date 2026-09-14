@@ -46,7 +46,7 @@ async def store_token(code: str, payload: dict) -> None:
     try:
         await client.set(_KEY_PREFIX + code, raw, ex=_CODE_TTL_SECONDS)
         return
-    except Exception:
+    except Exception:  # noqa: BLE001 -- any Redis failure degrades to the in-memory path
         increment("redis_fallback")
     expires = time.monotonic() + _CODE_TTL_SECONDS
     async with _mem_lock:
@@ -63,7 +63,7 @@ async def consume_code(code: str) -> dict | None:
         pipe.get(_KEY_PREFIX + code)
         pipe.delete(_KEY_PREFIX + code)
         raw, _deleted = await pipe.execute()
-    except Exception:
+    except Exception:  # noqa: BLE001 -- any Redis failure degrades to the in-memory path
         increment("redis_fallback")
         raw = None
     if not raw:

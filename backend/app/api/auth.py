@@ -188,7 +188,7 @@ async def login_local(
                 asyncio.to_thread(authenticate_ldap_sync, username, body.password, ldap_cfg),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             raise HTTPException(status_code=503, detail=LDAP_UNAVAILABLE_MESSAGE) from exc
         except LdapUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc) or LDAP_UNAVAILABLE_MESSAGE) from exc
@@ -522,7 +522,7 @@ async def oidc_logout(request: Request, db: AsyncSession = Depends(get_db)):
     if cfg.get("enabled"):
         try:
             slo = await asyncio.to_thread(end_session_url, cfg)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- falls back to a safe default value
             slo = None
     response = RedirectResponse(slo or f"{frontend_url}/login")
     clear_session_cookies(response, request=request)
@@ -542,7 +542,7 @@ async def saml_metadata(db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Not Found")
     try:
         xml = await asyncio.to_thread(sp_metadata_xml, cfg)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- public endpoint must not leak configuration details
         # Avoid leaking configuration details on a public endpoint.
         raise HTTPException(status_code=404, detail="Not Found") from None
     return RawResponse(content=xml, media_type="application/samlmetadata+xml")
@@ -575,7 +575,7 @@ async def saml_logout(request: Request, db: AsyncSession = Depends(get_db)):
     if cfg.get("enabled"):
         try:
             slo_url = await asyncio.to_thread(logout_redirect_url, cfg, _request_public_url(request), name_id)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- falls back to a safe default value
             slo_url = None
 
     response = RedirectResponse(slo_url or f"{frontend_url}/login")

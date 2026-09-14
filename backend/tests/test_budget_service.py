@@ -14,7 +14,7 @@ from app.services.budget_service import (
     budget_request_blocked,
     resolve_monthly_budget,
 )
-from app.services.plan_assignment_service import upsert_user_no_plan, upsert_group_plan
+from app.services.plan_assignment_service import upsert_group_plan, upsert_user_no_plan
 
 
 async def _test_no_plan_assignments_yield_zero_budget() -> None:

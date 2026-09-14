@@ -36,7 +36,7 @@ def _client():
     """Shared per-process client (never closed here)."""
     try:
         return get_redis()
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return None)
         return None
 
 
@@ -73,10 +73,10 @@ async def check_rate_limit(
             return
         except HTTPException:
             raise
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 -- any Redis failure degrades to the in-memory limiter
             increment("redis_fallback")
             if fail_closed:
-                raise HTTPException(status_code=503, detail=_REDIS_UNAVAILABLE_LOGIN)
+                raise HTTPException(status_code=503, detail=_REDIS_UNAVAILABLE_LOGIN) from exc
             # Redis hiccup: fall through to in-memory fallback (fail-open).
     elif fail_closed:
         increment("redis_fallback")

@@ -10,16 +10,16 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.api import images
 from app.database import Base
 from app.models.api_key import AlphaRouterApiKey
 from app.models.budget_reservation import BudgetReservation
 from app.models.logging import RequestLog
 from app.models.user import User
 from app.services import budget_reservation_service as reservations
-from app.api import images
-from app.services.budget_service import ensure_budget_period
-from app.services.alpha_router_api_key_service import maybe_reset_key_period
 from app.services import proxy_service
+from app.services.alpha_router_api_key_service import maybe_reset_key_period
+from app.services.budget_service import ensure_budget_period
 from app.services.proxy_service import log_usage
 
 

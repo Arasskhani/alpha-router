@@ -1,7 +1,7 @@
 """Background jobs: model sync, monthly budget reset, scheduled reports."""
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
@@ -140,11 +140,11 @@ def user_media_cleanup_due(prefs, now: datetime, tz=None) -> bool:
     tz = tz or get_server_timezone()
     hour = int(prefs.cleanup_hour or 0)
     minute = int(prefs.cleanup_minute or 0)
-    now_local = now.replace(tzinfo=timezone.utc).astimezone(tz)
+    now_local = now.replace(tzinfo=UTC).astimezone(tz)
     scheduled_local = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if now_local < scheduled_local:
         return False
-    scheduled_utc = scheduled_local.astimezone(timezone.utc).replace(tzinfo=None)
+    scheduled_utc = scheduled_local.astimezone(UTC).replace(tzinfo=None)
     last = prefs.last_cleanup_at
     return last is None or last < scheduled_utc
 
@@ -333,7 +333,7 @@ def start_scheduler():
     scheduler.add_job(job_sync_all_models, "interval", minutes=30, id="model_sync")
     # Budget periods are month-of-UTC everywhere else (ensure_budget_period,
     # get_month_usage), so the reset fires at 00:05 UTC on the 1st, not local.
-    scheduler.add_job(job_reset_budgets, "cron", day=1, hour=0, minute=5, id="budget_reset", timezone=timezone.utc)
+    scheduler.add_job(job_reset_budgets, "cron", day=1, hour=0, minute=5, id="budget_reset", timezone=UTC)
     scheduler.add_job(
         job_expire_budget_reservations,
         "interval",

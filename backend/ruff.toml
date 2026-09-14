@@ -1,24 +1,33 @@
-# Phase 0 baseline: only defect-class rules that must never regress.
-# Style/complexity rules (E5xx, C90, SIM, UP, BLE) are introduced in Phase 3
-# once a formatting pass has landed, so this file stays a hard CI gate.
+# Phase 3 gate: defect rules (E/F/B/BLE), modernisation (UP), simplification
+# (SIM) and a complexity ceiling. `ruff format` is also enforced in CI.
 target-version = "py312"
 line-length = 120
 extend-exclude = ["alembic/versions"]
 
 [lint]
 select = [
-  "E9",   # syntax / io errors
-  "F63",  # invalid comparisons (is-literal, etc.)
-  "F7",   # misplaced statements (return/yield outside function, ...)
-  "F82",  # undefined names
-  "F401", # unused import
-  "F841", # unused local variable
-  "B006", # mutable default argument
-  "E722", # bare except
+  "E",    # pycodestyle errors
+  "F",    # pyflakes
+  "W",    # pycodestyle warnings
+  "B",    # bugbear
+  "UP",   # pyupgrade
+  "SIM",  # simplify
+  "C90",  # mccabe complexity
+  "BLE",  # blind except
 ]
+ignore = [
+  "B008", # function call in default argument — FastAPI Depends()/Query() idiom
+  "E501", # line length is the formatter's job
+  "UP042", # str+Enum -> StrEnum changes str()/format() output of the members; revisit deliberately
+]
+
+[lint.mccabe]
+# Functions above the ceiling carry `# noqa: C901` with a reason; the list is
+# the Phase 4 refactor backlog and must not grow.
+max-complexity = 20
 
 [lint.per-file-ignores]
 # Package re-exports register ORM models on Base.metadata; keep them.
 "app/models/__init__.py" = ["F401"]
 "app/__init__.py" = ["F401"]
-"tests/**" = ["F841"]
+"tests/**" = ["F841", "BLE001", "SIM117"]

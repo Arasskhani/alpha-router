@@ -27,7 +27,7 @@ WILDCARD_NETWORKS = frozenset(
     }
 )
 
-_cache: tuple[float, "RestrictionState"] | None = None
+_cache: tuple[float, RestrictionState] | None = None
 
 
 class AllowlistError(ValueError):

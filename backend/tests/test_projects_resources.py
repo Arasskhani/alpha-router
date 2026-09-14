@@ -1,5 +1,6 @@
 """Tests for project resource upload, listing, and deletion."""
 
+import pytest
 import asyncio
 
 from sqlalchemy import select
@@ -195,7 +196,7 @@ def test_upload_resource_viewer_denied():
                         declared_mime=mime,
                         data=data,
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 403
         finally:
@@ -223,7 +224,7 @@ def test_upload_resource_non_member_hidden():
                         declared_mime=mime,
                         data=data,
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 404
         finally:
@@ -369,7 +370,7 @@ def test_list_resources_non_member_private_hidden():
 
                 try:
                     await list_project_resources(db, project_id=PROJ_ID, user=stranger)
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 404
         finally:
@@ -490,7 +491,7 @@ def test_delete_resource_contributor_other_denied():
 
                 try:
                     await delete_project_resource(db, project_id=PROJ_ID, resource_id=resource_id, user=contrib)
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 403
             async with factory() as db:
@@ -523,7 +524,7 @@ def test_delete_resource_viewer_denied():
 
                 try:
                     await delete_project_resource(db, project_id=PROJ_ID, resource_id=resource_id, user=viewer)
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 403
         finally:

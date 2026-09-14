@@ -968,7 +968,7 @@ async def _evaluate_tool_guardrail(
     return decision
 
 
-async def execute_agent_tool(
+async def execute_agent_tool(  # noqa: C901 -- Phase 4 split; complexity must not grow
     *,
     spec: ResolvedAgentTool,
     model: AIModel,

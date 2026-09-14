@@ -348,7 +348,7 @@ def peek_in_response_to(saml_response_b64: str) -> str | None:
     try:
         raw = base64.b64decode(saml_response_b64, validate=False)
         doc = OneLogin_Saml2_XML.to_etree(raw)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return None)
         return None
     value = doc.get("InResponseTo")
     return str(value).strip() if value else None
@@ -417,7 +417,7 @@ def logout_redirect_url(cfg: dict[str, Any], request_url: str, name_id: str | No
     """Return IdP SLO URL when metadata provides it; otherwise None (local logout only)."""
     try:
         idp = _load_idp_data(cfg)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return None)
         return None
     slo = (idp.get("singleLogoutService") or {}).get("url")
     if not slo:

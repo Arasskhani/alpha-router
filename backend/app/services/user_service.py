@@ -48,7 +48,7 @@ async def get_user_by_api_key(db: AsyncSession, raw_key: str):
     if router_key:
         return None, "alpha_router_key", router_key, None
     uk = (
-        (await db.execute(select(UserApiKey).where(UserApiKey.key_hash == h, UserApiKey.is_active == True)))
+        (await db.execute(select(UserApiKey).where(UserApiKey.key_hash == h, UserApiKey.is_active.is_(True))))
         .scalars()
         .first()
     )  # noqa: E712

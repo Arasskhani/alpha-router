@@ -106,7 +106,7 @@ def extract_document_text(raw: bytes, filename: str) -> str:
         if ext == "doc":
             return "(Legacy .doc files are not supported. Save as .docx and retry.)"
         return _truncate(_decode_text(raw)) or "(Empty file.)"
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
         return f"(Could not extract text from {filename}: {exc})"
 
 
@@ -139,9 +139,7 @@ def _looks_like_svg(raw: bytes) -> bool:
     low = head.lower()
     if low.startswith(b"<svg"):
         return True
-    if low.startswith(b"<?xml") and b"<svg" in low:
-        return True
-    return False
+    return bool(low.startswith(b"<?xml") and b"<svg" in low)
 
 
 def build_image_data_url(raw: bytes, mime_type: str, filename: str) -> str:

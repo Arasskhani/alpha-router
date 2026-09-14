@@ -34,6 +34,7 @@ from app.services.openrouter_transcription_service import (
 from app.services.model_access_service import resolve_access_subject, user_can_access_model
 from app.services.proxy_service import settle_auxiliary_usage
 from app.services.secret_crypto import decrypt_secret
+import contextlib
 
 logger = logging.getLogger("app.services.transcription")
 
@@ -127,10 +128,8 @@ def _write_temp_audio(audio_bytes: bytes, suffix: str) -> str:
 
 
 def _unlink_quietly(path: str) -> None:
-    try:
+    with contextlib.suppress(OSError):
         os.unlink(path)
-    except OSError:
-        pass
 
 
 def resolve_billable_seconds(

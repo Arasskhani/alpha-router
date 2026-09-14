@@ -186,7 +186,7 @@ async def claim_job(
     try:
         if db.get_bind().dialect.name == "postgresql":
             statement = statement.with_for_update(skip_locked=True)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
         pass
     job = (await db.execute(statement)).scalar_one_or_none()
     if job is None:
@@ -325,7 +325,7 @@ async def recover_stale_jobs(
     try:
         if db.get_bind().dialect.name == "postgresql":
             statement = statement.with_for_update(skip_locked=True)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
         pass
     jobs = (await db.execute(statement)).scalars().all()
     recovered = 0

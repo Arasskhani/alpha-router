@@ -5,6 +5,7 @@ fail-open in-memory fallback; login is fail-closed (HTTP 503) on Redis outage.
 """
 
 import asyncio
+
 import pytest
 from fastapi import HTTPException
 

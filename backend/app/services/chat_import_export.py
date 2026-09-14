@@ -332,10 +332,7 @@ def _parse_openwebui(payload: Any) -> list[dict[str, Any]]:
         model = ""
         if isinstance(chat_obj, dict):
             models = chat_obj.get("models")
-            if isinstance(models, list) and models:
-                model = str(models[0] or "")
-            else:
-                model = str(chat_obj.get("model") or "")
+            model = str(models[0] or "") if isinstance(models, list) and models else str(chat_obj.get("model") or "")
         out.append({"title": title, "messages": messages, "model": model[:512]})
     return out
 

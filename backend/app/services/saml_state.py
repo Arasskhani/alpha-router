@@ -94,10 +94,7 @@ async def register_assertion(assertion_id: str, not_on_or_after: float | None) -
     if not assertion_id:
         return False
     now = time.time()
-    if not_on_or_after:
-        ttl = int(float(not_on_or_after) - now)
-    else:
-        ttl = _MIN_ASSERTION_TTL_SECONDS * 5
+    ttl = int(float(not_on_or_after) - now) if not_on_or_after else _MIN_ASSERTION_TTL_SECONDS * 5
     ttl = max(_MIN_ASSERTION_TTL_SECONDS, min(_MAX_ASSERTION_TTL_SECONDS, ttl))
 
     async def op(client):

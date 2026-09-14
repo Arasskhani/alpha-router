@@ -4,7 +4,8 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 from app.core.text_safety import clean_extracted_text, strip_nul
-from app.services import attachment_extract, storage_service as storage
+from app.services import attachment_extract
+from app.services import storage_service as storage
 
 
 class _Nested:

@@ -151,7 +151,7 @@ def _collect_system_metrics() -> dict[str, Any]:
             "memory_rss_bytes": int(mem.rss),
         }
         out["available"] = True
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
         out["error"] = str(exc)
     return out
 
@@ -179,7 +179,7 @@ async def collect_snapshot_metrics(db: AsyncSession) -> dict[str, Any]:
         elif kind == "postgresql":
             size = (await db.execute(text("SELECT pg_database_size(current_database())"))).scalar()
             out["db_size_bytes"] = int(size) if size is not None else None
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
         pass
     system = await collect_system_metrics()
     if system.get("available") and system.get("host"):
@@ -258,7 +258,7 @@ async def collect_database_monitor(db: AsyncSession) -> dict[str, Any]:
                 continue
             try:
                 count = await _count_rows(db, table_name)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
                 tables_out.append(
                     {
                         "name": table_name,
@@ -278,7 +278,7 @@ async def collect_database_monitor(db: AsyncSession) -> dict[str, Any]:
                 }
             )
         out["tables"] = tables_out
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
         out["connected"] = False
         out["error"] = str(exc)
 

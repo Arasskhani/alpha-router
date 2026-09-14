@@ -132,10 +132,7 @@ class ExtractionParseError(ValueError):
 
 def contains_secret(text: str) -> bool:
     blob = text or ""
-    for _rule, pattern in _SECRET_PATTERNS:
-        if pattern.search(blob):
-            return True
-    return False
+    return any(pattern.search(blob) for _rule, pattern in _SECRET_PATTERNS)
 
 
 def looks_like_injection(text: str) -> bool:
@@ -284,7 +281,7 @@ def parse_operations(payload: dict[str, Any] | str) -> list[MemoryOperation]:
             continue
         try:
             content = normalize_memory_content(str(item.get("content") or ""))
-        except Exception:
+        except Exception:  # noqa: BLE001 -- one bad item must not abort the batch
             continue
         if looks_like_injection(content) or contains_secret(content):
             continue
@@ -386,7 +383,7 @@ async def _suppressed_semantically(db: AsyncSession, user_id: int, content: str)
         return False
 
 
-async def apply_memory_operations(
+async def apply_memory_operations(  # noqa: C901 -- Phase 4 split; complexity must not grow
     db: AsyncSession,
     *,
     user_id: int,
@@ -401,7 +398,7 @@ async def apply_memory_operations(
     for operation in operations[:MAX_OPS]:
         try:
             digest = memory_content_hash(operation.content)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- boundary with an external dependency; degraded result is returned
             result.skipped += 1
             continue
         if await is_hash_suppressed(db, user_id, digest):
@@ -418,7 +415,7 @@ async def apply_memory_operations(
                 from app.services.observability import observe_memory_item
 
                 observe_memory_item("suppress-hit")
-            except Exception:
+            except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
                 pass
             continue
         if await _suppressed_semantically(db, user_id, operation.content):
@@ -446,7 +443,7 @@ async def apply_memory_operations(
                 from app.services.observability import observe_memory_item
 
                 observe_memory_item("reject")
-            except Exception:
+            except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
                 pass
             continue
 
@@ -493,13 +490,13 @@ async def apply_memory_operations(
                     from app.services.user_memory_service import _index_memory_vector
 
                     await _index_memory_vector(db, target)
-                except Exception:
+                except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
                     pass
                 try:
                     from app.services.observability import observe_memory_item
 
                     observe_memory_item("update")
-                except Exception:
+                except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
                     pass
                 continue
 
@@ -545,7 +542,7 @@ async def apply_memory_operations(
                     from app.services.observability import observe_memory_item
 
                     observe_memory_item("supersede")
-                except Exception:
+                except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
                     pass
                 continue
 
@@ -587,7 +584,7 @@ async def apply_memory_operations(
                 from app.services.observability import observe_memory_item
 
                 observe_memory_item("add")
-            except Exception:
+            except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
                 pass
         else:
             result.skipped += 1
@@ -600,7 +597,7 @@ async def apply_memory_operations(
             from app.services.observability import observe_memory_item
 
             observe_memory_item("evict")
-        except Exception:
+        except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
             pass
     return result
 

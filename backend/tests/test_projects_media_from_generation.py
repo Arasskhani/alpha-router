@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 import app.models  # noqa: F401
 from app.database import Base
-from app.models.project import PROJECT_ROLE_PRIMARY_OWNER, Project, ProjectMember, ProjectMediaAsset
+from app.models.project import PROJECT_ROLE_PRIMARY_OWNER, Project, ProjectMediaAsset, ProjectMember
 from app.models.user import User
 from app.services.project_media_service import (
     maybe_save_generated_media_to_project,

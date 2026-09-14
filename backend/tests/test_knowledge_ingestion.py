@@ -22,8 +22,8 @@ from app.models.knowledge import (
 from app.services.knowledge_connector_service import (
     create_connector,
     process_connector_sync,
-    schedule_due_connectors,
     schedule_connector_sync,
+    schedule_due_connectors,
 )
 from app.services.knowledge_crypto_service import decrypt_text
 from app.services.knowledge_ingestion_service import (
@@ -31,11 +31,11 @@ from app.services.knowledge_ingestion_service import (
     process_document_version,
     submit_document_bytes,
 )
+from app.services.knowledge_job_service import retry_dead_knowledge_job
 from app.services.knowledge_publisher_service import (
     create_knowledge_release,
     submit_release_for_indexing,
 )
-from app.services.knowledge_job_service import retry_dead_knowledge_job
 from app.services.knowledge_safety_service import scan_knowledge_text
 from app.services.malware_scan_service import MalwareScanResult
 
@@ -92,9 +92,9 @@ async def _test_secure_ingestion_and_immutable_release() -> None:
     factory, engine = await _session_factory()
     store = MemoryKnowledgeStore()
     text = (
-        "Annual leave requests must be submitted through the HR portal. "
-        "Managers approve requests within three business days."
-    ).encode()
+        b"Annual leave requests must be submitted through the HR portal. "
+        b"Managers approve requests within three business days."
+    )
     async with factory() as db:
         knowledge_base = await _knowledge_base(db, "hr-policy")
         submission = await submit_document_bytes(

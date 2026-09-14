@@ -141,7 +141,7 @@ def _launch_browser(playwright):
     if channel and channel != "chromium":
         try:
             return playwright.chromium.launch(channel=channel, **launch_kwargs)
-        except Exception as channel_exc:
+        except Exception as channel_exc:  # noqa: BLE001 -- logged; expected failure of an external dependency
             logger.warning("Playwright channel %s unavailable: %s", channel, channel_exc)
     try:
         return playwright.chromium.launch(**launch_kwargs)

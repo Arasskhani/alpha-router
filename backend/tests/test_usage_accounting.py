@@ -13,18 +13,19 @@ from app.database import Base
 from app.models.cost_accounting import LedgerEntry, UsageEvent, UsageOperation
 from app.models.logging import RequestLog
 from app.models.user import User
-from app.services.proxy_service import log_usage
 from app.services.provider_reconciliation_service import (
     OpenAIReconciliationAdapter,
     OpenRouterReconciliationAdapter,
     automatic_reconciliation_providers,
 )
+from app.services.proxy_service import log_usage
 from app.services.usage_accounting_service import (
     CONFIDENCE_CALCULATED,
     CONFIDENCE_EXACT,
     COST_SOURCE_CATALOG,
     COST_SOURCE_CONFIGURED,
     COST_SOURCE_PROVIDER,
+    NormalizedUsage,
     capture_usage_event,
     create_configured_pricing_snapshot,
     create_reconciliation_run,
@@ -33,7 +34,6 @@ from app.services.usage_accounting_service import (
     persist_usage_operation,
     quote_usage,
     reconcile_usage_event,
-    NormalizedUsage,
 )
 
 

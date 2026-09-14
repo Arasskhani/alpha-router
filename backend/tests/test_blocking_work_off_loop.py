@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import base64
 import os
 import time
@@ -65,13 +66,11 @@ def test_openrouter_transcription_encodes_off_loop_and_sends_base64():
             patch.object(ors, "post_openrouter_json", new=fake_post),
             patch.object(ors, "audio_format_for", lambda f, m: "wav"),
         ):
-            try:
+            # Response parsing details are not under test here; the payload is.
+            with contextlib.suppress(Exception):
                 await ors.transcribe_with_openrouter(
                     api_key="k", base_url=None, model="m", audio_bytes=audio, filename="a.wav", mime_type="audio/wav"
                 )
-            except Exception:
-                # Response parsing details are not under test here; the payload is.
-                pass
         assert captured["payload"]["input_audio"]["data"] == base64.b64encode(audio).decode("ascii")
 
     asyncio.run(run())

@@ -166,7 +166,7 @@ async def _load_project_resource_excerpts(
                 chunk.content,
                 associated_data=f"knowledge-chunk:{chunk.id}",
             ).strip()
-        except Exception:
+        except Exception:  # noqa: BLE001 -- one bad item must not abort the batch
             continue
         if not text:
             continue

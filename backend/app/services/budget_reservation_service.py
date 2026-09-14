@@ -412,7 +412,7 @@ def estimate_embedding_hold(ai_model: AIModel, body: dict) -> float:
     fallback = float(settings.budget_embedding_fallback_hold_usd or 0.01)
     try:
         prompt_tokens = int(litellm.token_counter(model=ai_model.external_id, text=str(body.get("input") or "")) or 0)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- falls back to a safe default value
         prompt_tokens = 0
     in_rate = _positive_float(ai_model.input_cost_per_1k, 0.0)
     return _clamp_hold((prompt_tokens / 1000) * in_rate * 1.25, fallback)

@@ -104,7 +104,7 @@ async def _release_rows(
     return list(rows), documents
 
 
-async def build_and_activate_knowledge_index(
+async def build_and_activate_knowledge_index(  # noqa: C901 -- Phase 4 split; complexity must not grow
     db: AsyncSession,
     *,
     index_version_id: str,

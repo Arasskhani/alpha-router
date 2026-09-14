@@ -211,10 +211,7 @@ def _window_prompt(window: ProjectExtractionWindow) -> str:
     existing_block = "\n".join(existing_lines) or "(none)"
     turns = []
     for turn in window.turns:
-        if turn.role == "assistant":
-            speaker = "assistant"
-        else:
-            speaker = f"member {turn.author}" if turn.author else "member"
+        speaker = "assistant" if turn.role == "assistant" else f"member {turn.author}" if turn.author else "member"
         turns.append(f"[{speaker} #{turn.sequence}] {turn.text}")
     conversation = "\n".join(turns)
     return (
@@ -247,7 +244,7 @@ def parse_project_operations(
             continue
         try:
             content = normalize_memory_content(str(item.get("content") or ""))
-        except Exception:
+        except Exception:  # noqa: BLE001 -- one bad item must not abort the batch
             continue
         if looks_like_injection(content) or contains_secret(content):
             continue
@@ -360,7 +357,7 @@ def _observe(op: str) -> None:
         from app.services.observability import observe_memory_item
 
         observe_memory_item(op, scope="project")
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
         pass
 
 
@@ -390,7 +387,7 @@ async def apply_project_memory_operations(
     for operation in operations[:MAX_OPS]:
         try:
             digest = memory_content_hash(operation.content)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- boundary with an external dependency; degraded result is returned
             result.skipped += 1
             continue
         if await is_project_hash_suppressed(db, project_id, digest):

@@ -11,6 +11,7 @@ import app.services.code_interpreter_service as cis
 from app.config import get_settings
 from app.sandbox.filenames import is_safe_filename
 from app.services.code_interpreter_service import (
+    SandboxExecutionResult,
     WorkspaceLimitError,
     build_workspace_manifest,
     code_interpreter_error_hint,
@@ -20,7 +21,6 @@ from app.services.code_interpreter_service import (
     extract_last_python_block,
     format_code_output_for_chat,
     run_python_sandbox,
-    SandboxExecutionResult,
     sanitize_workspace_filename,
     validate_python_code,
     workspace_files_from_messages,

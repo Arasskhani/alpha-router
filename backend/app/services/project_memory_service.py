@@ -746,7 +746,7 @@ async def sync_project_vector_enabled(db: AsyncSession, row: ProjectMemory, *, e
             points=[row.id],
             wait=True,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 -- logged; expected failure of an external dependency
         # Postgres stays the source of truth; retrieval re-filters by row.
         logger.warning("Failed to sync project memory vector payload memory_id=%s", row.id)
 
@@ -1315,13 +1315,13 @@ async def _retrieve_auto_facts(
     timeout = max(0.05, int(settings.get("retrieval_timeout_ms") or 600) / 1000.0)
     try:
         fused = await asyncio.wait_for(_hybrid(), timeout=timeout)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- logged; expected failure of an external dependency
         logger.warning("Project memory hybrid retrieval failed project_id=%s", project_id)
         try:
             from app.services.observability import observe_memory_retrieval_fallback
 
             observe_memory_retrieval_fallback("timeout_or_error", scope="project")
-        except Exception:
+        except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
             pass
         fused = []
     if not fused:
@@ -1470,7 +1470,7 @@ async def load_injectable_project_memories(
             injected=len(own_facts) + len(auto_facts),
             scope="project",
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
         pass
 
     return ProjectMemoryInjection(

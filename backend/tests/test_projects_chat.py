@@ -2,6 +2,7 @@
 
 import asyncio
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -115,7 +116,7 @@ def test_create_chat_viewer_denied():
 
                 try:
                     await create_project_chat_session(db, project_id=PROJ_ID, user=viewer)
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 403
         finally:
@@ -135,7 +136,7 @@ def test_create_chat_non_member_hidden():
 
                 try:
                     await create_project_chat_session(db, project_id=PROJ_ID, user=stranger)
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 404
         finally:
@@ -305,7 +306,7 @@ def test_append_message_viewer_denied():
                     await append_project_chat_message(
                         db, project_id=PROJ_ID, session_id=s["id"], user=viewer, role="user", content="X"
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 403
         finally:
@@ -435,7 +436,7 @@ def test_pin_viewer_denied():
 
                 try:
                     await pin_project_chat(db, project_id=PROJ_ID, session_id=s["id"], user=viewer)
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 403
         finally:
@@ -532,7 +533,7 @@ def test_delete_chat_viewer_denied():
 
                 try:
                     await delete_project_chat_session(db, project_id=PROJ_ID, session_id=s["id"], user=viewer)
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 403
         finally:

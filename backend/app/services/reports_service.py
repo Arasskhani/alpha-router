@@ -74,10 +74,7 @@ def _apply_log_filters(q, *, start: datetime | None, end: datetime | None, user_
     if end is not None:
         q = q.where(RequestLog.request_time <= end)
     if user_ids is not None:
-        if not user_ids:
-            q = q.where(RequestLog.user_id == -1)
-        else:
-            q = q.where(RequestLog.user_id.in_(user_ids))
+        q = q.where(RequestLog.user_id == -1) if not user_ids else q.where(RequestLog.user_id.in_(user_ids))
     return q
 
 
@@ -1063,7 +1060,7 @@ async def report_alpha_router_api_keys_near_credit_limit(
     return pd.DataFrame(rows)
 
 
-async def build_report(db: AsyncSession, report_type: str, params: dict[str, Any]) -> pd.DataFrame:
+async def build_report(db: AsyncSession, report_type: str, params: dict[str, Any]) -> pd.DataFrame:  # noqa: C901 -- Phase 4 split; complexity must not grow
     from app.services.reports_catalog import REPORT_IDS
 
     if report_type not in REPORT_IDS:

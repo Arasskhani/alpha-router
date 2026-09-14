@@ -1,5 +1,6 @@
 """Tests for project cost attribution and admin usage reports."""
 
+import pytest
 import asyncio
 import datetime
 
@@ -193,11 +194,11 @@ def test_project_usage_by_member_marks_revoked():
                 start, end = _window()
                 df = await report_project_usage_by_member(db, PROJ_ID, start, end)
                 assert len(df) == 3
-                revoked_rows = df[df["is_member"] == False]
+                revoked_rows = df[~df["is_member"]]
                 assert len(revoked_rows) == 1
                 assert revoked_rows.iloc[0]["username"] == "<revoked>"
                 assert pd.isna(revoked_rows.iloc[0]["user_id"])
-                member_rows = df[df["is_member"] == True]
+                member_rows = df[df["is_member"]]
                 assert set(member_rows["username"]) == {"owner", "contrib"}
         finally:
             await engine.dispose()
@@ -280,7 +281,7 @@ def test_project_usage_summary_unknown_project_raises():
                 start, end = _window()
                 try:
                     await report_project_usage_summary(db, "no-such-proj", start, end)
-                    assert False, "expected ValueError"
+                    pytest.fail("expected ValueError")
                 except ValueError:
                     pass
         finally:

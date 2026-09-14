@@ -101,7 +101,7 @@ async def web_search_context(
                 error_message=str(exc) or "Search cancelled",
             )
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
         if metered is not None:
             await finish_metered_usage(
                 metered,
@@ -152,7 +152,7 @@ def _html_to_text(html: str) -> str:
     try:
         parser.feed(html)
         parser.close()
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return re.sub(r"<[^>]+>", " ", html))
         return re.sub(r"<[^>]+>", " ", html)
     return re.sub(r"\s+", " ", parser.get_text()).strip()
 
@@ -248,7 +248,7 @@ async def web_fetch_context(
                 reserve_budget=reserve_budget,
             )
             blocks.append(wrap_untrusted("WEB_PAGE", content[:8000], source=url))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
             blocks.append(wrap_untrusted("WEB_PAGE", f"(fetch failed: {exc})", source=url))
     return "\n\n".join(blocks)
 

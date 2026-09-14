@@ -2,6 +2,7 @@
 
 import asyncio
 
+import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -29,7 +30,6 @@ from app.services.project_service import (
     remove_member,
 )
 from app.services.user_lifecycle_service import permanently_delete_user
-
 
 PROJ = "media-cleanup-1"
 PROJ_PUB = "media-cleanup-pub"
@@ -152,7 +152,7 @@ def test_soft_delete_project_hides_media():
                 # The media library is members-only even on a public project.
                 try:
                     await list_project_media(db, project_id=PROJ_PUB, user=outsider)
-                    assert False, "public viewer must not list media"
+                    pytest.fail("public viewer must not list media")
                 except HTTPException as exc:
                     assert exc.status_code == 403
                 before, total = await list_project_media(db, project_id=PROJ_PUB, user=viewer)
@@ -167,7 +167,7 @@ def test_soft_delete_project_hides_media():
                 # After soft-delete the project itself is hidden from non-members.
                 try:
                     await list_project_media(db, project_id=PROJ_PUB, user=outsider)
-                    assert False, "public viewer should not see media after soft-delete"
+                    pytest.fail("public viewer should not see media after soft-delete")
                 except HTTPException as exc:
                     assert exc.status_code == 404
 
@@ -256,7 +256,7 @@ def test_removed_member_media_preserved():
 
                 try:
                     await list_project_media(db, project_id=PROJ, user=contrib)
-                    assert False, "removed member must not list project media"
+                    pytest.fail("removed member must not list project media")
                 except HTTPException as exc:
                     assert exc.status_code == 404
         finally:

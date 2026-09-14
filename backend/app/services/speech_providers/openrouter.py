@@ -56,7 +56,7 @@ def _provider_error_detail(response: Any) -> str:
     text = (getattr(response, "text", None) or "")[:800]
     try:
         payload = response.json()
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return text or "Speech provider request )
         return text or "Speech provider request failed"
     if not isinstance(payload, dict):
         return text or "Speech provider request failed"
@@ -81,7 +81,7 @@ class OpenRouterSpeechAdapter:
         # Chat TTS surface is mp3-only; pcm remains available for internal/API use.
         return ("mp3",)
 
-    async def generate(
+    async def generate(  # noqa: C901 -- Phase 4 split; complexity must not grow
         self,
         *,
         api_key: str,
@@ -151,7 +151,7 @@ class OpenRouterSpeechAdapter:
         if content_type.startswith("application/json") or (len(blob) < 512 and blob.lstrip().startswith(b"{")):
             try:
                 parsed = json.loads(blob.decode("utf-8", errors="replace"))
-            except Exception:
+            except Exception:  # noqa: BLE001 -- falls back to a safe default value
                 parsed = None
             if isinstance(parsed, dict) and (parsed.get("error") or parsed.get("message")):
                 detail = "Speech provider returned an error payload"

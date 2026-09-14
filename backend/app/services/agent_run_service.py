@@ -124,9 +124,7 @@ async def persist_agent_plan(
     }.get(plan.status)
     if status is None:
         raise AgentRunPersistenceError(f"Unsupported Agent plan status: {plan.status}")
-    query_digest = (
-        hashlib.sha256(f"private:{plan.plan_id}".encode("utf-8")).hexdigest() if private_mode else plan.query_sha256
-    )
+    query_digest = hashlib.sha256(f"private:{plan.plan_id}".encode()).hexdigest() if private_mode else plan.query_sha256
 
     row = AgentRun(
         id=plan.plan_id,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 import asyncio
 import datetime as dt
 from unittest.mock import patch
@@ -57,12 +58,12 @@ def test_normalize_and_hash() -> None:
     assert memory_content_hash("hello world") == memory_content_hash("  hello   world\n")
     try:
         normalize_memory_content("   ")
-        assert False, "expected empty rejection"
+        pytest.fail("expected empty rejection")
     except MemoryValidationError:
         pass
     try:
         normalize_memory_content("x" * 501)
-        assert False, "expected length rejection"
+        pytest.fail("expected length rejection")
     except MemoryValidationError:
         pass
 
@@ -97,12 +98,12 @@ async def _crud_and_inject() -> None:
 
         try:
             await update_memory(db, other.id, created["id"], content="hack")
-            assert False, "expected not found"
+            pytest.fail("expected not found")
         except MemoryNotFoundError:
             pass
         try:
             await delete_memory(db, other.id, created["id"])
-            assert False, "expected not found"
+            pytest.fail("expected not found")
         except MemoryNotFoundError:
             pass
 
@@ -159,7 +160,7 @@ async def _crud_and_inject() -> None:
         await db.commit()
         try:
             await create_memory(db, user.id, "Secret fact", source_session_id="priv1")
-            assert False, "expected private session rejection"
+            pytest.fail("expected private session rejection")
         except MemoryValidationError:
             pass
 

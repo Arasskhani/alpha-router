@@ -125,16 +125,12 @@ async def filter_models_for_subject(
         )
     ).all()
     for model_id, uid, gid in rows:
-        if uid is not None and int(uid) == subject.user_id:
-            allowed_private.add(int(model_id))
-        elif gid is not None and int(gid) in group_ids:
+        if uid is not None and int(uid) == subject.user_id or gid is not None and int(gid) in group_ids:
             allowed_private.add(int(model_id))
 
     out: list[AIModel] = []
     for m in models:
-        if (m.access_type or ACCESS_PUBLIC).strip().lower() != ACCESS_PRIVATE:
-            out.append(m)
-        elif m.id in allowed_private:
+        if (m.access_type or ACCESS_PUBLIC).strip().lower() != ACCESS_PRIVATE or m.id in allowed_private:
             out.append(m)
     return out
 

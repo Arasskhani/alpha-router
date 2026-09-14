@@ -248,9 +248,8 @@ def validate_python_code(code: str) -> None:
             root = (node.module or "").split(".")[0]
             if root in BLOCKED_ROOT_MODULES:
                 raise ValueError(f"Import not allowed: {node.module}")
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id == "__import__":
-                raise ValueError("Dynamic import is not allowed")
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "__import__":
+            raise ValueError("Dynamic import is not allowed")
 
 
 def _bounded_stem(stem: str, *, suffix: str) -> str:
@@ -306,7 +305,7 @@ def sanitize_workspace_filename(name: str, *, used: set[str] | None = None) -> s
     return candidate
 
 
-def build_workspace_manifest(
+def build_workspace_manifest(  # noqa: C901 -- Phase 4 split; complexity must not grow
     messages: list[dict],
     *,
     max_files: int = DEFAULT_MAX_WORKSPACE_FILES,

@@ -25,6 +25,7 @@ from app.services.user_chat_storage_service import (
     update_chat_session,
     update_last_session_message,
 )
+import contextlib
 
 _STREAM_PERSIST_INTERVAL_SEC = 0.45
 _STREAM_PERSIST_MIN_CHARS = 64
@@ -226,9 +227,9 @@ class ChatCompletionPersister:
         if delta_chars <= 0:
             return False
         now = time.monotonic()
-        if delta_chars < _STREAM_PERSIST_MIN_CHARS and now - self._last_persist_at < _STREAM_PERSIST_INTERVAL_SEC:
-            return False
-        return True
+        return not (
+            delta_chars < _STREAM_PERSIST_MIN_CHARS and now - self._last_persist_at < _STREAM_PERSIST_INTERVAL_SEC
+        )
 
     def schedule_content(self, content: str) -> None:
         """Store the latest assistant text and flush later, off the SSE path.
@@ -299,7 +300,7 @@ class ChatCompletionPersister:
         try:
             async with AsyncSessionLocal() as db:
                 self._cancel_requested = await _read_cancel_flag(db, self.session_id)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- falls back to a safe default value
             self._cancel_requested = False
 
     async def is_cancel_requested(self, *, force: bool = False) -> bool:
@@ -314,7 +315,7 @@ class ChatCompletionPersister:
         try:
             async with AsyncSessionLocal() as db:
                 self._cancel_requested = await _read_cancel_flag(db, self.session_id)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- falls back to a safe default value
             self._cancel_requested = False
         return self._cancel_requested
 
@@ -328,10 +329,7 @@ class ChatCompletionPersister:
             error_message = None
         content = self._content
         if not success and error_message and error_message != "client_disconnected":
-            if content.strip():
-                content = f"{content}\n\nError: {error_message}"
-            else:
-                content = f"Error: {error_message}"
+            content = f"{content}\n\nError: {error_message}" if content.strip() else f"Error: {error_message}"
         elif not content.strip() and not success:
             content = "No response from model."
         # If a prior on_content flush was rolled back, the stored message may be
@@ -348,17 +346,15 @@ class ChatCompletionPersister:
                     self.user_message,
                 )
                 await self.db.commit()
-        except Exception:
+        except Exception:  # noqa: BLE001 -- session is rolled back and the caller continues without the write
             # Last-resort: roll back and retry the final write once on a clean
             # transaction so the assistant message is not left streaming=True.
-            try:
+            with contextlib.suppress(Exception):
                 await self.db.rollback()
-            except Exception:
-                pass
             try:
                 await self._flush(content, partial=False)
                 await self.db.commit()
-            except Exception:
+            except Exception:  # noqa: BLE001 -- session is rolled back and the caller continues without the write
                 await self.db.rollback()
 
     async def _flush(self, content: str, *, partial: bool) -> None:
@@ -409,10 +405,7 @@ def persister_from_body(
     if assistant_id is not None:
         assistant_id = str(assistant_id)
     project_id = body.get("project_id") or body.get("projectId")
-    if not isinstance(project_id, str) or not project_id.strip():
-        project_id = None
-    else:
-        project_id = project_id.strip()
+    project_id = None if not isinstance(project_id, str) or not project_id.strip() else project_id.strip()
     return ChatCompletionPersister(
         db,
         user_id=user_id,

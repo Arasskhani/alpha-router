@@ -84,7 +84,7 @@ async def _resolve_video_model(
     if model_id.startswith("model::"):
         try:
             model_pk = int(model_id.split("::", 1)[1])
-        except Exception:
+        except Exception:  # noqa: BLE001 -- falls back to a safe default value
             model_pk = None
         if model_pk is not None:
             row = (
@@ -98,15 +98,14 @@ async def _resolve_video_model(
             )
         if row:
             conn = await db.get(Connection, row.connection_id)
-            if conn and conn.is_active:
-                if subject is None or await user_can_access_model(db, row, subject):
-                    return (
-                        row.external_id,
-                        decrypt_secret(conn.api_key_encrypted),
-                        conn.base_url,
-                        conn.provider_type,
-                        row,
-                    )
+            if conn and conn.is_active and (subject is None or await user_can_access_model(db, row, subject)):
+                return (
+                    row.external_id,
+                    decrypt_secret(conn.api_key_encrypted),
+                    conn.base_url,
+                    conn.provider_type,
+                    row,
+                )
             row = None
 
     if not row:
@@ -182,10 +181,13 @@ async def generate_video(
             raise HTTPException(status_code=400, detail="reference_image is required for image-to-video")
     else:
         operation = "generation"
-        if not caps.get("supports_text_to_video") and not caps.get("supports_image_to_video"):
-            # Allow if catalog marks is_video_model even without modality metadata.
-            if not getattr(ai_model, "is_video_model", False):
-                raise HTTPException(status_code=400, detail="Selected model does not support video generation")
+        # Allow if catalog marks is_video_model even without modality metadata.
+        if (
+            not caps.get("supports_text_to_video")
+            and not caps.get("supports_image_to_video")
+            and not getattr(ai_model, "is_video_model", False)
+        ):
+            raise HTTPException(status_code=400, detail="Selected model does not support video generation")
 
     duration = parse_video_duration(body.duration)
     if duration is None:
@@ -347,11 +349,11 @@ async def cancel_video_job_endpoint(
         raise HTTPException(status_code=404, detail="Job not found")
     try:
         job = await cancel_video_job(db, job)
-    except VideoJobAlreadyCompleted:
+    except VideoJobAlreadyCompleted as exc:
         await db.commit()
         raise HTTPException(
             status_code=409,
             detail="The provider already finished this video; it will be delivered and billed.",
-        )
+        ) from exc
     await db.commit()
     return serialize_job(job)

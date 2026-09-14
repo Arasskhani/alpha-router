@@ -6,6 +6,8 @@ import asyncio
 import json
 import uuid
 
+import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import app.models  # noqa: F401
@@ -15,10 +17,10 @@ from app.models.system import SystemSetting
 from app.models.user import User
 from app.services.chat_markers import ATTACHMENT_MESSAGE_PREFIX
 from app.services.memory_extraction_service import (
-    ExtractionParseError,
-    ExtractionWindow,
     MAX_OPS,
     MAX_WINDOW_CHARS,
+    ExtractionParseError,
+    ExtractionWindow,
     MemoryOperation,
     apply_memory_operations,
     build_extraction_window,
@@ -28,7 +30,6 @@ from app.services.memory_extraction_service import (
     parse_operations,
 )
 from app.services.user_memory_service import retrieve_memories
-from sqlalchemy import select
 
 
 async def _session_factory():
@@ -87,7 +88,7 @@ def test_parse_caps_at_five_operations() -> None:
 def test_malformed_json_object_extraction() -> None:
     try:
         parse_operations("definitely not json")
-        assert False, "expected parse error"
+        pytest.fail("expected parse error")
     except ExtractionParseError:
         pass
     ops = parse_operations('prefix {"operations":[]} trailing')
@@ -232,7 +233,7 @@ async def _repair_then_dead_letter() -> None:
 
         try:
             await extract_memory_operations(db, window=window, completer=always_bad)
-            assert False, "expected dead-letter parse error"
+            pytest.fail("expected dead-letter parse error")
         except ExtractionParseError:
             pass
     await engine.dispose()

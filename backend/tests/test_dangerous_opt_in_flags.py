@@ -1,6 +1,6 @@
 """L2: dangerous opt-in flags are surfaced clearly when enabled."""
 
-from app.main import collect_dangerous_opt_in_flags, _warn_dangerous_opt_in_flags
+from app.main import _warn_dangerous_opt_in_flags, collect_dangerous_opt_in_flags
 
 
 def test_collect_empty_when_all_false():

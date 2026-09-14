@@ -1,8 +1,8 @@
 """Tests for the Projects domain model, ACL service, and membership invariants."""
 
 import asyncio
-import pytest
 
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import app.models  # noqa: F401
@@ -77,7 +77,7 @@ def test_validate_role_accepts_valid_roles():
 def test_validate_role_rejects_invalid():
     try:
         validate_role("admin")
-        assert False, "expected ValueError"
+        pytest.fail("expected ValueError")
     except ValueError:
         pass
 
@@ -85,7 +85,7 @@ def test_validate_role_rejects_invalid():
 def test_validate_invitation_role_rejects_owner():
     try:
         validate_invitation_role("owner")
-        assert False, "expected ValueError"
+        pytest.fail("expected ValueError")
     except ValueError:
         pass
 
@@ -266,7 +266,7 @@ def test_require_capability_raises_404_for_hidden_project():
 
                 try:
                     await require_capability(db, project_id="proj-1", user=stranger, capability="project.view")
-                    assert False, "expected 404"
+                    pytest.fail("expected 404")
                 except HTTPException as exc:
                     assert exc.status_code == 404
         finally:
@@ -291,7 +291,7 @@ def test_require_capability_raises_403_for_insufficient_role():
 
                 try:
                     await require_capability(db, project_id="proj-1", user=viewer, capability="project.edit")
-                    assert False, "expected 403"
+                    pytest.fail("expected 403")
                 except HTTPException as exc:
                     assert exc.status_code == 403
         finally:
@@ -331,7 +331,7 @@ def test_ensure_not_last_owner_blocks_demote_of_last_owner():
 
                 try:
                     await ensure_not_last_owner(db, project_id="proj-1", user_id=owner.id, new_role=PROJECT_ROLE_VIEWER)
-                    assert False, "expected ProjectAccessError"
+                    pytest.fail("expected ProjectAccessError")
                 except ProjectAccessError:
                     pass
         finally:
@@ -406,7 +406,7 @@ def test_append_project_audit_creates_immutable_event():
                 event.event_type = "tampered"
                 try:
                     await db.commit()
-                    assert False, "expected append-only guard"
+                    pytest.fail("expected append-only guard")
                 except ValueError:
                     await db.rollback()
         finally:
@@ -458,7 +458,7 @@ def test_invitation_role_constraint_rejects_owner_at_model_level():
                 db.add(invite)
                 try:
                     await db.flush()
-                    assert False, "expected CHECK constraint violation"
+                    pytest.fail("expected CHECK constraint violation")
                 except Exception:
                     await db.rollback()
         finally:

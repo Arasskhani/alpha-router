@@ -345,7 +345,7 @@ def test_broker_hardcodes_container_security_policy() -> None:
 
     result = asyncio.run(run())
     assert result["stdout"] == "ok"
-    assert broker.SANDBOX_IMAGE == captured[-1]
+    assert captured[-1] == broker.SANDBOX_IMAGE
     assert broker.SANDBOX_IMAGE == "alpha-router-sandbox:latest"
     assert captured[captured.index("--name") + 1].startswith("alpha-router-sandbox-")
     assert captured[captured.index("--label") + 1] == "com.alpha-router.sandbox=true"

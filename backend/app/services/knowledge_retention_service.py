@@ -302,7 +302,7 @@ async def execute_retention_purge_jobs(
                 worker_id=_INLINE_CLEANUP_WORKER,
             )
             purged += 1
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- boundary with an external dependency; degraded result is returned
             await fail_knowledge_job(
                 db,
                 job,

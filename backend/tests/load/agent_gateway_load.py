@@ -146,7 +146,7 @@ async def _run(args: argparse.Namespace) -> Result:
                             result.completed += 1
                         else:
                             result.failed += 1
-                except (httpx.HTTPError, asyncio.TimeoutError):
+                except (TimeoutError, httpx.HTTPError):
                     async with lock:
                         result.failed += 1
 

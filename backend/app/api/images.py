@@ -108,7 +108,7 @@ async def _await_image_work(
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
-                raise asyncio.TimeoutError()
+                raise TimeoutError()
             await asyncio.wait({task}, timeout=min(0.5, remaining))
         return await task
     except BaseException:
@@ -292,7 +292,7 @@ def _is_output_modality_404(resp: httpx.Response | None) -> bool:
         return False
     try:
         body = (resp.text or "").lower()
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return False)
         return False
     return "output modalit" in body and "no endpoint" in body
 
@@ -414,7 +414,7 @@ async def _reference_image_dimensions(reference_image: str) -> tuple[int, int] |
                     ref,
                     max_bytes=media_input_limit(),
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return None)
             return None
     if not data:
         return None
@@ -422,7 +422,7 @@ async def _reference_image_dimensions(reference_image: str) -> tuple[int, int] |
         from app.services.image_decode_policy import image_dimensions
 
         return await asyncio.to_thread(image_dimensions, data)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return None)
         return None
     return None
 
@@ -524,7 +524,7 @@ async def _blob_from_image_item(item: dict) -> tuple[bytes, str] | None:
         return None
     try:
         return await resolve_media_blob(data_url=data_url, source_url=source_url)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return None)
         return None
 
 
@@ -660,7 +660,7 @@ def _extract_image_url_and_b64(obj: dict) -> tuple[str | None, str | None]:
     )
 
 
-def _collect_openrouter_images(data: dict) -> list[dict]:
+def _collect_openrouter_images(data: dict) -> list[dict]:  # noqa: C901 -- Phase 4 split; complexity must not grow
     """
     OpenRouter image-capable models can return image payloads in different shapes.
     Normalize the common variants to: [{"url": ...}] or [{"b64_json": ...}].
@@ -782,7 +782,7 @@ async def _resolve_image_model(
     if model_id.startswith("model::"):
         try:
             model_pk = int(model_id.split("::", 1)[1])
-        except Exception:
+        except Exception:  # noqa: BLE001 -- falls back to a safe default value
             model_pk = None
         if model_pk is not None:
             row = (
@@ -796,15 +796,14 @@ async def _resolve_image_model(
             )
         if row:
             conn = await db.get(Connection, row.connection_id)
-            if conn and conn.is_active:
-                if subject is None or await user_can_access_model(db, row, subject):
-                    return (
-                        row.external_id,
-                        decrypt_secret(conn.api_key_encrypted),
-                        conn.base_url,
-                        conn.provider_type,
-                        row,
-                    )
+            if conn and conn.is_active and (subject is None or await user_can_access_model(db, row, subject)):
+                return (
+                    row.external_id,
+                    decrypt_secret(conn.api_key_encrypted),
+                    conn.base_url,
+                    conn.provider_type,
+                    row,
+                )
             row = None
 
     if not row:
@@ -842,7 +841,7 @@ async def _resolve_image_model(
 
 
 @router.post("/generate")
-async def generate_image(
+async def generate_image(  # noqa: C901 -- Phase 4 split; complexity must not grow
     request: Request,
     body: ImageRequest,
     user: User = Depends(require_active_user),
@@ -964,7 +963,7 @@ async def generate_image(
         )
         upstream_prompt = prepare_image_generation_prompt(body.prompt)
 
-        async def _attempt_one_model(
+        async def _attempt_one_model(  # noqa: C901 -- Phase 4 split; complexity must not grow
             *,
             attempt_model_id: str,
             attempt_api_key: str | None,
@@ -1052,7 +1051,7 @@ async def generate_image(
                     if img_resp.status_code >= 400:
                         try:
                             error_payload = img_resp.json()
-                        except Exception:
+                        except Exception:  # noqa: BLE001 -- falls back to a safe default value
                             error_payload = None
                         billing.add_usage(
                             error_payload,
@@ -1123,7 +1122,7 @@ async def generate_image(
                     if chat_resp.status_code >= 400:
                         try:
                             error_payload = chat_resp.json()
-                        except Exception:
+                        except Exception:  # noqa: BLE001 -- falls back to a safe default value
                             error_payload = None
                         billing.add_usage(
                             error_payload,
@@ -1304,7 +1303,7 @@ async def generate_image(
                     try:
                         j = resp.json()
                         detail_msg = (j.get("error") or {}).get("message") or j.get("message") or body_preview
-                    except Exception:
+                    except Exception:  # noqa: BLE001 -- falls back to a safe default value
                         detail_msg = body_preview
                     if body_preview.startswith("<!DOCTYPE html"):
                         detail_msg = (
@@ -1462,7 +1461,7 @@ async def generate_image(
                 if auto_deadline is not None:
                     remaining = auto_deadline - time.perf_counter()
                     if remaining <= 0:
-                        raise asyncio.TimeoutError()
+                        raise TimeoutError()
                     timeout_seconds = min(_AUTO_ROUTER_MODEL_TIMEOUT_SECONDS, remaining)
                 result = await _await_image_work(
                     _attempt_one_model(
@@ -1514,7 +1513,7 @@ async def generate_image(
                     status_code=499,
                     detail="Image generation stopped because the client disconnected.",
                 ) from attempt_exc
-            except asyncio.TimeoutError as attempt_exc:
+            except TimeoutError as attempt_exc:
                 wrapped = HTTPException(
                     status_code=504,
                     detail="Image model attempt timed out.",
@@ -1665,10 +1664,8 @@ async def generate_image(
             import logging
 
             logging.getLogger("app.api.images").exception("Failed to close image request transaction before billing")
-            try:
+            with contextlib.suppress(Exception):
                 await db.rollback()
-            except Exception:
-                pass
             if success:
                 success = False
                 error_message = "Image persistence failed"

@@ -297,7 +297,7 @@ async def probe_model_compatibility(
                         else:
                             success = True
                             evidence["followup_complete"] = True
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
         detail = str(exc)[:1000]
         reason_code = classify_failure_reason(detail)
         logger.warning(

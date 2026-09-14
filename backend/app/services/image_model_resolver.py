@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,7 +57,7 @@ def _newness_ratio(external_id: str, pricing_raw: str | None) -> float:
     created = raw.get("created")
     if created is not None:
         try:
-            year = datetime.fromtimestamp(int(created), tz=timezone.utc).year
+            year = datetime.fromtimestamp(int(created), tz=UTC).year
             return max(0.1, min(1.0, (year - 2021) / 6))
         except (TypeError, ValueError, OSError):
             pass

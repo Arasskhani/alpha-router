@@ -35,7 +35,7 @@ def _client():
     """Shared per-process client (never closed here)."""
     try:
         return get_redis()
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return None)
         return None
 
 
@@ -63,7 +63,7 @@ async def mark_online(user_id: int) -> bool:
     try:
         await client.set(presence_key(user_id), "1", ex=presence_ttl_seconds())
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001 -- any Redis failure degrades to the in-memory path
         increment("redis_fallback")
         return False
 
@@ -77,7 +77,7 @@ async def clear_presence(user_id: int) -> None:
         return
     try:
         await client.delete(presence_key(user_id))
-    except Exception:
+    except Exception:  # noqa: BLE001 -- any Redis failure degrades to the in-memory path
         increment("redis_fallback")
 
 
@@ -108,7 +108,7 @@ async def online_user_ids(user_ids: Sequence[int]) -> set[int] | None:
         return None
     try:
         values = await client.mget([presence_key(uid) for uid in ids])
-    except Exception:
+    except Exception:  # noqa: BLE001 -- any Redis failure degrades to the in-memory path
         increment("redis_fallback")
         return None
-    return {uid for uid, value in zip(ids, values) if value}
+    return {uid for uid, value in zip(ids, values, strict=False) if value}

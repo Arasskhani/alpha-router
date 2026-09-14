@@ -37,7 +37,7 @@ SP_ENTITY = f"{SP_BASE}/api/auth/saml/metadata"
 def _make_idp_keypair() -> tuple[str, str]:
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "idp.example.com")])
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     cert = (
         x509.CertificateBuilder()
         .subject_name(name)
@@ -93,7 +93,7 @@ def _cfg(**overrides) -> dict:
 
 
 def _ts(delta_seconds: int) -> str:
-    t = dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=delta_seconds)
+    t = dt.datetime.now(dt.UTC) + dt.timedelta(seconds=delta_seconds)
     return t.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 

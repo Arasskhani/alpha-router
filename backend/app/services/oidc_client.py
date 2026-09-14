@@ -205,7 +205,7 @@ def verify_state_cookie(cookie_value: str | None, state: str) -> OIDCFlowParams 
         return None
     try:
         payload = json.loads(base64.urlsafe_b64decode(body.encode()))
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return None)
         return None
     if int(payload.get("exp", 0)) < int(time.time()):
         return None
@@ -483,7 +483,7 @@ def end_session_url(cfg: dict[str, Any], *, id_token_hint: str | None = None) ->
     try:
         issuer = validate_issuer_url(cfg.get("issuer") or "")
         discovery = fetch_discovery(issuer)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return None)
         return None
     ep = discovery.get("end_session_endpoint")
     if not ep:

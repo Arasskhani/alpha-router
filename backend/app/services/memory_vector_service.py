@@ -104,7 +104,7 @@ class MemoryVectorService:
                 type=models.KeywordIndexType.KEYWORD,
                 is_tenant=True,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 -- falls back to a safe default value
             tenant_schema = models.PayloadSchemaType.KEYWORD
         await self.client.create_payload_index(name, "user_id", field_schema=tenant_schema, wait=True)
         for field, schema in (
@@ -293,6 +293,6 @@ class MemoryVectorService:
             for item in aliases.aliases:
                 if item.alias_name == alias:
                     return item.collection_name
-        except Exception:
+        except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
             pass
         return alias

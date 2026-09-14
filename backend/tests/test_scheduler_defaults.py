@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from app.services import scheduler as sched
@@ -14,7 +14,7 @@ def _prefs(hour, minute, last=None):
     return SimpleNamespace(cleanup_hour=hour, cleanup_minute=minute, last_cleanup_at=last)
 
 
-UTC = timezone.utc
+UTC = UTC
 
 
 def test_scheduler_has_misfire_grace_and_coalescing():
@@ -70,7 +70,7 @@ def test_budget_reset_trigger_is_utc_and_reset_has_no_day_guard(monkeypatch):
     monkeypatch.setattr(sched.scheduler, "start", lambda: None)
     sched.start_scheduler()
     reset = next(k for a, k in added if k.get("id") == "budget_reset")
-    assert reset["timezone"] is timezone.utc
+    assert reset["timezone"] is UTC
 
     # Function: runs on any day (the trigger decides) - the 14th here.
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine

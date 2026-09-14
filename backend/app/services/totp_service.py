@@ -60,7 +60,7 @@ def qr_png_base64(otpauth_uri: str) -> str | None:
     """Return a base64 PNG QR for the otpauth URI, or None if qrcode is unavailable."""
     try:
         import qrcode
-    except Exception:
+    except Exception:  # noqa: BLE001 -- logged; expected failure of an external dependency
         logger.warning("qrcode package unavailable; returning secret URI only")
         return None
     try:

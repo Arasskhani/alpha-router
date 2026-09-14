@@ -445,7 +445,7 @@ async def append_project_chat_message(
     # constraint ux_chat_messages_session_sequence) or when SQLite
     # reports the database is locked.  This makes the append robust
     # under concurrent writes on both SQLite and PostgreSQL.
-    for attempt in range(12):
+    for _attempt in range(12):
         try:
             # Re-fetch the session row each iteration (it may have been
             # expired/refreshed after a rollback).

@@ -19,6 +19,7 @@ from app.services.knowledge_file_service import (
     UnsafeDocumentError,
     ValidatedDocument,
 )
+import contextlib
 
 
 class ParserSandboxError(RuntimeError):
@@ -87,10 +88,8 @@ async def _terminate_process(process: asyncio.subprocess.Process) -> None:
     if process.returncode is not None:
         return
     if os.name != "nt":
-        try:
+        with contextlib.suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
     else:
         process.kill()
     await process.wait()

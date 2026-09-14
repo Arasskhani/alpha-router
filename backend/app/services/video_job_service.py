@@ -101,10 +101,8 @@ def serialize_job(job: VideoGenerationJob, *, include_provider: bool = False) ->
     }
     request_log_id = params.get("request_log_id")
     if request_log_id is not None:
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             out["request_log_id"] = int(request_log_id)
-        except (TypeError, ValueError):
-            pass
     if include_provider:
         out["provider_job_id"] = job.provider_job_id
     return out
@@ -263,7 +261,7 @@ async def _durable_worker_loop() -> None:
                 await asyncio.sleep(1.0)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 -- logged; expected failure of an external dependency
             _LOG.exception("Video durable worker iteration failed")
             await asyncio.sleep(2.0)
 
@@ -315,7 +313,7 @@ async def cancel_video_job(db: AsyncSession, job: VideoGenerationJob) -> VideoGe
                 # result on the floor; let the runner ingest and bill it.
                 try:
                     snapshot = await adapter.poll(api_key=api_key, base_url=conn.base_url, job=ref)
-                except Exception:
+                except Exception:  # noqa: BLE001 -- falls back to a safe default value
                     snapshot = None
                 if snapshot is not None and snapshot.state == "completed":
                     job.cancel_requested_at = None
@@ -327,7 +325,7 @@ async def cancel_video_job(db: AsyncSession, job: VideoGenerationJob) -> VideoGe
                 )
         except VideoJobAlreadyCompleted:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 -- logged; expected failure of an external dependency
             _LOG.warning("Provider cancel failed for video job %s", job.id, exc_info=True)
     job.status = "cancelled"
     job.error_code = "cancelled"
@@ -408,7 +406,7 @@ async def reclaim_stale_video_jobs() -> int:
                         job_id=job.id,
                         project_id=job.project_id,
                     )
-            except Exception:
+            except Exception:  # noqa: BLE001 -- logged; expected failure of an external dependency
                 _LOG.exception("Failed settling reclaimed video job %s", job.id)
         if reclaimed:
             await db.commit()
@@ -464,7 +462,7 @@ async def _lease_heartbeat(job_id: str, owner: str | None):
             try:
                 if not await _touch_video_job_lease(job_id, owner):
                     return
-            except Exception:
+            except Exception:  # noqa: BLE001 -- logged; expected failure of an external dependency
                 _LOG.warning("Lease heartbeat failed for video job %s", job_id, exc_info=True)
 
     task = asyncio.create_task(beat(), name=f"video-lease-{job_id}")
@@ -477,7 +475,7 @@ async def _lease_heartbeat(job_id: str, owner: str | None):
             await task
 
 
-async def _run_video_job(job_id: str) -> None:
+async def _run_video_job(job_id: str) -> None:  # noqa: C901 -- Phase 4 split; complexity must not grow
     started = time.perf_counter()
     async with AsyncSessionLocal() as db:
         job = await db.get(VideoGenerationJob, job_id)
@@ -743,7 +741,7 @@ async def _run_video_job(job_id: str) -> None:
             error_message = job.error_message
             billing.add_usage(None, success=False, error_message=error_message)
             await db.commit()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
             error_message = str(exc)[:2000]
             job.status = "failed"
             job.error_code = "upstream_error"
@@ -757,49 +755,49 @@ async def _run_video_job(job_id: str) -> None:
             _LOG.warning("Video job %s failed: %s", job_id, error_message)
             increment("video_job_failed")
         finally:
-            if lease_lost:
-                return
-            try:
-                elapsed_ms = (time.perf_counter() - started) * 1000.0
-                log_id = await log_video_usage(
-                    db,
-                    user=user,
-                    capture=billing,
-                    prompt=job.prompt or "",
-                    response_time_ms=elapsed_ms,
-                    success=success,
-                    error_message=error_message,
-                    source_ip=job.source_ip,
-                    operation=job.operation,
-                    budget_reservation_id=job.budget_reservation_id,
-                    duration_seconds=duration,
-                    job_id=job.id,
-                    project_id=job.project_id,
-                )
-                if log_id and success:
-                    job_params: dict[str, Any] = {}
-                    if job.params_json:
-                        try:
-                            loaded = json.loads(job.params_json)
-                            if isinstance(loaded, dict):
-                                job_params = loaded
-                        except json.JSONDecodeError:
-                            job_params = {}
-                    job_params["request_log_id"] = int(log_id)
-                    job.params_json = json.dumps(job_params)
-                    assistant_cid = str(job_params.get("assistant_client_message_id") or "").strip()
-                    if job.chat_session_id:
-                        from app.services.user_chat_storage_service import (
-                            attach_request_log_id_to_chat_message,
-                        )
+            # A runner that lost its lease settles nothing; the new owner does.
+            if not lease_lost:
+                try:
+                    elapsed_ms = (time.perf_counter() - started) * 1000.0
+                    log_id = await log_video_usage(
+                        db,
+                        user=user,
+                        capture=billing,
+                        prompt=job.prompt or "",
+                        response_time_ms=elapsed_ms,
+                        success=success,
+                        error_message=error_message,
+                        source_ip=job.source_ip,
+                        operation=job.operation,
+                        budget_reservation_id=job.budget_reservation_id,
+                        duration_seconds=duration,
+                        job_id=job.id,
+                        project_id=job.project_id,
+                    )
+                    if log_id and success:
+                        job_params: dict[str, Any] = {}
+                        if job.params_json:
+                            try:
+                                loaded = json.loads(job.params_json)
+                                if isinstance(loaded, dict):
+                                    job_params = loaded
+                            except json.JSONDecodeError:
+                                job_params = {}
+                        job_params["request_log_id"] = int(log_id)
+                        job.params_json = json.dumps(job_params)
+                        assistant_cid = str(job_params.get("assistant_client_message_id") or "").strip()
+                        if job.chat_session_id:
+                            from app.services.user_chat_storage_service import (
+                                attach_request_log_id_to_chat_message,
+                            )
 
-                        await attach_request_log_id_to_chat_message(
-                            db,
-                            user.id,
-                            job.chat_session_id,
-                            int(log_id),
-                            client_message_id=assistant_cid or None,
-                        )
-                await db.commit()
-            except Exception:
-                _LOG.exception("Failed to settle video billing for job %s", job_id)
+                            await attach_request_log_id_to_chat_message(
+                                db,
+                                user.id,
+                                job.chat_session_id,
+                                int(log_id),
+                                client_message_id=assistant_cid or None,
+                            )
+                    await db.commit()
+                except Exception:  # noqa: BLE001 -- logged; expected failure of an external dependency
+                    _LOG.exception("Failed to settle video billing for job %s", job_id)

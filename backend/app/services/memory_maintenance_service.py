@@ -192,7 +192,7 @@ async def run_user_memory_maintenance(db: AsyncSession) -> dict[str, int]:
         from app.services.observability import set_memory_embedding_backlog
 
         set_memory_embedding_backlog(remaining)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
         pass
     await db.flush()
     return stats

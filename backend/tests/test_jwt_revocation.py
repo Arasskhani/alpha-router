@@ -13,8 +13,8 @@ import asyncio
 import os
 
 from fastapi.security import HTTPAuthorizationCredentials
-from starlette.requests import Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from starlette.requests import Request
 
 from app.api.deps import get_current_user
 from app.config import get_settings
@@ -104,6 +104,7 @@ async def _run_legacy_token_compat() -> None:
     # create_access_token now always sets ver=0 by default; simulate a truly
     # legacy token by deleting the claim and re-encoding via jose directly.
     from jose import jwt as _jwt
+
     from app.config import get_settings
 
     del payload["ver"]

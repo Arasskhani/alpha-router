@@ -93,7 +93,7 @@ async def _await_speech_work(
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
-                raise asyncio.TimeoutError()
+                raise TimeoutError()
             await asyncio.wait({task}, timeout=min(0.5, remaining))
         return await task
     except BaseException:
@@ -116,7 +116,7 @@ async def _resolve_speech_model(
     if model_id.startswith("model::"):
         try:
             model_pk = int(model_id.split("::", 1)[1])
-        except Exception:
+        except Exception:  # noqa: BLE001 -- falls back to a safe default value
             model_pk = None
         if model_pk is not None:
             row = (
@@ -130,15 +130,14 @@ async def _resolve_speech_model(
             )
         if row:
             conn = await db.get(Connection, row.connection_id)
-            if conn and conn.is_active:
-                if subject is None or await user_can_access_model(db, row, subject):
-                    return (
-                        row.external_id,
-                        decrypt_secret(conn.api_key_encrypted),
-                        conn.base_url,
-                        conn.provider_type,
-                        row,
-                    )
+            if conn and conn.is_active and (subject is None or await user_can_access_model(db, row, subject)):
+                return (
+                    row.external_id,
+                    decrypt_secret(conn.api_key_encrypted),
+                    conn.base_url,
+                    conn.provider_type,
+                    row,
+                )
             row = None
 
     if not row:
@@ -229,7 +228,7 @@ def _validate_capabilities(
 
 
 @router.post("/generate")
-async def generate_speech(
+async def generate_speech(  # noqa: C901 -- Phase 4 split; complexity must not grow
     request: Request,
     body: SpeechRequest,
     user: User = Depends(require_active_user),
@@ -388,7 +387,7 @@ async def generate_speech(
         success = False
         error_message = "Speech generation stopped because the client disconnected."
         raise HTTPException(status_code=499, detail=error_message) from exc
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         success = False
         error_message = "Speech generation timed out."
         raise HTTPException(status_code=504, detail=error_message) from exc
@@ -420,10 +419,8 @@ async def generate_speech(
             import logging
 
             logging.getLogger("app.api.speech").exception("Failed to close speech request transaction before billing")
-            try:
+            with contextlib.suppress(Exception):
                 await db.rollback()
-            except Exception:
-                pass
             if success:
                 success = False
                 error_message = "Speech persistence failed"

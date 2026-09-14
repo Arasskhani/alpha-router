@@ -27,6 +27,8 @@ from app.database import Base
 from app.main import app, health_payload
 from app.models.api_key import AlphaRouterApiKey, AlphaRouterApiKeyAuditLog
 from app.models.logging import RequestLog
+from app.sandbox_broker import SANDBOX_IMAGE
+from app.sandbox_broker import app as sandbox_broker_app
 from app.services import chat_feedback_service, chat_title_service, user_chat_storage_service
 from app.services.budget_reservation_service import SUBJECT_ALPHA_ROUTER_KEY
 from app.services.chat_import_export import CHAT_EXPORT_FORMAT, detect_import_format
@@ -36,7 +38,6 @@ from app.services.db_monitor_service import TABLE_LABELS
 from app.services.openrouter_image_service import build_openrouter_headers
 from app.services.reports_catalog import REPORT_CATALOG
 from app.services.totp_service import provisioning_uri
-from app.sandbox_broker import SANDBOX_IMAGE, app as sandbox_broker_app
 from app.utils.app_attribution import detect_client_app
 from app.utils.display import format_app_source
 

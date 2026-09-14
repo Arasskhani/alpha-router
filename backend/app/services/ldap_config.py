@@ -77,7 +77,7 @@ def discover_root_dse(host: str, port: int = _DEFAULT_PORT) -> dict[str, str]:
         conn.unbind()
         domain = infer_domain("", base_dn) if base_dn else ""
         return {"base_dn": base_dn, "domain": domain}
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return {})
         return {}
 
 

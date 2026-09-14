@@ -339,9 +339,7 @@ def is_transient_empty_openrouter_image_response(
     """
     if collected:
         return False
-    if openrouter_message_is_text_only(data):
-        return False
-    return True
+    return not openrouter_message_is_text_only(data)
 
 
 def build_openrouter_headers(api_key: str, *, referer: str | None = None) -> dict[str, str]:

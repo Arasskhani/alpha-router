@@ -1,5 +1,6 @@
 """Step 3 tests: project media service (upload, list, delete, isolation, quota)."""
 
+import pytest
 import asyncio
 
 from fastapi import HTTPException
@@ -282,7 +283,7 @@ def test_delete_by_contributor_own_file_only():
                         user=contrib,
                         object_store=store,
                     )
-                    assert False, "contributor must not delete others' files"
+                    pytest.fail("contributor must not delete others' files")
                 except HTTPException as e:
                     assert e.status_code == 403
         finally:
@@ -315,7 +316,7 @@ def test_delete_by_viewer_denied():
                         user=viewer,
                         object_store=store,
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as e:
                     assert e.status_code == 403
         finally:
@@ -348,7 +349,7 @@ def test_get_hidden_for_non_member():
                         media_id=uploaded["id"],
                         user=outsider,
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as e:
                     assert e.status_code == 404
         finally:
@@ -385,7 +386,7 @@ def test_upload_quota_enforced():
                         object_store=store,
                         quota_bytes=8,
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except ProjectMediaQuotaError:
                     pass
         finally:
@@ -437,7 +438,7 @@ def test_viewer_cannot_upload():
                         content_bytes=b"x",
                         object_store=store,
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as e:
                     assert e.status_code == 403
         finally:
@@ -484,7 +485,7 @@ def test_read_bytes_and_empty_rejected():
                         content_bytes=b"",
                         object_store=store,
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except ProjectMediaValidationError:
                     pass
         finally:

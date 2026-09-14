@@ -570,10 +570,10 @@ async def leave_project(db: AsyncSession, *, project_id: str, user: User) -> boo
         return False
     try:
         await ensure_not_last_owner(db, project_id=project_id, user_id=user.id, new_role=None)
-    except ProjectAccessError:
+    except ProjectAccessError as exc:
         if is_primary_owner_role(access.role):
-            raise ProjectAccessError("The Primary Owner cannot leave the project")
-        raise ProjectAccessError("You are the last Owner and cannot leave the project")
+            raise ProjectAccessError("The Primary Owner cannot leave the project") from exc
+        raise ProjectAccessError("You are the last Owner and cannot leave the project") from exc
 
     member = await db.get(ProjectMember, (project_id, user.id))
     if member is None:

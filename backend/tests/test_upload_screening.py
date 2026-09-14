@@ -13,7 +13,7 @@ import pytest
 
 from app.core.archive_safety import ArchiveSafetyError, validate_ooxml_archive
 from app.services import upload_screening
-from app.services.malware_scan_service import MalwareScanResult, MalwareScannerUnavailable
+from app.services.malware_scan_service import MalwareScannerUnavailable, MalwareScanResult
 from app.services.upload_screening import UploadRejected, screen_upload
 
 EICAR_LIKE = MalwareScanResult(clean=False, signature="Win.Test.EICAR_HDB-1", raw_response="stream: FOUND")

@@ -22,6 +22,7 @@ from app.services.knowledge_retention_service import (
     schedule_expired_knowledge_retention,
 )
 from app.services.outbox_service import relay_outbox_once
+import contextlib
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -111,10 +112,8 @@ async def run() -> None:
                 raise
             except Exception:
                 logger.exception("Knowledge scheduler loop failed")
-                try:
+                with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), timeout=1.0)
-                except TimeoutError:
-                    pass
     finally:
         await redis.aclose()
         await engine.dispose()

@@ -29,7 +29,7 @@ import asyncio
 import ipaddress
 import logging
 import socket
-from typing import Iterable
+from collections.abc import Iterable
 from urllib.parse import urlparse
 
 import httpcore
@@ -56,12 +56,11 @@ def _private_ranges_allowed() -> bool:
 
 def _is_forbidden_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """Return True for loopback / private / link-local / multicast / reserved / unspecified IPs."""
-    if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
-        return True
-    # Cloud metadata endpoints (AWS/Azure/GCP) live in 169.254.0.0/16 (link-local)
-    # which is already caught by is_link_local, but be explicit for clarity:
-    # 169.254.169.254 is the canonical metadata IP.
-    return False
+    # Cloud metadata endpoints (AWS/Azure/GCP) live in 169.254.0.0/16, which
+    # is_link_local already covers (169.254.169.254 is the canonical one).
+    return bool(
+        ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified
+    )
 
 
 def _resolve_hosts(hostname: str) -> list[str]:
@@ -84,11 +83,11 @@ def _check_resolved_ips(ips: Iterable[str]) -> None:
     for ip_str in ips:
         try:
             ip = ipaddress.ip_address(ip_str)
-        except ValueError:
+        except ValueError as exc:
             # If it's not a parseable IP, treat it as suspicious and block.
             logger.warning("Blocked SSRF target with unparseable resolved IP")
             increment("ssrf_block")
-            raise SSRFBlockedError(f"Unparseable resolved IP: {ip_str}")
+            raise SSRFBlockedError(f"Unparseable resolved IP: {ip_str}") from exc
         if _is_forbidden_ip(ip):
             logger.warning("Blocked SSRF connection to forbidden IP %s", ip_str)
             increment("ssrf_block")

@@ -392,7 +392,7 @@ def _egress_manifest(
     )
 
 
-async def plan_agent_turn(
+async def plan_agent_turn(  # noqa: C901 -- Phase 4 split; complexity must not grow
     db: AsyncSession,
     *,
     messages: list[dict[str, Any]],

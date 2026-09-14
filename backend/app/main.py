@@ -310,7 +310,7 @@ def _url_has_secure_password(url: str) -> bool:
     return bool(parsed.password and parsed.password not in INSECURE_DEFAULTS)
 
 
-def _collect_production_insecurities(
+def _collect_production_insecurities(  # noqa: C901 -- Phase 4 split; complexity must not grow
     *,
     environment: str,
     secret_key: str,

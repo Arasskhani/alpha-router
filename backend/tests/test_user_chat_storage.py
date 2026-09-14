@@ -1,5 +1,6 @@
 """Tests for DB-backed chat storage."""
 
+import pytest
 import asyncio
 
 from sqlalchemy import select
@@ -188,7 +189,7 @@ async def _run_roundtrip() -> None:
                 {"title": "Conflict"},
                 expected_revision=1,
             )
-            assert False, "expected RevisionConflictError"
+            pytest.fail("expected RevisionConflictError")
         except RevisionConflictError as exc:
             assert exc.current_revision >= 2
 
@@ -221,7 +222,7 @@ def test_dt_to_ms_interprets_naive_as_utc():
     from app.services.user_chat_storage_service import _dt_to_ms
 
     naive = dt.datetime(2026, 1, 15, 12, 0, 0)
-    expected = int(dt.datetime(2026, 1, 15, 12, 0, 0, tzinfo=dt.timezone.utc).timestamp() * 1000)
+    expected = int(dt.datetime(2026, 1, 15, 12, 0, 0, tzinfo=dt.UTC).timestamp() * 1000)
     assert _dt_to_ms(naive) == expected
 
 

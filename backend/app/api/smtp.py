@@ -69,5 +69,5 @@ async def test_smtp(body: SmtpIn, _: User = Depends(require_smtp_write)):
             await client.login(body.username, body.password)
         await client.quit()
         return {"ok": True}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
         return {"ok": False, "error": str(exc)}

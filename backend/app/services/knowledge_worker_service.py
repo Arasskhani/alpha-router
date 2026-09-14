@@ -36,6 +36,7 @@ from app.services.knowledge_queue import (
     read_new_messages,
     reclaim_stale_messages,
 )
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,7 @@ class KnowledgeWorker:
         except ExtractionParseError as exc:
             failure = exc
             retryable = False
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- falls back to a safe default value
             failure = exc
         stop_heartbeat.set()
         await heartbeat_task
@@ -275,7 +276,7 @@ class KnowledgeWorker:
                         raise ValueError("Knowledge job disappeared during execution")
                     await handler(db, current, self.context)
                     await db.commit()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- falls back to a safe default value
                 failure = exc
 
         stop_heartbeat.set()
@@ -374,7 +375,5 @@ class KnowledgeWorker:
                 raise
             except Exception:
                 logger.exception("Knowledge worker loop failed")
-                try:
+                with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), timeout=1.0)
-                except TimeoutError:
-                    pass

@@ -85,4 +85,4 @@ def chunk_plaintext_hash(chunk_index: int, text: str) -> str:
     under ``uq_knowledge_chunks_hash`` while still binding the stored ciphertext
     to its plaintext.
     """
-    return hashlib.sha256(f"{int(chunk_index)}\0{text}".encode("utf-8")).hexdigest()
+    return hashlib.sha256(f"{int(chunk_index)}\0{text}".encode()).hexdigest()

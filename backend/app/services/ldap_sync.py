@@ -177,9 +177,13 @@ async def _apply_directory_profile(
     conflicts: list[dict[str, str]],
 ) -> None:
     new_username = normalize_username(item.get("username"))
-    if new_username and new_username != normalize_username(user.username) and not user.hashed_password:
-        if not await username_taken_ci(db, new_username, exclude_user_id=user.id):
-            user.username = new_username
+    if (
+        new_username
+        and new_username != normalize_username(user.username)
+        and not user.hashed_password
+        and not await username_taken_ci(db, new_username, exclude_user_id=user.id)
+    ):
+        user.username = new_username
 
     email = _clean(item.get("email"))
     if email and (user.email or "").strip().lower() != email.lower():
@@ -334,7 +338,7 @@ async def _sync_one_group(
     return group, True
 
 
-async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:
+async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:  # noqa: C901 -- Phase 4 split; complexity must not grow
     if not cfg.get("enabled"):
         raise ValueError("LDAP is not enabled")
     if not (cfg.get("server") or "").strip():
@@ -595,9 +599,7 @@ async def _should_prune_ldap_group(db: AsyncSession, group: UserGroup) -> bool:
     member_count = (
         await db.execute(select(user_group_members.c.user_id).where(user_group_members.c.group_id == group.id))
     ).all()
-    if member_count:
-        return False
-    return True
+    return not member_count
 
 
 async def _delete_ldap_group_row(db: AsyncSession, group: UserGroup) -> None:

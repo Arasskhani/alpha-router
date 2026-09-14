@@ -341,7 +341,7 @@ def _build_model_experience(
         key = _bucket_key_ts(start, tr.bucket_seconds)
         bucket_logs = log_buckets.get(key, [])
         point: dict[str, Any] = {"label": _bucket_label_ts(start, tr.bucket_seconds)}
-        for mk, mid in zip(chart_keys, [m["model_id"] for m in chart_models]):
+        for mk, mid in zip(chart_keys, [m["model_id"] for m in chart_models], strict=False):
             bl = [
                 float(r.response_time_ms) for r in bucket_logs if r.model_id == mid and r.response_time_ms is not None
             ]

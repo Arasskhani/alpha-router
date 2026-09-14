@@ -5,12 +5,13 @@ import sqlite3
 import uuid
 from pathlib import Path
 
-import app.models  # noqa: F401
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+import app.models  # noqa: F401
 from app.database import Base
 from app.models.project import ProjectMediaAsset
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 
 def _alembic_head() -> str:

@@ -1,5 +1,6 @@
 """Tests for project config versioning, memory CRUD, and cross-project grants."""
 
+import pytest
 import asyncio
 
 from sqlalchemy import select
@@ -165,7 +166,7 @@ def test_update_config_contributor_denied():
 
                 try:
                     await update_project_config(db, project_id=PROJ_ID, user=contrib, custom_prompt="x")
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 403
         finally:
@@ -221,7 +222,7 @@ def test_create_memory_contributor_denied():
 
                 try:
                     await create_project_memory(db, project_id=PROJ_ID, user=contrib, content="Contrib fact")
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 403
         finally:
@@ -240,7 +241,7 @@ def test_create_memory_viewer_denied():
 
                 try:
                     await create_project_memory(db, project_id=PROJ_ID, user=viewer, content="x")
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 403
         finally:
@@ -276,7 +277,7 @@ def test_create_memory_empty_denied():
                 owner, _, _ = await _setup_project(db)
                 try:
                     await create_project_memory(db, project_id=PROJ_ID, user=owner, content="   ")
-                    assert False
+                    pytest.fail("expected an exception")
                 except ProjectMemoryValidationError:
                     pass
         finally:
@@ -336,7 +337,7 @@ def test_delete_memory_not_found():
                 owner, _, _ = await _setup_project(db)
                 try:
                     await delete_project_memory(db, project_id=PROJ_ID, user=owner, memory_id="nonexistent")
-                    assert False
+                    pytest.fail("expected an exception")
                 except ProjectMemoryNotFoundError:
                     pass
         finally:
@@ -380,7 +381,7 @@ def test_create_grant_self_denied():
                         source_project_id=PROJ_ID,
                         user=owner,
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except ValueError:
                     pass
         finally:
@@ -405,7 +406,7 @@ def test_create_grant_not_owner_of_source():
                         source_project_id=PROJ_ID_2,
                         user=non_owner,
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except ValueError:
                     pass
         finally:
@@ -432,7 +433,7 @@ def test_create_grant_contributor_denied():
                         source_project_id=PROJ_ID_2,
                         user=contrib,
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 403
         finally:
@@ -693,7 +694,7 @@ def test_grant_requires_owner_on_both():
                         source_project_id=PROJ_ID_2,
                         user=owner_a,
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except ProjectMemoryGrantError:
                     pass
                 try:
@@ -703,7 +704,7 @@ def test_grant_requires_owner_on_both():
                         source_project_id=PROJ_ID_2,
                         user=contrib,
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException:
                     pass
         finally:

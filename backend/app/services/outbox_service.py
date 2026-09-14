@@ -190,7 +190,7 @@ async def relay_outbox_once(
                     aggregate_id=event.aggregate_id,
                     payload=dict(event.payload_json or {}),
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- falls back to a safe default value
                 status = await mark_outbox_failed(
                     db,
                     event,

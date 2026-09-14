@@ -2,6 +2,9 @@
 
 import asyncio
 
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
 import app.models  # noqa: F401
 from app.database import Base
 from app.models.project import (
@@ -29,7 +32,6 @@ from app.services.project_service import (
     update_member_role,
     update_project,
 )
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 
 async def _factory():
@@ -81,7 +83,7 @@ def test_create_project_rejects_empty_name():
                 owner = await _user(db, "owner")
                 try:
                     await create_project(db, user=owner, name="  ")
-                    assert False, "expected error"
+                    pytest.fail("expected error")
                 except ProjectValidationError:
                     pass
         finally:
@@ -173,7 +175,7 @@ def test_update_project_owner_only():
 
                 try:
                     await update_project(db, project_id=pid, user=contrib, name="Hack")
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as e:
                     assert e.status_code == 403
         finally:
@@ -210,7 +212,7 @@ def test_leave_project_blocks_last_owner():
                 pid = proj["id"]
                 try:
                     await leave_project(db, project_id=pid, user=owner)
-                    assert False, "expected block"
+                    pytest.fail("expected block")
                 except ProjectAccessError:
                     pass
         finally:
@@ -270,7 +272,7 @@ def test_update_member_role_blocks_demote_last_owner():
                 pid = proj["id"]
                 try:
                     await update_member_role(db, project_id=pid, user=owner, target_user_id=owner.id, role="viewer")
-                    assert False
+                    pytest.fail("expected an exception")
                 except ProjectAccessError:
                     pass
         finally:
@@ -289,7 +291,7 @@ def test_remove_member_blocks_last_owner():
                 pid = proj["id"]
                 try:
                     await remove_member(db, project_id=pid, user=owner, target_user_id=owner.id)
-                    assert False
+                    pytest.fail("expected an exception")
                 except ProjectAccessError:
                     pass
         finally:
@@ -344,7 +346,7 @@ def test_invitation_create_claim_revoke():
                 user3 = await _user(db, "user3")
                 try:
                     await claim_invitation(db, token=token, user=user3)
-                    assert False
+                    pytest.fail("expected an exception")
                 except ProjectValidationError:
                     pass
                 # revoke
@@ -367,7 +369,7 @@ def test_invitation_rejects_owner_role():
                 pid = proj["id"]
                 try:
                     await create_invitation(db, project_id=pid, user=owner, role="owner")
-                    assert False
+                    pytest.fail("expected an exception")
                 except ValueError:
                     pass
         finally:

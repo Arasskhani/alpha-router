@@ -4,6 +4,7 @@ Costs are taken from provider usage objects — never adjusted by Alpharouter.
 """
 
 import asyncio
+import contextlib
 import datetime
 import json
 import logging
@@ -246,7 +247,7 @@ def configure_litellm_cache() -> None:
         import redis  # noqa: F401
 
         litellm.cache = litellm.Cache(type="redis", url=redis_url)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- falls back to a safe default value
         litellm.cache = litellm.Cache()
 
 
@@ -278,7 +279,7 @@ async def resolve_model_and_key(
     if isinstance(normalized_input, str) and normalized_input.startswith("model::"):
         try:
             model_pk = int(normalized_input.split("::", 1)[1])
-        except Exception:
+        except Exception:  # noqa: BLE001 -- falls back to a safe default value
             model_pk = None
         if model_pk is not None:
             row = (
@@ -471,7 +472,7 @@ def _usage_from_chunk(chunk) -> tuple[int, int, int]:
             data = chunk.model_dump()
             if isinstance(data, dict):
                 return _usage_from_usage_obj(data.get("usage"))
-        except Exception:
+        except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
             pass
     return 0, 0, 0
 
@@ -562,7 +563,7 @@ def _agent_identity_metadata(agent_turn: PreparedAgentTurn) -> dict[str, object]
 def _serialize_stream_chunk(chunk) -> str:
     try:
         return chunk.model_dump_json()
-    except Exception:
+    except Exception:  # noqa: BLE001 -- boundary with an external dependency; degraded result is returned
         if hasattr(chunk, "model_dump"):
             return json.dumps(chunk.model_dump(), default=str)
         return json.dumps(chunk, default=str)
@@ -701,10 +702,8 @@ def _abandon_task(task: asyncio.Task) -> None:
     task.cancel()
 
     async def _drain() -> None:
-        try:
+        with contextlib.suppress(asyncio.CancelledError, Exception):
             await task
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001
-            pass
 
     _spawn_compatibility_task(_drain())
 
@@ -841,7 +840,7 @@ def _code_interpreter_capacity_lease_id(body: dict, subject: str) -> str | None:
     )
 
 
-async def preflight_stream_chat(
+async def preflight_stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
     db: AsyncSession,
     body: dict,
     *,
@@ -1364,7 +1363,7 @@ async def _resolve_session_project_id(db: AsyncSession, chat_session_id: str | N
     return str(session.project_id) if session.project_id else None
 
 
-async def stream_chat(
+async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
     request: Request,
     body: dict,
     *,
@@ -1700,7 +1699,7 @@ async def stream_chat(
                             }
                         )
                     await persister.prepare()
-                except Exception:
+                except Exception:  # noqa: BLE001 -- session is rolled back and the caller continues without the write
                     await db.rollback()
                     persister = None
 
@@ -1727,7 +1726,7 @@ async def stream_chat(
                     if llm_provider:
                         ct_kwargs["custom_llm_provider"] = llm_provider
                     completion_tokens = litellm.token_counter(**ct_kwargs)
-                except Exception:
+                except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
                     pass
 
             total_cost = _compute_token_cost_usd(
@@ -1759,14 +1758,14 @@ async def stream_chat(
                 if await request.is_disconnected():
                     client_disconnected = True
                     return True
-            except Exception:
+            except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
                 pass
             if persister:
                 try:
                     if await persister.is_cancel_requested(force=True):
                         client_disconnected = True
                         return True
-                except Exception:
+                except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
                     pass
             return False
 
@@ -1897,7 +1896,7 @@ async def stream_chat(
                         if llm_provider:
                             completion_kwargs_for_count["custom_llm_provider"] = llm_provider
                         active_completion_tokens = int(litellm.token_counter(**completion_kwargs_for_count) or 0)
-                    except Exception:
+                    except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
                         pass
                 empty_completion = not iteration_content.strip()
                 attempt_error = "Upstream model returned an empty completion." if empty_completion else None
@@ -2088,7 +2087,7 @@ async def stream_chat(
                 if persister:
                     try:
                         await persister.on_content(collected_content)
-                    except Exception:
+                    except Exception:  # noqa: BLE001 -- session is rolled back and the caller continues without the write
                         await db.rollback()
                         persister.reset_persist_state()
                 if not client_disconnected:
@@ -2145,7 +2144,7 @@ async def stream_chat(
                     )
                     try:
                         await persister.on_content(collected_content)
-                    except Exception:
+                    except Exception:  # noqa: BLE001 -- session is rolled back and the caller continues without the write
                         await db.rollback()
                         persister.reset_persist_state()
                 yield _sse_delta_chunk(collected_content)
@@ -2188,7 +2187,7 @@ async def stream_chat(
                 completion_tokens += active_completion_tokens
                 cached_tokens += active_cached_tokens
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- session is rolled back and the caller continues without the write
             if active_started_at is not None:
                 failed_event = capture_usage_event(
                     active_response,
@@ -2259,7 +2258,7 @@ async def stream_chat(
                             if llm_provider:
                                 completion_count_kwargs["custom_llm_provider"] = llm_provider
                             ct = int(litellm.token_counter(**completion_count_kwargs) or 0)
-                        except Exception:
+                        except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
                             pass
                     usage_events.append(
                         capture_usage_event(
@@ -2288,7 +2287,7 @@ async def stream_chat(
                     if persister and content and agent_turn is None:
                         try:
                             await persister.on_content(collected_content)
-                        except Exception:
+                        except Exception:  # noqa: BLE001 -- session is rolled back and the caller continues without the write
                             await db.rollback()
                             persister.reset_persist_state()
                     await _compute_cost()
@@ -2317,12 +2316,12 @@ async def stream_chat(
                             )
                             try:
                                 await persister.on_content(collected_content)
-                            except Exception:
+                            except Exception:  # noqa: BLE001 -- session is rolled back and the caller continues without the write
                                 await db.rollback()
                                 persister.reset_persist_state()
                         yield _sse_delta_chunk(collected_content)
                         agent_output_displayed = True
-                except Exception as retry_exc:
+                except Exception as retry_exc:  # noqa: BLE001 -- error text is surfaced to the caller
                     usage_events.append(
                         capture_usage_event(
                             None,
@@ -2373,7 +2372,7 @@ async def stream_chat(
                             success=success,
                             error_message=error_message,
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001 -- session is rolled back and the caller continues without the write
                         await db.rollback()
                 if stream_end_at is not None:
                     elapsed_ms = (stream_end_at - generation_start) * 1000
@@ -2679,7 +2678,7 @@ async def create_embedding(
                 if llm_provider:
                     count_kwargs["custom_llm_provider"] = llm_provider
                 prompt_tokens = int(litellm.token_counter(**count_kwargs) or 0)
-            except Exception:
+            except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
                 pass
         cached_tokens = cache
         usage_events.append(
@@ -2702,10 +2701,7 @@ async def create_embedding(
         total_cost = sum(
             float(event.quote.final_cost_usd) for event in usage_events if event.quote.final_cost_usd is not None
         )
-        if hasattr(response, "model_dump"):
-            payload = response.model_dump()
-        else:
-            payload = dict(response)
+        payload = response.model_dump() if hasattr(response, "model_dump") else dict(response)
     except Exception as exc:
         success = False
         error_message = _format_provider_error(exc, provider)[:500]

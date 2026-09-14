@@ -1,7 +1,11 @@
 """Security gate: ACL, invitation, race, memory leakage, billing, deletion, regression."""
 
 import asyncio
+import contextlib
 import datetime
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import app.models  # noqa: F401
 from app.database import Base
@@ -44,7 +48,6 @@ from app.services.project_service import (
     update_member_role,
     update_project,
 )
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 PROJ = "sec-proj-1"
 PROJ2 = "sec-proj-2"
@@ -76,10 +79,8 @@ async def _file_factory():
 
     async def dispose():
         await engine.dispose()
-        try:
+        with contextlib.suppress(OSError):
             os.remove(path)
-        except OSError:
-            pass
 
     return (
         async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False),
@@ -147,7 +148,7 @@ def test_viewer_cannot_write_chat():
                         role="user",
                         content="hi",
                     )
-                    assert False, "viewer should not write"
+                    pytest.fail("viewer should not write")
                 except HTTPException as e:
                     assert e.status_code == 403
         finally:
@@ -249,7 +250,7 @@ def test_member_cannot_self_promote_via_update_project():
                 # contributor tries to update project (needs project.edit = owner only)
                 try:
                     await update_project(db, project_id=PROJ, user=contrib, name="Hacked")
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as e:
                     assert e.status_code == 403
         finally:
@@ -272,7 +273,7 @@ def test_owner_cannot_demote_self_to_create_zero_owners():
                         target_user_id=owner.id,
                         role="viewer",
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except ProjectAccessError:
                     pass
         finally:
@@ -303,7 +304,7 @@ def test_invitation_expired_rejected():
                 invitee = await _user(db, "invitee")
                 try:
                     await claim_invitation(db, token=inv["token"], user=invitee)
-                    assert False
+                    pytest.fail("expected an exception")
                 except ProjectValidationError:
                     pass
         finally:
@@ -323,7 +324,7 @@ def test_invitation_revoked_rejected():
                 invitee = await _user(db, "invitee")
                 try:
                     await claim_invitation(db, token=inv["token"], user=invitee)
-                    assert False
+                    pytest.fail("expected an exception")
                 except ProjectValidationError:
                     pass
         finally:
@@ -367,7 +368,7 @@ def test_invitation_multi_use_exhaustion():
                 assert await claim_invitation(db, token=inv["token"], user=u2) is not None
                 try:
                     await claim_invitation(db, token=inv["token"], user=u3)
-                    assert False
+                    pytest.fail("expected an exception")
                 except ProjectValidationError:
                     pass
         finally:
@@ -597,7 +598,7 @@ def test_memory_grant_requires_owner_in_both_projects():
                         source_project_id=PROJ2,
                         user=contrib,
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except (ProjectMemoryGrantError, Exception):
                     pass
         finally:
@@ -882,7 +883,7 @@ def test_remove_last_owner_blocked():
                 owner, _, _ = await _setup_project(db)
                 try:
                     await remove_member(db, project_id=PROJ, user=owner, target_user_id=owner.id)
-                    assert False
+                    pytest.fail("expected an exception")
                 except ProjectAccessError:
                     pass
         finally:

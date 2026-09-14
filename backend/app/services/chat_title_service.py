@@ -67,14 +67,14 @@ def _parse_json_prompt(raw: str, prefix: str, fallback: str) -> str:
             user_text = str(payload.get("userText") or "").strip()
             if user_text:
                 return user_text
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
         pass
     return fallback
 
 
 def _normalize_content_for_title(content: str) -> str:
     t = (content or "").strip()
-    if not t or t == _IMAGE_PENDING or t == _VIDEO_PENDING:
+    if t in (_IMAGE_PENDING, _VIDEO_PENDING) or not t:
         return ""
     if t.startswith(_IMAGE_PREFIX):
         return _parse_json_prompt(t, _IMAGE_PREFIX, "Generated image")
@@ -155,7 +155,7 @@ async def generate_chat_title(
             messages=kwargs["messages"],
             max_tokens=32,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return _sanitize_title(_fallback_title(m)
         return _sanitize_title(_fallback_title(messages))
 
     response = None
@@ -174,7 +174,7 @@ async def generate_chat_title(
         if title == "New chat":
             return _sanitize_title(_fallback_title(messages))
         return title
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
         error_message = str(exc)[:500]
         return _sanitize_title(_fallback_title(messages))
     finally:

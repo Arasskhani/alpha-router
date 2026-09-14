@@ -38,7 +38,6 @@ from app.services.oidc_client import (
 )
 from app.services.secret_crypto import encrypt_secret
 
-
 ISSUER = "https://idp.example.com/realms/alpha-router"
 
 

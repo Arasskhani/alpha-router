@@ -312,7 +312,7 @@ async def _check_readiness() -> dict[str, str]:
             stderr=asyncio.subprocess.DEVNULL,
         )
         await asyncio.wait_for(check.wait(), timeout=3)
-    except (FileNotFoundError, TimeoutError, asyncio.TimeoutError):
+    except (FileNotFoundError, TimeoutError):
         raise HTTPException(status_code=503, detail="Sandbox runtime unavailable") from None
     if check.returncode != 0:
         raise HTTPException(status_code=503, detail="Sandbox image unavailable")
@@ -340,7 +340,7 @@ async def readyz() -> dict[str, str]:
 async def execute(body: ExecuteRequest) -> dict[str, object]:
     try:
         await asyncio.wait_for(_semaphore.acquire(), timeout=QUEUE_TIMEOUT_SECONDS)
-    except (TimeoutError, asyncio.TimeoutError):
+    except TimeoutError:
         raise HTTPException(status_code=429, detail="Sandbox capacity is busy") from None
     try:
         return await _run_container(body)
@@ -398,7 +398,7 @@ async def _force_remove(container_name: str) -> None:
         await asyncio.wait_for(cleanup.wait(), timeout=5)
 
 
-async def _run_container(body: ExecuteRequest, job: "_Job | None" = None) -> dict[str, object]:
+async def _run_container(body: ExecuteRequest, job: _Job | None = None) -> dict[str, object]:
     container_name = f"alpha-router-sandbox-{uuid.uuid4().hex}"
     payload = json.dumps(
         {"code": body.code, "files": body.files},
@@ -466,7 +466,7 @@ async def _run_container(body: ExecuteRequest, job: "_Job | None" = None) -> dic
             timeout=EXECUTION_TIMEOUT_SECONDS,
         )
         completed = True
-    except (TimeoutError, asyncio.TimeoutError):
+    except TimeoutError:
         raise HTTPException(status_code=504, detail="Sandbox execution timed out") from None
     except _OutputLimitExceeded:
         raise HTTPException(status_code=413, detail="Sandbox output exceeds limit") from None
@@ -518,13 +518,13 @@ async def _run_container(body: ExecuteRequest, job: "_Job | None" = None) -> dic
 
 
 def _now() -> datetime.datetime:
-    return datetime.datetime.now(datetime.timezone.utc)
+    return datetime.datetime.now(datetime.UTC)
 
 
 @dataclasses.dataclass
 class _Job:
     job_id: str
-    request: "ExecuteRequest | None" = None
+    request: ExecuteRequest | None = None
     state: JobState = JobState.PENDING
     created_at: datetime.datetime = dataclasses.field(default_factory=_now)
     updated_at: datetime.datetime = dataclasses.field(default_factory=_now)

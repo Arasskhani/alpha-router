@@ -11,7 +11,8 @@ import time
 import uuid
 from calendar import timegm
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
@@ -403,7 +404,7 @@ async def _sync_vector_enabled(db: AsyncSession, row: UserMemory, *, enabled: bo
                 points=[row.id],
                 wait=True,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 -- boundary with an external dependency; degraded result is returned
             await vectors.delete_ids(collection_name=collection, point_ids=[row.id])
             row.embedding_status = "pending"
     except Exception:
@@ -899,13 +900,13 @@ async def retrieve_memories(
                 fused = _rrf_fuse(semantic, lexical)
                 if not fused:
                     fused = await _recency_rows(db, user_id, limit=item_limit)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- logged; expected failure of an external dependency
             logger.warning("Memory retrieval hybrid path failed user_id=%s", user_id)
             try:
                 from app.services.observability import observe_memory_retrieval_fallback
 
                 observe_memory_retrieval_fallback("timeout_or_error")
-            except Exception:
+            except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
                 pass
             fused = await _recency_rows(db, user_id, limit=item_limit)
 
@@ -936,7 +937,7 @@ async def retrieve_memories(
                 duration_seconds=time.perf_counter() - started,
                 injected=len(facts),
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
             pass
         return facts
     except Exception:

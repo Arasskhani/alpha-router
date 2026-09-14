@@ -2,6 +2,7 @@
 
 import asyncio
 
+import pytest
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -99,7 +100,7 @@ def test_member_session_cannot_call_completions():
                 assert row.channel_kind == CHANNEL_KIND_MEMBER
                 try:
                     await assert_session_allows_model_generation(db, room["id"])
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 403
                     assert exc.detail["code"] == ROOM_SESSION_NOT_ALLOWED
@@ -171,7 +172,7 @@ def test_viewer_member_can_read_but_not_write_or_handoff():
                     await append_project_room_message(
                         db, project_id=PROJ_ID, room_id=room["id"], user=viewer, content="nope"
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 403
                 try:
@@ -182,7 +183,7 @@ def test_viewer_member_can_read_but_not_write_or_handoff():
                         user=viewer,
                         brief="Ship the teaser",
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 403
         finally:
@@ -372,7 +373,7 @@ def test_sender_can_edit_and_delete_own_message():
                         user=owner,
                         content="hijack",
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 403
                 assert await delete_project_room_message(

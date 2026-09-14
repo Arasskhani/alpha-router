@@ -85,10 +85,7 @@ async def log_video_usage(
     """Write RequestLog row and settle budget (same path as image/chat)."""
     model_id = (capture.model_id or "").strip() or "unknown"
     op = (operation or "generation").strip().lower()
-    if op == "img2vid":
-        op_name = "video:img2vid"
-    else:
-        op_name = f"video:{op}"
+    op_name = "video:img2vid" if op == "img2vid" else f"video:{op}"
 
     captured_sources = list(capture.usage_sources)
     usage_events: list[PendingUsageEvent] = []

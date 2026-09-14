@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import tempfile
@@ -53,10 +54,8 @@ async def _factory():
 
     async def dispose():
         await engine.dispose()
-        try:
+        with contextlib.suppress(OSError):
             os.remove(path)
-        except OSError:
-            pass
 
     return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False), dispose
 

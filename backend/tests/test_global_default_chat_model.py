@@ -10,8 +10,8 @@ from app.models.model_catalog import AIModel
 from app.models.system import SystemSetting
 from app.models.user import User
 from app.services.global_default_chat_model import (
-    GlobalDefaultModelError,
     SETTING_KEY,
+    GlobalDefaultModelError,
     clear_global_default_if_ids,
     drop_unusable_global_default,
     get_global_default_model,

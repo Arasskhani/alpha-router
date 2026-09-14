@@ -190,7 +190,7 @@ def _dictish(value: Any) -> dict[str, Any]:
         if callable(method):
             try:
                 dumped = method()
-            except Exception:
+            except Exception:  # noqa: BLE001 -- one bad item must not abort the batch
                 continue
             if isinstance(dumped, dict):
                 return dumped
@@ -535,7 +535,7 @@ def _line_item(
     )
 
 
-def _catalog_quote(
+def _catalog_quote(  # noqa: C901 -- Phase 4 split; complexity must not grow
     ai_model: AIModel | None,
     usage: NormalizedUsage,
     *,
@@ -896,7 +896,7 @@ def _litellm_estimate(
         if custom_provider:
             kwargs["custom_llm_provider"] = custom_provider
         return _finite_float(litellm.completion_cost(**kwargs))
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return None)
         return None
 
 

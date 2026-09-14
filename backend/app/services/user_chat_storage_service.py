@@ -36,6 +36,7 @@ from app.services.private_mode_service import (
     PrivateModePersistenceError,
     assert_session_persistence_allowed,
 )
+import contextlib
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -194,9 +195,9 @@ def _normalize_timezone(value: Any) -> str:
             return raw
         except ZoneInfoNotFoundError:
             return "UTC"
-        except Exception:
+        except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return "UTC")
             return "UTC"
-    except Exception:
+    except Exception:  # noqa: BLE001 -- boundary with an external dependency; degraded result is returned
         # zoneinfo unavailable — accept common-looking tokens only
         if raw.replace("_", "").replace("/", "").replace("-", "").isalnum():
             return raw
@@ -220,9 +221,7 @@ def _normalize_prefs(raw: dict[str, Any] | None) -> dict[str, Any]:
     else:
         base["theme"] = "light"
 
-    if "timezone" in raw:
-        base["timezone"] = _normalize_timezone(raw.get("timezone"))
-    elif isinstance(raw.get("timezone"), str):
+    if "timezone" in raw or isinstance(raw.get("timezone"), str):
         base["timezone"] = _normalize_timezone(raw.get("timezone"))
 
     # Language: English only for now
@@ -349,10 +348,8 @@ def _message_to_client(row: ChatMessage) -> dict[str, Any]:
         out["streaming"] = meta["streaming"]
     request_log_id = meta.get("requestLogId")
     if request_log_id is not None:
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             out["requestLogId"] = int(request_log_id)
-        except (TypeError, ValueError):
-            pass
     for key in (
         "agentId",
         "agentVersionId",
@@ -988,15 +985,12 @@ async def _try_reconcile_inflight_assistant(
 
     age = (dt.datetime.utcnow() - last.created_at).total_seconds()
     force = bool(meta.get("cancelRequested"))
-    if content == IMAGE_PENDING_MARKER:
-        if meta.get("receivedAt") is not None or age >= _STALE_IMAGE_PENDING_SEC:
-            force = True
-    if content == SPEECH_PENDING_MARKER:
-        if meta.get("receivedAt") is not None or age >= _STALE_IMAGE_PENDING_SEC:
-            force = True
-    if content == VIDEO_PENDING_MARKER:
-        if meta.get("receivedAt") is not None or age >= _STALE_VIDEO_PENDING_SEC:
-            force = True
+    if content == IMAGE_PENDING_MARKER and (meta.get("receivedAt") is not None or age >= _STALE_IMAGE_PENDING_SEC):
+        force = True
+    if content == SPEECH_PENDING_MARKER and (meta.get("receivedAt") is not None or age >= _STALE_IMAGE_PENDING_SEC):
+        force = True
+    if content == VIDEO_PENDING_MARKER and (meta.get("receivedAt") is not None or age >= _STALE_VIDEO_PENDING_SEC):
+        force = True
     if not force and not content.strip() and meta.get("streaming") and age >= _STALE_TEXT_STREAMING_SEC:
         force = True
     # Imported / legacy rows: completed assistant text without receivedAt is treated
@@ -1079,7 +1073,7 @@ async def list_session_messages(
             .all()
         )
         feedback_by_message = {row.message_id: row for row in feedback_rows}
-        for payload, row in zip(messages, rows):
+        for payload, row in zip(messages, rows, strict=False):
             feedback = feedback_by_message.get(row.id)
             if feedback is not None:
                 payload["feedback"] = {
@@ -1333,9 +1327,7 @@ async def finalize_chat_session_image(
         _bump_session_revision(session)
         await db.flush()
         return True
-    if content.startswith(IMAGE_MESSAGE_PREFIX):
-        return True
-    return False
+    return bool(content.startswith(IMAGE_MESSAGE_PREFIX))
 
 
 def _build_video_message(

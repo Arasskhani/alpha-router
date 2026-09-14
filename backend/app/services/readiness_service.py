@@ -70,7 +70,7 @@ async def _timed(name: str, required: bool, coro) -> CheckResult:
     try:
         await asyncio.wait_for(coro, timeout=CHECK_TIMEOUT_SECONDS)
         return CheckResult(name, True, required, (time.perf_counter() - start) * 1000)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return CheckResult(name, False, required, (time.perf_counter() - start) * 1000, "timeout")
     except Exception as exc:  # noqa: BLE001 - the probe must report, not raise
         # Keep the detail short and free of connection strings.

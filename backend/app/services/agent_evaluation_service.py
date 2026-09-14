@@ -521,7 +521,7 @@ def _percentile_95(values: list[int]) -> int | None:
     return ordered[max(0, math.ceil(len(ordered) * 0.95) - 1)]
 
 
-async def run_evaluation(
+async def run_evaluation(  # noqa: C901 -- Phase 4 split; complexity must not grow
     db: AsyncSession,
     *,
     dataset: EvaluationDataset,

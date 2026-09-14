@@ -212,9 +212,7 @@ def user_has_super_admin_access(slugs: list[str]) -> bool:
     normalized = {normalize_role_slug(s) for s in slugs if s}
     if SUPER_ADMIN_SLUG in normalized:
         return True
-    if FULL_ADMIN_SLUG in normalized or LEGACY_ADMIN_SLUG in normalized:
-        return True
-    return False
+    return bool(FULL_ADMIN_SLUG in normalized or LEGACY_ADMIN_SLUG in normalized)
 
 
 def actor_may_assign_roles(
@@ -232,16 +230,12 @@ def actor_may_assign_roles(
     actor_is_super = user_has_super_admin_access(actor_slugs)
     if user_has_super_admin_access(new_slugs) and not actor_is_super:
         return False
-    if previous_slugs is not None and user_has_super_admin_access(previous_slugs) and not actor_is_super:
-        return False
-    return True
+    return not (previous_slugs is not None and user_has_super_admin_access(previous_slugs) and not actor_is_super)
 
 
 def user_has_super_read_only_access(slugs: list[str]) -> bool:
     normalized = {normalize_role_slug(s) for s in slugs if s}
-    if READ_ONLY_FULL_ADMIN_SLUG in normalized or LEGACY_READ_ONLY_ADMIN_SLUG in normalized:
-        return True
-    return False
+    return bool(READ_ONLY_FULL_ADMIN_SLUG in normalized or LEGACY_READ_ONLY_ADMIN_SLUG in normalized)
 
 
 def _build_role_catalog() -> tuple[RoleDefinition, ...]:
@@ -667,9 +661,7 @@ def can_write_menu(role: str | None, menu: MenuKey | None = None) -> bool:
             return False
     if slug in (READ_ONLY_FULL_ADMIN_SLUG, LEGACY_READ_ONLY_ADMIN_SLUG):
         return False
-    if slug.endswith("_read_only_administrator"):
-        return False
-    return True
+    return not slug.endswith("_read_only_administrator")
 
 
 # Category helpers (any menu in the group).
@@ -700,13 +692,11 @@ def path_to_menu(path: str) -> MenuKey | None:
     for menu, prefixes in MENU_PATH_PREFIXES.items():
         for prefix in prefixes:
             if prefix == "/admin":
-                if normalized == "/admin":
-                    if len(prefix) > best_len:
-                        best, best_len = menu, len(prefix)
-                continue
-            if normalized == prefix or normalized.startswith(f"{prefix}/"):
-                if len(prefix) > best_len:
+                if normalized == "/admin" and len(prefix) > best_len:
                     best, best_len = menu, len(prefix)
+                continue
+            if (normalized == prefix or normalized.startswith(f"{prefix}/")) and len(prefix) > best_len:
+                best, best_len = menu, len(prefix)
     return best
 
 

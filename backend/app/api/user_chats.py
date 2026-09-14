@@ -324,9 +324,8 @@ async def get_session_messages(
     messages, has_more = await list_session_messages(db, user.id, session_id, limit=limit, before=before)
     await db.commit()
     session = await get_chat_session(db, user.id, session_id)
-    if not messages and before is None:
-        if session is None:
-            raise HTTPException(status_code=404, detail="Session not found")
+    if not messages and before is None and session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
     revision = int(session["revision"]) if session else None
     return {"messages": messages, "has_more": has_more, "revision": revision}
 

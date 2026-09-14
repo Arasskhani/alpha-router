@@ -96,13 +96,13 @@ async def _make_db() -> AsyncSession:
         expire_on_commit=False,
     )
     session = factory()
-    setattr(session, "_test_engine", engine)
+    session._test_engine = engine
     return session
 
 
 async def _dispose_db(session: AsyncSession) -> None:
     await session.close()
-    await getattr(session, "_test_engine").dispose()
+    await session._test_engine.dispose()
 
 
 async def _test_provider_config_persists_only_ciphertext():

@@ -58,7 +58,7 @@ async def _sandbox_broker_capacity() -> dict:
     )
     try:
         return {"status": "ok", **(await executor.capacity())}
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return {"status": "unavailable"})
         return {"status": "unavailable"}
 
 

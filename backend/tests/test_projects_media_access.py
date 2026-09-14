@@ -2,6 +2,9 @@
 
 import asyncio
 
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
 import app.models  # noqa: F401
 from app.database import Base
 from app.models.project import (
@@ -16,7 +19,6 @@ from app.services.project_access_service import (
     require_capability,
     resolve_project_access,
 )
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 PROJ = "media-acl-1"
 
@@ -73,7 +75,7 @@ def test_viewer_cannot_upload_media():
 
                 try:
                     await require_capability(db, project_id=PROJ, user=viewer, capability="media.upload")
-                    assert False, "viewer should not upload"
+                    pytest.fail("viewer should not upload")
                 except HTTPException as e:
                     assert e.status_code == 403
         finally:
@@ -137,7 +139,7 @@ def test_viewer_cannot_delete_media():
 
                 try:
                     await require_capability(db, project_id=PROJ, user=viewer, capability="media.delete")
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as e:
                     assert e.status_code == 403
         finally:
@@ -206,7 +208,7 @@ def test_inactive_user_denied_media_access():
 
                 try:
                     await require_capability(db, project_id=PROJ, user=contrib, capability="media.upload")
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as e:
                     assert e.status_code == 404
         finally:

@@ -1,10 +1,12 @@
 """Step 8 security gate: ACL, race, leakage, billing isolation, cascade."""
 
 import asyncio
+import contextlib
 import datetime
 import os
 import tempfile
 
+import pytest
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -75,10 +77,8 @@ async def _file_factory():
 
     async def dispose():
         await engine.dispose()
-        try:
+        with contextlib.suppress(OSError):
             os.remove(path)
-        except OSError:
-            pass
 
     return (
         async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False),
@@ -137,7 +137,7 @@ def test_viewer_upload_denied():
                 _, _, viewer = await _setup(db, PROJ_A)
                 try:
                     await require_capability(db, project_id=PROJ_A, user=viewer, capability="media.upload")
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 403
                 try:
@@ -150,7 +150,7 @@ def test_viewer_upload_denied():
                         content_bytes=b"nope",
                         object_store=store,
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 403
         finally:
@@ -183,7 +183,7 @@ def test_contributor_cannot_delete_others_media():
                         user=contrib,
                         object_store=store,
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 403
                 row = await db.get(ProjectMediaAsset, uploaded["id"])
@@ -230,7 +230,7 @@ def test_cross_project_media_isolation():
                         media_id=uploaded["id"],
                         user=owner_b,
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 404
         finally:
@@ -385,7 +385,7 @@ def test_removed_member_cannot_read_but_file_remains():
                         media_id=uploaded["id"],
                         user=contrib,
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as exc:
                     assert exc.status_code == 404
         finally:

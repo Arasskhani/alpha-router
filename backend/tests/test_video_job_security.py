@@ -2,7 +2,6 @@
 
 import json
 
-
 from app.models.video import VideoGenerationJob
 from app.services.video_job_service import serialize_job
 

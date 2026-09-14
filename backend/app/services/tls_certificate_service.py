@@ -146,11 +146,9 @@ def parse_pem_bundle(
     private_key = _load_private_key(key_pem, password)
     if _public_key_bytes(private_key.public_key()) != _public_key_bytes(leaf.public_key()):
         raise TlsCertificateError("The private key does not match the certificate.")
-    now = datetime.datetime.now(datetime.timezone.utc)
-    not_before = getattr(leaf, "not_valid_before_utc", None) or leaf.not_valid_before.replace(
-        tzinfo=datetime.timezone.utc
-    )
-    not_after = getattr(leaf, "not_valid_after_utc", None) or leaf.not_valid_after.replace(tzinfo=datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
+    not_before = getattr(leaf, "not_valid_before_utc", None) or leaf.not_valid_before.replace(tzinfo=datetime.UTC)
+    not_after = getattr(leaf, "not_valid_after_utc", None) or leaf.not_valid_after.replace(tzinfo=datetime.UTC)
     if now < not_before:
         raise TlsCertificateError("This certificate is not valid yet.")
     if now > not_after:

@@ -367,7 +367,7 @@ async def release_code_interpreter_turn(permit: CapacityPermit | str) -> bool:
             _SUBJECT_ZSET_PREFIX,
         )
         return bool(int(result or 0))
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return False)
         return False
 
 

@@ -6,11 +6,11 @@ literals are checked directly. The opt-in ``ALLOW_SSRF_PRIVATE_RANGES`` flag
 disables the check for self-hosted internal deployments.
 """
 
-import ipaddress
 import asyncio
+import ipaddress
 import socket
 import ssl
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -213,8 +213,8 @@ def test_pinned_https_preserves_host_header_and_tls_sni(tmp_path):
         .issuer_name(subject)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.now(timezone.utc) - timedelta(minutes=1))
-        .not_valid_after(datetime.now(timezone.utc) + timedelta(days=1))
+        .not_valid_before(datetime.now(UTC) - timedelta(minutes=1))
+        .not_valid_after(datetime.now(UTC) + timedelta(days=1))
         .add_extension(x509.SubjectAlternativeName([x509.DNSName("public.test")]), critical=False)
         .sign(key, hashes.SHA256())
     )
@@ -261,4 +261,4 @@ def test_pinned_https_preserves_host_header_and_tls_sni(tmp_path):
     ):
         sni_names, request_headers = asyncio.run(run())
     assert sni_names == ["public.test"]
-    assert f"host: public.test:".encode() in request_headers[0].lower()
+    assert b"host: public.test:" in request_headers[0].lower()

@@ -11,6 +11,7 @@ from typing import Any, Protocol
 import httpx
 
 from app.sandbox.contracts import JobState
+import contextlib
 
 
 @dataclass(frozen=True)
@@ -142,10 +143,8 @@ class DockerBrokerSandboxExecutor:
                     await asyncio.sleep(self.poll_interval_seconds)
             except asyncio.CancelledError:
                 cancel_task = asyncio.create_task(self._cancel_with_client(client, resolved_job_id))
-                try:
+                with contextlib.suppress(Exception):
                     await asyncio.shield(cancel_task)
-                except Exception:
-                    pass
                 raise
 
     async def _cancel_with_client(

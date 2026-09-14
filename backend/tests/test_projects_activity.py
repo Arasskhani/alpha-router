@@ -2,6 +2,8 @@
 
 import asyncio
 
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
 import app.models  # noqa: F401
 from app.database import Base
 from app.models.project import (
@@ -14,7 +16,6 @@ from app.models.project import (
 from app.models.user import User, UserRoleAssignment
 from app.services.project_access_service import can_view_project_activity
 from app.services.rbac import REPORTS_ACCESS_SLUG, USER_SLUG
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 PROJ_ID = "proj-activity-1"
 

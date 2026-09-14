@@ -330,7 +330,7 @@ def _ocr_pdf_page_text(
     raise UnsafeDocumentError(f"OCR failed for PDF page {page_number}{detail}") from last_error
 
 
-def parse_document(data: bytes, document: ValidatedDocument) -> ParsedDocument:
+def parse_document(data: bytes, document: ValidatedDocument) -> ParsedDocument:  # noqa: C901 -- Phase 4 split; complexity must not grow
     segments: list[ParsedSegment] = []
     metadata: dict = {"format": document.format_name}
     if document.format_name == "pdf":
@@ -343,7 +343,7 @@ def parse_document(data: bytes, document: ValidatedDocument) -> ParsedDocument:
             for page_number, page in enumerate(reader.pages, start=1):
                 try:
                     text = _normalize_extracted_text(page.extract_text() or "")
-                except Exception:
+                except Exception:  # noqa: BLE001 -- falls back to a safe default value
                     text = ""
                 if len(text) < settings.knowledge_ocr_min_text_characters:
                     if page_number > settings.knowledge_ocr_max_pages:

@@ -8,7 +8,6 @@ from fastapi import HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import app.models  # noqa: F401
-from app.services.malware_scan_service import MalwareScanResult
 from app.api.projects import (
     delete_project_media_endpoint,
     download_project_media_endpoint,
@@ -25,6 +24,7 @@ from app.models.project import (
     ProjectMember,
 )
 from app.models.user import User
+from app.services.malware_scan_service import MalwareScanResult
 
 PROJ = "media-api-1"
 
@@ -192,7 +192,7 @@ def test_api_upload_media_viewer_403(monkeypatch):
                         user=viewer,
                         db=db,
                     )
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as e:
                     assert e.status_code == 403
         finally:
@@ -284,7 +284,7 @@ def test_api_delete_media_contributor_other_403(monkeypatch):
                 )
                 try:
                     await delete_project_media_endpoint(project_id=PROJ, media_id=item["id"], user=contrib, db=db)
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as e:
                     assert e.status_code == 403
         finally:
@@ -304,17 +304,17 @@ def test_api_media_not_found_404(monkeypatch):
                 owner, _, _ = await _setup(db)
                 try:
                     await get_project_media_endpoint(project_id=PROJ, media_id=99999, user=owner, db=db)
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as e:
                     assert e.status_code == 404
                 try:
                     await download_project_media_endpoint(project_id=PROJ, media_id=99999, user=owner, db=db)
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as e:
                     assert e.status_code == 404
                 try:
                     await delete_project_media_endpoint(project_id=PROJ, media_id=99999, user=owner, db=db)
-                    assert False
+                    pytest.fail("expected an exception")
                 except HTTPException as e:
                     assert e.status_code == 404
         finally:

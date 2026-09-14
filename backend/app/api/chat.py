@@ -1,6 +1,7 @@
 """In-app chat using enabled models (admin + user)."""
 
 import asyncio
+import re
 
 from fastapi import (
     APIRouter,
@@ -93,6 +94,7 @@ from app.services.storage_service import (
     media_public_url,
     purge_expired_media,
     read_media_bytes,
+    read_media_range,
     store_generated_blob,
     store_generated_media,
     unlink_storage_if_unreferenced,
@@ -752,10 +754,6 @@ async def media_file(
         asset_id,
         action=MediaAccessAction.READ,
     )
-    try:
-        data = await read_media_bytes(row)
-    except FileNotFoundError:
-        raise HTTPException(404, detail="File not found") from None
     media_type, content_disposition = media_response_type_and_disposition(
         file_name=row.file_name or "download",
         kind=getattr(row, "kind", None),
@@ -768,40 +766,37 @@ async def media_file(
     range_header = (request.headers.get("range") or "").strip()
     kind = (getattr(row, "kind", None) or "").strip().lower()
     if range_header.lower().startswith("bytes=") and kind in {"video", "audio"}:
-        # Single-range support for HTML5 media seekers.
+        # Single-range support for HTML5 media seekers. Only the requested
+        # window is fetched from object storage; reading the whole file to
+        # slice it in Python made every seek in a long video a full download.
         spec = range_header.split("=", 1)[1].strip()
-        if "," not in spec:
-            start_s, _, end_s = spec.partition("-")
-            try:
-                total = len(data)
-                if start_s == "":
-                    # suffix bytes: bytes=-N
-                    suffix = int(end_s)
-                    start = max(0, total - suffix)
-                    end = total - 1
-                else:
-                    start = int(start_s)
-                    end = int(end_s) if end_s else total - 1
-                if start < 0 or end < start or start >= total:
-                    raise ValueError("invalid range")
-                end = min(end, total - 1)
-                chunk = data[start : end + 1]
-                headers.update(
-                    {
-                        "Content-Range": f"bytes {start}-{end}/{total}",
-                        "Content-Length": str(len(chunk)),
-                    }
-                )
-                return Response(
-                    content=chunk,
-                    status_code=206,
-                    media_type=media_type,
-                    headers=headers,
-                )
-            except ValueError:
-                headers["Content-Range"] = f"bytes */{len(data)}"
-                return Response(status_code=416, headers=headers)
+        if "," not in spec and re.fullmatch(r"\d*-\d*", spec) and spec != "-":
+            from app.services.object_storage_service import InvalidRangeError
 
+            try:
+                chunk, start, end, total = await read_media_range(row, spec)
+            except FileNotFoundError:
+                raise HTTPException(404, detail="File not found") from None
+            except InvalidRangeError:
+                headers["Content-Range"] = f"bytes */{int(getattr(row, 'size_bytes', 0) or 0)}"
+                return Response(status_code=416, headers=headers)
+            headers.update(
+                {
+                    "Content-Range": f"bytes {start}-{end}/{total}",
+                    "Content-Length": str(len(chunk)),
+                }
+            )
+            return Response(
+                content=chunk,
+                status_code=206,
+                media_type=media_type,
+                headers=headers,
+            )
+
+    try:
+        data = await read_media_bytes(row)
+    except FileNotFoundError:
+        raise HTTPException(404, detail="File not found") from None
     headers["Content-Length"] = str(len(data))
     return Response(
         content=data,

@@ -494,6 +494,21 @@ async def read_media_bytes(asset: MediaAsset) -> bytes:
     return await asyncio.to_thread(read_media_bytes_sync, asset)
 
 
+def read_media_range_sync(asset: MediaAsset, range_spec: str) -> tuple[bytes, int, int, int]:
+    path = (asset.storage_path or "").replace("\\", "/")
+    if not oss.is_cdn_object_key(path):
+        raise FileNotFoundError(path)
+    try:
+        return oss.get_object_range(path, range_spec)
+    except oss.ObjectNotFoundError:
+        raise FileNotFoundError(path) from None
+
+
+async def read_media_range(asset: MediaAsset, range_spec: str) -> tuple[bytes, int, int, int]:
+    """One partial GET against object storage (HTML5 seeking)."""
+    return await asyncio.to_thread(read_media_range_sync, asset, range_spec)
+
+
 async def list_user_media(db: AsyncSession, user_id: int, limit: int = 200) -> list[MediaAsset]:
     return (
         await db.execute(

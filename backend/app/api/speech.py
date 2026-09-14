@@ -461,6 +461,9 @@ async def generate_speech(
                         continue
                     import logging
 
+                    from app.services.observability import increment
+
+                    increment("budget_hold_leak")
                     logging.getLogger("app.api.speech").exception(
                         "Speech usage settlement failed after retries; "
                         "reservation remains held for recovery"

@@ -11,6 +11,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.services.observability import increment
 from app.database import AsyncSessionLocal
 from app.models.user import User
 from app.services.budget_reservation_service import (
@@ -185,6 +186,7 @@ async def finish_metered_usage(
                 if attempt < 2:
                     await asyncio.sleep(0.1 * (attempt + 1))
                     continue
+                increment("budget_hold_leak")
                 logger.exception(
                     "Metered usage settlement failed after retries "
                     "provider=%s operation=%s; reservation remains held",

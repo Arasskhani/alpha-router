@@ -1370,6 +1370,7 @@ async def settle_auxiliary_usage(
             if attempt < 2:
                 await asyncio.sleep(0.1 * (attempt + 1))
                 continue
+            increment("budget_hold_leak")
             logger.exception(
                 "Auxiliary usage settlement failed after retries operation=%s; "
                 "reservation remains held for recovery",
@@ -2654,6 +2655,9 @@ async def stream_chat(
                         if attempt < 2:
                             await asyncio.sleep(0.1 * (attempt + 1))
                             continue
+                        # The hold stays "held" until TTL: the one signal ops
+                        # has that money is stuck.
+                        increment("budget_hold_leak")
                         logger.exception(
                             "Chat usage settlement failed after retries; "
                             "reservation remains held for recovery"

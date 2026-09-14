@@ -1751,6 +1751,9 @@ async def generate_image(
                         continue
                     import logging
 
+                    from app.services.observability import increment
+
+                    increment("budget_hold_leak")
                     logging.getLogger("app.api.images").exception(
                         "Image usage settlement failed after retries; "
                         "reservation remains held for recovery"

@@ -3,6 +3,7 @@ name: alpha-router
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-alpha_router}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
@@ -31,6 +32,7 @@ services:
 
   pgbouncer:
     image: edoburu/pgbouncer:1.22.1-p0
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-alpha_router}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-alpha_router}
       # edoburu image defaults to 5432; set 6432 so app/host use standard PgBouncer port
@@ -59,6 +61,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     # Require authentication when REDIS_PASSWORD is set; empty (default) keeps
     # legacy no-auth behavior for existing single-box deployments. When set,
     # wire REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0 in the Alpharouter service.
@@ -108,6 +111,7 @@ services:
   # Pin version via deploy/seaweedfs/VERSION (currently 4.40).
   seaweedfs:
     image: chrislusf/seaweedfs:4.40
+    restart: unless-stopped
     entrypoint: ["/bin/sh", "/entrypoint.sh"]
     environment:
       # weed mini enables S3 auth when AWS_* credentials are present (never Allow All).
@@ -293,6 +297,18 @@ services:
       context: .
       dockerfile: Dockerfile
     image: alpha-router:latest
+    restart: unless-stopped
+    # Chat completions stream for minutes. Give in-flight turns time to finish
+    # and settle (see --timeout-graceful-shutdown below) before SIGKILL.
+    stop_grace_period: 120s
+    healthcheck:
+      # /ready: 200 only when database and redis answer (qdrant/object storage
+      # are reported as degraded, never fatal). /health stays a constant.
+      test: ["CMD", "python", "-c", "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/ready', timeout=4).status == 200 else 1)"]
+      interval: 15s
+      timeout: 6s
+      retries: 3
+      start_period: 90s
     env_file:
       - .env
     ports:
@@ -332,6 +348,7 @@ services:
         mkdir -p /tmp/prometheus &&
         exec uvicorn app.main:app --host 0.0.0.0 --port 8080
         --workers ${UVICORN_WORKERS:-4}
+        --timeout-graceful-shutdown 110
         --proxy-headers
         --forwarded-allow-ips=${TRUSTED_PROXY_CIDRS:-127.0.0.1/32,::1/128}
     depends_on:
@@ -388,7 +405,10 @@ services:
       retries: 3
       start_period: 20s
     depends_on:
-      - alpha-router
+      # The edge only proxies; start it once the app answers /ready so a
+      # fresh deploy does not serve 502s while workers boot.
+      alpha-router:
+        condition: service_healthy
 
 volumes:
   alpha_router_pg:

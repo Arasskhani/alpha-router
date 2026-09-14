@@ -848,6 +848,25 @@ async def health():
     return health_payload()
 
 
+@app.get("/ready", include_in_schema=False)
+async def ready():
+    """Readiness probe: 200 when database and redis answer, else 503.
+
+    Qdrant and object storage are reported but do not fail the probe (see
+    app/services/readiness_service.py). Used by the compose healthcheck.
+    """
+    from fastapi.responses import JSONResponse
+
+    from app.services.readiness_service import readiness_report
+
+    report = await readiness_report()
+    return JSONResponse(
+        status_code=200 if report.ready else 503,
+        content=report.payload(),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 if settings.metrics_enabled:
 
     @app.get("/metrics", include_in_schema=False)

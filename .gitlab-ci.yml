@@ -11,18 +11,69 @@ workflow:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'
 
-backend-tests:
-  stage: verify
-  image: python:3.12-slim
+# Every verify job runs unconditionally on the default branch. Path-scoped
+# 'changes' rules alone let a backend-only merge skip the frontend jobs (and
+# vice-versa), so a red job could sit on main unnoticed for weeks.
+.always-on-default: &always-on-default
+  if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+.backend-rules: &backend-rules
   rules:
+    - *always-on-default
     - changes:
         - backend/**/*
         - .gitlab-ci.yml
+
+.frontend-rules: &frontend-rules
+  rules:
+    - *always-on-default
+    - changes:
+        - frontend/**/*
+        - scripts/check-frontend-sources.sh
+        - .gitlab-ci.yml
+
+backend-lint:
+  stage: verify
+  image: python:3.12-slim
+  <<: *backend-rules
+  script:
+    - python -m pip install --no-cache-dir ruff
+    # Defect-class rules only (see backend/ruff.toml); style rules arrive in Phase 3.
+    - cd backend && ruff check .
+
+backend-tests:
+  stage: verify
+  image: python:3.12-slim
+  <<: *backend-rules
   script:
     - python -m pip install --no-cache-dir -r backend/requirements.txt
     - python -m pip install --no-cache-dir pytest
     - python -m pip check
     - PYTHONPATH=backend python -m pytest backend/tests -q
+
+# The money path relies on SELECT ... FOR UPDATE / SKIP LOCKED, which SQLite
+# silently ignores. Run the real migration entrypoint (the same one db-init
+# executes) and the opt-in reservation canary against PostgreSQL 16.
+backend-postgres-canary:
+  stage: verify
+  image: python:3.12-slim
+  <<: *backend-rules
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+  variables:
+    POSTGRES_USER: alpha_router
+    POSTGRES_PASSWORD: ci-canary
+    POSTGRES_DB: alpha_router_test
+    POSTGRES_HOST_AUTH_METHOD: trust
+    DATABASE_URL: postgresql+asyncpg://alpha_router:ci-canary@postgres:5432/alpha_router_test
+    RUN_POSTGRES_RESERVATION_CANARY: "1"
+  script:
+    - python -m pip install --no-cache-dir -r backend/requirements.txt
+    - python -m pip install --no-cache-dir pytest
+    - cd backend
+    - python -m app.migrate
+    - PYTHONPATH=. python -m pytest tests/test_budget_reservations_postgres.py -q -rs
 
 deployment-config:
   stage: verify
@@ -55,10 +106,7 @@ deployment-config:
 frontend-sources:
   stage: verify
   image: node:20
-  rules:
-    - changes:
-        - frontend/**/*
-        - .gitlab-ci.yml
+  <<: *frontend-rules
   script:
     - bash scripts/check-frontend-sources.sh
 
@@ -71,10 +119,7 @@ frontend-tests-and-build:
         - frontend/package-lock.json
     paths:
       - frontend/.npm/
-  rules:
-    - changes:
-        - frontend/**/*
-        - .gitlab-ci.yml
+  <<: *frontend-rules
   before_script:
     - cd frontend
     - npm ci --cache .npm --prefer-offline
@@ -86,6 +131,7 @@ frontend-audit:
   stage: audit
   image: node:20
   rules:
+    - *always-on-default
     - changes:
         - frontend/package.json
         - frontend/package-lock.json
@@ -100,6 +146,7 @@ backend-audit:
   stage: audit
   image: python:3.12-slim
   rules:
+    - *always-on-default
     - changes:
         - backend/requirements.txt
         - .gitlab-ci.yml

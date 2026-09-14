@@ -395,7 +395,7 @@ services:
     read_only: true
     tmpfs:
       - /var/cache/nginx:rw,nosuid,nodev
-      - /var/log/nginx:rw,nosuid,nodev
+      - /var/log/nginx:rw,nosuid,nodev,size=64m
       - /run:rw,nosuid,nodev
       - /tmp:rw,nosuid,nodev
     healthcheck:

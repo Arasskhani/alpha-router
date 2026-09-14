@@ -97,6 +97,19 @@ backup_before_upgrade() {
   LOG_PREFIX=backup "$ROOT_DIR/scripts/backup.sh" --consistent
 }
 
+# 'compose up' exits non-zero when db-init (the migration one-shot) fails,
+# but its own output is a bare exit code. Surface the migration log so the
+# operator sees *why* before the script dies.
+compose_up_or_explain() {
+  if compose up "$@"; then
+    return 0
+  fi
+  local rc=$?
+  warn "compose up failed (exit $rc). Last lines of the migration container:"
+  compose logs --no-color --tail=60 db-init 2>/dev/null | sed "s/^/[$LOG_PREFIX]   /" || true
+  die "Stack did not start. Fix the error above and re-run; volumes are intact."
+}
+
 start_stack() {
   if [ "${FROM_REGISTRY:-0}" -eq 1 ]; then
     require_registry_config
@@ -104,16 +117,16 @@ start_stack() {
     log "Pulling images from registry..."
     compose pull
     log "Starting stack (volumes are kept)..."
-    compose up -d
+    compose_up_or_explain -d
     return 0
   fi
 
   if [ "${SKIP_BUILD:-0}" -eq 1 ]; then
     log "Starting stack (no rebuild; volumes are kept)..."
-    compose up -d
+    compose_up_or_explain -d
   else
     log "Building and starting stack (this may take several minutes; volumes are kept)..."
-    compose up --build -d
+    compose_up_or_explain --build -d
   fi
 }
 

@@ -156,3 +156,14 @@ def test_edge_listener_applied_requires_matching_generation(tmp_path, monkeypatc
         '{"generation": 3, "ok": true}\n', encoding="utf-8"
     )
     assert edge_listener_applied() is True
+
+
+def test_nginx_config_is_hardened():
+    from app.services.tls_edge_service import render_nginx_config
+
+    conf = render_nginx_config(https_port=443, http_mode="redirect", hsts_enabled=True, has_chain=False, max_body_mb=100)
+    assert "server_tokens off;" in conf
+    assert "access_log off;" in conf
+    assert "ssl_session_tickets off;" in conf
+    assert "ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256" in conf
+    assert "ssl_protocols TLSv1.2 TLSv1.3;" in conf

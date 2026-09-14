@@ -39,10 +39,44 @@ async def _validate() -> None:
     await engine.dispose()
 
 
+_CONNECT_ATTEMPTS = 6
+_CONNECT_BACKOFF_SECONDS = (1, 2, 4, 8, 15)
+
+
+def _with_db_retry(step, label: str) -> None:
+    """Retry ``step`` while the database is still coming up.
+
+    ``db-init`` starts once postgres/pgbouncer report healthy, but the first
+    connection through PgBouncer can still be refused for a moment (or the
+    server is mid-recovery). One OperationalError used to fail the whole
+    ``compose up`` and leave the operator with an unexplained exit code.
+    """
+    import time
+
+    from sqlalchemy.exc import DBAPIError, OperationalError
+
+    last: Exception | None = None
+    for attempt in range(_CONNECT_ATTEMPTS):
+        try:
+            step()
+            return
+        except (OperationalError, DBAPIError, OSError, ConnectionError) as exc:
+            last = exc
+            if attempt + 1 >= _CONNECT_ATTEMPTS:
+                break
+            delay = _CONNECT_BACKOFF_SECONDS[min(attempt, len(_CONNECT_BACKOFF_SECONDS) - 1)]
+            print(
+                f"[migrate] {label}: database not ready ({type(exc).__name__}); retry {attempt + 1}/{_CONNECT_ATTEMPTS - 1} in {delay}s",
+                flush=True,
+            )
+            time.sleep(delay)
+    raise SystemExit(f"[migrate] {label} failed after {_CONNECT_ATTEMPTS} attempts: {last}")
+
+
 def main() -> None:
-    asyncio.run(_bootstrap_legacy_schema())
-    upgrade_schema_sync("head")
-    asyncio.run(_validate())
+    _with_db_retry(lambda: asyncio.run(_bootstrap_legacy_schema()), "legacy schema bootstrap")
+    _with_db_retry(lambda: upgrade_schema_sync("head"), "alembic upgrade")
+    _with_db_retry(lambda: asyncio.run(_validate()), "schema validation")
 
 
 if __name__ == "__main__":

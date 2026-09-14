@@ -3,10 +3,12 @@
 import asyncio
 from io import BytesIO
 
+import pytest
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import app.models  # noqa: F401
+from app.services.malware_scan_service import MalwareScanResult
 from app.api.projects import (
     delete_project_media_endpoint,
     download_project_media_endpoint,
@@ -25,6 +27,17 @@ from app.models.project import (
 from app.models.user import User
 
 PROJ = "media-api-1"
+
+
+
+@pytest.fixture(autouse=True)
+def _no_clamav(monkeypatch):
+    """Uploads are screened by ClamAV now; these tests cover the API, not the scanner."""
+
+    async def clean(_data: bytes) -> MalwareScanResult:
+        return MalwareScanResult(clean=True, signature=None, raw_response="stream: OK")
+
+    monkeypatch.setattr("app.services.upload_screening.scan_bytes", clean)
 
 
 class InMemoryObjectStore:

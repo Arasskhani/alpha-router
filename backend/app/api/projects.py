@@ -20,6 +20,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.models.user import User
 from app.services.bounded_io import BoundedIOError, read_upload_bounded
+from app.services.upload_screening import UploadRejected, screen_upload
 from app.services.project_chat_service import (
     append_project_chat_message,
     create_project_chat_session,
@@ -1278,6 +1279,7 @@ async def upload_project_media_endpoint(
 ) -> dict[str, Any]:
     try:
         data = await read_upload_bounded(file, max_bytes=media_input_limit())
+        await screen_upload(data, file.filename or "upload")
         item = await upload_project_media(
             db,
             project_id=project_id,
@@ -1292,6 +1294,9 @@ async def upload_project_media_endpoint(
             object_store=default_project_media_store(),
         )
         await db.commit()
+    except UploadRejected as exc:
+        await db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except (BoundedIOError, ProjectMediaValidationError) as exc:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

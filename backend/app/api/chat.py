@@ -26,7 +26,8 @@ from app.models.chat import ChatSession
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
-from app.services.attachment_extract import processed_attachment_payload
+from app.services.attachment_extract import processed_attachment_payload_async
+from app.services.upload_screening import UploadRejected, screen_upload
 from app.services.attachment_from_media_service import attachments_from_existing_media
 from app.services.attachment_policy import (
     AttachmentPolicyError,
@@ -462,6 +463,10 @@ async def voice_message(
         raise HTTPException(status_code=413, detail=str(exc)) from exc
     mime = (file.content_type or "audio/webm").split(";")[0].strip() or "audio/webm"
     filename = file.filename or "voice.webm"
+    try:
+        await screen_upload(raw, filename)
+    except UploadRejected as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
     # The user's own pick, when they made one. It is re-validated downstream
     # against their ACL, so an unusable value falls through to the system default.
@@ -600,6 +605,12 @@ async def process_attachments(
             raise HTTPException(status_code=413, detail=str(exc)) from exc
         except AttachmentPolicyError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # Archive-bomb structure check and ClamAV before the bytes are stored
+        # or handed to a parser (same gate Knowledge uploads pass through).
+        try:
+            await screen_upload(raw, filename)
+        except UploadRejected as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
         mime = resolve_attachment_mime(
             filename=filename,
@@ -629,7 +640,7 @@ async def process_attachments(
             )
             raise HTTPException(status_code=status_code, detail=str(exc)) from exc
         out.append(
-            processed_attachment_payload(
+            await processed_attachment_payload_async(
                 filename=filename,
                 kind=kind,
                 mime_type=mime,

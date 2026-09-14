@@ -9,7 +9,7 @@ from app.models.chat import ChatSession
 from app.models.media import MediaAsset
 from app.models.project import ProjectMediaAsset
 from app.models.user import User
-from app.services.attachment_extract import extract_document_text
+from app.services.attachment_extract import extract_document_text_bounded
 from app.services.attachment_policy import (
     AttachmentPolicyError,
     resolve_attachment_mime,
@@ -238,7 +238,7 @@ async def attachments_from_existing_media(
                     )
                 else:
                     raw = await _read_personal_bytes(row)
-            text = extract_document_text(raw, filename)
+            text = await extract_document_text_bounded(raw, filename)
         out.append(
             _payload(
                 filename=filename,

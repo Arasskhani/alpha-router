@@ -145,6 +145,10 @@ class Settings(BaseSettings):
     clamav_port: int = 3310
     clamav_scan_timeout_seconds: int = 120
     clamav_required: bool = True
+    # Wall-clock ceiling for extracting text from one chat attachment. The
+    # parsers are CPU-bound and run in a worker thread; this bounds how long a
+    # hostile PDF/XLSX can keep that thread busy.
+    attachment_extract_timeout_seconds: int = 30  # env: ATTACHMENT_EXTRACT_TIMEOUT_SECONDS
     knowledge_ocr_required: bool = True
     knowledge_ocr_languages: str = "fas+eng"
     knowledge_ocr_dpi: int = 200

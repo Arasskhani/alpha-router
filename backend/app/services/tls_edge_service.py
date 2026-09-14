@@ -94,7 +94,7 @@ def render_nginx_config(
     from app.services.request_body_limit_service import LARGE_BODY_PATH_PREFIXES
 
     if json_body_mb is None:
-        json_body_mb = max(1, -(-int(get_settings().max_json_body_bytes) // (1024 * 1024)))
+        json_body_mb = default_json_body_mb()
     json_body_mb = max(1, min(int(json_body_mb), max(1, int(max_body_mb))))
     large_paths = "|".join(re.escape(prefix.lstrip("/")) for prefix in LARGE_BODY_PATH_PREFIXES)
     proxy_directives = f"""            proxy_pass http://{upstream};
@@ -255,6 +255,26 @@ async def _set_setting(db: AsyncSession, key: str, value: str) -> None:
         db.add(SystemSetting(key=key, value=value))
 
 
+def default_json_body_mb() -> int:
+    """MAX_JSON_BODY_BYTES rounded up to whole megabytes (nginx granularity)."""
+    return max(1, -(-int(get_settings().max_json_body_bytes) // (1024 * 1024)))
+
+
+def nginx_conf_matches(text: str, *, max_body_mb: int, json_body_mb: int | None = None) -> bool:
+    """True when a rendered nginx.conf already carries both body ceilings.
+
+    The reconcile used to compare only the http-level (upload) ceiling, so a
+    change of MAX_JSON_BODY_BYTES alone never reached the edge until the
+    upload ceiling happened to move too.
+    """
+    match = _NGINX_BODY_RE.search(text)
+    if not match or int(match.group(1)) != int(max_body_mb):
+        return False
+    json_mb = default_json_body_mb() if json_body_mb is None else int(json_body_mb)
+    json_mb = max(1, min(json_mb, max(1, int(max_body_mb))))
+    return f"client_max_body_size {json_mb}m;" in text
+
+
 def read_nginx_client_max_body_mb(conf_path: Path | None = None) -> int | None:
     path = conf_path or (tls_state_dir() / "nginx.conf")
     if not path.is_file():
@@ -314,8 +334,14 @@ async def sync_edge_body_limit(db: AsyncSession) -> dict[str, Any]:
             "reason": "https_disabled",
         }
 
-    current_mb = read_nginx_client_max_body_mb()
-    if current_mb == body_mb and (tls_state_dir() / "nginx.conf").is_file():
+    conf_path = tls_state_dir() / "nginx.conf"
+    current_text = ""
+    if conf_path.is_file():
+        try:
+            current_text = conf_path.read_text(encoding="utf-8")
+        except OSError:
+            current_text = ""
+    if current_text and nginx_conf_matches(current_text, max_body_mb=body_mb):
         return {
             "attempted": True,
             "queued": False,

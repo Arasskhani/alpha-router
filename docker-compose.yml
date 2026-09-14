@@ -336,8 +336,10 @@ services:
     volumes:
       - alpha_router_tls:/app/tls
     tmpfs:
-      # ZIP download packs under /tmp; keep headroom above max ZIP download setting.
-      - /tmp:rw,nosuid,nodev,size=10g
+      # ZIP download packs are assembled under /tmp. tmpfs is RAM: size it for
+      # MAX_ZIP_AGGREGATE_BYTES (256 MiB default) x UVICORN_WORKERS with headroom,
+      # not for the whole host. Raise it together with those settings.
+      - /tmp:rw,nosuid,nodev,size=2g
       - /home/alpha_router:rw,nosuid,nodev,size=64m,uid=10001,gid=10001,mode=700
       - /app/app/storage:rw,nosuid,nodev,size=256m,uid=10001,gid=10001,mode=700
     command:

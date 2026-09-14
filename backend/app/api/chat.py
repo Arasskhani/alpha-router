@@ -511,18 +511,35 @@ async def voice_message(
             status_code=502, detail="Transcription failed. Please try again."
         ) from exc
 
-    # Identity primitives are captured now: the ORM user expires with the
-    # request session, and the storage task outlives it.
-    background_tasks.add_task(
-        _store_voice_note,
-        user_id=int(user.id),
-        username=str(user.username or ""),
-        raw=raw,
-        mime=mime,
-        filename=filename,
-        transcript=transcript,
-        chat_session_id=chat_session_id,
-    )
+    # The quota check is one cheap SUM; do it now so the caller learns *in
+    # the response* when the recording will not be kept, instead of getting
+    # media_pending=true for an upload that then fails silently in the
+    # background (B-36). The object-store write itself stays deferred.
+    from app.services.user_media_service import MediaQuotaExceededError, ensure_user_media_quota
+
+    media_pending = True
+    media_error: str | None = None
+    try:
+        await ensure_user_media_quota(db, int(user.id), len(raw))
+    except MediaQuotaExceededError as exc:
+        media_pending = False
+        media_error = (
+            f"Media storage quota exceeded ({exc.used_bytes + exc.incoming_bytes} of {exc.quota_bytes} bytes); "
+            "the recording was transcribed but not saved."
+        )
+    if media_pending:
+        # Identity primitives are captured now: the ORM user expires with the
+        # request session, and the storage task outlives it.
+        background_tasks.add_task(
+            _store_voice_note,
+            user_id=int(user.id),
+            username=str(user.username or ""),
+            raw=raw,
+            mime=mime,
+            filename=filename,
+            transcript=transcript,
+            chat_session_id=chat_session_id,
+        )
     return {
         # The asset is written after this response, so its id and url are not
         # known yet. They stay in the payload as nulls so the response shape is
@@ -531,7 +548,8 @@ async def voice_message(
         "url": None,
         "transcript": transcript,
         "mime_type": mime,
-        "media_pending": True,
+        "media_pending": media_pending,
+        "media_error": media_error,
     }
 
 

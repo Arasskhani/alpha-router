@@ -442,10 +442,10 @@ export const userManualSections: DocSection[] = [
         <ul>
           <li>Record or upload audio for transcription into the composer.</li>
           <li>
-            Choose voice recording language in Settings → General (English or Persian) so transcription matches your
-            speech.
+            Choose the voice recording language in Settings → General (Auto-detect, English or Persian) so
+            transcription matches your speech; Auto-detect lets the model decide.
           </li>
-          <li>Optional refine step can clean up a transcript before you send it as a prompt.</li>
+          <li>The transcript lands in the composer as-is; edit it there before sending.</li>
         </ul>
       </>
     ),

@@ -1,8 +1,9 @@
 # Multi-stage production image: React frontend + FastAPI backend
 FROM node:20-alpine AS frontend-build
 WORKDIR /fe
-COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm install
+COPY frontend/package.json frontend/package-lock.json ./
+# npm ci: install exactly what CI tested; fails loudly if the lockfile is missing or drifts.
+RUN npm ci --no-audit --no-fund
 COPY frontend/ .
 RUN npm run build
 

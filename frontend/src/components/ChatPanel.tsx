@@ -110,7 +110,6 @@ import {
   CHAT_REFRESH_EVENT_NAME,
   onChatLeaderChange,
 } from "../lib/chatLeader";
-import { formatLocalDateTimeFromMs } from "../lib/dateTime";
 import { BROWSER_EVENT_NAMES, PRODUCT_NAME, STORAGE_KEYS } from "../lib/brand";
 import {
   notifyReplyReady,
@@ -164,8 +163,6 @@ import {
 import { wavFromRecording } from "../lib/audioWav";
 import {
   ATTACHMENT_ACCEPT,
-  AUDIO_MESSAGE_PREFIX,
-  attachmentDisplayText,
   attachmentMessage,
   buildApiMessageContentAsync,
   type ApiContentPart,
@@ -215,14 +212,12 @@ import {
 } from "../lib/chatImageModels";
 import {
   isBackgroundVideoRunning,
-  parseVideoMessage,
   runBackgroundVideoGeneration,
   shouldRouteToVideoGeneration,
   stopBackgroundVideoGeneration,
   subscribeBackgroundVideoUpdates,
   VIDEO_MESSAGE_PREFIX,
   VIDEO_PENDING_MARKER,
-  type VideoPayload,
 } from "../lib/chatVideo";
 import {
   findVideoGenerationFallbackModel,
@@ -233,14 +228,12 @@ import {
 import {
   buildStoppedSpeechMessages,
   isBackgroundSpeechRunning,
-  parseSpeechMessage,
   runBackgroundSpeechGeneration,
   shouldRouteToSpeechGeneration,
   SPEECH_MESSAGE_PREFIX,
   SPEECH_PENDING_MARKER,
   stopBackgroundSpeechGeneration,
   subscribeBackgroundSpeechUpdates,
-  type SpeechPayload,
 } from "../lib/chatSpeech";
 import {
   findSpeechGenerationFallbackModel,
@@ -277,7 +270,7 @@ import {
   getComposerDraft,
   syncComposerDraft,
 } from "../lib/composerDrafts";
-import { inputDirectionForText, messageDirectionForText, textNeedsEnglishTranslation, type TextDirection } from "../lib/textDirection";
+import { inputDirectionForText, textNeedsEnglishTranslation, type TextDirection } from "../lib/textDirection";
 import {
   isPrivateBlobRef,
   resolvePrivateBlobRef,
@@ -308,6 +301,26 @@ import {
   AgentHandoffBanner,
 } from "./chat/AgentExperience";
 import AgentMenu from "./chat/AgentMenu";
+import {
+  shortModelName,
+  readAudioMessage,
+  removePromptThreadFromMessages,
+  promptTextFromUserContent,
+  displayTextForMessage,
+  messageDirectionForContent,
+  readVideoMessage,
+  readSpeechMessage,
+  messagesHavePendingSpeech,
+  messagesHavePendingVideo,
+  buildStoppedVideoMessages,
+  readImageMessage,
+  newQueueId,
+  queueItemPreview,
+  extractMarkdownImage,
+  isTextAssistantExportable,
+  chatMessageInfoTitle,
+  type QueuedPrompt,
+} from "../lib/chatPanelMessages";
 
 type Model = {
   id: string;
@@ -333,12 +346,6 @@ type Model = {
   supports_vision?: boolean;
   code_interpreter?: CodeInterpreterCompatibility | null;
 };
-type AudioPayload = { url: string; transcript: string };
-type QueuedPrompt = {
-  id: string;
-  text: string;
-  attachments: ProcessedAttachment[];
-};
 type TurnPhase = "preparing" | "searching" | "writing";
 
 function turnPhaseLabel(phase: TurnPhase): string {
@@ -363,211 +370,6 @@ function TurnStatusDots() {
     </span>
   );
 }
-function shortModelName(name: string, id: string) {
-  const n = name || id;
-  return n.length > 28 ? `${n.slice(0, 26)}…` : n;
-}
-
-function readAudioMessage(content: string): AudioPayload | null {
-  if (content.startsWith(AUDIO_MESSAGE_PREFIX)) {
-    try {
-      return JSON.parse(content.slice(AUDIO_MESSAGE_PREFIX.length)) as AudioPayload;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
-/**
- * Remove a user prompt (and the assistant replies that follow it) from a
- * message list, identifying the prompt by its stable `clientMessageId`.
- *
- * `fallbackIndex` is only used when the target has no client id and the message
- * at that index still matches the target's role+content (defensive against the
- * list shifting under a background sync). Returns null when the target can no
- * longer be located safely, so callers can abort instead of deleting the wrong
- * thread.
- */
-function removePromptThreadFromMessages(
-  source: ChatMessage[],
-  target: ChatMessage,
-  fallbackIndex?: number,
-): ChatMessage[] | null {
-  let i = -1;
-  if (target.clientMessageId) {
-    i = source.findIndex((m) => m.clientMessageId === target.clientMessageId);
-  }
-  if (i < 0 && target.sentAt != null) {
-    i = source.findIndex((m) => m.role === "user" && m.sentAt === target.sentAt);
-  }
-  if (
-    i < 0 &&
-    fallbackIndex != null &&
-    source[fallbackIndex]?.role === "user" &&
-    source[fallbackIndex]?.content === target.content
-  ) {
-    i = fallbackIndex;
-  }
-  if (i < 0 || source[i]?.role !== "user") return null;
-  const next = [...source];
-  next.splice(i, 1);
-  while (next[i]?.role === "assistant") {
-    next.splice(i, 1);
-  }
-  return next;
-}
-
-function promptTextFromUserContent(content: string): string {
-  const attach = readAttachmentMessage(content);
-  if (attach) {
-    const text = attach.userText.trim();
-    if (text) return text;
-    if (attach.attachments.some((a) => a.kind === "image")) return "Edit this image";
-    return attachmentDisplayText(attach);
-  }
-  const audio = readAudioMessage(content);
-  if (audio?.transcript?.trim()) return audio.transcript.trim();
-  return content;
-}
-
-function displayTextForMessage(content: string): string {
-  const attach = readAttachmentMessage(content);
-  if (attach) return attachmentDisplayText(attach);
-  const audio = readAudioMessage(content);
-  if (audio?.transcript) return audio.transcript;
-  const image = readImageMessage(content);
-  if (image?.prompt?.trim()) return image.prompt.trim();
-  const video = readVideoMessage(content);
-  if (video?.prompt?.trim()) return video.prompt.trim();
-  const speech = readSpeechMessage(content);
-  if (speech?.prompt?.trim()) return speech.prompt.trim();
-  return content;
-}
-
-function messageDirectionForContent(content: string): TextDirection {
-  if (
-    content === IMAGE_PENDING_MARKER ||
-    content.startsWith(IMAGE_MESSAGE_PREFIX) ||
-    content === VIDEO_PENDING_MARKER ||
-    content.startsWith(VIDEO_MESSAGE_PREFIX) ||
-    content === SPEECH_PENDING_MARKER ||
-    content.startsWith(SPEECH_MESSAGE_PREFIX)
-  ) {
-    return "ltr";
-  }
-  const attach = readAttachmentMessage(content);
-  if (attach) {
-    return messageDirectionForText(attach.userText || attachmentDisplayText(attach));
-  }
-  const audio = readAudioMessage(content);
-  if (audio?.transcript) return messageDirectionForText(audio.transcript);
-  return messageDirectionForText(displayTextForMessage(content));
-}
-
-function readVideoMessage(content: string): VideoPayload | null {
-  return parseVideoMessage(content);
-}
-
-function readSpeechMessage(content: string): SpeechPayload | null {
-  return parseSpeechMessage(content);
-}
-
-/** Last assistant slot is a speech placeholder still being generated. */
-function messagesHavePendingSpeech(messages: ChatMessage[]): boolean {
-  const last = messages.at(-1);
-  return last?.role === "assistant" && last.content === SPEECH_PENDING_MARKER;
-}
-
-/** Last assistant slot is a video placeholder still being generated. */
-function messagesHavePendingVideo(messages: ChatMessage[]): boolean {
-  const last = messages.at(-1);
-  return last?.role === "assistant" && last.content === VIDEO_PENDING_MARKER;
-}
-
-function buildStoppedVideoMessages(
-  messages: ChatMessage[],
-  stoppedText = "Video generation stopped.",
-): ChatMessage[] {
-  const withoutPending = messages.filter((m) => m.content !== VIDEO_PENDING_MARKER);
-  const last = withoutPending.at(-1);
-  if (last?.role === "assistant" && last.content === stoppedText) return withoutPending;
-  return [
-    ...withoutPending,
-    { role: "assistant", content: stoppedText, receivedAt: Date.now() },
-  ];
-}
-
-function readImageMessage(content: string): ImagePayload | null {
-  if (content.startsWith(IMAGE_MESSAGE_PREFIX)) {
-    try {
-      return JSON.parse(content.slice(IMAGE_MESSAGE_PREFIX.length)) as ImagePayload;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
-function newQueueId() {
-  return `q-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function queueItemPreview(item: QueuedPrompt): string {
-  if (item.attachments.length) {
-    const names = item.attachments.map((a) => a.name).join(", ");
-    const text = item.text.trim();
-    return text ? `${text} · ${names}` : names;
-  }
-  return item.text.trim() || "(empty)";
-}
-
-function extractMarkdownImage(content: string): { imageUrl: string | null; text: string } {
-  const re = /!\[[^\]]*\]\((https?:\/\/[^\s)]+)\)/i;
-  const m = content.match(re);
-  if (!m) return { imageUrl: null, text: content };
-  const cleaned = content.replace(re, "").replace(/\n{3,}/g, "\n\n").trim();
-  return { imageUrl: m[1], text: cleaned };
-}
-
-/** CSV / Word / PDF actions only for real text replies (not image/audio/pending). */
-function isTextAssistantExportable(content: string): boolean {
-  if (!content?.trim()) return false;
-  if (content === IMAGE_PENDING_MARKER) return false;
-  if (content === VIDEO_PENDING_MARKER) return false;
-  if (content === SPEECH_PENDING_MARKER) return false;
-  if (readImageMessage(content)) return false;
-  if (readVideoMessage(content)) return false;
-  if (readSpeechMessage(content)) return false;
-  if (readAudioMessage(content)) return false;
-  const md = extractMarkdownImage(content);
-  if (md.imageUrl && !md.text.trim()) return false;
-  return true;
-}
-
-function formatChatMessageTime(ts?: number): string | null {
-  return formatLocalDateTimeFromMs(ts);
-}
-
-function chatMessageInfoTitle(message: ChatMessage, role: "user" | "assistant", messages: ChatMessage[], index: number): string {
-  if (role === "user") {
-    const sent = formatChatMessageTime(message.sentAt);
-    return sent ? `Sent: ${sent}` : "Send time not recorded for this message.";
-  }
-  let promptSent: string | null = null;
-  for (let j = index - 1; j >= 0; j -= 1) {
-    if (messages[j].role === "user") {
-      promptSent = formatChatMessageTime(messages[j].sentAt);
-      break;
-    }
-  }
-  const received = formatChatMessageTime(message.receivedAt);
-  const lines: string[] = [];
-  if (promptSent) lines.push(`Prompt sent: ${promptSent}`);
-  if (received) lines.push(`Response received: ${received}`);
-  return lines.length ? lines.join("\n") : "Timing not recorded for this message.";
-}
-
 function MessageInfoButton({
   title,
   onClick,

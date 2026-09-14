@@ -6,8 +6,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from contextlib import ExitStack
 
-from app.services import proxy_service, turn_settlement
+from app.services import chat_turn_context, proxy_service, turn_settlement
 from app.services.agent_chat_integration_service import (
     AgentRequestError,
     PreparedAgentTurn,
@@ -158,8 +159,9 @@ async def _test_non_generating_plan_returns_only_safe_response() -> None:
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=context),
+        patch.object(chat_turn_context, "AsyncSessionLocal", return_value=context),
         patch.object(turn_settlement, "AsyncSessionLocal", return_value=context),
-        patch.object(proxy_service, "finalize_agent_run", finalize_run),
+        patch.object(chat_turn_context, "finalize_agent_run", finalize_run),
         patch.object(turn_settlement, "finalize_agent_run", finalize_run),
         patch.object(
             proxy_service,
@@ -258,57 +260,68 @@ async def _test_agent_stream_is_buffered_until_post_generation_review() -> None:
         del args, kwargs
         return 42
 
-    with (
-        patch.object(proxy_service, "AsyncSessionLocal", return_value=context),
-        patch.object(turn_settlement, "AsyncSessionLocal", return_value=context),
-        patch.object(
-            proxy_service,
-            "mark_agent_run_started",
-            AsyncMock(),
-        ) as mark_started,
-        patch.object(
-            proxy_service,
-            "resolve_resource_access_subject",
-            AsyncMock(return_value=SimpleNamespace(user_id=1)),
-        ),
-        patch.object(
-            proxy_service,
-            "augment_messages_with_tools",
-            AsyncMock(side_effect=lambda _db, messages, _tools, **_kwargs: messages),
-        ),
-        patch.object(
-            proxy_service,
-            "augment_messages_with_profile",
-            AsyncMock(side_effect=lambda _db, messages, **_kwargs: messages),
-        ),
-        patch.object(
-            proxy_service,
-            "augment_messages_with_memory",
-            AsyncMock(side_effect=lambda _db, messages, **_kwargs: messages),
-        ),
-        patch.object(
-            proxy_service,
-            "apply_prompt_cache_breakpoints",
-            side_effect=lambda messages: messages,
-        ),
-        patch.object(proxy_service, "acompletion", side_effect=fake_acompletion),
-        patch.object(proxy_service, "_usage_from_chunk", return_value=(10, 2, 0)),
-        patch.object(
-            proxy_service,
-            "_usage_from_stream_wrapper",
-            return_value=(0, 0, 0),
-        ),
-        patch.object(proxy_service, "_compute_token_cost_usd", return_value=0.0),
-        patch.object(
-            proxy_service,
-            "finalize_agent_completion",
-            AsyncMock(return_value=review),
-        ) as finalize_completion,
-        patch.object(proxy_service, "finalize_agent_run", finalize_run),
-        patch.object(turn_settlement, "finalize_agent_run", finalize_run),
-        patch.object(proxy_service, "log_usage", side_effect=fake_log_usage),
-        patch.object(turn_settlement, "log_usage", side_effect=fake_log_usage),
-    ):
+    with ExitStack() as _stack:
+        _stack.enter_context(patch.object(proxy_service, "AsyncSessionLocal", return_value=context))
+        _stack.enter_context(patch.object(chat_turn_context, "AsyncSessionLocal", return_value=context))
+        _stack.enter_context(patch.object(turn_settlement, "AsyncSessionLocal", return_value=context))
+        mark_started = _stack.enter_context(patch.object(chat_turn_context, "mark_agent_run_started", AsyncMock()))
+        _stack.enter_context(
+            patch.object(
+                chat_turn_context, "resolve_resource_access_subject", AsyncMock(return_value=SimpleNamespace(user_id=1))
+            )
+        )
+        _stack.enter_context(
+            patch.object(
+                chat_turn_context,
+                "augment_messages_with_tools",
+                AsyncMock(side_effect=lambda _db, messages, _tools, **_kwargs: messages),
+            )
+        )
+        _stack.enter_context(
+            patch.object(
+                chat_turn_context,
+                "augment_messages_with_profile",
+                AsyncMock(side_effect=lambda _db, messages, **_kwargs: messages),
+            )
+        )
+        _stack.enter_context(
+            patch.object(
+                chat_turn_context,
+                "augment_messages_with_memory",
+                AsyncMock(side_effect=lambda _db, messages, **_kwargs: messages),
+            )
+        )
+        _stack.enter_context(
+            patch.object(
+                proxy_service,
+                "apply_prompt_cache_breakpoints",
+                side_effect=lambda messages: messages,
+            )
+        )
+        _stack.enter_context(
+            patch.object(chat_turn_context, "apply_prompt_cache_breakpoints", side_effect=lambda messages: messages)
+        )
+        _stack.enter_context(patch.object(proxy_service, "acompletion", side_effect=fake_acompletion))
+        _stack.enter_context(patch.object(proxy_service, "_usage_from_chunk", return_value=(10, 2, 0)))
+        _stack.enter_context(
+            patch.object(
+                proxy_service,
+                "_usage_from_stream_wrapper",
+                return_value=(0, 0, 0),
+            )
+        )
+        _stack.enter_context(patch.object(proxy_service, "_compute_token_cost_usd", return_value=0.0))
+        finalize_completion = _stack.enter_context(
+            patch.object(
+                proxy_service,
+                "finalize_agent_completion",
+                AsyncMock(return_value=review),
+            )
+        )
+        _stack.enter_context(patch.object(chat_turn_context, "finalize_agent_run", finalize_run))
+        _stack.enter_context(patch.object(turn_settlement, "finalize_agent_run", finalize_run))
+        _stack.enter_context(patch.object(proxy_service, "log_usage", side_effect=fake_log_usage))
+        _stack.enter_context(patch.object(turn_settlement, "log_usage", side_effect=fake_log_usage))
         output = [
             chunk
             async for chunk in proxy_service.stream_chat(

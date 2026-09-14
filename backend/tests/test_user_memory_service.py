@@ -331,7 +331,7 @@ async def test_retrieve_timeout_falls_back_to_recency() -> None:
 
 
 async def _private_mode_resolve() -> None:
-    from app.services.proxy_service import _resolve_private_mode_for_memory
+    from app.services.chat_turn_context import _resolve_private_mode_for_memory
 
     engine, factory = await _make_session()
     async with factory() as db:

@@ -78,9 +78,9 @@ def test_images_module_no_longer_hardcodes_180():
 def test_chat_completion_carries_provider_timeout(monkeypatch):
     import inspect
 
-    from app.services import proxy_service
+    from app.services import chat_turn_context
 
-    src = inspect.getsource(proxy_service)
+    src = inspect.getsource(chat_turn_context)
     assert '"timeout": float(getattr(settings, "chat_provider_timeout_seconds"' in src
 
 

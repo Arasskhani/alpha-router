@@ -210,7 +210,7 @@ async def _personal_memory_never_reaches_a_project_turn() -> None:
 
         # The proxy resolves the project from the session, so the personal
         # augmenter is skipped entirely for this turn.
-        from app.services.proxy_service import _resolve_session_project_id
+        from app.services.chat_turn_context import _resolve_session_project_id
 
         assert await _resolve_session_project_id(db, session.id) == PROJ_ID
         personal = ChatSession(

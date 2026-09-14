@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 import app.models  # noqa: F401
 from app.database import Base
-from app.services import proxy_service, turn_settlement
+from app.services import chat_turn_context, proxy_service, turn_settlement
 
 
 def _chunk(content: str) -> SimpleNamespace:
@@ -70,24 +70,26 @@ async def test_request_session_transaction_is_closed_before_provider_call():
             if True:
                 with (
                     patch.object(proxy_service, "AsyncSessionLocal", tracking_factory),
+                    patch.object(chat_turn_context, "AsyncSessionLocal", tracking_factory),
                     patch.object(turn_settlement, "AsyncSessionLocal", tracking_factory),
                     patch.object(
                         proxy_service, "parse_tools_config", return_value=SimpleNamespace(code_interpreter=False)
                     ),
                     patch.object(
-                        proxy_service,
+                        chat_turn_context,
                         "augment_messages_with_tools",
                         AsyncMock(side_effect=lambda db, m, t, **_kwargs: m),
                     ),
                     patch.object(proxy_service, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
+                    patch.object(chat_turn_context, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
                     patch.object(proxy_service, "acompletion", side_effect=fake_acompletion),
-                    patch.object(proxy_service, "persister_from_body", return_value=None),
+                    patch.object(chat_turn_context, "persister_from_body", return_value=None),
                     patch.object(proxy_service, "_usage_from_stream_wrapper", return_value=(3, 2, 0)),
                     patch.object(proxy_service, "_compute_token_cost_usd", return_value=0.0),
                     patch.object(proxy_service, "log_usage", AsyncMock(return_value=1)),
                     patch.object(turn_settlement, "log_usage", AsyncMock(return_value=1)),
                     patch.object(proxy_service, "record_compatibility_result", AsyncMock()),
-                    patch.object(proxy_service, "openrouter_auto_plugin", AsyncMock(return_value=None)),
+                    patch.object(chat_turn_context, "openrouter_auto_plugin", AsyncMock(return_value=None)),
                 ):
                     chunks = [
                         c

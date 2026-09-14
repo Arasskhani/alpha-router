@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services import proxy_service
+from app.services import chat_turn_context, proxy_service
 from app.services.code_interpreter_service import SandboxArtifact
 
 
@@ -36,6 +36,7 @@ async def test_persist_code_interpreter_artifact_uses_owner_and_session_metadata
     async def run():
         with (
             patch.object(proxy_service, "AsyncSessionLocal", return_value=context),
+            patch.object(chat_turn_context, "AsyncSessionLocal", return_value=context),
             patch.object(
                 proxy_service,
                 "store_generated_blob",

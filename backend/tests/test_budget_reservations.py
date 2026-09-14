@@ -16,7 +16,7 @@ from app.models.budget_reservation import BudgetReservation
 from app.models.logging import RequestLog
 from app.models.user import User
 from app.services import budget_reservation_service as reservations
-from app.services import proxy_service
+from app.services import chat_turn_context, proxy_service
 from app.services.alpha_router_api_key_service import maybe_reset_key_period
 from app.services.budget_service import ensure_budget_period
 from app.services.proxy_service import log_usage
@@ -293,6 +293,7 @@ async def test_embedding_failure_settles_committed_hold_independently() -> None:
                 AsyncMock(side_effect=RuntimeError("provider failed")),
             ),
             patch.object(proxy_service, "AsyncSessionLocal", factory),
+            patch.object(chat_turn_context, "AsyncSessionLocal", factory),
             pytest.raises(HTTPException) as exc,
         ):
             await proxy_service.create_embedding(

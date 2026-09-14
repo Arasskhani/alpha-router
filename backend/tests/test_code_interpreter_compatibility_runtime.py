@@ -6,7 +6,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services import proxy_service, turn_settlement
+from app.services import chat_turn_context, proxy_service, turn_settlement
 from app.services.usage_accounting_service import NormalizedUsage
 
 
@@ -89,20 +89,21 @@ async def _run_empty_completion_records_failure() -> tuple[list[dict], list[dict
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(chat_turn_context, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(turn_settlement, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(proxy_service, "parse_tools_config", return_value=tools),
+        patch.object(chat_turn_context, "parse_tools_config", return_value=tools),
         patch.object(
-            proxy_service,
-            "augment_messages_with_tools",
-            AsyncMock(side_effect=lambda db, m, t, **_kwargs: m),
+            chat_turn_context, "augment_messages_with_tools", AsyncMock(side_effect=lambda db, m, t, **_kwargs: m)
         ),
         patch.object(proxy_service, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
+        patch.object(chat_turn_context, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
         patch.object(proxy_service, "acompletion", side_effect=fake_acompletion),
         patch.object(proxy_service, "_usage_from_stream_wrapper", return_value=(10, 0, 0)),
         patch.object(proxy_service, "_compute_token_cost_usd", return_value=0.0),
         patch.object(proxy_service, "log_usage", side_effect=AsyncMock()),
         patch.object(turn_settlement, "log_usage", side_effect=AsyncMock()),
-        patch.object(proxy_service, "openrouter_auto_plugin", side_effect=fake_plugin),
+        patch.object(chat_turn_context, "openrouter_auto_plugin", side_effect=fake_plugin),
         patch.object(proxy_service, "record_compatibility_result", side_effect=fake_record),
         patch.object(
             proxy_service,
@@ -185,6 +186,7 @@ async def _run_alias_evidence_is_dropped() -> list[dict]:
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(chat_turn_context, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(turn_settlement, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(proxy_service, "record_compatibility_result", side_effect=fake_record),
     ):
@@ -300,14 +302,15 @@ async def _run_final_answer_after_execution() -> tuple[list[dict], int]:
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(chat_turn_context, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(turn_settlement, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(proxy_service, "parse_tools_config", return_value=SimpleNamespace(code_interpreter=True)),
+        patch.object(chat_turn_context, "parse_tools_config", return_value=SimpleNamespace(code_interpreter=True)),
         patch.object(
-            proxy_service,
-            "augment_messages_with_tools",
-            AsyncMock(side_effect=lambda db, m, t, **_kwargs: m),
+            chat_turn_context, "augment_messages_with_tools", AsyncMock(side_effect=lambda db, m, t, **_kwargs: m)
         ),
         patch.object(proxy_service, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
+        patch.object(chat_turn_context, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
         patch.object(proxy_service, "acompletion", side_effect=fake_acompletion),
         patch.object(proxy_service, "_usage_from_stream_wrapper", return_value=(10, 5, 0)),
         patch.object(proxy_service, "_compute_token_cost_usd", return_value=0.0),
@@ -319,7 +322,7 @@ async def _run_final_answer_after_execution() -> tuple[list[dict], int]:
             "run_python_sandbox",
             AsyncMock(return_value=proxy_service.SandboxExecutionResult(output="4", exit_code=0)),
         ),
-        patch.object(proxy_service, "openrouter_auto_plugin", AsyncMock(return_value=None)),
+        patch.object(chat_turn_context, "openrouter_auto_plugin", AsyncMock(return_value=None)),
     ):
         async for _chunk_out in proxy_service.stream_chat(
             request,

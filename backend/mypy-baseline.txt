@@ -103,7 +103,6 @@ app/services/proxy_service.py:0: error: Argument "api_key" to "_record_code_inte
 app/services/proxy_service.py:0: error: Argument "api_key" to "_record_code_interpreter_failure" has incompatible type "str | None"; expected "str"  [arg-type]
 app/services/proxy_service.py:0: error: Argument "api_key" to "_record_code_interpreter_failure" has incompatible type "str | None"; expected "str"  [arg-type]
 app/services/proxy_service.py:0: error: Argument "api_key" to "_record_code_interpreter_success" has incompatible type "str | None"; expected "str"  [arg-type]
-app/services/proxy_service.py:0: error: Argument 1 to "heartbeat_code_interpreter_turn" has incompatible type "Any | None"; expected "CapacityPermit | str"  [arg-type]
 app/services/proxy_service.py:0: error: Argument 1 to "int" has incompatible type "int | None"; expected "str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc"  [arg-type]
 app/services/proxy_service.py:0: error: Argument 2 to "resolve_model_and_key" has incompatible type "str | Any | None"; expected "str"  [arg-type]
 app/services/proxy_service.py:0: error: Item "None" of "AIModel | None" has no attribute "provider_type"  [union-attr]

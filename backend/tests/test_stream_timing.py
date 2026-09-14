@@ -6,7 +6,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services import proxy_service, turn_settlement
+from app.services import chat_turn_context, proxy_service, turn_settlement
 
 
 class _FakeDeltaChunk:
@@ -56,23 +56,19 @@ async def _run_stream_timing_test() -> None:
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(chat_turn_context, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(turn_settlement, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(
-            proxy_service,
-            "augment_messages_with_tools",
-            AsyncMock(side_effect=lambda db, m, t, **_kwargs: m),
+            chat_turn_context, "augment_messages_with_tools", AsyncMock(side_effect=lambda db, m, t, **_kwargs: m)
         ),
         patch.object(
-            proxy_service,
-            "augment_messages_with_profile",
-            AsyncMock(side_effect=lambda db, m, **_kwargs: m),
+            chat_turn_context, "augment_messages_with_profile", AsyncMock(side_effect=lambda db, m, **_kwargs: m)
         ),
         patch.object(
-            proxy_service,
-            "augment_messages_with_memory",
-            AsyncMock(side_effect=lambda db, m, **_kwargs: m),
+            chat_turn_context, "augment_messages_with_memory", AsyncMock(side_effect=lambda db, m, **_kwargs: m)
         ),
         patch.object(proxy_service, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
+        patch.object(chat_turn_context, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
         patch.object(proxy_service, "acompletion", side_effect=fake_acompletion),
         patch.object(proxy_service, "_usage_from_chunk", return_value=(10, 2, 0)),
         patch.object(proxy_service, "_usage_from_stream_wrapper", return_value=(0, 0, 0)),
@@ -153,24 +149,21 @@ async def _run_empty_code_interpreter_test() -> None:
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(chat_turn_context, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(turn_settlement, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(proxy_service, "parse_tools_config", return_value=tools),
+        patch.object(chat_turn_context, "parse_tools_config", return_value=tools),
         patch.object(
-            proxy_service,
-            "augment_messages_with_tools",
-            AsyncMock(side_effect=lambda db, m, t, **_kwargs: m),
+            chat_turn_context, "augment_messages_with_tools", AsyncMock(side_effect=lambda db, m, t, **_kwargs: m)
         ),
         patch.object(
-            proxy_service,
-            "augment_messages_with_profile",
-            AsyncMock(side_effect=lambda db, m, **_kwargs: m),
+            chat_turn_context, "augment_messages_with_profile", AsyncMock(side_effect=lambda db, m, **_kwargs: m)
         ),
         patch.object(
-            proxy_service,
-            "augment_messages_with_memory",
-            AsyncMock(side_effect=lambda db, m, **_kwargs: m),
+            chat_turn_context, "augment_messages_with_memory", AsyncMock(side_effect=lambda db, m, **_kwargs: m)
         ),
         patch.object(proxy_service, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
+        patch.object(chat_turn_context, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
         patch.object(proxy_service, "acompletion", side_effect=fake_acompletion),
         patch.object(proxy_service, "_usage_from_stream_wrapper", return_value=(10, 0, 0)),
         patch.object(proxy_service, "_compute_token_cost_usd", return_value=0.0),

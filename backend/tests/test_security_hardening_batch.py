@@ -235,10 +235,12 @@ def test_chat_session_must_belong_to_caller_or_writable_project():
                 await db.commit()
                 assert (await resolve_owned_chat_session(db, user=me, chat_session_id="mine")).id == "mine"
                 assert await resolve_owned_chat_session(db, user=me, chat_session_id=None) is None
-                for sid in ("theirs", "does-not-exist"):
-                    with pytest.raises(HTTPException) as exc:
-                        await resolve_owned_chat_session(db, user=me, chat_session_id=sid)
-                    assert exc.value.status_code == 404
+                # Unknown ids are the client's private / not-yet-synced sessions:
+                # opaque, allowed (a 404 here broke attachments in Private Mode).
+                assert await resolve_owned_chat_session(db, user=me, chat_session_id="not-synced-yet") is None
+                with pytest.raises(HTTPException) as exc:
+                    await resolve_owned_chat_session(db, user=me, chat_session_id="theirs")
+                assert exc.value.status_code == 404
         finally:
             await engine.dispose()
 

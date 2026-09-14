@@ -377,12 +377,13 @@ async def saml_acs(
 async def _audit_saml_rejection(db: AsyncSession, request: Request, reason: str, ref: str | None) -> None:
     """Record a refused SAML Response; never let bookkeeping mask the 401."""
     try:
+        from app.services.client_ip import resolve_client_ip
         from app.services.security_audit import log_security_event
 
         await log_security_event(
             db,
             actor=None,
-            actor_ip=request.client.host if request.client else None,
+            actor_ip=resolve_client_ip(request),
             action="saml_response_rejected",
             resource_type="saml",
             resource_id=(ref or "")[:64] or None,

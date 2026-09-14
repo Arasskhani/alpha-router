@@ -1,5 +1,6 @@
 """Admin REST API: connections, models, keys, plans, users, dashboard, debug."""
 
+import asyncio
 import csv
 import io
 from datetime import date, datetime, timedelta
@@ -253,7 +254,7 @@ async def create_connection(
     admin: User = Depends(require_connections_write),
 ):
     """Add connection to list immediately; model sync is optional (use Sync Now in table)."""
-    base_url = _validated_connection_base_url(body.base_url)
+    base_url = await _validated_connection_base_url(body.base_url)
     provider = (body.provider_type or "").strip().lower()
     if not provider:
         raise HTTPException(400, detail="Provider is required")
@@ -1555,7 +1556,7 @@ async def update_connection(
     if body.api_key:
         conn.api_key_encrypted = encrypt_secret(body.api_key)
     if body.base_url is not None:
-        conn.base_url = _validated_connection_base_url(body.base_url)
+        conn.base_url = await _validated_connection_base_url(body.base_url)
         patches["base_url"] = conn.base_url or ""
     if body.sync_interval_hours is not None:
         conn.sync_interval_hours = body.sync_interval_hours
@@ -3492,7 +3493,7 @@ async def admin_purge_expired_chat(
     return {"ok": True, **result}
 
 
-def _validated_connection_base_url(raw: str | None) -> str | None:
+async def _validated_connection_base_url(raw: str | None) -> str | None:
     """A provider base_url is fetched server-side with the connection's API key.
 
     Without a check an admin-level account (or a CSRF'd admin) could point a
@@ -3508,7 +3509,8 @@ def _validated_connection_base_url(raw: str | None) -> str | None:
     if not value.lower().startswith(("http://", "https://")):
         raise HTTPException(400, detail="base_url must start with http:// or https://")
     try:
-        assert_url_safe(value)
+        # assert_url_safe resolves DNS synchronously; keep it off the event loop.
+        await asyncio.to_thread(assert_url_safe, value)
     except SSRFBlockedError as exc:
         raise HTTPException(
             400,

@@ -107,14 +107,16 @@ deployment-config:
 # docker/compose; a regression here takes a production host down on upgrade.
 scripts-tests:
   stage: verify
-  image: bash:5
+  # Debian, not busybox: the scripts run on Ubuntu hosts and lean on GNU
+  # sed/grep/date semantics; the harness must exercise the same tools.
+  image: debian:bookworm-slim
   rules:
     - *always-on-default
     - changes:
         - scripts/**/*
         - .gitlab-ci.yml
   script:
-    - apk add --no-cache openssl grep coreutils >/dev/null
+    - apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends bash openssl >/dev/null
     - for t in scripts/tests/test-*.sh; do echo "== $t"; bash "$t"; done
 
 frontend-sources:

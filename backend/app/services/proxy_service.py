@@ -4,8 +4,6 @@ Costs are taken from provider usage objects — never adjusted by Alpharouter.
 """
 
 import asyncio
-
-import anyio
 import datetime
 import json
 import logging
@@ -14,6 +12,7 @@ import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
+import anyio
 import httpx
 import litellm
 from fastapi import HTTPException, Request

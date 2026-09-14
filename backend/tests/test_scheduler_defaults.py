@@ -14,6 +14,9 @@ def _prefs(hour, minute, last=None):
     return SimpleNamespace(cleanup_hour=hour, cleanup_minute=minute, last_cleanup_at=last)
 
 
+UTC = timezone.utc
+
+
 def test_scheduler_has_misfire_grace_and_coalescing():
     defaults = sched.scheduler._job_defaults
     assert defaults["misfire_grace_time"] == 300
@@ -26,23 +29,36 @@ def test_cleanup_with_a_non_zero_minute_actually_runs():
     day = datetime(2026, 9, 14)
     prefs = _prefs(3, 30)
     # Hourly poll at 03:00 used to be the only chance and was skipped (0 < 30).
-    assert user_media_cleanup_due(prefs, day.replace(hour=3, minute=0)) is False
-    assert user_media_cleanup_due(prefs, day.replace(hour=3, minute=30)) is True
-    assert user_media_cleanup_due(prefs, day.replace(hour=3, minute=45)) is True
-    assert user_media_cleanup_due(prefs, day.replace(hour=23, minute=59)) is True  # late is still due
+    assert user_media_cleanup_due(prefs, day.replace(hour=3, minute=0), UTC) is False
+    assert user_media_cleanup_due(prefs, day.replace(hour=3, minute=30), UTC) is True
+    assert user_media_cleanup_due(prefs, day.replace(hour=3, minute=45), UTC) is True
+    assert user_media_cleanup_due(prefs, day.replace(hour=23, minute=59), UTC) is True  # late is still due
 
 
 def test_cleanup_runs_once_per_scheduled_slot():
     day = datetime(2026, 9, 14)
     served = day.replace(hour=3, minute=31)
     prefs = _prefs(3, 30, last=served)
-    assert user_media_cleanup_due(prefs, day.replace(hour=4)) is False
-    assert user_media_cleanup_due(prefs, day.replace(hour=22)) is False
+    assert user_media_cleanup_due(prefs, day.replace(hour=4), UTC) is False
+    assert user_media_cleanup_due(prefs, day.replace(hour=22), UTC) is False
     # Next day's slot is due again.
-    assert user_media_cleanup_due(prefs, (day + timedelta(days=1)).replace(hour=3, minute=30)) is True
+    assert user_media_cleanup_due(prefs, (day + timedelta(days=1)).replace(hour=3, minute=30), UTC) is True
     # A run that happened *before* today's slot (e.g. yesterday) does not count.
     prefs_old = _prefs(3, 30, last=day.replace(hour=2))
-    assert user_media_cleanup_due(prefs_old, day.replace(hour=3, minute=30)) is True
+    assert user_media_cleanup_due(prefs_old, day.replace(hour=3, minute=30), UTC) is True
+
+
+def test_cleanup_slot_is_in_server_timezone():
+    import zoneinfo
+
+    tehran = zoneinfo.ZoneInfo("Asia/Tehran")  # UTC+03:30
+    prefs = _prefs(3, 0)  # 03:00 Tehran == 23:30 UTC the day before
+    assert user_media_cleanup_due(prefs, datetime(2026, 9, 13, 23, 0), tehran) is False
+    assert user_media_cleanup_due(prefs, datetime(2026, 9, 13, 23, 45), tehran) is True
+    # Served at 23:46 UTC: not due again until the next Tehran 03:00.
+    prefs = _prefs(3, 0, last=datetime(2026, 9, 13, 23, 46))
+    assert user_media_cleanup_due(prefs, datetime(2026, 9, 14, 10, 0), tehran) is False
+    assert user_media_cleanup_due(prefs, datetime(2026, 9, 14, 23, 31), tehran) is True
 
 
 def test_budget_reset_trigger_is_utc_and_reset_has_no_day_guard(monkeypatch):

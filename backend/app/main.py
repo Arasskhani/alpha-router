@@ -91,6 +91,7 @@ from app.services.scheduler import (
     start_scheduler,
     stop_scheduler,
 )
+from app.services.csrf_protection import development_origins as _development_origins
 from app.services.scheduler_leader import SchedulerLeader, install_leader
 from app.services.security_headers import SecurityHeadersMiddleware
 from app.services.user_chat_storage_service import ensure_user_chat_store
@@ -728,6 +729,7 @@ async def lifespan(app: FastAPI):
     # then keeps heartbeating / retrying.
     try:
         if await leader.try_acquire():
+            logging.getLogger(LOGGER_NAMESPACE).info("This worker is now the scheduler leader")
             await _become_scheduler_leader()
     except Exception:
         logging.getLogger(LOGGER_NAMESPACE).exception(
@@ -792,8 +794,6 @@ app.add_middleware(RequestBodyLimitMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(OpenApiDocsGuardMiddleware)
 
-
-from app.services.csrf_protection import development_origins as _development_origins
 
 app.add_middleware(
     CORSMiddleware,

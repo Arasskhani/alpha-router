@@ -123,20 +123,28 @@ async def job_storage_cleanup():
         await purge_expired_media(db, retention_days=int(settings["retention_days"]))
 
 
-def user_media_cleanup_due(prefs, now: datetime) -> bool:
+def user_media_cleanup_due(prefs, now: datetime, tz=None) -> bool:
     """True when today's scheduled (hour, minute) has passed and was not served yet.
 
     The old rule ran only at minute 0 of the chosen hour and skipped when
     ``now.minute < cleanup_minute`` - so any minute other than 0 meant the
     cleanup never ran. Now the job polls every 15 minutes and this decides.
+
+    ``now`` and ``prefs.last_cleanup_at`` are naive UTC (what the job and the
+    column store). The user's (hour, minute) is a wall-clock time in the
+    server's timezone - the same zone the other cron jobs use - so the slot
+    is built there and converted back to UTC before comparing.
     """
+    tz = tz or get_server_timezone()
     hour = int(prefs.cleanup_hour or 0)
     minute = int(prefs.cleanup_minute or 0)
-    scheduled_today = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if now < scheduled_today:
+    now_local = now.replace(tzinfo=timezone.utc).astimezone(tz)
+    scheduled_local = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if now_local < scheduled_local:
         return False
+    scheduled_utc = scheduled_local.astimezone(timezone.utc).replace(tzinfo=None)
     last = prefs.last_cleanup_at
-    return last is None or last < scheduled_today
+    return last is None or last < scheduled_utc
 
 
 async def job_user_media_cleanup():

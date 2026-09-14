@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime
 import uuid
 from unittest.mock import patch
@@ -542,24 +541,24 @@ async def _test_project_agent_turn_gets_no_personal_memory() -> None:
         await engine.dispose()
 
 
-def test_router_prefers_explicit_and_handles_ambiguity():
-    asyncio.run(_test_router_prefers_explicit_and_handles_ambiguity())
+async def test_router_prefers_explicit_and_handles_ambiguity():
+    await _test_router_prefers_explicit_and_handles_ambiguity()
 
 
-def test_project_agent_turn_gets_no_personal_memory():
-    asyncio.run(_test_project_agent_turn_gets_no_personal_memory())
+async def test_project_agent_turn_gets_no_personal_memory():
+    await _test_project_agent_turn_gets_no_personal_memory()
 
 
-def test_pinned_previously_published_version_is_resolved():
-    asyncio.run(_test_pinned_previously_published_version_is_resolved())
+async def test_pinned_previously_published_version_is_resolved():
+    await _test_pinned_previously_published_version_is_resolved()
 
 
-def test_runtime_prompt_egress_and_fail_closed_abstention():
-    asyncio.run(_test_runtime_prompt_egress_and_fail_closed_abstention())
+async def test_runtime_prompt_egress_and_fail_closed_abstention():
+    await _test_runtime_prompt_egress_and_fail_closed_abstention()
 
 
-def test_private_mode_disables_agent_rag_unless_policy_allows_it():
-    asyncio.run(_test_private_mode_disables_agent_rag_unless_published_policy_allows_it())
+async def test_private_mode_disables_agent_rag_unless_policy_allows_it():
+    await _test_private_mode_disables_agent_rag_unless_published_policy_allows_it()
 
 
 def test_citation_validation_messages_separate_missing_markers_from_bad_markers():

@@ -21,7 +21,7 @@ class _Boom:
         return False
 
 
-def test_metered_settlement_failure_counts_a_hold_leak():
+async def test_metered_settlement_failure_counts_a_hold_leak():
     call = mus.MeteredUsageCall(
         id="m1",
         user_id=1,
@@ -45,7 +45,7 @@ def test_metered_settlement_failure_counts_a_hold_leak():
             await mus.finish_metered_usage(call, success=True, quantity=1, unit="request")
         return inc
 
-    inc = asyncio.run(run())
+    inc = await run()
     inc.assert_any_call("budget_hold_leak")
 
 

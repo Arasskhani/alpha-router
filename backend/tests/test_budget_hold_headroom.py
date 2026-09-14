@@ -12,7 +12,6 @@ still had budget:
 
 from __future__ import annotations
 
-import asyncio
 import datetime
 import json
 from types import SimpleNamespace
@@ -125,9 +124,9 @@ async def _hold_for_image_turn() -> float:
     return hold
 
 
-def test_image_turn_hold_stays_small() -> None:
+async def test_image_turn_hold_stays_small() -> None:
     """The reported failure: $1.05 left, a 1 MB image turn quoted at $1.57."""
-    hold = asyncio.run(_hold_for_image_turn())
+    hold = await _hold_for_image_turn()
     assert hold < 0.20, f"hold {hold} would still block a user with $1.05 left"
 
 
@@ -164,25 +163,25 @@ async def _user_with_budget(
     return user
 
 
-def test_reserve_refuses_an_estimate_larger_than_the_balance() -> None:
+async def test_reserve_refuses_an_estimate_larger_than_the_balance() -> None:
     """Admission is strict: the whole estimate must fit, or the request is refused.
 
     Clamping an over-sized estimate down to the remaining balance was tried and
     reverted — it let a 30-second video quoted at $7.64 start on a $1.68 hold and
     settle at its real $6.95, taking a $12.00 budget to $17.27.
     """
-    detail = asyncio.run(_reserve_expecting_rejection(used=10.95, amount_usd=1.57))
+    detail = await _reserve_expecting_rejection(used=10.95, amount_usd=1.57)
     assert "1.5700" in detail, detail
     assert "1.0500" in detail, detail
 
 
-def test_priced_hold_is_not_truncated_to_the_unpriced_ceiling() -> None:
+async def test_priced_hold_is_not_truncated_to_the_unpriced_ceiling() -> None:
     """A priced quote above ``budget_max_hold_usd`` ($5.00) must be held in full.
 
     The 30-second video quoted $7.64. Truncating it to $5.00 under-reserved the
     job, so it could overshoot the budget even under strict admission.
     """
-    reserved = asyncio.run(_reserve_priced_video())
+    reserved = await _reserve_priced_video()
     assert reserved == pytest.approx(7.642, abs=1e-6)
 
 
@@ -223,8 +222,8 @@ async def _reserve_within_headroom() -> float:
     return reserved
 
 
-def test_reserve_leaves_a_fitting_estimate_untouched() -> None:
-    assert asyncio.run(_reserve_within_headroom()) == pytest.approx(0.07, abs=1e-9)
+async def test_reserve_leaves_a_fitting_estimate_untouched() -> None:
+    assert await _reserve_within_headroom() == pytest.approx(0.07, abs=1e-9)
 
 
 async def _reserve_expecting_rejection(
@@ -258,21 +257,21 @@ async def _reserve_expecting_rejection(
     return detail
 
 
-def test_reserve_rejects_a_spent_budget() -> None:
-    detail = asyncio.run(_reserve_expecting_rejection(used=12.0, amount_usd=0.05))
+async def test_reserve_rejects_a_spent_budget() -> None:
+    detail = await _reserve_expecting_rejection(used=12.0, amount_usd=0.05)
     assert "budget exceeded" in detail.lower()
 
 
-def test_rejection_names_the_estimate_and_the_remaining_balance() -> None:
+async def test_rejection_names_the_estimate_and_the_remaining_balance() -> None:
     """The refusal has to be diagnosable without reading the database."""
-    detail = asyncio.run(_reserve_expecting_rejection(used=11.996, amount_usd=1.57))
+    detail = await _reserve_expecting_rejection(used=11.996, amount_usd=1.57)
     assert "1.5700" in detail, detail
     assert "0.0040" in detail, detail
 
 
-def test_estimate_that_exactly_fits_is_admitted() -> None:
+async def test_estimate_that_exactly_fits_is_admitted() -> None:
     """Boundary: estimate == remaining balance must be allowed, not refused."""
-    assert asyncio.run(_reserve_amount(used=10.95, amount_usd=1.05)) == pytest.approx(1.05, abs=1e-9)
+    assert await _reserve_amount(used=10.95, amount_usd=1.05) == pytest.approx(1.05, abs=1e-9)
 
 
 async def _reserve_amount(
@@ -305,43 +304,43 @@ async def _reserve_amount(
 # --------------------------------------------------------------------------- #
 
 
-def test_chat_estimate_slightly_over_balance_is_clamped_and_admitted() -> None:
+async def test_chat_estimate_slightly_over_balance_is_clamped_and_admitted() -> None:
     """Chat's estimate is an upper bound, so a small miss must not refuse the turn.
 
     $12.00 limit, $11.70 used -> $0.30 left. A chat quoted at $0.55 misses by
     $0.25, inside the $0.50 tolerance, so it runs on a $0.30 hold.
     """
-    reserved = asyncio.run(_reserve_amount(used=11.70, amount_usd=0.55, cost_is_estimated=True))
+    reserved = await _reserve_amount(used=11.70, amount_usd=0.55, cost_is_estimated=True)
     assert reserved == pytest.approx(0.30, abs=1e-6)
 
 
-def test_chat_estimate_far_over_balance_is_still_refused() -> None:
+async def test_chat_estimate_far_over_balance_is_still_refused() -> None:
     """Beyond the tolerance the overshoot stops being bounded, so refuse."""
-    detail = asyncio.run(_reserve_expecting_rejection(used=11.70, amount_usd=2.50, cost_is_estimated=True))
+    detail = await _reserve_expecting_rejection(used=11.70, amount_usd=2.50, cost_is_estimated=True)
     assert "2.5000" in detail, detail
     assert "0.3000" in detail, detail
 
 
-def test_strict_operations_get_no_tolerance() -> None:
+async def test_strict_operations_get_no_tolerance() -> None:
     """The same shortfall that chat tolerates must refuse a video/image/speech job."""
-    detail = asyncio.run(_reserve_expecting_rejection(used=11.70, amount_usd=0.55, cost_is_estimated=False))
+    detail = await _reserve_expecting_rejection(used=11.70, amount_usd=0.55, cost_is_estimated=False)
     assert "0.5500" in detail, detail
     assert "0.3000" in detail, detail
 
 
-def test_video_overspend_scenario_stays_refused_under_the_soft_path() -> None:
+async def test_video_overspend_scenario_stays_refused_under_the_soft_path() -> None:
     """The production regression must not come back through the chat tolerance.
 
     30s video quoted $7.6420 with $1.68 left. Even if it were ever mislabelled as
     an estimated cost, the shortfall dwarfs the tolerance, so it is refused.
     """
-    detail = asyncio.run(_reserve_expecting_rejection(used=10.32, amount_usd=7.642, cost_is_estimated=True))
+    detail = await _reserve_expecting_rejection(used=10.32, amount_usd=7.642, cost_is_estimated=True)
     assert "7.6420" in detail, detail
 
 
-def test_soft_path_never_reserves_past_the_limit() -> None:
+async def test_soft_path_never_reserves_past_the_limit() -> None:
     """Whatever the tolerance allows, the hold itself still cannot exceed the limit."""
-    factory_reserved = asyncio.run(_reserve_amount(used=11.70, amount_usd=0.55, cost_is_estimated=True))
+    factory_reserved = await _reserve_amount(used=11.70, amount_usd=0.55, cost_is_estimated=True)
     assert 11.70 + factory_reserved == pytest.approx(12.0, abs=1e-6)
 
 
@@ -376,8 +375,8 @@ async def _reserve_with_orphaned_counter() -> tuple[float, float]:
     return reserved, counter
 
 
-def test_orphaned_reserved_counter_is_repaired_instead_of_blocking() -> None:
-    reserved, counter = asyncio.run(_reserve_with_orphaned_counter())
+async def test_orphaned_reserved_counter_is_repaired_instead_of_blocking() -> None:
+    reserved, counter = await _reserve_with_orphaned_counter()
     # The $5.05 phantom is dropped and the real estimate is held instead.
     assert reserved == pytest.approx(0.07, abs=1e-9)
     assert counter == pytest.approx(0.07, abs=1e-9)
@@ -424,8 +423,8 @@ async def _reserve_with_genuine_holds() -> str:
     return detail
 
 
-def test_real_open_holds_are_not_repaired_away() -> None:
-    detail = asyncio.run(_reserve_with_genuine_holds())
+async def test_real_open_holds_are_not_repaired_away() -> None:
+    detail = await _reserve_with_genuine_holds()
     assert "budget exceeded" in detail.lower()
 
 
@@ -469,8 +468,8 @@ async def _drift_sweep() -> tuple[int, float, float]:
     return repaired, drifted_counter, healthy_counter
 
 
-def test_scheduler_sweep_repairs_only_drifted_counters() -> None:
-    repaired, drifted_counter, healthy_counter = asyncio.run(_drift_sweep())
+async def test_scheduler_sweep_repairs_only_drifted_counters() -> None:
+    repaired, drifted_counter, healthy_counter = await _drift_sweep()
     assert repaired == 1
     assert drifted_counter == pytest.approx(0.0, abs=1e-9)
     assert healthy_counter == pytest.approx(2.0, abs=1e-9)

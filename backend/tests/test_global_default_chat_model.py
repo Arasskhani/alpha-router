@@ -1,7 +1,5 @@
 """Admin system default for new chats — never writes UserChatPrefs."""
 
-import asyncio
-
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
@@ -167,21 +165,21 @@ async def _test_drop_when_model_becomes_private() -> None:
     await engine.dispose()
 
 
-def test_set_and_read():
-    asyncio.run(_test_set_and_read())
+async def test_set_and_read():
+    await _test_set_and_read()
 
 
-def test_rejects_private_disabled_and_non_text():
-    asyncio.run(_test_rejects_private_disabled_and_non_text())
+async def test_rejects_private_disabled_and_non_text():
+    await _test_rejects_private_disabled_and_non_text()
 
 
-def test_does_not_write_user_prefs():
-    asyncio.run(_test_does_not_write_user_prefs())
+async def test_does_not_write_user_prefs():
+    await _test_does_not_write_user_prefs()
 
 
-def test_clear_when_disabled():
-    asyncio.run(_test_clear_when_disabled())
+async def test_clear_when_disabled():
+    await _test_clear_when_disabled()
 
 
-def test_drop_when_model_becomes_private():
-    asyncio.run(_test_drop_when_model_becomes_private())
+async def test_drop_when_model_becomes_private():
+    await _test_drop_when_model_becomes_private()

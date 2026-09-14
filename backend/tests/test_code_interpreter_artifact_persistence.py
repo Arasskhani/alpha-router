@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -24,7 +23,7 @@ def _artifact() -> SandboxArtifact:
     )
 
 
-def test_persist_code_interpreter_artifact_uses_owner_and_session_metadata():
+async def test_persist_code_interpreter_artifact_uses_owner_and_session_metadata():
     media_db = AsyncMock()
     query_result = MagicMock()
     query_result.scalar_one_or_none.return_value = SimpleNamespace(id="session-1", user_id=7)
@@ -53,7 +52,7 @@ def test_persist_code_interpreter_artifact_uses_owner_and_session_metadata():
             )
         return result, store
 
-    result, store = asyncio.run(run())
+    result, store = await run()
     assert result == [
         proxy_service.StoredCodeArtifact(
             asset_id=42,
@@ -69,7 +68,7 @@ def test_persist_code_interpreter_artifact_uses_owner_and_session_metadata():
     media_db.commit.assert_awaited_once()
 
 
-def test_persist_code_interpreter_artifact_rejects_foreign_session():
+async def test_persist_code_interpreter_artifact_rejects_foreign_session():
     media_db = AsyncMock()
     query_result = MagicMock()
     query_result.scalar_one_or_none.return_value = None
@@ -90,7 +89,7 @@ def test_persist_code_interpreter_artifact_rejects_foreign_session():
             )
 
     with pytest.raises(ValueError, match="unavailable"):
-        asyncio.run(run())
+        await run()
 
 
 def test_artifact_links_use_canonical_authenticated_media_route():

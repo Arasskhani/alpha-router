@@ -1,7 +1,5 @@
 """Tests for user account cleanup on delete."""
 
-import asyncio
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -138,6 +136,6 @@ async def _purge_roundtrip(monkeypatch) -> None:
     await engine.dispose()
 
 
-def test_purge_user_account_data_removes_media_and_chat(monkeypatch):
+async def test_purge_user_account_data_removes_media_and_chat(monkeypatch):
 
-    asyncio.run(_purge_roundtrip(monkeypatch))
+    await _purge_roundtrip(monkeypatch)

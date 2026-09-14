@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import uuid
 from pathlib import Path
@@ -84,7 +83,7 @@ def test_nginx_conf_embeds_body_mb_and_parser_reads_it():
     assert read_nginx_client_max_body_mb(path) == 44
 
 
-def test_sync_edge_body_limit_https_disabled_still_publishes(monkeypatch):
+async def test_sync_edge_body_limit_https_disabled_still_publishes(monkeypatch):
     tmp_path = _workdir()
     monkeypatch.setattr(
         "app.services.request_body_limit_service.get_settings",
@@ -101,7 +100,7 @@ def test_sync_edge_body_limit_https_disabled_still_publishes(monkeypatch):
         "app.services.tls_edge_service._resolve_edge_body_mb",
         new=AsyncMock(return_value=44),
     ):
-        result = asyncio.run(sync_edge_body_limit(db))
+        result = await sync_edge_body_limit(db)
 
     assert result["reason"] == "https_disabled"
     assert result["body_mb"] == 44

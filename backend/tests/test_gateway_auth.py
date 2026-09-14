@@ -8,7 +8,6 @@ Covers:
 - /v1/models read gate (_require_valid_gateway_key) rejects missing/unknown, accepts valid.
 """
 
-import asyncio
 import datetime
 import types
 from types import SimpleNamespace
@@ -314,53 +313,53 @@ async def _test_chat_completions_personal_key_preflight_and_stream():
 # ---- sync wrappers ----
 
 
-def test_missing_authorization_raises_401():
-    asyncio.run(_test_missing_authorization_raises_401())
+async def test_missing_authorization_raises_401():
+    await _test_missing_authorization_raises_401()
 
 
-def test_empty_bearer_raises_401():
-    asyncio.run(_test_empty_bearer_raises_401())
+async def test_empty_bearer_raises_401():
+    await _test_empty_bearer_raises_401()
 
 
-def test_unknown_key_raises_401():
-    asyncio.run(_test_unknown_key_raises_401())
+async def test_unknown_key_raises_401():
+    await _test_unknown_key_raises_401()
 
 
-def test_master_key_ignores_body_user_and_uses_service_account():
-    asyncio.run(_test_master_key_ignores_body_user_and_uses_service_account())
+async def test_master_key_ignores_body_user_and_uses_service_account():
+    await _test_master_key_ignores_body_user_and_uses_service_account()
 
 
-def test_user_api_key_resolves_owner_with_budget():
-    asyncio.run(_test_user_api_key_resolves_owner_with_budget())
+async def test_user_api_key_resolves_owner_with_budget():
+    await _test_user_api_key_resolves_owner_with_budget()
 
 
-def test_alpha_router_api_key_skips_user_budget():
-    asyncio.run(_test_alpha_router_api_key_skips_user_budget())
+async def test_alpha_router_api_key_skips_user_budget():
+    await _test_alpha_router_api_key_skips_user_budget()
 
 
-def test_alpha_router_api_key_over_credit_limit_raises_402():
-    asyncio.run(_test_alpha_router_api_key_over_credit_limit_raises_402())
+async def test_alpha_router_api_key_over_credit_limit_raises_402():
+    await _test_alpha_router_api_key_over_credit_limit_raises_402()
 
 
-def test_read_gate_rejects_missing():
-    asyncio.run(_test_read_gate_rejects_missing())
+async def test_read_gate_rejects_missing():
+    await _test_read_gate_rejects_missing()
 
 
-def test_read_gate_accepts_master():
-    asyncio.run(_test_read_gate_accepts_master())
+async def test_read_gate_accepts_master():
+    await _test_read_gate_accepts_master()
 
 
-def test_read_gate_rejects_unknown():
-    asyncio.run(_test_read_gate_rejects_unknown())
+async def test_read_gate_rejects_unknown():
+    await _test_read_gate_rejects_unknown()
 
 
-def test_read_gate_accepts_user_key():
-    asyncio.run(_test_read_gate_accepts_user_key())
+async def test_read_gate_accepts_user_key():
+    await _test_read_gate_accepts_user_key()
 
 
-def test_chat_completions_no_key_short_circuits_before_body_parse():
-    asyncio.run(_test_chat_completions_no_key_short_circuits_before_body_parse())
+async def test_chat_completions_no_key_short_circuits_before_body_parse():
+    await _test_chat_completions_no_key_short_circuits_before_body_parse()
 
 
-def test_chat_completions_personal_key_preflight_and_stream():
-    asyncio.run(_test_chat_completions_personal_key_preflight_and_stream())
+async def test_chat_completions_personal_key_preflight_and_stream():
+    await _test_chat_completions_personal_key_preflight_and_stream()

@@ -1,6 +1,5 @@
 """Model-tool compatibility registry, circuit breaker, and Auto Router constraints."""
 
-import asyncio
 import datetime
 
 import pytest
@@ -147,8 +146,8 @@ async def _run_inconclusive_probe_error_keeps_model() -> None:
         await engine.dispose()
 
 
-def test_inconclusive_provider_error_does_not_block_model():
-    asyncio.run(_run_inconclusive_probe_error_keeps_model())
+async def test_inconclusive_provider_error_does_not_block_model():
+    await _run_inconclusive_probe_error_keeps_model()
 
 
 async def _run_transient_failure_keeps_verified_status() -> None:
@@ -188,8 +187,8 @@ async def _run_transient_failure_keeps_verified_status() -> None:
         await engine.dispose()
 
 
-def test_transient_failure_keeps_verified_model_selectable():
-    asyncio.run(_run_transient_failure_keeps_verified_status())
+async def test_transient_failure_keeps_verified_model_selectable():
+    await _run_transient_failure_keeps_verified_status()
 
 
 async def _run_unavailable_model_backs_off() -> None:
@@ -223,8 +222,8 @@ async def _run_unavailable_model_backs_off() -> None:
         await engine.dispose()
 
 
-def test_unavailable_model_is_blocked_with_long_backoff():
-    asyncio.run(_run_unavailable_model_backs_off())
+async def test_unavailable_model_is_blocked_with_long_backoff():
+    await _run_unavailable_model_backs_off()
 
 
 async def _run_override_is_audited() -> list[ModelToolCompatibilityEvent]:
@@ -263,8 +262,8 @@ async def _run_override_is_audited() -> list[ModelToolCompatibilityEvent]:
         await engine.dispose()
 
 
-def test_manual_override_records_attributed_audit_trail():
-    events = asyncio.run(_run_override_is_audited())
+async def test_manual_override_records_attributed_audit_trail():
+    events = await _run_override_is_audited()
 
     assert [e.reason_code for e in events] == ["admin_force_block", "admin_auto"]
     assert all(e.source == "admin" for e in events)
@@ -340,8 +339,8 @@ async def _run_hard_failure_quarantine() -> None:
         await engine.dispose()
 
 
-def test_hard_runtime_failure_quarantines_model():
-    asyncio.run(_run_hard_failure_quarantine())
+async def test_hard_runtime_failure_quarantines_model():
+    await _run_hard_failure_quarantine()
 
 
 async def _run_success_recovers_model() -> None:
@@ -382,8 +381,8 @@ async def _run_success_recovers_model() -> None:
         await engine.dispose()
 
 
-def test_success_clears_quarantine_and_marks_compatible():
-    asyncio.run(_run_success_recovers_model())
+async def test_success_clears_quarantine_and_marks_compatible():
+    await _run_success_recovers_model()
 
 
 async def _run_transient_failure_is_soft() -> None:
@@ -414,8 +413,8 @@ async def _run_transient_failure_is_soft() -> None:
         await engine.dispose()
 
 
-def test_transient_failure_does_not_block_model():
-    asyncio.run(_run_transient_failure_is_soft())
+async def test_transient_failure_does_not_block_model():
+    await _run_transient_failure_is_soft()
 
 
 async def _run_manual_override() -> None:
@@ -457,8 +456,8 @@ async def _run_manual_override() -> None:
         await engine.dispose()
 
 
-def test_manual_override_wins_over_measurements():
-    asyncio.run(_run_manual_override())
+async def test_manual_override_wins_over_measurements():
+    await _run_manual_override()
 
 
 async def _run_auto_router_plugin() -> None:
@@ -514,8 +513,8 @@ async def _run_auto_router_plugin() -> None:
         await engine.dispose()
 
 
-def test_auto_router_constraints_come_from_recorded_evidence():
-    asyncio.run(_run_auto_router_plugin())
+async def test_auto_router_constraints_come_from_recorded_evidence():
+    await _run_auto_router_plugin()
 
 
 async def _run_registry_bootstrap() -> None:
@@ -545,8 +544,8 @@ async def _run_registry_bootstrap() -> None:
         await engine.dispose()
 
 
-def test_sync_registers_text_models_without_guessing():
-    asyncio.run(_run_registry_bootstrap())
+async def test_sync_registers_text_models_without_guessing():
+    await _run_registry_bootstrap()
 
 
 async def _run_event_pruning() -> None:
@@ -588,5 +587,5 @@ async def _run_event_pruning() -> None:
         await engine.dispose()
 
 
-def test_old_compatibility_events_are_pruned():
-    asyncio.run(_run_event_pruning())
+async def test_old_compatibility_events_are_pruned():
+    await _run_event_pruning()

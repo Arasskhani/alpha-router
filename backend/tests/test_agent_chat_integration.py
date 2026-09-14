@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -192,8 +191,8 @@ async def _test_non_generating_plan_returns_only_safe_response() -> None:
     db.commit.assert_awaited_once()
 
 
-def test_non_generating_plan_returns_only_safe_response():
-    asyncio.run(_test_non_generating_plan_returns_only_safe_response())
+async def test_non_generating_plan_returns_only_safe_response():
+    await _test_non_generating_plan_returns_only_safe_response()
 
 
 async def _test_agent_stream_is_buffered_until_post_generation_review() -> None:
@@ -338,5 +337,5 @@ async def _test_agent_stream_is_buffered_until_post_generation_review() -> None:
     assert finalize_run.await_args.kwargs["output_displayed"] is True
 
 
-def test_agent_stream_is_buffered_until_post_generation_review():
-    asyncio.run(_test_agent_stream_is_buffered_until_post_generation_review())
+async def test_agent_stream_is_buffered_until_post_generation_review():
+    await _test_agent_stream_is_buffered_until_post_generation_review()

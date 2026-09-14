@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
 import uuid
 
@@ -287,25 +286,25 @@ async def _delete_all_auto_resets_watermarks_and_keeps_manual() -> None:
     await engine.dispose()
 
 
-def test_two_members_coalesce_into_one_project_job() -> None:
-    asyncio.run(_two_members_coalesce_into_one_job())
+async def test_two_members_coalesce_into_one_project_job() -> None:
+    await _two_members_coalesce_into_one_job()
 
 
-def test_project_chat_never_schedules_a_personal_memory_job() -> None:
-    asyncio.run(_project_chat_never_schedules_personal_job())
+async def test_project_chat_never_schedules_a_personal_memory_job() -> None:
+    await _project_chat_never_schedules_personal_job()
 
 
-def test_rooms_private_and_personal_sessions_are_not_mined() -> None:
-    asyncio.run(_ineligible_sessions_are_skipped())
+async def test_rooms_private_and_personal_sessions_are_not_mined() -> None:
+    await _ineligible_sessions_are_skipped()
 
 
-def test_auto_capture_disabled_stops_project_scheduling() -> None:
-    asyncio.run(_auto_capture_off_stops_scheduling())
+async def test_auto_capture_disabled_stops_project_scheduling() -> None:
+    await _auto_capture_off_stops_scheduling()
 
 
-def test_project_job_lease_recovery_and_completion() -> None:
-    asyncio.run(_lease_recovery_and_completion())
+async def test_project_job_lease_recovery_and_completion() -> None:
+    await _lease_recovery_and_completion()
 
 
-def test_delete_all_learned_facts_resets_watermarks() -> None:
-    asyncio.run(_delete_all_auto_resets_watermarks_and_keeps_manual())
+async def test_delete_all_learned_facts_resets_watermarks() -> None:
+    await _delete_all_auto_resets_watermarks_and_keeps_manual()

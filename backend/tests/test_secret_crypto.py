@@ -1,6 +1,5 @@
 """Greenfield at-rest secret-encryption contracts."""
 
-import asyncio
 import json
 
 import pytest
@@ -133,8 +132,8 @@ async def _test_provider_config_persists_only_ciphertext():
         await _dispose_db(db)
 
 
-def test_provider_config_persists_only_ciphertext():
-    asyncio.run(_test_provider_config_persists_only_ciphertext())
+async def test_provider_config_persists_only_ciphertext():
+    await _test_provider_config_persists_only_ciphertext()
 
 
 def test_sensitive_fields_catalog():

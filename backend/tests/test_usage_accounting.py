@@ -1,6 +1,5 @@
 """Provider-agnostic usage ledger and reconciliation tests."""
 
-import asyncio
 import json
 from types import SimpleNamespace
 
@@ -124,8 +123,8 @@ async def _openrouter_adapter_reads_generation_total_cost() -> None:
     assert cost == pytest.approx(0.1234)
 
 
-def test_openrouter_adapter_reads_generation_total_cost():
-    asyncio.run(_openrouter_adapter_reads_generation_total_cost())
+async def test_openrouter_adapter_reads_generation_total_cost():
+    await _openrouter_adapter_reads_generation_total_cost()
 
 
 def test_automatic_reconciliation_providers_include_openai():
@@ -159,8 +158,8 @@ async def _openai_adapter_reads_direct_cost_from_responses() -> None:
     assert cost == pytest.approx(0.0456)
 
 
-def test_openai_adapter_reads_direct_cost_from_responses():
-    asyncio.run(_openai_adapter_reads_direct_cost_from_responses())
+async def test_openai_adapter_reads_direct_cost_from_responses():
+    await _openai_adapter_reads_direct_cost_from_responses()
 
 
 async def _openai_adapter_quotes_catalog_from_responses_usage() -> None:
@@ -217,8 +216,8 @@ async def _openai_adapter_quotes_catalog_from_responses_usage() -> None:
     assert cost == pytest.approx(0.002)
 
 
-def test_openai_adapter_quotes_catalog_from_responses_usage():
-    asyncio.run(_openai_adapter_quotes_catalog_from_responses_usage())
+async def test_openai_adapter_quotes_catalog_from_responses_usage():
+    await _openai_adapter_quotes_catalog_from_responses_usage()
 
 
 async def _openai_adapter_skips_chat_completion_ids() -> None:
@@ -240,8 +239,8 @@ async def _openai_adapter_skips_chat_completion_ids() -> None:
     assert called is False
 
 
-def test_openai_adapter_skips_chat_completion_ids():
-    asyncio.run(_openai_adapter_skips_chat_completion_ids())
+async def test_openai_adapter_skips_chat_completion_ids():
+    await _openai_adapter_skips_chat_completion_ids()
 
 
 async def _configured_credit_pricing_is_applied() -> None:
@@ -290,8 +289,8 @@ async def _configured_credit_pricing_is_applied() -> None:
     await engine.dispose()
 
 
-def test_configured_credit_pricing_is_applied():
-    asyncio.run(_configured_credit_pricing_is_applied())
+async def test_configured_credit_pricing_is_applied():
+    await _configured_credit_pricing_is_applied()
 
 
 async def _ledger_accumulates_and_reconciliation_adjusts_budget() -> None:
@@ -377,8 +376,8 @@ async def _ledger_accumulates_and_reconciliation_adjusts_budget() -> None:
     await engine.dispose()
 
 
-def test_ledger_accumulates_and_reconciliation_adjusts_budget():
-    asyncio.run(_ledger_accumulates_and_reconciliation_adjusts_budget())
+async def test_ledger_accumulates_and_reconciliation_adjusts_budget():
+    await _ledger_accumulates_and_reconciliation_adjusts_budget()
 
 
 async def _idempotent_log_replay_does_not_charge_twice() -> None:
@@ -441,8 +440,8 @@ async def _idempotent_log_replay_does_not_charge_twice() -> None:
     await engine.dispose()
 
 
-def test_idempotent_log_replay_does_not_charge_twice():
-    asyncio.run(_idempotent_log_replay_does_not_charge_twice())
+async def test_idempotent_log_replay_does_not_charge_twice():
+    await _idempotent_log_replay_does_not_charge_twice()
 
 
 def test_openrouter_speech_quotes_prompt_as_usd_per_character():

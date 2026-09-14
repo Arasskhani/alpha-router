@@ -28,7 +28,7 @@ async def _max_tick_gap(coro, *, ticks: int = 30, period: float = 0.01) -> float
     return gaps["max"]
 
 
-def test_system_metrics_sampling_does_not_stall_the_loop(monkeypatch):
+async def test_system_metrics_sampling_does_not_stall_the_loop(monkeypatch):
     from app.services import db_monitor_service as mon
 
     def slow_collect():
@@ -36,15 +36,11 @@ def test_system_metrics_sampling_does_not_stall_the_loop(monkeypatch):
         return {"available": True, "host": {"cpu_percent": 1.0}, "process": None, "error": None}
 
     monkeypatch.setattr(mon, "_collect_system_metrics", slow_collect)
-
-    async def run():
-        gap = await _max_tick_gap(mon.collect_system_metrics())
-        assert gap < 0.1, gap
-
-    asyncio.run(run())
+    gap = await _max_tick_gap(mon.collect_system_metrics())
+    assert gap < 0.1, gap
 
 
-def test_openrouter_transcription_encodes_off_loop_and_sends_base64():
+async def test_openrouter_transcription_encodes_off_loop_and_sends_base64():
     from app.services import openrouter_transcription_service as ors
 
     audio = os.urandom(3 * 1024 * 1024)
@@ -61,22 +57,19 @@ def test_openrouter_transcription_encodes_off_loop_and_sends_base64():
 
         return R()
 
-    async def run():
-        with (
-            patch.object(ors, "post_openrouter_json", new=fake_post),
-            patch.object(ors, "audio_format_for", lambda f, m: "wav"),
-        ):
-            # Response parsing details are not under test here; the payload is.
-            with contextlib.suppress(Exception):
-                await ors.transcribe_with_openrouter(
-                    api_key="k", base_url=None, model="m", audio_bytes=audio, filename="a.wav", mime_type="audio/wav"
-                )
-        assert captured["payload"]["input_audio"]["data"] == base64.b64encode(audio).decode("ascii")
-
-    asyncio.run(run())
+    with (
+        patch.object(ors, "post_openrouter_json", new=fake_post),
+        patch.object(ors, "audio_format_for", lambda f, m: "wav"),
+    ):
+        # Response parsing details are not under test here; the payload is.
+        with contextlib.suppress(Exception):
+            await ors.transcribe_with_openrouter(
+                api_key="k", base_url=None, model="m", audio_bytes=audio, filename="a.wav", mime_type="audio/wav"
+            )
+    assert captured["payload"]["input_audio"]["data"] == base64.b64encode(audio).decode("ascii")
 
 
-def test_transcription_temp_file_is_written_and_removed_in_threads(monkeypatch, tmp_path):
+async def test_transcription_temp_file_is_written_and_removed_in_threads(monkeypatch, tmp_path):
     from app.services import transcription_service as ts
 
     calls = []
@@ -87,28 +80,20 @@ def test_transcription_temp_file_is_written_and_removed_in_threads(monkeypatch, 
         return await real_to_thread(fn, *a, **k)
 
     monkeypatch.setattr(ts.asyncio, "to_thread", spy_to_thread)
-
-    async def run():
-        path = await ts.asyncio.to_thread(ts._write_temp_audio, b"RIFF....", ".wav")
-        assert os.path.exists(path)
-        await ts.asyncio.to_thread(ts._unlink_quietly, path)
-        assert not os.path.exists(path)
-        await ts.asyncio.to_thread(ts._unlink_quietly, path)  # idempotent
-        assert calls == ["_write_temp_audio", "_unlink_quietly", "_unlink_quietly"]
-
-    asyncio.run(run())
+    path = await ts.asyncio.to_thread(ts._write_temp_audio, b"RIFF....", ".wav")
+    assert os.path.exists(path)
+    await ts.asyncio.to_thread(ts._unlink_quietly, path)
+    assert not os.path.exists(path)
+    await ts.asyncio.to_thread(ts._unlink_quietly, path)  # idempotent
+    assert calls == ["_write_temp_audio", "_unlink_quietly", "_unlink_quietly"]
 
 
-def test_readiness_uses_shared_redis_client():
+async def test_readiness_uses_shared_redis_client():
     from app.services import readiness_service as rs
 
     fake = AsyncMock()
     fake.ping = AsyncMock(return_value=True)
-
-    async def run():
-        with patch("app.core.redis_client.get_redis", return_value=fake):
-            await rs._check_redis()
-        fake.ping.assert_awaited_once()
-        fake.aclose.assert_not_called()
-
-    asyncio.run(run())
+    with patch("app.core.redis_client.get_redis", return_value=fake):
+        await rs._check_redis()
+    fake.ping.assert_awaited_once()
+    fake.aclose.assert_not_called()

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 
 from qdrant_client import AsyncQdrantClient
@@ -125,5 +124,5 @@ async def _tenant_and_lifecycle() -> None:
     await service.close()
 
 
-def test_memory_vector_tenant_isolation_and_alias() -> None:
-    asyncio.run(_tenant_and_lifecycle())
+async def test_memory_vector_tenant_isolation_and_alias() -> None:
+    await _tenant_and_lifecycle()

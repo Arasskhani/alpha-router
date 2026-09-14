@@ -1,6 +1,5 @@
 """Public/Private catalog model access control."""
 
-import asyncio
 from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import select
@@ -242,25 +241,25 @@ async def _test_sync_preserves_access_type() -> None:
     await engine.dispose()
 
 
-def test_public_visible_to_regular_user():
-    asyncio.run(_test_public_visible_to_regular_user())
+async def test_public_visible_to_regular_user():
+    await _test_public_visible_to_regular_user()
 
 
-def test_private_user_and_group_assignment():
-    asyncio.run(_test_private_user_and_group_assignment())
+async def test_private_user_and_group_assignment():
+    await _test_private_user_and_group_assignment()
 
 
-def test_private_empty_super_admin_only():
-    asyncio.run(_test_private_empty_super_admin_only())
+async def test_private_empty_super_admin_only():
+    await _test_private_empty_super_admin_only()
 
 
-def test_bulk_public_clears_assignments_private_keeps():
-    asyncio.run(_test_bulk_public_clears_assignments_private_keeps())
+async def test_bulk_public_clears_assignments_private_keeps():
+    await _test_bulk_public_clears_assignments_private_keeps()
 
 
-def test_master_and_alpha_router_key_subjects():
-    asyncio.run(_test_master_and_alpha_router_key_subjects())
+async def test_master_and_alpha_router_key_subjects():
+    await _test_master_and_alpha_router_key_subjects()
 
 
-def test_sync_preserves_access_type():
-    asyncio.run(_test_sync_preserves_access_type())
+async def test_sync_preserves_access_type():
+    await _test_sync_preserves_access_type()

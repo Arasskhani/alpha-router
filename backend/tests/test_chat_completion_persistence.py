@@ -77,8 +77,8 @@ async def _run_persist_roundtrip() -> None:
         assert msgs[1].get("clientMessageId") == "a1"
 
 
-def test_chat_completion_persister_roundtrip() -> None:
-    asyncio.run(_run_persist_roundtrip())
+async def test_chat_completion_persister_roundtrip() -> None:
+    await _run_persist_roundtrip()
 
 
 async def _run_persist_creates_missing_session() -> None:
@@ -121,8 +121,8 @@ async def _run_persist_creates_missing_session() -> None:
         assert msgs[1]["content"] == "World"
 
 
-def test_chat_completion_persister_creates_missing_session() -> None:
-    asyncio.run(_run_persist_creates_missing_session())
+async def test_chat_completion_persister_creates_missing_session() -> None:
+    await _run_persist_creates_missing_session()
 
 
 async def _run_persist_sets_fallback_title() -> None:
@@ -165,8 +165,8 @@ async def _run_persist_sets_fallback_title() -> None:
         assert "quantum" in row.title.lower()
 
 
-def test_chat_completion_persister_sets_fallback_title() -> None:
-    asyncio.run(_run_persist_sets_fallback_title())
+async def test_chat_completion_persister_sets_fallback_title() -> None:
+    await _run_persist_sets_fallback_title()
 
 
 async def _run_schedule_content_does_not_block() -> None:
@@ -227,8 +227,8 @@ async def _run_schedule_content_does_not_block() -> None:
     await engine.dispose()
 
 
-def test_schedule_content_does_not_block_on_flush() -> None:
-    asyncio.run(_run_schedule_content_does_not_block())
+async def test_schedule_content_does_not_block_on_flush() -> None:
+    await _run_schedule_content_does_not_block()
 
 
 async def _run_schedule_content_persists_partial() -> None:
@@ -279,5 +279,5 @@ async def _run_schedule_content_persists_partial() -> None:
     await engine.dispose()
 
 
-def test_schedule_content_persists_partial_without_finalize() -> None:
-    asyncio.run(_run_schedule_content_persists_partial())
+async def test_schedule_content_persists_partial_without_finalize() -> None:
+    await _run_schedule_content_persists_partial()

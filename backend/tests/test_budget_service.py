@@ -1,7 +1,5 @@
 """Budget plan resolution and chat blocking without an assigned plan."""
 
-import asyncio
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -111,20 +109,20 @@ async def _test_inherit_group_plan_without_user_override() -> None:
         assert await resolve_monthly_budget(db, user) == 20.0
 
 
-def test_no_plan_assignments_yield_zero_budget():
-    asyncio.run(_test_no_plan_assignments_yield_zero_budget())
+async def test_no_plan_assignments_yield_zero_budget():
+    await _test_no_plan_assignments_yield_zero_budget()
 
 
-def test_direct_plan_assignment_sets_budget():
-    asyncio.run(_test_direct_plan_assignment_sets_budget())
+async def test_direct_plan_assignment_sets_budget():
+    await _test_direct_plan_assignment_sets_budget()
 
 
-def test_explicit_no_plan_blocks_group_inheritance():
-    asyncio.run(_test_explicit_no_plan_blocks_group_inheritance())
+async def test_explicit_no_plan_blocks_group_inheritance():
+    await _test_explicit_no_plan_blocks_group_inheritance()
 
 
-def test_inherit_group_plan_without_user_override():
-    asyncio.run(_test_inherit_group_plan_without_user_override())
+async def test_inherit_group_plan_without_user_override():
+    await _test_inherit_group_plan_without_user_override()
 
 
 def test_budget_request_blocked_without_plan():

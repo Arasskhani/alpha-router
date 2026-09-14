@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime
 import uuid
 
@@ -291,20 +290,20 @@ async def _run_schedule_expired_retention_can_scope_to_one_base() -> None:
     await engine.dispose()
 
 
-def test_soft_revoke_document_marks_document():
-    asyncio.run(_run_soft_revoke_document_marks_document())
+async def test_soft_revoke_document_marks_document():
+    await _run_soft_revoke_document_marks_document()
 
 
-def test_hard_delete_knowledge_base_tombstones_row():
-    asyncio.run(_run_hard_delete_knowledge_base_tombstones_row())
+async def test_hard_delete_knowledge_base_tombstones_row():
+    await _run_hard_delete_knowledge_base_tombstones_row()
 
 
-def test_purge_agent_tombstones_row():
-    asyncio.run(_run_purge_agent_tombstones_row())
+async def test_purge_agent_tombstones_row():
+    await _run_purge_agent_tombstones_row()
 
 
-def test_schedule_expired_retention_can_scope_to_one_base():
-    asyncio.run(_run_schedule_expired_retention_can_scope_to_one_base())
+async def test_schedule_expired_retention_can_scope_to_one_base():
+    await _run_schedule_expired_retention_can_scope_to_one_base()
 
 
 async def _run_purge_expired_retention_removes_expired_files() -> None:
@@ -396,8 +395,8 @@ async def _run_purge_expired_retention_removes_expired_files() -> None:
         assert (await db.get(KnowledgeDocument, fresh.id)).status == "revoked"
 
 
-def test_purge_expired_retention_removes_expired_files():
-    asyncio.run(_run_purge_expired_retention_removes_expired_files())
+async def test_purge_expired_retention_removes_expired_files():
+    await _run_purge_expired_retention_removes_expired_files()
 
 
 async def _run_overview_counts_only_live_documents() -> None:
@@ -439,5 +438,5 @@ async def _run_overview_counts_only_live_documents() -> None:
     await engine.dispose()
 
 
-def test_overview_counts_only_live_documents():
-    asyncio.run(_run_overview_counts_only_live_documents())
+async def test_overview_counts_only_live_documents():
+    await _run_overview_counts_only_live_documents()

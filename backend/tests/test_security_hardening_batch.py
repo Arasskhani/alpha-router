@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -58,7 +57,7 @@ def test_master_key_comparison_is_constant_time_and_rejects_empty(monkeypatch):
 # --- #17: admin IP guard fails closed ----------------------------------------
 
 
-def test_admin_ip_guard_answers_503_without_policy_and_db():
+async def test_admin_ip_guard_answers_503_without_policy_and_db():
     from app.services import admin_ip_guard as guard
 
     sent = []
@@ -88,7 +87,7 @@ def test_admin_ip_guard_answers_503_without_policy_and_db():
         ):
             await mw(scope, None, send)
 
-    asyncio.run(run())
+    await run()
     assert "passed-through" not in sent
     start = next(m for m in sent if isinstance(m, dict) and m.get("type") == "http.response.start")
     assert start["status"] == 503
@@ -111,33 +110,30 @@ def test_xlsx_cells_starting_with_formula_characters_are_escaped():
 # --- #24: streaming update strips NUL and bounds size -------------------------
 
 
-def test_update_last_message_strips_nul_and_truncates():
+async def test_update_last_message_strips_nul_and_truncates():
     from app.models.chat import ChatMessage, ChatSession
     from app.models.user import User
     from app.services import user_chat_storage_service as ucs
 
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                u = User(username="n", email="n@t", hashed_password="x", auth_provider="local", is_active=True)
-                db.add(u)
-                await db.flush()
-                s = ChatSession(id="s1", user_id=u.id, title="t")
-                db.add(s)
-                await db.flush()
-                db.add(ChatMessage(id="m1", session_id="s1", role="assistant", content="", sequence=1))
-                await db.commit()
-                huge = "a" * (ucs._MAX_MESSAGE_BYTES + 100)
-                await ucs.update_last_session_message(db, u.id, "s1", "he\x00llo" + huge)
-                row = await db.get(ChatMessage, "m1")
-                assert "\x00" not in row.content
-                assert row.content.startswith("hello")
-                assert len(row.content.encode("utf-8")) <= ucs._MAX_MESSAGE_BYTES
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            u = User(username="n", email="n@t", hashed_password="x", auth_provider="local", is_active=True)
+            db.add(u)
+            await db.flush()
+            s = ChatSession(id="s1", user_id=u.id, title="t")
+            db.add(s)
+            await db.flush()
+            db.add(ChatMessage(id="m1", session_id="s1", role="assistant", content="", sequence=1))
+            await db.commit()
+            huge = "a" * (ucs._MAX_MESSAGE_BYTES + 100)
+            await ucs.update_last_session_message(db, u.id, "s1", "he\x00llo" + huge)
+            row = await db.get(ChatMessage, "m1")
+            assert "\x00" not in row.content
+            assert row.content.startswith("hello")
+            assert len(row.content.encode("utf-8")) <= ucs._MAX_MESSAGE_BYTES
+    finally:
+        await engine.dispose()
 
 
 # --- B-27/B-28: STT suffix whitelist and WAV header sanity --------------------
@@ -168,7 +164,7 @@ def test_transcription_suffix_whitelist_and_wav_sanity():
 # --- B-15: LDAP prune refuses empty / mass-removal answers --------------------
 
 
-def test_ldap_prune_refuses_empty_directory_and_mass_removal(monkeypatch):
+async def test_ldap_prune_refuses_empty_directory_and_mass_removal(monkeypatch):
     from app.models.user import User
     from app.services import ldap_sync
 
@@ -211,9 +207,9 @@ def test_ldap_prune_refuses_empty_directory_and_mass_removal(monkeypatch):
         finally:
             await engine.dispose()
 
-    asyncio.run(run([], "empty_directory"))
+    await run([], "empty_directory")
     one = [{"username": "ldap0", "external_id": "ext0", "email": "l0@t", "display_name": "L0", "dn": "cn=l0"}]
-    asyncio.run(run(one, "ratio_"))
+    await run(one, "ratio_")
 
 
 # --- #14: report schedules are validated --------------------------------------
@@ -242,59 +238,52 @@ def test_report_schedule_validation():
 # --- B-26: chat_session_id ownership -----------------------------------------
 
 
-def test_chat_session_must_belong_to_caller_or_writable_project():
+async def test_chat_session_must_belong_to_caller_or_writable_project():
     from app.models.chat import ChatSession
     from app.models.user import User
     from app.services.chat_session_access import resolve_owned_chat_session
 
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                me = User(username="me", email="me@t", hashed_password="x", auth_provider="local", is_active=True)
-                other = User(username="ot", email="ot@t", hashed_password="x", auth_provider="local", is_active=True)
-                db.add_all([me, other])
-                await db.flush()
-                db.add(ChatSession(id="mine", user_id=me.id, title="t"))
-                db.add(ChatSession(id="theirs", user_id=other.id, title="t"))
-                await db.commit()
-                assert (await resolve_owned_chat_session(db, user=me, chat_session_id="mine")).id == "mine"
-                assert await resolve_owned_chat_session(db, user=me, chat_session_id=None) is None
-                # Unknown ids are the client's private / not-yet-synced sessions:
-                # opaque, allowed (a 404 here broke attachments in Private Mode).
-                assert await resolve_owned_chat_session(db, user=me, chat_session_id="not-synced-yet") is None
-                with pytest.raises(HTTPException) as exc:
-                    await resolve_owned_chat_session(db, user=me, chat_session_id="theirs")
-                assert exc.value.status_code == 404
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            me = User(username="me", email="me@t", hashed_password="x", auth_provider="local", is_active=True)
+            other = User(username="ot", email="ot@t", hashed_password="x", auth_provider="local", is_active=True)
+            db.add_all([me, other])
+            await db.flush()
+            db.add(ChatSession(id="mine", user_id=me.id, title="t"))
+            db.add(ChatSession(id="theirs", user_id=other.id, title="t"))
+            await db.commit()
+            assert (await resolve_owned_chat_session(db, user=me, chat_session_id="mine")).id == "mine"
+            assert await resolve_owned_chat_session(db, user=me, chat_session_id=None) is None
+            # Unknown ids are the client's private / not-yet-synced sessions:
+            # opaque, allowed (a 404 here broke attachments in Private Mode).
+            assert await resolve_owned_chat_session(db, user=me, chat_session_id="not-synced-yet") is None
+            with pytest.raises(HTTPException) as exc:
+                await resolve_owned_chat_session(db, user=me, chat_session_id="theirs")
+            assert exc.value.status_code == 404
+    finally:
+        await engine.dispose()
 
 
 # --- B-30: connection base_url passes the SSRF guard --------------------------
 
 
-def test_connection_base_url_rejects_internal_targets(monkeypatch):
+async def test_connection_base_url_rejects_internal_targets(monkeypatch):
     from app.api import admin
 
     monkeypatch.setattr(
         "app.services.ssrf_guard.get_settings", lambda: SimpleNamespace(allow_ssrf_private_ranges=False)
     )
-
-    async def run():
-        for bad in ("http://169.254.169.254/latest", "http://127.0.0.1:6333", "http://10.1.2.3/v1", "ftp://x.test"):
-            with pytest.raises(HTTPException) as exc:
-                await admin._validated_connection_base_url(bad)
-            assert exc.value.status_code == 400
-        with patch("app.services.ssrf_guard.socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 0))]):
-            assert (
-                await admin._validated_connection_base_url(" https://api.provider.test/v1 ")
-                == "https://api.provider.test/v1"
-            )
-        assert await admin._validated_connection_base_url("") is None
-
-    asyncio.run(run())
+    for bad in ("http://169.254.169.254/latest", "http://127.0.0.1:6333", "http://10.1.2.3/v1", "ftp://x.test"):
+        with pytest.raises(HTTPException) as exc:
+            await admin._validated_connection_base_url(bad)
+        assert exc.value.status_code == 400
+    with patch("app.services.ssrf_guard.socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 0))]):
+        assert (
+            await admin._validated_connection_base_url(" https://api.provider.test/v1 ")
+            == "https://api.provider.test/v1"
+        )
+    assert await admin._validated_connection_base_url("") is None
 
 
 # --- production guard: ALLOW_INSECURE_SAML -------------------------------------
@@ -324,33 +313,30 @@ def test_allow_insecure_saml_is_a_production_insecurity():
 # --- B-20: system default gate matches the transcription gate -------------------
 
 
-def test_system_default_requires_connection_with_api_key():
+async def test_system_default_requires_connection_with_api_key():
     from app.models.connection import Connection
     from app.models.model_catalog import AIModel
     from app.services import system_default_models as sdm
 
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                no_key = Connection(name="nokey", provider_type="openai", api_key_encrypted="", is_active=True)
-                db.add(no_key)
-                await db.flush()
-                orphan = AIModel(external_id="m1", provider_type="openai", is_enabled=True, access_type="public")
-                keyless = AIModel(
-                    connection_id=no_key.id,
-                    external_id="m2",
-                    provider_type="openai",
-                    is_enabled=True,
-                    access_type="public",
-                )
-                db.add_all([orphan, keyless])
-                await db.commit()
-                entry = SimpleNamespace(supports=lambda m: True, requirement="x")
-                for model, msg in ((orphan, "no connection"), (keyless, "no API key")):
-                    with pytest.raises(sdm.SystemDefaultModelError, match=msg):
-                        await sdm._assert_usable(db, entry, model)
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            no_key = Connection(name="nokey", provider_type="openai", api_key_encrypted="", is_active=True)
+            db.add(no_key)
+            await db.flush()
+            orphan = AIModel(external_id="m1", provider_type="openai", is_enabled=True, access_type="public")
+            keyless = AIModel(
+                connection_id=no_key.id,
+                external_id="m2",
+                provider_type="openai",
+                is_enabled=True,
+                access_type="public",
+            )
+            db.add_all([orphan, keyless])
+            await db.commit()
+            entry = SimpleNamespace(supports=lambda m: True, requirement="x")
+            for model, msg in ((orphan, "no connection"), (keyless, "no API key")):
+                with pytest.raises(sdm.SystemDefaultModelError, match=msg):
+                    await sdm._assert_usable(db, entry, model)
+    finally:
+        await engine.dispose()

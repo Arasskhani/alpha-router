@@ -1,7 +1,5 @@
 """Connection allowlist for gateway API keys."""
 
-import asyncio
-
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -226,33 +224,33 @@ async def _test_gateway_models_list_respects_allowlist() -> None:
         await engine.dispose()
 
 
-def test_unrestricted_key_returns_none_allowlist():
-    asyncio.run(_test_unrestricted_key_returns_none_allowlist())
+async def test_unrestricted_key_returns_none_allowlist():
+    await _test_unrestricted_key_returns_none_allowlist()
 
 
-def test_restricted_empty_allowlist_is_deny_all():
-    asyncio.run(_test_restricted_empty_allowlist_is_deny_all())
+async def test_restricted_empty_allowlist_is_deny_all():
+    await _test_restricted_empty_allowlist_is_deny_all()
 
 
-def test_restricted_allowlist_filters_models():
-    asyncio.run(_test_restricted_allowlist_filters_models())
+async def test_restricted_allowlist_filters_models():
+    await _test_restricted_allowlist_filters_models()
 
 
-def test_clearing_restriction_does_not_keep_join_rows():
-    asyncio.run(_test_clearing_restriction_does_not_keep_join_rows())
+async def test_clearing_restriction_does_not_keep_join_rows():
+    await _test_clearing_restriction_does_not_keep_join_rows()
 
 
-def test_deleted_connection_keeps_key_restricted():
-    asyncio.run(_test_deleted_connection_keeps_key_restricted())
+async def test_deleted_connection_keeps_key_restricted():
+    await _test_deleted_connection_keeps_key_restricted()
 
 
-def test_unknown_connection_id_raises():
-    asyncio.run(_test_unknown_connection_id_raises())
+async def test_unknown_connection_id_raises():
+    await _test_unknown_connection_id_raises()
 
 
-def test_resolve_uses_allowed_connection_for_duplicate_ids():
-    asyncio.run(_test_resolve_uses_allowed_connection_for_duplicate_ids())
+async def test_resolve_uses_allowed_connection_for_duplicate_ids():
+    await _test_resolve_uses_allowed_connection_for_duplicate_ids()
 
 
-def test_gateway_models_list_respects_allowlist():
-    asyncio.run(_test_gateway_models_list_respects_allowlist())
+async def test_gateway_models_list_respects_allowlist():
+    await _test_gateway_models_list_respects_allowlist()

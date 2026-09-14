@@ -9,6 +9,7 @@ from app.core import redis_client
 
 
 def test_get_redis_builds_once_per_loop_and_url(monkeypatch):
+    # Deliberately sync: the point is two *separate* event loops (asyncio.run twice).
     redis_client.reset_for_tests()
     built = []
 
@@ -47,7 +48,7 @@ def test_get_redis_builds_once_per_loop_and_url(monkeypatch):
     redis_client.reset_for_tests()
 
 
-def test_hot_paths_share_the_client_and_never_close_it(monkeypatch):
+async def test_hot_paths_share_the_client_and_never_close_it(monkeypatch):
     """100 rate-limit checks + 100 presence pings + 50 one-time codes = 1 client, 0 aclose."""
     redis_client.reset_for_tests()
 
@@ -111,5 +112,5 @@ def test_hot_paths_share_the_client_and_never_close_it(monkeypatch):
         assert client.closed == 0
         assert await presence_service.online_user_ids([1, 2, 999]) == {1, 2}
 
-    asyncio.run(run())
+    await run()
     redis_client.reset_for_tests()

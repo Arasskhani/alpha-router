@@ -131,8 +131,8 @@ async def _run_empty_completion_records_failure() -> tuple[list[dict], list[dict
     return recorded, seen_kwargs
 
 
-def test_empty_code_interpreter_turn_records_selected_model_failure():
-    recorded, seen_kwargs = asyncio.run(_run_empty_completion_records_failure())
+async def test_empty_code_interpreter_turn_records_selected_model_failure():
+    recorded, seen_kwargs = await _run_empty_completion_records_failure()
 
     assert recorded, "runtime failures must be recorded for the registry"
     first = recorded[0]
@@ -163,8 +163,8 @@ async def _run_missing_connection_is_noop() -> dict | None:
     return await proxy_service._adaptive_openrouter_extra_body(ai_model)
 
 
-def test_models_without_connection_skip_adaptive_routing():
-    assert asyncio.run(_run_missing_connection_is_noop()) is None
+async def test_models_without_connection_skip_adaptive_routing():
+    assert await _run_missing_connection_is_noop() is None
 
 
 async def _run_alias_evidence_is_dropped() -> list[dict]:
@@ -200,8 +200,8 @@ async def _run_alias_evidence_is_dropped() -> list[dict]:
     return recorded
 
 
-def test_router_alias_evidence_is_not_recorded():
-    recorded = asyncio.run(_run_alias_evidence_is_dropped())
+async def test_router_alias_evidence_is_not_recorded():
+    recorded = await _run_alias_evidence_is_dropped()
     assert [r["external_model_id"] for r in recorded] == ["vendor/real"]
 
 
@@ -234,8 +234,8 @@ async def _run_success_resolves_concrete_model() -> list[dict]:
     return recorded
 
 
-def test_router_success_is_credited_to_selected_model():
-    recorded = asyncio.run(_run_success_resolves_concrete_model())
+async def test_router_success_is_credited_to_selected_model():
+    recorded = await _run_success_resolves_concrete_model()
     assert len(recorded) == 1
     assert recorded[0]["external_model_id"] == "vendor/picked"
     assert recorded[0]["success"] is True
@@ -338,8 +338,8 @@ async def _run_final_answer_after_execution() -> tuple[list[dict], int]:
     return recorded, calls
 
 
-def test_final_answer_after_code_execution_is_not_a_failure():
-    recorded, calls = asyncio.run(_run_final_answer_after_execution())
+async def test_final_answer_after_code_execution_is_not_a_failure():
+    recorded, calls = await _run_final_answer_after_execution()
 
     # No third call: a completed flow must not be nudged for more Python.
     assert calls == 2

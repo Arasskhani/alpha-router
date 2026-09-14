@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import importlib.util
 import sys
 from pathlib import Path
@@ -51,8 +50,8 @@ async def _exercise_stream_request() -> None:
     assert captured["alpharouter"]["session_id"].startswith("load-")
 
 
-def test_load_harness_streams_privately_and_supports_cancellation() -> None:
-    asyncio.run(_exercise_stream_request())
+async def test_load_harness_streams_privately_and_supports_cancellation() -> None:
+    await _exercise_stream_request()
 
 
 def test_load_harness_percentiles_are_deterministic() -> None:

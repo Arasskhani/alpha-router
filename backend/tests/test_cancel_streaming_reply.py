@@ -1,6 +1,5 @@
 """Tests for server-side streaming cancellation."""
 
-import asyncio
 import datetime as dt
 from unittest.mock import patch
 
@@ -269,16 +268,16 @@ async def _run_cancel_orphan_pending_with_received_at() -> None:
     await engine.dispose()
 
 
-def test_cancel_streaming_reply_roundtrip() -> None:
-    asyncio.run(_run_cancel_roundtrip())
+async def test_cancel_streaming_reply_roundtrip() -> None:
+    await _run_cancel_roundtrip()
 
 
-def test_cancel_image_pending_finalizes() -> None:
-    asyncio.run(_run_cancel_image_pending())
+async def test_cancel_image_pending_finalizes() -> None:
+    await _run_cancel_image_pending()
 
 
-def test_stale_image_pending_reconciled_only_after_threshold() -> None:
-    asyncio.run(_run_stale_pending_reconcile())
+async def test_stale_image_pending_reconciled_only_after_threshold() -> None:
+    await _run_stale_pending_reconcile()
 
 
 async def _run_reconcile_orphan_pending_with_received_at() -> None:
@@ -326,9 +325,9 @@ async def _run_reconcile_orphan_pending_with_received_at() -> None:
     await engine.dispose()
 
 
-def test_cancel_orphan_image_pending_with_received_at() -> None:
-    asyncio.run(_run_cancel_orphan_pending_with_received_at())
+async def test_cancel_orphan_image_pending_with_received_at() -> None:
+    await _run_cancel_orphan_pending_with_received_at()
 
 
-def test_reconcile_orphan_image_pending_with_received_at() -> None:
-    asyncio.run(_run_reconcile_orphan_pending_with_received_at())
+async def test_reconcile_orphan_image_pending_with_received_at() -> None:
+    await _run_reconcile_orphan_pending_with_received_at()

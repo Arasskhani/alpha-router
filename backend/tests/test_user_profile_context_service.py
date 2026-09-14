@@ -1,7 +1,5 @@
 """Tests for directory profile context injection."""
 
-import asyncio
-
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
@@ -102,5 +100,5 @@ async def _inject_roundtrip() -> None:
     await engine.dispose()
 
 
-def test_augment_messages_with_profile() -> None:
-    asyncio.run(_inject_roundtrip())
+async def test_augment_messages_with_profile() -> None:
+    await _inject_roundtrip()

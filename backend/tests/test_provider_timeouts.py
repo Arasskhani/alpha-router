@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -23,7 +22,7 @@ def test_only_pre_send_failures_are_resent():
     assert ois.is_retryable_openrouter_transport_error(httpx.ReadTimeout("x"))
 
 
-def test_post_is_not_resent_after_read_timeout_but_is_after_connect_error():
+async def test_post_is_not_resent_after_read_timeout_but_is_after_connect_error():
     calls = {"n": 0}
 
     class Client:
@@ -38,24 +37,21 @@ def test_post_is_not_resent_after_read_timeout_but_is_after_connect_error():
                 raise httpx.ConnectError("refused")
             return httpx.Response(200, json={"ok": True}, request=httpx.Request("POST", url))
 
-    async def run():
-        with (
-            patch.object(ois, "get_openrouter_http_client", lambda: Client()),
-            patch.object(ois, "OPENROUTER_DISCONNECT_BACKOFF_SEC", (0.0,)),
-        ):
-            with pytest.raises(httpx.ReadTimeout):
-                await ois.post_openrouter_json("https://o.test/x", headers={}, json_payload={}, max_attempts=5)
-        assert calls["n"] == 1, "a paid POST that timed out on read must not be sent again"
+    with (
+        patch.object(ois, "get_openrouter_http_client", lambda: Client()),
+        patch.object(ois, "OPENROUTER_DISCONNECT_BACKOFF_SEC", (0.0,)),
+    ):
+        with pytest.raises(httpx.ReadTimeout):
+            await ois.post_openrouter_json("https://o.test/x", headers={}, json_payload={}, max_attempts=5)
+    assert calls["n"] == 1, "a paid POST that timed out on read must not be sent again"
 
-        calls["n"] = 0
-        with (
-            patch.object(ois, "get_openrouter_http_client", lambda: Client2()),
-            patch.object(ois, "OPENROUTER_DISCONNECT_BACKOFF_SEC", (0.0,)),
-        ):
-            resp = await ois.post_openrouter_json("https://o.test/x", headers={}, json_payload={}, max_attempts=5)
-        assert resp.status_code == 200 and calls["n"] == 3
-
-    asyncio.run(run())
+    calls["n"] = 0
+    with (
+        patch.object(ois, "get_openrouter_http_client", lambda: Client2()),
+        patch.object(ois, "OPENROUTER_DISCONNECT_BACKOFF_SEC", (0.0,)),
+    ):
+        resp = await ois.post_openrouter_json("https://o.test/x", headers={}, json_payload={}, max_attempts=5)
+    assert resp.status_code == 200 and calls["n"] == 3
 
 
 def test_pool_size_and_image_timeout_come_from_settings(monkeypatch):

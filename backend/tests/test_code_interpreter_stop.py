@@ -163,8 +163,8 @@ async def _run_stop_during_sandbox() -> dict:
     }
 
 
-def test_stop_during_sandbox_interrupts_the_turn():
-    result = asyncio.run(_run_stop_during_sandbox())
+async def test_stop_during_sandbox_interrupts_the_turn():
+    result = await _run_stop_during_sandbox()
 
     # The turn must end at the sandbox: no follow-up completion is requested.
     assert result["calls"] == 1
@@ -262,8 +262,8 @@ async def _run_stop_before_sandbox() -> dict:
     return state
 
 
-def test_stop_before_sandbox_skips_execution_entirely():
-    state = asyncio.run(_run_stop_before_sandbox())
+async def test_stop_before_sandbox_skips_execution_entirely():
+    state = await _run_stop_before_sandbox()
 
     assert state["calls"] == 1
     assert state["sandbox_calls"] == 0
@@ -349,7 +349,7 @@ async def _run_partial_flush_stops_after_cancel() -> list[str]:
     return persister.contents
 
 
-def test_no_partial_flush_after_cancel():
-    contents = asyncio.run(_run_partial_flush_stops_after_cancel())
+async def test_no_partial_flush_after_cancel():
+    contents = await _run_partial_flush_stops_after_cancel()
 
     assert contents == ["first "]

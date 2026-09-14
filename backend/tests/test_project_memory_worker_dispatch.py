@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
 import uuid
 from unittest.mock import patch
@@ -154,5 +153,5 @@ async def _dispatch() -> None:
     await engine.dispose()
 
 
-def test_project_memory_job_dispatches_on_shared_worker() -> None:
-    asyncio.run(_dispatch())
+async def test_project_memory_job_dispatches_on_shared_worker() -> None:
+    await _dispatch()

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 
 from fastapi import FastAPI
@@ -136,5 +135,5 @@ async def client_list_via_db(db, user_id: int) -> int:
     return total
 
 
-def test_user_memories_api_surface() -> None:
-    asyncio.run(_api_flow())
+async def test_user_memories_api_surface() -> None:
+    await _api_flow()

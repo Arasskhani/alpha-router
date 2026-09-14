@@ -1,7 +1,5 @@
 """Admin disable-2FA recovery for locked-out local users."""
 
-import asyncio
-
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.security import hash_password
@@ -58,5 +56,5 @@ async def _run() -> None:
         assert ldap_user.auth_provider == "ldap"
 
 
-def test_admin_disable_2fa_clears_secret_and_bumps_token_version():
-    asyncio.run(_run())
+async def test_admin_disable_2fa_clears_secret_and_bumps_token_version():
+    await _run()

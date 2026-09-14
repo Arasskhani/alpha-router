@@ -1,6 +1,5 @@
 """Agent draft, publish, immutability, and rollback lifecycle tests."""
 
-import asyncio
 import uuid
 
 import pytest
@@ -221,16 +220,16 @@ async def _test_discard_agent_draft() -> None:
     await engine.dispose()
 
 
-def test_agent_version_lifecycle():
-    asyncio.run(_test_agent_version_lifecycle())
+async def test_agent_version_lifecycle():
+    await _test_agent_version_lifecycle()
 
 
-def test_duplicate_slug_and_draft_fingerprint_change():
-    asyncio.run(_test_duplicate_slug_and_draft_fingerprint_change())
+async def test_duplicate_slug_and_draft_fingerprint_change():
+    await _test_duplicate_slug_and_draft_fingerprint_change()
 
 
-def test_discard_agent_draft():
-    asyncio.run(_test_discard_agent_draft())
+async def test_discard_agent_draft():
+    await _test_discard_agent_draft()
 
 
 async def _test_create_version_reuses_discarded_draft_number() -> None:
@@ -277,8 +276,8 @@ async def _test_create_version_reuses_discarded_draft_number() -> None:
     await engine.dispose()
 
 
-def test_create_version_reuses_discarded_draft_number():
-    asyncio.run(_test_create_version_reuses_discarded_draft_number())
+async def test_create_version_reuses_discarded_draft_number():
+    await _test_create_version_reuses_discarded_draft_number()
 
 
 def test_agent_slug_normalization_and_validation():
@@ -393,5 +392,5 @@ async def _test_revoke_knowledge_binding_from_draft_only() -> None:
     await engine.dispose()
 
 
-def test_revoke_knowledge_binding_from_draft_only():
-    asyncio.run(_test_revoke_knowledge_binding_from_draft_only())
+async def test_revoke_knowledge_binding_from_draft_only():
+    await _test_revoke_knowledge_binding_from_draft_only()

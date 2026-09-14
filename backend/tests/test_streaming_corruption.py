@@ -8,8 +8,6 @@ pre-rollback (shorter) content. ``finalize`` must also guarantee the final
 content is written even after a rollback.
 """
 
-import asyncio
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -159,17 +157,17 @@ async def _test_finalize_on_failure_writes_error_message() -> None:
     await engine.dispose()
 
 
-def test_reset_persist_state_resets_counters():
-    asyncio.run(_test_reset_persist_state_resets_counters())
+async def test_reset_persist_state_resets_counters():
+    await _test_reset_persist_state_resets_counters()
 
 
-def test_finalize_writes_full_content_after_rollback():
-    asyncio.run(_test_finalize_writes_full_content_after_rollback())
+async def test_finalize_writes_full_content_after_rollback():
+    await _test_finalize_writes_full_content_after_rollback()
 
 
-def test_on_content_does_not_skip_after_reset():
-    asyncio.run(_test_on_content_does_not_skip_after_reset())
+async def test_on_content_does_not_skip_after_reset():
+    await _test_on_content_does_not_skip_after_reset()
 
 
-def test_finalize_on_failure_writes_error_message():
-    asyncio.run(_test_finalize_on_failure_writes_error_message())
+async def test_finalize_on_failure_writes_error_message():
+    await _test_finalize_on_failure_writes_error_message()

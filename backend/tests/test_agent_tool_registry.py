@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
 
 import pytest
@@ -468,13 +467,13 @@ async def _test_executor_retries_redacts_and_enforces_approval() -> None:
         await engine.dispose()
 
 
-def test_registry_lifecycle_and_schema_guards():
-    asyncio.run(_test_registry_lifecycle_and_schema_guards())
+async def test_registry_lifecycle_and_schema_guards():
+    await _test_registry_lifecycle_and_schema_guards()
 
 
-def test_agent_policy_resolves_pinned_tool_version():
-    asyncio.run(_test_agent_policy_resolves_pinned_tool_version())
+async def test_agent_policy_resolves_pinned_tool_version():
+    await _test_agent_policy_resolves_pinned_tool_version()
 
 
-def test_executor_retries_redacts_and_enforces_approval():
-    asyncio.run(_test_executor_retries_redacts_and_enforces_approval())
+async def test_executor_retries_redacts_and_enforces_approval():
+    await _test_executor_retries_redacts_and_enforces_approval()

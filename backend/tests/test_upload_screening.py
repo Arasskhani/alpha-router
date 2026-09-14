@@ -75,57 +75,45 @@ def test_knowledge_service_still_raises_its_own_error(monkeypatch):
 # ------------------------------------------------------------------ screening
 
 
-def test_screen_upload_rejects_malware_with_422(monkeypatch):
+async def test_screen_upload_rejects_malware_with_422(monkeypatch):
     monkeypatch.setattr("app.core.archive_safety.get_settings", lambda: _settings())
     monkeypatch.setattr(upload_screening, "get_settings", lambda: _settings())
-
-    async def run():
-        with patch.object(upload_screening, "scan_bytes", new=AsyncMock(return_value=EICAR_LIKE)):
-            with pytest.raises(UploadRejected) as exc:
-                await screen_upload(b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR", "note.txt")
-            assert exc.value.status_code == 422
-        with patch.object(upload_screening, "scan_bytes", new=AsyncMock(return_value=CLEAN)):
-            await screen_upload(b"hello", "note.txt")
-
-    asyncio.run(run())
+    with patch.object(upload_screening, "scan_bytes", new=AsyncMock(return_value=EICAR_LIKE)):
+        with pytest.raises(UploadRejected) as exc:
+            await screen_upload(b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR", "note.txt")
+        assert exc.value.status_code == 422
+    with patch.object(upload_screening, "scan_bytes", new=AsyncMock(return_value=CLEAN)):
+        await screen_upload(b"hello", "note.txt")
 
 
-def test_screen_upload_fails_closed_when_scanner_is_down_and_required(monkeypatch):
+async def test_screen_upload_fails_closed_when_scanner_is_down_and_required(monkeypatch):
     monkeypatch.setattr("app.core.archive_safety.get_settings", lambda: _settings())
     monkeypatch.setattr(upload_screening, "get_settings", lambda: _settings(clamav_required=True))
-
-    async def run():
-        with patch.object(upload_screening, "scan_bytes", new=AsyncMock(side_effect=MalwareScannerUnavailable("down"))):
-            with pytest.raises(UploadRejected) as exc:
-                await screen_upload(b"hello", "note.txt")
-            assert exc.value.status_code == 503
-
-    asyncio.run(run())
+    with patch.object(upload_screening, "scan_bytes", new=AsyncMock(side_effect=MalwareScannerUnavailable("down"))):
+        with pytest.raises(UploadRejected) as exc:
+            await screen_upload(b"hello", "note.txt")
+        assert exc.value.status_code == 503
 
 
-def test_screen_upload_checks_archive_before_scanning(monkeypatch):
+async def test_screen_upload_checks_archive_before_scanning(monkeypatch):
     monkeypatch.setattr("app.core.archive_safety.get_settings", lambda: _settings())
     monkeypatch.setattr(upload_screening, "get_settings", lambda: _settings())
     scanner = AsyncMock(return_value=CLEAN)
-
-    async def run():
-        with patch.object(upload_screening, "scan_bytes", new=scanner):
-            with pytest.raises(UploadRejected) as exc:
-                await screen_upload(_docx({"word/document.xml": b"\0" * (5 * 1024 * 1024)}), "report.docx")
-            assert exc.value.status_code == 422
-            # The bomb never reached ClamAV.
-            scanner.assert_not_awaited()
-            # A non-Office file skips the archive check and is scanned.
-            await screen_upload(b"%PDF-1.4", "x.pdf")
-            scanner.assert_awaited_once()
-
-    asyncio.run(run())
+    with patch.object(upload_screening, "scan_bytes", new=scanner):
+        with pytest.raises(UploadRejected) as exc:
+            await screen_upload(_docx({"word/document.xml": b"\0" * (5 * 1024 * 1024)}), "report.docx")
+        assert exc.value.status_code == 422
+        # The bomb never reached ClamAV.
+        scanner.assert_not_awaited()
+        # A non-Office file skips the archive check and is scanned.
+        await screen_upload(b"%PDF-1.4", "x.pdf")
+        scanner.assert_awaited_once()
 
 
 # ------------------------------------------------------------------ bounded extraction
 
 
-def test_extraction_runs_off_loop_and_is_time_bounded(monkeypatch):
+async def test_extraction_runs_off_loop_and_is_time_bounded(monkeypatch):
     from app.services import attachment_extract
 
     monkeypatch.setattr("app.config.get_settings", lambda: _settings(attachment_extract_timeout_seconds=1))
@@ -134,40 +122,34 @@ def test_extraction_runs_off_loop_and_is_time_bounded(monkeypatch):
         time.sleep(2.5)
         return "late"
 
-    async def run():
-        ticks = {"max_gap": 0.0}
+    ticks = {"max_gap": 0.0}
 
-        async def ticker():
-            last = time.monotonic()
-            for _ in range(40):
-                await asyncio.sleep(0.02)
-                now = time.monotonic()
-                ticks["max_gap"] = max(ticks["max_gap"], now - last)
-                last = now
+    async def ticker():
+        last = time.monotonic()
+        for _ in range(40):
+            await asyncio.sleep(0.02)
+            now = time.monotonic()
+            ticks["max_gap"] = max(ticks["max_gap"], now - last)
+            last = now
 
-        with patch.object(attachment_extract, "extract_document_text", slow_extract):
-            t = asyncio.create_task(ticker())
-            text = await attachment_extract.extract_document_text_bounded(b"x", "big.pdf")
-            await t
-        assert "exceeded 1s" in text
-        # The parser ran in a thread: the loop kept ticking meanwhile.
-        assert ticks["max_gap"] < 0.5, ticks
-
-    asyncio.run(run())
+    with patch.object(attachment_extract, "extract_document_text", slow_extract):
+        t = asyncio.create_task(ticker())
+        text = await attachment_extract.extract_document_text_bounded(b"x", "big.pdf")
+        await t
+    assert "exceeded 1s" in text
+    # The parser ran in a thread: the loop kept ticking meanwhile.
+    assert ticks["max_gap"] < 0.5, ticks
 
 
-def test_async_payload_uses_bounded_extraction(monkeypatch):
+async def test_async_payload_uses_bounded_extraction(monkeypatch):
     from app.services import attachment_extract
 
-    async def run():
-        with patch.object(attachment_extract, "extract_document_text_bounded", new=AsyncMock(return_value="TEXT")):
-            payload = await attachment_extract.processed_attachment_payload_async(
-                filename="a.txt", kind="document", mime_type="text/plain", url="u", raw=b"abc"
-            )
-        assert payload["text"] == "TEXT"
+    with patch.object(attachment_extract, "extract_document_text_bounded", new=AsyncMock(return_value="TEXT")):
         payload = await attachment_extract.processed_attachment_payload_async(
-            filename="a.mp3", kind="audio", mime_type="audio/mpeg", url="u", raw=b"abc"
+            filename="a.txt", kind="document", mime_type="text/plain", url="u", raw=b"abc"
         )
-        assert "text" not in payload
-
-    asyncio.run(run())
+    assert payload["text"] == "TEXT"
+    payload = await attachment_extract.processed_attachment_payload_async(
+        filename="a.mp3", kind="audio", mime_type="audio/mpeg", url="u", raw=b"abc"
+    )
+    assert "text" not in payload

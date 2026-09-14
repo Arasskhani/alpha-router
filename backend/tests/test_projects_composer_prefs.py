@@ -1,7 +1,5 @@
 """Per-user project chat composer prefs stay isolated across members."""
 
-import asyncio
-
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -68,105 +66,96 @@ async def _setup(db):
     return owner, contrib, viewer
 
 
-def test_composer_prefs_are_isolated_per_user():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                owner, contrib, _viewer = await _setup(db)
-                created = await create_project_chat_session(
-                    db, project_id=PROJ_ID, user=owner, title="Shared", model_id="gpt-text"
-                )
-                session_id = created["id"]
-                owner_saved = await upsert_project_chat_composer_prefs(
+async def test_composer_prefs_are_isolated_per_user():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            owner, contrib, _viewer = await _setup(db)
+            created = await create_project_chat_session(
+                db, project_id=PROJ_ID, user=owner, title="Shared", model_id="gpt-text"
+            )
+            session_id = created["id"]
+            owner_saved = await upsert_project_chat_composer_prefs(
+                db,
+                project_id=PROJ_ID,
+                session_id=session_id,
+                user=owner,
+                payload={
+                    "tools": {"web_search": True, "code_interpreter": True},
+                    "toolsTouched": True,
+                    "model": "image-specialist",
+                    "selectedAgentSlug": "legal-consultant",
+                },
+            )
+            assert owner_saved["toolsTouched"] is True
+            assert owner_saved["model"] == "image-specialist"
+            assert owner_saved["selectedAgentSlug"] == "legal-consultant"
+            assert owner_saved["tools"]["web_search"] is True
+
+            contrib_prefs = await get_project_chat_composer_prefs(
+                db, project_id=PROJ_ID, session_id=session_id, user=contrib
+            )
+            assert contrib_prefs == {
+                "tools": {},
+                "toolsTouched": False,
+                "model": None,
+                "selectedAgentSlug": None,
+            }
+
+            owner_again = await get_project_chat_composer_prefs(
+                db, project_id=PROJ_ID, session_id=session_id, user=owner
+            )
+            assert owner_again["selectedAgentSlug"] == "legal-consultant"
+            assert owner_again["model"] == "image-specialist"
+    finally:
+        await engine.dispose()
+
+
+async def test_project_session_patch_ignores_shared_tools_and_model():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            owner, contrib, _viewer = await _setup(db)
+            created = await create_project_chat_session(
+                db, project_id=PROJ_ID, user=owner, title="Shared", model_id="gpt-text"
+            )
+            session_id = created["id"]
+            await update_chat_session(
+                db,
+                contrib.id,
+                session_id,
+                {
+                    "tools": {"web_search": True},
+                    "toolsTouched": True,
+                    "model": "image-specialist",
+                    "title": "Still shared title",
+                },
+            )
+            row = await db.get(ChatSession, session_id)
+            assert row.tools == {}
+            assert row.tools_touched is False
+            assert row.model_id == "gpt-text"
+            assert row.title == "Still shared title"
+    finally:
+        await engine.dispose()
+
+
+async def test_viewer_cannot_write_composer_prefs():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            owner, _contrib, viewer = await _setup(db)
+            created = await create_project_chat_session(db, project_id=PROJ_ID, user=owner, title="Shared")
+            try:
+                await upsert_project_chat_composer_prefs(
                     db,
                     project_id=PROJ_ID,
-                    session_id=session_id,
-                    user=owner,
-                    payload={
-                        "tools": {"web_search": True, "code_interpreter": True},
-                        "toolsTouched": True,
-                        "model": "image-specialist",
-                        "selectedAgentSlug": "legal-consultant",
-                    },
+                    session_id=created["id"],
+                    user=viewer,
+                    payload={"toolsTouched": True, "tools": {"web_search": True}},
                 )
-                assert owner_saved["toolsTouched"] is True
-                assert owner_saved["model"] == "image-specialist"
-                assert owner_saved["selectedAgentSlug"] == "legal-consultant"
-                assert owner_saved["tools"]["web_search"] is True
-
-                contrib_prefs = await get_project_chat_composer_prefs(
-                    db, project_id=PROJ_ID, session_id=session_id, user=contrib
-                )
-                assert contrib_prefs == {
-                    "tools": {},
-                    "toolsTouched": False,
-                    "model": None,
-                    "selectedAgentSlug": None,
-                }
-
-                owner_again = await get_project_chat_composer_prefs(
-                    db, project_id=PROJ_ID, session_id=session_id, user=owner
-                )
-                assert owner_again["selectedAgentSlug"] == "legal-consultant"
-                assert owner_again["model"] == "image-specialist"
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
-
-
-def test_project_session_patch_ignores_shared_tools_and_model():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                owner, contrib, _viewer = await _setup(db)
-                created = await create_project_chat_session(
-                    db, project_id=PROJ_ID, user=owner, title="Shared", model_id="gpt-text"
-                )
-                session_id = created["id"]
-                await update_chat_session(
-                    db,
-                    contrib.id,
-                    session_id,
-                    {
-                        "tools": {"web_search": True},
-                        "toolsTouched": True,
-                        "model": "image-specialist",
-                        "title": "Still shared title",
-                    },
-                )
-                row = await db.get(ChatSession, session_id)
-                assert row.tools == {}
-                assert row.tools_touched is False
-                assert row.model_id == "gpt-text"
-                assert row.title == "Still shared title"
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
-
-
-def test_viewer_cannot_write_composer_prefs():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                owner, _contrib, viewer = await _setup(db)
-                created = await create_project_chat_session(db, project_id=PROJ_ID, user=owner, title="Shared")
-                try:
-                    await upsert_project_chat_composer_prefs(
-                        db,
-                        project_id=PROJ_ID,
-                        session_id=created["id"],
-                        user=viewer,
-                        payload={"toolsTouched": True, "tools": {"web_search": True}},
-                    )
-                    raise AssertionError("expected HTTPException")
-                except HTTPException as exc:
-                    assert exc.status_code == 403
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+                raise AssertionError("expected HTTPException")
+            except HTTPException as exc:
+                assert exc.status_code == 403
+    finally:
+        await engine.dispose()

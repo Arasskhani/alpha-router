@@ -207,22 +207,19 @@ async def _run_purge_removes_empty_sessions() -> None:
     await engine.dispose()
 
 
-def test_chat_retention_settings_roundtrip():
-    import asyncio
+async def test_chat_retention_settings_roundtrip():
 
-    asyncio.run(_run_settings_roundtrip())
-
-
-def test_chat_retention_purge():
-    import asyncio
-
-    asyncio.run(_run_purge_roundtrip())
+    await _run_settings_roundtrip()
 
 
-def test_chat_retention_purge_removes_empty_sessions():
-    import asyncio
+async def test_chat_retention_purge():
 
-    asyncio.run(_run_purge_removes_empty_sessions())
+    await _run_purge_roundtrip()
+
+
+async def test_chat_retention_purge_removes_empty_sessions():
+
+    await _run_purge_removes_empty_sessions()
 
 
 def test_chat_retention_job_is_registered_by_start_scheduler():

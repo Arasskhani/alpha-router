@@ -22,9 +22,8 @@ def test_video_response_is_inline():
     assert disposition.startswith("inline")
 
 
-def test_range_request_fetches_only_the_window():
+async def test_range_request_fetches_only_the_window():
     """A seek must cost one partial GET, not a full download sliced in Python."""
-    import asyncio
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, patch
 
@@ -49,22 +48,22 @@ def test_range_request_fetches_only_the_window():
             )
         return resp, full, partial
 
-    resp, full, partial = asyncio.run(run("bytes=100-199", (b"y" * 100, 100, 199, 1000)))
+    resp, full, partial = await run("bytes=100-199", (b"y" * 100, 100, 199, 1000))
     assert resp.status_code == 206
     assert resp.headers["Content-Range"] == "bytes 100-199/1000"
     assert resp.headers["Content-Length"] == "100"
     partial.assert_awaited_once_with(row, "100-199")
     full.assert_not_awaited()
 
-    resp, full, partial = asyncio.run(run("bytes=5000-", None, InvalidRangeError("5000-")))
+    resp, full, partial = await run("bytes=5000-", None, InvalidRangeError("5000-"))
     assert resp.status_code == 416 and resp.headers["Content-Range"] == "bytes */1000"
     full.assert_not_awaited()
 
-    resp, full, partial = asyncio.run(run(None))
+    resp, full, partial = await run(None)
     assert resp.status_code == 200 and resp.headers["Content-Length"] == "1000"
     partial.assert_not_awaited()
 
     # Multi-range and malformed specs fall back to the full body (as before).
-    resp, full, partial = asyncio.run(run("bytes=0-1,5-9"))
+    resp, full, partial = await run("bytes=0-1,5-9")
     assert resp.status_code == 200
     partial.assert_not_awaited()

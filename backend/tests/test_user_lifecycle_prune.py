@@ -1,7 +1,5 @@
 """LDAP OU prune moves users to Deleted Users instead of hard delete."""
 
-import asyncio
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -40,5 +38,5 @@ async def _run_prune_soft_deletes_without_login_history() -> None:
         assert still_there is not None
 
 
-def test_prune_sync_user_soft_deletes_even_without_last_login():
-    asyncio.run(_run_prune_soft_deletes_without_login_history())
+async def test_prune_sync_user_soft_deletes_even_without_last_login():
+    await _run_prune_soft_deletes_without_login_history()

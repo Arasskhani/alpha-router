@@ -560,6 +560,17 @@ def _agent_identity_metadata(agent_turn: PreparedAgentTurn) -> dict[str, object]
     }
 
 
+def _sse_error_frame(message: str, *, error_type: str = "provider_error") -> bytes:
+    """One SSE ``data:`` frame carrying an error in the OpenAI wire shape.
+
+    ``{"error": {"message": ..., "type": ..., "code": null}}`` is what the OpenAI
+    SDKs (and our own ChatPanel) understand; a bare string under ``error`` was
+    the pre-Phase-3 form and is still accepted by the frontend.
+    """
+    payload = {"error": {"message": message, "type": error_type, "code": None}}
+    return f"data: {json.dumps(payload, separators=(',', ':'))}\n\n".encode()
+
+
 def _serialize_stream_chunk(chunk) -> str:
     try:
         return chunk.model_dump_json()
@@ -1961,7 +1972,7 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                     error_message = (
                         "The upstream model returned no usable content. Retry the request or select a different model."
                     )
-                    yield f"data: {json.dumps({'error': error_message})}\n\n".encode()
+                    yield _sse_error_frame(error_message)
                     break
 
                 if not tools.code_interpreter or code_iterations >= MAX_CODE_ITERATIONS:
@@ -2341,11 +2352,11 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                     )
                     success = False
                     error_message = _format_provider_error(retry_exc, provider)[:500]
-                    yield f"data: {json.dumps({'error': error_message})}\n\n".encode()
+                    yield _sse_error_frame(error_message)
             else:
                 success = False
                 error_message = _format_provider_error(exc, provider)[:500]
-                yield f"data: {json.dumps({'error': error_message})}\n\n".encode()
+                yield _sse_error_frame(error_message)
         finally:
             # Starlette cancels a streaming response through an anyio cancel
             # scope when the client disconnects. anyio delivers that

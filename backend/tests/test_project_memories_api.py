@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -185,13 +184,13 @@ async def _delete_all_requires_owner_and_keeps_manual() -> None:
     await engine.dispose()
 
 
-def test_project_memory_filters_and_source_links() -> None:
-    asyncio.run(_filters_and_source_links())
+async def test_project_memory_filters_and_source_links() -> None:
+    await _filters_and_source_links()
 
 
-def test_project_memory_export_requires_memory_manage() -> None:
-    asyncio.run(_export_requires_owner())
+async def test_project_memory_export_requires_memory_manage() -> None:
+    await _export_requires_owner()
 
 
-def test_delete_all_learned_requires_memory_manage() -> None:
-    asyncio.run(_delete_all_requires_owner_and_keeps_manual())
+async def test_delete_all_learned_requires_memory_manage() -> None:
+    await _delete_all_requires_owner_and_keeps_manual()

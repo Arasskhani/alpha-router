@@ -1,6 +1,5 @@
 """Object-level authorization matrix for user media."""
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -27,7 +26,7 @@ class FakeDb:
         return None
 
 
-def _authorize(*, owner_id: int, actor_id: int, slugs: list[str], action: media_auth.MediaAccessAction):
+async def _authorize(*, owner_id: int, actor_id: int, slugs: list[str], action: media_auth.MediaAccessAction):
     asset = SimpleNamespace(id=7, user_id=owner_id)
     actor = SimpleNamespace(id=actor_id)
 
@@ -40,12 +39,12 @@ def _authorize(*, owner_id: int, actor_id: int, slugs: list[str], action: media_
                 action=action,
             )
 
-    return asyncio.run(run())
+    return await run()
 
 
 @pytest.mark.parametrize("action", list(media_auth.MediaAccessAction))
-def test_owner_can_read_and_delete_own_media(action: media_auth.MediaAccessAction) -> None:
-    asset = _authorize(owner_id=10, actor_id=10, slugs=["user"], action=action)
+async def test_owner_can_read_and_delete_own_media(action: media_auth.MediaAccessAction) -> None:
+    asset = await _authorize(owner_id=10, actor_id=10, slugs=["user"], action=action)
     assert asset.id == 7
 
 
@@ -58,12 +57,12 @@ def test_owner_can_read_and_delete_own_media(action: media_auth.MediaAccessActio
     ],
 )
 @pytest.mark.parametrize("action", list(media_auth.MediaAccessAction))
-def test_unrelated_roles_cannot_access_cross_user_media(
+async def test_unrelated_roles_cannot_access_cross_user_media(
     slugs: list[str],
     action: media_auth.MediaAccessAction,
 ) -> None:
     with pytest.raises(HTTPException) as exc:
-        _authorize(owner_id=10, actor_id=20, slugs=slugs, action=action)
+        await _authorize(owner_id=10, actor_id=20, slugs=slugs, action=action)
     assert exc.value.status_code == 404
     assert exc.value.detail == "Media not found"
 
@@ -79,20 +78,20 @@ def test_unrelated_roles_cannot_access_cross_user_media(
         (["read_only_full_administrator"], media_auth.MediaAccessAction.DELETE, False),
     ],
 )
-def test_cross_user_media_requires_exact_permission(
+async def test_cross_user_media_requires_exact_permission(
     slugs: list[str],
     action: media_auth.MediaAccessAction,
     allowed: bool,
 ) -> None:
     if allowed:
-        assert _authorize(owner_id=10, actor_id=20, slugs=slugs, action=action).id == 7
+        assert (await _authorize(owner_id=10, actor_id=20, slugs=slugs, action=action)).id == 7
     else:
         with pytest.raises(HTTPException) as exc:
-            _authorize(owner_id=10, actor_id=20, slugs=slugs, action=action)
+            await _authorize(owner_id=10, actor_id=20, slugs=slugs, action=action)
         assert exc.value.status_code == 404
 
 
-def test_missing_and_forbidden_assets_are_indistinguishable() -> None:
+async def test_missing_and_forbidden_assets_are_indistinguishable() -> None:
     actor = SimpleNamespace(id=20)
 
     async def run_missing():
@@ -104,9 +103,9 @@ def test_missing_and_forbidden_assets_are_indistinguishable() -> None:
         )
 
     with pytest.raises(HTTPException) as missing:
-        asyncio.run(run_missing())
+        await run_missing()
     with pytest.raises(HTTPException) as forbidden:
-        _authorize(
+        await _authorize(
             owner_id=10,
             actor_id=20,
             slugs=["connections_full_administrator"],
@@ -128,7 +127,7 @@ def _asset(owner_id: int = 10) -> SimpleNamespace:
     )
 
 
-def test_chat_file_route_applies_shared_object_authorization() -> None:
+async def test_chat_file_route_applies_shared_object_authorization() -> None:
     async def run():
         with (
             patch.object(
@@ -146,11 +145,11 @@ def test_chat_file_route_applies_shared_object_authorization() -> None:
             )
 
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(run())
+        await run()
     assert exc.value.status_code == 404
 
 
-def test_chat_delete_route_requires_cross_user_write_permission() -> None:
+async def test_chat_delete_route_requires_cross_user_write_permission() -> None:
     db = FakeDb(_asset())
 
     async def run():
@@ -162,12 +161,12 @@ def test_chat_delete_route_requires_cross_user_write_permission() -> None:
             await chat.delete_media(7, user=SimpleNamespace(id=20), db=db)
 
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(run())
+        await run()
     assert exc.value.status_code == 404
     assert db.deleted is None
 
 
-def test_reference_image_route_applies_shared_object_authorization() -> None:
+async def test_reference_image_route_applies_shared_object_authorization() -> None:
     async def run():
         with (
             patch.object(
@@ -184,6 +183,6 @@ def test_reference_image_route_applies_shared_object_authorization() -> None:
             )
 
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(run())
+        await run()
     assert exc.value.status_code == 404
     assert exc.value.detail == "Reference image not found"

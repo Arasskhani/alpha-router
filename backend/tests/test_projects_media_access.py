@@ -1,7 +1,5 @@
 """Step 2 tests: project media access capabilities."""
 
-import asyncio
-
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -65,153 +63,129 @@ async def _setup(db):
     return owner, contrib, viewer
 
 
-def test_viewer_cannot_upload_media():
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                owner, contrib, viewer = await _setup(db)
-                from fastapi import HTTPException
+async def test_viewer_cannot_upload_media():
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            owner, contrib, viewer = await _setup(db)
+            from fastapi import HTTPException
 
-                try:
-                    await require_capability(db, project_id=PROJ, user=viewer, capability="media.upload")
-                    pytest.fail("viewer should not upload")
-                except HTTPException as e:
-                    assert e.status_code == 403
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+            try:
+                await require_capability(db, project_id=PROJ, user=viewer, capability="media.upload")
+                pytest.fail("viewer should not upload")
+            except HTTPException as e:
+                assert e.status_code == 403
+    finally:
+        await engine.dispose()
 
 
-def test_contributor_can_upload_media():
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                owner, contrib, viewer = await _setup(db)
-                access = await require_capability(db, project_id=PROJ, user=contrib, capability="media.upload")
-                assert access is not None
-                assert access.can("media.upload")
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+async def test_contributor_can_upload_media():
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            owner, contrib, viewer = await _setup(db)
+            access = await require_capability(db, project_id=PROJ, user=contrib, capability="media.upload")
+            assert access is not None
+            assert access.can("media.upload")
+    finally:
+        await engine.dispose()
 
 
-def test_owner_can_upload_media():
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                owner, contrib, viewer = await _setup(db)
-                access = await require_capability(db, project_id=PROJ, user=owner, capability="media.upload")
-                assert access is not None
-                assert access.can("media.upload")
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+async def test_owner_can_upload_media():
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            owner, contrib, viewer = await _setup(db)
+            access = await require_capability(db, project_id=PROJ, user=owner, capability="media.upload")
+            assert access is not None
+            assert access.can("media.upload")
+    finally:
+        await engine.dispose()
 
 
-def test_contributor_has_media_delete_capability():
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                owner, contrib, viewer = await _setup(db)
-                access = await require_capability(db, project_id=PROJ, user=contrib, capability="media.delete")
-                assert access is not None
-                assert access.can("media.delete")
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+async def test_contributor_has_media_delete_capability():
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            owner, contrib, viewer = await _setup(db)
+            access = await require_capability(db, project_id=PROJ, user=contrib, capability="media.delete")
+            assert access is not None
+            assert access.can("media.delete")
+    finally:
+        await engine.dispose()
 
 
-def test_viewer_cannot_delete_media():
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                owner, contrib, viewer = await _setup(db)
-                from fastapi import HTTPException
+async def test_viewer_cannot_delete_media():
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            owner, contrib, viewer = await _setup(db)
+            from fastapi import HTTPException
 
-                try:
-                    await require_capability(db, project_id=PROJ, user=viewer, capability="media.delete")
-                    pytest.fail("expected an exception")
-                except HTTPException as e:
-                    assert e.status_code == 403
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+            try:
+                await require_capability(db, project_id=PROJ, user=viewer, capability="media.delete")
+                pytest.fail("expected an exception")
+            except HTTPException as e:
+                assert e.status_code == 403
+    finally:
+        await engine.dispose()
 
 
-def test_owner_can_delete_any_media():
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                owner, contrib, viewer = await _setup(db)
-                access = await require_capability(db, project_id=PROJ, user=owner, capability="media.delete")
-                assert access.can("media.delete")
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+async def test_owner_can_delete_any_media():
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            owner, contrib, viewer = await _setup(db)
+            access = await require_capability(db, project_id=PROJ, user=owner, capability="media.delete")
+            assert access.can("media.delete")
+    finally:
+        await engine.dispose()
 
 
-def test_public_viewer_can_read_but_not_upload():
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                owner = await _user(db, "owner")
-                db.add(
-                    Project(
-                        id=PROJ,
-                        name="P",
-                        status="active",
-                        visibility="public",
-                        created_by_user_id=owner.id,
-                        revision=1,
-                        acl_version=1,
-                    )
+async def test_public_viewer_can_read_but_not_upload():
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            owner = await _user(db, "owner")
+            db.add(
+                Project(
+                    id=PROJ,
+                    name="P",
+                    status="active",
+                    visibility="public",
+                    created_by_user_id=owner.id,
+                    revision=1,
+                    acl_version=1,
                 )
-                db.add(ProjectMember(project_id=PROJ, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))
-                await db.flush()
-                outsider = await _user(db, "outsider")
-                access = await resolve_project_access(db, project_id=PROJ, user=outsider)
-                assert access is not None
-                assert access.role == "viewer"
-                assert access.is_public_viewer is True
-                assert not access.can("media.upload")
-                assert not access.can("media.delete")
-                # read is implicit via project.view
-                assert access.can("project.view")
-        finally:
-            await engine.dispose()
+            )
+            db.add(ProjectMember(project_id=PROJ, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))
+            await db.flush()
+            outsider = await _user(db, "outsider")
+            access = await resolve_project_access(db, project_id=PROJ, user=outsider)
+            assert access is not None
+            assert access.role == "viewer"
+            assert access.is_public_viewer is True
+            assert not access.can("media.upload")
+            assert not access.can("media.delete")
+            # read is implicit via project.view
+            assert access.can("project.view")
+    finally:
+        await engine.dispose()
 
-    asyncio.run(run())
 
+async def test_inactive_user_denied_media_access():
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            owner, contrib, viewer = await _setup(db)
+            contrib.is_active = False
+            await db.flush()
+            from fastapi import HTTPException
 
-def test_inactive_user_denied_media_access():
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                owner, contrib, viewer = await _setup(db)
-                contrib.is_active = False
-                await db.flush()
-                from fastapi import HTTPException
-
-                try:
-                    await require_capability(db, project_id=PROJ, user=contrib, capability="media.upload")
-                    pytest.fail("expected an exception")
-                except HTTPException as e:
-                    assert e.status_code == 404
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+            try:
+                await require_capability(db, project_id=PROJ, user=contrib, capability="media.upload")
+                pytest.fail("expected an exception")
+            except HTTPException as e:
+                assert e.status_code == 404
+    finally:
+        await engine.dispose()

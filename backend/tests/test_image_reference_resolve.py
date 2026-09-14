@@ -1,6 +1,5 @@
 """Tests for Alpharouter media URL → data URL resolution before upstream image APIs."""
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -45,7 +44,7 @@ def test_parse_project_media_ref_rejects_other_urls():
     assert parse_project_media_ref("https://cdn.example.com/a.png") is None
 
 
-def test_remote_reference_is_fetched_by_alpha_router_not_forwarded_to_provider():
+async def test_remote_reference_is_fetched_by_alpha_router_not_forwarded_to_provider():
     async def run():
         with (
             patch.object(
@@ -64,6 +63,6 @@ def test_remote_reference_is_fetched_by_alpha_router_not_forwarded_to_provider()
                 "https://public.example/reference.png",
             )
 
-    resolved = asyncio.run(run())
+    resolved = await run()
     assert resolved.startswith("data:image/png;base64,")
     assert "public.example" not in resolved

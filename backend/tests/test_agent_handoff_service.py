@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime
 import uuid
 
@@ -216,5 +215,5 @@ async def _test_handoff_state_machine_and_acl_recheck() -> None:
         await engine.dispose()
 
 
-def test_handoff_state_machine_and_acl_recheck():
-    asyncio.run(_test_handoff_state_machine_and_acl_recheck())
+async def test_handoff_state_machine_and_acl_recheck():
+    await _test_handoff_state_machine_and_acl_recheck()

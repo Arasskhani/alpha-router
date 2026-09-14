@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import uuid
 
@@ -338,13 +337,13 @@ async def _lab_then_pizza() -> None:
     await engine.dispose()
 
 
-def test_window_attachment_truncation_and_sensitivity_gate() -> None:
-    asyncio.run(_window_and_gates())
+async def test_window_attachment_truncation_and_sensitivity_gate() -> None:
+    await _window_and_gates()
 
 
-def test_malformed_llm_json_repairs_then_dead_letters() -> None:
-    asyncio.run(_repair_then_dead_letter())
+async def test_malformed_llm_json_repairs_then_dead_letters() -> None:
+    await _repair_then_dead_letter()
 
 
-def test_lab_result_then_pizza_query_retrieves_health_memory() -> None:
-    asyncio.run(_lab_then_pizza())
+async def test_lab_result_then_pizza_query_retrieves_health_memory() -> None:
+    await _lab_then_pizza()

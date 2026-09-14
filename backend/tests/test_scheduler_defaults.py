@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -61,7 +60,7 @@ def test_cleanup_slot_is_in_server_timezone():
     assert user_media_cleanup_due(prefs, datetime(2026, 9, 14, 23, 31), tehran) is True
 
 
-def test_budget_reset_trigger_is_utc_and_reset_has_no_day_guard(monkeypatch):
+async def test_budget_reset_trigger_is_utc_and_reset_has_no_day_guard(monkeypatch):
     from app.services import budget_service
 
     # Trigger registration: the budget_reset cron carries an explicit UTC zone.
@@ -79,35 +78,32 @@ def test_budget_reset_trigger_is_utc_and_reset_has_no_day_guard(monkeypatch):
     from app.database import Base
     from app.models.user import User
 
-    async def run():
-        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        try:
-            async with factory() as db:
-                u = User(
-                    username="r",
-                    email="r@t",
-                    hashed_password="x",
-                    auth_provider="local",
-                    is_active=True,
-                    monthly_budget_usd=10.0,
-                    budget_used_usd=4.0,
-                    budget_reserved_usd=0.0,
-                )
-                db.add(u)
-                await db.commit()
-                with monkeypatch.context() as m:
-                    m.setattr(budget_service.datetime, "datetime", _FixedDT)
-                    assert await budget_service.reset_all_monthly_budgets(db) == 1
-                await db.refresh(u)
-                assert u.budget_used_usd == 0.0
-                assert u.budget_period_start == datetime(2026, 9, 1)
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        async with factory() as db:
+            u = User(
+                username="r",
+                email="r@t",
+                hashed_password="x",
+                auth_provider="local",
+                is_active=True,
+                monthly_budget_usd=10.0,
+                budget_used_usd=4.0,
+                budget_reserved_usd=0.0,
+            )
+            db.add(u)
+            await db.commit()
+            with monkeypatch.context() as m:
+                m.setattr(budget_service.datetime, "datetime", _FixedDT)
+                assert await budget_service.reset_all_monthly_budgets(db) == 1
+            await db.refresh(u)
+            assert u.budget_used_usd == 0.0
+            assert u.budget_period_start == datetime(2026, 9, 1)
+    finally:
+        await engine.dispose()
 
 
 class _FixedDT(datetime):

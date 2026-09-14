@@ -9,7 +9,6 @@ Covers:
   existing users (backward compatible).
 """
 
-import asyncio
 import os
 
 from fastapi.security import HTTPAuthorizationCredentials
@@ -137,15 +136,15 @@ async def _run_create_token_embeds_ver() -> None:
     assert payload["ver"] == 7
 
 
-def test_create_access_token_embeds_ver():
-    asyncio.run(_run_create_token_embeds_ver())
+async def test_create_access_token_embeds_ver():
+    await _run_create_token_embeds_ver()
 
 
-def test_revocation_scenarios():
+async def test_revocation_scenarios():
     _enable_legacy_bearer_for_test()
-    asyncio.run(_run_revocation_scenarios())
+    await _run_revocation_scenarios()
 
 
-def test_legacy_token_backward_compatible():
+async def test_legacy_token_backward_compatible():
     _enable_legacy_bearer_for_test()
-    asyncio.run(_run_legacy_token_compat())
+    await _run_legacy_token_compat()

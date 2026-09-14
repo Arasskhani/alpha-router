@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime
 import uuid
 
@@ -302,13 +301,13 @@ async def _test_static_connector_incremental_sync() -> None:
     await engine.dispose()
 
 
-def test_secure_ingestion_and_immutable_release():
-    asyncio.run(_test_secure_ingestion_and_immutable_release())
+async def test_secure_ingestion_and_immutable_release():
+    await _test_secure_ingestion_and_immutable_release()
 
 
-def test_prompt_injection_requires_explicit_override():
-    asyncio.run(_test_prompt_injection_requires_explicit_override())
+async def test_prompt_injection_requires_explicit_override():
+    await _test_prompt_injection_requires_explicit_override()
 
 
-def test_static_connector_incremental_sync():
-    asyncio.run(_test_static_connector_incremental_sync())
+async def test_static_connector_incremental_sync():
+    await _test_static_connector_incremental_sync()

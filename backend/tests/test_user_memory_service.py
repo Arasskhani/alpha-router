@@ -314,20 +314,20 @@ async def _timeout_fallback() -> None:
     await engine.dispose()
 
 
-def test_memory_crud_and_inject() -> None:
-    asyncio.run(_crud_and_inject())
+async def test_memory_crud_and_inject() -> None:
+    await _crud_and_inject()
 
 
-def test_memory_cap_evicts_lowest() -> None:
-    asyncio.run(_cap_eviction())
+async def test_memory_cap_evicts_lowest() -> None:
+    await _cap_eviction()
 
 
-def test_supersede_expiry_suppression_and_retrieve() -> None:
-    asyncio.run(_supersede_expiry_suppression_retrieve())
+async def test_supersede_expiry_suppression_and_retrieve() -> None:
+    await _supersede_expiry_suppression_retrieve()
 
 
-def test_retrieve_timeout_falls_back_to_recency() -> None:
-    asyncio.run(_timeout_fallback())
+async def test_retrieve_timeout_falls_back_to_recency() -> None:
+    await _timeout_fallback()
 
 
 async def _private_mode_resolve() -> None:
@@ -365,5 +365,5 @@ async def _private_mode_resolve() -> None:
     await engine.dispose()
 
 
-def test_resolve_private_mode_for_memory() -> None:
-    asyncio.run(_private_mode_resolve())
+async def test_resolve_private_mode_for_memory() -> None:
+    await _private_mode_resolve()

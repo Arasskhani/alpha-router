@@ -1,6 +1,5 @@
 """SAML config validation helpers (no live IdP required)."""
 
-import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -85,9 +84,9 @@ async def _metadata_xml_when_enabled() -> None:
     assert "EntityDescriptor" in body
 
 
-def test_saml_metadata_endpoint_404_when_disabled():
-    asyncio.run(_metadata_404_when_disabled())
+async def test_saml_metadata_endpoint_404_when_disabled():
+    await _metadata_404_when_disabled()
 
 
-def test_saml_metadata_endpoint_returns_xml_when_enabled():
-    asyncio.run(_metadata_xml_when_enabled())
+async def test_saml_metadata_endpoint_returns_xml_when_enabled():
+    await _metadata_xml_when_enabled()

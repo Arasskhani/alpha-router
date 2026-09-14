@@ -1,6 +1,5 @@
 """Tests for transient empty OpenRouter image responses and retry helpers."""
 
-import asyncio
 from unittest.mock import AsyncMock
 
 import httpx
@@ -79,7 +78,7 @@ def test_build_openrouter_payload_omits_sort_when_disabled():
     assert "sort" not in payload["provider"]
 
 
-def test_post_openrouter_json_retries_after_connect_failure(monkeypatch):
+async def test_post_openrouter_json_retries_after_connect_failure(monkeypatch):
     calls = {"n": 0}
 
     class FakeClient:
@@ -104,12 +103,12 @@ def test_post_openrouter_json_retries_after_connect_failure(monkeypatch):
             max_attempts=2,
         )
 
-    resp = asyncio.run(_run())
+    resp = await _run()
     assert resp.status_code == 200
     assert calls["n"] == 2
 
 
-def test_post_openrouter_json_does_not_resend_after_read_timeout(monkeypatch):
+async def test_post_openrouter_json_does_not_resend_after_read_timeout(monkeypatch):
     """The body reached OpenRouter; a second send could be billed twice."""
     calls = {"n": 0}
 
@@ -124,12 +123,10 @@ def test_post_openrouter_json_does_not_resend_after_read_timeout(monkeypatch):
     monkeypatch.setattr(svc.asyncio, "sleep", AsyncMock())
 
     with pytest.raises(httpx.ReadTimeout):
-        asyncio.run(
-            svc.post_openrouter_json(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={"Authorization": "Bearer test"},
-                json_payload={"model": "test"},
-                max_attempts=3,
-            )
+        await svc.post_openrouter_json(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": "Bearer test"},
+            json_payload={"model": "test"},
+            max_attempts=3,
         )
     assert calls["n"] == 1

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
 import json
 import uuid
@@ -419,21 +418,21 @@ async def _handle_extraction_skips_when_auto_capture_off() -> None:
     await engine.dispose()
 
 
-def test_multi_author_window_attributes_members() -> None:
-    asyncio.run(_window_attributes_each_member())
+async def test_multi_author_window_attributes_members() -> None:
+    await _window_attributes_each_member()
 
 
-def test_apply_records_provenance_and_leaves_manual_facts_alone() -> None:
-    asyncio.run(_apply_records_provenance_and_respects_manual())
+async def test_apply_records_provenance_and_leaves_manual_facts_alone() -> None:
+    await _apply_records_provenance_and_respects_manual()
 
 
-def test_deleted_fact_is_not_relearned() -> None:
-    asyncio.run(_suppressed_fact_is_not_relearned())
+async def test_deleted_fact_is_not_relearned() -> None:
+    await _suppressed_fact_is_not_relearned()
 
 
-def test_handle_project_extraction_drops_personal_fact() -> None:
-    asyncio.run(_handle_extraction_end_to_end())
+async def test_handle_project_extraction_drops_personal_fact() -> None:
+    await _handle_extraction_end_to_end()
 
 
-def test_handle_project_extraction_respects_auto_capture_flag() -> None:
-    asyncio.run(_handle_extraction_skips_when_auto_capture_off())
+async def test_handle_project_extraction_respects_auto_capture_flag() -> None:
+    await _handle_extraction_skips_when_auto_capture_off()

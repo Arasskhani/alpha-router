@@ -20,7 +20,7 @@ class _Response:
         return self._payload
 
 
-def test_executor_polls_job_to_success() -> None:
+async def test_executor_polls_job_to_success() -> None:
     class Client:
         polls = 0
 
@@ -76,11 +76,11 @@ def test_executor_polls_job_to_success() -> None:
         with patch("app.sandbox.executor.httpx.AsyncClient", Client):
             return await executor.execute("print(1)", {}, job_id="job-1")
 
-    result = asyncio.run(go())
+    result = await go()
     assert result["stdout"] == "ok\n"
 
 
-def test_cancelling_executor_deletes_active_broker_job() -> None:
+async def test_cancelling_executor_deletes_active_broker_job() -> None:
     get_started = asyncio.Event()
     delete_called = asyncio.Event()
 
@@ -109,18 +109,15 @@ def test_cancelling_executor_deletes_active_broker_job() -> None:
             delete_called.set()
             return _Response(200, {"job_id": "job-cancel", "state": "cancelled"})
 
-    async def go():
-        executor = DockerBrokerSandboxExecutor(
-            base_url="http://broker",
-            token="t" * 32,
-            execution_timeout_seconds=20,
-        )
-        with patch("app.sandbox.executor.httpx.AsyncClient", Client):
-            task = asyncio.create_task(executor.execute("print(1)", {}, job_id="job-cancel"))
-            await get_started.wait()
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-            assert delete_called.is_set()
-
-    asyncio.run(go())
+    executor = DockerBrokerSandboxExecutor(
+        base_url="http://broker",
+        token="t" * 32,
+        execution_timeout_seconds=20,
+    )
+    with patch("app.sandbox.executor.httpx.AsyncClient", Client):
+        task = asyncio.create_task(executor.execute("print(1)", {}, job_id="job-cancel"))
+        await get_started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert delete_called.is_set()

@@ -154,25 +154,25 @@ async def _test_atomic_key_increment_zero_is_noop() -> None:
     await engine.dispose()
 
 
-def test_atomic_user_increment_sums_correctly():
-    asyncio.run(_test_atomic_user_increment_sums_correctly())
+async def test_atomic_user_increment_sums_correctly():
+    await _test_atomic_user_increment_sums_correctly()
 
 
-def test_atomic_user_increment_handles_null():
-    asyncio.run(_test_atomic_user_increment_handles_null())
+async def test_atomic_user_increment_handles_null():
+    await _test_atomic_user_increment_handles_null()
 
 
-def test_atomic_key_increment_sums_correctly():
-    asyncio.run(_test_atomic_key_increment_sums_correctly())
+async def test_atomic_key_increment_sums_correctly():
+    await _test_atomic_key_increment_sums_correctly()
 
 
-def test_atomic_key_increment_handles_null():
-    asyncio.run(_test_atomic_key_increment_handles_null())
+async def test_atomic_key_increment_handles_null():
+    await _test_atomic_key_increment_handles_null()
 
 
-def test_atomic_user_increment_zero_is_noop():
-    asyncio.run(_test_atomic_user_increment_zero_is_noop())
+async def test_atomic_user_increment_zero_is_noop():
+    await _test_atomic_user_increment_zero_is_noop()
 
 
-def test_atomic_key_increment_zero_is_noop():
-    asyncio.run(_test_atomic_key_increment_zero_is_noop())
+async def test_atomic_key_increment_zero_is_noop():
+    await _test_atomic_key_increment_zero_is_noop()

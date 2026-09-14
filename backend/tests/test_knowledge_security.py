@@ -170,5 +170,5 @@ async def _test_clamav_instream_protocol(monkeypatch) -> None:
     assert result.signature == "Eicar-Test-Signature"
 
 
-def test_clamav_instream_protocol(monkeypatch):
-    asyncio.run(_test_clamav_instream_protocol(monkeypatch))
+async def test_clamav_instream_protocol(monkeypatch):
+    await _test_clamav_instream_protocol(monkeypatch)

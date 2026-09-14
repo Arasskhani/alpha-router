@@ -1,6 +1,5 @@
 """first_seen_at is set on first catalog insert and survives later syncs."""
 
-import asyncio
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -122,9 +121,9 @@ async def _test_existing_null_first_seen_stays_null() -> None:
     await engine.dispose()
 
 
-def test_new_model_records_first_seen_and_keeps_it():
-    asyncio.run(_test_new_model_records_first_seen_and_keeps_it())
+async def test_new_model_records_first_seen_and_keeps_it():
+    await _test_new_model_records_first_seen_and_keeps_it()
 
 
-def test_existing_null_first_seen_stays_null():
-    asyncio.run(_test_existing_null_first_seen_stays_null())
+async def test_existing_null_first_seen_stays_null():
+    await _test_existing_null_first_seen_stays_null()

@@ -368,24 +368,24 @@ def _upsert_requires_the_scope_owner_key() -> None:
     asyncio.run(run())
 
 
-def test_manual_project_facts_stay_pinned_above_learned_facts() -> None:
-    asyncio.run(_manual_facts_stay_pinned())
+async def test_manual_project_facts_stay_pinned_above_learned_facts() -> None:
+    await _manual_facts_stay_pinned()
 
 
-def test_injected_project_facts_record_usage() -> None:
-    asyncio.run(_usage_is_recorded_for_injected_facts())
+async def test_injected_project_facts_record_usage() -> None:
+    await _usage_is_recorded_for_injected_facts()
 
 
-def test_disabled_and_expired_project_facts_are_not_injected() -> None:
-    asyncio.run(_disabled_and_expired_facts_are_not_injected())
+async def test_disabled_and_expired_project_facts_are_not_injected() -> None:
+    await _disabled_and_expired_facts_are_not_injected()
 
 
-def test_personal_memory_is_not_injected_into_a_project_chat() -> None:
-    asyncio.run(_personal_memory_never_reaches_a_project_turn())
+async def test_personal_memory_is_not_injected_into_a_project_chat() -> None:
+    await _personal_memory_never_reaches_a_project_turn()
 
 
-def test_project_vectors_are_isolated_by_project_and_scope() -> None:
-    asyncio.run(_project_vectors_are_tenant_isolated())
+async def test_project_vectors_are_isolated_by_project_and_scope() -> None:
+    await _project_vectors_are_tenant_isolated()
 
 
 def test_project_vector_upsert_requires_project_id() -> None:

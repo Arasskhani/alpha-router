@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime
 import uuid
 
@@ -304,17 +303,17 @@ async def _test_outbox_retry_and_stale_job_recovery() -> None:
     await engine.dispose()
 
 
-def test_qdrant_hybrid_collection_and_acl_payload():
-    asyncio.run(_test_qdrant_hybrid_collection_and_acl_payload())
+async def test_qdrant_hybrid_collection_and_acl_payload():
+    await _test_qdrant_hybrid_collection_and_acl_payload()
 
 
-def test_outbox_relay_and_successful_worker():
-    asyncio.run(_test_outbox_relay_and_successful_worker())
+async def test_outbox_relay_and_successful_worker():
+    await _test_outbox_relay_and_successful_worker()
 
 
-def test_worker_dead_letters_unsupported_job():
-    asyncio.run(_test_worker_dead_letters_unsupported_job())
+async def test_worker_dead_letters_unsupported_job():
+    await _test_worker_dead_letters_unsupported_job()
 
 
-def test_outbox_retry_and_stale_job_recovery():
-    asyncio.run(_test_outbox_retry_and_stale_job_recovery())
+async def test_outbox_retry_and_stale_job_recovery():
+    await _test_outbox_retry_and_stale_job_recovery()

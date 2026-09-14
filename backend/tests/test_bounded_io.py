@@ -20,12 +20,12 @@ from app.services.bounded_io import (
 from app.services.ssrf_guard import SSRFBlockedError
 
 
-def test_upload_reader_accepts_exact_limit_and_rejects_one_byte_over() -> None:
+async def test_upload_reader_accepts_exact_limit_and_rejects_one_byte_over() -> None:
     exact = UploadFile(filename="exact.bin", file=io.BytesIO(b"x" * 8))
     over = UploadFile(filename="over.bin", file=io.BytesIO(b"x" * 9))
-    assert asyncio.run(read_upload_bounded(exact, max_bytes=8)) == b"x" * 8
+    assert await read_upload_bounded(exact, max_bytes=8) == b"x" * 8
     with pytest.raises(BoundedIOError):
-        asyncio.run(read_upload_bounded(over, max_bytes=8))
+        await read_upload_bounded(over, max_bytes=8)
 
 
 def test_data_url_checks_encoded_and_decoded_boundaries() -> None:
@@ -52,27 +52,27 @@ class ChunkStream(httpx.AsyncByteStream):
         self.closed = True
 
 
-def test_http_reader_caps_chunked_body_without_content_length() -> None:
+async def test_http_reader_caps_chunked_body_without_content_length() -> None:
     stream = ChunkStream([b"1234", b"56789"])
     response = httpx.Response(200, stream=stream)
     with pytest.raises(BoundedIOError):
-        asyncio.run(read_http_response_bounded(response, max_bytes=8))
+        await read_http_response_bounded(response, max_bytes=8)
     assert stream.closed
 
 
-def test_http_reader_accepts_exact_limit_and_rejects_declared_oversize() -> None:
+async def test_http_reader_accepts_exact_limit_and_rejects_declared_oversize() -> None:
     exact = httpx.Response(200, content=b"12345678")
-    assert asyncio.run(read_http_response_bounded(exact, max_bytes=8)) == b"12345678"
+    assert await read_http_response_bounded(exact, max_bytes=8) == b"12345678"
     declared = httpx.Response(
         200,
         headers={"content-length": "9"},
         stream=ChunkStream([b"1"]),
     )
     with pytest.raises(BoundedIOError):
-        asyncio.run(read_http_response_bounded(declared, max_bytes=8))
+        await read_http_response_bounded(declared, max_bytes=8)
 
 
-def test_request_middleware_caps_chunked_body_without_content_length() -> None:
+async def test_request_middleware_caps_chunked_body_without_content_length() -> None:
     sent = []
     chunks = [b"x" * (512 * 1024), b"x" * (512 * 1024 + 1)]
 
@@ -99,11 +99,11 @@ def test_request_middleware_caps_chunked_body_without_content_length() -> None:
         "app.services.request_body_limit_service.effective_request_body_limit_bytes",
         return_value=1024 * 1024,
     ):
-        asyncio.run(middleware(scope, receive, send))
+        await middleware(scope, receive, send)
     assert any(message.get("status") == 413 for message in sent)
 
 
-def test_bounded_get_revalidates_each_manual_redirect_hop() -> None:
+async def test_bounded_get_revalidates_each_manual_redirect_hop() -> None:
     requested = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -132,11 +132,11 @@ def test_bounded_get_revalidates_each_manual_redirect_hop() -> None:
                 ]
                 return body, mime
 
-    assert asyncio.run(run()) == (b"safe", "image/png")
+    assert await run() == (b"safe", "image/png")
     assert requested == ["https://public.example/start", "https://cdn.example/image"]
 
 
-def test_bounded_get_blocks_redirect_before_second_request() -> None:
+async def test_bounded_get_blocks_redirect_before_second_request() -> None:
     requests = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -157,7 +157,7 @@ def test_bounded_get_blocks_redirect_before_second_request() -> None:
         patch("app.services.ssrf_guard._private_ranges_allowed", return_value=False),
         pytest.raises(SSRFBlockedError),
     ):
-        asyncio.run(run())
+        await run()
     assert requests == 1
 
 
@@ -213,7 +213,7 @@ def test_json_routes_get_the_small_ceiling_and_upload_routes_the_large_one() -> 
         assert [m.get("status") for m in sent if m["type"] == "http.response.start"] == [200]
 
 
-def test_no_second_response_start_when_handler_already_answered() -> None:
+async def test_no_second_response_start_when_handler_already_answered() -> None:
     sent: list[dict] = []
     chunks = [b"x" * 1024, b"x" * (200 * 1024)]
 
@@ -235,7 +235,7 @@ def test_no_second_response_start_when_handler_already_answered() -> None:
         "app.services.request_body_limit_service.request_body_limit_for",
         return_value=64 * 1024,
     ):
-        asyncio.run(RequestBodyLimitMiddleware(app)(scope, receive, send))
+        await RequestBodyLimitMiddleware(app)(scope, receive, send)
     starts = [m for m in sent if m["type"] == "http.response.start"]
     assert len(starts) == 1 and starts[0]["status"] == 200
 

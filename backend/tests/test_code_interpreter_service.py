@@ -1,6 +1,5 @@
 """Tests for sandboxed code interpreter helpers."""
 
-import asyncio
 import base64
 import hashlib
 import json
@@ -292,7 +291,7 @@ def _clear_settings_cache():
     get_settings.cache_clear()
 
 
-def test_run_sandbox_uses_subprocess_when_no_broker(monkeypatch):
+async def test_run_sandbox_uses_subprocess_when_no_broker(monkeypatch):
     """A subprocess requires an explicit development-only opt-in."""
     monkeypatch.delenv("CODE_SANDBOX_BROKER_URL", raising=False)
     monkeypatch.delenv("CODE_SANDBOX_IMAGE", raising=False)
@@ -313,7 +312,7 @@ def test_run_sandbox_uses_subprocess_when_no_broker(monkeypatch):
     monkeypatch.setattr(cis, "_run_in_subprocess", fake_sub)
     monkeypatch.setattr(cis, "_run_via_broker", fake_broker)
 
-    out = asyncio.run(run_python_sandbox("print(1)"))
+    out = await run_python_sandbox("print(1)")
     assert out.output == "sub-ok"
     assert calls == {"subprocess": 1, "broker": 0}
     _clear_settings_cache()
@@ -327,7 +326,7 @@ def test_run_sandbox_uses_subprocess_when_no_broker(monkeypatch):
         ("development", "false"),
     ],
 )
-def test_run_sandbox_fails_closed_without_broker(
+async def test_run_sandbox_fails_closed_without_broker(
     monkeypatch,
     environment: str,
     allow_subprocess: str,
@@ -342,12 +341,12 @@ def test_run_sandbox_fails_closed_without_broker(
         raise AssertionError("subprocess must not run")
 
     monkeypatch.setattr(cis, "_run_in_subprocess", forbidden_subprocess)
-    out = asyncio.run(run_python_sandbox("print(1)"))
+    out = await run_python_sandbox("print(1)")
     assert "sandbox broker is required" in out.output
     _clear_settings_cache()
 
 
-def test_legacy_image_only_configuration_cannot_downgrade(monkeypatch):
+async def test_legacy_image_only_configuration_cannot_downgrade(monkeypatch):
     monkeypatch.delenv("CODE_SANDBOX_BROKER_URL", raising=False)
     monkeypatch.setenv("CODE_SANDBOX_IMAGE", "alpha-router-sandbox:latest")
     monkeypatch.setenv("ENVIRONMENT", "development")
@@ -358,12 +357,12 @@ def test_legacy_image_only_configuration_cannot_downgrade(monkeypatch):
         raise AssertionError("legacy image config must not downgrade")
 
     monkeypatch.setattr(cis, "_run_in_subprocess", forbidden_subprocess)
-    out = asyncio.run(run_python_sandbox("print(1)"))
+    out = await run_python_sandbox("print(1)")
     assert "legacy sandbox image configuration" in out.output
     _clear_settings_cache()
 
 
-def test_run_sandbox_uses_broker_when_configured(monkeypatch):
+async def test_run_sandbox_uses_broker_when_configured(monkeypatch):
     monkeypatch.setenv("CODE_SANDBOX_BROKER_URL", "http://sandbox-broker:8081")
     monkeypatch.setenv("CODE_SANDBOX_BROKER_TOKEN", "t" * 48)
     _clear_settings_cache()
@@ -377,7 +376,7 @@ def test_run_sandbox_uses_broker_when_configured(monkeypatch):
 
     monkeypatch.setattr(cis, "_run_via_broker", fake_broker)
 
-    out = asyncio.run(run_python_sandbox("print(2)", {"a.txt": "hi"}))
+    out = await run_python_sandbox("print(2)", {"a.txt": "hi"})
     assert out.output == "broker-ok"
     assert captured["broker_url"] == "http://sandbox-broker:8081"
     assert "print(2)" in captured["code"]
@@ -385,7 +384,7 @@ def test_run_sandbox_uses_broker_when_configured(monkeypatch):
     _clear_settings_cache()
 
 
-def test_run_sandbox_rejects_broker_without_strong_token(monkeypatch):
+async def test_run_sandbox_rejects_broker_without_strong_token(monkeypatch):
     monkeypatch.setenv("CODE_SANDBOX_BROKER_URL", "http://sandbox-broker:8081")
     monkeypatch.setenv("CODE_SANDBOX_BROKER_TOKEN", "short")
     _clear_settings_cache()
@@ -394,12 +393,12 @@ def test_run_sandbox_rejects_broker_without_strong_token(monkeypatch):
         raise AssertionError("unauthenticated broker request must not be sent")
 
     monkeypatch.setattr(cis, "_run_via_broker", forbidden_broker)
-    out = asyncio.run(run_python_sandbox("print(1)"))
+    out = await run_python_sandbox("print(1)")
     assert "broker authentication is not configured" in out.output
     _clear_settings_cache()
 
 
-def test_run_sandbox_broker_still_blocks_disallowed_imports(monkeypatch):
+async def test_run_sandbox_broker_still_blocks_disallowed_imports(monkeypatch):
     """AST validation runs before a broker request (defense in depth)."""
     monkeypatch.setenv("CODE_SANDBOX_BROKER_URL", "http://sandbox-broker:8081")
     monkeypatch.setenv("CODE_SANDBOX_BROKER_TOKEN", "t" * 48)
@@ -410,7 +409,7 @@ def test_run_sandbox_broker_still_blocks_disallowed_imports(monkeypatch):
 
     monkeypatch.setattr(cis, "_run_via_broker", fake_broker)
     with pytest.raises(ValueError, match="Import not allowed"):
-        asyncio.run(run_python_sandbox("import os"))
+        await run_python_sandbox("import os")
     monkeypatch.delenv("CODE_SANDBOX_BROKER_URL", raising=False)
     _clear_settings_cache()
 
@@ -421,7 +420,7 @@ def test_dynamic_import_is_blocked_before_execution():
         validate_python_code("socket = __import__('socket')")
 
 
-def test_development_subprocess_receives_scrubbed_environment(monkeypatch):
+async def test_development_subprocess_receives_scrubbed_environment(monkeypatch):
     captured = {}
 
     class FakeProcess:
@@ -437,7 +436,7 @@ def test_development_subprocess_receives_scrubbed_environment(monkeypatch):
 
     monkeypatch.setattr(cis.asyncio, "create_subprocess_exec", fake_spawn)
     monkeypatch.setenv("SECRET_KEY", "must-not-propagate")
-    out = asyncio.run(cis._run_in_subprocess("print('ok')", {}))
+    out = await cis._run_in_subprocess("print('ok')", {})
     assert "ok" in out.output
     assert "SECRET_KEY" not in captured["env"]
     assert set(captured["env"]) == {"PATH", "PYTHONIOENCODING", "PYTHONUNBUFFERED"}
@@ -487,7 +486,7 @@ async def _broker_status_maps_to_distinct_message(status: int, detail: str, need
         assert detail in out.output
 
 
-def test_broker_http_errors_are_distinct(monkeypatch):
+async def test_broker_http_errors_are_distinct(monkeypatch):
     del monkeypatch
     cases = [
         (401, "Unauthorized", "authentication failed"),
@@ -498,4 +497,4 @@ def test_broker_http_errors_are_distinct(monkeypatch):
         (418, "teapot", "HTTP 418"),
     ]
     for status, detail, needle in cases:
-        asyncio.run(_broker_status_maps_to_distinct_message(status, detail, needle))
+        await _broker_status_maps_to_distinct_message(status, detail, needle)

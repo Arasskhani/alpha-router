@@ -7,7 +7,6 @@ the library's validation path rather than mocks of it.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import datetime as dt
 import uuid
@@ -268,36 +267,26 @@ def fake_redis(monkeypatch):
     saml_state.set_client_factory(None)
 
 
-def test_request_is_consumed_exactly_once(fake_redis):
-    async def run():
-        await saml_state.remember_authn_request("_r1")
-        assert await saml_state.consume_authn_request("_r1") is True
-        assert await saml_state.consume_authn_request("_r1") is False
-        assert await saml_state.consume_authn_request("_never_issued") is False
-        assert await saml_state.consume_authn_request(None) is False
-
-    asyncio.run(run())
+async def test_request_is_consumed_exactly_once(fake_redis):
+    await saml_state.remember_authn_request("_r1")
+    assert await saml_state.consume_authn_request("_r1") is True
+    assert await saml_state.consume_authn_request("_r1") is False
+    assert await saml_state.consume_authn_request("_never_issued") is False
+    assert await saml_state.consume_authn_request(None) is False
 
 
-def test_assertion_id_is_accepted_once(fake_redis):
-    async def run():
-        assert await saml_state.register_assertion("_a1", None) is True
-        assert await saml_state.register_assertion("_a1", None) is False
-        assert await saml_state.register_assertion("", None) is False
-
-    asyncio.run(run())
+async def test_assertion_id_is_accepted_once(fake_redis):
+    assert await saml_state.register_assertion("_a1", None) is True
+    assert await saml_state.register_assertion("_a1", None) is False
+    assert await saml_state.register_assertion("", None) is False
 
 
-def test_store_fails_closed_without_redis(fake_redis):
+async def test_store_fails_closed_without_redis(fake_redis):
     fake_redis.fail = True
-
-    async def run():
-        with pytest.raises(saml_state.SamlStateUnavailable):
-            await saml_state.remember_authn_request("_r1")
-        with pytest.raises(saml_state.SamlStateUnavailable):
-            await saml_state.consume_authn_request("_r1")
-
-    asyncio.run(run())
+    with pytest.raises(saml_state.SamlStateUnavailable):
+        await saml_state.remember_authn_request("_r1")
+    with pytest.raises(saml_state.SamlStateUnavailable):
+        await saml_state.consume_authn_request("_r1")
 
 
 # --------------------------------------------------------------------------- ACS endpoint
@@ -307,7 +296,7 @@ def _acs_request():
     return SimpleNamespace(url=SimpleNamespace(path="/api/auth/saml/acs"), client=SimpleNamespace(host="10.0.0.9"))
 
 
-def test_acs_endpoint_refuses_replay_of_the_same_response(fake_redis, monkeypatch):
+async def test_acs_endpoint_refuses_replay_of_the_same_response(fake_redis, monkeypatch):
     from app.api import auth as auth_api
 
     monkeypatch.setattr(auth_api, "_request_public_url", lambda request: ACS)
@@ -315,78 +304,66 @@ def test_acs_endpoint_refuses_replay_of_the_same_response(fake_redis, monkeypatc
     db = AsyncMock()
     user = SimpleNamespace(id=1, username="alice", token_version=0, is_active=True)
     audit = AsyncMock()
+    with (
+        patch.object(auth_api, "get_provider_config", new=AsyncMock(return_value=cfg)),
+        patch.object(auth_api, "_upsert_directory_user", new=AsyncMock(return_value=user)),
+        patch.object(auth_api, "get_user_role_slugs", new=AsyncMock(return_value=["user"])),
+        patch.object(auth_api, "record_user_login", new=AsyncMock()),
+        patch.object(auth_api, "store_token", new=AsyncMock()),
+        patch.object(auth_api, "validate_frontend_url", lambda url: SP_BASE),
+        patch("app.services.security_audit.log_security_event", new=audit),
+    ):
+        # Real login step: issues and remembers the request id.
+        _, request_id = saml_sp.login_redirect_url(cfg, f"{SP_BASE}/api/auth/saml/login")
+        await saml_state.remember_authn_request(request_id)
+        b64 = _build_response(in_response_to=request_id)
 
-    async def run():
-        with (
-            patch.object(auth_api, "get_provider_config", new=AsyncMock(return_value=cfg)),
-            patch.object(auth_api, "_upsert_directory_user", new=AsyncMock(return_value=user)),
-            patch.object(auth_api, "get_user_role_slugs", new=AsyncMock(return_value=["user"])),
-            patch.object(auth_api, "record_user_login", new=AsyncMock()),
-            patch.object(auth_api, "store_token", new=AsyncMock()),
-            patch.object(auth_api, "validate_frontend_url", lambda url: SP_BASE),
-            patch("app.services.security_audit.log_security_event", new=audit),
-        ):
-            # Real login step: issues and remembers the request id.
-            _, request_id = saml_sp.login_redirect_url(cfg, f"{SP_BASE}/api/auth/saml/login")
-            await saml_state.remember_authn_request(request_id)
-            b64 = _build_response(in_response_to=request_id)
+        first = await auth_api.saml_acs(_acs_request(), b64, None, db)
+        assert first.status_code in (302, 307)
+        assert "/login?code=" in first.headers["location"]
 
-            first = await auth_api.saml_acs(_acs_request(), b64, None, db)
-            assert first.status_code in (302, 307)
-            assert "/login?code=" in first.headers["location"]
+        # Same Response again: the request id is gone.
+        with pytest.raises(HTTPException) as exc:
+            await auth_api.saml_acs(_acs_request(), b64, None, db)
+        assert exc.value.status_code == 401
+        assert "outstanding login request" in exc.value.detail
+        assert audit.await_args.kwargs["detail"] == {"reason": "unsolicited_or_replayed_response"}
 
-            # Same Response again: the request id is gone.
-            with pytest.raises(HTTPException) as exc:
-                await auth_api.saml_acs(_acs_request(), b64, None, db)
-            assert exc.value.status_code == 401
-            assert "outstanding login request" in exc.value.detail
-            assert audit.await_args.kwargs["detail"] == {"reason": "unsolicited_or_replayed_response"}
-
-            # Even with a fresh request id, an already-seen assertion is refused.
-            _, request_id2 = saml_sp.login_redirect_url(cfg, f"{SP_BASE}/api/auth/saml/login")
-            await saml_state.remember_authn_request(request_id2)
-            first_assertion_id = next(k for k in fake_redis.store if k.startswith("saml:asn:")).split(":", 2)[2]
-            replay = _build_response(in_response_to=request_id2, assertion_id=first_assertion_id)
-            with pytest.raises(HTTPException) as exc2:
-                await auth_api.saml_acs(_acs_request(), replay, None, db)
-            assert exc2.value.status_code == 401
-            assert "already used" in exc2.value.detail
-
-    asyncio.run(run())
+        # Even with a fresh request id, an already-seen assertion is refused.
+        _, request_id2 = saml_sp.login_redirect_url(cfg, f"{SP_BASE}/api/auth/saml/login")
+        await saml_state.remember_authn_request(request_id2)
+        first_assertion_id = next(k for k in fake_redis.store if k.startswith("saml:asn:")).split(":", 2)[2]
+        replay = _build_response(in_response_to=request_id2, assertion_id=first_assertion_id)
+        with pytest.raises(HTTPException) as exc2:
+            await auth_api.saml_acs(_acs_request(), replay, None, db)
+        assert exc2.value.status_code == 401
+        assert "already used" in exc2.value.detail
 
 
-def test_acs_endpoint_refuses_idp_initiated_response(fake_redis, monkeypatch):
+async def test_acs_endpoint_refuses_idp_initiated_response(fake_redis, monkeypatch):
     from app.api import auth as auth_api
 
     monkeypatch.setattr(auth_api, "_request_public_url", lambda request: ACS)
     db = AsyncMock()
-
-    async def run():
-        with (
-            patch.object(auth_api, "get_provider_config", new=AsyncMock(return_value=_cfg())),
-            patch("app.services.security_audit.log_security_event", new=AsyncMock()),
-        ):
-            with pytest.raises(HTTPException) as exc:
-                await auth_api.saml_acs(_acs_request(), _build_response(in_response_to=None), None, db)
-            assert exc.value.status_code == 401
-
-    asyncio.run(run())
+    with (
+        patch.object(auth_api, "get_provider_config", new=AsyncMock(return_value=_cfg())),
+        patch("app.services.security_audit.log_security_event", new=AsyncMock()),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await auth_api.saml_acs(_acs_request(), _build_response(in_response_to=None), None, db)
+        assert exc.value.status_code == 401
 
 
-def test_acs_and_login_answer_503_when_redis_is_down(fake_redis, monkeypatch):
+async def test_acs_and_login_answer_503_when_redis_is_down(fake_redis, monkeypatch):
     from app.api import auth as auth_api
 
     monkeypatch.setattr(auth_api, "_request_public_url", lambda request: ACS)
     fake_redis.fail = True
     db = AsyncMock()
-
-    async def run():
-        with patch.object(auth_api, "get_provider_config", new=AsyncMock(return_value=_cfg())):
-            with pytest.raises(HTTPException) as exc:
-                await auth_api.saml_login(_acs_request(), db)
-            assert exc.value.status_code == 503
-            with pytest.raises(HTTPException) as exc2:
-                await auth_api.saml_acs(_acs_request(), _build_response(in_response_to="_x"), None, db)
-            assert exc2.value.status_code == 503
-
-    asyncio.run(run())
+    with patch.object(auth_api, "get_provider_config", new=AsyncMock(return_value=_cfg())):
+        with pytest.raises(HTTPException) as exc:
+            await auth_api.saml_login(_acs_request(), db)
+        assert exc.value.status_code == 503
+        with pytest.raises(HTTPException) as exc2:
+            await auth_api.saml_acs(_acs_request(), _build_response(in_response_to="_x"), None, db)
+        assert exc2.value.status_code == 503

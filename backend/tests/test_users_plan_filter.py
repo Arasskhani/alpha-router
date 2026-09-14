@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import csv
 import io
 
@@ -204,5 +203,5 @@ async def _flow() -> None:
     await engine.dispose()
 
 
-def test_users_effective_plan_filter_and_csv_export():
-    asyncio.run(_flow())
+async def test_users_effective_plan_filter_and_csv_export():
+    await _flow()

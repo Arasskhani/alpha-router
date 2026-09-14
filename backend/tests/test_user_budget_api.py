@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime
 
 from fastapi import FastAPI
@@ -151,5 +150,5 @@ async def _flow() -> None:
     await engine.dispose()
 
 
-def test_user_budget_matches_period_counter_not_ledger_sum() -> None:
-    asyncio.run(_flow())
+async def test_user_budget_matches_period_counter_not_ledger_sum() -> None:
+    await _flow()

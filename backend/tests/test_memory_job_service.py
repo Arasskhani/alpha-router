@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
 import uuid
 
@@ -257,17 +256,17 @@ async def _race_keeps_caller_transaction_usable() -> None:
     await engine.dispose()
 
 
-def test_memory_job_coalesce_retry_and_lease_recovery() -> None:
-    asyncio.run(_coalesce_retry_recover())
+async def test_memory_job_coalesce_retry_and_lease_recovery() -> None:
+    await _coalesce_retry_recover()
 
 
-def test_open_job_race_does_not_poison_caller_transaction() -> None:
-    asyncio.run(_race_keeps_caller_transaction_usable())
+async def test_open_job_race_does_not_poison_caller_transaction() -> None:
+    await _race_keeps_caller_transaction_usable()
 
 
-def test_delete_all_resets_watermarks() -> None:
-    asyncio.run(_watermark_reset())
+async def test_delete_all_resets_watermarks() -> None:
+    await _watermark_reset()
 
 
-def test_memory_job_complete() -> None:
-    asyncio.run(_complete_job_happy_path())
+async def test_memory_job_complete() -> None:
+    await _complete_job_happy_path()

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime
 
 import pytest
@@ -319,13 +318,13 @@ async def _exercise_knowledge_retention_holds() -> None:
         await engine.dispose()
 
 
-def test_governance_audit_chain_and_legal_holds() -> None:
-    asyncio.run(_exercise_audit_chain_and_legal_holds())
+async def test_governance_audit_chain_and_legal_holds() -> None:
+    await _exercise_audit_chain_and_legal_holds()
 
 
-def test_chat_retention_respects_session_and_agent_holds() -> None:
-    asyncio.run(_exercise_chat_retention_holds())
+async def test_chat_retention_respects_session_and_agent_holds() -> None:
+    await _exercise_chat_retention_holds()
 
 
-def test_knowledge_retention_respects_legal_holds() -> None:
-    asyncio.run(_exercise_knowledge_retention_holds())
+async def test_knowledge_retention_respects_legal_holds() -> None:
+    await _exercise_knowledge_retention_holds()

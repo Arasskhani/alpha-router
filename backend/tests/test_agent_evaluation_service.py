@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 
 import pytest
 from sqlalchemy import func, select
@@ -293,5 +292,5 @@ async def _exercise_evaluation_gate() -> None:
         await engine.dispose()
 
 
-def test_evaluation_gate_requires_scoring_and_independent_review() -> None:
-    asyncio.run(_exercise_evaluation_gate())
+async def test_evaluation_gate_requires_scoring_and_independent_review() -> None:
+    await _exercise_evaluation_gate()

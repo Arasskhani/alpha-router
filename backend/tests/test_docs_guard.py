@@ -1,6 +1,5 @@
 """Phase 9: OpenAPI docs/redoc/openapi.json locked to Super Admin in production."""
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -170,48 +169,39 @@ async def _build_users(factory):
         return super_user.username, regular.username
 
 
-def test_request_has_super_admin_accepts_super_admin_cookie():
-    async def run():
-        engine, factory = _setup_db()
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        super_username, _ = await _build_users(factory)
-        token = create_access_token(super_username, "super_admin")
-        request = _cookie_request(token)
-        with patch("app.services.docs_guard.AsyncSessionLocal", factory):
-            assert await request_has_super_admin(request) is True
-        await engine.dispose()
-
-    asyncio.run(run())
+async def test_request_has_super_admin_accepts_super_admin_cookie():
+    engine, factory = _setup_db()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    super_username, _ = await _build_users(factory)
+    token = create_access_token(super_username, "super_admin")
+    request = _cookie_request(token)
+    with patch("app.services.docs_guard.AsyncSessionLocal", factory):
+        assert await request_has_super_admin(request) is True
+    await engine.dispose()
 
 
-def test_request_has_super_admin_rejects_regular_user_cookie():
-    async def run():
-        engine, factory = _setup_db()
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        _, regular_username = await _build_users(factory)
-        token = create_access_token(regular_username, "user")
-        request = _cookie_request(token)
-        with patch("app.services.docs_guard.AsyncSessionLocal", factory):
-            assert await request_has_super_admin(request) is False
-        await engine.dispose()
-
-    asyncio.run(run())
+async def test_request_has_super_admin_rejects_regular_user_cookie():
+    engine, factory = _setup_db()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    _, regular_username = await _build_users(factory)
+    token = create_access_token(regular_username, "user")
+    request = _cookie_request(token)
+    with patch("app.services.docs_guard.AsyncSessionLocal", factory):
+        assert await request_has_super_admin(request) is False
+    await engine.dispose()
 
 
-def test_request_has_super_admin_rejects_missing_cookie():
-    async def run():
-        engine, factory = _setup_db()
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        await _build_users(factory)
-        request = _cookie_request(None)
-        with patch("app.services.docs_guard.AsyncSessionLocal", factory):
-            assert await request_has_super_admin(request) is False
-        await engine.dispose()
-
-    asyncio.run(run())
+async def test_request_has_super_admin_rejects_missing_cookie():
+    engine, factory = _setup_db()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    await _build_users(factory)
+    request = _cookie_request(None)
+    with patch("app.services.docs_guard.AsyncSessionLocal", factory):
+        assert await request_has_super_admin(request) is False
+    await engine.dispose()
 
 
 class _FakeRequest:

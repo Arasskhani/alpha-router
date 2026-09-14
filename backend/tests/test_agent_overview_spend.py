@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime
 import uuid
 
@@ -107,5 +106,5 @@ async def _aggregates_cost_and_ranks_agents() -> None:
     await engine.dispose()
 
 
-def test_overview_spend_24h_ranks_agents_and_ignores_old_runs() -> None:
-    asyncio.run(_aggregates_cost_and_ranks_agents())
+async def test_overview_spend_24h_ranks_agents_and_ignores_old_runs() -> None:
+    await _aggregates_cost_and_ranks_agents()

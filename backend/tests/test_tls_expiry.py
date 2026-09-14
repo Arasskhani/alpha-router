@@ -1,6 +1,5 @@
 """TLS expiry notices must not stamp a send when SMTP fails."""
 
-import asyncio
 import datetime
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -26,80 +25,74 @@ async def _session():
     return engine, factory
 
 
-def test_expiry_notice_does_not_stamp_when_smtp_fails(monkeypatch):
-    async def _run():
-        engine, factory = await _session()
-        now = datetime.datetime.utcnow()
-        async with factory() as db:
-            db.add(
-                TlsCertificate(
-                    label="edge",
-                    cert_pem="CERT",
-                    key_pem_encrypted="KEY",
-                    sha256_fingerprint="abc123",
-                    not_after=now + datetime.timedelta(days=7),
-                    is_active=True,
-                )
+async def test_expiry_notice_does_not_stamp_when_smtp_fails(monkeypatch):
+    engine, factory = await _session()
+    now = datetime.datetime.utcnow()
+    async with factory() as db:
+        db.add(
+            TlsCertificate(
+                label="edge",
+                cert_pem="CERT",
+                key_pem_encrypted="KEY",
+                sha256_fingerprint="abc123",
+                not_after=now + datetime.timedelta(days=7),
+                is_active=True,
             )
-            await db.commit()
-
-        async def _recipients(_db):
-            return ["ops@example.com"]
-
-        async def _fail(*_args, **_kwargs):
-            raise SmtpSendError("smtp down")
-
-        monkeypatch.setattr(
-            "app.services.tls_expiry_service._notice_recipients",
-            _recipients,
         )
-        monkeypatch.setattr("app.services.tls_expiry_service.send_email", _fail)
+        await db.commit()
 
-        async with factory() as db:
-            result = await notify_expiring_certificates(db, now=now)
-            assert result["sent"] == 0
-            stamp = await db.get(SystemSetting, KEY_LAST_NOTICE)
-            assert stamp is None
-        await engine.dispose()
+    async def _recipients(_db):
+        return ["ops@example.com"]
 
-    asyncio.run(_run())
+    async def _fail(*_args, **_kwargs):
+        raise SmtpSendError("smtp down")
+
+    monkeypatch.setattr(
+        "app.services.tls_expiry_service._notice_recipients",
+        _recipients,
+    )
+    monkeypatch.setattr("app.services.tls_expiry_service.send_email", _fail)
+
+    async with factory() as db:
+        result = await notify_expiring_certificates(db, now=now)
+        assert result["sent"] == 0
+        stamp = await db.get(SystemSetting, KEY_LAST_NOTICE)
+        assert stamp is None
+    await engine.dispose()
 
 
-def test_expiry_notice_stamps_after_successful_send(monkeypatch):
-    async def _run():
-        engine, factory = await _session()
-        now = datetime.datetime.utcnow()
-        async with factory() as db:
-            db.add(
-                TlsCertificate(
-                    label="edge",
-                    cert_pem="CERT",
-                    key_pem_encrypted="KEY",
-                    sha256_fingerprint="abc123",
-                    not_after=now + datetime.timedelta(days=7),
-                    is_active=True,
-                )
+async def test_expiry_notice_stamps_after_successful_send(monkeypatch):
+    engine, factory = await _session()
+    now = datetime.datetime.utcnow()
+    async with factory() as db:
+        db.add(
+            TlsCertificate(
+                label="edge",
+                cert_pem="CERT",
+                key_pem_encrypted="KEY",
+                sha256_fingerprint="abc123",
+                not_after=now + datetime.timedelta(days=7),
+                is_active=True,
             )
-            await db.commit()
-
-        async def _recipients(_db):
-            return ["ops@example.com"]
-
-        async def _ok(*_args, **_kwargs):
-            return None
-
-        monkeypatch.setattr(
-            "app.services.tls_expiry_service._notice_recipients",
-            _recipients,
         )
-        monkeypatch.setattr("app.services.tls_expiry_service.send_email", _ok)
+        await db.commit()
 
-        async with factory() as db:
-            result = await notify_expiring_certificates(db, now=now)
-            assert result["sent"] == 1
-            stamp = await db.get(SystemSetting, KEY_LAST_NOTICE)
-            assert stamp is not None
-            assert stamp.value.startswith("abc123:")
-        await engine.dispose()
+    async def _recipients(_db):
+        return ["ops@example.com"]
 
-    asyncio.run(_run())
+    async def _ok(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "app.services.tls_expiry_service._notice_recipients",
+        _recipients,
+    )
+    monkeypatch.setattr("app.services.tls_expiry_service.send_email", _ok)
+
+    async with factory() as db:
+        result = await notify_expiring_certificates(db, now=now)
+        assert result["sent"] == 1
+        stamp = await db.get(SystemSetting, KEY_LAST_NOTICE)
+        assert stamp is not None
+        assert stamp.value.startswith("abc123:")
+    await engine.dispose()

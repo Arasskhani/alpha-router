@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 
 from sqlalchemy import event, select, text
@@ -93,35 +92,32 @@ def _abstained_plan() -> AgentTurnPlan:
     )
 
 
-def test_persist_agent_plan_inserts_run_before_trace_under_fk_enforcement():
-    async def _run() -> None:
-        session_factory, engine = await _session_factory()
-        try:
-            async with session_factory() as db:
-                plan = _abstained_plan()
-                row = await persist_agent_plan(
-                    db,
-                    plan=plan,
-                    source="chat",
-                    client_app="test",
-                    user_id=None,
-                    alpha_router_api_key_id=None,
-                    chat_session_id=None,
-                    external_session_id=None,
-                    private_mode=False,
-                )
-                await db.commit()
-                assert row.id == plan.plan_id
-                runs = (await db.execute(select(AgentRun).where(AgentRun.id == row.id))).scalars().all()
-                traces = (
-                    (await db.execute(select(AgentRetrievalTrace).where(AgentRetrievalTrace.agent_run_id == row.id)))
-                    .scalars()
-                    .all()
-                )
-                assert len(runs) == 1
-                assert len(traces) == 1
-                assert traces[0].outcome == "no_evidence"
-        finally:
-            await engine.dispose()
-
-    asyncio.run(_run())
+async def test_persist_agent_plan_inserts_run_before_trace_under_fk_enforcement():
+    session_factory, engine = await _session_factory()
+    try:
+        async with session_factory() as db:
+            plan = _abstained_plan()
+            row = await persist_agent_plan(
+                db,
+                plan=plan,
+                source="chat",
+                client_app="test",
+                user_id=None,
+                alpha_router_api_key_id=None,
+                chat_session_id=None,
+                external_session_id=None,
+                private_mode=False,
+            )
+            await db.commit()
+            assert row.id == plan.plan_id
+            runs = (await db.execute(select(AgentRun).where(AgentRun.id == row.id))).scalars().all()
+            traces = (
+                (await db.execute(select(AgentRetrievalTrace).where(AgentRetrievalTrace.agent_run_id == row.id)))
+                .scalars()
+                .all()
+            )
+            assert len(runs) == 1
+            assert len(traces) == 1
+            assert traces[0].outcome == "no_evidence"
+    finally:
+        await engine.dispose()

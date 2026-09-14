@@ -1,7 +1,6 @@
 """Tests for DB-backed chat storage."""
 
 import pytest
-import asyncio
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -212,8 +211,8 @@ async def _run_roundtrip() -> None:
     await engine.dispose()
 
 
-def test_chat_store_roundtrip():
-    asyncio.run(_run_roundtrip())
+async def test_chat_store_roundtrip():
+    await _run_roundtrip()
 
 
 def test_dt_to_ms_interprets_naive_as_utc():
@@ -293,8 +292,8 @@ def sessions_have_last_message_at(rows):
     return all("lastMessageAt" in r for r in rows)
 
 
-def test_activity_filters():
-    asyncio.run(_run_activity_filters())
+async def test_activity_filters():
+    await _run_activity_filters()
 
 
 def test_compact_attachment_strips_data_url_for_storage():
@@ -361,5 +360,5 @@ async def _run_attachment_append():
     await engine.dispose()
 
 
-def test_append_attachment_message_without_storage_limit_error():
-    asyncio.run(_run_attachment_append())
+async def test_append_attachment_message_without_storage_limit_error():
+    await _run_attachment_append()

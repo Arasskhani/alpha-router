@@ -7,7 +7,6 @@ The password login path used to challenge for a second factor only when
 
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -29,7 +28,7 @@ def _user(provider: str) -> SimpleNamespace:
 
 
 @pytest.mark.parametrize("provider", ["local", "ldap"])
-def test_password_login_challenges_totp_for_any_provider(provider: str) -> None:
+async def test_password_login_challenges_totp_for_any_provider(provider: str) -> None:
     async def run() -> auth_api.TokenResponse:
         user = _user(provider)
         store_pending = AsyncMock()
@@ -57,7 +56,7 @@ def test_password_login_challenges_totp_for_any_provider(provider: str) -> None:
         store_pending.assert_awaited_once()
         return result
 
-    result = asyncio.run(run())
+    result = await run()
     assert result.requires_2fa is True
     assert result.token_type == "2fa_pending"
     assert result.pending_token == "pending-123"

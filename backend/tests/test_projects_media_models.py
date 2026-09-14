@@ -130,32 +130,27 @@ def test_migration_idempotent_and_creates_table():
         database_path.unlink(missing_ok=True)
 
 
-def test_project_media_asset_can_be_created():
-    import asyncio
-
-    async def run():
-        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        try:
-            async with factory() as db:
-                asset = ProjectMediaAsset(
-                    project_id="proj-test-1",
-                    uploaded_by_user_id=None,
-                    kind="image",
-                    mime_type="image/png",
-                    file_name="test.png",
-                    storage_path="cdn/p/proj-test-1/test.png",
-                    content_hash="abc123",
-                    size_bytes=1024,
-                    created_at=datetime.datetime.utcnow(),
-                )
-                db.add(asset)
-                await db.flush()
-                assert asset.id is not None
-                assert asset.project_id == "proj-test-1"
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+async def test_project_media_asset_can_be_created():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        async with factory() as db:
+            asset = ProjectMediaAsset(
+                project_id="proj-test-1",
+                uploaded_by_user_id=None,
+                kind="image",
+                mime_type="image/png",
+                file_name="test.png",
+                storage_path="cdn/p/proj-test-1/test.png",
+                content_hash="abc123",
+                size_bytes=1024,
+                created_at=datetime.datetime.utcnow(),
+            )
+            db.add(asset)
+            await db.flush()
+            assert asset.id is not None
+            assert asset.project_id == "proj-test-1"
+    finally:
+        await engine.dispose()

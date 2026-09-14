@@ -1,6 +1,5 @@
 """Regression tests for async rate limiting on chat list/search endpoints."""
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -37,7 +36,7 @@ async def _call_list(*, q: str | None = None, since: int | None = None) -> None:
         ("message-search", "chat-msg-search:42"),
     ],
 )
-def test_chat_handlers_await_rate_limiter(operation: str, expected_key: str) -> None:
+async def test_chat_handlers_await_rate_limiter(operation: str, expected_key: str) -> None:
     calls: list[str] = []
 
     async def track(key: str, *, limit: int, window_seconds: int = 60) -> None:
@@ -66,27 +65,23 @@ def test_chat_handlers_await_rate_limiter(operation: str, expected_key: str) -> 
                     db=object(),
                 )
 
-    asyncio.run(run())
+    await run()
     assert calls == [expected_key]
 
 
-def test_chat_list_enforces_429_with_redis_outage_fallback() -> None:
+async def test_chat_list_enforces_429_with_redis_outage_fallback() -> None:
     key = "chat-list:42"
-
-    async def run() -> None:
-        with (
-            patch.object(rate_limit, "_client", return_value=None),
-            patch.object(user_chats, "list_chat_sessions", AsyncMock(return_value=([], 0, None))),
-            patch.object(user_chats, "list_chat_folders", AsyncMock(return_value=[])),
-            patch.object(user_chats, "load_user_prefs", AsyncMock(return_value={})),
-            patch.object(user_chats.get_settings(), "chat_list_rate_limit_per_min", 2),
-        ):
-            rate_limit._buckets.pop(key, None)
+    with (
+        patch.object(rate_limit, "_client", return_value=None),
+        patch.object(user_chats, "list_chat_sessions", AsyncMock(return_value=([], 0, None))),
+        patch.object(user_chats, "list_chat_folders", AsyncMock(return_value=[])),
+        patch.object(user_chats, "load_user_prefs", AsyncMock(return_value={})),
+        patch.object(user_chats.get_settings(), "chat_list_rate_limit_per_min", 2),
+    ):
+        rate_limit._buckets.pop(key, None)
+        await _call_list()
+        await _call_list()
+        with pytest.raises(HTTPException) as exc:
             await _call_list()
-            await _call_list()
-            with pytest.raises(HTTPException) as exc:
-                await _call_list()
-            assert exc.value.status_code == 429
-            rate_limit._buckets.pop(key, None)
-
-    asyncio.run(run())
+        assert exc.value.status_code == 429
+        rate_limit._buckets.pop(key, None)

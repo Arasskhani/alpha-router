@@ -1,6 +1,5 @@
 """Tests for image generation API Logs + budget accounting."""
 
-import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -117,8 +116,8 @@ async def _test_log_image_usage_writes_request_log_and_budget() -> None:
         assert count == 1
 
 
-def test_log_image_usage_writes_request_log_and_budget():
-    asyncio.run(_test_log_image_usage_writes_request_log_and_budget())
+async def test_log_image_usage_writes_request_log_and_budget():
+    await _test_log_image_usage_writes_request_log_and_budget()
 
 
 async def _test_log_image_usage_failure_row() -> None:
@@ -154,8 +153,8 @@ async def _test_log_image_usage_failure_row() -> None:
         assert row.total_cost_usd == 0.0
 
 
-def test_log_image_usage_failure_row():
-    asyncio.run(_test_log_image_usage_failure_row())
+async def test_log_image_usage_failure_row():
+    await _test_log_image_usage_failure_row()
 
 
 async def _test_image_attempts_keep_individual_outcomes_and_quantities() -> None:
@@ -221,5 +220,5 @@ async def _test_image_attempts_keep_individual_outcomes_and_quantities() -> None
     await engine.dispose()
 
 
-def test_image_attempts_keep_individual_outcomes_and_quantities():
-    asyncio.run(_test_image_attempts_keep_individual_outcomes_and_quantities())
+async def test_image_attempts_keep_individual_outcomes_and_quantities():
+    await _test_image_attempts_keep_individual_outcomes_and_quantities()

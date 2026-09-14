@@ -1,7 +1,5 @@
 """Model allowlist for gateway API keys."""
 
-import asyncio
-
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -220,28 +218,28 @@ async def _test_gateway_models_list_respects_model_allowlist() -> None:
         await engine.dispose()
 
 
-def test_unrestricted_key_returns_none_allowlist():
-    asyncio.run(_test_unrestricted_key_returns_none_allowlist())
+async def test_unrestricted_key_returns_none_allowlist():
+    await _test_unrestricted_key_returns_none_allowlist()
 
 
-def test_restricted_empty_allowlist_is_deny_all():
-    asyncio.run(_test_restricted_empty_allowlist_is_deny_all())
+async def test_restricted_empty_allowlist_is_deny_all():
+    await _test_restricted_empty_allowlist_is_deny_all()
 
 
-def test_owner_private_model_denied_for_other_owner():
-    asyncio.run(_test_owner_private_model_denied_for_other_owner())
+async def test_owner_private_model_denied_for_other_owner():
+    await _test_owner_private_model_denied_for_other_owner()
 
 
-def test_model_must_be_on_allowed_connection():
-    asyncio.run(_test_model_must_be_on_allowed_connection())
+async def test_model_must_be_on_allowed_connection():
+    await _test_model_must_be_on_allowed_connection()
 
 
-def test_resolve_respects_model_allowlist():
-    asyncio.run(_test_resolve_respects_model_allowlist())
+async def test_resolve_respects_model_allowlist():
+    await _test_resolve_respects_model_allowlist()
 
 
-def test_gateway_models_list_respects_model_allowlist():
-    asyncio.run(_test_gateway_models_list_respects_model_allowlist())
+async def test_gateway_models_list_respects_model_allowlist():
+    await _test_gateway_models_list_respects_model_allowlist()
 
 
 def test_model_policy_label():

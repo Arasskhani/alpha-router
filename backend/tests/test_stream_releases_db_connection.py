@@ -7,7 +7,6 @@ so the transaction opened by the session lookups pinned one pooled connection
 
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,7 +21,7 @@ def _chunk(content: str) -> SimpleNamespace:
     return SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=content))], usage=None)
 
 
-def test_request_session_transaction_is_closed_before_provider_call():
+async def test_request_session_transaction_is_closed_before_provider_call():
     async def run() -> dict:
         engine = create_async_engine("sqlite+aiosqlite:///:memory:")
         async with engine.begin() as conn:
@@ -111,7 +110,7 @@ def test_request_session_transaction_is_closed_before_provider_call():
             await engine.dispose()
         return observed
 
-    observed = asyncio.run(run())
+    observed = await run()
     assert observed["sessions_seen"] >= 1, "stream_chat must have opened its session"
     assert observed["in_transaction_at_provider_call"] is False
     assert observed["done"] is True

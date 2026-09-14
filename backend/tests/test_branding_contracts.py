@@ -4,7 +4,6 @@ These assertions intentionally lock the current phase's values. Each coordinated
 rename phase updates the relevant assertion alongside its production contract.
 """
 
-import asyncio
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
@@ -157,8 +156,8 @@ async def _test_fresh_database_schema_contracts() -> None:
     assert "reconciliation_attempts" in usage_event_columns
 
 
-def test_fresh_database_schema_contracts() -> None:
-    asyncio.run(_test_fresh_database_schema_contracts())
+async def test_fresh_database_schema_contracts() -> None:
+    await _test_fresh_database_schema_contracts()
 
 
 def test_chat_wire_and_export_contracts():

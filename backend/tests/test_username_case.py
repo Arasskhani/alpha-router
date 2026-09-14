@@ -1,7 +1,5 @@
 """Case-insensitive username identity."""
 
-import asyncio
-
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -93,17 +91,17 @@ async def _test_upsert_refuses_cross_provider_case_collision() -> None:
     await engine.dispose()
 
 
-def test_find_and_taken_ci():
-    asyncio.run(_test_find_and_taken_ci())
+async def test_find_and_taken_ci():
+    await _test_find_and_taken_ci()
 
 
-def test_upsert_matches_existing_mixed_case_without_rename():
-    asyncio.run(_test_upsert_matches_existing_mixed_case_without_rename())
+async def test_upsert_matches_existing_mixed_case_without_rename():
+    await _test_upsert_matches_existing_mixed_case_without_rename()
 
 
-def test_upsert_stores_new_username_lowercase():
-    asyncio.run(_test_upsert_stores_new_username_lowercase())
+async def test_upsert_stores_new_username_lowercase():
+    await _test_upsert_stores_new_username_lowercase()
 
 
-def test_upsert_refuses_cross_provider_case_collision():
-    asyncio.run(_test_upsert_refuses_cross_provider_case_collision())
+async def test_upsert_refuses_cross_provider_case_collision():
+    await _test_upsert_refuses_cross_provider_case_collision()

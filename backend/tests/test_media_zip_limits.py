@@ -56,45 +56,39 @@ def _patch_transfer_limits():
     )
 
 
-def test_zip_rejects_count_and_declared_size_before_reads(monkeypatch) -> None:
+async def test_zip_rejects_count_and_declared_size_before_reads(monkeypatch) -> None:
     monkeypatch.setenv("MAX_ZIP_ITEMS", "2")
     monkeypatch.setenv("MAX_ZIP_SINGLE_FILE_BYTES", str(1024 * 1024))
     get_settings.cache_clear()
     with _patch_transfer_limits():
         with pytest.raises(media.MediaZipLimitError, match="Too many"):
-            asyncio.run(media.build_media_zip_file(FakeDb([]), 1, [1, 2, 3]))
+            await media.build_media_zip_file(FakeDb([]), 1, [1, 2, 3])
         with pytest.raises(media.MediaZipLimitError, match="single-file"):
-            asyncio.run(
-                media.build_media_zip_file(
-                    FakeDb([_row(1, 1024 * 1024 + 1)]),
-                    1,
-                    [1],
-                )
-            )
-    get_settings.cache_clear()
-
-
-def test_zip_streams_valid_temp_file_and_removes_it() -> None:
-    get_settings.cache_clear()
-
-    async def run():
-        with _patch_transfer_limits(), patch.object(media, "read_media_bytes", AsyncMock(side_effect=[b"one", b"two"])):
-            path, packed = await media.build_media_zip_file(
-                FakeDb([_row(1, 3), _row(2, 3)]),
+            await media.build_media_zip_file(
+                FakeDb([_row(1, 1024 * 1024 + 1)]),
                 1,
-                [1, 2],
+                [1],
             )
-        assert packed == 2
-        with zipfile.ZipFile(path) as archive:
-            assert len(archive.namelist()) == 2
-        chunks = [chunk async for chunk in media.stream_media_zip(path)]
-        assert chunks
-        assert not path.exists()
-
-    asyncio.run(run())
+    get_settings.cache_clear()
 
 
-def test_zip_temp_file_is_removed_on_cancellation(tmp_path: Path) -> None:
+async def test_zip_streams_valid_temp_file_and_removes_it() -> None:
+    get_settings.cache_clear()
+    with _patch_transfer_limits(), patch.object(media, "read_media_bytes", AsyncMock(side_effect=[b"one", b"two"])):
+        path, packed = await media.build_media_zip_file(
+            FakeDb([_row(1, 3), _row(2, 3)]),
+            1,
+            [1, 2],
+        )
+    assert packed == 2
+    with zipfile.ZipFile(path) as archive:
+        assert len(archive.namelist()) == 2
+    chunks = [chunk async for chunk in media.stream_media_zip(path)]
+    assert chunks
+    assert not path.exists()
+
+
+async def test_zip_temp_file_is_removed_on_cancellation(tmp_path: Path) -> None:
     get_settings.cache_clear()
     target = tmp_path / "cancelled.zip"
 
@@ -115,5 +109,5 @@ def test_zip_temp_file_is_removed_on_cancellation(tmp_path: Path) -> None:
         ):
             await media.build_media_zip_file(FakeDb([_row(1)]), 1, [1])
 
-    asyncio.run(run())
+    await run()
     assert not target.exists()

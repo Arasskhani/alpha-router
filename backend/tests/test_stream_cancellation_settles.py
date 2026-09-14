@@ -163,7 +163,7 @@ def _enter_all(patches):
     return stack
 
 
-def test_task_group_cancellation_still_settles() -> None:
+async def test_task_group_cancellation_still_settles() -> None:
     """Starlette-style cancel: anyio cancel scope around the consumer."""
 
     async def run() -> dict:
@@ -210,7 +210,7 @@ def test_task_group_cancellation_still_settles() -> None:
             "consumer_error": consumer_error,
         }
 
-    result = asyncio.run(run())
+    result = await run()
 
     assert result["log_usage_calls"] == 1, "settlement must run once even when cancelled"
     assert result["finalized"] == {"success": False, "error_message": "Request cancelled"}
@@ -221,7 +221,7 @@ def test_task_group_cancellation_still_settles() -> None:
     assert isinstance(result["consumer_error"], asyncio.CancelledError)
 
 
-def test_generator_aclose_still_settles() -> None:
+async def test_generator_aclose_still_settles() -> None:
     """ASGI server closes the generator (GeneratorExit path)."""
 
     async def run() -> dict:
@@ -255,7 +255,7 @@ def test_generator_aclose_still_settles() -> None:
             "output": b"".join(chunks).decode(),
         }
 
-    result = asyncio.run(run())
+    result = await run()
 
     assert result["log_usage_calls"] == 1
     assert result["finalized"] == {"success": False, "error_message": "Request cancelled"}
@@ -263,7 +263,7 @@ def test_generator_aclose_still_settles() -> None:
     assert "[DONE]" not in result["output"]
 
 
-def test_detected_disconnect_stops_consuming_upstream() -> None:
+async def test_detected_disconnect_stops_consuming_upstream() -> None:
     """request.is_disconnected() -> break out of the provider stream immediately."""
 
     async def run() -> dict:
@@ -298,7 +298,7 @@ def test_detected_disconnect_stops_consuming_upstream() -> None:
             "output": b"".join(chunks).decode(),
         }
 
-    result = asyncio.run(run())
+    result = await run()
 
     # Without the early break the fake provider would be drained forever
     # (it never ends); a handful of chunks proves we stopped at the disconnect.
@@ -310,11 +310,11 @@ def test_detected_disconnect_stops_consuming_upstream() -> None:
 
 
 @pytest.mark.parametrize("attr", ["aclose"])
-def test_close_upstream_stream_is_best_effort(attr: str) -> None:
+async def test_close_upstream_stream_is_best_effort(attr: str) -> None:
     class Broken:
         async def aclose(self):
             raise RuntimeError("boom")
 
-    asyncio.run(proxy_service._close_upstream_stream(Broken()))
-    asyncio.run(proxy_service._close_upstream_stream(object()))
-    asyncio.run(proxy_service._close_upstream_stream(None))
+    await proxy_service._close_upstream_stream(Broken())
+    await proxy_service._close_upstream_stream(object())
+    await proxy_service._close_upstream_stream(None)

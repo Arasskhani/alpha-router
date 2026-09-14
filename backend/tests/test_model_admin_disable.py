@@ -1,6 +1,5 @@
 """Sticky admin_disabled semantics for catalog models."""
 
-import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -258,25 +257,25 @@ async def _test_new_model_from_sync_defaults() -> None:
     await engine.dispose()
 
 
-def test_admin_off_survives_sync():
-    asyncio.run(_test_admin_off_survives_sync())
+async def test_admin_off_survives_sync():
+    await _test_admin_off_survives_sync()
 
 
-def test_admin_off_survives_connection_enable():
-    asyncio.run(_test_admin_off_survives_connection_enable())
+async def test_admin_off_survives_connection_enable():
+    await _test_admin_off_survives_connection_enable()
 
 
-def test_admin_on_respects_connection_active():
-    asyncio.run(_test_admin_on_respects_connection_active())
+async def test_admin_on_respects_connection_active():
+    await _test_admin_on_respects_connection_active()
 
 
-def test_bulk_off_sticky():
-    asyncio.run(_test_bulk_off_sticky())
+async def test_bulk_off_sticky():
+    await _test_bulk_off_sticky()
 
 
-def test_sync_flash_does_not_touch_other_connection():
-    asyncio.run(_test_sync_flash_does_not_touch_other_connection())
+async def test_sync_flash_does_not_touch_other_connection():
+    await _test_sync_flash_does_not_touch_other_connection()
 
 
-def test_new_model_from_sync_defaults():
-    asyncio.run(_test_new_model_from_sync_defaults())
+async def test_new_model_from_sync_defaults():
+    await _test_new_model_from_sync_defaults()

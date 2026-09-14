@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -100,8 +99,8 @@ async def _run_stream_timing_test() -> None:
     assert logged["response_time_ms"] < 50
 
 
-def test_stream_chat_logs_provider_stream_duration_not_post_processing():
-    asyncio.run(_run_stream_timing_test())
+async def test_stream_chat_logs_provider_stream_duration_not_post_processing():
+    await _run_stream_timing_test()
 
 
 async def _run_empty_code_interpreter_test() -> None:
@@ -194,5 +193,5 @@ async def _run_empty_code_interpreter_test() -> None:
     assert [event.status for event in logged["usage_events"]] == ["failed", "failed"]
 
 
-def test_empty_code_interpreter_completion_is_logged_as_failure():
-    asyncio.run(_run_empty_code_interpreter_test())
+async def test_empty_code_interpreter_completion_is_logged_as_failure():
+    await _run_empty_code_interpreter_test()

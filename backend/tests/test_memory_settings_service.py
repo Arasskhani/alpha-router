@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-import asyncio
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -85,8 +84,8 @@ async def _project_settings_round_trip() -> None:
     await engine.dispose()
 
 
-def test_project_memory_settings_round_trip() -> None:
-    asyncio.run(_project_settings_round_trip())
+async def test_project_memory_settings_round_trip() -> None:
+    await _project_settings_round_trip()
 
 
 async def _defaults_and_validation() -> None:
@@ -191,5 +190,5 @@ async def _defaults_and_validation() -> None:
     await engine.dispose()
 
 
-def test_memory_settings_defaults_and_validation() -> None:
-    asyncio.run(_defaults_and_validation())
+async def test_memory_settings_defaults_and_validation() -> None:
+    await _defaults_and_validation()

@@ -37,7 +37,7 @@ backend-lint:
   image: python:3.12-slim
   <<: *backend-rules
   script:
-    - python -m pip install --no-cache-dir "ruff==0.16.7"
+    - python -m pip install --no-cache-dir -r backend/requirements-dev.txt
     # Full rule set (backend/ruff.toml) plus formatting; both are hard gates.
     - cd backend && ruff check . && ruff format --check .
 
@@ -49,8 +49,7 @@ backend-typecheck:
   image: python:3.12-slim
   <<: *backend-rules
   script:
-    - python -m pip install --no-cache-dir -r backend/requirements.txt
-    - python -m pip install --no-cache-dir "mypy==1.20.2" mypy-baseline
+    - python -m pip install --no-cache-dir -r backend/requirements.txt -r backend/requirements-dev.txt
     - bash scripts/mypy-check.sh
 
 backend-tests:
@@ -58,10 +57,9 @@ backend-tests:
   image: python:3.12-slim
   <<: *backend-rules
   script:
-    - python -m pip install --no-cache-dir -r backend/requirements.txt
-    - python -m pip install --no-cache-dir pytest
+    - python -m pip install --no-cache-dir -r backend/requirements.txt -r backend/requirements-dev.txt
     - python -m pip check
-    - PYTHONPATH=backend python -m pytest backend/tests -q
+    - cd backend && python -m pytest tests -q
 
 # The money path relies on SELECT ... FOR UPDATE / SKIP LOCKED, which SQLite
 # silently ignores. Run the real migration entrypoint (the same one db-init
@@ -81,8 +79,7 @@ backend-postgres-canary:
     DATABASE_URL: postgresql+asyncpg://alpha_router:ci-canary@postgres:5432/alpha_router_test
     RUN_POSTGRES_RESERVATION_CANARY: "1"
   script:
-    - python -m pip install --no-cache-dir -r backend/requirements.txt
-    - python -m pip install --no-cache-dir pytest
+    - python -m pip install --no-cache-dir -r backend/requirements.txt -r backend/requirements-dev.txt
     - cd backend
     - python -m app.migrate
     - PYTHONPATH=. python -m pytest tests/test_budget_reservations_postgres.py tests/test_budget_reconcile_race_postgres.py tests/test_scheduler_leader.py tests/test_readiness.py -q -rs

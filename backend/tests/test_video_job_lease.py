@@ -82,83 +82,38 @@ async def _seed(db, *, status="submitted", lease_owner="worker-A", provider_job_
     return user, job
 
 
-def test_runner_stops_without_billing_when_lease_is_taken_over():
-    async def run():
-        factory, dispose = await _factory()
-        adapter = _FakeAdapter()
-        billing = AsyncMock(return_value=None)
-        try:
-            async with factory() as db:
-                user, job = await _seed(db)
-                job_id = job.id
+async def test_runner_stops_without_billing_when_lease_is_taken_over():
+    factory, dispose = await _factory()
+    adapter = _FakeAdapter()
+    billing = AsyncMock(return_value=None)
+    try:
+        async with factory() as db:
+            user, job = await _seed(db)
+            job_id = job.id
 
-            async def takeover():
-                # Wait for the runner's first poll, then another worker claims the job.
-                for _ in range(200):
-                    if adapter.polls >= 1:
-                        break
-                    await asyncio.sleep(0.01)
-                async with factory() as db:
-                    row = await db.get(VideoGenerationJob, job_id)
-                    row.lease_owner = "worker-B"
-                    await db.commit()
-
-            settings = SimpleNamespace(video_job_timeout_seconds=30, video_job_poll_interval_ms=50)
-            with (
-                patch.object(vjs, "AsyncSessionLocal", factory),
-                patch.object(vjs, "get_video_adapter", lambda *a, **k: adapter),
-                patch.object(vjs, "get_settings", lambda: settings),
-                patch.object(vjs, "log_video_usage", billing),
-            ):
-                # Give the runner a connection to use.
-                from app.models.connection import Connection
-                from app.models.model_catalog import AIModel
-
-                async with factory() as db:
-                    conn = Connection(name="c", provider_type="openrouter", api_key_encrypted="enc", is_active=True)
-                    db.add(conn)
-                    await db.flush()
-                    model = AIModel(
-                        connection_id=conn.id,
-                        external_id="video-model",
-                        provider_type="openrouter",
-                        display_name="v",
-                        is_video_model=True,
-                    )
-                    db.add(model)
-                    await db.flush()
-                    row = await db.get(VideoGenerationJob, job_id)
-                    row.catalog_model_id = model.id
-                    row.connection_id = conn.id
-                    await db.commit()
-
-                with patch("app.services.secret_crypto.decrypt_secret", lambda v: "k"):
-                    await asyncio.gather(vjs._run_video_job(job_id), takeover())
-
+        async def takeover():
+            # Wait for the runner's first poll, then another worker claims the job.
+            for _ in range(200):
+                if adapter.polls >= 1:
+                    break
+                await asyncio.sleep(0.01)
             async with factory() as db:
                 row = await db.get(VideoGenerationJob, job_id)
-            # The row belongs to worker-B now: status untouched by the old runner,
-            # lease not cleared, and no usage row written by it.
-            assert row.lease_owner == "worker-B"
-            assert row.status not in ("failed", "cancelled", "completed")
-            billing.assert_not_awaited()
-        finally:
-            await dispose()
+                row.lease_owner = "worker-B"
+                await db.commit()
 
-    asyncio.run(run())
-
-
-def test_cancel_yields_when_provider_already_completed():
-    async def run():
-        factory, dispose = await _factory()
-        adapter = _FakeAdapter()
-        adapter.state = "completed"
-        try:
+        settings = SimpleNamespace(video_job_timeout_seconds=30, video_job_poll_interval_ms=50)
+        with (
+            patch.object(vjs, "AsyncSessionLocal", factory),
+            patch.object(vjs, "get_video_adapter", lambda *a, **k: adapter),
+            patch.object(vjs, "get_settings", lambda: settings),
+            patch.object(vjs, "log_video_usage", billing),
+        ):
+            # Give the runner a connection to use.
             from app.models.connection import Connection
             from app.models.model_catalog import AIModel
 
             async with factory() as db:
-                user, job = await _seed(db, status="running")
                 conn = Connection(name="c", provider_type="openrouter", api_key_encrypted="enc", is_active=True)
                 db.add(conn)
                 await db.flush()
@@ -171,24 +126,63 @@ def test_cancel_yields_when_provider_already_completed():
                 )
                 db.add(model)
                 await db.flush()
-                job.catalog_model_id = model.id
-                job.connection_id = conn.id
+                row = await db.get(VideoGenerationJob, job_id)
+                row.catalog_model_id = model.id
+                row.connection_id = conn.id
                 await db.commit()
 
-                with (
-                    patch.object(vjs, "get_video_adapter", lambda *a, **k: adapter),
-                    patch("app.services.secret_crypto.decrypt_secret", lambda v: "k"),
-                ):
-                    with pytest.raises(vjs.VideoJobAlreadyCompleted):
-                        await vjs.cancel_video_job(db, job)
-                    assert adapter.cancels == 0
-                    assert job.status == "running" and job.cancel_requested_at is None
+            with patch("app.services.secret_crypto.decrypt_secret", lambda v: "k"):
+                await asyncio.gather(vjs._run_video_job(job_id), takeover())
 
-                    # Still running at the provider: cancel proceeds as before.
-                    adapter.state = "running"
-                    out = await vjs.cancel_video_job(db, job)
-                    assert out.status == "cancelled" and adapter.cancels == 1
-        finally:
-            await dispose()
+        async with factory() as db:
+            row = await db.get(VideoGenerationJob, job_id)
+        # The row belongs to worker-B now: status untouched by the old runner,
+        # lease not cleared, and no usage row written by it.
+        assert row.lease_owner == "worker-B"
+        assert row.status not in ("failed", "cancelled", "completed")
+        billing.assert_not_awaited()
+    finally:
+        await dispose()
 
-    asyncio.run(run())
+
+async def test_cancel_yields_when_provider_already_completed():
+    factory, dispose = await _factory()
+    adapter = _FakeAdapter()
+    adapter.state = "completed"
+    try:
+        from app.models.connection import Connection
+        from app.models.model_catalog import AIModel
+
+        async with factory() as db:
+            user, job = await _seed(db, status="running")
+            conn = Connection(name="c", provider_type="openrouter", api_key_encrypted="enc", is_active=True)
+            db.add(conn)
+            await db.flush()
+            model = AIModel(
+                connection_id=conn.id,
+                external_id="video-model",
+                provider_type="openrouter",
+                display_name="v",
+                is_video_model=True,
+            )
+            db.add(model)
+            await db.flush()
+            job.catalog_model_id = model.id
+            job.connection_id = conn.id
+            await db.commit()
+
+            with (
+                patch.object(vjs, "get_video_adapter", lambda *a, **k: adapter),
+                patch("app.services.secret_crypto.decrypt_secret", lambda v: "k"),
+            ):
+                with pytest.raises(vjs.VideoJobAlreadyCompleted):
+                    await vjs.cancel_video_job(db, job)
+                assert adapter.cancels == 0
+                assert job.status == "running" and job.cancel_requested_at is None
+
+                # Still running at the provider: cancel proceeds as before.
+                adapter.state = "running"
+                out = await vjs.cancel_video_job(db, job)
+                assert out.status == "cancelled" and adapter.cancels == 1
+    finally:
+        await dispose()

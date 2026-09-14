@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime
 import hashlib
 import os
@@ -475,8 +474,8 @@ def test_rrf_combines_dense_and_sparse_rankings():
     assert fused[0].sparse_rank == 1
 
 
-def test_hybrid_index_retrieval_and_stale_acl_denial():
-    asyncio.run(_test_hybrid_index_retrieval_and_stale_acl_denial())
+async def test_hybrid_index_retrieval_and_stale_acl_denial():
+    await _test_hybrid_index_retrieval_and_stale_acl_denial()
 
 
 async def _test_live_qdrant_hybrid_acl_filter() -> None:
@@ -562,5 +561,5 @@ async def _test_live_qdrant_hybrid_acl_filter() -> None:
     os.environ.get("RUN_LIVE_QDRANT_TESTS") != "1",
     reason="live Qdrant integration is opt-in",
 )
-def test_live_qdrant_hybrid_acl_filter():
-    asyncio.run(_test_live_qdrant_hybrid_acl_filter())
+async def test_live_qdrant_hybrid_acl_filter():
+    await _test_live_qdrant_hybrid_acl_filter()

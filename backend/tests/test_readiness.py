@@ -20,14 +20,14 @@ async def _slow() -> None:
     await asyncio.sleep(5)
 
 
-def test_degraded_dependency_does_not_fail_probe():
+async def test_degraded_dependency_does_not_fail_probe():
     with (
         patch.object(rs, "_check_database", _ok),
         patch.object(rs, "_check_redis", _ok),
         patch.object(rs, "_check_qdrant", _boom),
         patch.object(rs, "_check_object_storage", _ok),
     ):
-        report = asyncio.run(rs.readiness_report())
+        report = await rs.readiness_report()
     assert report.ready is True
     payload = report.payload()
     assert payload["status"] == "ready"
@@ -36,20 +36,20 @@ def test_degraded_dependency_does_not_fail_probe():
     assert payload["checks"]["qdrant"]["detail"] == "ConnectionError"
 
 
-def test_required_dependency_failure_makes_probe_unavailable():
+async def test_required_dependency_failure_makes_probe_unavailable():
     with (
         patch.object(rs, "_check_database", _boom),
         patch.object(rs, "_check_redis", _ok),
         patch.object(rs, "_check_qdrant", _ok),
         patch.object(rs, "_check_object_storage", _ok),
     ):
-        report = asyncio.run(rs.readiness_report())
+        report = await rs.readiness_report()
     assert report.ready is False
     assert report.payload()["status"] == "unavailable"
     assert report.payload()["checks"]["database"]["detail"] == "ConnectionError"
 
 
-def test_hung_dependency_is_bounded_by_timeout(monkeypatch):
+async def test_hung_dependency_is_bounded_by_timeout(monkeypatch):
     monkeypatch.setattr(rs, "CHECK_TIMEOUT_SECONDS", 0.2)
     with (
         patch.object(rs, "_check_database", _ok),
@@ -57,7 +57,7 @@ def test_hung_dependency_is_bounded_by_timeout(monkeypatch):
         patch.object(rs, "_check_qdrant", _ok),
         patch.object(rs, "_check_object_storage", _ok),
     ):
-        report = asyncio.run(rs.readiness_report())
+        report = await rs.readiness_report()
     assert report.ready is False
     assert report.payload()["checks"]["redis"]["detail"] == "timeout"
 

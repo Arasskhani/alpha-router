@@ -267,6 +267,17 @@ class Settings(BaseSettings):
     # is 10 minutes; make it explicit so a stalled provider cannot pin a stream,
     # its capacity permit and its budget hold for longer than this.
     chat_provider_timeout_seconds: float = 600.0  # env: CHAT_PROVIDER_TIMEOUT_SECONDS
+    # Outbound HTTP ceilings that used to be literals scattered over the
+    # services (Phase 3.5). Connect timeouts stay at 10s everywhere.
+    #   provider_http:   model catalog sync, video create/poll, Replicate calls
+    #   provider_lookup: short metadata GETs (generation lookup, reconciliation,
+    #                    SSRF-guarded fetches, web tool pages)
+    #   identity_http:   SAML metadata / OIDC discovery, token and userinfo
+    #   speech_http:     text-to-speech synthesis (large audio bodies)
+    provider_http_timeout_seconds: float = 60.0  # env: PROVIDER_HTTP_TIMEOUT_SECONDS
+    provider_lookup_timeout_seconds: float = 20.0  # env: PROVIDER_LOOKUP_TIMEOUT_SECONDS
+    identity_http_timeout_seconds: float = 20.0  # env: IDENTITY_HTTP_TIMEOUT_SECONDS
+    speech_http_timeout_seconds: float = 120.0  # env: SPEECH_HTTP_TIMEOUT_SECONDS
 
     # Video generation (OpenRouter /videos async jobs).
     # Clip length is the user's selected duration from the model's

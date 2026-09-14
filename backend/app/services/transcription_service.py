@@ -22,10 +22,7 @@ from app.services.budget_reservation_service import (
     reservation_key,
     reserve,
 )
-from app.services.global_default_transcription_model import (
-    get_transcription_default_model,
-    model_supports_transcription,
-)
+from app.services.system_default_models import get_default_model, model_supports_transcription
 from app.services.llm_providers import litellm_transcription_model
 from app.services.openrouter_transcription_service import (
     OpenRouterTranscriptionError,
@@ -296,7 +293,7 @@ async def resolve_transcription_target(
             user_id,
         )
 
-    admin_model = await get_transcription_default_model(db)
+    admin_model = await get_default_model(db, "voice")
     resolved = await _resolve_catalog_row(db, admin_model, source="admin")
     if resolved is not None:
         return resolved

@@ -282,7 +282,7 @@ def _validate_discovery_document(data: dict[str, Any]) -> dict[str, Any]:
 
 def _idp_http_client() -> httpx.Client:
     # No redirects: a 30x from an IdP endpoint could re-target the request.
-    return httpx.Client(timeout=15.0, follow_redirects=False, trust_env=False)
+    return httpx.Client(timeout=get_settings().identity_http_timeout_seconds, follow_redirects=False, trust_env=False)
 
 
 def fetch_discovery(issuer: str) -> dict[str, Any]:

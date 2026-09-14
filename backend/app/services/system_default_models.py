@@ -4,8 +4,10 @@ One registry instead of a module per capability. Each kind names the
 ``system_settings`` key it lives under and the predicate a catalog row must
 satisfy, and every read/write path below is shared.
 
-The chat and transcription keys are imported from their own modules rather than
-re-declared, so there is exactly one definition of each setting name.
+This module is the only owner of the ``global_default_*_model_id`` setting
+names and of the per-capability eligibility predicates (Phase 3.5 folded the
+former ``global_default_chat_model`` / ``global_default_transcription_model``
+modules in here).
 
 Leaving a kind unset is always supported: callers fall back to whatever they did
 before an admin made a choice.
@@ -21,14 +23,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.system import SystemSetting
-from app.services.global_default_chat_model import SETTING_KEY as CHAT_SETTING_KEY
-from app.services.global_default_chat_model import model_supports_text_chat
-from app.services.global_default_transcription_model import (
-    SETTING_KEY as VOICE_SETTING_KEY,
-)
-from app.services.global_default_transcription_model import model_supports_transcription
 from app.services.model_access_service import ACCESS_PUBLIC
 from app.services.model_capabilities import model_kinds, model_media_flags
+from app.services.model_tool_compatibility_service import is_auto_router_model_id
+
+CHAT_SETTING_KEY = "global_default_chat_model_id"
+VOICE_SETTING_KEY = "global_default_transcription_model_id"
 
 
 class SystemDefaultModelError(ValueError):
@@ -50,6 +50,26 @@ def _catalog_kinds(model: AIModel) -> list[str]:
         pricing_raw=model.pricing_raw,
         provider_type=model.provider_type,
     )
+
+
+def model_supports_text_chat(model: AIModel) -> bool:
+    """Auto-router and unclassified models are assumed to chat; media-only ones are not."""
+    if is_auto_router_model_id(model.external_id):
+        return True
+    kinds = _catalog_kinds(model)
+    if not kinds:
+        return True
+    return "text" in kinds
+
+
+def model_supports_transcription(model: AIModel) -> bool:
+    """True only when the catalog says this model transcribes audio.
+
+    Unlike ``model_supports_text_chat``, an unclassified model is **not** given
+    the benefit of the doubt: sending audio to a model that cannot accept it
+    fails at the provider and bills the user for the attempt.
+    """
+    return "transcription" in _catalog_kinds(model)
 
 
 def model_supports_image_generation(model: AIModel) -> bool:
@@ -133,6 +153,18 @@ async def get_default_model_id(db: AsyncSession, kind: str) -> int | None:
     return _parse_stored_id(row.value if row else None)
 
 
+async def get_default_model(db: AsyncSession, kind: str) -> AIModel | None:
+    """The configured default for ``kind``, or None when unset or no longer eligible."""
+    entry = resolve_kind(kind)
+    model_id = await get_default_model_id(db, kind)
+    if model_id is None:
+        return None
+    model = await db.get(AIModel, model_id)
+    if model is None or not await _is_usable(db, entry, model):
+        return None
+    return model
+
+
 async def get_all_default_model_ids(db: AsyncSession) -> dict[str, int | None]:
     return {key: await get_default_model_id(db, key) for key in DEFAULT_MODEL_KIND_KEYS}
 
@@ -203,9 +235,8 @@ async def _assert_usable(db: AsyncSession, entry: DefaultModelKind, model: AIMod
         raise SystemDefaultModelError("Model must be public")
     if not entry.supports(model):
         raise SystemDefaultModelError(entry.requirement)
-    # Same bar as global_default_transcription_model: a system default is what
-    # every user falls back to, so it must be routable right now - a live
-    # connection with credentials, not merely a catalog row.
+    # A system default is what every user falls back to, so it must be routable
+    # right now - a live connection with credentials, not merely a catalog row.
     if model.connection_id is None:
         raise SystemDefaultModelError("Model has no connection")
     conn = await db.get(Connection, model.connection_id)

@@ -19,6 +19,7 @@ from app.services.video_providers.contracts import (
     ProviderJobSnapshot,
     VideoUsage,
 )
+from app.config import get_settings
 
 
 class ReplicateVideoAdapter:
@@ -128,7 +129,9 @@ class ReplicateVideoAdapter:
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError("Invalid Replicate URL")
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0), follow_redirects=False) as client:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(get_settings().provider_http_timeout_seconds, connect=10.0), follow_redirects=False
+        ) as client:
             response = await client.request(method, url, headers=self._headers(api_key), json=json_body)
         if allow_404 and response.status_code == 404:
             return {}

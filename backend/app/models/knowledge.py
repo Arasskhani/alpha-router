@@ -25,7 +25,7 @@ from app.database import Base
 JsonDocument = JSON().with_variant(JSONB(), "postgresql")
 
 
-def _one_acl_target_constraint(name: str) -> CheckConstraint:
+def one_acl_target_constraint(name: str) -> CheckConstraint:
     return CheckConstraint(
         "("
         "(CASE WHEN user_id IS NOT NULL THEN 1 ELSE 0 END) + "
@@ -113,7 +113,7 @@ class KnowledgeBaseAccessAssignment(Base):
 
     __tablename__ = "knowledge_base_access_assignments"
     __table_args__ = (
-        _one_acl_target_constraint("chk_kb_access_one_target"),
+        one_acl_target_constraint("chk_kb_access_one_target"),
         CheckConstraint("effect IN ('allow', 'deny')", name="chk_kb_access_effect"),
         UniqueConstraint(
             "knowledge_base_id",
@@ -235,7 +235,7 @@ class KnowledgeDocumentAccessAssignment(Base):
 
     __tablename__ = "knowledge_document_access_assignments"
     __table_args__ = (
-        _one_acl_target_constraint("chk_knowledge_document_access_one_target"),
+        one_acl_target_constraint("chk_knowledge_document_access_one_target"),
         CheckConstraint(
             "effect IN ('allow', 'deny')",
             name="chk_knowledge_document_access_effect",

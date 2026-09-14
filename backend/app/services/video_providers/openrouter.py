@@ -21,6 +21,7 @@ from app.services.video_providers.contracts import (
     ProviderJobSnapshot,
     VideoUsage,
 )
+from app.core.constants import OPENROUTER_HOST
 
 
 def _status(value: str) -> str:
@@ -122,12 +123,12 @@ class OpenRouterVideoAdapter:
         if not snapshot.asset_url:
             raise ValueError("Provider completed without a video asset URL")
         host = (urlparse(snapshot.asset_url).hostname or "").lower()
-        is_api_asset = host == "openrouter.ai" or host.endswith(".openrouter.ai")
+        is_api_asset = host == OPENROUTER_HOST or host.endswith(f".{OPENROUTER_HOST}")
         return ProviderAssetRef(
             url=snapshot.asset_url,
             mime_type=snapshot.asset_mime or "video/mp4",
             requires_auth=is_api_asset,
-            allowed_hosts=("openrouter.ai",) if is_api_asset else (),
+            allowed_hosts=(OPENROUTER_HOST,) if is_api_asset else (),
         )
 
     def normalize_usage(self, snapshot: ProviderJobSnapshot) -> VideoUsage:

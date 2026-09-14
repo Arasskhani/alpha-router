@@ -75,6 +75,7 @@ from app.services.llm_providers import (
     resolve_litellm_provider,
 )
 from app.services.openrouter_image_service import prepare_image_generation_prompt
+from app.core.constants import normalize_openrouter_base_url
 
 router = APIRouter(prefix="/api/images", tags=["images"])
 _ALPHA_ROUTER_MEDIA_PATH = re.compile(r"/api/chat/media/(\d+)/file/?(?:\?.*)?$")
@@ -234,15 +235,7 @@ async def resolve_reference_image_for_upstream(
 _normalize_model_id = normalize_model_id
 
 
-def _normalize_openrouter_base(base_url: str | None) -> str:
-    base = (base_url or "https://openrouter.ai/api/v1").strip().rstrip("/")
-    if not base:
-        return "https://openrouter.ai/api/v1"
-    low = base.lower()
-    # Admins often save https://openrouter.ai; force API root to avoid HTML pages.
-    if "openrouter.ai" in low and "/api/" not in low:
-        return "https://openrouter.ai/api/v1"
-    return base
+_normalize_openrouter_base = normalize_openrouter_base_url
 
 
 class ImageRequest(BaseModel):

@@ -130,6 +130,7 @@ from app.services.user_memory_service import (
     record_memory_usage,
 )
 from app.services.user_profile_context_service import augment_messages_with_profile
+from app.core.constants import normalize_openrouter_base_url
 
 logger = logging.getLogger("app.services.proxy_service")
 
@@ -611,9 +612,9 @@ async def _openrouter_generation_outcome(
     request_id = (upstream_request_id or "").strip()
     if not request_id:
         return None
-    base = (base_url or "https://openrouter.ai/api/v1").strip().rstrip("/")
+    base = normalize_openrouter_base_url(base_url)
     async with httpx.AsyncClient(
-        timeout=httpx.Timeout(10.0),
+        timeout=httpx.Timeout(get_settings().provider_lookup_timeout_seconds),
         trust_env=False,
     ) as client:
         # The generation record becomes queryable a moment after the stream ends,

@@ -21,6 +21,8 @@ from app.services.speech_providers.contracts import (
     SpeechProviderError,
 )
 from app.services.storage_service import audio_output_limit
+from app.core.constants import normalize_openrouter_base_url
+from app.config import get_settings
 
 _FORMAT_TO_MIME: dict[str, str] = {
     "mp3": "audio/mpeg",
@@ -28,15 +30,7 @@ _FORMAT_TO_MIME: dict[str, str] = {
 }
 
 
-def normalize_openrouter_base(base_url: str | None) -> str:
-    base = (base_url or "https://openrouter.ai/api/v1").strip().rstrip("/")
-    if not base:
-        return "https://openrouter.ai/api/v1"
-    low = base.lower()
-    # Admins often save https://openrouter.ai; force API root to avoid HTML pages.
-    if "openrouter.ai" in low and "/api/" not in low:
-        return "https://openrouter.ai/api/v1"
-    return base
+normalize_openrouter_base = normalize_openrouter_base_url
 
 
 def _audio_base(base_url: str | None) -> str:
@@ -117,7 +111,7 @@ class OpenRouterSpeechAdapter:
                 _audio_base(base_url),
                 json=payload,
                 headers=headers,
-                timeout=120.0,
+                timeout=get_settings().speech_http_timeout_seconds,
             )
         except Exception as exc:
             raise SpeechProviderError(

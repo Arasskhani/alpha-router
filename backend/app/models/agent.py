@@ -21,6 +21,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.types import JSON
 
 from app.database import Base
+from app.models.knowledge import one_acl_target_constraint
 
 JsonDocument = JSON().with_variant(JSONB(), "postgresql")
 
@@ -150,15 +151,7 @@ class AgentAccessAssignment(Base):
 
     __tablename__ = "agent_access_assignments"
     __table_args__ = (
-        CheckConstraint(
-            "("
-            "(CASE WHEN user_id IS NOT NULL THEN 1 ELSE 0 END) + "
-            "(CASE WHEN group_id IS NOT NULL THEN 1 ELSE 0 END) + "
-            "(CASE WHEN department IS NOT NULL THEN 1 ELSE 0 END) + "
-            "(CASE WHEN role_slug IS NOT NULL THEN 1 ELSE 0 END)"
-            ") = 1",
-            name="chk_agent_access_one_target",
-        ),
+        one_acl_target_constraint("chk_agent_access_one_target"),
         CheckConstraint(
             "effect IN ('allow', 'deny')",
             name="chk_agent_access_effect",

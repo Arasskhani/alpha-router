@@ -27,6 +27,7 @@ from app.services.openrouter_image_service import (
     build_openrouter_headers,
     post_openrouter_json,
 )
+from app.core.constants import normalize_openrouter_base_url
 
 #: Formats the OpenRouter transcription endpoint documents.
 _SUPPORTED_FORMATS = {"wav", "mp3", "flac", "m4a", "ogg", "webm", "aac", "mp4", "mpeg", "mpga"}
@@ -84,10 +85,7 @@ def audio_format_for(filename: str, mime_type: str) -> str:
 
 
 def transcription_url(base_url: str | None) -> str:
-    base = (base_url or "https://openrouter.ai/api/v1").strip().rstrip("/")
-    if "openrouter.ai" in base.lower() and "/api/" not in base.lower():
-        base = "https://openrouter.ai/api/v1"
-    return f"{base}/audio/transcriptions"
+    return f"{normalize_openrouter_base_url(base_url)}/audio/transcriptions"
 
 
 def _normalize_usage(raw: Any) -> dict[str, Any]:

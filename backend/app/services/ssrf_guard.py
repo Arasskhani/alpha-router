@@ -210,7 +210,7 @@ def safe_client(**kwargs) -> httpx.AsyncClient:
     on the response) with a bounded redirect limit and default timeouts.
     """
     kwargs.setdefault("follow_redirects", False)
-    kwargs.setdefault("timeout", httpx.Timeout(20.0, connect=10.0))
+    kwargs.setdefault("timeout", httpx.Timeout(get_settings().provider_lookup_timeout_seconds, connect=10.0))
     kwargs.setdefault("trust_env", False)
     kwargs.setdefault("transport", PinnedAsyncHTTPTransport())
     return httpx.AsyncClient(**kwargs)

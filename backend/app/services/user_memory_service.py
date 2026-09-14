@@ -33,6 +33,7 @@ from app.services.memory_settings_service import (
 )
 from app.services.user_chat_storage_service import load_user_prefs
 from app.utils.text_normalize import normalize_memory_text
+from app.core.constants import RRF_K
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,6 @@ MAX_MEMORY_CHARS = 500
 MAX_MEMORIES_PER_USER = 200
 MAX_INJECT_ITEMS = 30
 MAX_INJECT_CHARS = 4000
-RRF_K = 60
 NEAR_DUPE_THRESHOLD = 0.93
 
 _WHITESPACE_RE = re.compile(r"\s+")

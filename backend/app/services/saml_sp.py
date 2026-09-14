@@ -156,7 +156,7 @@ def _fetch_idp_metadata_xml(url: str) -> str:
     """SSRF-safe GET of IdP metadata XML (manual redirects, size-bounded)."""
     current = validate_idp_metadata_url(url)
     with httpx.Client(
-        timeout=httpx.Timeout(20.0, connect=10.0),
+        timeout=httpx.Timeout(get_settings().identity_http_timeout_seconds, connect=10.0),
         follow_redirects=False,
         trust_env=False,
     ) as client:

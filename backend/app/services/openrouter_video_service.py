@@ -13,13 +13,15 @@ from app.services.openrouter_image_service import (
     build_openrouter_headers,
     get_openrouter_http_client,
 )
+from app.core.constants import OPENROUTER_HOST, normalize_openrouter_base_url
+from app.config import get_settings
 import contextlib
 
 
 ALLOWED_VIDEO_RESOLUTIONS = frozenset({"480p", "720p", "1080p", "1K", "2K", "4K"})
 ALLOWED_VIDEO_ASPECT_RATIOS = frozenset({"16:9", "9:16", "1:1", "3:2", "2:3", "4:3", "3:4", "21:9"})
 ALLOWED_VIDEO_MIME_TYPES = frozenset({"video/mp4", "video/webm"})
-_OPENROUTER_HOST_SUFFIX = "openrouter.ai"
+_OPENROUTER_HOST_SUFFIX = OPENROUTER_HOST
 
 
 def normalize_video_resolution(value: str | None) -> str:
@@ -74,8 +76,7 @@ def catalog_video_durations(raw: object | None) -> list[int]:
 
 
 def openrouter_videos_base(base_url: str | None) -> str:
-    root = (base_url or "https://openrouter.ai/api/v1").rstrip("/")
-    return f"{root}/videos"
+    return f"{normalize_openrouter_base_url(base_url)}/videos"
 
 
 def build_video_generation_payload(
@@ -150,7 +151,7 @@ async def submit_video_job(
     headers = build_openrouter_headers(api_key, referer=referer)
     headers.setdefault("Connection", "close")
     client = get_openrouter_http_client()
-    timeout = httpx.Timeout(60.0, connect=OPENROUTER_CONNECT_TIMEOUT)
+    timeout = httpx.Timeout(get_settings().provider_http_timeout_seconds, connect=OPENROUTER_CONNECT_TIMEOUT)
     response = await client.post(url, headers=headers, json=payload, timeout=timeout)
     if response.status_code >= 400:
         detail = (response.text or "")[:2000]

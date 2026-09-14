@@ -12,6 +12,8 @@ from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.services.model_tool_compatibility_service import ensure_model_compatibility_rows
 from app.services.video_catalog_service import normalize_video_capabilities
+from app.core.constants import normalize_openrouter_base_url
+from app.config import get_settings
 
 logger = logging.getLogger("app.services.model_sync")
 
@@ -69,9 +71,9 @@ def _guess_is_video_model(ext_id: str, item: dict | None = None) -> bool:
 
 
 async def fetch_openrouter_models(api_key: str, base_url: str | None) -> list[dict]:
-    url = (base_url or "https://openrouter.ai/api/v1").rstrip("/") + "/models"
+    url = normalize_openrouter_base_url(base_url) + "/models"
     headers = _fresh_request_headers(api_key)
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=get_settings().provider_http_timeout_seconds) as client:
         # OpenRouter defaults this endpoint to text-output models. Request the
         # complete catalog so image/audio/video-only models are not omitted.
         resp = await client.get(
@@ -87,10 +89,10 @@ async def fetch_openrouter_models(api_key: str, base_url: str | None) -> list[di
 
 async def fetch_openrouter_video_models(api_key: str, base_url: str | None) -> dict[str, dict]:
     """Map model id → OpenRouter /videos/models capability snapshot."""
-    url = (base_url or "https://openrouter.ai/api/v1").rstrip("/") + "/videos/models"
+    url = normalize_openrouter_base_url(base_url) + "/videos/models"
     headers = _fresh_request_headers(api_key)
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=get_settings().provider_http_timeout_seconds) as client:
             resp = await client.get(url, headers=headers)
             if resp.status_code >= 400:
                 logger.warning(
@@ -123,10 +125,10 @@ async def fetch_openrouter_video_models(api_key: str, base_url: str | None) -> d
 
 async def fetch_openrouter_image_models(api_key: str, base_url: str | None) -> dict[str, dict]:
     """Map model identifiers to OpenRouter /images/models snapshots."""
-    url = (base_url or "https://openrouter.ai/api/v1").rstrip("/") + "/images/models"
+    url = normalize_openrouter_base_url(base_url) + "/images/models"
     headers = _fresh_request_headers(api_key)
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=get_settings().provider_http_timeout_seconds) as client:
             resp = await client.get(url, headers=headers)
             if resp.status_code >= 400:
                 logger.warning(
@@ -189,7 +191,7 @@ async def fetch_provider_models(
             "Pragma": "no-cache",
         }
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=get_settings().provider_http_timeout_seconds) as client:
         resp = await client.get(f"{base}/models", headers=headers, params=params)
         resp.raise_for_status()
         payload = resp.json()

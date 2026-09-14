@@ -66,7 +66,6 @@ from app.services.model_tool_compatibility_service import (
     is_code_interpreter_candidate,
     set_manual_override,
 )
-from app.services.global_default_chat_model import get_global_default_model_id
 from app.services.system_default_models import (
     DEFAULT_MODEL_KIND_KEYS,
     DEFAULT_MODEL_KINDS,
@@ -75,6 +74,7 @@ from app.services.system_default_models import (
     clear_defaults_if_ids,
     drop_unusable_defaults,
     get_all_default_model_ids,
+    get_default_model_id,
     set_default_model,
 )
 
@@ -451,7 +451,7 @@ async def get_models_system_default(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_models),
 ):
-    model_id = await get_global_default_model_id(db)
+    model_id = await get_default_model_id(db, "chat")
     return {"model_id": model_id}
 
 

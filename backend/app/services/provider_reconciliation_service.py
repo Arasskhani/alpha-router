@@ -22,6 +22,8 @@ from app.services.usage_accounting_service import (
     quote_usage,
     reconcile_usage_event,
 )
+from app.core.constants import normalize_openrouter_base_url
+from app.config import get_settings
 
 logger = logging.getLogger("app.services.provider_reconciliation_service")
 
@@ -74,11 +76,7 @@ def _extract_usd_cost(payload: Any) -> float | None:
     return None
 
 
-def _openrouter_api_base(base_url: str | None) -> str:
-    base = (base_url or "https://openrouter.ai/api/v1").strip().rstrip("/")
-    if base == "https://openrouter.ai":
-        return f"{base}/api/v1"
-    return base
+_openrouter_api_base = normalize_openrouter_base_url
 
 
 def _openai_api_base(base_url: str | None) -> str:
@@ -254,7 +252,7 @@ async def reconcile_connection_costs(
     api_key = decrypt_secret(connection.api_key_encrypted)
     unmatched = 0
     error_message: str | None = None
-    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(get_settings().provider_lookup_timeout_seconds)) as client:
         for event_id in claimed_event_ids:
             event = await db.get(UsageEvent, event_id)
             if event is None:

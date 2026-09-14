@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services import proxy_service
+from app.services import proxy_service, turn_settlement
 from app.services.agent_chat_integration_service import (
     AgentRequestError,
     PreparedAgentTurn,
@@ -158,7 +158,9 @@ async def _test_non_generating_plan_returns_only_safe_response() -> None:
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=context),
+        patch.object(turn_settlement, "AsyncSessionLocal", return_value=context),
         patch.object(proxy_service, "finalize_agent_run", finalize_run),
+        patch.object(turn_settlement, "finalize_agent_run", finalize_run),
         patch.object(
             proxy_service,
             "acompletion",
@@ -258,6 +260,7 @@ async def _test_agent_stream_is_buffered_until_post_generation_review() -> None:
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=context),
+        patch.object(turn_settlement, "AsyncSessionLocal", return_value=context),
         patch.object(
             proxy_service,
             "mark_agent_run_started",
@@ -302,7 +305,9 @@ async def _test_agent_stream_is_buffered_until_post_generation_review() -> None:
             AsyncMock(return_value=review),
         ) as finalize_completion,
         patch.object(proxy_service, "finalize_agent_run", finalize_run),
+        patch.object(turn_settlement, "finalize_agent_run", finalize_run),
         patch.object(proxy_service, "log_usage", side_effect=fake_log_usage),
+        patch.object(turn_settlement, "log_usage", side_effect=fake_log_usage),
     ):
         output = [
             chunk

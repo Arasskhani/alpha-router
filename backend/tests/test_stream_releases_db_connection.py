@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 import app.models  # noqa: F401
 from app.database import Base
-from app.services import proxy_service
+from app.services import proxy_service, turn_settlement
 
 
 def _chunk(content: str) -> SimpleNamespace:
@@ -70,6 +70,7 @@ async def test_request_session_transaction_is_closed_before_provider_call():
             if True:
                 with (
                     patch.object(proxy_service, "AsyncSessionLocal", tracking_factory),
+                    patch.object(turn_settlement, "AsyncSessionLocal", tracking_factory),
                     patch.object(
                         proxy_service, "parse_tools_config", return_value=SimpleNamespace(code_interpreter=False)
                     ),
@@ -84,6 +85,7 @@ async def test_request_session_transaction_is_closed_before_provider_call():
                     patch.object(proxy_service, "_usage_from_stream_wrapper", return_value=(3, 2, 0)),
                     patch.object(proxy_service, "_compute_token_cost_usd", return_value=0.0),
                     patch.object(proxy_service, "log_usage", AsyncMock(return_value=1)),
+                    patch.object(turn_settlement, "log_usage", AsyncMock(return_value=1)),
                     patch.object(proxy_service, "record_compatibility_result", AsyncMock()),
                     patch.object(proxy_service, "openrouter_auto_plugin", AsyncMock(return_value=None)),
                 ):

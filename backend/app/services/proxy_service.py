@@ -118,7 +118,6 @@ from app.services.project_turn_planner import augment_messages_with_project_cont
 from app.services.user_memory_service import (
     augment_messages_with_memory,
     extract_query_text,
-    record_memory_usage,
 )
 from app.services.user_profile_context_service import augment_messages_with_profile
 from app.core.constants import normalize_openrouter_base_url
@@ -145,6 +144,13 @@ from app.services.provider_utils import (  # noqa: F401 -- re-exported under the
 from app.services.model_resolution_service import (  # noqa: F401 -- re-exported for api.chat / api.gateway
     assert_model_supports_text_chat,
     resolve_model_and_key,
+)
+from app.services.turn_settlement import (
+    TurnIdentity,
+    TurnOutcome,
+    agent_citation_metadata as _agent_citation_metadata,
+    agent_identity_metadata as _agent_identity_metadata,
+    settle_turn,
 )
 from app.services.usage_logging_service import (  # noqa: F401 -- re-exported for api.chat / api.gateway
     log_usage,
@@ -261,54 +267,6 @@ def configure_litellm_cache() -> None:
         litellm.cache = litellm.Cache(type="redis", url=redis_url)
     except Exception:  # noqa: BLE001 -- falls back to a safe default value
         litellm.cache = litellm.Cache()
-
-
-def _agent_citation_metadata(
-    agent_turn: PreparedAgentTurn,
-    review: AgentCompletionReview | None,
-) -> list[dict[str, object]]:
-    verification = review.citation_verification if review is not None else None
-    if (
-        not getattr(agent_turn.options, "include_citations", True)
-        or verification is None
-        or not verification.valid
-        or agent_turn.plan.retrieval is None
-    ):
-        return []
-    by_id = {citation.citation_id: citation for citation in agent_turn.plan.retrieval.context.citations}
-    payloads: list[dict[str, object]] = []
-    for citation_id in verification.cited_ids:
-        citation = by_id.get(citation_id)
-        if citation is None:
-            continue
-        payloads.append(
-            {
-                "citation_id": citation.citation_id,
-                "marker": citation.marker,
-                "title": citation.title,
-                "file_name": citation.file_name,
-                "mime_type": citation.mime_type,
-                "page_number": citation.page_number,
-                "section": citation.section,
-                "authority": citation.authority,
-                "effective_from": citation.effective_from,
-                "effective_to": citation.effective_to,
-                "document_version_id": citation.document_version_id,
-            }
-        )
-    return payloads
-
-
-def _agent_identity_metadata(agent_turn: PreparedAgentTurn) -> dict[str, object]:
-    plan = agent_turn.plan
-    target = getattr(plan, "target", None)
-    agent = getattr(target, "agent", None)
-    version = getattr(target, "version", None)
-    return {
-        "agent_id": getattr(plan, "selected_agent_id", None) or getattr(agent, "id", None),
-        "agent_version_id": getattr(plan, "selected_agent_version_id", None) or getattr(version, "id", None),
-        "agent_name": getattr(agent, "name", None),
-    }
 
 
 async def _openrouter_generation_outcome(
@@ -1775,195 +1733,47 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
             # tokens are never charged. asyncio.shield() alone protects the inner
             # coroutine but not this frame, so shield the whole finalizer.
             with anyio.CancelScope(shield=True):
-                if capacity_heartbeat_task is not None:
-                    capacity_heartbeat_task.cancel()
-                    await asyncio.gather(
-                        capacity_heartbeat_task,
-                        return_exceptions=True,
-                    )
-                try:
-                    await _release_capacity_permit()
-                except Exception:
-                    logger.exception("Failed to release Code Interpreter capacity permit")
-                if persister:
-                    try:
-                        await persister.finalize(
-                            success=success,
-                            error_message=error_message,
-                        )
-                    except Exception:  # noqa: BLE001 -- session is rolled back and the caller continues without the write
-                        await db.rollback()
-                if stream_end_at is not None:
-                    elapsed_ms = (stream_end_at - generation_start) * 1000
-                else:
-                    elapsed_ms = (time.perf_counter() - generation_start) * 1000
-                # Usage/cost accounting is logged in an INDEPENDENT session so that a
-                # persister rollback (which reverts the assistant message content)
-                # cannot also drop the RequestLog / budget increment — otherwise a
-                # user could be charged for a response whose stored message was
-                # lost, or conversely get a response for free. This decouples the
-                # two concerns (message persistence vs cost accounting).
-                accounting_key = (
-                    f"chat:{stream_reservation_id}"
-                    if stream_reservation_id
-                    else (f"chat:{usage_events[0].idempotency_key}" if usage_events else None)
+                elapsed_ms = (
+                    (stream_end_at if stream_end_at is not None else time.perf_counter()) - generation_start
+                ) * 1000
+                response_metadata = await settle_turn(
+                    TurnIdentity(
+                        request=request,
+                        body=body,
+                        user_id=user_id,
+                        username=username,
+                        model=model,
+                        prompt_lang=prompt_lang,
+                        source=source,
+                        alpha_router_api_key_id=alpha_router_api_key_id,
+                        user_api_key_id=user_api_key_id,
+                        client_app=client_app,
+                        project_id_for_billing=project_id_for_billing,
+                        stream_reservation_id=stream_reservation_id,
+                        agent_turn=agent_turn,
+                        injected_memory_ids=injected_memory_ids,
+                        project_memory_project_id=project_memory_project_id,
+                        injected_project_memory_ids=injected_project_memory_ids,
+                    ),
+                    TurnOutcome(
+                        success=success,
+                        error_message=error_message,
+                        was_cancelled=was_cancelled,
+                        client_disconnected=client_disconnected,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        cached_tokens=cached_tokens,
+                        total_cost=total_cost,
+                        usage_events=usage_events,
+                        elapsed_ms=elapsed_ms,
+                        agent_review=agent_review,
+                        agent_output_displayed=agent_output_displayed,
+                    ),
+                    db=db,
+                    persister=persister,
+                    capacity_permit=capacity_permit,
+                    capacity_heartbeat_task=capacity_heartbeat_task,
                 )
-                if user_id and injected_memory_ids:
-                    try:
-                        async with AsyncSessionLocal() as mem_db:
-                            await record_memory_usage(mem_db, int(user_id), injected_memory_ids)
-                            await mem_db.commit()
-                    except Exception:
-                        logger.exception("Failed to record memory usage")
-                if project_memory_project_id and injected_project_memory_ids:
-                    try:
-                        from app.services.project_memory_service import (
-                            record_project_memory_usage,
-                        )
-
-                        async with AsyncSessionLocal() as mem_db:
-                            await record_project_memory_usage(
-                                mem_db,
-                                project_memory_project_id,
-                                injected_project_memory_ids,
-                            )
-                            await mem_db.commit()
-                    except Exception:
-                        logger.exception("Failed to record project memory usage")
-
-                stream_request_log_id: int | None = None
-
-                async def _persist_stream_usage() -> int | None:
-                    for attempt in range(3):
-                        try:
-                            async with AsyncSessionLocal() as log_db:
-                                log_id = await log_usage(
-                                    log_db,
-                                    user_id=user_id,
-                                    username=username,
-                                    model_id=model,
-                                    prompt_tokens=prompt_tokens,
-                                    completion_tokens=completion_tokens,
-                                    cached_tokens=cached_tokens,
-                                    total_cost_usd=total_cost,
-                                    response_time_ms=elapsed_ms,
-                                    prompt_language=prompt_lang,
-                                    source_ip=request.client.host if request.client else None,
-                                    source=source,
-                                    success=success,
-                                    error_message=error_message,
-                                    alpha_router_api_key_id=alpha_router_api_key_id,
-                                    user_api_key_id=user_api_key_id,
-                                    client_app=client_app,
-                                    budget_reservation_id=stream_reservation_id,
-                                    usage_events=usage_events,
-                                    operation_type="chat",
-                                    operation_idempotency_key=accounting_key,
-                                    project_id=project_id_for_billing,
-                                )
-                                chat_session_id = str(body.get("chat_session_id") or "").strip()
-                                assistant_cid = str(body.get("assistant_client_message_id") or "").strip()
-                                if log_id and success and source == "alpha_router_chat" and user_id and chat_session_id:
-                                    from app.services.user_chat_storage_service import (
-                                        attach_request_log_id_to_chat_message,
-                                    )
-
-                                    await attach_request_log_id_to_chat_message(
-                                        log_db,
-                                        int(user_id),
-                                        chat_session_id,
-                                        int(log_id),
-                                        client_message_id=assistant_cid or None,
-                                    )
-                                await log_db.commit()
-                            return log_id
-                        except Exception:
-                            if attempt < 2:
-                                await asyncio.sleep(0.1 * (attempt + 1))
-                                continue
-                            # The hold stays "held" until TTL: the one signal ops
-                            # has that money is stuck.
-                            increment("budget_hold_leak")
-                            logger.exception(
-                                "Chat usage settlement failed after retries; reservation remains held for recovery"
-                            )
-                    return None
-
-                stream_request_log_id = await _persist_stream_usage()
-                agent_terminal_status: str | None = None
-                if agent_turn is not None:
-                    if was_cancelled or client_disconnected:
-                        agent_terminal_status = "cancelled"
-                    elif not success:
-                        agent_terminal_status = "failed"
-                    elif agent_review is not None and agent_review.status == "blocked":
-                        agent_terminal_status = "blocked"
-                    else:
-                        agent_terminal_status = "succeeded"
-
-                    async def _persist_agent_finalization() -> None:
-                        for attempt in range(3):
-                            try:
-                                async with AsyncSessionLocal() as agent_db:
-                                    await finalize_agent_run(
-                                        agent_db,
-                                        run_id=agent_turn.run_id,
-                                        status=agent_terminal_status or "failed",
-                                        review=agent_review,
-                                        request_log_id=stream_request_log_id,
-                                        prompt_tokens=prompt_tokens,
-                                        completion_tokens=completion_tokens,
-                                        cached_tokens=cached_tokens,
-                                        total_cost_usd=total_cost,
-                                        provider_latency_ms=max(0, int(elapsed_ms)),
-                                        total_latency_ms=max(
-                                            0,
-                                            int(elapsed_ms + agent_turn.plan.total_planning_latency_ms),
-                                        ),
-                                        output_displayed=agent_output_displayed,
-                                        error_code=(
-                                            agent_review.reason_code
-                                            if agent_terminal_status == "blocked" and agent_review is not None
-                                            else (
-                                                "client_disconnected"
-                                                if agent_terminal_status == "cancelled"
-                                                else ("provider_error" if agent_terminal_status == "failed" else None)
-                                            )
-                                        ),
-                                        error_message=(
-                                            error_message if agent_terminal_status in {"failed", "cancelled"} else None
-                                        ),
-                                    )
-                                    await agent_db.commit()
-                                return
-                            except Exception:
-                                if attempt < 2:
-                                    await asyncio.sleep(0.1 * (attempt + 1))
-                                    continue
-                                logger.exception(
-                                    "Agent run finalization failed after retries run=%s",
-                                    agent_turn.run_id,
-                                )
-
-                    await _persist_agent_finalization()
-
-                response_metadata: dict[str, object] = {}
-                if not was_cancelled and success and stream_request_log_id and source == "alpha_router_chat":
-                    response_metadata["request_log_id"] = int(stream_request_log_id)
-                if agent_turn is not None and not was_cancelled:
-                    response_metadata.update(
-                        {
-                            "agent_run_id": agent_turn.run_id,
-                            **_agent_identity_metadata(agent_turn),
-                            "agent_status": agent_terminal_status,
-                            "routing_outcome": agent_turn.plan.routing_outcome,
-                        }
-                    )
-                    if agent_review is not None:
-                        response_metadata["completion_reason_code"] = agent_review.reason_code
-                        citations = _agent_citation_metadata(agent_turn, agent_review)
-                        if citations:
-                            response_metadata["citations"] = citations
             # Yields must stay outside the shielded scope and never run once the
             # consumer is gone: yielding from a cancelled/closed generator would
             # swallow the cancellation or raise "generator ignored GeneratorExit".

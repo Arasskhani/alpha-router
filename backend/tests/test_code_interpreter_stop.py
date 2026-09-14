@@ -6,7 +6,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services import proxy_service
+from app.services import proxy_service, turn_settlement
 
 
 def _chunk(content: str) -> SimpleNamespace:
@@ -107,6 +107,7 @@ async def _run_stop_during_sandbox() -> dict:
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(turn_settlement, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(
             proxy_service,
             "parse_tools_config",
@@ -123,12 +124,14 @@ async def _run_stop_during_sandbox() -> dict:
         patch.object(proxy_service, "_usage_from_stream_wrapper", return_value=(10, 5, 0)),
         patch.object(proxy_service, "_compute_token_cost_usd", return_value=0.0),
         patch.object(proxy_service, "log_usage", side_effect=AsyncMock()),
+        patch.object(turn_settlement, "log_usage", side_effect=AsyncMock()),
         patch.object(proxy_service, "record_compatibility_result", side_effect=AsyncMock()),
         patch.object(
             proxy_service,
             "release_code_interpreter_turn",
             release_capacity,
         ),
+        patch.object(turn_settlement, "release_code_interpreter_turn", release_capacity),
         patch.object(proxy_service, "run_python_sandbox", side_effect=slow_sandbox),
         patch.object(proxy_service, "openrouter_auto_plugin", AsyncMock(return_value=None)),
     ):
@@ -223,6 +226,7 @@ async def _run_stop_before_sandbox() -> dict:
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(turn_settlement, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(
             proxy_service,
             "parse_tools_config",
@@ -239,6 +243,7 @@ async def _run_stop_before_sandbox() -> dict:
         patch.object(proxy_service, "_usage_from_stream_wrapper", return_value=(10, 5, 0)),
         patch.object(proxy_service, "_compute_token_cost_usd", return_value=0.0),
         patch.object(proxy_service, "log_usage", side_effect=AsyncMock()),
+        patch.object(turn_settlement, "log_usage", side_effect=AsyncMock()),
         patch.object(proxy_service, "record_compatibility_result", side_effect=AsyncMock()),
         patch.object(proxy_service, "run_python_sandbox", side_effect=never_run_sandbox),
         patch.object(proxy_service, "openrouter_auto_plugin", AsyncMock(return_value=None)),
@@ -312,6 +317,7 @@ async def _run_partial_flush_stops_after_cancel() -> list[str]:
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(turn_settlement, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(
             proxy_service,
             "parse_tools_config",
@@ -328,6 +334,7 @@ async def _run_partial_flush_stops_after_cancel() -> list[str]:
         patch.object(proxy_service, "_usage_from_stream_wrapper", return_value=(10, 5, 0)),
         patch.object(proxy_service, "_compute_token_cost_usd", return_value=0.0),
         patch.object(proxy_service, "log_usage", side_effect=AsyncMock()),
+        patch.object(turn_settlement, "log_usage", side_effect=AsyncMock()),
         patch.object(proxy_service, "openrouter_auto_plugin", AsyncMock(return_value=None)),
     ):
         async for _chunk_out in proxy_service.stream_chat(

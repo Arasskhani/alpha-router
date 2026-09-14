@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import anyio
 import pytest
 
-from app.services import proxy_service
+from app.services import proxy_service, turn_settlement
 
 
 def _chunk(content: str) -> SimpleNamespace:
@@ -116,6 +116,7 @@ def _patches(provider: _SlowProvider, persister: _FakePersister, log_usage: Asyn
 
     return (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(turn_settlement, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(
             proxy_service,
             "parse_tools_config",
@@ -131,9 +132,9 @@ def _patches(provider: _SlowProvider, persister: _FakePersister, log_usage: Asyn
         patch.object(proxy_service, "persister_from_body", return_value=persister),
         patch.object(proxy_service, "_usage_from_stream_wrapper", return_value=(0, 0, 0)),
         patch.object(proxy_service, "_compute_token_cost_usd", return_value=0.0),
-        patch.object(proxy_service, "log_usage", log_usage),
+        patch.object(turn_settlement, "log_usage", log_usage),
         patch.object(proxy_service, "record_compatibility_result", side_effect=AsyncMock()),
-        patch.object(proxy_service, "release_code_interpreter_turn", release),
+        patch.object(turn_settlement, "release_code_interpreter_turn", release),
         patch.object(proxy_service, "openrouter_auto_plugin", AsyncMock(return_value=None)),
     )
 

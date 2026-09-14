@@ -6,7 +6,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services import proxy_service
+from app.services import proxy_service, turn_settlement
 from app.services.usage_accounting_service import NormalizedUsage
 
 
@@ -89,6 +89,7 @@ async def _run_empty_completion_records_failure() -> tuple[list[dict], list[dict
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(turn_settlement, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(proxy_service, "parse_tools_config", return_value=tools),
         patch.object(
             proxy_service,
@@ -100,6 +101,7 @@ async def _run_empty_completion_records_failure() -> tuple[list[dict], list[dict
         patch.object(proxy_service, "_usage_from_stream_wrapper", return_value=(10, 0, 0)),
         patch.object(proxy_service, "_compute_token_cost_usd", return_value=0.0),
         patch.object(proxy_service, "log_usage", side_effect=AsyncMock()),
+        patch.object(turn_settlement, "log_usage", side_effect=AsyncMock()),
         patch.object(proxy_service, "openrouter_auto_plugin", side_effect=fake_plugin),
         patch.object(proxy_service, "record_compatibility_result", side_effect=fake_record),
         patch.object(
@@ -183,6 +185,7 @@ async def _run_alias_evidence_is_dropped() -> list[dict]:
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(turn_settlement, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(proxy_service, "record_compatibility_result", side_effect=fake_record),
     ):
         for alias in ("openrouter/auto", "auto", "~openrouter/auto-beta"):
@@ -297,6 +300,7 @@ async def _run_final_answer_after_execution() -> tuple[list[dict], int]:
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(turn_settlement, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(proxy_service, "parse_tools_config", return_value=SimpleNamespace(code_interpreter=True)),
         patch.object(
             proxy_service,
@@ -308,6 +312,7 @@ async def _run_final_answer_after_execution() -> tuple[list[dict], int]:
         patch.object(proxy_service, "_usage_from_stream_wrapper", return_value=(10, 5, 0)),
         patch.object(proxy_service, "_compute_token_cost_usd", return_value=0.0),
         patch.object(proxy_service, "log_usage", side_effect=AsyncMock()),
+        patch.object(turn_settlement, "log_usage", side_effect=AsyncMock()),
         patch.object(proxy_service, "record_compatibility_result", side_effect=fake_record),
         patch.object(
             proxy_service,

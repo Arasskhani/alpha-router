@@ -6,7 +6,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services import proxy_service
+from app.services import proxy_service, turn_settlement
 
 
 class _FakeDeltaChunk:
@@ -56,6 +56,7 @@ async def _run_stream_timing_test() -> None:
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(turn_settlement, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(
             proxy_service,
             "augment_messages_with_tools",
@@ -82,6 +83,7 @@ async def _run_stream_timing_test() -> None:
             side_effect=lambda *a, **k: (time.sleep(0.08), 0.0)[1],
         ),
         patch.object(proxy_service, "log_usage", side_effect=capture_log),
+        patch.object(turn_settlement, "log_usage", side_effect=capture_log),
     ):
         gen = proxy_service.stream_chat(
             request,
@@ -151,6 +153,7 @@ async def _run_empty_code_interpreter_test() -> None:
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(turn_settlement, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(proxy_service, "parse_tools_config", return_value=tools),
         patch.object(
             proxy_service,
@@ -172,6 +175,7 @@ async def _run_empty_code_interpreter_test() -> None:
         patch.object(proxy_service, "_usage_from_stream_wrapper", return_value=(10, 0, 0)),
         patch.object(proxy_service, "_compute_token_cost_usd", return_value=0.0),
         patch.object(proxy_service, "log_usage", side_effect=capture_log),
+        patch.object(turn_settlement, "log_usage", side_effect=capture_log),
     ):
         output = [
             chunk

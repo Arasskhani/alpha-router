@@ -1,6 +1,6 @@
 """End-user panel API."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -122,12 +122,25 @@ async def create_user_key(
 @router.delete("/api-keys/{key_id}")
 async def delete_user_key(
     key_id: int,
+    request: Request,
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ):
     key = await db.get(UserApiKey, key_id)
     if not key or key.user_id != user.id:
         raise HTTPException(status_code=404, detail="API key not found")
+    from app.services.client_ip import resolve_client_ip
+    from app.services.security_audit import log_security_event
+
+    await log_security_event(
+        db,
+        actor=user,
+        actor_ip=resolve_client_ip(request),
+        action="user_api_key_deleted",
+        resource_type="user_api_key",
+        resource_id=str(key.id),
+        detail={"user_id": key.user_id, "name": getattr(key, "name", None), "self_service": True},
+    )
     await db.delete(key)
     await db.commit()
     return {"ok": True}

@@ -60,7 +60,7 @@ async function downloadCsvExport(path: string): Promise<void> {
 }
 
 export default function ApiLogs({ apiKeyId }: Props) {
-  const { confirm } = useConfirm();
+  const { confirm, prompt } = useConfirm();
   const writeLock = useAdminWriteLock();
   const [searchParams] = useSearchParams();
   const fromKeyRoute = Number.isFinite(apiKeyId) && (apiKeyId as number) > 0;
@@ -220,18 +220,25 @@ export default function ApiLogs({ apiKeyId }: Props) {
     });
     if (!step2) return;
 
-    const step3 = await confirm({
+    // The server verifies this phrase too (and requires Super Admin): the
+    // dialog is a courtesy, the typed phrase is the control.
+    const typed = await prompt({
       title: "Final confirmation",
       message:
         "You are about to purge ALL API logs from Alpharouter. Only continue if you intentionally want an empty log table.",
+      promptLabel: 'Type "DELETE ALL LOGS" to confirm',
+      promptExactMatch: "DELETE ALL LOGS",
       confirmLabel: "Clear all logs now",
       danger: true,
     });
-    if (!step3) return;
+    if (typed !== "DELETE ALL LOGS") return;
 
     setLoading(true);
     try {
-      await api("/api/admin/logs", { method: "DELETE" });
+      await api("/api/admin/logs", {
+        method: "DELETE",
+        body: JSON.stringify({ confirm: typed }),
+      });
       setItems([]);
       await load();
     } finally {

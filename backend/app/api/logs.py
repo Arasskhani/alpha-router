@@ -3,13 +3,14 @@
 import json
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
+    require_super_admin,
     get_current_user,
     require_active_user,
     require_api_keys,
@@ -1048,12 +1049,44 @@ async def reconcile_costs(
     }
 
 
+CLEAR_ALL_LOGS_PHRASE = "DELETE ALL LOGS"
+
+
+class ClearLogsIn(BaseModel):
+    confirm: str = ""
+
+
 @router.delete("/admin/logs")
 async def clear_admin_logs(
+    body: ClearLogsIn,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_api_logs_write),
+    admin: User = Depends(require_api_logs_write),
+    _: User = Depends(require_super_admin),
 ):
-    """Permanently delete all API request log rows."""
+    """Permanently delete all API request log rows.
+
+    Irreversible and platform-wide, so: Super Admin only, the phrase must be
+    typed and verified here (the three-step UI dialog is not a control), and
+    the row count goes to the security audit table *before* the delete.
+    """
+    if body.confirm.strip() != CLEAR_ALL_LOGS_PHRASE:
+        raise HTTPException(
+            status_code=400,
+            detail=f'Type "{CLEAR_ALL_LOGS_PHRASE}" in confirm to purge the request log.',
+        )
+    from app.services.client_ip import resolve_client_ip
+    from app.services.security_audit import log_security_event
+
+    total = int((await db.execute(select(func.count()).select_from(RequestLog))).scalar_one() or 0)
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=resolve_client_ip(request),
+        action="request_logs_cleared_all",
+        resource_type="request_log",
+        detail={"row_count": total},
+    )
     result = await db.execute(delete(RequestLog))
     await db.commit()
     return {"ok": True, "deleted": result.rowcount}

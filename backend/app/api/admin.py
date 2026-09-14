@@ -5,7 +5,7 @@ import io
 from datetime import date, datetime, timedelta
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import and_, delete, exists, func, insert, or_, select, update
@@ -103,10 +103,13 @@ from app.services.activity_pdf_service import ActivityPdfError, render_activity_
 from app.services.reports_service import export_activity_logs_workbook
 from app.services.scheduler import refresh_chat_retention_cleanup_schedule, refresh_storage_cleanup_schedule
 from app.services.db_monitor_service import collect_database_monitor
+from app.services.client_ip import resolve_client_ip
+from app.services.security_audit import log_security_event
 from app.services.connection_audit import (
     connection_snapshot,
     fetch_connection_changelog,
     log_connection_created,
+    log_connection_deleted,
     log_connection_status,
     log_connection_updated,
     touch_connection_modified,
@@ -114,6 +117,7 @@ from app.services.connection_audit import (
 from app.services.alpha_router_api_key_audit import (
     fetch_api_key_changelog,
     log_api_key_created,
+    log_api_key_deleted,
     log_api_key_status,
     log_api_key_updated,
     touch_key_modified,
@@ -1568,7 +1572,12 @@ async def update_connection(
 
 
 @router.delete("/connections/{conn_id}")
-async def delete_connection(conn_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(require_connections_write)):
+async def delete_connection(
+    conn_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_connections_write),
+):
     conn = await db.get(Connection, conn_id)
     if not conn:
         raise HTTPException(404)
@@ -1576,6 +1585,9 @@ async def delete_connection(conn_id: int, db: AsyncSession = Depends(get_db), _:
     catalog_ids = (
         await db.execute(select(AIModel.id).where(AIModel.connection_id == conn_id))
     ).scalars().all()
+    await log_connection_deleted(
+        db, conn=conn, actor=admin, actor_ip=_client_ip(request), model_count=len(catalog_ids)
+    )
     await clear_global_default_if_ids(db, list(catalog_ids))
     await db.execute(delete(AIModel).where(AIModel.connection_id == conn_id))
     await db.delete(conn)
@@ -1847,12 +1859,14 @@ async def patch_alpha_router_key(
 @router.delete("/api-keys/{key_id}")
 async def delete_alpha_router_key(
     key_id: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_api_keys_write),
+    admin: User = Depends(require_api_keys_write),
 ):
     k = await db.get(AlphaRouterApiKey, key_id)
     if not k:
         raise HTTPException(404)
+    await log_api_key_deleted(db, key=k, actor=admin, actor_ip=_client_ip(request))
     await db.delete(k)
     await db.commit()
     return {"ok": True}
@@ -2338,12 +2352,26 @@ async def list_user_api_keys(db: AsyncSession = Depends(get_db), _: User = Depen
 
 
 @router.delete("/user-api-keys/{key_id}")
-async def delete_user_api_key(key_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(require_users_write)):
+async def delete_user_api_key(
+    key_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_users_write),
+):
     from app.models.api_key import UserApiKey
 
     k = await db.get(UserApiKey, key_id)
     if not k:
         raise HTTPException(404)
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=_client_ip(request),
+        action="user_api_key_deleted",
+        resource_type="user_api_key",
+        resource_id=str(k.id),
+        detail={"user_id": k.user_id, "name": getattr(k, "name", None)},
+    )
     await db.delete(k)
     await db.commit()
     return {"ok": True}
@@ -3450,9 +3478,51 @@ async def admin_purge_expired_chat(
     return {"ok": True, **result}
 
 
+def _client_ip(request: Request) -> str | None:
+    try:
+        return resolve_client_ip(request)
+    except Exception:
+        return request.client.host if request.client else None
+
+
+class DestructiveConfirmIn(BaseModel):
+    """Server-side typed confirmation for irreversible, platform-wide deletes."""
+
+    confirm: str = ""
+
+
+CLEAR_ALL_MEDIA_PHRASE = "DELETE ALL MEDIA"
+
+
 @router.post("/storage/clear-cache")
-async def admin_clear_storage_cache(db: AsyncSession = Depends(get_db), _: User = Depends(require_storage_write)):
+async def admin_clear_storage_cache(
+    body: DestructiveConfirmIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_storage_write),
+    _: User = Depends(require_super_admin),
+):
+    """Delete every media asset. Super Admin, typed phrase, audited before the delete."""
+    if body.confirm.strip() != CLEAR_ALL_MEDIA_PHRASE:
+        raise HTTPException(
+            status_code=400,
+            detail=f'Type "{CLEAR_ALL_MEDIA_PHRASE}" in confirm to delete all media.',
+        )
+    from app.models.media import MediaAsset
+
+    count, total_bytes = (
+        await db.execute(select(func.count(), func.coalesce(func.sum(MediaAsset.size_bytes), 0)).select_from(MediaAsset))
+    ).one()
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=_client_ip(request),
+        action="media_cleared_all",
+        resource_type="storage",
+        detail={"asset_count": int(count or 0), "total_bytes": int(total_bytes or 0)},
+    )
     result = await clear_all_media(db)
+    await db.commit()
     return {"ok": True, **result}
 
 

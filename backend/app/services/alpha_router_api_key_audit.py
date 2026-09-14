@@ -172,6 +172,35 @@ async def log_api_key_updated(
     )
 
 
+async def log_api_key_deleted(
+    db: AsyncSession,
+    *,
+    key: AlphaRouterApiKey,
+    actor: User,
+    actor_ip: str | None = None,
+) -> None:
+    """Deletion goes to the security audit table: the per-key changelog
+    cascades away with the key. Only the key prefix is recorded, never the
+    secret."""
+    from app.services.security_audit import log_security_event
+
+    await log_security_event(
+        db,
+        actor=actor,
+        actor_ip=actor_ip,
+        action="api_key_deleted",
+        resource_type="alpha_router_api_key",
+        resource_id=str(key.id),
+        detail={
+            "name": key.name,
+            "key_prefix": (getattr(key, "key_prefix", None) or "")[:12],
+            "owner_user_id": key.owner_user_id,
+            "credit_limit_usd": key.credit_limit_usd,
+            "is_active": bool(key.is_active),
+        },
+    )
+
+
 async def log_api_key_status(
     db: AsyncSession,
     *,

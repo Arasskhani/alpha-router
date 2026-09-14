@@ -221,6 +221,15 @@ publish-images:
     - docker build -t "$CI_REGISTRY_IMAGE/alpha-router-sandbox:$TAG" -f sandbox/Dockerfile sandbox
     - docker build -t "$CI_REGISTRY_IMAGE/alpha-router-sandbox-broker:$TAG" -f sandbox-broker/Dockerfile .
     - docker build -t "$CI_REGISTRY_IMAGE/alpha-router-edge:$TAG" -f deploy/edge/Dockerfile .
+    # Scan what we are about to ship: fail on fixable CRITICAL/HIGH findings
+    # and keep a CycloneDX SBOM per image as a pipeline artifact. Until now only
+    # the third-party SeaweedFS image was scanned.
+    - mkdir -p sbom
+    - |
+      for name in alpha-router alpha-router-sandbox alpha-router-sandbox-broker alpha-router-edge; do
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/sbom:/sbom"           -e DOCKER_HOST="$DOCKER_HOST" aquasec/trivy:0.62.1 image           --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed "$CI_REGISTRY_IMAGE/${name}:$TAG"
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/sbom:/sbom"           -e DOCKER_HOST="$DOCKER_HOST" aquasec/trivy:0.62.1 image           --format cyclonedx --output "/sbom/${name}-${TAG}.cdx.json" "$CI_REGISTRY_IMAGE/${name}:$TAG"
+      done
     - docker push "$CI_REGISTRY_IMAGE/alpha-router:$TAG"
     - docker push "$CI_REGISTRY_IMAGE/alpha-router-sandbox:$TAG"
     - docker push "$CI_REGISTRY_IMAGE/alpha-router-sandbox-broker:$TAG"
@@ -232,3 +241,8 @@ publish-images:
           docker push "$CI_REGISTRY_IMAGE/${name}:latest"
         done
       fi
+  artifacts:
+    when: always
+    expire_in: 90 days
+    paths:
+      - sbom/

@@ -9,6 +9,7 @@ from html.parser import HTMLParser
 from urllib.parse import urlparse
 
 
+from app.core.prompt_fences import RUNTIME_POLICY, untrusted_preamble, wrap_untrusted
 from app.branding import OUTBOUND_USER_AGENT
 from app.services.metered_usage_service import (
     finish_metered_usage,
@@ -119,13 +120,18 @@ async def web_search_context(
         )
     if not rows:
         return ""
-    lines = ["Web search results (use for up-to-date facts; cite sources when relevant):"]
+    lines = []
     for i, row in enumerate(rows, 1):
         title = (row.get("title") or "").strip()
         href = (row.get("href") or row.get("link") or "").strip()
         body = (row.get("body") or row.get("snippet") or "").strip()
         lines.append(f"{i}. {title}\n   URL: {href}\n   {body}")
-    return "\n".join(lines)
+    return (
+        "Web search results (use for up-to-date facts; cite sources when relevant). "
+        + untrusted_preamble("search result text")
+        + "\n"
+        + wrap_untrusted("WEB_SEARCH_RESULTS", "\n".join(lines))
+    )
 
 
 class _MLStripper(HTMLParser):
@@ -231,7 +237,9 @@ async def web_fetch_context(
     urls = list(dict.fromkeys(URL_RE.findall(text)))[:3]
     if not urls:
         return ""
-    blocks: list[str] = ["Fetched page content for URLs in the user message:"]
+    blocks: list[str] = [
+        "Fetched page content for URLs in the user message. " + untrusted_preamble("page content")
+    ]
     for url in urls:
         try:
             content = await fetch_url_text(
@@ -241,9 +249,9 @@ async def web_fetch_context(
                 username=username,
                 reserve_budget=reserve_budget,
             )
-            blocks.append(f"--- {url} ---\n{content[:8000]}")
+            blocks.append(wrap_untrusted("WEB_PAGE", content[:8000], source=url))
         except Exception as exc:
-            blocks.append(f"--- {url} ---\n(fetch failed: {exc})")
+            blocks.append(wrap_untrusted("WEB_PAGE", f"(fetch failed: {exc})", source=url))
     return "\n\n".join(blocks)
 
 
@@ -293,6 +301,9 @@ async def augment_messages_with_tools(
 
     if not system_blocks:
         return list(messages)
+
+    # Untrusted content is about to enter the prompt: state the rules first.
+    system_blocks.insert(0, RUNTIME_POLICY)
 
     prefix = [{"role": "system", "content": "\n\n".join(system_blocks)}]
     out = list(messages)

@@ -13,6 +13,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.prompt_fences import RUNTIME_POLICY, untrusted_preamble, wrap_untrusted
 from app.models.chat import ChatSession, is_member_channel
 from app.models.knowledge import KnowledgeChunk, KnowledgeDocument, KnowledgeDocumentVersion
 from app.models.project import (
@@ -202,12 +203,11 @@ def _format_resource_block(excerpts: list[tuple[str, str]]) -> str:
     lines = [
         "## Project resources",
         "Excerpts from files attached to this project. Use them when relevant; "
-        "they are not the full documents.",
+        "they are not the full documents. " + untrusted_preamble("document text"),
     ]
     for title, excerpt in excerpts:
         lines.append("")
-        lines.append(f"### {title}")
-        lines.append(excerpt)
+        lines.append(wrap_untrusted("PROJECT_RESOURCE", excerpt, source=title))
     return "\n".join(lines)
 
 
@@ -294,7 +294,9 @@ async def plan_project_turn(
 
     if not blocks:
         return messages
-    return _merge_system_block(messages, "\n\n".join(blocks))
+    # Memory learned from chats and document excerpts are user-derived text;
+    # the policy line tells the model how to treat everything that follows.
+    return _merge_system_block(messages, "\n\n".join([RUNTIME_POLICY, *blocks]))
 
 
 async def augment_messages_with_project_context(

@@ -1,7 +1,17 @@
 name: alpha-router
 
+# Bounded container logs: without these, json-file logs grow until the disk
+# is full (nginx access log + uvicorn + clamav freshclam alone can do GBs a
+# week). 50 MB x 5 files per container; `docker compose logs` still works.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 services:
   postgres:
+    logging: *default-logging
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -31,6 +41,7 @@ services:
       retries: 5
 
   pgbouncer:
+    logging: *default-logging
     image: edoburu/pgbouncer:1.22.1-p0
     restart: unless-stopped
     environment:
@@ -60,6 +71,7 @@ services:
       - alpha_router_app
 
   redis:
+    logging: *default-logging
     image: redis:7-alpine
     restart: unless-stopped
     # Require authentication when REDIS_PASSWORD is set; empty (default) keeps
@@ -81,6 +93,7 @@ services:
       retries: 10
 
   clamav:
+    logging: *default-logging
     image: clamav/clamav:1.5.4-debian13-slim
     restart: unless-stopped
     volumes:
@@ -89,6 +102,7 @@ services:
       - alpha_router_app
 
   qdrant:
+    logging: *default-logging
     image: qdrant/qdrant:v1.19.0
     restart: unless-stopped
     environment:
@@ -110,6 +124,7 @@ services:
   # Primary object storage (SeaweedFS weed mini). S3 API :8333, Admin UI :23646.
   # Pin version via deploy/seaweedfs/VERSION (currently 4.40).
   seaweedfs:
+    logging: *default-logging
     image: chrislusf/seaweedfs:4.40
     restart: unless-stopped
     entrypoint: ["/bin/sh", "/entrypoint.sh"]
@@ -139,6 +154,7 @@ services:
   # spawned on demand as a disposable, network-less container by Alpharouter.
   # Build explicitly with: docker compose build alpha-router-sandbox
   alpha-router-sandbox:
+    logging: *default-logging
     build:
       context: ./sandbox
       dockerfile: Dockerfile
@@ -153,6 +169,7 @@ services:
       - no-new-privileges:true
 
   alpha-router-sandbox-broker:
+    logging: *default-logging
     build:
       context: .
       dockerfile: sandbox-broker/Dockerfile
@@ -212,6 +229,7 @@ services:
 
   # One-shot schema bootstrap + Alembic upgrade. App/workers wait on success.
   db-init:
+    logging: *default-logging
     build:
       context: .
       dockerfile: Dockerfile
@@ -235,6 +253,7 @@ services:
       - alpha_router_app
 
   alpha-router-knowledge-scheduler:
+    logging: *default-logging
     image: alpha-router:latest
     env_file:
       - .env
@@ -257,6 +276,7 @@ services:
       - alpha_router_app
 
   alpha-router-knowledge-worker:
+    logging: *default-logging
     image: alpha-router:latest
     env_file:
       - .env
@@ -293,6 +313,7 @@ services:
       - alpha_router_app
 
   alpha-router:
+    logging: *default-logging
     build:
       context: .
       dockerfile: Dockerfile
@@ -371,6 +392,7 @@ services:
       - alpha_router_sandbox_control
 
   alpha-router-edge:
+    logging: *default-logging
     build:
       context: .
       dockerfile: deploy/edge/Dockerfile

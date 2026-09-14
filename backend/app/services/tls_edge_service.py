@@ -308,11 +308,11 @@ async def sync_edge_body_limit(db: AsyncSession) -> dict[str, Any]:
     Never waits for nginx apply (edge polls desired-state asynchronously).
     Safe to call after Storage transfer-limit saves and on startup reconcile.
     """
-    from app.services.request_body_limit_service import publish_request_body_limit_mb
+    from app.services.request_body_limit_service import publish_request_body_limit_mb_async
 
     body_mb = await _resolve_edge_body_mb(db)
     try:
-        publish_request_body_limit_mb(body_mb)
+        await publish_request_body_limit_mb_async(body_mb)
     except OSError as exc:
         LOGGER.warning("Failed to publish shared request body limit: %s", exc)
         return {
@@ -444,7 +444,7 @@ async def activate_https(
     http_mode: HttpMode,
     hsts_enabled: bool,
 ) -> dict[str, Any]:
-    from app.services.request_body_limit_service import publish_request_body_limit_mb
+    from app.services.request_body_limit_service import publish_request_body_limit_mb_async
 
     port = validate_https_port(https_port)
     if http_mode not in {"redirect", "loopback_only"}:
@@ -455,7 +455,7 @@ async def activate_https(
         raise TlsCertificateError("The stored private key could not be decrypted.")
     max_body_mb = await _resolve_edge_body_mb(db)
     try:
-        publish_request_body_limit_mb(max_body_mb)
+        await publish_request_body_limit_mb_async(max_body_mb)
     except OSError as exc:
         LOGGER.warning("Failed to publish request body limit during HTTPS activate: %s", exc)
     nginx = render_nginx_config(

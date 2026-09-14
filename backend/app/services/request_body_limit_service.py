@@ -1,13 +1,21 @@
 """Shared HTTP request-body ceiling derived from Storage transfer limits.
 
-Published to the TLS state volume so every Uvicorn worker and the edge nginx
-config stay aligned without waiting for an edge reload inside API requests.
+Published on two channels so every Uvicorn worker — on this host and on any
+other host behind the same Redis — applies the same ceiling as the edge nginx
+config, without waiting for an edge reload inside API requests:
+
+* a Redis key (primary; Phase 4.7 — the file only ever reached workers that
+  shared the TLS volume, i.e. one host), and
+* ``request-body-limit.json`` in the TLS state volume (fallback when Redis is
+  unreachable, and what a single-host install without Redis reads).
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +28,7 @@ REQUEST_BODY_MARGIN_MB = 8
 # Align with transfer_limits_service.MAX_CHAT_ATTACHMENTS_TOTAL_MB.
 REQUEST_BODY_HARD_MAX_MB = 2048
 REQUEST_BODY_LIMIT_FILENAME = "request-body-limit.json"
+REQUEST_BODY_LIMIT_REDIS_KEY = "alpharouter:request_body_limit_mb"
 
 
 def resolve_request_body_limit_mb(*, upload_mb: int, chat_total_mb: int) -> int:
@@ -68,6 +77,23 @@ def publish_request_body_limit_mb(body_mb: int) -> int:
     return clamped
 
 
+async def publish_request_body_limit_mb_async(body_mb: int) -> int:
+    """Publish to Redis (all hosts) and to the state file (this host's fallback).
+
+    The file write raises ``OSError`` like before; a Redis failure is logged
+    and the file keeps single-host installs consistent.
+    """
+    clamped = publish_request_body_limit_mb(body_mb)
+    try:
+        from app.core.redis_client import get_redis
+
+        await asyncio.wait_for(get_redis().set(REQUEST_BODY_LIMIT_REDIS_KEY, str(clamped)), _REDIS_TIMEOUT_SECONDS)
+    except Exception:
+        LOGGER.warning("Request body limit published to file only; Redis publish failed", exc_info=True)
+    _set_redis_cache(clamped, ok=True)
+    return clamped
+
+
 def read_published_request_body_limit_mb() -> int | None:
     path = request_body_limit_path()
     if not path.is_file():
@@ -106,13 +132,59 @@ LARGE_BODY_PATH_PREFIXES: tuple[str, ...] = (
 )
 
 _PUBLISHED_CACHE_TTL_SECONDS = 5.0
+_REDIS_TIMEOUT_SECONDS = 0.25
+# After a failed Redis read wait this long before trying again, so a Redis
+# outage costs one short timeout per worker per interval, not per request.
+_REDIS_RETRY_AFTER_FAILURE_SECONDS = 30.0
+# (checked_at, mb from Redis or None, next_allowed_check_at)
+_redis_cache: tuple[float, int | None, float] = (0.0, None, 0.0)
 # (checked_at, path, mtime, mb) - keyed by path so a settings change is not served stale.
 _published_cache: tuple[float, str | None, float | None, int | None] = (0.0, None, None, None)
 
 
 def invalidate_published_cache() -> None:
-    global _published_cache
+    global _published_cache, _redis_cache
     _published_cache = (0.0, None, None, None)
+    _redis_cache = (0.0, None, 0.0)
+
+
+def _set_redis_cache(value: int | None, *, ok: bool) -> None:
+    global _redis_cache
+    now = time.monotonic()
+    retry_at = now if ok else now + _REDIS_RETRY_AFTER_FAILURE_SECONDS
+    _redis_cache = (now, value, retry_at)
+
+
+async def refresh_request_body_limit_from_redis() -> int | None:
+    """Re-read the Redis-published ceiling when the short cache has expired.
+
+    Called by the ASGI middleware before it asks for the per-request limit.
+    Returns the cached MiB value (``None`` when Redis has none or is down —
+    the sync readers then fall back to the state file).
+    """
+    checked_at, cached_mb, retry_at = _redis_cache
+    now = time.monotonic()
+    if now - checked_at < _PUBLISHED_CACHE_TTL_SECONDS or now < retry_at:
+        return cached_mb
+    try:
+        from app.core.redis_client import get_redis
+
+        raw = await asyncio.wait_for(get_redis().get(REQUEST_BODY_LIMIT_REDIS_KEY), _REDIS_TIMEOUT_SECONDS)
+    except Exception:
+        LOGGER.debug("request body limit: Redis read failed, using file fallback", exc_info=True)
+        _set_redis_cache(None, ok=False)
+        return None
+    value: int | None
+    try:
+        value = int(raw) if raw not in (None, "") else None
+    except (TypeError, ValueError):
+        value = None
+    if value is not None and value < 1:
+        value = None
+    if value is not None:
+        value = max(1, min(REQUEST_BODY_HARD_MAX_MB, value))
+    _set_redis_cache(value, ok=True)
+    return value
 
 
 def is_large_body_path(path: str) -> bool:
@@ -136,8 +208,6 @@ def _read_published_cached() -> int | None:
     fine, a stat()+read()+json.loads() per request is not.
     """
     global _published_cache
-    import time
-
     now = time.monotonic()
     path = request_body_limit_path()
     key = str(path)
@@ -158,6 +228,9 @@ def _read_published_cached() -> int | None:
 
 def effective_request_body_limit_bytes() -> int:
     """Best-effort upload ceiling for RequestBodyLimitMiddleware (all workers)."""
+    from_redis = _redis_cache[1]
+    if from_redis is not None:
+        return from_redis * 1024 * 1024
     published = _read_published_cached()
     if published is not None:
         return published * 1024 * 1024

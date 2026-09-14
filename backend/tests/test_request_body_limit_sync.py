@@ -107,3 +107,70 @@ async def test_sync_edge_body_limit_https_disabled_still_publishes(monkeypatch):
     assert result["queued"] is False
     assert read_published_request_body_limit_mb() == 44
     db.commit.assert_not_awaited()
+
+
+class _FakeRedis:
+    def __init__(self) -> None:
+        self.store: dict[str, str] = {}
+        self.calls = 0
+
+    async def set(self, key: str, value: str) -> None:
+        self.store[key] = value
+
+    async def get(self, key: str) -> str | None:
+        self.calls += 1
+        return self.store.get(key)
+
+
+class _DownRedis:
+    async def get(self, key: str) -> str | None:
+        raise ConnectionError("redis down")
+
+    async def set(self, key: str, value: str) -> None:
+        raise ConnectionError("redis down")
+
+
+async def test_redis_publish_reaches_other_workers(monkeypatch) -> None:
+    import app.core.redis_client as redis_client
+    import app.services.request_body_limit_service as svc
+
+    tmp_path = _workdir()
+    monkeypatch.setattr(svc, "get_settings", lambda: SimpleNamespace(tls_state_dir=str(tmp_path)))
+    monkeypatch.setattr("app.services.tls_edge_service.tls_state_dir", lambda: tmp_path)
+    fake = _FakeRedis()
+    monkeypatch.setattr(redis_client, "get_redis", lambda: fake)
+    svc.invalidate_published_cache()
+
+    assert await svc.publish_request_body_limit_mb_async(256) == 256
+    assert fake.store[svc.REQUEST_BODY_LIMIT_REDIS_KEY] == "256"
+    # File fallback is still written for single-host installs.
+    assert svc.read_published_request_body_limit_mb() == 256
+
+    # "Another worker" (fresh cache) on a host without the file sees Redis.
+    svc.invalidate_published_cache()
+    (tmp_path / svc.REQUEST_BODY_LIMIT_FILENAME).unlink()
+    assert await svc.refresh_request_body_limit_from_redis() == 256
+    assert svc.effective_request_body_limit_bytes() == 256 * 1024 * 1024
+    # Within the TTL no further Redis round-trip is made.
+    calls = fake.calls
+    assert await svc.refresh_request_body_limit_from_redis() == 256
+    assert fake.calls == calls
+
+
+async def test_redis_outage_falls_back_to_file_and_backs_off(monkeypatch) -> None:
+    import app.core.redis_client as redis_client
+    import app.services.request_body_limit_service as svc
+
+    tmp_path = _workdir()
+    monkeypatch.setattr(svc, "get_settings", lambda: SimpleNamespace(tls_state_dir=str(tmp_path)))
+    monkeypatch.setattr("app.services.tls_edge_service.tls_state_dir", lambda: tmp_path)
+    monkeypatch.setattr(redis_client, "get_redis", lambda: _DownRedis())
+    svc.invalidate_published_cache()
+
+    assert await svc.publish_request_body_limit_mb_async(64) == 64  # file written, Redis error logged
+    svc.invalidate_published_cache()
+    assert await svc.refresh_request_body_limit_from_redis() is None
+    assert svc.effective_request_body_limit_bytes() == 64 * 1024 * 1024
+    # Failure arms the back-off: the next call returns without touching Redis.
+    _, _, retry_at = svc._redis_cache
+    assert retry_at > svc.time.monotonic()

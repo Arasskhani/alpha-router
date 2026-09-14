@@ -32,8 +32,12 @@ class RequestBodyLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        from app.services.request_body_limit_service import request_body_limit_for
+        from app.services.request_body_limit_service import (
+            refresh_request_body_limit_from_redis,
+            request_body_limit_for,
+        )
 
+        await refresh_request_body_limit_from_redis()
         limit = clamp_limit(
             request_body_limit_for(scope.get("path") or ""),
             minimum=64 * 1024,

@@ -88,13 +88,17 @@ async def get_active_config(
     project_id: str,
     user: object,
 ) -> ProjectConfigSnapshot | None:
-    """Return the active config snapshot for a project (visible to any member)."""
+    """Return the active config snapshot for a project (members only).
+
+    The custom prompt is part of the project's private setup; a public
+    viewer talks *through* it but does not get to read it.
+    """
 
     await require_capability(
         db,
         project_id=project_id,
         user=user,
-        capability="project.view",
+        capability="config.read",
     )
     project = await db.get(Project, project_id)
     if project is None:

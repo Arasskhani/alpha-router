@@ -137,6 +137,8 @@ class ProjectUpdateIn(BaseModel):
     name: str | None = Field(default=None, max_length=255)
     description: str | None = Field(default=None, max_length=4000)
     visibility: str | None = None
+    # Required (must equal the current project name) when switching to public.
+    confirm_public_name: str | None = Field(default=None, max_length=255)
 
 
 class MemberRoleIn(BaseModel):
@@ -359,6 +361,7 @@ async def update_project_endpoint(
             name=body.name,
             description=body.description,
             visibility=body.visibility,
+            confirm_public_name=body.confirm_public_name,
         )
         await db.commit()
     except HTTPException:

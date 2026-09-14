@@ -325,7 +325,7 @@ async def list_project_resources(
         db,
         project_id=project_id,
         user=user,
-        capability="project.view",
+        capability="resource.read",
     )
 
     base = select(ProjectResource, KnowledgeDocument).outerjoin(
@@ -379,7 +379,7 @@ async def get_project_resource(
         db,
         project_id=project_id,
         user=user,
-        capability="project.view",
+        capability="resource.read",
     )
 
     resource = await db.get(ProjectResource, resource_id)

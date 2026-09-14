@@ -395,6 +395,7 @@ async def update_project(
     name: str | None = None,
     description: str | None = None,
     visibility: str | None = None,
+    confirm_public_name: str | None = None,
 ) -> dict[str, Any]:
     access = await require_capability(
         db, project_id=project_id, user=user, capability="project.edit"
@@ -402,6 +403,16 @@ async def update_project(
     project = await db.get(Project, project_id)
     if project is None:
         raise ProjectValidationError("Project not found")
+    if (
+        visibility == PROJECT_VISIBILITY_PUBLIC
+        and project.visibility != PROJECT_VISIBILITY_PUBLIC
+        and (confirm_public_name or "").strip() != (project.name or "").strip()
+    ):
+        # Going public exposes chats and knowledge to every active user. The
+        # client must echo the project name back so a mis-click cannot do it.
+        raise ProjectValidationError(
+            "To make this project public, repeat its exact name in confirm_public_name"
+        )
 
     changes: dict[str, Any] = {}
     if name is not None:
@@ -417,6 +428,14 @@ async def update_project(
             project.visibility = visibility
             changes["visibility"] = visibility
             await bump_acl_version(db, project)
+            if visibility == PROJECT_VISIBILITY_PUBLIC:
+                await append_project_audit(
+                    db,
+                    project_id=project_id,
+                    event_type="project.visibility.public",
+                    actor_user_id=user.id,
+                    payload={"name": project.name, "confirmed": True},
+                )
 
     project.revision = int(project.revision or 1) + 1
     project.updated_at = datetime.datetime.utcnow()
@@ -659,9 +678,8 @@ async def _require_member_role_mutation(
 async def list_members(
     db: AsyncSession, *, project_id: str, user: User
 ) -> list[dict[str, Any]] | None:
-    access = await resolve_project_access(db, project_id=project_id, user=user)
-    if access is None:
-        return None
+    """Member roster. Members only: a public viewer gets 403, not the list."""
+    await require_capability(db, project_id=project_id, user=user, capability="members.read")
     rows = (
         await db.execute(
             select(ProjectMember, User.username, User.display_name)
@@ -813,9 +831,7 @@ async def list_invitable_users(
     limit: int = 20,
 ) -> list[dict[str, Any]] | None:
     """Active users not already members — for the Owner invite picker."""
-    access = await resolve_project_access(db, project_id=project_id, user=user)
-    if access is None:
-        return None
+    await require_capability(db, project_id=project_id, user=user, capability="member.manage")
     limit = max(1, min(limit, 50))
     member_ids_subq = (
         select(ProjectMember.user_id).where(ProjectMember.project_id == project_id)
@@ -957,9 +973,8 @@ async def _maybe_email_invitation(
 async def list_invitations(
     db: AsyncSession, *, project_id: str, user: User
 ) -> list[dict[str, Any]] | None:
-    access = await resolve_project_access(db, project_id=project_id, user=user)
-    if access is None:
-        return None
+    """Pending invitations (tokens included) are for those who can manage members."""
+    await require_capability(db, project_id=project_id, user=user, capability="member.manage")
     rows = (
         await db.execute(
             select(ProjectInvitation)

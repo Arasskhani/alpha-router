@@ -168,7 +168,7 @@ async def attachments_from_existing_media(
             db,
             project_id=scoped_project_id,
             user=user,
-            capability="project.view",
+            capability="media.read",
         )
 
     out: list[dict] = []

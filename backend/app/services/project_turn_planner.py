@@ -253,7 +253,9 @@ async def plan_project_turn(
     if custom_prompt:
         blocks.append(_format_custom_prompt_block(custom_prompt))
 
-    if memory_enabled:
+    # A public viewer chats through the project's prompt but must not receive
+    # its memory: the model would happily repeat it back.
+    if memory_enabled and access.can("memory.read"):
         injection = await load_injectable_project_memories(
             db,
             project_id=session.project_id,

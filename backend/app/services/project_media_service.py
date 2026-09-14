@@ -283,8 +283,8 @@ async def list_project_media(
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[dict], int]:
-    """List project media. Requires ``project.view``."""
-    await require_capability(db, project_id=project_id, user=user, capability="project.view")
+    """List project media. Requires ``media.read`` (members only)."""
+    await require_capability(db, project_id=project_id, user=user, capability="media.read")
 
     limit = min(max(1, limit), _MAX_LIST_LIMIT)
     offset = max(0, offset)
@@ -331,7 +331,7 @@ async def get_project_media(
     user: object,
 ) -> dict | None:
     """Return one media item, or None if it does not belong to this project."""
-    await require_capability(db, project_id=project_id, user=user, capability="project.view")
+    await require_capability(db, project_id=project_id, user=user, capability="media.read")
     row = await db.get(ProjectMediaAsset, media_id)
     if row is None or row.project_id != project_id:
         return None
@@ -493,8 +493,8 @@ async def read_project_media_bytes(
     user: object,
     object_store: ProjectMediaObjectStore | None = None,
 ) -> tuple[ProjectMediaAsset, bytes] | None:
-    """Read binary content for download. Requires ``project.view``."""
-    await require_capability(db, project_id=project_id, user=user, capability="project.view")
+    """Read binary content for download. Requires ``media.read`` (members only)."""
+    await require_capability(db, project_id=project_id, user=user, capability="media.read")
     row = await db.get(ProjectMediaAsset, media_id)
     if row is None or row.project_id != project_id:
         return None

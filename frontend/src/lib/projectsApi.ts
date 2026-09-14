@@ -267,7 +267,13 @@ export async function putProjectChatComposerPrefs(
 
 export async function updateProject(
   projectId: string,
-  body: { name?: string; description?: string | null; visibility?: ProjectVisibility },
+  body: {
+    name?: string;
+    description?: string | null;
+    visibility?: ProjectVisibility;
+    /** Must equal the current project name when switching visibility to public. */
+    confirm_public_name?: string;
+  },
 ): Promise<ProjectRecord> {
   return api(`/api/projects/${encodeURIComponent(projectId)}`, {
     method: "PUT",

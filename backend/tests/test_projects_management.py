@@ -160,7 +160,10 @@ def test_update_project_owner_only():
                 proj = await create_project(db, user=owner, name="Alpha")
                 pid = proj["id"]
                 await add_member(db, project_id=pid, user=owner, target_user_id=contrib.id, role="contributor")
-                updated = await update_project(db, project_id=pid, user=owner, name="Alpha2", visibility="public")
+                updated = await update_project(
+                    db, project_id=pid, user=owner, name="Alpha2", visibility="public",
+                    confirm_public_name="Alpha",  # the *current* name is what must be echoed
+                )
                 assert updated["name"] == "Alpha2"
                 assert updated["visibility"] == "public"
                 # contributor cannot edit

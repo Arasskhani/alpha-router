@@ -140,7 +140,7 @@ def test_soft_delete_project_hides_media():
         store = InMemoryObjectStore()
         try:
             async with factory() as db:
-                owner, _, _ = await _setup(
+                owner, _, viewer = await _setup(
                     db, pid=PROJ_PUB, visibility=PROJECT_VISIBILITY_PUBLIC
                 )
                 outsider = await _user(db, "outsider_pub")
@@ -153,8 +153,14 @@ def test_soft_delete_project_hides_media():
                     content_bytes=b"public-bytes",
                     object_store=store,
                 )
+                # The media library is members-only even on a public project.
+                try:
+                    await list_project_media(db, project_id=PROJ_PUB, user=outsider)
+                    assert False, "public viewer must not list media"
+                except HTTPException as exc:
+                    assert exc.status_code == 403
                 before, total = await list_project_media(
-                    db, project_id=PROJ_PUB, user=outsider
+                    db, project_id=PROJ_PUB, user=viewer
                 )
                 assert total == 1
                 assert before[0]["id"] == uploaded["id"]
@@ -164,6 +170,7 @@ def test_soft_delete_project_hides_media():
                 assert project is not None
                 assert project.status == PROJECT_STATUS_DELETION_PENDING
 
+                # After soft-delete the project itself is hidden from non-members.
                 try:
                     await list_project_media(db, project_id=PROJ_PUB, user=outsider)
                     assert False, "public viewer should not see media after soft-delete"

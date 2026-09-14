@@ -192,13 +192,13 @@ async def list_project_memories(
     limit: int = 100,
     offset: int = 0,
 ) -> tuple[list[dict], int]:
-    """List memory items for a project (visible to any member)."""
+    """List memory items for a project (members only, never public viewers)."""
 
     await require_capability(
         db,
         project_id=project_id,
         user=user,
-        capability="project.view",
+        capability="memory.read",
     )
 
     filters = [ProjectMemory.project_id == project_id, _alive_filter()]

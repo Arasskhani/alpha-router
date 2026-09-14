@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     # Level for the application's own loggers (alpha_router.* and app.*); the
     # root logger and third-party libraries stay at WARNING.
     app_log_level: str = "INFO"  # env: APP_LOG_LEVEL
+    # Phase 4.3: `python -m app.migrate` runs the legacy create_all/column
+    # patches after Alembic for installations that predate the versioned
+    # baseline. Set false once an install has run the new migrate once; the
+    # default flips to false in the next release.
+    legacy_schema_bootstrap: bool = True  # env: LEGACY_SCHEMA_BOOTSTRAP
     secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     # Token lifetime. Default 8h (480 min) — balances UX against stolen-token

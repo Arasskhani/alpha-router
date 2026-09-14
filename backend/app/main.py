@@ -55,10 +55,8 @@ from app.branding import (
 )
 from app.config import INSECURE_DEFAULTS, get_settings
 from app.core.security import hash_password
-from app.database import AsyncSessionLocal, Base, engine
+from app.database import AsyncSessionLocal, engine
 from app.db_migrate import (
-    apply_schema_column_patches,
-    backfill_api_key_unlimited_budget,
     validate_accounting_schema,
     validate_agent_platform_schema,
 )
@@ -68,7 +66,6 @@ from app.legacy_brand_denylist import (
     LEGACY_SESSION_COOKIE_NAMES,
 )
 from app.models.user import User
-from app.schema_registry import legacy_metadata_tables
 from app.services import object_storage_service as oss
 from app.services.auth_sync_scheduler import refresh_auth_sync_schedules
 from app.services.admin_ip_guard import AdminIpGuardMiddleware
@@ -547,18 +544,9 @@ async def lifespan(app: FastAPI):
     )
     _assert_production_safe()
     _warn_dangerous_opt_in_flags()
-    async with engine.begin() as conn:
-        # Multiple uvicorn workers enter lifespan concurrently. Serialize DDL
-        # discovery/creation so a newly introduced table cannot race in
-        # PostgreSQL's type catalog and abort worker startup.
-        if conn.dialect.name == "postgresql":
-            await conn.execute(text("SELECT pg_advisory_xact_lock(56023113)"))
-        await conn.run_sync(
-            Base.metadata.create_all,
-            tables=legacy_metadata_tables(Base.metadata),
-        )
-    await apply_schema_column_patches()
-    await backfill_api_key_unlimited_budget()
+    # Phase 4.3: workers run no DDL. `python -m app.migrate` (the db-init
+    # service) owns the schema; a worker only refuses to start when the
+    # database does not match what this build expects.
     await validate_agent_platform_schema()
     await validate_accounting_schema()
 

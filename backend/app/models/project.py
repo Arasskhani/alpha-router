@@ -233,7 +233,7 @@ class ProjectInvitation(Base):
         nullable=False,
     )
     role = Column(String(16), nullable=False, default=PROJECT_ROLE_VIEWER)
-    token_hash = Column(String(128), nullable=False, unique=True)
+    token_hash = Column(String(128), nullable=False)
     max_uses = Column(Integer, nullable=False, default=1)
     use_count = Column(Integer, nullable=False, default=0)
     expires_at = Column(DateTime, nullable=False)
@@ -615,6 +615,8 @@ class ProjectResource(Base):
             "document_id",
             name="uq_project_resources_project_document",
         ),
+        # Named as revision c3d4e5f6a7b8 created it.
+        Index("ix_project_resources_project", "project_id"),
         Index("ix_project_resources_project_status", "project_id", "status"),
         Index("ix_project_resources_uploaded_by", "uploaded_by_user_id"),
     )
@@ -624,7 +626,6 @@ class ProjectResource(Base):
         String(36),
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     document_id = Column(
         String(36),
@@ -643,7 +644,6 @@ class ProjectResource(Base):
         Integer,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
-        index=True,
     )
     created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
     updated_at = Column(

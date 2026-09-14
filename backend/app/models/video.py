@@ -19,7 +19,12 @@ class VideoGenerationJob(Base):
 
     id = Column(String(36), primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
-    project_id = Column(String(36), nullable=True, index=True)
+    project_id = Column(
+        String(36),
+        ForeignKey("projects.id", ondelete="SET NULL", name="fk_video_generation_jobs_project_id", use_alter=True),
+        nullable=True,
+        index=True,
+    )
     chat_session_id = Column(String(128), nullable=True, index=True)
     model_id = Column(String(512), nullable=False)
     catalog_model_id = Column(Integer, ForeignKey("ai_models.id", ondelete="SET NULL"), nullable=True)

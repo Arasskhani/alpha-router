@@ -69,13 +69,23 @@ class ChatSession(Base):
     title = Column(String(512), nullable=False, default="New chat")
     folder_id = Column(String(36), ForeignKey("chat_folders.id", ondelete="SET NULL"), nullable=True)
     model_id = Column(String(512), nullable=False, default="")
+    # The FKs below were added by Alembic revisions (deferred until the Agent
+    # Platform tables existed); the ORM declares them too so that the schema
+    # drift gate compares equal. `use_alter` keeps create_all free of cycles.
     current_agent_id = Column(
         String(36),
+        ForeignKey("agents.id", ondelete="SET NULL", name="fk_chat_sessions_current_agent", use_alter=True),
         nullable=True,
         index=True,
     )
     current_agent_version_id = Column(
         String(36),
+        ForeignKey(
+            "agent_versions.id",
+            ondelete="SET NULL",
+            name="fk_chat_sessions_current_agent_version",
+            use_alter=True,
+        ),
         nullable=True,
         index=True,
     )
@@ -89,6 +99,7 @@ class ChatSession(Base):
     revision = Column(Integer, nullable=False, default=1)
     project_id = Column(
         String(36),
+        ForeignKey("projects.id", ondelete="CASCADE", name="fk_chat_sessions_project_id", use_alter=True),
         nullable=True,
         index=True,
     )
@@ -143,6 +154,7 @@ class ChatMessage(Base):
     client_message_id = Column(String(64), nullable=True)
     agent_run_id = Column(
         String(36),
+        ForeignKey("agent_runs.id", ondelete="SET NULL", name="fk_chat_messages_agent_run", use_alter=True),
         nullable=True,
         index=True,
     )

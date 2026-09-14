@@ -41,6 +41,18 @@ backend-lint:
     # Full rule set (backend/ruff.toml) plus formatting; both are hard gates.
     - cd backend && ruff check . && ruff format --check .
 
+# Type errors are frozen in backend/mypy-baseline.txt; the job fails on any
+# error not in the baseline. Fix errors and run `scripts/mypy-check.sh --sync`
+# to shrink it — never to grow it.
+backend-typecheck:
+  stage: verify
+  image: python:3.12-slim
+  <<: *backend-rules
+  script:
+    - python -m pip install --no-cache-dir -r backend/requirements.txt
+    - python -m pip install --no-cache-dir "mypy==1.20.2" mypy-baseline
+    - bash scripts/mypy-check.sh
+
 backend-tests:
   stage: verify
   image: python:3.12-slim

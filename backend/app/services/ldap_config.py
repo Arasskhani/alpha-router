@@ -149,7 +149,8 @@ def format_login_identity(username: str, domain: str) -> tuple[str, str, str]:
         sam = raw.split("@", 1)[0]
         return raw, sam, raw
     if "\\" in raw:
-        return raw, raw.split("\\", 1)[1], f"{raw.split('\\', 1)[1]}@{domain}" if domain else raw
+        sam = raw.split("\\", 1)[1]
+        return raw, sam, f"{sam}@{domain}" if domain else raw
     if domain:
         upn = f"{raw}@{domain}"
         return upn, raw, upn

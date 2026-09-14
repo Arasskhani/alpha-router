@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
-import app.models  # Register every ORM table before schema startup.
+import app.models as _orm_models  # noqa: F401 -- registers every ORM table before schema startup
 from app.api import (
     admin,
     admin_agent_evaluations,

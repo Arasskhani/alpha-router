@@ -4,6 +4,7 @@ import ModelName from "./ModelName";
 import { formatLocalDateTime } from "../lib/dateTime";
 import {
   confidenceLabel,
+  errorCodeLabel,
   formatTokenCount,
   logIdentityLabel,
   money,
@@ -84,6 +85,44 @@ export default function RequestLogCostDetailsModal({
 
           {loading && <p className="muted">Loading cost ledger…</p>}
           {error && <p className="error">{error}</p>}
+
+          {!loading && !error && details?.request && !details.request.success && (
+            <div className="api-log-cost-details__failure">
+              <h4>Failure</h4>
+              <dl>
+                <div>
+                  <dt>Reason</dt>
+                  <dd>{errorCodeLabel(details.request.error_code) || "Unknown"}</dd>
+                </div>
+                {details.request.http_status != null && (
+                  <div>
+                    <dt>HTTP status</dt>
+                    <dd>{details.request.http_status}</dd>
+                  </div>
+                )}
+                {details.request.provider_job_id && (
+                  <div>
+                    <dt>Provider job</dt>
+                    <dd className="api-log-cost-details__mono">{details.request.provider_job_id}</dd>
+                  </div>
+                )}
+                {details.request.correlation_id && (
+                  <div>
+                    <dt>Correlation id</dt>
+                    <dd
+                      className="api-log-cost-details__mono"
+                      title="Search the server logs for this id to see every line from this request"
+                    >
+                      {details.request.correlation_id}
+                    </dd>
+                  </div>
+                )}
+              </dl>
+              {details.request.error_message && (
+                <p className="api-log-cost-details__error-text">{details.request.error_message}</p>
+              )}
+            </div>
+          )}
 
           {!loading && !error && details?.legacy && (
             <p className="muted">
@@ -189,6 +228,26 @@ export default function RequestLogCostDetailsModal({
                             <dd>
                               <code className="api-log-cost-event__id">{event.upstream_request_id}</code>
                             </dd>
+                          </div>
+                        )}
+                        {event.connection_id != null && (
+                          <div>
+                            <dt>Connection</dt>
+                            <dd>#{event.connection_id}</dd>
+                          </div>
+                        )}
+                        {event.quantity != null && (
+                          <div>
+                            <dt>Quantity</dt>
+                            <dd>
+                              {event.quantity} {event.unit || ""}
+                            </dd>
+                          </div>
+                        )}
+                        {event.started_at && (
+                          <div>
+                            <dt>Started</dt>
+                            <dd>{formatLocalDateTime(event.started_at)}</dd>
                           </div>
                         )}
                         {event.error_message && (

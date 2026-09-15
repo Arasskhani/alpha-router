@@ -29,6 +29,15 @@ export type RequestLogSummary = {
   response_time_ms: number;
   source_ip: string;
   success: boolean;
+  /** What kind of request this was: chat, video, image, speech, embedding… */
+  operation_type?: string | null;
+  error_message?: string | null;
+  /** Classified failure (timeout, connect_error, http_client_error, …). */
+  error_code?: string | null;
+  http_status?: number | null;
+  /** Ties the row to the container log lines for the same request or job. */
+  correlation_id?: string | null;
+  provider_job_id?: string | null;
 };
 
 type CostLineItem = {
@@ -38,6 +47,22 @@ type CostLineItem = {
   unit_price_usd: number | null;
   cost_usd: number | null;
   pricing_source: string;
+};
+
+type RequestFailureBlock = {
+  id: number;
+  success: boolean;
+  error_code: string | null;
+  error_message: string | null;
+  http_status: number | null;
+  correlation_id: string | null;
+  provider_job_id: string | null;
+  response_time_ms: number;
+  source: string | null;
+  client_app: string | null;
+  source_ip: string | null;
+  model_id: string | null;
+  project_id: string | null;
 };
 
 type CostEvent = {
@@ -62,6 +87,11 @@ type CostEvent = {
   reconciliation_attempts: number;
   last_reconciliation_attempt_at: string | null;
   error_message: string | null;
+  connection_id: number | null;
+  quantity: number | null;
+  unit: string | null;
+  started_at: string | null;
+  completed_at: string | null;
   line_items: CostLineItem[];
 };
 
@@ -74,12 +104,51 @@ export type CostDetails = {
     provider_cost_usd: number | null;
     calculated_cost_usd: number | null;
     unpriced_event_count: number;
+    accounting_status?: string | null;
+    metadata?: Record<string, unknown> | null;
+    started_at?: string | null;
+    completed_at?: string | null;
     reconciled_at: string | null;
   } | null;
   events: CostEvent[];
   legacy: boolean;
+  request?: RequestFailureBlock | null;
   total_cost_usd?: number;
 };
+
+/** Short label for the kind of request, for the Type column and its filter. */
+export function operationTypeLabel(value: string | null | undefined): string {
+  const key = (value || "").trim().toLowerCase();
+  const labels: Record<string, string> = {
+    chat: "Chat",
+    video: "Video",
+    image: "Image",
+    speech: "Speech",
+    transcription: "Transcription",
+    embedding: "Embedding",
+    rerank: "Rerank",
+  };
+  return labels[key] || (key ? key.charAt(0).toUpperCase() + key.slice(1) : "—");
+}
+
+/** Human wording for a classified failure; unknown codes pass through readably. */
+export function errorCodeLabel(value: string | null | undefined): string {
+  const key = (value || "").trim().toLowerCase();
+  const labels: Record<string, string> = {
+    timeout: "Timed out",
+    connect_error: "Could not connect",
+    network_error: "Network error",
+    http_client_error: "Rejected by provider",
+    http_server_error: "Provider error",
+    invalid_response: "Unusable response",
+    provider_error: "Provider error",
+    empty_completion: "Empty completion",
+    cancelled: "Cancelled",
+    client_disconnected: "Client disconnected",
+    reclaimed: "Reclaimed",
+  };
+  return labels[key] || key.replace(/_/g, " ");
+}
 
 export function isPersonalApiKeyLog(log: Pick<RequestLogSummary, "api_key_kind" | "source" | "user_api_key_id">): boolean {
   if (log.api_key_kind === "personal") return true;

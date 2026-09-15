@@ -34,6 +34,12 @@ ACTIVITY_LOG_COLUMNS = [
     "Cost Confidence",
     "Duration ms",
     "Response Status",
+    "Type",
+    "Error Code",
+    "HTTP Status",
+    "Error",
+    "Correlation Id",
+    "Provider Job Id",
     "Source IP",
     "Language",
 ]
@@ -56,6 +62,12 @@ DETAIL_LOG_COLUMNS = [
     "Cost Confidence",
     "Duration ms",
     "Response Status",
+    "Type",
+    "Error Code",
+    "HTTP Status",
+    "Error",
+    "Correlation Id",
+    "Provider Job Id",
     "Source IP",
     "Language",
     "Operation Id",
@@ -69,6 +81,12 @@ DETAIL_LOG_COLUMNS = [
     "Event Model",
     "Event Status",
     "Upstream Request Id",
+    "Event Connection Id",
+    "Event Started",
+    "Event Completed",
+    "Event Quantity",
+    "Event Unit",
+    "Event Error",
     "Event Prompt Tokens",
     "Event Completion Tokens",
     "Event Cached Tokens",
@@ -130,6 +148,7 @@ def log_row_to_export(
     provider: str | None = None,
     router_key: AlphaRouterApiKey | None = None,
     user_key: UserApiKey | None = None,
+    operation_type: str | None = None,
 ) -> dict[str, Any]:
     dt = r.request_time
     time_str = _display_dt(dt, tz_mode).strftime("%Y-%m-%dT%H:%M:%S") if dt else ""
@@ -150,6 +169,12 @@ def log_row_to_export(
         "Cost Confidence": ("unpriced" if r.has_unpriced_usage else (r.cost_confidence or "")),
         "Duration ms": round(float(r.response_time_ms or 0), 1),
         "Response Status": "Success" if r.success else "Fail",
+        "Type": operation_type or "",
+        "Error Code": getattr(r, "error_code", None) or "",
+        "HTTP Status": getattr(r, "http_status", None) or "",
+        "Error": (getattr(r, "error_message", None) or "").replace("\n", " ").strip(),
+        "Correlation Id": getattr(r, "correlation_id", None) or "",
+        "Provider Job Id": getattr(r, "provider_job_id", None) or "",
         "Source IP": r.source_ip or "",
         "Language": r.prompt_language or "",
     }
@@ -186,6 +211,19 @@ async def resolve_log_export_maps(
     return provider_map, key_map, user_key_map
 
 
+async def resolve_operation_types(db: AsyncSession, rows: list[RequestLog]) -> dict[str, str]:
+    """usage_operation_id -> operation type, so the CSV can say chat / video / image."""
+    operation_ids = {r.usage_operation_id for r in rows if getattr(r, "usage_operation_id", None)}
+    if not operation_ids:
+        return {}
+    found = (
+        await db.execute(
+            select(UsageOperation.id, UsageOperation.operation_type).where(UsageOperation.id.in_(operation_ids))
+        )
+    ).all()
+    return {str(op_id): str(op_type or "") for op_id, op_type in found}
+
+
 def request_logs_to_export_dataframe(
     rows: list[RequestLog],
     *,
@@ -193,8 +231,10 @@ def request_logs_to_export_dataframe(
     provider_map: dict[str, str],
     key_map: dict[int, AlphaRouterApiKey],
     user_key_map: dict[int, UserApiKey] | None = None,
+    operation_types: dict[str, str] | None = None,
 ) -> pd.DataFrame:
     user_key_map = user_key_map or {}
+    operation_types = operation_types or {}
     if not rows:
         return pd.DataFrame(columns=ACTIVITY_LOG_COLUMNS)
     sorted_rows = sorted(rows, key=lambda r: r.request_time or r.id, reverse=True)
@@ -205,6 +245,7 @@ def request_logs_to_export_dataframe(
             provider=provider_map.get((r.model_id or "").strip()),
             router_key=(key_map.get(r.alpha_router_api_key_id) if r.alpha_router_api_key_id else None),
             user_key=(user_key_map.get(r.user_api_key_id) if getattr(r, "user_api_key_id", None) else None),
+            operation_type=operation_types.get(getattr(r, "usage_operation_id", None) or ""),
         )
         for r in sorted_rows
     ]
@@ -216,6 +257,10 @@ def dataframe_to_csv_bytes(df: pd.DataFrame) -> bytes:
     df.to_csv(buffer, index=False, lineterminator="\n")
     # UTF-8 BOM so Excel opens Persian/Unicode correctly.
     return ("\ufeff" + buffer.getvalue()).encode("utf-8")
+
+
+def _export_dt(value: Any, tz_mode: str) -> str:
+    return _display_dt(value, tz_mode).strftime("%Y-%m-%dT%H:%M:%S") if value else ""
 
 
 def _empty_detail_row() -> dict[str, Any]:
@@ -237,6 +282,7 @@ def request_log_detail_to_export_rows(
         tz_mode=tz_mode,
         provider=provider,
         router_key=router_key,
+        operation_type=(operation.operation_type if operation is not None else None),
     )
     rows: list[dict[str, Any]] = []
 
@@ -260,6 +306,12 @@ def request_log_detail_to_export_rows(
             "Cost Confidence": base["Cost Confidence"],
             "Duration ms": base["Duration ms"],
             "Response Status": base["Response Status"],
+            "Type": base["Type"],
+            "Error Code": base["Error Code"],
+            "HTTP Status": base["HTTP Status"],
+            "Error": base["Error"],
+            "Correlation Id": base["Correlation Id"],
+            "Provider Job Id": base["Provider Job Id"],
             "Source IP": base["Source IP"],
             "Language": base["Language"],
         }
@@ -297,6 +349,16 @@ def request_log_detail_to_export_rows(
                 "Event Model": event.model_id or "",
                 "Event Status": event.status or "",
                 "Upstream Request Id": event.upstream_request_id or "",
+                # getattr throughout: callers also hand this lightweight row
+                # stand-ins, the same reason log_row_to_export reads that way.
+                "Event Connection Id": getattr(event, "connection_id", None) or "",
+                "Event Started": _export_dt(getattr(event, "started_at", None), tz_mode),
+                "Event Completed": _export_dt(getattr(event, "completed_at", None), tz_mode),
+                "Event Quantity": (
+                    getattr(event, "quantity", None) if getattr(event, "quantity", None) is not None else ""
+                ),
+                "Event Unit": getattr(event, "unit", None) or "",
+                "Event Error": (getattr(event, "error_message", None) or "").replace("\n", " ").strip(),
                 "Event Prompt Tokens": int(event.prompt_tokens or 0),
                 "Event Completion Tokens": int(event.completion_tokens or 0),
                 "Event Cached Tokens": int(event.cached_tokens or 0),

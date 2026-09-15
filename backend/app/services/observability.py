@@ -51,6 +51,15 @@ _KNOWN_EVENTS = frozenset(
         "sandbox_orphan_removed",
         "video_job_started",
         "video_provider_submit",
+        # Could not reach the provider at all (handshake refused, black-holed
+        # or timed out). Watch the rate: it is normally zero, and a sustained
+        # non-zero value means this host's egress is losing new connections --
+        # the condition that used to surface only as unexplained video
+        # failures, and that no amount of application retrying truly fixes.
+        "upstream_connect_failure",
+        # A video status GET failed and was retried. One is noise; a steady
+        # stream is the same egress problem seen from the job side.
+        "video_poll_retry",
         "video_job_completed",
         "video_job_failed",
         "agent_run_failed",

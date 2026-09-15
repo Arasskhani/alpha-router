@@ -125,3 +125,24 @@ def test_the_loop_really_does_tolerate_failures():
     source = inspect.getsource(video_job_service._run_video_job_inner)
     assert "_is_transient_poll_failure" in source
     assert "poll_failures" in source
+
+
+def test_unreachable_upstreams_are_counted_separately_from_provider_errors():
+    """An operator has to be able to see this without reading a stack trace."""
+    from app.services import observability
+    from app.services.failure_details import CODE_CONNECT, CODE_PROVIDER, CODE_TIMEOUT
+    from app.services.video_job_service import _note_upstream_failure
+
+    observability.reset()
+    _note_upstream_failure(CODE_CONNECT)
+    _note_upstream_failure(CODE_TIMEOUT)
+    _note_upstream_failure(CODE_PROVIDER)  # the provider answered; not an egress problem
+    assert observability.snapshot().get("upstream_connect_failure") == 2
+
+
+def test_both_new_events_are_registered():
+    # observability.increment() silently drops anything not in _KNOWN_EVENTS.
+    from app.services.observability import _KNOWN_EVENTS
+
+    assert "upstream_connect_failure" in _KNOWN_EVENTS
+    assert "video_poll_retry" in _KNOWN_EVENTS

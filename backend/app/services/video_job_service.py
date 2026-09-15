@@ -33,7 +33,7 @@ from app.services.storage_service import (
 from app.services.user_chat_storage_service import finalize_chat_session_video
 from app.services.project_media_service import collect_personal_media_ids, persist_scoped_chat_media
 from app.services.video_billing_service import VideoBillingCapture, log_video_usage
-from app.services.failure_details import describe_failure
+from app.services.failure_details import CODE_CONNECT, CODE_TIMEOUT, describe_failure
 from app.services.observability import correlation_scope, increment
 
 _LOG = logging.getLogger("alpha_router.video_jobs")
@@ -50,6 +50,18 @@ _TERMINAL = frozenset({"completed", "failed", "cancelled"})
 # genuinely unreachable -- and the overall job deadline still applies
 # throughout, so this can never extend a job past its timeout.
 _MAX_CONSECUTIVE_POLL_FAILURES = 5
+
+
+def _note_upstream_failure(code: str) -> None:
+    """Count the failures that mean "we never reached the provider".
+
+    Separated from the generic failure counters because the operator action is
+    different: a provider error is the provider's problem, while a run of
+    these is this host's egress dropping connections, and it is invisible in
+    the logs until someone reads a stack trace.
+    """
+    if code in (CODE_CONNECT, CODE_TIMEOUT):
+        increment("upstream_connect_failure")
 
 
 def _is_transient_poll_failure(exc: BaseException) -> bool:
@@ -682,6 +694,8 @@ async def _run_video_job_inner(job_id: str) -> None:  # noqa: C901 -- same body,
                         raise
                     poll_failures += 1
                     detail = describe_failure(exc)
+                    increment("video_poll_retry")
+                    _note_upstream_failure(detail.code)
                     _LOG.warning(
                         "video poll failed (%s/%s) job=%s: %s",
                         poll_failures,
@@ -829,6 +843,7 @@ async def _run_video_job_inner(job_id: str) -> None:  # noqa: C901 -- same body,
             # str(exc) is empty for every httpx timeout and a bare ConnectError,
             # which used to store a failure with no reason at all.
             failure = describe_failure(exc)
+            _note_upstream_failure(failure.code)
             error_message = failure.message
             error_code = failure.code
             http_status = failure.http_status

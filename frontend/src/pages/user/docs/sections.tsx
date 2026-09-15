@@ -238,6 +238,9 @@ export const userManualSections: DocSection[] = [
             <a href="#chat-streaming">Sending, streaming &amp; queue</a>
           </li>
           <li>
+            <a href="#message-cost">What a reply cost</a>
+          </li>
+          <li>
             <a href="#chat-attachments">Attachments &amp; voice</a>
           </li>
           <li>
@@ -401,6 +404,36 @@ export const userManualSections: DocSection[] = [
     ),
   },
   {
+    id: "message-cost",
+    title: "What a reply cost",
+    group: "Chat",
+    content: (
+      <>
+        <h2>What a reply cost</h2>
+        <p>
+          The info button on an assistant reply opens <strong>Cost details</strong> for that single message: what it
+          cost, which model actually answered, how many tokens went each way, and how long it took. It is the same
+          number that counts against your monthly budget, so it is the quickest way to see why one answer was more
+          expensive than another.
+        </p>
+        <ul>
+          <li>
+            A turn can involve more than one attempt upstream — a retry after a dropped connection, for example. Each
+            attempt is listed with its own tokens and cost, so a surprising total usually explains itself.
+          </li>
+          <li>
+            If the request failed, the panel says why: a short error code and the recorded reason. That distinguishes a
+            refused prompt from a provider outage or a timeout, which is worth knowing before you retype anything.
+          </li>
+        </ul>
+        <Note>
+          You only ever see your own requests here, and only the parts that concern you. Operational detail — the raw
+          provider response, internal connection and trace identifiers — is kept to the administrator view.
+        </Note>
+      </>
+    ),
+  },
+  {
     id: "chat-attachments",
     title: "Attachments &amp; voice",
     group: "Chat",
@@ -494,6 +527,11 @@ export const userManualSections: DocSection[] = [
           </li>
           <li>Completed videos appear in the thread and in your Media library (unless Private mode).</li>
           <li>Only one video job runs at a time per user by default; costs count against your monthly budget.</li>
+          <li>
+            A brief network hiccup while a clip renders no longer loses the job — the status check is retried. If a job
+            does fail, the placeholder is replaced by the actual reason rather than a generic message, so you can tell
+            a rejected prompt from a provider outage.
+          </li>
         </ul>
       </>
     ),

@@ -1198,6 +1198,87 @@ export const docSections: DocSection[] = [
     ),
   },
   {
+    id: "upstream-connectivity",
+    title: "Upstream connectivity",
+    group: "Overview",
+    content: (
+      <>
+        <h2>Upstream connectivity</h2>
+        <p>
+          How Alpharouter reaches a provider matters more than it looks. Chat is one long request on one connection, so
+          it survives a flaky network almost by accident. Image, speech and especially video are not: an asynchronous
+          video job is one create call plus a status call every few seconds, up to a few hundred requests for a single
+          clip. If each one opens a brand-new TCP+TLS connection, any per-connection failure rate is multiplied by the
+          number of calls, and a network that loses a small share of new connections stops the feature outright while
+          chat still looks healthy.
+        </p>
+        <p>So provider calls share one connection policy:</p>
+        <ul>
+          <li>
+            <strong>Connections are pooled and kept alive</strong>, so a whole video job costs one or two handshakes
+            instead of hundreds.
+          </li>
+          <li>
+            <strong>The connect budget is a few seconds, and establishing a connection is retried.</strong> A healthy
+            handshake takes tens of milliseconds; a long connect timeout never recovers a connection, it only postpones
+            the error. The retries cover the connect only and never re-send a request that already reached the
+            provider, so a paid generation can never be submitted twice.
+          </li>
+          <li>
+            <strong>A failed status check does not fail a running job.</strong> The clip is still rendering on the
+            provider&apos;s side, so a transport error or a 429/5xx is retried; a 404 for an unknown job or a 401 for a
+            revoked key is reported at once. Several consecutive failures still fail the job, and the job deadline
+            applies throughout.
+          </li>
+        </ul>
+        <h3>Settings</h3>
+        <ul>
+          <li>
+            <code>PROVIDER_CONNECT_TIMEOUT_SECONDS</code> (default 5) — how long one handshake may take.
+          </li>
+          <li>
+            <code>PROVIDER_CONNECT_RETRIES</code> (default 3) — extra connect attempts. <code>0</code> restores
+            single-attempt behaviour.
+          </li>
+          <li>
+            <code>PROVIDER_HTTP_TIMEOUT_SECONDS</code> and <code>OPENROUTER_MAX_CONNECTIONS</code> — the read budget and
+            the pool ceiling, unchanged.
+          </li>
+        </ul>
+        <p>
+          On a network that drops some new connections, raise the <em>retries</em>, not the timeout. A longer timeout
+          only makes each failure slower to report.
+        </p>
+        <h3>Diagnosing</h3>
+        <p>
+          Two counters on <code>/metrics</code> separate “the provider said no” from “we never reached the provider”,
+          which need different people:
+        </p>
+        <ul>
+          <li>
+            <code>upstream_connect_failure</code> — a handshake was refused, black-holed or timed out. Normally zero.
+          </li>
+          <li>
+            <code>video_poll_retry</code> — a video status call had to be retried. An occasional one is noise.
+          </li>
+        </ul>
+        <Warn>
+          A sustained non-zero <code>upstream_connect_failure</code> rate is a network problem on the host running
+          Alpharouter, not a provider problem and not something the application can fix. Stateful firewalls, NAT layers
+          (Docker Desktop&apos;s included) and TLS-inspecting antivirus are the usual causes. The connection policy
+          makes the platform survive the condition; it does not repair it.
+        </Warn>
+        <Note>
+          <code>HTTPS_PROXY</code> and <code>NO_PROXY</code> are honoured for provider API calls, so an egress that
+          cannot be fixed can be routed around without a code change. They deliberately do <strong>not</strong> apply to
+          downloads of generated media or any other user-supplied URL: those go through an SSRF-guarded client that
+          pins the validated IP, and a proxy would hand the destination back to the proxy and defeat that check. Those
+          hosts have to be reachable directly.
+        </Note>
+      </>
+    ),
+  },
+  {
     id: "admin-database",
     title: "Database",
     group: "Overview",
@@ -1929,7 +2010,24 @@ export const docSections: DocSection[] = [
           <li>
             <strong>Chat</strong> — enable policy, retention days, daily schedule, purge expired messages now.
           </li>
+          <li>
+            <strong>API logs — raw provider responses</strong> — how many days the verbatim provider payloads behind{" "}
+            <a href="#admin-logs">API Logs</a> are kept (1–365, default 30). The card shows how many payloads are stored and how many the current
+            window already excludes, so you can see what a shorter window would remove before you save it.
+          </li>
         </ul>
+        <h3>Why the payload window is separate</h3>
+        <p>
+          Every upstream attempt stores the provider&apos;s own response, and that is what actually explains a failed or
+          unexpectedly expensive request. It is also the bulkiest thing in the log tables and can carry prompt text the
+          provider echoed back, so it gets a clock of its own. Expiry clears only the payload column: the request rows
+          — cost, tokens, status, the failure reason — stay for as long as the request log does.
+        </p>
+        <p>
+          A daily job clears expired payloads, and saving applies the new window immediately rather than waiting for the
+          next run, because an operator who shortens it expects what falls outside to be gone now. The change and the
+          number of rows cleared are written to the security audit.
+        </p>
         <Note>
           Users can also schedule personal media cleanup from the Media library; that schedule is separate from the
           global media retention settings here.
@@ -2112,7 +2210,12 @@ export const docSections: DocSection[] = [
           app, tokens, cache hit, cost, duration, success/failure.
         </p>
         <ul>
-          <li>Filters: user, gateway API key (<code>api_key_id</code>), model, status, prompt cache, date range.</li>
+          <li>
+            Filters: user, gateway API key (<code>api_key_id</code>), model, status, prompt cache, date range, plus{" "}
+            <strong>Type</strong> (chat, image, video, speech, embedding) and <strong>Error code</strong>. The error
+            code list is built from the codes actually present in the log, so an empty list means nothing has failed
+            that way.
+          </li>
           <li>
             The table stays inside the page: narrower widths hide secondary columns (Provider, App, cache, duration,
             then tokens) and ellipsize long user/model names. Full values remain on hover; click a row for Cost details.
@@ -2128,14 +2231,34 @@ export const docSections: DocSection[] = [
             provider and calculated amounts.
           </li>
           <li>
+            A failed row shows <strong>why</strong>, not just that it failed: the failure column carries the error code
+            and the recorded message. Every failure path classifies the exception before storing it, so a network
+            timeout reads as a timeout against a named URL rather than an empty string — the condition that used to
+            surface as a bare “Video generation failed”.
+          </li>
+          <li>
             Click a row to open <strong>Cost details</strong>: user or API key, operation totals, each upstream attempt
             (tokens, sources, provider IDs), and line items from{" "}
             <code>GET /api/admin/logs/&lt;id&gt;/cost-details</code>. Pre-ledger rows show only the legacy summary.
           </li>
           <li>
+            For a failed request the modal opens with a <strong>Failure</strong> block: error code, upstream HTTP
+            status, the message, the <strong>correlation ID</strong> (the same value tagged on this request&apos;s
+            container log lines) and, for asynchronous media, the <strong>provider job ID</strong>. Those two are what
+            turn a log row into something you can trace through the stack.
+          </li>
+          <li>
+            Each attempt also shows the connection it went out on, quantity and unit, start and finish times, and{" "}
+            <strong>Show raw payload</strong> — the provider&apos;s own response for that attempt, which is usually the
+            only thing that explains an unexpected cost or a refusal. How long those payloads are kept is set on{" "}
+            <a href="#admin-retention">Retention Policy</a>; the modal shows the current window next to the payload.
+          </li>
+          <li>
             <strong>Export</strong> downloads the current filtered set (including date range) as CSV via{" "}
-            <code>GET /api/admin/logs/export</code>. Inside Cost details, <strong>Export</strong> downloads that one
-            request plus its ledger rows via <code>GET /api/admin/logs/&lt;id&gt;/export</code>.
+            <code>GET /api/admin/logs/export</code>, with the failure columns alongside the billing ones. Inside Cost
+            details, <strong>Export</strong> downloads that one request plus its ledger rows — including each
+            attempt&apos;s raw provider payload — via <code>GET /api/admin/logs/&lt;id&gt;/export</code>. What you can
+            read on screen is what you get in the file.
           </li>
           <li>
             <strong>Clear All Logs</strong> — write-gated, multi-step confirm.
@@ -2149,6 +2272,12 @@ export const docSections: DocSection[] = [
           Deep links from Operations (for example filtered by model) are supported via query parameters. Export and
           cost-details respect the active filters, including <code>api_key_id</code> when scoped to a gateway key.
         </p>
+        <Note>
+          End users see a narrower version of this modal on their own chat messages (the info button on an assistant
+          reply). They get the cost, the error code and the message; the raw provider payload, the connection, the
+          correlation ID, the provider job ID and the recorded source IP are withheld — those answer an
+          operator&apos;s questions, not the account holder&apos;s.
+        </Note>
       </>
     ),
   },
@@ -2420,6 +2549,7 @@ export const docSections: DocSection[] = [
           <li>Budget reservation expiry</li>
           <li>Provider cost reconciliation for registered adapters</li>
           <li>Media and chat retention cleanup (cron from Retention Policy)</li>
+          <li>Raw provider payload retention for API Logs (daily, shortly after the chat cleanup)</li>
           <li>Per-user media cleanup schedules</li>
           <li>System metrics snapshots</li>
           <li>Chat session stats reconcile</li>

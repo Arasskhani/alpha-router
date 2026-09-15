@@ -72,3 +72,13 @@ Thumbs.db
 uploads/
 tmp/
 backups/
+
+# =============================================================================
+# Delivery scaffolding
+# =============================================================================
+# Bundles, patch series and zips produced to hand a change set over. Every one
+# of them is a copy of work that is already in this history, so committing them
+# doubles the repository for nothing and buries real changes in review.
+_phase*/
+Claude outputs/
+*.bundle

@@ -87,6 +87,8 @@ type CostEvent = {
   reconciliation_attempts: number;
   last_reconciliation_attempt_at: string | null;
   error_message: string | null;
+  /** The provider's own response for this attempt, until the retention window passes. */
+  raw_usage: Record<string, unknown> | null;
   connection_id: number | null;
   quantity: number | null;
   unit: string | null;
@@ -192,6 +194,25 @@ export function money(n: number | null | undefined) {
 
 export function formatTokenCount(n: number) {
   return new Intl.NumberFormat("en-US").format(n || 0);
+}
+
+export type RawPayloadRetention = {
+  retention_days: number;
+  min_days: number;
+  max_days: number;
+  default_days: number;
+  has_expired_payloads: boolean;
+};
+
+export async function fetchRawPayloadRetention(): Promise<RawPayloadRetention> {
+  return api<RawPayloadRetention>("/api/admin/logs/raw-payload-retention");
+}
+
+export async function saveRawPayloadRetention(days: number): Promise<RawPayloadRetention> {
+  return api<RawPayloadRetention>("/api/admin/logs/raw-payload-retention", {
+    method: "PUT",
+    body: JSON.stringify({ retention_days: days }),
+  });
 }
 
 export async function fetchOwnedRequestLog(logId: number): Promise<RequestLogSummary> {

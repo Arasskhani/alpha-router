@@ -13,9 +13,12 @@ import {
   confidenceLabel,
   errorCodeLabel,
   fetchAdminRequestLogCostDetails,
+  fetchRawPayloadRetention,
+  saveRawPayloadRetention,
   isPersonalApiKeyLog,
   operationTypeLabel,
   type CostDetails,
+  type RawPayloadRetention,
   type RequestLogSummary,
 } from "../../lib/requestLogCostDetails";
 
@@ -95,6 +98,11 @@ export default function ApiLogs({ apiKeyId }: Props) {
   const [exporting, setExporting] = useState(false);
   const [exportingOne, setExportingOne] = useState(false);
   const [exportError, setExportError] = useState("");
+  const [retention, setRetention] = useState<RawPayloadRetention | null>(null);
+  const [retentionDraft, setRetentionDraft] = useState("");
+  const [retentionSaving, setRetentionSaving] = useState(false);
+  const [retentionError, setRetentionError] = useState("");
+  const [retentionSaved, setRetentionSaved] = useState("");
 
   const buildFilterQuery = useCallback(
     (limit?: string) => {
@@ -264,9 +272,38 @@ export default function ApiLogs({ apiKeyId }: Props) {
     if (m) setModel(m);
   }, [searchParams]);
 
+  const loadRetention = useCallback(async () => {
+    try {
+      const value = await fetchRawPayloadRetention();
+      setRetention(value);
+      setRetentionDraft(String(value.retention_days));
+    } catch {
+      setRetention(null);
+    }
+  }, []);
+
+  const saveRetention = async () => {
+    const days = Number(retentionDraft);
+    if (!Number.isFinite(days) || !retention) return;
+    setRetentionError("");
+    setRetentionSaved("");
+    setRetentionSaving(true);
+    try {
+      const value = await saveRawPayloadRetention(Math.round(days));
+      setRetention(value);
+      setRetentionDraft(String(value.retention_days));
+      setRetentionSaved(`Keeping provider payloads for ${value.retention_days} days.`);
+    } catch (err) {
+      setRetentionError(formatApiError(err));
+    } finally {
+      setRetentionSaving(false);
+    }
+  };
+
   useEffect(() => {
     void load();
     void loadFilterOptions();
+    if (!scopedKeyId) void loadRetention();
     // Refetch when the API key scope changes; Filter/Refresh still call load() directly.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- avoid refetching on every filter keystroke
   }, [scopedKeyId, fromKeyRoute]);
@@ -427,6 +464,42 @@ export default function ApiLogs({ apiKeyId }: Props) {
             Refresh
           </button>
         </div>
+        {!scopedKeyId && retention ? (
+          <div className="api-logs-toolbar__retention">
+            <label htmlFor="api-logs-payload-retention">Keep provider payloads</label>
+            <input
+              id="api-logs-payload-retention"
+              className="api-logs-toolbar__retention-input"
+              type="number"
+              min={retention.min_days}
+              max={retention.max_days}
+              value={retentionDraft}
+              onChange={(e) => {
+                setRetentionDraft(e.target.value);
+                setRetentionSaved("");
+              }}
+              disabled={retentionSaving || writeLock.readOnly}
+            />
+            <span className="muted-text">days</span>
+            <button
+              type="button"
+              className="btn btn-readonly-ok api-logs-toolbar-btn"
+              {...writeLock.writeLockProps}
+              onClick={() => void saveRetention()}
+              disabled={
+                retentionSaving ||
+                writeLock.readOnly ||
+                retentionDraft.trim() === "" ||
+                Number(retentionDraft) === retention.retention_days
+              }
+              title="Raw provider responses behind each request are cleared after this many days; the requests themselves stay"
+            >
+              {retentionSaving ? "Saving…" : "Save"}
+            </button>
+            {retentionSaved ? <span className="muted-text">{retentionSaved}</span> : null}
+            {retentionError ? <span className="error">{retentionError}</span> : null}
+          </div>
+        ) : null}
         {exportError && !selectedLog && <p className="error api-logs-export-error">{exportError}</p>}
       </div>
       <div className="table-wrap table-wrap--api-logs">

@@ -247,6 +247,26 @@ async def job_chat_retention_cleanup():
             logger.exception("Chat retention cleanup failed")
 
 
+async def job_raw_payload_retention():
+    """Clear provider payloads past the window set on the API Logs page."""
+    async with AsyncSessionLocal() as db:
+        from app.services.log_detail_retention_service import purge_expired_raw_payloads
+
+        try:
+            result = await purge_expired_raw_payloads(db)
+            await db.commit()
+            if result["usage_events_cleared"] or result["video_jobs_cleared"]:
+                logger.info(
+                    "Raw provider payloads cleared: %s usage events, %s video jobs (older than %s days)",
+                    result["usage_events_cleared"],
+                    result["video_jobs_cleared"],
+                    result["retention_days"],
+                )
+        except Exception:
+            await db.rollback()
+            logger.exception("Raw provider payload retention run failed")
+
+
 async def job_tls_expiry_notice():
     async with AsyncSessionLocal() as db:
         from app.services.tls_expiry_service import notify_expiring_certificates
@@ -374,6 +394,14 @@ def start_scheduler():
         minute=0,
         timezone=get_server_timezone(),
         id="chat_retention_cleanup",
+    )
+    scheduler.add_job(
+        job_raw_payload_retention,
+        "cron",
+        hour=4,
+        minute=10,
+        timezone=get_server_timezone(),
+        id="api_logs_raw_payload_retention",
     )
     scheduler.add_job(
         job_user_memory_maintenance,

@@ -16017,3 +16017,41 @@ body.login-route #root {
     grid-template-columns: 1fr;
   }
 }
+
+/* API Logs: provider-payload retention control and the raw payload viewer */
+.api-logs-toolbar__retention {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding-top: 0.15rem;
+  font-size: 0.85rem;
+}
+
+.api-logs-toolbar__retention label {
+  color: var(--muted);
+}
+
+.api-logs-toolbar__retention-input {
+  width: 5.5rem;
+  min-width: 0;
+}
+
+.api-log-cost-event__raw > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.api-log-cost-event__raw pre {
+  margin: 0.45rem 0 0;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-size: 0.75rem;
+  max-height: 16rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

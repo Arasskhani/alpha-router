@@ -17,6 +17,10 @@ from app.models.model_catalog import AIModel
 from app.services.activity_service import _display_dt
 from app.utils.display import format_app_source
 
+#: The provider payload can be large; a spreadsheet cell is not the place for
+#: all of it, and the detail modal shows the whole thing.
+MAX_EXPORT_RAW_PAYLOAD_CHARS = 8000
+
 ACTIVITY_LOG_COLUMNS = [
     "Id",
     "Time",
@@ -87,6 +91,7 @@ DETAIL_LOG_COLUMNS = [
     "Event Quantity",
     "Event Unit",
     "Event Error",
+    "Event Raw Payload",
     "Event Prompt Tokens",
     "Event Completion Tokens",
     "Event Cached Tokens",
@@ -359,6 +364,9 @@ def request_log_detail_to_export_rows(
                 ),
                 "Event Unit": getattr(event, "unit", None) or "",
                 "Event Error": (getattr(event, "error_message", None) or "").replace("\n", " ").strip(),
+                "Event Raw Payload": (getattr(event, "raw_usage_json", None) or "").replace("\n", " ")[
+                    :MAX_EXPORT_RAW_PAYLOAD_CHARS
+                ],
                 "Event Prompt Tokens": int(event.prompt_tokens or 0),
                 "Event Completion Tokens": int(event.completion_tokens or 0),
                 "Event Cached Tokens": int(event.cached_tokens or 0),

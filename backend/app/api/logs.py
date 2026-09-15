@@ -31,6 +31,13 @@ from app.models.cost_accounting import (
 from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel
 from app.models.user import User
+from app.services.log_detail_retention_service import (
+    MAX_RETENTION_DAYS,
+    MIN_RETENTION_DAYS,
+    get_raw_payload_retention,
+    purge_expired_raw_payloads,
+    set_raw_payload_retention_days,
+)
 from app.services.log_export_service import (
     dataframe_to_csv_bytes,
     resolve_operation_types,
@@ -999,6 +1006,9 @@ async def _cost_details_payload(db: AsyncSession, log_row: RequestLog) -> dict:
                     event.last_reconciliation_attempt_at.isoformat() if event.last_reconciliation_attempt_at else None
                 ),
                 "error_message": event.error_message,
+                # The provider's own response for this attempt. Kept until the
+                # retention window configured on the API Logs page expires.
+                "raw_usage": _json_or_none(event.raw_usage_json),
                 "line_items": [
                     {
                         "category": line.category,
@@ -1131,6 +1141,44 @@ CLEAR_ALL_LOGS_PHRASE = "DELETE ALL LOGS"
 
 class ClearLogsIn(BaseModel):
     confirm: str = ""
+
+
+class RawPayloadRetentionIn(BaseModel):
+    retention_days: int = Field(..., ge=MIN_RETENTION_DAYS, le=MAX_RETENTION_DAYS)
+
+
+@router.get("/admin/logs/raw-payload-retention")
+async def admin_raw_payload_retention(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_api_logs),
+):
+    return await get_raw_payload_retention(db)
+
+
+@router.put("/admin/logs/raw-payload-retention")
+async def admin_set_raw_payload_retention(
+    body: RawPayloadRetentionIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_api_logs_write),
+):
+    from app.services.client_ip import resolve_client_ip
+    from app.services.security_audit import log_security_event
+
+    payload = await set_raw_payload_retention_days(db, body.retention_days)
+    # Apply it immediately: an operator who shortens the window expects the
+    # payloads past it to be gone now, not at the next nightly run.
+    purged = await purge_expired_raw_payloads(db, days=payload["retention_days"])
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=resolve_client_ip(request),
+        action="api_logs_raw_payload_retention_changed",
+        resource_type="request_log",
+        detail={"retention_days": payload["retention_days"], **purged},
+    )
+    await db.commit()
+    return {**payload, **purged}
 
 
 @router.delete("/admin/logs")

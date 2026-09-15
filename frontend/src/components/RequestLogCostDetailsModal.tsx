@@ -250,6 +250,17 @@ export default function RequestLogCostDetailsModal({
                             <dd>{formatLocalDateTime(event.started_at)}</dd>
                           </div>
                         )}
+                        {event.raw_usage && (
+                          <div className="api-log-cost-event__full">
+                            <dt>Provider response</dt>
+                            <dd>
+                              <details className="api-log-cost-event__raw">
+                                <summary>Show raw payload</summary>
+                                <pre>{JSON.stringify(event.raw_usage, null, 2)}</pre>
+                              </details>
+                            </dd>
+                          </div>
+                        )}
                         {event.error_message && (
                           <div className="api-log-cost-event__full">
                             <dt>Error</dt>

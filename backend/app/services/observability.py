@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import datetime
 import json
@@ -380,6 +381,21 @@ def prometheus_payload() -> tuple[bytes, str]:
 
 def correlation_id() -> str:
     return _correlation_id.get()
+
+
+@contextlib.contextmanager
+def correlation_scope(value: str):
+    """Stamp background work with an id, the way the HTTP middleware does.
+
+    A worker runs outside any request, so its log lines carried no correlation
+    id and nothing tied them to the row it wrote. Using the job's own id makes
+    `grep <id>` in the container log and the API Logs row the same thing.
+    """
+    token = _correlation_id.set(value)
+    try:
+        yield value
+    finally:
+        _correlation_id.reset(token)
 
 
 class JsonLogFormatter(logging.Formatter):

@@ -61,6 +61,15 @@ class RequestLog(Base):
     response_time_ms = Column(Float, default=0.0)
     success = Column(Boolean, default=True)
     error_message = Column(Text, nullable=True)
+    # Why it failed, in a form the admin UI can filter on (see failure_details).
+    error_code = Column(String(64), nullable=True, index=True)
+    # Upstream HTTP status when the provider answered with one.
+    http_status = Column(Integer, nullable=True)
+    # Ties this row to the container log lines for the same request or job.
+    correlation_id = Column(String(64), nullable=True, index=True)
+    # Provider-side job id for async media (video/image), so a row can be traced
+    # back to the job that produced it.
+    provider_job_id = Column(String(128), nullable=True, index=True)
 
     user = relationship("User", back_populates="logs")
 

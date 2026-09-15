@@ -50,6 +50,10 @@ class TurnOutcome:
     elapsed_ms: float
     agent_review: AgentCompletionReview | None = None
     agent_output_displayed: bool = False
+    #: Classification of the failure (see failure_details), for the API Logs filter.
+    error_code: str | None = None
+    #: Upstream HTTP status, when the provider answered with one.
+    http_status: int | None = None
 
 
 @dataclass(slots=True)
@@ -198,6 +202,8 @@ async def _persist_stream_usage(identity: TurnIdentity, outcome: TurnOutcome) ->
                     operation_type="chat",
                     operation_idempotency_key=accounting_key,
                     project_id=identity.project_id_for_billing,
+                    error_code=outcome.error_code,
+                    http_status=outcome.http_status,
                 )
                 chat_session_id = str(identity.body.get("chat_session_id") or "").strip()
                 assistant_cid = str(identity.body.get("assistant_client_message_id") or "").strip()

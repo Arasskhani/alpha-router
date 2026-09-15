@@ -27,7 +27,7 @@ from app.services.budget_reservation_service import (
     reserve,
     settle,
 )
-from app.services.observability import increment
+from app.services.observability import correlation_id as current_correlation_id, increment
 from app.services.provider_utils import extract_prompt_text, sanitize_cost_usd
 from app.services.usage_accounting_service import (
     PendingUsageEvent,
@@ -77,6 +77,10 @@ async def log_usage(
     operation_type: str = "chat",
     operation_idempotency_key: str | None = None,
     project_id: str | None = None,
+    error_code: str | None = None,
+    http_status: int | None = None,
+    correlation_id: str | None = None,
+    provider_job_id: str | None = None,
 ) -> int | None:
     events = list(usage_events or [])
     if not events:
@@ -105,6 +109,12 @@ async def log_usage(
         client_app=client_app,
         success=success,
         error_message=error_message,
+        error_code=(error_code or None),
+        http_status=http_status,
+        # Defaulted here rather than at every call site: inside a request this
+        # is the id already stamped on that request's log lines.
+        correlation_id=(correlation_id or current_correlation_id() or None),
+        provider_job_id=(provider_job_id or None),
         alpha_router_api_key_id=alpha_router_api_key_id,
         user_api_key_id=user_api_key_id,
         budget_reservation_id=budget_reservation_id,

@@ -34,7 +34,7 @@ from app.services.user_chat_storage_service import finalize_chat_session_video
 from app.services.project_media_service import collect_personal_media_ids, persist_scoped_chat_media
 from app.services.video_billing_service import VideoBillingCapture, log_video_usage
 from app.services.failure_details import describe_failure
-from app.services.observability import increment
+from app.services.observability import correlation_scope, increment
 
 _LOG = logging.getLogger("alpha_router.video_jobs")
 _ACTIVE_TASKS: dict[str, asyncio.Task] = {}
@@ -406,6 +406,8 @@ async def reclaim_stale_video_jobs() -> int:
                         budget_reservation_id=job.budget_reservation_id,
                         job_id=job.id,
                         project_id=job.project_id,
+                        error_code=job.error_code or "reclaimed",
+                        provider_job_id=job.provider_job_id,
                     )
             except Exception:  # noqa: BLE001 -- logged; expected failure of an external dependency
                 _LOG.exception("Failed settling reclaimed video job %s", job.id)
@@ -500,6 +502,13 @@ def _provider_failure_text(snapshot: Any, status: str) -> str:
 
 
 async def _run_video_job(job_id: str) -> None:  # noqa: C901 -- Phase 4 split; complexity must not grow
+    # The job id doubles as this run's correlation id, so every log line the
+    # worker writes carries it and the API Logs row points back at them.
+    with correlation_scope(job_id):
+        await _run_video_job_inner(job_id)
+
+
+async def _run_video_job_inner(job_id: str) -> None:  # noqa: C901 -- same body, one indent in
     started = time.perf_counter()
     async with AsyncSessionLocal() as db:
         job = await db.get(VideoGenerationJob, job_id)
@@ -550,6 +559,8 @@ async def _run_video_job(job_id: str) -> None:  # noqa: C901 -- Phase 4 split; c
         success = False
         lease_lost = False
         error_message: str | None = None
+        error_code: str | None = None
+        http_status: int | None = None
         settings = get_settings()
         deadline = time.monotonic() + float(settings.video_job_timeout_seconds or 600)
         poll_interval = max(0.5, float(settings.video_job_poll_interval_ms or 2500) / 1000.0)
@@ -763,6 +774,7 @@ async def _run_video_job(job_id: str) -> None:  # noqa: C901 -- Phase 4 split; c
             job.lease_owner = None
             job.lease_expires_at = None
             error_message = job.error_message
+            error_code = job.error_code or "cancelled"
             billing.add_usage(None, success=False, error_message=error_message)
             await db.commit()
         except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
@@ -770,6 +782,8 @@ async def _run_video_job(job_id: str) -> None:  # noqa: C901 -- Phase 4 split; c
             # which used to store a failure with no reason at all.
             failure = describe_failure(exc)
             error_message = failure.message
+            error_code = failure.code
+            http_status = failure.http_status
             job.status = "failed"
             job.error_code = failure.code
             job.error_message = error_message
@@ -800,6 +814,10 @@ async def _run_video_job(job_id: str) -> None:  # noqa: C901 -- Phase 4 split; c
                         duration_seconds=duration,
                         job_id=job.id,
                         project_id=job.project_id,
+                        error_code=error_code,
+                        http_status=http_status,
+                        provider_job_id=job.provider_job_id,
+                        correlation_id=job_id,
                     )
                     if log_id and success:
                         job_params: dict[str, Any] = {}

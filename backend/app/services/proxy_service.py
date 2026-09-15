@@ -100,6 +100,7 @@ from app.services.usage_accounting_service import (
     capture_usage_event,
 )
 from app.core.constants import normalize_openrouter_base_url
+from app.services.failure_details import describe_failure
 from app.services.provider_utils import (  # noqa: F401 -- re-exported under the historical names
     _apply_litellm_provider_kwargs,
     _close_upstream_stream,
@@ -795,6 +796,8 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
             )
 
         was_cancelled = False
+        error_code: str | None = None
+        http_status: int | None = None
         agent_review: AgentCompletionReview | None = None
         agent_output_displayed = False
         # Sticky for the whole request: once the user presses Stop (or the client
@@ -947,6 +950,7 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
 
                 if empty_completion and (not tools.code_interpreter or code_loop.nudge_sent or code_loop.exhausted):
                     success = False
+                    error_code = "empty_completion"
                     error_message = (
                         "The upstream model returned no usable content. Retry the request or select a different model."
                     )
@@ -1062,11 +1066,13 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
             was_cancelled = True
             client_disconnected = True
             success = False
+            error_code = "client_disconnected"
             error_message = "Request cancelled"
             raise
         except asyncio.CancelledError as exc:
             was_cancelled = True
             success = False
+            error_code = "cancelled"
             error_message = "Request cancelled"
             if attempt is not None:
                 _absorb(attempt, status="cancelled", error_message=str(exc) or error_message, completion="")
@@ -1097,6 +1103,8 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                         )
                     )
                     success = False
+                    retry_failure = describe_failure(retry_exc)
+                    error_code, http_status = retry_failure.code, retry_failure.http_status
                     error_message = _format_provider_error(retry_exc, provider)[:500]
                     yield _sse_error_frame(error_message)
                 else:
@@ -1115,6 +1123,8 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                         yield _sse_delta_chunk(collected_content)
             else:
                 success = False
+                failure = describe_failure(exc)
+                error_code, http_status = failure.code, failure.http_status
                 error_message = _format_provider_error(exc, provider)[:500]
                 yield _sse_error_frame(error_message)
         finally:
@@ -1162,6 +1172,8 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                         elapsed_ms=elapsed_ms,
                         agent_review=agent_review,
                         agent_output_displayed=agent_output_displayed,
+                        error_code=error_code,
+                        http_status=http_status,
                     ),
                     db=db,
                     persister=persister,

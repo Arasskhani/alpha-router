@@ -42,6 +42,34 @@ _WORKER_TASK: asyncio.Task | None = None
 _WORKER_STOP = asyncio.Event()
 _TERMINAL = frozenset({"completed", "failed", "cancelled"})
 
+# A failed poll is not a failed job. The clip is still being generated on the
+# provider's side; all that broke is one status GET, and the next one a few
+# seconds later almost always succeeds. Killing the job on the first network
+# hiccup threw away work the user is billed for and reported a provider error
+# that never happened. Only an unbroken run of failures means the provider is
+# genuinely unreachable -- and the overall job deadline still applies
+# throughout, so this can never extend a job past its timeout.
+_MAX_CONSECUTIVE_POLL_FAILURES = 5
+
+
+def _is_transient_poll_failure(exc: BaseException) -> bool:
+    """True when retrying the same status GET is worth a try.
+
+    Transport errors and 429/5xx are the provider or the path between us
+    being briefly unavailable. A 4xx (bad job id, revoked key) or a malformed
+    body will fail identically forever, so those are raised at once.
+    """
+    import httpx
+
+    from app.services.openrouter_image_service import is_retryable_openrouter_transport_error
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code if exc.response is not None else 0
+        return status == 429 or status >= 500
+    if isinstance(exc, LeaseLost):
+        return False
+    return is_retryable_openrouter_transport_error(exc)
+
 
 class LeaseLost(RuntimeError):
     """Another worker now owns this job's lease; this runner must stop touching it.
@@ -628,6 +656,7 @@ async def _run_video_job_inner(job_id: str) -> None:  # noqa: C901 -- same body,
 
             final_snapshot = None
             status = "submitted"
+            poll_failures = 0
             while status not in _TERMINAL:
                 if time.monotonic() > deadline:
                     raise TimeoutError("Video generation timed out")
@@ -642,11 +671,30 @@ async def _run_video_job_inner(job_id: str) -> None:  # noqa: C901 -- same body,
                 # its pooled connection) stays open for the whole provider wait.
                 await db.commit()
                 await asyncio.sleep(poll_interval)
-                final_snapshot = await adapter.poll(
-                    api_key=api_key,
-                    base_url=base_url,
-                    job=provider_job,
-                )
+                try:
+                    final_snapshot = await adapter.poll(
+                        api_key=api_key,
+                        base_url=base_url,
+                        job=provider_job,
+                    )
+                except Exception as exc:  # noqa: BLE001 -- re-raised unless it is worth another poll
+                    if not _is_transient_poll_failure(exc):
+                        raise
+                    poll_failures += 1
+                    detail = describe_failure(exc)
+                    _LOG.warning(
+                        "video poll failed (%s/%s) job=%s: %s",
+                        poll_failures,
+                        _MAX_CONSECUTIVE_POLL_FAILURES,
+                        job_id,
+                        detail.message,
+                    )
+                    if poll_failures >= _MAX_CONSECUTIVE_POLL_FAILURES:
+                        raise
+                    # Back to the top: the deadline, the cancel check and the
+                    # lease heartbeat all run again before the next attempt.
+                    continue
+                poll_failures = 0
                 status = final_snapshot.state
                 job.provider_status_raw = json.dumps(final_snapshot.raw)[:20000]
                 # When the provider signals completion, transition to "ingesting"

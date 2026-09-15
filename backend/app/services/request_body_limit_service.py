@@ -136,8 +136,11 @@ _REDIS_TIMEOUT_SECONDS = 0.25
 # After a failed Redis read wait this long before trying again, so a Redis
 # outage costs one short timeout per worker per interval, not per request.
 _REDIS_RETRY_AFTER_FAILURE_SECONDS = 30.0
-# (checked_at, mb from Redis or None, next_allowed_check_at)
-_redis_cache: tuple[float, int | None, float] = (0.0, None, 0.0)
+# (checked_at, mb from Redis or None, next_allowed_check_at). The sentinel is
+# far in the past so the first read always goes to Redis: monotonic() can be a
+# small number just after boot, and 0.0 would look "checked a moment ago".
+_NEVER_CHECKED = -1e9
+_redis_cache: tuple[float, int | None, float] = (_NEVER_CHECKED, None, 0.0)
 # (checked_at, path, mtime, mb) - keyed by path so a settings change is not served stale.
 _published_cache: tuple[float, str | None, float | None, int | None] = (0.0, None, None, None)
 
@@ -145,7 +148,7 @@ _published_cache: tuple[float, str | None, float | None, int | None] = (0.0, Non
 def invalidate_published_cache() -> None:
     global _published_cache, _redis_cache
     _published_cache = (0.0, None, None, None)
-    _redis_cache = (0.0, None, 0.0)
+    _redis_cache = (_NEVER_CHECKED, None, 0.0)
 
 
 def _set_redis_cache(value: int | None, *, ok: bool) -> None:

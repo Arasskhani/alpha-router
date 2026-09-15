@@ -34,7 +34,8 @@ def test_retention_days_are_clamped_to_a_sane_window():
 async def test_default_until_an_operator_sets_it(db_session):
     payload = await get_raw_payload_retention(db_session)
     assert payload["retention_days"] == DEFAULT_RETENTION_DAYS
-    assert payload["has_expired_payloads"] is False
+    assert payload["stored_events"] == 0
+    assert payload["expired_events"] == 0
 
     saved = await set_raw_payload_retention_days(db_session, 7)
     assert saved["retention_days"] == 7
@@ -110,10 +111,15 @@ async def test_purge_clears_old_payloads_and_keeps_the_rows(db_session):
     assert job.status == "failed"
 
 
-async def test_shortening_the_window_reports_what_is_now_expired(db_session):
+async def test_shortening_the_window_reports_what_it_will_delete(db_session):
+    """The Retention Policy page shows this count before the operator saves."""
     await _event(db_session, age_days=10, raw='{"status":"failed"}')
     await set_raw_payload_retention_days(db_session, 30)
-    assert (await get_raw_payload_retention(db_session))["has_expired_payloads"] is False
+    wide = await get_raw_payload_retention(db_session)
+    assert wide["stored_events"] == 1
+    assert wide["expired_events"] == 0
 
     await set_raw_payload_retention_days(db_session, 5)
-    assert (await get_raw_payload_retention(db_session))["has_expired_payloads"] is True
+    narrow = await get_raw_payload_retention(db_session)
+    assert narrow["stored_events"] == 1
+    assert narrow["expired_events"] == 1

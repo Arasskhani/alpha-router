@@ -16,7 +16,7 @@ from __future__ import annotations
 import datetime
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.cost_accounting import UsageEvent
@@ -43,20 +43,55 @@ async def get_raw_payload_retention_days(db: AsyncSession) -> int:
     return clamp_retention_days(row.value if row else None)
 
 
+async def raw_payload_stats(db: AsyncSession, *, days: int | None = None) -> dict[str, int]:
+    """How many stored payloads there are, and how many the window already excludes.
+
+    Shown before the operator saves a shorter window: saving purges, so the
+    count is the "you are about to delete this much" number.
+    """
+    retention_days = clamp_retention_days(days) if days is not None else await get_raw_payload_retention_days(db)
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=retention_days)
+
+    stored_events = (
+        await db.execute(select(func.count(UsageEvent.id)).where(UsageEvent.raw_usage_json.isnot(None)))
+    ).scalar_one() or 0
+    expired_events = (
+        await db.execute(
+            select(func.count(UsageEvent.id)).where(
+                UsageEvent.raw_usage_json.isnot(None), UsageEvent.started_at < cutoff
+            )
+        )
+    ).scalar_one() or 0
+    stored_jobs = (
+        await db.execute(
+            select(func.count(VideoGenerationJob.id)).where(VideoGenerationJob.provider_status_raw.isnot(None))
+        )
+    ).scalar_one() or 0
+    expired_jobs = (
+        await db.execute(
+            select(func.count(VideoGenerationJob.id)).where(
+                VideoGenerationJob.provider_status_raw.isnot(None),
+                VideoGenerationJob.created_at < cutoff,
+            )
+        )
+    ).scalar_one() or 0
+    return {
+        "stored_events": int(stored_events),
+        "expired_events": int(expired_events),
+        "stored_video_jobs": int(stored_jobs),
+        "expired_video_jobs": int(expired_jobs),
+    }
+
+
 async def get_raw_payload_retention(db: AsyncSession) -> dict[str, Any]:
     days = await get_raw_payload_retention_days(db)
-    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=days)
-    pending = (
-        await db.execute(
-            select(UsageEvent.id).where(UsageEvent.raw_usage_json.isnot(None), UsageEvent.started_at < cutoff).limit(1)
-        )
-    ).first()
+    stats = await raw_payload_stats(db, days=days)
     return {
         "retention_days": days,
         "min_days": MIN_RETENTION_DAYS,
         "max_days": MAX_RETENTION_DAYS,
         "default_days": DEFAULT_RETENTION_DAYS,
-        "has_expired_payloads": pending is not None,
+        **stats,
     }
 
 

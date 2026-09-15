@@ -115,6 +115,8 @@ export type CostDetails = {
   events: CostEvent[];
   legacy: boolean;
   request?: RequestFailureBlock | null;
+  /** Admin view only: how long the raw provider responses below are kept. */
+  raw_payload_retention_days?: number | null;
   total_cost_usd?: number;
 };
 
@@ -194,25 +196,6 @@ export function money(n: number | null | undefined) {
 
 export function formatTokenCount(n: number) {
   return new Intl.NumberFormat("en-US").format(n || 0);
-}
-
-export type RawPayloadRetention = {
-  retention_days: number;
-  min_days: number;
-  max_days: number;
-  default_days: number;
-  has_expired_payloads: boolean;
-};
-
-export async function fetchRawPayloadRetention(): Promise<RawPayloadRetention> {
-  return api<RawPayloadRetention>("/api/admin/logs/raw-payload-retention");
-}
-
-export async function saveRawPayloadRetention(days: number): Promise<RawPayloadRetention> {
-  return api<RawPayloadRetention>("/api/admin/logs/raw-payload-retention", {
-    method: "PUT",
-    body: JSON.stringify({ retention_days: days }),
-  });
 }
 
 export async function fetchOwnedRequestLog(logId: number): Promise<RequestLogSummary> {

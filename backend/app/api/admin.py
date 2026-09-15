@@ -8,7 +8,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import and_, delete, exists, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -3318,6 +3318,11 @@ async def get_storage_overview(db: AsyncSession = Depends(get_db), _: User = Dep
         "stats": await chat_retention_stats(db),
         "settings": await get_chat_retention_settings(db),
     }
+    from app.services.log_detail_retention_service import get_raw_payload_retention
+
+    # Raw provider responses stored behind API Logs: the third thing this page
+    # governs, alongside media files and chat history.
+    stats["api_logs"] = await get_raw_payload_retention(db)
     quota_gb = await get_user_media_quota_gb(db)
     stats["settings"]["user_media_quota_gb"] = quota_gb
     stats["settings"]["user_media_quota_bytes"] = await get_user_media_quota_bytes(db)
@@ -3404,6 +3409,45 @@ async def patch_storage_settings(
     if edge_sync is not None:
         payload["edge_sync"] = edge_sync
     return payload
+
+
+class ApiLogRetentionSettingsPatch(BaseModel):
+    retention_days: int = Field(..., ge=1, le=365)
+
+
+@router.patch("/storage/api-log-settings")
+async def patch_api_log_retention_settings(
+    body: ApiLogRetentionSettingsPatch,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_storage_write),
+):
+    """How long the raw provider responses behind API Logs are kept.
+
+    Saving applies the new window at once — an operator who shortens it expects
+    what falls outside to be gone now, not at the next nightly run — so the
+    purge is part of this call and lands in the security audit with it.
+    """
+    from app.services.client_ip import resolve_client_ip
+    from app.services.log_detail_retention_service import (
+        get_raw_payload_retention,
+        purge_expired_raw_payloads,
+        set_raw_payload_retention_days,
+    )
+    from app.services.security_audit import log_security_event
+
+    saved = await set_raw_payload_retention_days(db, body.retention_days)
+    purged = await purge_expired_raw_payloads(db, days=saved["retention_days"])
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=resolve_client_ip(request),
+        action="api_logs_raw_payload_retention_changed",
+        resource_type="request_log",
+        detail={"retention_days": saved["retention_days"], **purged},
+    )
+    await db.commit()
+    return {"ok": True, "api_logs": await get_raw_payload_retention(db), "purged": purged}
 
 
 @router.patch("/storage/chat-settings")

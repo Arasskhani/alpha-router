@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Link } from "react-router-dom";
 import Modal from "./Modal";
 import ModelName from "./ModelName";
 import { formatLocalDateTime } from "../lib/dateTime";
@@ -257,6 +258,12 @@ export default function RequestLogCostDetailsModal({
                               <details className="api-log-cost-event__raw">
                                 <summary>Show raw payload</summary>
                                 <pre>{JSON.stringify(event.raw_usage, null, 2)}</pre>
+                                {details.raw_payload_retention_days ? (
+                                  <p className="api-log-cost-event__raw-note muted-text">
+                                    Kept for {details.raw_payload_retention_days} days ·{" "}
+                                    <Link to="/admin/retention-policy">Retention Policy</Link>
+                                  </p>
+                                ) : null}
                               </details>
                             </dd>
                           </div>

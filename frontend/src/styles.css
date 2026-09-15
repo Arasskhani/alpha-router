@@ -16018,25 +16018,7 @@ body.login-route #root {
   }
 }
 
-/* API Logs: provider-payload retention control and the raw payload viewer */
-.api-logs-toolbar__retention {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  padding-top: 0.15rem;
-  font-size: 0.85rem;
-}
-
-.api-logs-toolbar__retention label {
-  color: var(--muted);
-}
-
-.api-logs-toolbar__retention-input {
-  width: 5.5rem;
-  min-width: 0;
-}
-
+/* API Logs: the raw provider payload viewer in the detail modal */
 .api-log-cost-event__raw > summary {
   cursor: pointer;
   color: var(--muted);
@@ -16054,4 +16036,9 @@ body.login-route #root {
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.api-log-cost-event__raw-note {
+  margin: 0.4rem 0 0;
+  font-size: 0.75rem;
 }

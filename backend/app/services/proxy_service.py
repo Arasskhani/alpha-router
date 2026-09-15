@@ -101,6 +101,7 @@ from app.services.usage_accounting_service import (
 )
 from app.core.constants import normalize_openrouter_base_url
 from app.services.failure_details import describe_failure, failure_message
+from app.services.provider_http import build_provider_client
 from app.services.provider_utils import (  # noqa: F401 -- re-exported under the historical names
     _apply_litellm_provider_kwargs,
     _close_upstream_stream,
@@ -269,10 +270,11 @@ async def _openrouter_generation_outcome(
     if not request_id:
         return None
     base = normalize_openrouter_base_url(base_url)
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(get_settings().provider_lookup_timeout_seconds),
-        trust_env=False,
-    ) as client:
+    # Its own client (short lookup budget, closed with the loop) but the same
+    # connection policy as every other provider call: a scalar httpx timeout
+    # would set the connect budget to the lookup budget as well, so a stalled
+    # handshake blocked each of the four attempts below for the full 20s.
+    async with build_provider_client(read_timeout=get_settings().provider_lookup_timeout_seconds) as client:
         # The generation record becomes queryable a moment after the stream ends,
         # so a single fast retry is not enough to resolve the routed model.
         for delay in (0.0, 0.6, 1.2, 2.4):

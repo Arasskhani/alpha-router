@@ -37,6 +37,8 @@ So this client:
 
 from __future__ import annotations
 
+import logging
+
 import httpx
 
 DEFAULT_CONNECT_TIMEOUT = 5.0
@@ -83,35 +85,68 @@ def _max_connections() -> int:
     return int(_setting("openrouter_max_connections", DEFAULT_MAX_CONNECTIONS))
 
 
+def build_provider_client(
+    *,
+    read_timeout: float | None = None,
+    follow_redirects: bool = True,
+) -> httpx.AsyncClient:
+    """A client with this module's connection policy but its own lifetime.
+
+    For callers that need a different read budget, or that own a client across
+    a loop and close it themselves. ``read_timeout`` defaults to
+    ``PROVIDER_HTTP_TIMEOUT_SECONDS``; the connect budget and the retries are
+    the policy and are not per-caller.
+    """
+    max_connections = _max_connections()
+    limits = httpx.Limits(
+        max_connections=max_connections,
+        max_keepalive_connections=min(DEFAULT_KEEPALIVE_CONNECTIONS, max_connections),
+        keepalive_expiry=DEFAULT_KEEPALIVE_EXPIRY,
+    )
+    return httpx.AsyncClient(
+        # ``limits`` has to go on the transport: httpx silently ignores the
+        # client-level argument whenever a transport is supplied, which
+        # would leave the pool on httpcore's defaults instead of ours.
+        transport=httpx.AsyncHTTPTransport(retries=provider_connect_retries(), limits=limits),
+        timeout=httpx.Timeout(
+            read_timeout if read_timeout and read_timeout > 0 else _setting("provider_http_timeout_seconds", 60.0),
+            connect=provider_connect_timeout(),
+        ),
+        limits=limits,
+        follow_redirects=follow_redirects,
+        http2=False,
+        trust_env=True,
+    )
+
+
 def get_provider_rest_client() -> httpx.AsyncClient:
-    """The shared keep-alive client for short provider REST calls."""
+    """The shared keep-alive client for short provider REST calls.
+
+    Process-wide and never closed by a caller: closing it would break every
+    other request in flight. A caller that needs its own lifetime or a
+    different read budget uses ``build_provider_client``.
+    """
     global _shared_client
     if _shared_client is None or _shared_client.is_closed:
-        max_connections = _max_connections()
-        limits = httpx.Limits(
-            max_connections=max_connections,
-            max_keepalive_connections=min(DEFAULT_KEEPALIVE_CONNECTIONS, max_connections),
-            keepalive_expiry=DEFAULT_KEEPALIVE_EXPIRY,
-        )
-        _shared_client = httpx.AsyncClient(
-            # ``limits`` has to go on the transport: httpx silently ignores the
-            # client-level argument whenever a transport is supplied, which
-            # would leave the pool on httpcore's defaults instead of ours.
-            transport=httpx.AsyncHTTPTransport(retries=provider_connect_retries(), limits=limits),
-            timeout=httpx.Timeout(
-                _setting("provider_http_timeout_seconds", 60.0),
-                connect=provider_connect_timeout(),
-            ),
-            limits=limits,
-            follow_redirects=True,
-            http2=False,
-            trust_env=True,
-        )
+        _shared_client = build_provider_client()
     return _shared_client
 
 
 async def close_provider_rest_client() -> None:
+    """Best effort, and the reference is dropped either way.
+
+    A pooled client holds live sockets, and closing one can raise when the
+    loop that opened it is already gone. Letting that propagate would abort
+    the rest of the shutdown sequence and leave this module still pointing at
+    a client nobody can use, so the failure is logged and the slot cleared.
+    """
     global _shared_client
-    if _shared_client is not None and not _shared_client.is_closed:
-        await _shared_client.aclose()
-    _shared_client = None
+    client, _shared_client = _shared_client, None
+    if client is None or client.is_closed:
+        return
+    try:
+        await client.aclose()
+    except Exception:  # noqa: BLE001 -- shutdown must not fail on a dead socket
+        logging.getLogger("alpha_router.provider_http").debug(
+            "Provider HTTP client did not close cleanly", exc_info=True
+        )

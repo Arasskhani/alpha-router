@@ -4,7 +4,6 @@ import json
 import logging
 from datetime import datetime
 
-import httpx
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,8 +11,8 @@ from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.services.model_tool_compatibility_service import ensure_model_compatibility_rows
 from app.services.video_catalog_service import normalize_video_capabilities
+from app.services.provider_http import get_provider_rest_client
 from app.core.constants import normalize_openrouter_base_url
-from app.config import get_settings
 
 logger = logging.getLogger("app.services.model_sync")
 
@@ -73,18 +72,18 @@ def _guess_is_video_model(ext_id: str, item: dict | None = None) -> bool:
 async def fetch_openrouter_models(api_key: str, base_url: str | None) -> list[dict]:
     url = normalize_openrouter_base_url(base_url) + "/models"
     headers = _fresh_request_headers(api_key)
-    async with httpx.AsyncClient(timeout=get_settings().provider_http_timeout_seconds) as client:
-        # OpenRouter defaults this endpoint to text-output models. Request the
-        # complete catalog so image/audio/video-only models are not omitted.
-        resp = await client.get(
-            url,
-            headers=headers,
-            params={"output_modalities": "all"},
-        )
-        resp.raise_for_status()
-        payload = resp.json()
-        data = payload.get("data", []) if isinstance(payload, dict) else []
-        return data if isinstance(data, list) else []
+    client = get_provider_rest_client()
+    # OpenRouter defaults this endpoint to text-output models. Request the
+    # complete catalog so image/audio/video-only models are not omitted.
+    resp = await client.get(
+        url,
+        headers=headers,
+        params={"output_modalities": "all"},
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    data = payload.get("data", []) if isinstance(payload, dict) else []
+    return data if isinstance(data, list) else []
 
 
 async def fetch_openrouter_video_models(api_key: str, base_url: str | None) -> dict[str, dict]:
@@ -92,17 +91,17 @@ async def fetch_openrouter_video_models(api_key: str, base_url: str | None) -> d
     url = normalize_openrouter_base_url(base_url) + "/videos/models"
     headers = _fresh_request_headers(api_key)
     try:
-        async with httpx.AsyncClient(timeout=get_settings().provider_http_timeout_seconds) as client:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code >= 400:
-                logger.warning(
-                    "OpenRouter video catalog returned HTTP %s for %s",
-                    resp.status_code,
-                    url,
-                )
-                return {}
-            payload = resp.json()
-            data = payload.get("data", []) if isinstance(payload, dict) else []
+        client = get_provider_rest_client()
+        resp = await client.get(url, headers=headers)
+        if resp.status_code >= 400:
+            logger.warning(
+                "OpenRouter video catalog returned HTTP %s for %s",
+                resp.status_code,
+                url,
+            )
+            return {}
+        payload = resp.json()
+        data = payload.get("data", []) if isinstance(payload, dict) else []
     except Exception:
         logger.warning("OpenRouter video catalog sync failed for %s", url, exc_info=True)
         return {}
@@ -128,17 +127,17 @@ async def fetch_openrouter_image_models(api_key: str, base_url: str | None) -> d
     url = normalize_openrouter_base_url(base_url) + "/images/models"
     headers = _fresh_request_headers(api_key)
     try:
-        async with httpx.AsyncClient(timeout=get_settings().provider_http_timeout_seconds) as client:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code >= 400:
-                logger.warning(
-                    "OpenRouter image catalog returned HTTP %s for %s",
-                    resp.status_code,
-                    url,
-                )
-                return {}
-            payload = resp.json()
-            data = payload.get("data", []) if isinstance(payload, dict) else []
+        client = get_provider_rest_client()
+        resp = await client.get(url, headers=headers)
+        if resp.status_code >= 400:
+            logger.warning(
+                "OpenRouter image catalog returned HTTP %s for %s",
+                resp.status_code,
+                url,
+            )
+            return {}
+        payload = resp.json()
+        data = payload.get("data", []) if isinstance(payload, dict) else []
     except Exception:
         logger.warning("OpenRouter image catalog sync failed for %s", url, exc_info=True)
         return {}
@@ -191,10 +190,10 @@ async def fetch_provider_models(
             "Pragma": "no-cache",
         }
 
-    async with httpx.AsyncClient(timeout=get_settings().provider_http_timeout_seconds) as client:
-        resp = await client.get(f"{base}/models", headers=headers, params=params)
-        resp.raise_for_status()
-        payload = resp.json()
+    client = get_provider_rest_client()
+    resp = await client.get(f"{base}/models", headers=headers, params=params)
+    resp.raise_for_status()
+    payload = resp.json()
 
     if not isinstance(payload, dict):
         return []

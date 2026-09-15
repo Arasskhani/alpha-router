@@ -24,6 +24,7 @@ from app.services.usage_accounting_service import (
 )
 from app.core.constants import normalize_openrouter_base_url
 from app.config import get_settings
+from app.services.provider_http import build_provider_client
 
 logger = logging.getLogger("app.services.provider_reconciliation_service")
 
@@ -252,7 +253,11 @@ async def reconcile_connection_costs(
     api_key = decrypt_secret(connection.api_key_encrypted)
     unmatched = 0
     error_message: str | None = None
-    async with httpx.AsyncClient(timeout=httpx.Timeout(get_settings().provider_lookup_timeout_seconds)) as client:
+    # Its own client, not the shared one: this keeps a short lookup budget and
+    # is closed when the batch ends. A scalar httpx timeout would have set the
+    # connect budget to the lookup budget too, so a stalled handshake held this
+    # loop for the full 20s with no second attempt.
+    async with build_provider_client(read_timeout=get_settings().provider_lookup_timeout_seconds) as client:
         for event_id in claimed_event_ids:
             event = await db.get(UsageEvent, event_id)
             if event is None:

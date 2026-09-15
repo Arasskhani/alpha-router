@@ -20,6 +20,7 @@ from app.services.video_providers.contracts import (
     VideoUsage,
 )
 from app.config import get_settings
+from app.services.provider_http import get_provider_rest_client, provider_connect_timeout
 
 
 class ReplicateVideoAdapter:
@@ -129,10 +130,20 @@ class ReplicateVideoAdapter:
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError("Invalid Replicate URL")
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(get_settings().provider_http_timeout_seconds, connect=10.0), follow_redirects=False
-        ) as client:
-            response = await client.request(method, url, headers=self._headers(api_key), json=json_body)
+        # Replicate is the same async-job shape as OpenRouter -- one create,
+        # then a status GET every few seconds -- so it pays the same price for
+        # a fresh connection each time, and it used to build a whole new client
+        # per request. The shared provider client keeps the connection and
+        # retries the handshake.
+        client = get_provider_rest_client()
+        response = await client.request(
+            method,
+            url,
+            headers=self._headers(api_key),
+            json=json_body,
+            follow_redirects=False,
+            timeout=httpx.Timeout(get_settings().provider_http_timeout_seconds, connect=provider_connect_timeout()),
+        )
         if allow_404 and response.status_code == 404:
             return {}
         response.raise_for_status()

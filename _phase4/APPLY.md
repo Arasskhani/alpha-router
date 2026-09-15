@@ -1,12 +1,11 @@
 # Alpharouter — Phase 4 "Architecture" — apply instructions
 
-Branch: `refactor/phase4-architecture` (19 commits = 12 Phase 4 + 7 from the
-self-review) on top of `chore/phase3-engineering-hygiene` (`2556f1e`).
-82 files, +5704 / −2354.
+Branch: `refactor/phase4-architecture` (23 commits = 12 Phase 4 + 7 from the
+self-review + 4 for API Logs detail) on top of
+`chore/phase3-engineering-hygiene` (`2556f1e`). 98 files, +7386 / −2367.
 
-**This replaces the earlier 12-commit `_phase4` delivery.** The review found
-six real defects in it, listed below; if you already fetched the old branch,
-fetch again (the bundle fast-forwards it).
+**This replaces the earlier `_phase4` deliveries.** If you already fetched the
+branch, fetch again — the bundle fast-forwards it.
 
 ## Apply
 
@@ -42,6 +41,10 @@ Alternative (no bundle): `git checkout -b refactor/phase4-architecture chore/pha
 | 17 | 7123f53 | review | **Cache bug in #12.** The Redis cache sentinel `0.0` reads as "checked just now" while `monotonic()` is small, so a worker could serve its first seconds without ever asking Redis |
 | 18 | bd05840 | review | **Upgrade hazard in #11.** Cloning a tag leaves a detached HEAD; `upgrade.sh` read that as the branch "HEAD" and ran `git pull origin HEAD`, quietly fast-forwarding a pinned host **onto main**. A pinned checkout now moves release to release, or warns and stops. New harness `scripts/tests/test-release-pin.sh` |
 | 19 | 6ac8a59 | review | **Follow-up to #13.** The identity guard skipped the patch when one side had no id — exactly the replaced-in-place rows — so speech/video error notices never reached the server. It now refuses only when both ids exist and differ |
+| 20 | 0b7277a | logs | **A recorded failure is never blank again.** `str(exc)` is empty for every httpx timeout, a bare ConnectError and `asyncio.TimeoutError`, and every failure path stored exactly that — which is why a failed video reached the user as "Video generation failed" and the container log read `Video job <id> failed:` with nothing after it. `describe_failure()` gives a stable code, a message that always says something (class name, HTTP status, method + host with the query stripped, a slice of the error body) and the upstream status. Wired into the video worker, the chat error formatter (a timeout used to send a blank SSE error frame), transcription, chat titles, image prompts. Two video holes closed: `RuntimeError(None)` (literally "None") when a provider ends a job with no reason, and the adapter dropping a structured `error` object |
+| 21 | b768284 | logs | Revision `6d2e3f4a5b6c`: `request_logs.error_code`, `http_status`, `correlation_id`, `provider_job_id` (three indexed). `log_usage` — the single writer of that table — takes them and defaults the correlation id to the current request's. The video worker runs inside `correlation_scope(job_id)`, so its log lines and its row share one id, and a failed video records the OpenRouter job id |
+| 22 | addc57f | logs | API Logs shows it: a **Type** column (chat / video / image / speech / embedding, read from the usage operation), a status cell that names the failure with the full text on hover, and two new filters (request type, failure reason) offered from the values actually present. The detail modal opens with a **Failure** block — reason, HTTP status, provider job id, correlation id to grep the server log with — and each attempt shows its connection, quantity and timing. **Export follows the page**: Type, Error Code, HTTP Status, Error, Correlation Id, Provider Job Id in the list CSV; per-attempt connection, window, quantity and error in the single-request CSV |
+| 23 | 72d604a | logs | The provider's own response per attempt (`usage_events.raw_usage_json`) and the video job's last poll payload were stored but never shown and never cleared. The modal now shows them behind a disclosure and the single-request CSV carries them (8000 chars/attempt). Their lifetime is yours: **"Keep provider payloads N days"** in the API Logs toolbar (1–365, same button style as Filter/Export, behind the admin write lock). Saving applies immediately and writes a security-audit entry; a daily job at 04:10 does the routine sweep. Purging nulls the payload and keeps the row, so costs, tokens, status and the failure reason stay as long as the request log |
 
 ## Operator notes — read before deploying
 
@@ -54,7 +57,8 @@ Alternative (no bundle): `git checkout -b refactor/phase4-architecture chore/pha
 5. **Redis body-limit key**: after the first Storage transfer-limit save (or HTTPS activate) the key exists; before that, workers read the state file as today. The middleware does one Redis `GET` per worker per 5 s (250 ms timeout, 30 s back-off when Redis is down).
 6. **Frontend chat sync**: an ordinary turn is one request; a chat longer than the loaded window pages through as much history as the local list needs. Prompt deletion reads the whole history and refuses (with a message) above 5000 messages rather than truncating it.
 7. **`install.sh`** on a fresh host installs the newest release tag and leaves a detached HEAD; `upgrade.sh` then moves that host release to release. `ALPHAROUTER_GIT_REF=main` restores the old behaviour. Until the first `vX.Y.Z` tag exists on the remote it falls back to `main` with a warning — **tag a release** before pointing new hosts at it.
-8. **Patch targets moved** for tests that mock chat internals: `turn_settlement.log_usage/finalize_agent_run/release_code_interpreter_turn/AsyncSessionLocal`, `chat_turn_context.*` (augment_*, persister_from_body, mark_agent_run_started, …). `proxy_service.acompletion` / `run_python_sandbox` still work (injected callables).
+8. **API Logs retention**: provider payloads default to **30 days**. The control is in the API Logs toolbar (hidden on the API-key-scoped view). Shortening it purges immediately — that is deliberate, and audited. Everything else in the log is untouched by it.
+9. **Patch targets moved** for tests that mock chat internals: `turn_settlement.log_usage/finalize_agent_run/release_code_interpreter_turn/AsyncSessionLocal`, `chat_turn_context.*` (augment_*, persister_from_body, mark_agent_run_started, …). `proxy_service.acompletion` / `run_python_sandbox` still work (injected callables).
 
 ## What is NOT in this phase (deliberately)
 
@@ -66,9 +70,10 @@ Alternative (no bundle): `git checkout -b refactor/phase4-architecture chore/pha
 
 ## Verification performed (re-run after the review commits)
 
-- Backend: `pytest tests` → **1380 passed, 8 skipped** (SQLite, `REDIS_URL` unreachable); Postgres canary (reservations, reconcile race, scheduler leader, readiness, schema baseline, money numeric) → 13 passed; ruff (full set) + `ruff format --check` clean; mypy baseline: 0 new errors; vulture ≥80 clean.
+- Backend: `pytest tests` → **1411 passed, 8 skipped** (SQLite, `REDIS_URL` unreachable); Postgres canary (reservations, reconcile race, scheduler leader, readiness, schema baseline, money numeric) → 13 passed; ruff (full set) + `ruff format --check` clean; mypy baseline: 0 new errors; vulture ≥80 clean.
 - Schema: fresh database with `LEGACY_SCHEMA_BOOTSTRAP` **on** and **off** both end at 0 `compare_metadata` diffs against the ORM; money columns verified `numeric(20,12)` / `numeric(24,14)` in `information_schema`.
 - Boot smoke: `python -m app.migrate` then `uvicorn app.main:app --workers 2` on Postgres+Redis+moto S3: `/health` 200, `/ready` 200, exactly one "scheduler leader" line, no DDL from workers, no tracebacks, both workers shut down cleanly on SIGTERM.
-- Frontend: `tsc -b` clean, ESLint 0 errors / 286 warnings (= budget), knip clean, vitest **253 passed** (44 files, +29 new tests), `vite build` initial chunk 380 kB / gzip 119 kB.
+- Frontend: `tsc -b` clean, ESLint 0 errors / 286 warnings (= budget), knip clean, vitest **258 passed** (45 files), `vite build` initial chunk 380 kB / gzip 119 kB.
+- Migration `6d2e3f4a5b6c` applied to a Postgres copy, columns and indexes verified, and the schema drift gate still reports 0 diffs against the ORM.
 - Shell: all four `scripts/tests/test-*.sh` harnesses pass, including the new release-pin one; shellcheck clean on the changed files.
 - Compose: `docker compose config` with the CI placeholder env renders `logging` for all 13 services (one key per service); the registry overlay still validates.

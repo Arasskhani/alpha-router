@@ -1,0 +1,1117 @@
+From addc57f73f8bd78258ba47a50cb44e5ad4deeca8 Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Tue, 15 Sep 2026 08:08:54 +0000
+Subject: [PATCH 22/23] feat(logs): show the failure reason and the request
+ type in API Logs
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The page fetched `error_message` and rendered "Fail", and nothing said
+whether a row was a chat turn, a video job or an embedding call — so a
+failed request could only be investigated by reading the server's own logs.
+
+The list rows now carry the operation type (read from the usage operation)
+and the failure detail; the table gains a Type column and a status cell that
+names the reason with the full text on hover. Two filters come with it —
+request type and failure reason — both offered from the values actually
+present, next to the existing ones.
+
+The detail modal opens with a Failure block for a failed request (reason,
+HTTP status, provider job id, and the correlation id to grep the server log
+with) and each upstream attempt now shows its connection, quantity and
+timing alongside the costs it already had.
+
+Export follows the page: Type, Error Code, HTTP Status, Error, Correlation
+Id and Provider Job Id in the list CSV, plus the per-attempt connection,
+window, quantity and error in the single-request CSV.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ backend/app/api/logs.py                       | 122 +++++++++++++++
+ backend/app/services/log_export_service.py    |  62 ++++++++
+ backend/tests/test_api_logs_detail_view.py    | 139 ++++++++++++++++++
+ .../components/RequestLogCostDetailsModal.tsx |  59 ++++++++
+ frontend/src/lib/requestLogCostDetails.ts     |  69 +++++++++
+ frontend/src/lib/requestLogLabels.test.ts     |  33 +++++
+ frontend/src/pages/admin/ApiLogs.tsx          |  65 +++++++-
+ frontend/src/styles.css                       |  66 +++++++++
+ 8 files changed, 611 insertions(+), 4 deletions(-)
+ create mode 100644 backend/tests/test_api_logs_detail_view.py
+ create mode 100644 frontend/src/lib/requestLogLabels.test.ts
+
+diff --git a/backend/app/api/logs.py b/backend/app/api/logs.py
+index 7c7b6ac..9e5d54b 100644
+--- a/backend/app/api/logs.py
++++ b/backend/app/api/logs.py
+@@ -33,6 +33,7 @@ from app.models.model_catalog import AIModel
+ from app.models.user import User
+ from app.services.log_export_service import (
+     dataframe_to_csv_bytes,
++    resolve_operation_types,
+     detail_rows_to_csv_bytes,
+     request_log_detail_to_export_rows,
+     request_logs_to_export_dataframe,
+@@ -89,6 +90,7 @@ def _log_row(
+     *,
+     router_key: AlphaRouterApiKey | None = None,
+     user_key: UserApiKey | None = None,
++    operation_type: str | None = None,
+ ) -> dict:
+     source_code = (r.source or "").strip().lower()
+     if source_code == "alpha_router_chat":
+@@ -131,6 +133,14 @@ def _log_row(
+         "client_app": r.client_app,
+         "success": r.success,
+         "error_message": r.error_message,
++        # getattr: this helper is also handed lightweight row stand-ins (tests,
++        # partially loaded selects), the same reason user_api_key_id is read
++        # that way below.
++        "error_code": getattr(r, "error_code", None),
++        "http_status": getattr(r, "http_status", None),
++        "correlation_id": getattr(r, "correlation_id", None),
++        "provider_job_id": getattr(r, "provider_job_id", None),
++        "operation_type": operation_type,
+     }
+     if router_key:
+         row["api_key_name"] = router_key.name
+@@ -162,6 +172,8 @@ def _apply_log_filters(
+     end_date: str | None,
+     api_key_id: int | None = None,
+     user_api_key_id: int | None = None,
++    operation_type: str | None = None,
++    error_code: str | None = None,
+ ):
+     if api_key_id is not None:
+         q = q.where(RequestLog.alpha_router_api_key_id == api_key_id)
+@@ -184,6 +196,16 @@ def _apply_log_filters(
+         q = q.where(RequestLog.success.is_(True))
+     elif response_status == "fail":
+         q = q.where(RequestLog.success.is_(False))
++    if operation_type:
++        # The kind of request (chat / video / image / speech / embedding) lives
++        # on the usage operation, so filtering by it is a subquery on that table.
++        q = q.where(
++            RequestLog.usage_operation_id.in_(
++                select(UsageOperation.id).where(UsageOperation.operation_type == operation_type.strip())
++            )
++        )
++    if error_code:
++        q = q.where(RequestLog.error_code == error_code.strip())
+     if prompt_cache == "yes":
+         q = q.where(RequestLog.cached_tokens > 0)
+     elif prompt_cache == "no":
+@@ -238,6 +260,8 @@ async def _filtered_log_rows(
+     end_date: str | None = None,
+     api_key_id: int | None = None,
+     user_api_key_id: int | None = None,
++    operation_type: str | None = None,
++    error_code: str | None = None,
+ ):
+     q = select(RequestLog).order_by(RequestLog.request_time.desc())
+     q = _apply_log_filters(
+@@ -250,6 +274,8 @@ async def _filtered_log_rows(
+         end_date=end_date,
+         api_key_id=api_key_id,
+         user_api_key_id=user_api_key_id,
++        operation_type=operation_type,
++        error_code=error_code,
+     )
+     if offset:
+         q = q.offset(offset)
+@@ -259,7 +285,14 @@ async def _filtered_log_rows(
+ async def _serialize_log_rows(db: AsyncSession, rows: list[RequestLog]) -> list[dict]:
+     operation_ids = {r.usage_operation_id for r in rows if r.usage_operation_id}
+     operation_providers: dict[str, set[str]] = {}
++    operation_types: dict[str, str] = {}
+     if operation_ids:
++        type_rows = (
++            await db.execute(
++                select(UsageOperation.id, UsageOperation.operation_type).where(UsageOperation.id.in_(operation_ids))
++            )
++        ).all()
++        operation_types = {str(op_id): str(op_type or "") for op_id, op_type in type_rows}
+         provider_rows = (
+             await db.execute(
+                 select(UsageEvent.operation_id, UsageEvent.provider_type)
+@@ -310,6 +343,7 @@ async def _serialize_log_rows(db: AsyncSession, rows: list[RequestLog]) -> list[
+                 provider,
+                 router_key=key_map.get(r.alpha_router_api_key_id),
+                 user_key=user_key_map.get(r.user_api_key_id),
++                operation_type=operation_types.get(r.usage_operation_id or "") or None,
+             )
+         )
+     return items
+@@ -328,6 +362,8 @@ async def _logs_list_payload(
+     end_date: str | None = None,
+     api_key_id: int | None = None,
+     user_api_key_id: int | None = None,
++    operation_type: str | None = None,
++    error_code: str | None = None,
+     api_key: AlphaRouterApiKey | None = None,
+ ) -> dict:
+     rows = await _filtered_log_rows(
+@@ -342,6 +378,8 @@ async def _logs_list_payload(
+         end_date=end_date,
+         api_key_id=api_key_id,
+         user_api_key_id=user_api_key_id,
++        operation_type=operation_type,
++        error_code=error_code,
+     )
+     payload: dict = {
+         "items": await _serialize_log_rows(db, rows),
+@@ -367,6 +405,8 @@ async def _logs_export_response(
+     end_date: str | None = None,
+     api_key_id: int | None = None,
+     user_api_key_id: int | None = None,
++    operation_type: str | None = None,
++    error_code: str | None = None,
+ ) -> Response:
+     rows = await _filtered_log_rows(
+         db,
+@@ -379,6 +419,8 @@ async def _logs_export_response(
+         end_date=end_date,
+         api_key_id=api_key_id,
+         user_api_key_id=user_api_key_id,
++        operation_type=operation_type,
++        error_code=error_code,
+     )
+     provider_map, key_map, user_key_map = await resolve_log_export_maps(db, rows)
+     df = request_logs_to_export_dataframe(
+@@ -387,6 +429,7 @@ async def _logs_export_response(
+         provider_map=provider_map,
+         key_map=key_map,
+         user_key_map=user_key_map,
++        operation_types=await resolve_operation_types(db, rows),
+     )
+     content = dataframe_to_csv_bytes(df)
+     stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+@@ -428,6 +471,30 @@ async def admin_logs_filter_options(
+         .scalars()
+         .all()
+     )
++    operation_types = (
++        (
++            await db.execute(
++                select(UsageOperation.operation_type)
++                .where(UsageOperation.operation_type.isnot(None), UsageOperation.operation_type != "")
++                .distinct()
++                .order_by(UsageOperation.operation_type)
++            )
++        )
++        .scalars()
++        .all()
++    )
++    error_codes = (
++        (
++            await db.execute(
++                select(RequestLog.error_code)
++                .where(RequestLog.error_code.isnot(None), RequestLog.error_code != "")
++                .distinct()
++                .order_by(RequestLog.error_code)
++            )
++        )
++        .scalars()
++        .all()
++    )
+     api_keys = (
+         (
+             await db.execute(
+@@ -460,6 +527,8 @@ async def admin_logs_filter_options(
+     return {
+         "usernames": identity_options,
+         "models": [m for m in models if (m or "").strip()],
++        "operation_types": [t for t in operation_types if (t or "").strip()],
++        "error_codes": [c for c in error_codes if (c or "").strip()],
+     }
+ 
+ 
+@@ -476,6 +545,8 @@ async def admin_logs_export(
+     end_date: str | None = None,
+     api_key_id: int | None = Query(default=None, ge=1),
+     user_api_key_id: int | None = Query(default=None, ge=1),
++    operation_type: str | None = Query(default=None, max_length=32),
++    error_code: str | None = Query(default=None, max_length=64),
+     timezone: str = Query("local", pattern="^(local|utc)$"),
+ ):
+     return await _logs_export_response(
+@@ -490,6 +561,8 @@ async def admin_logs_export(
+         end_date=end_date,
+         api_key_id=api_key_id,
+         user_api_key_id=user_api_key_id,
++        operation_type=operation_type,
++        error_code=error_code,
+     )
+ 
+ 
+@@ -507,6 +580,8 @@ async def admin_logs(
+     end_date: str | None = None,
+     api_key_id: int | None = Query(default=None, ge=1),
+     user_api_key_id: int | None = Query(default=None, ge=1),
++    operation_type: str | None = Query(default=None, max_length=32),
++    error_code: str | None = Query(default=None, max_length=64),
+ ):
+     key = await db.get(AlphaRouterApiKey, api_key_id) if api_key_id else None
+     return await _logs_list_payload(
+@@ -521,6 +596,8 @@ async def admin_logs(
+         end_date=end_date,
+         api_key_id=api_key_id,
+         user_api_key_id=user_api_key_id,
++        operation_type=operation_type,
++        error_code=error_code,
+         api_key=key,
+     )
+ 
+@@ -537,12 +614,16 @@ async def api_key_logs_export(
+     prompt_cache: str | None = Query(default=None, pattern="^(yes|no)$"),
+     start_date: str | None = None,
+     end_date: str | None = None,
++    operation_type: str | None = Query(default=None, max_length=32),
++    error_code: str | None = Query(default=None, max_length=64),
+     timezone: str = Query("local", pattern="^(local|utc)$"),
+ ):
+     await _require_gateway_key(db, key_id)
+     return await _logs_export_response(
+         db,
+         limit=limit,
++        operation_type=operation_type,
++        error_code=error_code,
+         timezone=timezone,
+         username=username,
+         model_id=model_id,
+@@ -567,12 +648,16 @@ async def api_key_logs(
+     prompt_cache: str | None = Query(default=None, pattern="^(yes|no)$"),
+     start_date: str | None = None,
+     end_date: str | None = None,
++    operation_type: str | None = Query(default=None, max_length=32),
++    error_code: str | None = Query(default=None, max_length=64),
+ ):
+     key = await _require_gateway_key(db, key_id)
+     return await _logs_list_payload(
+         db,
+         limit=limit,
+         offset=offset,
++        operation_type=operation_type,
++        error_code=error_code,
+         username=username,
+         model_id=model_id,
+         response_status=response_status,
+@@ -799,12 +884,39 @@ async def admin_log_export(
+     )
+ 
+ 
++def _json_or_none(raw: str | None) -> dict | None:
++    """Parse a stored JSON blob for display; never fail a detail view over it."""
++    if not raw:
++        return None
++    try:
++        parsed = json.loads(raw)
++    except (TypeError, ValueError):
++        return None
++    return parsed if isinstance(parsed, dict) else {"value": parsed}
++
++
+ async def _cost_details_payload(db: AsyncSession, log_row: RequestLog) -> dict:
++    request_block = {
++        "id": log_row.id,
++        "success": bool(log_row.success),
++        "error_code": log_row.error_code,
++        "error_message": log_row.error_message,
++        "http_status": log_row.http_status,
++        "correlation_id": log_row.correlation_id,
++        "provider_job_id": log_row.provider_job_id,
++        "response_time_ms": float(log_row.response_time_ms or 0),
++        "source": log_row.source,
++        "client_app": log_row.client_app,
++        "source_ip": log_row.source_ip,
++        "model_id": log_row.model_id,
++        "project_id": log_row.project_id,
++    }
+     if not log_row.usage_operation_id:
+         return {
+             "operation": None,
+             "events": [],
+             "legacy": True,
++            "request": request_block,
+             "total_cost_usd": float(log_row.total_cost_usd or 0),
+         }
+     operation = await db.get(UsageOperation, log_row.usage_operation_id)
+@@ -849,6 +961,10 @@ async def _cost_details_payload(db: AsyncSession, log_row: RequestLog) -> dict:
+                 float(operation.calculated_cost_usd) if operation.calculated_cost_usd is not None else None
+             ),
+             "unpriced_event_count": int(operation.unpriced_event_count or 0),
++            "accounting_status": operation.accounting_status,
++            "metadata": _json_or_none(operation.metadata_json),
++            "started_at": (operation.started_at.isoformat() if operation.started_at else None),
++            "completed_at": (operation.completed_at.isoformat() if operation.completed_at else None),
+             "reconciled_at": (operation.reconciled_at.isoformat() if operation.reconciled_at else None),
+         },
+         "events": [
+@@ -861,6 +977,11 @@ async def _cost_details_payload(db: AsyncSession, log_row: RequestLog) -> dict:
+                 "attempt_index": event.attempt_index,
+                 "upstream_request_id": event.upstream_request_id,
+                 "status": event.status,
++                "connection_id": event.connection_id,
++                "quantity": event.quantity,
++                "unit": event.unit,
++                "started_at": (event.started_at.isoformat() if event.started_at else None),
++                "completed_at": (event.completed_at.isoformat() if event.completed_at else None),
+                 "prompt_tokens": event.prompt_tokens,
+                 "completion_tokens": event.completion_tokens,
+                 "cached_tokens": event.cached_tokens,
+@@ -893,6 +1014,7 @@ async def _cost_details_payload(db: AsyncSession, log_row: RequestLog) -> dict:
+             for event in events
+         ],
+         "legacy": False,
++        "request": request_block,
+     }
+ 
+ 
+diff --git a/backend/app/services/log_export_service.py b/backend/app/services/log_export_service.py
+index 7253959..1dd0565 100644
+--- a/backend/app/services/log_export_service.py
++++ b/backend/app/services/log_export_service.py
+@@ -34,6 +34,12 @@ ACTIVITY_LOG_COLUMNS = [
+     "Cost Confidence",
+     "Duration ms",
+     "Response Status",
++    "Type",
++    "Error Code",
++    "HTTP Status",
++    "Error",
++    "Correlation Id",
++    "Provider Job Id",
+     "Source IP",
+     "Language",
+ ]
+@@ -56,6 +62,12 @@ DETAIL_LOG_COLUMNS = [
+     "Cost Confidence",
+     "Duration ms",
+     "Response Status",
++    "Type",
++    "Error Code",
++    "HTTP Status",
++    "Error",
++    "Correlation Id",
++    "Provider Job Id",
+     "Source IP",
+     "Language",
+     "Operation Id",
+@@ -69,6 +81,12 @@ DETAIL_LOG_COLUMNS = [
+     "Event Model",
+     "Event Status",
+     "Upstream Request Id",
++    "Event Connection Id",
++    "Event Started",
++    "Event Completed",
++    "Event Quantity",
++    "Event Unit",
++    "Event Error",
+     "Event Prompt Tokens",
+     "Event Completion Tokens",
+     "Event Cached Tokens",
+@@ -130,6 +148,7 @@ def log_row_to_export(
+     provider: str | None = None,
+     router_key: AlphaRouterApiKey | None = None,
+     user_key: UserApiKey | None = None,
++    operation_type: str | None = None,
+ ) -> dict[str, Any]:
+     dt = r.request_time
+     time_str = _display_dt(dt, tz_mode).strftime("%Y-%m-%dT%H:%M:%S") if dt else ""
+@@ -150,6 +169,12 @@ def log_row_to_export(
+         "Cost Confidence": ("unpriced" if r.has_unpriced_usage else (r.cost_confidence or "")),
+         "Duration ms": round(float(r.response_time_ms or 0), 1),
+         "Response Status": "Success" if r.success else "Fail",
++        "Type": operation_type or "",
++        "Error Code": getattr(r, "error_code", None) or "",
++        "HTTP Status": getattr(r, "http_status", None) or "",
++        "Error": (getattr(r, "error_message", None) or "").replace("\n", " ").strip(),
++        "Correlation Id": getattr(r, "correlation_id", None) or "",
++        "Provider Job Id": getattr(r, "provider_job_id", None) or "",
+         "Source IP": r.source_ip or "",
+         "Language": r.prompt_language or "",
+     }
+@@ -186,6 +211,19 @@ async def resolve_log_export_maps(
+     return provider_map, key_map, user_key_map
+ 
+ 
++async def resolve_operation_types(db: AsyncSession, rows: list[RequestLog]) -> dict[str, str]:
++    """usage_operation_id -> operation type, so the CSV can say chat / video / image."""
++    operation_ids = {r.usage_operation_id for r in rows if getattr(r, "usage_operation_id", None)}
++    if not operation_ids:
++        return {}
++    found = (
++        await db.execute(
++            select(UsageOperation.id, UsageOperation.operation_type).where(UsageOperation.id.in_(operation_ids))
++        )
++    ).all()
++    return {str(op_id): str(op_type or "") for op_id, op_type in found}
++
++
+ def request_logs_to_export_dataframe(
+     rows: list[RequestLog],
+     *,
+@@ -193,8 +231,10 @@ def request_logs_to_export_dataframe(
+     provider_map: dict[str, str],
+     key_map: dict[int, AlphaRouterApiKey],
+     user_key_map: dict[int, UserApiKey] | None = None,
++    operation_types: dict[str, str] | None = None,
+ ) -> pd.DataFrame:
+     user_key_map = user_key_map or {}
++    operation_types = operation_types or {}
+     if not rows:
+         return pd.DataFrame(columns=ACTIVITY_LOG_COLUMNS)
+     sorted_rows = sorted(rows, key=lambda r: r.request_time or r.id, reverse=True)
+@@ -205,6 +245,7 @@ def request_logs_to_export_dataframe(
+             provider=provider_map.get((r.model_id or "").strip()),
+             router_key=(key_map.get(r.alpha_router_api_key_id) if r.alpha_router_api_key_id else None),
+             user_key=(user_key_map.get(r.user_api_key_id) if getattr(r, "user_api_key_id", None) else None),
++            operation_type=operation_types.get(getattr(r, "usage_operation_id", None) or ""),
+         )
+         for r in sorted_rows
+     ]
+@@ -218,6 +259,10 @@ def dataframe_to_csv_bytes(df: pd.DataFrame) -> bytes:
+     return ("\ufeff" + buffer.getvalue()).encode("utf-8")
+ 
+ 
++def _export_dt(value: Any, tz_mode: str) -> str:
++    return _display_dt(value, tz_mode).strftime("%Y-%m-%dT%H:%M:%S") if value else ""
++
++
+ def _empty_detail_row() -> dict[str, Any]:
+     return {column: "" for column in DETAIL_LOG_COLUMNS}
+ 
+@@ -237,6 +282,7 @@ def request_log_detail_to_export_rows(
+         tz_mode=tz_mode,
+         provider=provider,
+         router_key=router_key,
++        operation_type=(operation.operation_type if operation is not None else None),
+     )
+     rows: list[dict[str, Any]] = []
+ 
+@@ -260,6 +306,12 @@ def request_log_detail_to_export_rows(
+             "Cost Confidence": base["Cost Confidence"],
+             "Duration ms": base["Duration ms"],
+             "Response Status": base["Response Status"],
++            "Type": base["Type"],
++            "Error Code": base["Error Code"],
++            "HTTP Status": base["HTTP Status"],
++            "Error": base["Error"],
++            "Correlation Id": base["Correlation Id"],
++            "Provider Job Id": base["Provider Job Id"],
+             "Source IP": base["Source IP"],
+             "Language": base["Language"],
+         }
+@@ -297,6 +349,16 @@ def request_log_detail_to_export_rows(
+                 "Event Model": event.model_id or "",
+                 "Event Status": event.status or "",
+                 "Upstream Request Id": event.upstream_request_id or "",
++                # getattr throughout: callers also hand this lightweight row
++                # stand-ins, the same reason log_row_to_export reads that way.
++                "Event Connection Id": getattr(event, "connection_id", None) or "",
++                "Event Started": _export_dt(getattr(event, "started_at", None), tz_mode),
++                "Event Completed": _export_dt(getattr(event, "completed_at", None), tz_mode),
++                "Event Quantity": (
++                    getattr(event, "quantity", None) if getattr(event, "quantity", None) is not None else ""
++                ),
++                "Event Unit": getattr(event, "unit", None) or "",
++                "Event Error": (getattr(event, "error_message", None) or "").replace("\n", " ").strip(),
+                 "Event Prompt Tokens": int(event.prompt_tokens or 0),
+                 "Event Completion Tokens": int(event.completion_tokens or 0),
+                 "Event Cached Tokens": int(event.cached_tokens or 0),
+diff --git a/backend/tests/test_api_logs_detail_view.py b/backend/tests/test_api_logs_detail_view.py
+new file mode 100644
+index 0000000..bbe78d6
+--- /dev/null
++++ b/backend/tests/test_api_logs_detail_view.py
+@@ -0,0 +1,139 @@
++"""API Logs has to answer "why did this fail?" — not just "it failed".
++
++The page used to render a bare "Fail": error_message was fetched and thrown
++away, and nothing said whether a row was a chat turn or a video job. These
++cover the list payload, the new filters and the detail payload.
++"""
++
++from __future__ import annotations
++
++from app.api.logs import _cost_details_payload, _serialize_log_rows
++from app.models.logging import RequestLog
++from app.services.usage_logging_service import log_usage
++
++
++async def _failed_video_log(db_session, user) -> int:
++    log_id = await log_usage(
++        db_session,
++        user_id=user.id,
++        username=user.username,
++        model_id="bytedance/seedance-1-pro",
++        prompt_tokens=0,
++        completion_tokens=0,
++        cached_tokens=0,
++        total_cost_usd=0.0,
++        response_time_ms=42.0,
++        prompt_language="en",
++        source_ip="10.0.0.1",
++        source="alpha_router_chat",
++        success=False,
++        error_message="Upstream timed out (ReadTimeout) (GET https://cdn.example.com/v/1.mp4)",
++        error_code="timeout",
++        correlation_id="job-77",
++        provider_job_id="vid_77",
++        operation_type="video",
++    )
++    await db_session.commit()
++    return log_id
++
++
++async def test_list_rows_carry_the_failure_detail_and_the_operation_type(db_session, user) -> None:
++    log_id = await _failed_video_log(db_session, user)
++    row = await db_session.get(RequestLog, log_id)
++
++    [item] = await _serialize_log_rows(db_session, [row])
++
++    assert item["success"] is False
++    assert item["error_code"] == "timeout"
++    assert "ReadTimeout" in item["error_message"]
++    assert item["correlation_id"] == "job-77"
++    assert item["provider_job_id"] == "vid_77"
++    # Without this an admin cannot tell a video job from a chat turn in the list.
++    assert item["operation_type"] == "video"
++
++
++async def test_detail_payload_exposes_the_request_block(db_session, user) -> None:
++    log_id = await _failed_video_log(db_session, user)
++    row = await db_session.get(RequestLog, log_id)
++
++    payload = await _cost_details_payload(db_session, row)
++
++    request = payload["request"]
++    assert request["error_code"] == "timeout"
++    assert request["provider_job_id"] == "vid_77"
++    assert request["correlation_id"] == "job-77"
++    assert request["success"] is False
++    assert payload["operation"]["operation_type"] == "video"
++    # Attempt rows gained the connection and the timing window.
++    for event in payload["events"]:
++        assert "connection_id" in event
++        assert "started_at" in event
++
++
++async def test_filters_narrow_by_operation_type_and_error_code(db_session, user) -> None:
++    """The admin endpoint sits behind the IP-guard middleware, so this drives
++    the payload builder the endpoint calls."""
++    from app.api.logs import _logs_list_payload
++
++    await _failed_video_log(db_session, user)
++    await log_usage(
++        db_session,
++        user_id=user.id,
++        username=user.username,
++        model_id="openai/gpt-4o",
++        prompt_tokens=10,
++        completion_tokens=5,
++        cached_tokens=0,
++        total_cost_usd=0.01,
++        response_time_ms=100.0,
++        prompt_language="en",
++        source_ip=None,
++        source="alpha_router_chat",
++        success=True,
++        operation_type="chat",
++    )
++    await db_session.commit()
++
++    everything = await _logs_list_payload(db_session, limit=50)
++    assert {item["operation_type"] for item in everything["items"]} == {"video", "chat"}
++
++    only_video = await _logs_list_payload(db_session, limit=50, operation_type="video")
++    assert only_video["items"], "the video row should survive the filter"
++    assert {item["operation_type"] for item in only_video["items"]} == {"video"}
++
++    timeouts = await _logs_list_payload(db_session, limit=50, error_code="timeout")
++    assert timeouts["items"]
++    assert all(item["error_code"] == "timeout" for item in timeouts["items"])
++
++    none_left = await _logs_list_payload(db_session, limit=50, error_code="connect_error")
++    assert none_left["items"] == []
++
++
++async def test_export_carries_the_same_detail_as_the_page(db_session, user) -> None:
++    """Whatever the page shows, the Export button has to hand over too."""
++    from app.models.logging import RequestLog as RL
++    from app.services.log_export_service import (
++        dataframe_to_csv_bytes,
++        request_logs_to_export_dataframe,
++        resolve_operation_types,
++    )
++
++    log_id = await _failed_video_log(db_session, user)
++    row = await db_session.get(RL, log_id)
++
++    df = request_logs_to_export_dataframe(
++        [row],
++        tz_mode="utc",
++        provider_map={},
++        key_map={},
++        operation_types=await resolve_operation_types(db_session, [row]),
++    )
++    assert list(df["Type"]) == ["video"]
++    assert list(df["Error Code"]) == ["timeout"]
++    assert list(df["Correlation Id"]) == ["job-77"]
++    assert list(df["Provider Job Id"]) == ["vid_77"]
++    assert "ReadTimeout" in df["Error"].iloc[0]
++
++    csv_text = dataframe_to_csv_bytes(df).decode("utf-8")
++    for header in ("Type", "Error Code", "HTTP Status", "Error", "Correlation Id", "Provider Job Id"):
++        assert header in csv_text
+diff --git a/frontend/src/components/RequestLogCostDetailsModal.tsx b/frontend/src/components/RequestLogCostDetailsModal.tsx
+index 1a9622b..a1d716f 100644
+--- a/frontend/src/components/RequestLogCostDetailsModal.tsx
++++ b/frontend/src/components/RequestLogCostDetailsModal.tsx
+@@ -4,6 +4,7 @@ import ModelName from "./ModelName";
+ import { formatLocalDateTime } from "../lib/dateTime";
+ import {
+   confidenceLabel,
++  errorCodeLabel,
+   formatTokenCount,
+   logIdentityLabel,
+   money,
+@@ -85,6 +86,44 @@ export default function RequestLogCostDetailsModal({
+           {loading && <p className="muted">Loading cost ledger…</p>}
+           {error && <p className="error">{error}</p>}
+ 
++          {!loading && !error && details?.request && !details.request.success && (
++            <div className="api-log-cost-details__failure">
++              <h4>Failure</h4>
++              <dl>
++                <div>
++                  <dt>Reason</dt>
++                  <dd>{errorCodeLabel(details.request.error_code) || "Unknown"}</dd>
++                </div>
++                {details.request.http_status != null && (
++                  <div>
++                    <dt>HTTP status</dt>
++                    <dd>{details.request.http_status}</dd>
++                  </div>
++                )}
++                {details.request.provider_job_id && (
++                  <div>
++                    <dt>Provider job</dt>
++                    <dd className="api-log-cost-details__mono">{details.request.provider_job_id}</dd>
++                  </div>
++                )}
++                {details.request.correlation_id && (
++                  <div>
++                    <dt>Correlation id</dt>
++                    <dd
++                      className="api-log-cost-details__mono"
++                      title="Search the server logs for this id to see every line from this request"
++                    >
++                      {details.request.correlation_id}
++                    </dd>
++                  </div>
++                )}
++              </dl>
++              {details.request.error_message && (
++                <p className="api-log-cost-details__error-text">{details.request.error_message}</p>
++              )}
++            </div>
++          )}
++
+           {!loading && !error && details?.legacy && (
+             <p className="muted">
+               This request was logged before the usage ledger. Only the summary total is available (
+@@ -191,6 +230,26 @@ export default function RequestLogCostDetailsModal({
+                             </dd>
+                           </div>
+                         )}
++                        {event.connection_id != null && (
++                          <div>
++                            <dt>Connection</dt>
++                            <dd>#{event.connection_id}</dd>
++                          </div>
++                        )}
++                        {event.quantity != null && (
++                          <div>
++                            <dt>Quantity</dt>
++                            <dd>
++                              {event.quantity} {event.unit || ""}
++                            </dd>
++                          </div>
++                        )}
++                        {event.started_at && (
++                          <div>
++                            <dt>Started</dt>
++                            <dd>{formatLocalDateTime(event.started_at)}</dd>
++                          </div>
++                        )}
+                         {event.error_message && (
+                           <div className="api-log-cost-event__full">
+                             <dt>Error</dt>
+diff --git a/frontend/src/lib/requestLogCostDetails.ts b/frontend/src/lib/requestLogCostDetails.ts
+index 7368875..00180e8 100644
+--- a/frontend/src/lib/requestLogCostDetails.ts
++++ b/frontend/src/lib/requestLogCostDetails.ts
+@@ -29,6 +29,15 @@ export type RequestLogSummary = {
+   response_time_ms: number;
+   source_ip: string;
+   success: boolean;
++  /** What kind of request this was: chat, video, image, speech, embedding… */
++  operation_type?: string | null;
++  error_message?: string | null;
++  /** Classified failure (timeout, connect_error, http_client_error, …). */
++  error_code?: string | null;
++  http_status?: number | null;
++  /** Ties the row to the container log lines for the same request or job. */
++  correlation_id?: string | null;
++  provider_job_id?: string | null;
+ };
+ 
+ type CostLineItem = {
+@@ -40,6 +49,22 @@ type CostLineItem = {
+   pricing_source: string;
+ };
+ 
++type RequestFailureBlock = {
++  id: number;
++  success: boolean;
++  error_code: string | null;
++  error_message: string | null;
++  http_status: number | null;
++  correlation_id: string | null;
++  provider_job_id: string | null;
++  response_time_ms: number;
++  source: string | null;
++  client_app: string | null;
++  source_ip: string | null;
++  model_id: string | null;
++  project_id: string | null;
++};
++
+ type CostEvent = {
+   id: string;
+   provider_type: string;
+@@ -62,6 +87,11 @@ type CostEvent = {
+   reconciliation_attempts: number;
+   last_reconciliation_attempt_at: string | null;
+   error_message: string | null;
++  connection_id: number | null;
++  quantity: number | null;
++  unit: string | null;
++  started_at: string | null;
++  completed_at: string | null;
+   line_items: CostLineItem[];
+ };
+ 
+@@ -74,13 +104,52 @@ export type CostDetails = {
+     provider_cost_usd: number | null;
+     calculated_cost_usd: number | null;
+     unpriced_event_count: number;
++    accounting_status?: string | null;
++    metadata?: Record<string, unknown> | null;
++    started_at?: string | null;
++    completed_at?: string | null;
+     reconciled_at: string | null;
+   } | null;
+   events: CostEvent[];
+   legacy: boolean;
++  request?: RequestFailureBlock | null;
+   total_cost_usd?: number;
+ };
+ 
++/** Short label for the kind of request, for the Type column and its filter. */
++export function operationTypeLabel(value: string | null | undefined): string {
++  const key = (value || "").trim().toLowerCase();
++  const labels: Record<string, string> = {
++    chat: "Chat",
++    video: "Video",
++    image: "Image",
++    speech: "Speech",
++    transcription: "Transcription",
++    embedding: "Embedding",
++    rerank: "Rerank",
++  };
++  return labels[key] || (key ? key.charAt(0).toUpperCase() + key.slice(1) : "—");
++}
++
++/** Human wording for a classified failure; unknown codes pass through readably. */
++export function errorCodeLabel(value: string | null | undefined): string {
++  const key = (value || "").trim().toLowerCase();
++  const labels: Record<string, string> = {
++    timeout: "Timed out",
++    connect_error: "Could not connect",
++    network_error: "Network error",
++    http_client_error: "Rejected by provider",
++    http_server_error: "Provider error",
++    invalid_response: "Unusable response",
++    provider_error: "Provider error",
++    empty_completion: "Empty completion",
++    cancelled: "Cancelled",
++    client_disconnected: "Client disconnected",
++    reclaimed: "Reclaimed",
++  };
++  return labels[key] || key.replace(/_/g, " ");
++}
++
+ export function isPersonalApiKeyLog(log: Pick<RequestLogSummary, "api_key_kind" | "source" | "user_api_key_id">): boolean {
+   if (log.api_key_kind === "personal") return true;
+   if (typeof log.user_api_key_id === "number" && log.user_api_key_id > 0) return true;
+diff --git a/frontend/src/lib/requestLogLabels.test.ts b/frontend/src/lib/requestLogLabels.test.ts
+new file mode 100644
+index 0000000..6ff960d
+--- /dev/null
++++ b/frontend/src/lib/requestLogLabels.test.ts
+@@ -0,0 +1,33 @@
++import { describe, expect, it } from "vitest";
++import { errorCodeLabel, operationTypeLabel } from "./requestLogCostDetails";
++
++describe("operationTypeLabel", () => {
++  it("names the kinds the API Logs Type column shows", () => {
++    expect(operationTypeLabel("video")).toBe("Video");
++    expect(operationTypeLabel("chat")).toBe("Chat");
++    expect(operationTypeLabel("transcription")).toBe("Transcription");
++  });
++
++  it("passes an unknown kind through rather than hiding it", () => {
++    expect(operationTypeLabel("rerank")).toBe("Rerank");
++    expect(operationTypeLabel("something_new")).toBe("Something_new");
++  });
++
++  it("shows a dash when the row predates the usage ledger", () => {
++    expect(operationTypeLabel(null)).toBe("—");
++    expect(operationTypeLabel("")).toBe("—");
++  });
++});
++
++describe("errorCodeLabel", () => {
++  it("turns the stored code into something an operator reads", () => {
++    expect(errorCodeLabel("timeout")).toBe("Timed out");
++    expect(errorCodeLabel("connect_error")).toBe("Could not connect");
++    expect(errorCodeLabel("http_client_error")).toBe("Rejected by provider");
++  });
++
++  it("degrades readably for a code it does not know", () => {
++    expect(errorCodeLabel("some_new_code")).toBe("some new code");
++    expect(errorCodeLabel(null)).toBe("");
++  });
++});
+diff --git a/frontend/src/pages/admin/ApiLogs.tsx b/frontend/src/pages/admin/ApiLogs.tsx
+index cfa51ec..0182d97 100644
+--- a/frontend/src/pages/admin/ApiLogs.tsx
++++ b/frontend/src/pages/admin/ApiLogs.tsx
+@@ -11,8 +11,10 @@ import { useAdminWriteLock } from "../../lib/adminWriteLock";
+ import { formatLocalDateTime } from "../../lib/dateTime";
+ import {
+   confidenceLabel,
++  errorCodeLabel,
+   fetchAdminRequestLogCostDetails,
+   isPersonalApiKeyLog,
++  operationTypeLabel,
+   type CostDetails,
+   type RequestLogSummary,
+ } from "../../lib/requestLogCostDetails";
+@@ -22,6 +24,8 @@ type Log = RequestLogSummary;
+ type FilterOptions = {
+   usernames: string[];
+   models: string[];
++  operation_types?: string[];
++  error_codes?: string[];
+ };
+ 
+ type ApiKeyMeta = {
+@@ -72,10 +76,17 @@ export default function ApiLogs({ apiKeyId }: Props) {
+   const [model, setModel] = useState(searchParams.get("model_id") || searchParams.get("model") || "");
+   const [responseStatus, setResponseStatus] = useState<"" | "success" | "fail">("");
+   const [promptCache, setPromptCache] = useState<"" | "yes" | "no">("");
++  const [operationType, setOperationType] = useState("");
++  const [errorCode, setErrorCode] = useState("");
+   const [start, setStart] = useState("");
+   const [end, setEnd] = useState("");
+   const [loading, setLoading] = useState(false);
+-  const [filterOptions, setFilterOptions] = useState<FilterOptions>({ usernames: [], models: [] });
++  const [filterOptions, setFilterOptions] = useState<FilterOptions>({
++    usernames: [],
++    models: [],
++    operation_types: [],
++    error_codes: [],
++  });
+   const [optionsLoading, setOptionsLoading] = useState(false);
+   const [selectedLog, setSelectedLog] = useState<Log | null>(null);
+   const [costDetails, setCostDetails] = useState<CostDetails | null>(null);
+@@ -93,12 +104,14 @@ export default function ApiLogs({ apiKeyId }: Props) {
+       if (model.trim()) q.set("model_id", model.trim());
+       if (responseStatus) q.set("response_status", responseStatus);
+       if (promptCache) q.set("prompt_cache", promptCache);
++      if (operationType) q.set("operation_type", operationType);
++      if (errorCode) q.set("error_code", errorCode);
+       if (start) q.set("start_date", start);
+       if (end) q.set("end_date", end);
+       if (!fromKeyRoute && scopedKeyId) q.set("api_key_id", String(scopedKeyId));
+       return q;
+     },
+-    [username, model, responseStatus, promptCache, start, end, fromKeyRoute, scopedKeyId],
++    [username, model, responseStatus, promptCache, operationType, errorCode, start, end, fromKeyRoute, scopedKeyId],
+   );
+ 
+   const logsPath = fromKeyRoute ? `/api/admin/api-keys/${apiKeyId}/logs` : "/api/admin/logs";
+@@ -109,7 +122,7 @@ export default function ApiLogs({ apiKeyId }: Props) {
+       const d = await api<FilterOptions>("/api/admin/logs/filter-options");
+       setFilterOptions(d);
+     } catch {
+-      setFilterOptions({ usernames: [], models: [] });
++      setFilterOptions({ usernames: [], models: [], operation_types: [], error_codes: [] });
+     } finally {
+       setOptionsLoading(false);
+     }
+@@ -318,6 +331,32 @@ export default function ApiLogs({ apiKeyId }: Props) {
+             <option value="yes">Cache hit</option>
+             <option value="no">No cache</option>
+           </select>
++          <select
++            value={operationType}
++            onChange={(e) => setOperationType(e.target.value)}
++            aria-label="Request type"
++            disabled={loading}
++          >
++            <option value="">All types</option>
++            {(filterOptions.operation_types || []).map((t) => (
++              <option key={t} value={t}>
++                {operationTypeLabel(t)}
++              </option>
++            ))}
++          </select>
++          <select
++            value={errorCode}
++            onChange={(e) => setErrorCode(e.target.value)}
++            aria-label="Failure reason"
++            disabled={loading}
++          >
++            <option value="">All failures</option>
++            {(filterOptions.error_codes || []).map((c) => (
++              <option key={c} value={c}>
++                {errorCodeLabel(c)}
++              </option>
++            ))}
++          </select>
+           <input
+             className="api-logs-toolbar__date"
+             type="date"
+@@ -396,6 +435,7 @@ export default function ApiLogs({ apiKeyId }: Props) {
+             <tr>
+               <th className="api-log-col--time">Time</th>
+               <th className="api-log-col--user">User</th>
++              <th className="api-log-col--secondary">Type</th>
+               <th className="api-log-col--model">Model</th>
+               <th className="api-log-col--secondary">Provider</th>
+               <th className="api-log-col--secondary">App</th>
+@@ -503,6 +543,7 @@ export default function ApiLogs({ apiKeyId }: Props) {
+                       </span>
+                     )}
+                   </td>
++                  <td className="api-log-col--secondary">{operationTypeLabel(r.operation_type)}</td>
+                   <td className="api-log-col--model" title={r.model_id}>
+                     <ModelName modelId={r.model_id} label={r.model_id} size={14} />
+                   </td>
+@@ -552,7 +593,23 @@ export default function ApiLogs({ apiKeyId }: Props) {
+                   >
+                     {Math.round(r.response_time_ms)}
+                   </td>
+-                  <td className="api-log-col--status">{r.success ? "Success" : "Fail"}</td>
++                  <td className="api-log-col--status">
++                    {r.success ? (
++                      "Success"
++                    ) : (
++                      <span
++                        className="api-log-failure"
++                        title={r.error_message || errorCodeLabel(r.error_code) || "Failed"}
++                      >
++                        <span className="api-log-failure__code">
++                          {r.error_code ? errorCodeLabel(r.error_code) : "Fail"}
++                        </span>
++                        {r.error_message ? (
++                          <span className="api-log-failure__message">{r.error_message}</span>
++                        ) : null}
++                      </span>
++                    )}
++                  </td>
+                 </tr>
+               );
+             })}
+diff --git a/frontend/src/styles.css b/frontend/src/styles.css
+index 6e45b96..bcecbce 100644
+--- a/frontend/src/styles.css
++++ b/frontend/src/styles.css
+@@ -15951,3 +15951,69 @@ body.login-route #root {
+   flex-wrap: wrap;
+   margin-top: 1rem;
+ }
++
++/* API Logs: the failure reason in the table and in the detail modal (Phase 4 logging) */
++.api-log-failure {
++  display: inline-flex;
++  flex-direction: column;
++  gap: 0.1rem;
++  min-width: 0;
++  max-width: 100%;
++}
++
++.api-log-failure__code {
++  /* Same red the rest of the admin uses for error text. */
++  color: #dc2626;
++  font-weight: 600;
++}
++
++.api-log-failure__message {
++  color: var(--muted);
++  font-size: 0.78rem;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++  max-width: 22ch;
++}
++
++.api-log-cost-details__failure {
++  margin-bottom: 1rem;
++}
++
++.api-log-cost-details__failure dl {
++  display: grid;
++  grid-template-columns: repeat(2, minmax(0, 1fr));
++  gap: 0.55rem 0.85rem;
++  margin: 0;
++}
++
++.api-log-cost-details__failure dl > div {
++  display: flex;
++  flex-direction: column;
++  gap: 0.2rem;
++  min-width: 0;
++}
++
++.api-log-cost-details__mono {
++  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
++  font-size: 0.8rem;
++  overflow-wrap: anywhere;
++}
++
++.api-log-cost-details__error-text {
++  margin: 0.6rem 0 0;
++  padding: 0.55rem 0.7rem;
++  border-radius: 8px;
++  background: var(--bg);
++  border: 1px solid var(--border);
++  color: var(--text);
++  font-size: 0.82rem;
++  overflow-wrap: anywhere;
++  white-space: pre-wrap;
++}
++
++@media (max-width: 720px) {
++  .api-log-cost-details__failure dl {
++    grid-template-columns: 1fr;
++  }
++}
+-- 
+2.43.0
+

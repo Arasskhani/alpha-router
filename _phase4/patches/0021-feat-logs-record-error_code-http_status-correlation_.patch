@@ -1,0 +1,530 @@
+From b768284d55ffb584511a9e4340c73a5adffab9d7 Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Tue, 15 Sep 2026 07:52:14 +0000
+Subject: [PATCH 21/23] feat(logs): record error_code, http_status,
+ correlation_id and provider job id
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+request_logs said only "Fail", with a free-text message that was often empty,
+so the API Logs page could not answer any of the questions an operator
+actually has: what kind of failure, what the upstream answered, which
+container log lines belong to it, which provider job it was.
+
+Revision 6d2e3f4a5b6c adds the four nullable columns (error_code,
+correlation_id and provider_job_id indexed — they are what you search by).
+log_usage — the single writer of this table — takes them, and defaults the
+correlation id to the one already stamped on the current request's log lines.
+
+The chat turn carries its classification through TurnOutcome, and the video
+worker now runs inside `correlation_scope(job_id)`, so every line it logs
+carries the job id and the request-log row points back at exactly those
+lines. A failed video also records the OpenRouter job id.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ ...6d2e3f4a5b6c_request_log_failure_detail.py |  55 +++++++
+ backend/app/models/logging.py                 |   9 ++
+ backend/app/services/observability.py         |  16 ++
+ backend/app/services/proxy_service.py         |  12 ++
+ backend/app/services/turn_settlement.py       |   6 +
+ backend/app/services/usage_logging_service.py |  12 +-
+ backend/app/services/video_billing_service.py |   8 +
+ backend/app/services/video_job_service.py     |  20 ++-
+ .../tests/test_request_log_failure_columns.py | 138 ++++++++++++++++++
+ 9 files changed, 274 insertions(+), 2 deletions(-)
+ create mode 100644 backend/alembic/versions/6d2e3f4a5b6c_request_log_failure_detail.py
+ create mode 100644 backend/tests/test_request_log_failure_columns.py
+
+diff --git a/backend/alembic/versions/6d2e3f4a5b6c_request_log_failure_detail.py b/backend/alembic/versions/6d2e3f4a5b6c_request_log_failure_detail.py
+new file mode 100644
+index 0000000..4a0b2cf
+--- /dev/null
++++ b/backend/alembic/versions/6d2e3f4a5b6c_request_log_failure_detail.py
+@@ -0,0 +1,55 @@
++"""Request logs: why a request failed, not just that it did.
++
++Revision ID: 6d2e3f4a5b6c
++Revises: 5c1d2e3f4a5b
++Create Date: 2026-09-15
++
++``request_logs`` recorded ``success`` and a free-text ``error_message`` that
++was frequently empty (see ``app/services/failure_details``), so the API Logs
++page could only ever say "Fail". These four columns make a failed request
++answer the operator's actual questions: what kind of failure, what the
++upstream answered, which container log lines belong to it, and — for async
++media — which provider job it was.
++
++All nullable: every existing row keeps its meaning, and paths that cannot
++supply a value simply leave it empty.
++"""
++
++from __future__ import annotations
++
++from collections.abc import Sequence
++
++import sqlalchemy as sa
++
++from alembic import op
++
++revision: str = "6d2e3f4a5b6c"
++down_revision: str | None = "5c1d2e3f4a5b"
++branch_labels: str | Sequence[str] | None = None
++depends_on: str | Sequence[str] | None = None
++
++
++_COLUMNS = (
++    ("error_code", sa.String(length=64), True),
++    ("http_status", sa.Integer(), False),
++    ("correlation_id", sa.String(length=64), True),
++    ("provider_job_id", sa.String(length=128), True),
++)
++
++
++def upgrade() -> None:
++    existing = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("request_logs")}
++    indexes = {index["name"] for index in sa.inspect(op.get_bind()).get_indexes("request_logs")}
++    for name, type_, indexed in _COLUMNS:
++        if name not in existing:
++            op.add_column("request_logs", sa.Column(name, type_, nullable=True))
++        index_name = f"ix_request_logs_{name}"
++        if indexed and index_name not in indexes:
++            op.create_index(index_name, "request_logs", [name])
++
++
++def downgrade() -> None:
++    for name, _type, indexed in _COLUMNS:
++        if indexed:
++            op.drop_index(f"ix_request_logs_{name}", table_name="request_logs")
++        op.drop_column("request_logs", name)
+diff --git a/backend/app/models/logging.py b/backend/app/models/logging.py
+index ae6e387..57ff6d7 100644
+--- a/backend/app/models/logging.py
++++ b/backend/app/models/logging.py
+@@ -61,6 +61,15 @@ class RequestLog(Base):
+     response_time_ms = Column(Float, default=0.0)
+     success = Column(Boolean, default=True)
+     error_message = Column(Text, nullable=True)
++    # Why it failed, in a form the admin UI can filter on (see failure_details).
++    error_code = Column(String(64), nullable=True, index=True)
++    # Upstream HTTP status when the provider answered with one.
++    http_status = Column(Integer, nullable=True)
++    # Ties this row to the container log lines for the same request or job.
++    correlation_id = Column(String(64), nullable=True, index=True)
++    # Provider-side job id for async media (video/image), so a row can be traced
++    # back to the job that produced it.
++    provider_job_id = Column(String(128), nullable=True, index=True)
+ 
+     user = relationship("User", back_populates="logs")
+ 
+diff --git a/backend/app/services/observability.py b/backend/app/services/observability.py
+index 97b2420..4a57948 100644
+--- a/backend/app/services/observability.py
++++ b/backend/app/services/observability.py
+@@ -2,6 +2,7 @@
+ 
+ from __future__ import annotations
+ 
++import contextlib
+ import contextvars
+ import datetime
+ import json
+@@ -382,6 +383,21 @@ def correlation_id() -> str:
+     return _correlation_id.get()
+ 
+ 
++@contextlib.contextmanager
++def correlation_scope(value: str):
++    """Stamp background work with an id, the way the HTTP middleware does.
++
++    A worker runs outside any request, so its log lines carried no correlation
++    id and nothing tied them to the row it wrote. Using the job's own id makes
++    `grep <id>` in the container log and the API Logs row the same thing.
++    """
++    token = _correlation_id.set(value)
++    try:
++        yield value
++    finally:
++        _correlation_id.reset(token)
++
++
+ class JsonLogFormatter(logging.Formatter):
+     """Stable JSON formatter that excludes arbitrary record attributes."""
+ 
+diff --git a/backend/app/services/proxy_service.py b/backend/app/services/proxy_service.py
+index dc256b9..2592919 100644
+--- a/backend/app/services/proxy_service.py
++++ b/backend/app/services/proxy_service.py
+@@ -100,6 +100,7 @@ from app.services.usage_accounting_service import (
+     capture_usage_event,
+ )
+ from app.core.constants import normalize_openrouter_base_url
++from app.services.failure_details import describe_failure
+ from app.services.provider_utils import (  # noqa: F401 -- re-exported under the historical names
+     _apply_litellm_provider_kwargs,
+     _close_upstream_stream,
+@@ -795,6 +796,8 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
+             )
+ 
+         was_cancelled = False
++        error_code: str | None = None
++        http_status: int | None = None
+         agent_review: AgentCompletionReview | None = None
+         agent_output_displayed = False
+         # Sticky for the whole request: once the user presses Stop (or the client
+@@ -947,6 +950,7 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
+ 
+                 if empty_completion and (not tools.code_interpreter or code_loop.nudge_sent or code_loop.exhausted):
+                     success = False
++                    error_code = "empty_completion"
+                     error_message = (
+                         "The upstream model returned no usable content. Retry the request or select a different model."
+                     )
+@@ -1062,11 +1066,13 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
+             was_cancelled = True
+             client_disconnected = True
+             success = False
++            error_code = "client_disconnected"
+             error_message = "Request cancelled"
+             raise
+         except asyncio.CancelledError as exc:
+             was_cancelled = True
+             success = False
++            error_code = "cancelled"
+             error_message = "Request cancelled"
+             if attempt is not None:
+                 _absorb(attempt, status="cancelled", error_message=str(exc) or error_message, completion="")
+@@ -1097,6 +1103,8 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
+                         )
+                     )
+                     success = False
++                    retry_failure = describe_failure(retry_exc)
++                    error_code, http_status = retry_failure.code, retry_failure.http_status
+                     error_message = _format_provider_error(retry_exc, provider)[:500]
+                     yield _sse_error_frame(error_message)
+                 else:
+@@ -1115,6 +1123,8 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
+                         yield _sse_delta_chunk(collected_content)
+             else:
+                 success = False
++                failure = describe_failure(exc)
++                error_code, http_status = failure.code, failure.http_status
+                 error_message = _format_provider_error(exc, provider)[:500]
+                 yield _sse_error_frame(error_message)
+         finally:
+@@ -1162,6 +1172,8 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
+                         elapsed_ms=elapsed_ms,
+                         agent_review=agent_review,
+                         agent_output_displayed=agent_output_displayed,
++                        error_code=error_code,
++                        http_status=http_status,
+                     ),
+                     db=db,
+                     persister=persister,
+diff --git a/backend/app/services/turn_settlement.py b/backend/app/services/turn_settlement.py
+index de968e5..5c719ae 100644
+--- a/backend/app/services/turn_settlement.py
++++ b/backend/app/services/turn_settlement.py
+@@ -50,6 +50,10 @@ class TurnOutcome:
+     elapsed_ms: float
+     agent_review: AgentCompletionReview | None = None
+     agent_output_displayed: bool = False
++    #: Classification of the failure (see failure_details), for the API Logs filter.
++    error_code: str | None = None
++    #: Upstream HTTP status, when the provider answered with one.
++    http_status: int | None = None
+ 
+ 
+ @dataclass(slots=True)
+@@ -198,6 +202,8 @@ async def _persist_stream_usage(identity: TurnIdentity, outcome: TurnOutcome) ->
+                     operation_type="chat",
+                     operation_idempotency_key=accounting_key,
+                     project_id=identity.project_id_for_billing,
++                    error_code=outcome.error_code,
++                    http_status=outcome.http_status,
+                 )
+                 chat_session_id = str(identity.body.get("chat_session_id") or "").strip()
+                 assistant_cid = str(identity.body.get("assistant_client_message_id") or "").strip()
+diff --git a/backend/app/services/usage_logging_service.py b/backend/app/services/usage_logging_service.py
+index b5d2a94..b20e140 100644
+--- a/backend/app/services/usage_logging_service.py
++++ b/backend/app/services/usage_logging_service.py
+@@ -27,7 +27,7 @@ from app.services.budget_reservation_service import (
+     reserve,
+     settle,
+ )
+-from app.services.observability import increment
++from app.services.observability import correlation_id as current_correlation_id, increment
+ from app.services.provider_utils import extract_prompt_text, sanitize_cost_usd
+ from app.services.usage_accounting_service import (
+     PendingUsageEvent,
+@@ -77,6 +77,10 @@ async def log_usage(
+     operation_type: str = "chat",
+     operation_idempotency_key: str | None = None,
+     project_id: str | None = None,
++    error_code: str | None = None,
++    http_status: int | None = None,
++    correlation_id: str | None = None,
++    provider_job_id: str | None = None,
+ ) -> int | None:
+     events = list(usage_events or [])
+     if not events:
+@@ -105,6 +109,12 @@ async def log_usage(
+         client_app=client_app,
+         success=success,
+         error_message=error_message,
++        error_code=(error_code or None),
++        http_status=http_status,
++        # Defaulted here rather than at every call site: inside a request this
++        # is the id already stamped on that request's log lines.
++        correlation_id=(correlation_id or current_correlation_id() or None),
++        provider_job_id=(provider_job_id or None),
+         alpha_router_api_key_id=alpha_router_api_key_id,
+         user_api_key_id=user_api_key_id,
+         budget_reservation_id=budget_reservation_id,
+diff --git a/backend/app/services/video_billing_service.py b/backend/app/services/video_billing_service.py
+index 1d1c6a9..f4ad870 100644
+--- a/backend/app/services/video_billing_service.py
++++ b/backend/app/services/video_billing_service.py
+@@ -81,6 +81,10 @@ async def log_video_usage(
+     duration_seconds: int | None = None,
+     job_id: str | None = None,
+     project_id: str | None = None,
++    error_code: str | None = None,
++    http_status: int | None = None,
++    provider_job_id: str | None = None,
++    correlation_id: str | None = None,
+ ) -> int | None:
+     """Write RequestLog row and settle budget (same path as image/chat)."""
+     model_id = (capture.model_id or "").strip() or "unknown"
+@@ -158,4 +162,8 @@ async def log_video_usage(
+         operation_type="video",
+         operation_idempotency_key=f"video:{job_id}" if job_id else None,
+         project_id=project_id,
++        error_code=error_code,
++        http_status=http_status,
++        provider_job_id=provider_job_id,
++        correlation_id=correlation_id,
+     )
+diff --git a/backend/app/services/video_job_service.py b/backend/app/services/video_job_service.py
+index c586a49..72293df 100644
+--- a/backend/app/services/video_job_service.py
++++ b/backend/app/services/video_job_service.py
+@@ -34,7 +34,7 @@ from app.services.user_chat_storage_service import finalize_chat_session_video
+ from app.services.project_media_service import collect_personal_media_ids, persist_scoped_chat_media
+ from app.services.video_billing_service import VideoBillingCapture, log_video_usage
+ from app.services.failure_details import describe_failure
+-from app.services.observability import increment
++from app.services.observability import correlation_scope, increment
+ 
+ _LOG = logging.getLogger("alpha_router.video_jobs")
+ _ACTIVE_TASKS: dict[str, asyncio.Task] = {}
+@@ -406,6 +406,8 @@ async def reclaim_stale_video_jobs() -> int:
+                         budget_reservation_id=job.budget_reservation_id,
+                         job_id=job.id,
+                         project_id=job.project_id,
++                        error_code=job.error_code or "reclaimed",
++                        provider_job_id=job.provider_job_id,
+                     )
+             except Exception:  # noqa: BLE001 -- logged; expected failure of an external dependency
+                 _LOG.exception("Failed settling reclaimed video job %s", job.id)
+@@ -500,6 +502,13 @@ def _provider_failure_text(snapshot: Any, status: str) -> str:
+ 
+ 
+ async def _run_video_job(job_id: str) -> None:  # noqa: C901 -- Phase 4 split; complexity must not grow
++    # The job id doubles as this run's correlation id, so every log line the
++    # worker writes carries it and the API Logs row points back at them.
++    with correlation_scope(job_id):
++        await _run_video_job_inner(job_id)
++
++
++async def _run_video_job_inner(job_id: str) -> None:  # noqa: C901 -- same body, one indent in
+     started = time.perf_counter()
+     async with AsyncSessionLocal() as db:
+         job = await db.get(VideoGenerationJob, job_id)
+@@ -550,6 +559,8 @@ async def _run_video_job(job_id: str) -> None:  # noqa: C901 -- Phase 4 split; c
+         success = False
+         lease_lost = False
+         error_message: str | None = None
++        error_code: str | None = None
++        http_status: int | None = None
+         settings = get_settings()
+         deadline = time.monotonic() + float(settings.video_job_timeout_seconds or 600)
+         poll_interval = max(0.5, float(settings.video_job_poll_interval_ms or 2500) / 1000.0)
+@@ -763,6 +774,7 @@ async def _run_video_job(job_id: str) -> None:  # noqa: C901 -- Phase 4 split; c
+             job.lease_owner = None
+             job.lease_expires_at = None
+             error_message = job.error_message
++            error_code = job.error_code or "cancelled"
+             billing.add_usage(None, success=False, error_message=error_message)
+             await db.commit()
+         except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
+@@ -770,6 +782,8 @@ async def _run_video_job(job_id: str) -> None:  # noqa: C901 -- Phase 4 split; c
+             # which used to store a failure with no reason at all.
+             failure = describe_failure(exc)
+             error_message = failure.message
++            error_code = failure.code
++            http_status = failure.http_status
+             job.status = "failed"
+             job.error_code = failure.code
+             job.error_message = error_message
+@@ -800,6 +814,10 @@ async def _run_video_job(job_id: str) -> None:  # noqa: C901 -- Phase 4 split; c
+                         duration_seconds=duration,
+                         job_id=job.id,
+                         project_id=job.project_id,
++                        error_code=error_code,
++                        http_status=http_status,
++                        provider_job_id=job.provider_job_id,
++                        correlation_id=job_id,
+                     )
+                     if log_id and success:
+                         job_params: dict[str, Any] = {}
+diff --git a/backend/tests/test_request_log_failure_columns.py b/backend/tests/test_request_log_failure_columns.py
+new file mode 100644
+index 0000000..2ce1443
+--- /dev/null
++++ b/backend/tests/test_request_log_failure_columns.py
+@@ -0,0 +1,138 @@
++"""A failed request must record *why*, not just that it failed.
++
++request_logs gained error_code / http_status / correlation_id /
++provider_job_id (revision 6d2e3f4a5b6c). These check the whole path: the
++classifier feeds the columns, log_usage writes them, and a background job
++stamps its own correlation id so the container log and the row can be joined.
++"""
++
++from __future__ import annotations
++
++from types import SimpleNamespace
++from unittest.mock import AsyncMock, patch
++
++import httpx
++
++from app.models.logging import RequestLog
++from app.services.failure_details import describe_failure
++from app.services.observability import correlation_id, correlation_scope
++from app.services.usage_logging_service import log_usage
++from app.services.video_billing_service import VideoBillingCapture, log_video_usage
++
++
++async def test_log_usage_persists_the_failure_detail(db_session, user) -> None:
++    failure = describe_failure(
++        httpx.ConnectError("", request=httpx.Request("GET", "https://cdn.example.com/v/1.mp4?sig=x"))
++    )
++    log_id = await log_usage(
++        db_session,
++        user_id=user.id,
++        username=user.username,
++        model_id="bytedance/seedance-1-pro",
++        prompt_tokens=0,
++        completion_tokens=0,
++        cached_tokens=0,
++        total_cost_usd=0.0,
++        response_time_ms=12.0,
++        prompt_language="en",
++        source_ip=None,
++        source="alpha_router_chat",
++        success=False,
++        error_message=failure.message,
++        error_code=failure.code,
++        http_status=failure.http_status,
++        correlation_id="job-abc",
++        provider_job_id="vid_123",
++        operation_type="video",
++    )
++    await db_session.commit()
++    row = await db_session.get(RequestLog, log_id)
++    assert row is not None
++    assert row.success is False
++    assert row.error_code == "connect_error"
++    assert row.error_message and "cdn.example.com" in row.error_message
++    assert "sig=x" not in row.error_message
++    assert row.correlation_id == "job-abc"
++    assert row.provider_job_id == "vid_123"
++
++
++async def test_http_status_is_recorded_from_the_upstream_response(db_session, user) -> None:
++    request = httpx.Request("POST", "https://openrouter.ai/api/v1/videos")
++    failure = describe_failure(
++        httpx.HTTPStatusError(
++            "Client error", request=request, response=httpx.Response(400, request=request, text="bad duration")
++        )
++    )
++    log_id = await log_usage(
++        db_session,
++        user_id=user.id,
++        username=user.username,
++        model_id="m",
++        prompt_tokens=0,
++        completion_tokens=0,
++        cached_tokens=0,
++        total_cost_usd=0.0,
++        response_time_ms=1.0,
++        prompt_language="en",
++        source_ip=None,
++        source="alpha_router_chat",
++        success=False,
++        error_message=failure.message,
++        error_code=failure.code,
++        http_status=failure.http_status,
++        operation_type="video",
++    )
++    await db_session.commit()
++    row = await db_session.get(RequestLog, log_id)
++    assert row.http_status == 400
++    assert row.error_code == "http_client_error"
++    assert "bad duration" in row.error_message
++
++
++async def test_correlation_id_defaults_to_the_current_scope(db_session, user) -> None:
++    with correlation_scope("corr-42"):
++        assert correlation_id() == "corr-42"
++        log_id = await log_usage(
++            db_session,
++            user_id=user.id,
++            username=user.username,
++            model_id="m",
++            prompt_tokens=1,
++            completion_tokens=1,
++            cached_tokens=0,
++            total_cost_usd=0.0,
++            response_time_ms=1.0,
++            prompt_language="en",
++            source_ip=None,
++            source="alpha_router_chat",
++            success=True,
++        )
++    await db_session.commit()
++    row = await db_session.get(RequestLog, log_id)
++    assert row.correlation_id == "corr-42"
++    # The scope is restored, so the next request is not tagged with this one.
++    assert correlation_id() != "corr-42"
++
++
++async def test_video_logger_forwards_the_failure_detail() -> None:
++    capture = VideoBillingCapture(model_id="bytedance/seedance-1-pro", provider_type="openrouter")
++    capture.add_usage(None, success=False, error_message="timeout")
++    with patch("app.services.video_billing_service.log_usage", new_callable=AsyncMock) as mocked:
++        await log_video_usage(
++            AsyncMock(),
++            user=SimpleNamespace(id=1, username="tester"),
++            capture=capture,
++            prompt="a cat",
++            response_time_ms=10.0,
++            success=False,
++            error_message="Upstream timed out (ReadTimeout)",
++            error_code="timeout",
++            http_status=None,
++            provider_job_id="vid_9",
++            correlation_id="job-9",
++            job_id="job-9",
++        )
++        kwargs = mocked.await_args.kwargs
++    assert kwargs["error_code"] == "timeout"
++    assert kwargs["provider_job_id"] == "vid_9"
++    assert kwargs["correlation_id"] == "job-9"
+-- 
+2.43.0
+

@@ -1,0 +1,565 @@
+From 0b7277a601f6ca310ca4ee12b17c0b65e099cfef Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Tue, 15 Sep 2026 07:44:52 +0000
+Subject: [PATCH 20/23] feat(logs): classify failures so a recorded reason is
+ never empty
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+`str(exc)` is an empty string for every httpx timeout, a bare ConnectError
+and asyncio.TimeoutError — and every failure path stored exactly that. The
+job row, the RequestLog, the ledger event and the UI all ended up with
+nothing, which is why a failed video reached the user as "Video generation
+failed" and left the operator with `Video job <id> failed:` in the container
+log.
+
+`describe_failure()` returns a stable code (timeout / connect_error /
+network_error / http_client_error / http_server_error / invalid_response /
+provider_error / cancelled), a message that always says something — the
+exception class when there is no text, plus the HTTP status, the request's
+method and host, and a slice of the error body — and the upstream status
+code for the column added next. URLs are quoted without their query string:
+video assets and object storage arrive as signed links.
+
+Wired into the video worker, the chat error formatter (which handed the
+client a blank SSE error frame on a timeout), transcription, chat titles and
+image prompts. Two video-specific holes closed with it: a provider that
+reports a terminal state with no reason produced `RuntimeError(None)` —
+literally "None" in the log — and now names the state and quotes its last
+payload; and the OpenRouter adapter now reads a structured `error` object
+instead of stringifying the dict or dropping it.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ backend/app/services/chat_title_service.py    |   3 +-
+ backend/app/services/failure_details.py       | 141 ++++++++++++++++++
+ backend/app/services/image_prompt_service.py  |   5 +-
+ backend/app/services/provider_utils.py        |  11 +-
+ backend/app/services/transcription_service.py |   3 +-
+ backend/app/services/video_job_service.py     |  33 +++-
+ .../services/video_providers/openrouter.py    |  28 +++-
+ backend/tests/test_failure_details.py         | 139 +++++++++++++++++
+ 8 files changed, 353 insertions(+), 10 deletions(-)
+ create mode 100644 backend/app/services/failure_details.py
+ create mode 100644 backend/tests/test_failure_details.py
+
+diff --git a/backend/app/services/chat_title_service.py b/backend/app/services/chat_title_service.py
+index f88fcbc..21677a8 100644
+--- a/backend/app/services/chat_title_service.py
++++ b/backend/app/services/chat_title_service.py
+@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.branding import CHAT_CLIENT_APP
+ from app.models.user import User
++from app.services.failure_details import failure_message
+ from app.services.budget_service import budget_request_blocked, get_user_budget_state
+ from app.services.chat_markers import (
+     ATTACHMENT_MESSAGE_PREFIX,
+@@ -172,7 +173,7 @@ async def generate_chat_title(
+             return _sanitize_title(_fallback_title(messages))
+         return title
+     except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
+-        error_message = str(exc)[:500]
++        error_message = failure_message(exc)[:500]
+         return _sanitize_title(_fallback_title(messages))
+     finally:
+         await settle_auxiliary_usage(
+diff --git a/backend/app/services/failure_details.py b/backend/app/services/failure_details.py
+new file mode 100644
+index 0000000..22e3f79
+--- /dev/null
++++ b/backend/app/services/failure_details.py
+@@ -0,0 +1,141 @@
++"""One description of a failed upstream call: a stable code and a real message.
++
++Every call site used to store ``str(exc)`` verbatim. That is empty for a whole
++family of failures — every httpx timeout, a bare ``ConnectError``, an
++``asyncio.TimeoutError`` — so the failure was recorded with no reason at all:
++an empty ``error_message`` on the job row, on the RequestLog, in the ledger,
++and a user staring at "Error: Video generation failed" with nothing to go on.
++
++The exception class name is never empty, and for an HTTP failure the status and
++the host it was talking to say more than the text does. ``describe_failure``
++builds that, plus a short code the UI can filter on.
++
++Query strings are dropped from any URL we quote: video assets and object
++storage arrive as signed links, and a log is the last place their signature
++should end up.
++"""
++
++from __future__ import annotations
++
++import asyncio
++from dataclasses import dataclass
++from urllib.parse import urlsplit
++
++import httpx
++
++#: Longest message we store. The DB columns are Text, but a provider that
++#: echoes the whole prompt back in an error should not fill the table.
++MAX_MESSAGE_CHARS = 2000
++#: How much of an error response body is worth keeping.
++MAX_BODY_CHARS = 500
++
++CODE_CANCELLED = "cancelled"
++CODE_TIMEOUT = "timeout"
++CODE_CONNECT = "connect_error"
++CODE_NETWORK = "network_error"
++CODE_HTTP_CLIENT = "http_client_error"
++CODE_HTTP_SERVER = "http_server_error"
++CODE_INVALID_RESPONSE = "invalid_response"
++CODE_PROVIDER = "provider_error"
++
++
++@dataclass(frozen=True, slots=True)
++class FailureDetail:
++    """What to store about one failure."""
++
++    code: str
++    message: str
++    http_status: int | None = None
++
++
++def _safe_url(url: object) -> str:
++    """Scheme, host and path only — never the query (signed URLs live there)."""
++    try:
++        parts = urlsplit(str(url))
++    except Exception:  # noqa: BLE001 -- an unparseable URL just means less context
++        return ""
++    if not parts.hostname:
++        return ""
++    return f"{parts.scheme}://{parts.hostname}{parts.path}" if parts.scheme else parts.hostname
++
++
++def _request_context(exc: BaseException) -> str:
++    try:
++        # httpx exposes .request as a property that *raises* when the exception
++        # was built without one, so this has to be guarded: a function that
++        # describes failures must never become one.
++        request = getattr(exc, "request", None)
++    except Exception:  # noqa: BLE001 -- no request context is simply less detail
++        return ""
++    if request is None:
++        return ""
++    url = _safe_url(getattr(request, "url", ""))
++    method = str(getattr(request, "method", "") or "").upper()
++    if url and method:
++        return f"{method} {url}"
++    return url or ""
++
++
++def _with_context(text: str, context: str) -> str:
++    if context and context not in text:
++        return f"{text} ({context})" if text else context
++    return text
++
++
++def describe_failure(exc: BaseException, *, fallback: str = "") -> FailureDetail:
++    """Classify one exception and produce a message that is never empty."""
++    raw = str(exc).strip()
++    context = _request_context(exc)
++
++    if isinstance(exc, asyncio.CancelledError):
++        return FailureDetail(CODE_CANCELLED, raw or fallback or "Cancelled")
++
++    if isinstance(exc, httpx.HTTPStatusError):
++        response = exc.response
++        status = int(getattr(response, "status_code", 0) or 0) or None
++        body = ""
++        try:
++            body = (response.text or "").strip()[:MAX_BODY_CHARS]
++        except Exception:  # noqa: BLE001 -- a streamed body may not be readable here
++            body = ""
++        parts = [p for p in (f"HTTP {status}" if status else "", context, body) if p]
++        message = raw if raw and not raw.startswith("Client error") and not raw.startswith("Server error") else ""
++        message = " — ".join([p for p in (message, *parts) if p]) or "Upstream HTTP error"
++        code = CODE_HTTP_SERVER if status and status >= 500 else CODE_HTTP_CLIENT
++        return FailureDetail(code, message[:MAX_MESSAGE_CHARS], status)
++
++    if isinstance(exc, httpx.TimeoutException | asyncio.TimeoutError | TimeoutError):
++        text = _with_context(raw or f"Upstream timed out ({type(exc).__name__})", context)
++        return FailureDetail(CODE_TIMEOUT, text[:MAX_MESSAGE_CHARS])
++
++    if isinstance(exc, httpx.ConnectError):
++        text = _with_context(raw or "Could not connect to the upstream host", context)
++        return FailureDetail(CODE_CONNECT, text[:MAX_MESSAGE_CHARS])
++
++    if isinstance(exc, httpx.TransportError):
++        text = _with_context(raw or f"Upstream transport error ({type(exc).__name__})", context)
++        return FailureDetail(CODE_NETWORK, text[:MAX_MESSAGE_CHARS])
++
++    if isinstance(exc, (ValueError, TypeError, KeyError)):
++        text = raw or f"Unusable upstream response ({type(exc).__name__})"
++        return FailureDetail(CODE_INVALID_RESPONSE, text[:MAX_MESSAGE_CHARS])
++
++    status = None
++    detail = getattr(exc, "detail", None)
++    if detail is not None and not raw:
++        raw = str(detail).strip()
++    if getattr(exc, "status_code", None):
++        try:
++            status = int(exc.status_code)  # type: ignore[attr-defined]
++        except (TypeError, ValueError):
++            status = None
++    text = raw or fallback or f"Upstream call failed ({type(exc).__name__})"
++    code = CODE_PROVIDER
++    if status is not None:
++        code = CODE_HTTP_SERVER if status >= 500 else CODE_HTTP_CLIENT
++    return FailureDetail(code, _with_context(text, context)[:MAX_MESSAGE_CHARS], status)
++
++
++def failure_message(exc: BaseException, *, fallback: str = "") -> str:
++    """Just the message — for call sites that have nowhere to put a code yet."""
++    return describe_failure(exc, fallback=fallback).message
+diff --git a/backend/app/services/image_prompt_service.py b/backend/app/services/image_prompt_service.py
+index 2d163c4..2fc9d25 100644
+--- a/backend/app/services/image_prompt_service.py
++++ b/backend/app/services/image_prompt_service.py
+@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ from app.branding import CHAT_CLIENT_APP
+ from app.core.language_detect import needs_english_translation
+ from app.models.user import User
++from app.services.failure_details import failure_message
+ from app.services.budget_service import budget_request_blocked, get_user_budget_state
+ from app.services.model_capabilities import model_kinds, model_media_flags
+ from app.services.model_tool_compatibility_service import is_auto_router_model_id
+@@ -339,10 +340,10 @@ async def enhance_user_prompt(
+         success = True
+         return result
+     except PromptEnhanceError as exc:
+-        error_message = str(exc)[:500]
++        error_message = failure_message(exc)[:500]
+         raise
+     except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
+-        error_message = str(exc)[:500]
++        error_message = failure_message(exc)[:500]
+         return _fail_or_fallback(
+             normalized_mode,
+             "Translation failed. Try again or choose another text model.",
+diff --git a/backend/app/services/provider_utils.py b/backend/app/services/provider_utils.py
+index 109bb2a..3e0eedc 100644
+--- a/backend/app/services/provider_utils.py
++++ b/backend/app/services/provider_utils.py
+@@ -15,6 +15,7 @@ import json
+ import logging
+ 
+ from app.models.model_catalog import AIModel
++from app.services.failure_details import failure_message
+ from app.services.llm_providers import (
+     litellm_model_for_provider,
+     normalize_model_id,
+@@ -66,16 +67,22 @@ def should_retry_non_stream(_provider: str, exc: Exception) -> bool:
+ 
+ 
+ def format_provider_error(exc: Exception, provider: str) -> str:
++    """Text for the SSE error frame and the request log — never empty.
++
++    ``str(exc)`` is blank for every httpx timeout and a bare ConnectError, so
++    this used to hand the client an error frame with no message and store an
++    empty ``error_message`` against the turn.
++    """
+     msg = str(exc).strip()
+     if provider != "openrouter":
+-        return msg
++        return msg or failure_message(exc)
+     for attr in ("message", "body", "text"):
+         val = getattr(exc, attr, None)
+         if isinstance(val, str) and val.strip() and not message_has_stream_body_read_error(val):
+             return val.strip()
+     if is_stream_body_read_error(exc):
+         return "OpenRouter request failed. Check model availability, context size, and API key."
+-    return msg
++    return msg or failure_message(exc)
+ 
+ 
+ def cached_tokens_from_usage(usage) -> int:
+diff --git a/backend/app/services/transcription_service.py b/backend/app/services/transcription_service.py
+index 0ac4fcf..79ec171 100644
+--- a/backend/app/services/transcription_service.py
++++ b/backend/app/services/transcription_service.py
+@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ from app.branding import CHAT_CLIENT_APP
+ from app.models.connection import Connection
+ from app.models.model_catalog import AIModel
++from app.services.failure_details import failure_message
+ from app.services.budget_reservation_service import (
+     reservation_hold_usd,
+     reservation_key,
+@@ -521,7 +522,7 @@ async def transcribe_audio_bytes(
+         success = True
+         return transcript
+     except Exception as exc:
+-        error_message = str(exc)[:500]
++        error_message = failure_message(exc)[:500]
+         raise
+     finally:
+         if tmp_path:
+diff --git a/backend/app/services/video_job_service.py b/backend/app/services/video_job_service.py
+index 6c059ec..c586a49 100644
+--- a/backend/app/services/video_job_service.py
++++ b/backend/app/services/video_job_service.py
+@@ -33,6 +33,7 @@ from app.services.storage_service import (
+ from app.services.user_chat_storage_service import finalize_chat_session_video
+ from app.services.project_media_service import collect_personal_media_ids, persist_scoped_chat_media
+ from app.services.video_billing_service import VideoBillingCapture, log_video_usage
++from app.services.failure_details import describe_failure
+ from app.services.observability import increment
+ 
+ _LOG = logging.getLogger("alpha_router.video_jobs")
+@@ -475,6 +476,29 @@ async def _lease_heartbeat(job_id: str, owner: str | None):
+             await task
+ 
+ 
++def _provider_failure_text(snapshot: Any, status: str) -> str:
++    """Why the provider ended the job — never an empty string.
++
++    ``RuntimeError(snapshot.error_message)`` stored "None" when the provider
++    reported a terminal state without any reason, and the caller then showed
++    the user a bare "Video generation failed". When there is no text, say which
++    state the provider reported and quote a little of its last payload.
++    """
++    message = (getattr(snapshot, "error_message", None) or "").strip() if snapshot is not None else ""
++    if message:
++        return message[:2000]
++    provider_status = (getattr(snapshot, "provider_status", None) or status or "unknown").strip()
++    raw = getattr(snapshot, "raw", None)
++    excerpt = ""
++    if isinstance(raw, dict):
++        try:
++            excerpt = json.dumps(raw, ensure_ascii=False)[:500]
++        except (TypeError, ValueError):
++            excerpt = ""
++    base = f"Provider ended the job as '{provider_status}' without an error message"
++    return f"{base}: {excerpt}" if excerpt else base
++
++
+ async def _run_video_job(job_id: str) -> None:  # noqa: C901 -- Phase 4 split; complexity must not grow
+     started = time.perf_counter()
+     async with AsyncSessionLocal() as db:
+@@ -629,7 +653,7 @@ async def _run_video_job(job_id: str) -> None:  # noqa: C901 -- Phase 4 split; c
+             if status == "cancelled":
+                 raise asyncio.CancelledError()
+             if status != "completed" or final_snapshot is None:
+-                raise RuntimeError(final_snapshot.error_message if final_snapshot else "Video generation failed")
++                raise RuntimeError(_provider_failure_text(final_snapshot, status))
+ 
+             # Fetching the asset and writing it to object storage can outlast
+             # the lease; beat while it runs so no second worker claims this job.
+@@ -742,9 +766,12 @@ async def _run_video_job(job_id: str) -> None:  # noqa: C901 -- Phase 4 split; c
+             billing.add_usage(None, success=False, error_message=error_message)
+             await db.commit()
+         except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
+-            error_message = str(exc)[:2000]
++            # str(exc) is empty for every httpx timeout and a bare ConnectError,
++            # which used to store a failure with no reason at all.
++            failure = describe_failure(exc)
++            error_message = failure.message
+             job.status = "failed"
+-            job.error_code = "upstream_error"
++            job.error_code = failure.code
+             job.error_message = error_message
+             job.completed_at = _now()
+             job.updated_at = _now()
+diff --git a/backend/app/services/video_providers/openrouter.py b/backend/app/services/video_providers/openrouter.py
+index 2302d35..51d3a51 100644
+--- a/backend/app/services/video_providers/openrouter.py
++++ b/backend/app/services/video_providers/openrouter.py
+@@ -2,6 +2,8 @@
+ 
+ from __future__ import annotations
+ 
++import json
++
+ from typing import Any
+ from urllib.parse import urlparse
+ 
+@@ -24,6 +26,30 @@ from app.services.video_providers.contracts import (
+ from app.core.constants import OPENROUTER_HOST
+ 
+ 
++def _error_text(response: dict[str, Any]) -> str | None:
++    """The provider's reason for a failed job, whatever shape it arrives in.
++
++    OpenRouter documents ``{"status": "failed", "error": "..."}`` but providers
++    also nest the reason in an object. Stringifying the dict (what this used to
++    do) stored ``{'message': ...}`` in the log; taking only ``.get("error")``
++    as a string stored nothing at all when it was an object.
++    """
++    for key in ("error", "message", "failure_reason", "detail"):
++        value = response.get(key)
++        if isinstance(value, str) and value.strip():
++            return value.strip()[:2000]
++        if isinstance(value, dict):
++            for inner in ("message", "detail", "reason", "code"):
++                text = value.get(inner)
++                if isinstance(text, str) and text.strip():
++                    return text.strip()[:2000]
++            try:
++                return json.dumps(value, ensure_ascii=False)[:2000]
++            except (TypeError, ValueError):
++                return str(value)[:2000]
++    return None
++
++
+ def _status(value: str) -> str:
+     if value == "completed":
+         return "completed"
+@@ -99,7 +125,7 @@ class OpenRouterVideoAdapter:
+             provider_status=str(response.get("status") or "") or None,
+             provider_job_id=job.provider_job_id,
+             asset_url=asset_url,
+-            error_message=str(response.get("error") or response.get("message") or "")[:2000] or None,
++            error_message=_error_text(response),
+             raw=response,
+         )
+ 
+diff --git a/backend/tests/test_failure_details.py b/backend/tests/test_failure_details.py
+new file mode 100644
+index 0000000..87d2a35
+--- /dev/null
++++ b/backend/tests/test_failure_details.py
+@@ -0,0 +1,139 @@
++"""A recorded failure must never be a blank string.
++
++The bug these cover: `str(exc)` is empty for every httpx timeout and for a bare
++ConnectError, so a video job (or a chat turn) was stored with status=failed and
++an empty error_message — which the UI renders as "Video generation failed",
++telling nobody anything.
++"""
++
++from __future__ import annotations
++
++import asyncio
++
++import httpx
++import pytest
++
++from app.services.failure_details import (
++    CODE_CANCELLED,
++    CODE_CONNECT,
++    CODE_HTTP_CLIENT,
++    CODE_HTTP_SERVER,
++    CODE_INVALID_RESPONSE,
++    CODE_NETWORK,
++    CODE_PROVIDER,
++    CODE_TIMEOUT,
++    MAX_MESSAGE_CHARS,
++    describe_failure,
++)
++
++_REQUEST = httpx.Request("GET", "https://cdn.example.com/videos/abc.mp4?signature=SECRET&x=1")
++
++
++@pytest.mark.parametrize(
++    "exc,expected_code",
++    [
++        (httpx.ReadTimeout("", request=_REQUEST), CODE_TIMEOUT),
++        (httpx.ConnectTimeout("", request=_REQUEST), CODE_TIMEOUT),
++        (httpx.PoolTimeout(""), CODE_TIMEOUT),
++        (TimeoutError(), CODE_TIMEOUT),  # asyncio.TimeoutError is this since 3.11
++        (httpx.ConnectError("", request=_REQUEST), CODE_CONNECT),
++        (httpx.RemoteProtocolError("", request=_REQUEST), CODE_NETWORK),
++        (ValueError(""), CODE_INVALID_RESPONSE),
++        (RuntimeError(""), CODE_PROVIDER),
++    ],
++)
++def test_every_empty_exception_still_gets_a_message(exc, expected_code):
++    detail = describe_failure(exc)
++    assert detail.code == expected_code
++    # Not just non-empty: it has to say something a person can act on.
++    assert len(detail.message.strip()) > 10, f"{type(exc).__name__} produced {detail.message!r}"
++
++
++def test_the_exception_class_is_named_when_there_is_nothing_better():
++    detail = describe_failure(httpx.ReadTimeout("", request=_REQUEST))
++    assert "ReadTimeout" in detail.message
++    assert describe_failure(RuntimeError("")).message.endswith("(RuntimeError)")
++
++
++def test_the_signed_part_of_a_url_is_not_logged():
++    detail = describe_failure(httpx.ConnectError("", request=_REQUEST))
++    assert "cdn.example.com/videos/abc.mp4" in detail.message
++    assert "SECRET" not in detail.message
++    assert "signature" not in detail.message
++
++
++def test_http_status_error_keeps_status_and_body():
++    response = httpx.Response(429, request=_REQUEST, text='{"error":{"message":"rate limited"}}')
++    detail = describe_failure(httpx.HTTPStatusError("Client error '429'", request=_REQUEST, response=response))
++    assert detail.code == CODE_HTTP_CLIENT
++    assert detail.http_status == 429
++    assert "rate limited" in detail.message
++    assert "HTTP 429" in detail.message
++
++
++def test_server_errors_are_classified_apart_from_client_errors():
++    response = httpx.Response(503, request=_REQUEST, text="upstream unavailable")
++    detail = describe_failure(httpx.HTTPStatusError("Server error", request=_REQUEST, response=response))
++    assert detail.code == CODE_HTTP_SERVER
++    assert detail.http_status == 503
++
++
++def test_a_real_message_is_kept_as_is():
++    detail = describe_failure(RuntimeError("Video job is missing a duration"))
++    assert detail.message == "Video job is missing a duration"
++    assert detail.code == CODE_PROVIDER
++
++
++def test_cancellation_is_not_a_provider_failure():
++    assert describe_failure(asyncio.CancelledError()).code == CODE_CANCELLED
++
++
++def test_message_is_capped():
++    detail = describe_failure(RuntimeError("x" * (MAX_MESSAGE_CHARS * 2)))
++    assert len(detail.message) <= MAX_MESSAGE_CHARS
++
++
++def test_http_exception_detail_is_used_when_str_is_empty():
++    from fastapi import HTTPException
++
++    detail = describe_failure(HTTPException(status_code=402, detail="Budget exceeded"))
++    assert "Budget exceeded" in detail.message
++    assert detail.http_status == 402
++    assert detail.code == CODE_HTTP_CLIENT
++
++
++def test_chat_error_frame_is_never_blank():
++    """A timeout used to produce an SSE error frame with an empty message."""
++    from app.services.provider_utils import format_provider_error
++
++    timeout = httpx.ReadTimeout("", request=_REQUEST)
++    assert format_provider_error(timeout, "openrouter").strip()
++    assert format_provider_error(timeout, "openai").strip()
++
++
++def test_video_provider_failure_without_text_says_what_the_provider_reported():
++    from types import SimpleNamespace
++
++    from app.services.video_job_service import _provider_failure_text
++
++    snapshot = SimpleNamespace(
++        error_message=None,
++        provider_status="failed",
++        raw={"id": "vid_1", "status": "failed"},
++    )
++    text = _provider_failure_text(snapshot, "failed")
++    assert "failed" in text
++    assert "vid_1" in text
++    assert text.strip()
++
++    with_text = SimpleNamespace(error_message="content policy", provider_status="failed", raw={})
++    assert _provider_failure_text(with_text, "failed") == "content policy"
++
++
++def test_video_adapter_reads_a_structured_provider_error():
++    from app.services.video_providers.openrouter import _error_text
++
++    assert _error_text({"status": "failed", "error": "moderation blocked"}) == "moderation blocked"
++    assert _error_text({"error": {"message": "invalid duration", "code": 400}}) == "invalid duration"
++    assert _error_text({"error": {"code": "E42"}}) == "E42"
++    assert _error_text({"status": "completed"}) is None
+-- 
+2.43.0
+

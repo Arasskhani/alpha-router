@@ -455,7 +455,7 @@ export default function RetentionPolicy() {
         <h3>API logs — raw provider responses</h3>
         <p className="muted-text" style={{ marginTop: 0 }}>
           Every upstream attempt behind{" "}
-          <Link to="/admin/api-logs">API Logs</Link> stores the provider&apos;s own response, which is what explains a
+          <Link to="/admin/logs">API Logs</Link> stores the provider&apos;s own response, which is what explains a
           failed request. It is also the bulkiest part of the log and can contain prompt text the provider echoed back,
           so it is kept only for the window you set here. The requests themselves — cost, tokens, status and the failure
           reason — are unaffected.

@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 from app.core.prompt_fences import RUNTIME_POLICY, untrusted_preamble, wrap_untrusted
 from app.branding import OUTBOUND_USER_AGENT
+from app.services.failure_details import failure_message
 from app.services.metered_usage_service import (
     finish_metered_usage,
     start_metered_usage,
@@ -107,7 +108,7 @@ async def web_search_context(
                 success=False,
                 quantity=None,
                 unit=None,
-                error_message=str(exc),
+                error_message=failure_message(exc),
             )
         return ""
     if metered is not None:
@@ -211,7 +212,7 @@ async def fetch_url_text(
                 success=False,
                 quantity=None,
                 unit=None,
-                error_message=str(exc),
+                error_message=failure_message(exc),
             )
         raise
     if metered is not None:

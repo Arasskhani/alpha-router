@@ -100,7 +100,7 @@ from app.services.usage_accounting_service import (
     capture_usage_event,
 )
 from app.core.constants import normalize_openrouter_base_url
-from app.services.failure_details import describe_failure
+from app.services.failure_details import describe_failure, failure_message
 from app.services.provider_utils import (  # noqa: F401 -- re-exported under the historical names
     _apply_litellm_provider_kwargs,
     _close_upstream_stream,
@@ -1081,11 +1081,11 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
         except Exception as exc:  # noqa: BLE001 -- provider failures become an SSE error frame; settlement still runs
             failed_event = None
             if attempt is not None:
-                _absorb(attempt, status="failed", error_message=str(exc), completion="")
+                _absorb(attempt, status="failed", error_message=failure_message(exc), completion="")
                 failed_event = usage_events[-1]
                 attempt = None
                 if tools.code_interpreter:
-                    await _record_ci_failure(failed_event, str(exc))
+                    await _record_ci_failure(failed_event, failure_message(exc))
             if _should_retry_non_stream(provider, exc):
                 retry = NonStreamRetry(
                     ai_model=ai_model,
@@ -1099,7 +1099,7 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                 except Exception as retry_exc:  # noqa: BLE001 -- error text is surfaced to the caller
                     usage_events.append(
                         retry.usage_event(
-                            attempt_index=len(usage_events), status="failed", error_message=str(retry_exc)
+                            attempt_index=len(usage_events), status="failed", error_message=failure_message(retry_exc)
                         )
                     )
                     success = False
@@ -1337,7 +1337,7 @@ async def create_embedding(
                 completion_tokens=0,
                 cached_tokens=cached_tokens,
                 prompt=body.get("input"),
-                error_message=str(exc),
+                error_message=failure_message(exc),
             )
         )
         raise HTTPException(status_code=502, detail=error_message) from exc

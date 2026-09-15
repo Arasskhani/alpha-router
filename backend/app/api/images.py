@@ -63,6 +63,7 @@ from app.services.storage_service import (
     resolve_media_blob,
 )
 from app.services.user_chat_storage_service import finalize_chat_session_image
+from app.services.failure_details import CODE_CANCELLED, describe_failure, failure_message
 from app.services.image_billing_service import ImageBillingCapture, log_image_usage
 from app.services.image_attempt_service import image_attempt_outcome, record_image_attempt
 from app.services.chat_channel_guard import assert_session_allows_model_generation
@@ -832,6 +833,18 @@ async def _resolve_image_model(
     return model_id, None, None, None, None
 
 
+def _classify(exc: BaseException) -> tuple[str, int | None]:
+    """Failure code and upstream status for an image request, never blank.
+
+    `str(exc)` is empty for every httpx timeout and a bare ConnectError, so an
+    image failure used to reach API Logs with a code of None and, on the
+    per-attempt events, an empty message - the same hole that made video
+    failures read "Video generation failed" and nothing else.
+    """
+    detail = describe_failure(exc)
+    return detail.code, detail.http_status
+
+
 @router.post("/generate")
 async def generate_image(  # noqa: C901 -- Phase 4 split; complexity must not grow
     request: Request,
@@ -846,6 +859,11 @@ async def generate_image(  # noqa: C901 -- Phase 4 split; complexity must not gr
     routing_reason: dict[str, object] | None = body.routing
     success = True
     error_message: str | None = None
+    # Classified alongside the message so API Logs can filter image failures the
+    # same way it filters chat and video ones; without a code the Error Code
+    # filter simply never matches an image row.
+    error_code: str | None = None
+    http_status: int | None = None
     image_request_id = str(uuid.uuid4())
     current_attempt_started_at: datetime.datetime | None = None
     current_attempt_source_count = 0
@@ -1030,7 +1048,7 @@ async def generate_image(  # noqa: C901 -- Phase 4 split; complexity must not gr
                                 None,
                                 started_at=started_at,
                                 success=False,
-                                error_message=str(exc),
+                                error_message=failure_message(exc),
                             ),
                         )
                         if img_resp.status_code in {404, 405} and not is_last:
@@ -1108,7 +1126,7 @@ async def generate_image(  # noqa: C901 -- Phase 4 split; complexity must not gr
                             None,
                             started_at=started_at,
                             success=False,
-                            error_message=str(exc),
+                            error_message=failure_message(exc),
                         ),
                     )
                     if chat_resp.status_code >= 400:
@@ -1603,6 +1621,7 @@ async def generate_image(  # noqa: C901 -- Phase 4 split; complexity must not gr
                     continue
                 success = False
                 error_message = detail[:500]
+                error_code, http_status = _classify(wrapped)
                 raise wrapped from attempt_exc
         if last_failover_exc is not None:
             if isinstance(last_failover_exc, HTTPException):
@@ -1613,6 +1632,7 @@ async def generate_image(  # noqa: C901 -- Phase 4 split; complexity must not gr
             ) from last_failover_exc
     except asyncio.CancelledError as exc:
         success = False
+        error_code = CODE_CANCELLED
         error_message = str(exc) or "Image generation cancelled"
         if len(billing.usage_sources) == current_attempt_source_count:
             billing.add_usage(
@@ -1626,6 +1646,7 @@ async def generate_image(  # noqa: C901 -- Phase 4 split; complexity must not gr
         success = False
         detail = exc.detail
         error_message = detail if isinstance(detail, str) else str(detail)
+        error_code, http_status = _classify(exc)
         raise
     except httpx.HTTPError as exc:
         success = False
@@ -1636,6 +1657,7 @@ async def generate_image(  # noqa: C901 -- Phase 4 split; complexity must not gr
                 "Please retry; if it persists, try another image model or check the OpenRouter connection."
             )
         error_message = msg[:500]
+        error_code, http_status = _classify(exc)
         raise HTTPException(status_code=502, detail=msg) from exc
     except Exception as exc:
         success = False
@@ -1646,6 +1668,7 @@ async def generate_image(  # noqa: C901 -- Phase 4 split; complexity must not gr
 
         logging.getLogger("app.api.images").exception("Unhandled error during image generation")
         error_message = "Image generation failed due to an internal error"
+        error_code, http_status = _classify(exc)
         raise HTTPException(status_code=500, detail=error_message) from exc
     finally:
         elapsed_ms = (time.perf_counter() - generation_start) * 1000
@@ -1675,6 +1698,8 @@ async def generate_image(  # noqa: C901 -- Phase 4 split; complexity must not gr
                             response_time_ms=elapsed_ms,
                             success=success,
                             error_message=error_message,
+                            error_code=error_code,
+                            http_status=http_status,
                             source_ip=request.client.host if request.client else None,
                             operation=body.operation,
                             budget_reservation_id=budget_reservation_id,

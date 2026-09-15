@@ -27,6 +27,7 @@ from app.services.budget_reservation_service import (
 from app.services.llm_providers import external_id_lookup_candidates, normalize_model_id
 from app.services.model_capabilities import speech_generation_capabilities
 from app.services.secret_crypto import decrypt_secret
+from app.services.failure_details import CODE_CANCELLED, CODE_TIMEOUT, describe_failure
 from app.services.speech_billing_service import SpeechBillingCapture, log_speech_usage
 from app.services.speech_providers import NormalizedSpeechRequest, get_speech_adapter
 from app.services.speech_providers.contracts import SpeechProviderError
@@ -244,6 +245,10 @@ async def generate_speech(  # noqa: C901 -- Phase 4 split; complexity must not g
     budget_reservation_id: str | None = None
     success = True
     error_message: str | None = None
+    # Speech already recorded a readable message; the code is what lets API
+    # Logs filter these alongside chat, image and video failures.
+    error_code: str | None = None
+    http_status: int | None = None
     response_out: dict | None = None
 
     text = _normalize_text(body.text)
@@ -386,19 +391,24 @@ async def generate_speech(  # noqa: C901 -- Phase 4 split; complexity must not g
     except SpeechClientDisconnected as exc:
         success = False
         error_message = "Speech generation stopped because the client disconnected."
+        error_code, http_status = CODE_CANCELLED, 499
         raise HTTPException(status_code=499, detail=error_message) from exc
     except TimeoutError as exc:
         success = False
         error_message = "Speech generation timed out."
+        error_code, http_status = CODE_TIMEOUT, 504
         raise HTTPException(status_code=504, detail=error_message) from exc
     except SpeechProviderError as exc:
         success = False
         error_message = exc.message
+        error_code, http_status = describe_failure(exc).code, exc.status_code
         raise HTTPException(status_code=exc.status_code, detail=error_message) from exc
     except HTTPException as exc:
         success = False
         detail = exc.detail
         error_message = detail if isinstance(detail, str) else str(detail)
+        failure = describe_failure(exc)
+        error_code, http_status = failure.code, failure.http_status
         raise
     except Exception as exc:
         success = False
@@ -406,6 +416,7 @@ async def generate_speech(  # noqa: C901 -- Phase 4 split; complexity must not g
 
         logging.getLogger("app.api.speech").exception("Unhandled error during speech generation")
         error_message = "Speech generation failed due to an internal error"
+        error_code, http_status = describe_failure(exc).code, 500
         raise HTTPException(status_code=500, detail=error_message) from exc
     finally:
         elapsed_ms = (time.perf_counter() - generation_start) * 1000
@@ -439,6 +450,8 @@ async def generate_speech(  # noqa: C901 -- Phase 4 split; complexity must not g
                             response_time_ms=elapsed_ms,
                             success=success,
                             error_message=error_message,
+                            error_code=error_code,
+                            http_status=http_status,
                             source_ip=request.client.host if request.client else None,
                             budget_reservation_id=budget_reservation_id,
                         )

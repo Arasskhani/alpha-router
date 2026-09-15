@@ -1,0 +1,81 @@
+From 9f7d6a22348917013bb022d21645a17e16ab0f63 Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Tue, 15 Sep 2026 05:55:01 +0000
+Subject: [PATCH 16/19] fix(schema): dispose the engine when a migrate step
+ fails, so the retry works
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Each step in app.migrate runs in its own asyncio.run() loop and is retried
+while the database comes up. Only the success path disposed the engine, so a
+step that failed part-way left a pool belonging to a loop that was then
+closed, and every retry died on "attached to a different loop" instead of
+reconnecting — turning a transient database hiccup into a failed db-init.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ backend/app/migrate.py | 40 +++++++++++++++++++++++++---------------
+ 1 file changed, 25 insertions(+), 15 deletions(-)
+
+diff --git a/backend/app/migrate.py b/backend/app/migrate.py
+index db3cdfc..36e2084 100644
+--- a/backend/app/migrate.py
++++ b/backend/app/migrate.py
+@@ -37,27 +37,37 @@ from app.schema_registry import legacy_metadata_tables
+ async def _legacy_catch_up() -> None:
+     """Create legacy tables/columns an old installation still lacks (no-op at head)."""
+ 
+-    async with engine.begin() as conn:
+-        if conn.dialect.name == "postgresql":
+-            await conn.execute(text("SELECT pg_advisory_xact_lock(56023113)"))
+-        await conn.run_sync(
+-            Base.metadata.create_all,
+-            tables=legacy_metadata_tables(Base.metadata),
+-        )
+-    await apply_schema_column_patches()
+-    await backfill_api_key_unlimited_budget()
+-    await engine.dispose()
++    try:
++        async with engine.begin() as conn:
++            if conn.dialect.name == "postgresql":
++                await conn.execute(text("SELECT pg_advisory_xact_lock(56023113)"))
++            await conn.run_sync(
++                Base.metadata.create_all,
++                tables=legacy_metadata_tables(Base.metadata),
++            )
++        await apply_schema_column_patches()
++        await backfill_api_key_unlimited_budget()
++    finally:
++        # Each step runs in its own asyncio.run() loop and may be retried. A
++        # pool left behind by a failed attempt belongs to a loop that is now
++        # closed, and the retry would die on "attached to a different loop"
++        # instead of reconnecting — so dispose on the way out either way.
++        await engine.dispose()
+ 
+ 
+ async def _backfill_only() -> None:
+-    await backfill_api_key_unlimited_budget()
+-    await engine.dispose()
++    try:
++        await backfill_api_key_unlimited_budget()
++    finally:
++        await engine.dispose()
+ 
+ 
+ async def _validate() -> None:
+-    await validate_agent_platform_schema()
+-    await validate_accounting_schema()
+-    await engine.dispose()
++    try:
++        await validate_agent_platform_schema()
++        await validate_accounting_schema()
++    finally:
++        await engine.dispose()
+ 
+ 
+ _CONNECT_ATTEMPTS = 6
+-- 
+2.43.0
+

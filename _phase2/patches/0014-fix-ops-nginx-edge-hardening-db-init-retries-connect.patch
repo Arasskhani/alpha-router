@@ -1,0 +1,247 @@
+From 30089106527045c7309617ef932a8435b33354a8 Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 16:10:43 +0000
+Subject: [PATCH 14/22] fix(ops): nginx edge hardening; db-init retries
+ connection errors and compose failures show the migration log
+
+B-21: the generated nginx config advertised its version, wrote an access
+log with every chat URL and query string onto an unbounded tmpfs, used the
+OpenSSL default TLS 1.2 cipher list and left session tickets on (no key
+rotation -> weaker forward secrecy). Now server_tokens off, access_log off
+(the app has its own redacted request log), Mozilla-intermediate TLS 1.2
+suites, ssl_session_tickets off; the /var/log/nginx tmpfs is capped at 64m.
+
+B-22: python -m app.migrate ran once; a connection refused through PgBouncer
+in the first second after "healthy" failed the whole compose up with a bare
+exit code. Each of the three migration steps now retries OperationalError/
+DBAPIError/OSError up to 6 times (1,2,4,8,15 s) and exits with a clear
+message; other errors are not retried. stack.sh's compose_up_or_explain
+prints the last 60 lines of the db-init container when compose up fails.
+
+Tests: tests/test_migrate_retry.py; nginx hardening assertions added to
+tests/test_tls_certificate.py.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ backend/app/migrate.py                   | 40 +++++++++++++++++++--
+ backend/app/services/tls_edge_service.py | 10 ++++++
+ backend/tests/test_migrate_retry.py      | 44 ++++++++++++++++++++++++
+ backend/tests/test_tls_certificate.py    | 11 ++++++
+ docker-compose.yml                       |  2 +-
+ scripts/lib/stack.sh                     | 19 ++++++++--
+ 6 files changed, 119 insertions(+), 7 deletions(-)
+ create mode 100644 backend/tests/test_migrate_retry.py
+
+diff --git a/backend/app/migrate.py b/backend/app/migrate.py
+index 32cd146..b0ba483 100644
+--- a/backend/app/migrate.py
++++ b/backend/app/migrate.py
+@@ -39,10 +39,44 @@ async def _validate() -> None:
+     await engine.dispose()
+ 
+ 
++_CONNECT_ATTEMPTS = 6
++_CONNECT_BACKOFF_SECONDS = (1, 2, 4, 8, 15)
++
++
++def _with_db_retry(step, label: str) -> None:
++    """Retry ``step`` while the database is still coming up.
++
++    ``db-init`` starts once postgres/pgbouncer report healthy, but the first
++    connection through PgBouncer can still be refused for a moment (or the
++    server is mid-recovery). One OperationalError used to fail the whole
++    ``compose up`` and leave the operator with an unexplained exit code.
++    """
++    import time
++
++    from sqlalchemy.exc import DBAPIError, OperationalError
++
++    last: Exception | None = None
++    for attempt in range(_CONNECT_ATTEMPTS):
++        try:
++            step()
++            return
++        except (OperationalError, DBAPIError, OSError, ConnectionError) as exc:
++            last = exc
++            if attempt + 1 >= _CONNECT_ATTEMPTS:
++                break
++            delay = _CONNECT_BACKOFF_SECONDS[min(attempt, len(_CONNECT_BACKOFF_SECONDS) - 1)]
++            print(
++                f"[migrate] {label}: database not ready ({type(exc).__name__}); retry {attempt + 1}/{_CONNECT_ATTEMPTS - 1} in {delay}s",
++                flush=True,
++            )
++            time.sleep(delay)
++    raise SystemExit(f"[migrate] {label} failed after {_CONNECT_ATTEMPTS} attempts: {last}")
++
++
+ def main() -> None:
+-    asyncio.run(_bootstrap_legacy_schema())
+-    upgrade_schema_sync("head")
+-    asyncio.run(_validate())
++    _with_db_retry(lambda: asyncio.run(_bootstrap_legacy_schema()), "legacy schema bootstrap")
++    _with_db_retry(lambda: upgrade_schema_sync("head"), "alembic upgrade")
++    _with_db_retry(lambda: asyncio.run(_validate()), "schema validation")
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/backend/app/services/tls_edge_service.py b/backend/app/services/tls_edge_service.py
+index ebd57cc..79ca510 100644
+--- a/backend/app/services/tls_edge_service.py
++++ b/backend/app/services/tls_edge_service.py
+@@ -139,6 +139,11 @@ http {{
+     include /etc/nginx/mime.types;
+     default_type application/octet-stream;
+     sendfile on;
++    # No version banner; the access log is off (it would record every chat
++    # URL incl. session ids and query strings on the tmpfs; the app has its
++    # own structured request log with the right redactions).
++    server_tokens off;
++    access_log off;
+     client_max_body_size {max(1, int(max_body_mb))}m;
+     map $http_upgrade $connection_upgrade {{
+         default upgrade;
+@@ -153,9 +158,14 @@ http {{
+         ssl_certificate /etc/alpha-router/tls/fullchain.pem;
+         ssl_certificate_key /etc/alpha-router/tls/key.pem;
+         ssl_protocols TLSv1.2 TLSv1.3;
++        # Mozilla "intermediate" TLS 1.2 suites (TLS 1.3 suites are fixed).
++        ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+         ssl_prefer_server_ciphers off;
+         ssl_session_timeout 1d;
+         ssl_session_cache shared:SSL:10m;
++        # Session tickets would need a rotated key to keep forward secrecy;
++        # the shared cache above is enough for a single edge.
++        ssl_session_tickets off;
+ {stapling}{hsts}
+         # Ordinary JSON: small ceiling (mirrors MAX_JSON_BODY_BYTES).
+         location / {{
+diff --git a/backend/tests/test_migrate_retry.py b/backend/tests/test_migrate_retry.py
+new file mode 100644
+index 0000000..4207b79
+--- /dev/null
++++ b/backend/tests/test_migrate_retry.py
+@@ -0,0 +1,44 @@
++"""db-init retries while the database is still coming up, then fails loudly."""
++
++from __future__ import annotations
++
++from unittest.mock import patch
++
++import pytest
++from sqlalchemy.exc import OperationalError
++
++from app import migrate
++
++
++def test_retries_operational_errors_then_succeeds():
++    calls = {"n": 0}
++
++    def step():
++        calls["n"] += 1
++        if calls["n"] < 3:
++            raise OperationalError("connect", {}, Exception("connection refused"))
++
++    with patch.object(migrate, "_CONNECT_BACKOFF_SECONDS", (0, 0, 0, 0, 0)), patch("time.sleep"):
++        migrate._with_db_retry(step, "x")
++    assert calls["n"] == 3
++
++
++def test_gives_up_with_a_clear_exit_after_max_attempts():
++    def step():
++        raise OperationalError("connect", {}, Exception("still down"))
++
++    with patch.object(migrate, "_CONNECT_BACKOFF_SECONDS", (0,)), patch("time.sleep"):
++        with pytest.raises(SystemExit, match="failed after"):
++            migrate._with_db_retry(step, "alembic upgrade")
++
++
++def test_non_connection_errors_are_not_retried():
++    calls = {"n": 0}
++
++    def step():
++        calls["n"] += 1
++        raise ValueError("bad migration")
++
++    with pytest.raises(ValueError):
++        migrate._with_db_retry(step, "x")
++    assert calls["n"] == 1
+diff --git a/backend/tests/test_tls_certificate.py b/backend/tests/test_tls_certificate.py
+index 2823360..05b5138 100644
+--- a/backend/tests/test_tls_certificate.py
++++ b/backend/tests/test_tls_certificate.py
+@@ -156,3 +156,14 @@ def test_edge_listener_applied_requires_matching_generation(tmp_path, monkeypatc
+         '{"generation": 3, "ok": true}\n', encoding="utf-8"
+     )
+     assert edge_listener_applied() is True
++
++
++def test_nginx_config_is_hardened():
++    from app.services.tls_edge_service import render_nginx_config
++
++    conf = render_nginx_config(https_port=443, http_mode="redirect", hsts_enabled=True, has_chain=False, max_body_mb=100)
++    assert "server_tokens off;" in conf
++    assert "access_log off;" in conf
++    assert "ssl_session_tickets off;" in conf
++    assert "ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256" in conf
++    assert "ssl_protocols TLSv1.2 TLSv1.3;" in conf
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 3a1ded5..3097d22 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -395,7 +395,7 @@ services:
+     read_only: true
+     tmpfs:
+       - /var/cache/nginx:rw,nosuid,nodev
+-      - /var/log/nginx:rw,nosuid,nodev
++      - /var/log/nginx:rw,nosuid,nodev,size=64m
+       - /run:rw,nosuid,nodev
+       - /tmp:rw,nosuid,nodev
+     healthcheck:
+diff --git a/scripts/lib/stack.sh b/scripts/lib/stack.sh
+index b59f678..ea78cc0 100644
+--- a/scripts/lib/stack.sh
++++ b/scripts/lib/stack.sh
+@@ -97,6 +97,19 @@ backup_before_upgrade() {
+   LOG_PREFIX=backup "$ROOT_DIR/scripts/backup.sh" --consistent
+ }
+ 
++# 'compose up' exits non-zero when db-init (the migration one-shot) fails,
++# but its own output is a bare exit code. Surface the migration log so the
++# operator sees *why* before the script dies.
++compose_up_or_explain() {
++  if compose up "$@"; then
++    return 0
++  fi
++  local rc=$?
++  warn "compose up failed (exit $rc). Last lines of the migration container:"
++  compose logs --no-color --tail=60 db-init 2>/dev/null | sed "s/^/[$LOG_PREFIX]   /" || true
++  die "Stack did not start. Fix the error above and re-run; volumes are intact."
++}
++
+ start_stack() {
+   if [ "${FROM_REGISTRY:-0}" -eq 1 ]; then
+     require_registry_config
+@@ -104,16 +117,16 @@ start_stack() {
+     log "Pulling images from registry..."
+     compose pull
+     log "Starting stack (volumes are kept)..."
+-    compose up -d
++    compose_up_or_explain -d
+     return 0
+   fi
+ 
+   if [ "${SKIP_BUILD:-0}" -eq 1 ]; then
+     log "Starting stack (no rebuild; volumes are kept)..."
+-    compose up -d
++    compose_up_or_explain -d
+   else
+     log "Building and starting stack (this may take several minutes; volumes are kept)..."
+-    compose up --build -d
++    compose_up_or_explain --build -d
+   fi
+ }
+ 
+-- 
+2.43.0
+

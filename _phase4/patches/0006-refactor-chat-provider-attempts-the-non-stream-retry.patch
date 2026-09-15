@@ -1,0 +1,1339 @@
+From 9e5093720e9da45670d98ca4e0f7d903cd503b8f Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 22:29:17 +0000
+Subject: [PATCH 06/12] refactor(chat): provider attempts, the non-stream retry
+ and the sandbox step leave stream_chat
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fourth step of the split.
+
+- provider_stream.ProviderAttempt: one `acompletion(stream=True)` call —
+  start, iterate chunks while merging usage, close upstream on
+  disconnect, `finish()` merges the wrapper's final usage and estimates
+  tokens when the provider sent none, `usage_event()` builds the ledger
+  event. `estimate_tokens()` replaces three copies of the tokenizer
+  fallback. `NonStreamRetry` is the one-shot `stream=False` retry after a
+  dropped stream body, with its own `chat_completion_retry` events.
+- code_interpreter_turn: `CodeInterpreterLoop` bookkeeping,
+  `run_sandbox_until_stopped` (Stop-aware wait, drained abandon) and
+  `describe_code_step` (result formatting, artifact storage, the feedback
+  message the model continues from).
+- stream_chat's loop now reads: start attempt -> forward chunks -> absorb
+  the attempt -> decide (empty / nudge / sandbox / continue); the three
+  exception handlers book the in-flight attempt through the same
+  `_absorb` helper instead of three copies of `capture_usage_event(...)`.
+  `_persist_content` and `_review_agent_output` fold four repeated blocks.
+
+The provider function and the sandbox runner are injected from
+proxy_service's module globals, so tests keep patching
+`proxy_service.acompletion` / `run_python_sandbox`.
+
+stream_chat: 1194 -> 521 lines, cyclomatic complexity ~150 -> 75;
+proxy_service 2777 -> 1370 lines. Not yet at the plan's <300 / <25 —
+the remaining bulk is the chunk loop with its interleaved yields; next
+step is a TurnRunner class (see APPLY.md). 1371 tests, contract and
+cancellation tests unchanged; mypy baseline shrinks to 181.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ backend/app/services/code_interpreter_turn.py | 152 ++++
+ backend/app/services/provider_stream.py       | 232 ++++++
+ backend/app/services/proxy_service.py         | 684 +++++-------------
+ backend/mypy-baseline.txt                     |   2 -
+ 4 files changed, 581 insertions(+), 489 deletions(-)
+ create mode 100644 backend/app/services/code_interpreter_turn.py
+ create mode 100644 backend/app/services/provider_stream.py
+
+diff --git a/backend/app/services/code_interpreter_turn.py b/backend/app/services/code_interpreter_turn.py
+new file mode 100644
+index 0000000..67aad56
+--- /dev/null
++++ b/backend/app/services/code_interpreter_turn.py
+@@ -0,0 +1,152 @@
++"""Code Interpreter step of a chat turn (Phase 4.1).
++
++The sandbox part of ``stream_chat``: wait for the sandbox while honouring
++Stop, turn the execution result into the text shown to the user and the
++feedback message sent back to the model, and store generated files. Pure
++orchestration helpers — the streaming loop still decides when to call them
++and what to yield.
++
++Collaborators that tests patch on ``proxy_service`` (``run_python_sandbox``,
++``_persist_code_interpreter_artifacts``) are injected as callables so the
++seam stays where it was.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import contextlib
++import logging
++from collections.abc import Awaitable, Callable, Coroutine, Sequence
++from typing import Any
++from dataclasses import dataclass, field
++
++from app.services.code_interpreter_service import (
++    SandboxExecutionResult,
++    code_interpreter_error_hint,
++    format_code_output_for_chat,
++)
++from app.services.observability import increment
++
++logger = logging.getLogger(__name__)
++
++#: How often the sandbox wait re-checks whether the user pressed Stop.
++SANDBOX_CANCEL_POLL_SECONDS = 0.4
++
++#: Strong refs for fire-and-forget drains so the tasks are not GC'd early.
++_background_tasks: set[asyncio.Task] = set()
++
++
++@dataclass(slots=True)
++class CodeInterpreterLoop:
++    """Per-turn Code Interpreter bookkeeping."""
++
++    max_iterations: int
++    iterations: int = 0
++    nudge_sent: bool = False
++    executed: bool = False
++    emitted_artifact_ids: set[int] = field(default_factory=set)
++    observed_compatibility_models: set[str] = field(default_factory=set)
++
++    @property
++    def exhausted(self) -> bool:
++        return self.iterations >= self.max_iterations
++
++
++@dataclass(slots=True)
++class CodeStepOutput:
++    #: Markdown appended to the assistant message and streamed to the client.
++    formatted: str
++    #: The "tool result" user message the model continues from.
++    feedback: str
++    succeeded: bool
++
++
++def abandon_task(task: asyncio.Task) -> None:
++    """Cancel a task we no longer wait on and swallow its eventual result.
++
++    Without draining it, asyncio logs "Task exception was never retrieved" once
++    the abandoned sandbox call finishes or raises.
++    """
++    task.cancel()
++
++    async def _drain() -> None:
++        with contextlib.suppress(asyncio.CancelledError, Exception):
++            await task
++
++    drain = asyncio.create_task(_drain())
++    _background_tasks.add(drain)
++    drain.add_done_callback(_background_tasks.discard)
++
++
++async def run_sandbox_until_stopped(
++    code: str,
++    files: dict[str, str],
++    *,
++    sandbox_runner: Callable[[str, dict[str, str]], Coroutine[Any, Any, SandboxExecutionResult | str]],
++    client_stopped: Callable[[], Awaitable[bool]],
++) -> SandboxExecutionResult | str | None:
++    """Run sandbox code, abandoning the wait as soon as the user stops.
++
++    Returns ``None`` when the client stopped while the sandbox was still
++    running. Cancelling the executor task invokes the broker Job DELETE path,
++    which force-removes the active container.
++    """
++    task: asyncio.Task[SandboxExecutionResult | str] = asyncio.create_task(sandbox_runner(code, files))
++    while True:
++        done, _pending = await asyncio.wait({task}, timeout=SANDBOX_CANCEL_POLL_SECONDS)
++        if task in done:
++            return task.result()
++        if await client_stopped():
++            abandon_task(task)
++            increment("code_interpreter_cancelled")
++            return None
++
++
++async def describe_code_step(
++    exec_result: SandboxExecutionResult,
++    *,
++    loop: CodeInterpreterLoop,
++    can_persist_artifacts: bool,
++    persist_artifacts: Callable[[Sequence[Any]], Awaitable[Sequence[Any]]] | None,
++    artifact_links_markdown: Callable[[list[Any]], str],
++) -> CodeStepOutput:
++    """Format one execution result for the user and for the model.
++
++    ``persist_artifacts`` stores generated files in the user's Media library
++    (only for persisted app chats); the returned records carry ``asset_id``,
++    ``name`` and ``url``. Failure to store never fails the turn — the model
++    is told not to invent download links instead.
++    """
++    formatted = format_code_output_for_chat(exec_result)
++    artifact_context = ""
++    if exec_result.artifacts:
++        if can_persist_artifacts and persist_artifacts is not None:
++            try:
++                stored = await persist_artifacts(exec_result.artifacts)
++                new_artifacts = [item for item in stored if item.asset_id not in loop.emitted_artifact_ids]
++                loop.emitted_artifact_ids.update(item.asset_id for item in new_artifacts)
++                formatted += artifact_links_markdown(new_artifacts)
++                artifact_context = "Platform-stored artifacts (use only these exact download links):\n" + "\n".join(
++                    f"- {item.name}: {item.url}" for item in stored
++                )
++            except Exception:
++                logger.exception("Failed to persist code interpreter artifacts")
++                artifact_context = "The generated files could not be stored in Media. Do not invent download links."
++                formatted += "\n> Generated files could not be stored in Media. No download link was created.\n\n"
++        else:
++            artifact_context = (
++                "This is not a persisted app chat, so generated files were not stored. Do not invent download links."
++            )
++            formatted += "\n> Generated files are not persisted for Private Mode or non-persisted API chats.\n\n"
++    remediation = code_interpreter_error_hint(exec_result.output) if exec_result.exit_code != 0 else ""
++    feedback = "\n\n".join(
++        part
++        for part in (
++            exec_result.output,
++            artifact_context,
++            remediation,
++            "Continue your reply to the user using these results. Do not repeat the same code unless necessary.",
++        )
++        if part
++    )
++    return CodeStepOutput(formatted=formatted, feedback=feedback, succeeded=exec_result.exit_code == 0)
+diff --git a/backend/app/services/provider_stream.py b/backend/app/services/provider_stream.py
+new file mode 100644
+index 0000000..6292721
+--- /dev/null
++++ b/backend/app/services/provider_stream.py
+@@ -0,0 +1,232 @@
++"""One streamed attempt against the model provider (Phase 4.1).
++
++``stream_chat`` used to inline this: call ``acompletion``, iterate chunks,
++merge usage from chunks / the LiteLLM wrapper, estimate tokens when the
++provider sent none, and build the ``PendingUsageEvent`` for the ledger.
++The same estimation code existed three times (stream, non-stream retry,
++final cost). :class:`ProviderAttempt` owns that state for exactly one call
++so the loop in ``stream_chat`` only decides *what to do* with each chunk.
++
++The provider function is injected (``completion_fn``) so callers — and the
++tests that patch ``proxy_service.acompletion`` — keep their seam.
++"""
++
++from __future__ import annotations
++
++import datetime
++import logging
++from collections.abc import AsyncIterator, Awaitable, Callable
++from typing import Any
++
++import litellm
++
++from app.models.model_catalog import AIModel
++from app.services.llm_providers import resolve_litellm_provider
++from app.services.provider_utils import (
++    apply_litellm_provider_kwargs,
++    close_upstream_stream,
++    extract_non_stream_content,
++    merge_stream_usage,
++    usage_from_chunk,
++    usage_from_stream_wrapper,
++)
++from app.services.usage_accounting_service import PendingUsageEvent, capture_usage_event
++
++logger = logging.getLogger(__name__)
++
++
++def estimate_tokens(
++    *,
++    provider_type: str | None,
++    model: str,
++    messages: list[dict] | None,
++    completion_text: str,
++) -> tuple[int, int]:
++    """(prompt, completion) token estimate via LiteLLM's tokenizer; (0, 0) on any failure.
++
++    Used only when the provider reported no usage. Never raises: a tokenizer
++    hiccup must not turn a billable turn into an error.
++    """
++    try:
++        prompt_kwargs: dict = {"messages": messages or []}
++        litellm_model = apply_litellm_provider_kwargs(prompt_kwargs, provider_type, model)
++        prompt_tokens = int(litellm.token_counter(**prompt_kwargs) or 0)
++        completion_kwargs: dict = {"model": litellm_model, "text": completion_text}
++        llm_provider = resolve_litellm_provider(provider_type)
++        if llm_provider:
++            completion_kwargs["custom_llm_provider"] = llm_provider
++        completion_tokens = int(litellm.token_counter(**completion_kwargs) or 0)
++        return prompt_tokens, completion_tokens
++    except Exception:
++        logger.debug("token estimate failed for %s", model, exc_info=True)
++        return 0, 0
++
++
++class ProviderAttempt:
++    """State of one ``acompletion(stream=True)`` call from start to settlement."""
++
++    def __init__(
++        self,
++        *,
++        ai_model: AIModel,
++        provider_type: str,
++        model: str,
++        completion_kwargs: dict,
++        completion_fn: Callable[..., Awaitable[Any]],
++    ) -> None:
++        self.ai_model = ai_model
++        self.provider_type = provider_type
++        self.model = model
++        self.completion_kwargs = completion_kwargs
++        self._completion_fn = completion_fn
++        self.messages: list[dict] = list(completion_kwargs.get("messages", []))
++        self.started_at: datetime.datetime = datetime.datetime.utcnow()
++        self.response: Any = None
++        self.last_usage_chunk: Any = None
++        self.prompt_tokens = 0
++        self.completion_tokens = 0
++        self.cached_tokens = 0
++        self.content = ""
++        self.last_chunk_at: float | None = None
++
++    async def start(self) -> None:
++        self.response = await self._completion_fn(**self.completion_kwargs)
++
++    async def chunks(self) -> AsyncIterator[Any]:
++        """Iterate provider chunks, recording usage and text as they arrive."""
++        async for chunk in self.response:
++            pt, ct, cache = usage_from_chunk(chunk)
++            chunk_usage = chunk.get("usage") if isinstance(chunk, dict) else getattr(chunk, "usage", None)
++            if pt or ct or cache or chunk_usage is not None:
++                self.last_usage_chunk = chunk
++            self.prompt_tokens, self.completion_tokens, self.cached_tokens = merge_stream_usage(
++                self.prompt_tokens, self.completion_tokens, self.cached_tokens, pt, ct, cache
++            )
++            yield chunk
++
++    @staticmethod
++    def delta_text(chunk: Any) -> str:
++        if chunk.choices and chunk.choices[0].delta.content:
++            return chunk.choices[0].delta.content
++        return ""
++
++    def record_text(self, delta: str) -> None:
++        self.content += delta
++
++    async def close(self) -> None:
++        """Stop consuming upstream (client gone): every further chunk is billed for nobody."""
++        await close_upstream_stream(self.response)
++
++    def finish(self) -> None:
++        """Merge the wrapper's final usage; estimate when the provider sent none."""
++        pt, ct, cache = usage_from_stream_wrapper(self.response)
++        self.prompt_tokens, self.completion_tokens, self.cached_tokens = merge_stream_usage(
++            self.prompt_tokens, self.completion_tokens, self.cached_tokens, pt, ct, cache
++        )
++        if self.prompt_tokens == 0 and self.content:
++            est_prompt, est_completion = estimate_tokens(
++                provider_type=self.provider_type,
++                model=self.model,
++                messages=self.messages,
++                completion_text=self.content,
++            )
++            self.prompt_tokens, self.completion_tokens = est_prompt, est_completion
++
++    def usage_event(
++        self,
++        *,
++        attempt_index: int,
++        status: str,
++        error_message: str | None = None,
++        completion: str | None = None,
++        operation_name: str = "chat_completion",
++    ) -> PendingUsageEvent:
++        return capture_usage_event(
++            self.response,
++            fallback_response=self.last_usage_chunk,
++            ai_model=self.ai_model,
++            provider_type=self.provider_type,
++            service_type="llm",
++            operation_name=operation_name,
++            model_id=self.model,
++            attempt_index=attempt_index,
++            status=status,
++            started_at=self.started_at,
++            completed_at=datetime.datetime.utcnow(),
++            prompt_tokens=self.prompt_tokens,
++            completion_tokens=self.completion_tokens,
++            cached_tokens=self.cached_tokens,
++            prompt=self.messages,
++            completion=self.content if completion is None else completion,
++            error_message=error_message,
++        )
++
++
++class NonStreamRetry:
++    """The one-shot ``stream=False`` retry after a streaming read failure.
++
++    Some providers (OpenRouter Auto Router in particular) drop a stream body
++    but answer the same request fine without streaming. The retry re-sends the
++    exact prompt once; its outcome is booked as a separate ``chat_completion_retry``
++    usage event so the ledger shows both attempts.
++    """
++
++    def __init__(
++        self,
++        *,
++        ai_model: AIModel,
++        provider_type: str,
++        model: str,
++        completion_kwargs: dict,
++        completion_fn: Callable[..., Awaitable[Any]],
++    ) -> None:
++        self.ai_model = ai_model
++        self.provider_type = provider_type
++        self.model = model
++        self.kwargs = dict(completion_kwargs)
++        self.kwargs["stream"] = False
++        self.kwargs.pop("stream_options", None)
++        self._completion_fn = completion_fn
++        self.started_at = datetime.datetime.utcnow()
++        self.content = ""
++        self.prompt_tokens = 0
++        self.completion_tokens = 0
++        self.cached_tokens = 0
++        self._response: Any = None
++
++    async def run(self) -> None:
++        """Perform the call; raises the provider error when it fails too."""
++        response = await self._completion_fn(**self.kwargs)
++        content, (pt, ct, cache) = extract_non_stream_content(response)
++        if pt == 0 and content:
++            est_prompt, est_completion = estimate_tokens(
++                provider_type=self.provider_type,
++                model=self.model,
++                messages=self.kwargs.get("messages"),
++                completion_text=content,
++            )
++            if est_prompt:
++                pt, ct = est_prompt, est_completion
++        self.content = content
++        self.prompt_tokens, self.completion_tokens, self.cached_tokens = pt, ct, cache
++        self._response = response
++
++    def usage_event(self, *, attempt_index: int, status: str, error_message: str | None = None) -> PendingUsageEvent:
++        return capture_usage_event(
++            self._response,
++            ai_model=self.ai_model,
++            provider_type=self.provider_type,
++            service_type="llm",
++            operation_name="chat_completion_retry",
++            model_id=self.model,
++            attempt_index=attempt_index,
++            status=status,
++            started_at=self.started_at,
++            completed_at=datetime.datetime.utcnow(),
++            prompt_tokens=self.prompt_tokens,
++            completion_tokens=self.completion_tokens,
++            cached_tokens=self.cached_tokens,
++            prompt=self.kwargs.get("messages"),
++            completion=self.content if status == "succeeded" else "",
++            error_message=error_message,
++        )
+diff --git a/backend/app/services/proxy_service.py b/backend/app/services/proxy_service.py
+index 09b9c0d..4bb90ad 100644
+--- a/backend/app/services/proxy_service.py
++++ b/backend/app/services/proxy_service.py
+@@ -4,14 +4,14 @@ Costs are taken from provider usage objects — never adjusted by Alpharouter.
+ """
+ 
+ import asyncio
+-import contextlib
+ import datetime
+ import json
+ import logging
+ import time
+ import uuid
+-from collections.abc import AsyncIterator
++from collections.abc import AsyncIterator, Sequence
+ from dataclasses import dataclass
++from typing import Any
+ 
+ import anyio
+ import httpx
+@@ -73,10 +73,8 @@ from app.services.code_interpreter_service import (
+     SandboxArtifact,
+     SandboxExecutionResult,
+     WorkspaceLimitError,
+-    code_interpreter_error_hint,
+     code_interpreter_nudge_message,
+     extract_last_python_block,
+-    format_code_output_for_chat,
+     run_python_sandbox,
+     workspace_files_from_messages,
+ )
+@@ -91,7 +89,6 @@ from app.services.model_tool_compatibility_service import (
+     is_auto_router_model_id,
+     record_compatibility_result,
+ )
+-from app.services.observability import increment
+ from app.services.private_mode_service import (
+     PrivateModePersistenceError,
+     resolve_private_mode,
+@@ -127,6 +124,12 @@ from app.services.model_resolution_service import (  # noqa: F401 -- re-exported
+     assert_model_supports_text_chat,
+     resolve_model_and_key,
+ )
++from app.services.code_interpreter_turn import (
++    CodeInterpreterLoop,
++    describe_code_step,
++    run_sandbox_until_stopped,
++)
++from app.services.provider_stream import NonStreamRetry, ProviderAttempt, estimate_tokens
+ from app.services.chat_turn_context import (
+     NonGeneratingReply,
+     _adaptive_openrouter_extra_body,
+@@ -353,25 +356,6 @@ def _spawn_compatibility_task(coro) -> None:
+     task.add_done_callback(_background_compatibility_tasks.discard)
+ 
+ 
+-# How often the sandbox wait wakes up to notice that the user pressed Stop.
+-_SANDBOX_CANCEL_POLL_SECONDS = 0.4
+-
+-
+-def _abandon_task(task: asyncio.Task) -> None:
+-    """Cancel a task we no longer wait on and swallow its eventual result.
+-
+-    Without draining it, asyncio logs "Task exception was never retrieved" once
+-    the abandoned sandbox call finishes or raises.
+-    """
+-    task.cancel()
+-
+-    async def _drain() -> None:
+-        with contextlib.suppress(asyncio.CancelledError, Exception):
+-            await task
+-
+-    _spawn_compatibility_task(_drain())
+-
+-
+ async def _log_compatibility_task_errors(coro) -> None:
+     try:
+         await coro
+@@ -754,15 +738,35 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
+         usage_events: list[PendingUsageEvent] = []
+         generation_start = time.perf_counter()
+         stream_end_at: float | None = None
+-        active_response = None
+-        active_last_chunk = None
+-        active_started_at: datetime.datetime | None = None
+-        active_messages = None
+-        active_prompt_tokens = 0
+-        active_completion_tokens = 0
+-        active_cached_tokens = 0
+-
+-        async def _compute_cost() -> None:
++        attempt: ProviderAttempt | None = None
++
++        def _absorb(
++            done: ProviderAttempt,
++            *,
++            status: str,
++            error_message: str | None,
++            completion: str | None,
++            track_model: bool = False,
++        ) -> None:
++            """Book one provider attempt into the turn totals and the ledger events."""
++            nonlocal prompt_tokens, completion_tokens, cached_tokens
++            usage_events.append(
++                done.usage_event(
++                    attempt_index=len(usage_events),
++                    status=status,
++                    error_message=error_message,
++                    completion=completion,
++                )
++            )
++            if track_model:
++                observed = _usage_event_model_id(usage_events[-1])
++                if observed and not is_auto_router_model_id(observed):
++                    code_loop.observed_compatibility_models.add(observed)
++            prompt_tokens += done.prompt_tokens
++            completion_tokens += done.completion_tokens
++            cached_tokens += done.cached_tokens
++
++        def _compute_cost() -> None:
+             nonlocal total_cost, prompt_tokens, completion_tokens
+             if usage_events:
+                 total_cost = sum(
+@@ -773,21 +777,11 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
+                 return
+             msgs_for_count = completion_kwargs.get("messages", messages)
+             if prompt_tokens == 0 and collected_content:
+-                try:
+-                    tc_kwargs: dict = {"messages": msgs_for_count}
+-                    litellm_model = _apply_litellm_provider_kwargs(tc_kwargs, provider_type, model)
+-                    prompt_tokens = litellm.token_counter(**tc_kwargs)
+-                    ct_kwargs: dict = {
+-                        "model": litellm_model,
+-                        "text": collected_content,
+-                    }
+-                    llm_provider = resolve_litellm_provider(provider_type)
+-                    if llm_provider:
+-                        ct_kwargs["custom_llm_provider"] = llm_provider
+-                    completion_tokens = litellm.token_counter(**ct_kwargs)
+-                except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
+-                    pass
+-
++                est_prompt, est_completion = estimate_tokens(
++                    provider_type=provider_type, model=model, messages=msgs_for_count, completion_text=collected_content
++                )
++                if est_prompt:
++                    prompt_tokens, completion_tokens = est_prompt, est_completion
+             total_cost = _compute_token_cost_usd(
+                 ai_model,
+                 prompt_tokens=prompt_tokens,
+@@ -817,55 +811,75 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
+                 if await request.is_disconnected():
+                     client_disconnected = True
+                     return True
+-            except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
++            except Exception:  # noqa: BLE001 -- a broken transport counts as still connected until the next chunk
+                 pass
+             if persister:
+                 try:
+                     if await persister.is_cancel_requested(force=True):
+                         client_disconnected = True
+                         return True
+-                except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
++                except Exception:  # noqa: BLE001 -- the cancel flag is advisory; the chunk loop re-checks it
+                     pass
+             return False
+ 
+-        async def _run_sandbox_until_stopped(
+-            code: str,
+-            files: dict[str, str],
+-        ) -> SandboxExecutionResult | None:
+-            """Run sandbox code, abandoning the wait as soon as the user stops.
+-
+-            Returns ``None`` when the client stopped while the sandbox was still
+-            running. Cancelling the executor task invokes the broker Job DELETE
+-            path, which force-removes the active container.
+-            """
+-            task = asyncio.create_task(run_python_sandbox(code, files))
+-            while True:
+-                done, _pending = await asyncio.wait(
+-                    {task},
+-                    timeout=_SANDBOX_CANCEL_POLL_SECONDS,
++        async def _persist_content(text: str) -> None:
++            if not persister:
++                return
++            try:
++                await persister.on_content(text)
++            except Exception:  # noqa: BLE001 -- session is rolled back and the caller continues without the write
++                await db.rollback()
++                persister.reset_persist_state()
++
++        async def _review_agent_output() -> None:
++            """Post-generation Agent review: rewrite collected_content, persist, mark displayed."""
++            nonlocal agent_review, collected_content, agent_output_displayed
++            if agent_turn is None:
++                return
++            if agent_resource_subject is None:
++                raise AgentRuntimeUnavailable("Agent authorization context is unavailable")
++            agent_review = await finalize_agent_completion(
++                plan=agent_turn.plan,
++                output_text=collected_content,
++                resource_subject=agent_resource_subject,
++            )
++            reviewed = agent_review.display_text if agent_review.status == "ready" else agent_review.safe_response
++            collected_content = reviewed or "This Agent response could not be displayed safely."
++            if persister:
++                persister.set_completion_metadata(
++                    {
++                        "agentStatus": ("succeeded" if agent_review.status == "ready" else "blocked"),
++                        "completionReasonCode": agent_review.reason_code,
++                        "citations": _agent_citation_metadata(agent_turn, agent_review),
++                    }
++                )
++                await _persist_content(collected_content)
++            agent_output_displayed = True
++
++        async def _record_ci_failure(event, detail: str, **kwargs) -> None:
++            try:
++                await _record_code_interpreter_failure(
++                    ai_model=ai_model,
++                    provider=provider,
++                    base_url=base_url,
++                    api_key=api_key,
++                    event=event,
++                    detail=detail,
++                    **kwargs,
+                 )
+-                if task in done:
+-                    return task.result()
+-                if await _client_stopped():
+-                    _abandon_task(task)
+-                    increment("code_interpreter_cancelled")
+-                    return None
++            except Exception:
++                logger.exception("Failed to record Code Interpreter compatibility failure")
+ 
++        code_loop = CodeInterpreterLoop(max_iterations=MAX_CODE_ITERATIONS)
+         try:
+-            code_iterations = 0
+-            code_nudge_sent = False
+-            code_executed = False
+-            emitted_artifact_ids: set[int] = set()
+-            observed_compatibility_models: set[str] = set()
+-            while True:
+-                if client_disconnected:
+-                    break
+-                active_started_at = datetime.datetime.utcnow()
+-                active_messages = list(completion_kwargs.get("messages", messages))
+-                active_prompt_tokens = 0
+-                active_completion_tokens = 0
+-                active_cached_tokens = 0
+-                active_last_chunk = None
++            while not client_disconnected:
++                attempt = ProviderAttempt(
++                    ai_model=ai_model,
++                    provider_type=provider_type,
++                    model=model,
++                    completion_kwargs=completion_kwargs,
++                    completion_fn=acompletion,
++                )
+                 # Release the request session's connection before waiting on
+                 # the provider. Only persisted chats commit via
+                 # persister.prepare(); gateway, API-key and Private Mode turns
+@@ -874,10 +888,8 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
+                 # server slot -- for the whole stream (minutes). ~32 concurrent
+                 # gateway streams per worker then exhaust the pool.
+                 await _end_request_transaction(db)
+-                response = await acompletion(**completion_kwargs)
+-                active_response = response
+-                iteration_content = ""
+-                async for chunk in response:
++                await attempt.start()
++                async for chunk in attempt.chunks():
+                     stream_end_at = time.perf_counter()
+                     if capacity_lost.is_set():
+                         client_disconnected = True
+@@ -893,129 +905,45 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
+                         # chunk is generated (and billed upstream) for nobody.
+                         # The post-loop code estimates usage for what was
+                         # received so the partial turn is still settled.
+-                        await _close_upstream_stream(response)
++                        await attempt.close()
+                         break
+-                    pt, ct, cache = _usage_from_chunk(chunk)
+-                    chunk_usage = chunk.get("usage") if isinstance(chunk, dict) else getattr(chunk, "usage", None)
+-                    if pt or ct or cache or chunk_usage is not None:
+-                        active_last_chunk = chunk
+-                    (
+-                        active_prompt_tokens,
+-                        active_completion_tokens,
+-                        active_cached_tokens,
+-                    ) = _merge_stream_usage(
+-                        active_prompt_tokens,
+-                        active_completion_tokens,
+-                        active_cached_tokens,
+-                        pt,
+-                        ct,
+-                        cache,
+-                    )
+-                    if chunk.choices and chunk.choices[0].delta.content:
+-                        delta = chunk.choices[0].delta.content
+-                        iteration_content += delta
++                    delta = ProviderAttempt.delta_text(chunk)
++                    if delta:
++                        attempt.record_text(delta)
+                         collected_content += delta
+                     if not client_disconnected and agent_turn is None:
+                         yield f"data: {_serialize_stream_chunk(chunk)}\n\n".encode()
+                     # Persist after yield and without awaiting DB: token printing
+                     # must not wait on commit. A partial flush after Stop would
+                     # re-mark the message as streaming, so skip once cancelled.
+-                    if (
+-                        chunk.choices
+-                        and chunk.choices[0].delta.content
+-                        and persister
+-                        and agent_turn is None
+-                        and not client_disconnected
+-                    ):
++                    if delta and persister and agent_turn is None and not client_disconnected:
+                         persister.schedule_content(collected_content)
+ 
+-                pt, ct, cache = _usage_from_stream_wrapper(response)
+-                active_prompt_tokens, active_completion_tokens, active_cached_tokens = _merge_stream_usage(
+-                    active_prompt_tokens,
+-                    active_completion_tokens,
+-                    active_cached_tokens,
+-                    pt,
+-                    ct,
+-                    cache,
+-                )
+-                if active_prompt_tokens == 0 and iteration_content:
+-                    try:
+-                        token_kwargs: dict = {"messages": active_messages}
+-                        _apply_litellm_provider_kwargs(
+-                            token_kwargs,
+-                            provider_type,
+-                            model,
+-                        )
+-                        active_prompt_tokens = int(litellm.token_counter(**token_kwargs) or 0)
+-                        completion_kwargs_for_count: dict = {
+-                            "model": model,
+-                            "text": iteration_content,
+-                        }
+-                        llm_provider = resolve_litellm_provider(provider_type)
+-                        if llm_provider:
+-                            completion_kwargs_for_count["custom_llm_provider"] = llm_provider
+-                        active_completion_tokens = int(litellm.token_counter(**completion_kwargs_for_count) or 0)
+-                    except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
+-                        pass
++                attempt.finish()
++                iteration_content = attempt.content
+                 empty_completion = not iteration_content.strip()
+                 attempt_error = "Upstream model returned an empty completion." if empty_completion else None
+-                active_event = capture_usage_event(
+-                    response,
+-                    fallback_response=active_last_chunk,
+-                    ai_model=ai_model,
+-                    provider_type=provider_type,
+-                    service_type="llm",
+-                    operation_name="chat_completion",
+-                    model_id=model,
+-                    attempt_index=len(usage_events),
++                _absorb(
++                    attempt,
+                     status="failed" if empty_completion else "succeeded",
+-                    started_at=active_started_at,
+-                    completed_at=datetime.datetime.utcnow(),
+-                    prompt_tokens=active_prompt_tokens,
+-                    completion_tokens=active_completion_tokens,
+-                    cached_tokens=active_cached_tokens,
+-                    prompt=active_messages,
+-                    completion=iteration_content,
+                     error_message=attempt_error,
++                    completion=iteration_content,
++                    track_model=True,
+                 )
+-                usage_events.append(active_event)
+-                observed_model_id = _usage_event_model_id(active_event)
+-                if observed_model_id and not is_auto_router_model_id(observed_model_id):
+-                    observed_compatibility_models.add(observed_model_id)
+-                prompt_tokens += active_prompt_tokens
+-                completion_tokens += active_completion_tokens
+-                cached_tokens += active_cached_tokens
+-                active_response = None
+-                active_last_chunk = None
+-                active_started_at = None
+-                active_messages = None
+-                active_prompt_tokens = 0
+-                active_completion_tokens = 0
+-                active_cached_tokens = 0
++                active_event = usage_events[-1]
++                attempt = None
+ 
+                 if client_disconnected:
+                     break
+ 
+                 if empty_completion and tools.code_interpreter:
+-                    try:
+-                        await _record_code_interpreter_failure(
+-                            ai_model=ai_model,
+-                            provider=provider,
+-                            base_url=base_url,
+-                            api_key=api_key,
+-                            event=active_event,
+-                            detail=attempt_error or "Empty Code Interpreter response",
+-                        )
+-                    except Exception:
+-                        logger.exception("Failed to record Code Interpreter compatibility failure")
++                    await _record_ci_failure(active_event, attempt_error or "Empty Code Interpreter response")
+                     if provider == "openrouter" and is_auto_router_model_id(ai_model.external_id):
+                         retry_extra_body = await _adaptive_openrouter_extra_body(ai_model)
+                         if retry_extra_body:
+                             completion_kwargs["extra_body"] = retry_extra_body
+ 
+-                if empty_completion and (
+-                    not tools.code_interpreter or code_nudge_sent or code_iterations >= MAX_CODE_ITERATIONS
+-                ):
++                if empty_completion and (not tools.code_interpreter or code_loop.nudge_sent or code_loop.exhausted):
+                     success = False
+                     error_message = (
+                         "The upstream model returned no usable content. Retry the request or select a different model."
+@@ -1023,39 +951,29 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
+                     yield _sse_error_frame(error_message)
+                     break
+ 
+-                if not tools.code_interpreter or code_iterations >= MAX_CODE_ITERATIONS:
++                if not tools.code_interpreter or code_loop.exhausted:
+                     break
+ 
+                 code = extract_last_python_block(iteration_content)
+                 if not code:
+-                    if code_executed:
++                    if code_loop.executed:
+                         # Code already ran in this turn, so an answer without a new
+                         # block is the normal end of the flow: never nudge again and
+                         # never score it as a compatibility failure.
+                         break
+-                    if code_nudge_sent:
+-                        try:
+-                            await _record_code_interpreter_failure(
+-                                ai_model=ai_model,
+-                                provider=provider,
+-                                base_url=base_url,
+-                                api_key=api_key,
+-                                event=active_event,
+-                                detail=("The model did not emit a runnable Python block after an explicit nudge."),
+-                                reason_code_override="no_python_block",
+-                            )
+-                        except Exception:
+-                            logger.exception("Failed to record Code Interpreter compatibility failure")
++                    if code_loop.nudge_sent:
++                        await _record_ci_failure(
++                            active_event,
++                            "The model did not emit a runnable Python block after an explicit nudge.",
++                            reason_code_override="no_python_block",
++                        )
+                         break
+-                    code_nudge_sent = True
++                    code_loop.nudge_sent = True
+                     current_messages = apply_prompt_cache_breakpoints(
+                         current_messages
+                         + [
+                             {"role": "assistant", "content": iteration_content},
+-                            {
+-                                "role": "user",
+-                                "content": code_interpreter_nudge_message(workspace_files),
+-                            },
++                            {"role": "user", "content": code_interpreter_nudge_message(workspace_files)},
+                         ]
+                     )
+                     completion_kwargs["messages"] = current_messages
+@@ -1065,24 +983,19 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
+                 # both before starting and while waiting for the result.
+                 if await _client_stopped():
+                     break
+-
+                 try:
+-                    exec_result = await _run_sandbox_until_stopped(code, workspace_files)
+-                except ValueError as exc:
+-                    exec_result = SandboxExecutionResult(
+-                        output=f"Code interpreter error: {exc}",
+-                        exit_code=1,
++                    exec_result = await run_sandbox_until_stopped(
++                        code, workspace_files, sandbox_runner=run_python_sandbox, client_stopped=_client_stopped
+                     )
++                except ValueError as exc:
++                    exec_result = SandboxExecutionResult(output=f"Code interpreter error: {exc}", exit_code=1)
+                 if exec_result is None or await _client_stopped():
+                     break
+                 if isinstance(exec_result, str):
+-                    exec_result = SandboxExecutionResult(
+-                        output=exec_result,
+-                        exit_code=0,
+-                    )
++                    exec_result = SandboxExecutionResult(output=exec_result, exit_code=0)
+ 
+                 if exec_result.exit_code == 0:
+-                    code_executed = True
++                    code_loop.executed = True
+                     # Resolving the routed model can take a second upstream, so it
+                     # is never allowed to delay the user's stream.
+                     _spawn_compatibility_task(
+@@ -1093,121 +1006,54 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
+                                 base_url=base_url,
+                                 api_key=api_key,
+                                 event=active_event,
+-                                observed_model_ids=set(observed_compatibility_models),
++                                observed_model_ids=set(code_loop.observed_compatibility_models),
+                             )
+                         )
+                     )
+ 
+-                formatted = format_code_output_for_chat(exec_result)
+-                artifact_context = ""
+-                if exec_result.artifacts:
+-                    can_persist_artifacts = bool(
+-                        source == "alpha_router_chat"
+-                        and body.get("persist_chat")
+-                        and user_id
+-                        and body.get("chat_session_id")
++                can_persist_artifacts = bool(
++                    source == "alpha_router_chat"
++                    and body.get("persist_chat")
++                    and user_id
++                    and body.get("chat_session_id")
++                )
++
++                async def _persist_artifacts(artifacts: Sequence[Any]) -> Sequence[Any]:
++                    return await _persist_code_interpreter_artifacts(
++                        tuple(artifacts),
++                        user_id=int(user_id),
++                        username=username,
++                        chat_session_id=str(body["chat_session_id"]),
++                        model_id=model,
++                        source_prompt=_extract_prompt_text(messages),
+                     )
+-                    if can_persist_artifacts:
+-                        try:
+-                            stored_artifacts = await _persist_code_interpreter_artifacts(
+-                                exec_result.artifacts,
+-                                user_id=int(user_id),
+-                                username=username,
+-                                chat_session_id=str(body["chat_session_id"]),
+-                                model_id=model,
+-                                source_prompt=_extract_prompt_text(messages),
+-                            )
+-                            new_artifacts = [
+-                                item for item in stored_artifacts if item.asset_id not in emitted_artifact_ids
+-                            ]
+-                            emitted_artifact_ids.update(item.asset_id for item in new_artifacts)
+-                            formatted += _artifact_links_markdown(new_artifacts)
+-                            artifact_context = (
+-                                "Platform-stored artifacts (use only these exact download links):\n"
+-                                + "\n".join(f"- {item.name}: {item.url}" for item in stored_artifacts)
+-                            )
+-                        except Exception:
+-                            logger.exception("Failed to persist code interpreter artifacts")
+-                            artifact_context = (
+-                                "The generated files could not be stored in Media. Do not invent download links."
+-                            )
+-                            formatted += (
+-                                "\n> Generated files could not be stored in Media. No download link was created.\n\n"
+-                            )
+-                    else:
+-                        artifact_context = (
+-                            "This is not a persisted app chat, so generated files were not stored. "
+-                            "Do not invent download links."
+-                        )
+-                        formatted += (
+-                            "\n> Generated files are not persisted for Private Mode or non-persisted API chats.\n\n"
+-                        )
+-                collected_content += formatted
+-                if persister:
+-                    try:
+-                        await persister.on_content(collected_content)
+-                    except Exception:  # noqa: BLE001 -- session is rolled back and the caller continues without the write
+-                        await db.rollback()
+-                        persister.reset_persist_state()
++
++                step = await describe_code_step(
++                    exec_result,
++                    loop=code_loop,
++                    can_persist_artifacts=can_persist_artifacts,
++                    persist_artifacts=_persist_artifacts,
++                    artifact_links_markdown=_artifact_links_markdown,
++                )
++                collected_content += step.formatted
++                await _persist_content(collected_content)
+                 if not client_disconnected:
+-                    yield _sse_delta_chunk(formatted)
+-
+-                remediation = code_interpreter_error_hint(exec_result.output) if exec_result.exit_code != 0 else ""
+-                feedback_parts = [
+-                    part
+-                    for part in (
+-                        exec_result.output,
+-                        artifact_context,
+-                        remediation,
+-                        "Continue your reply to the user using these results. "
+-                        "Do not repeat the same code unless necessary.",
+-                    )
+-                    if part
+-                ]
++                    yield _sse_delta_chunk(step.formatted)
++
+                 current_messages = apply_prompt_cache_breakpoints(
+                     current_messages
+                     + [
+                         {"role": "assistant", "content": iteration_content},
+-                        {
+-                            "role": "user",
+-                            "content": "\n\n".join(feedback_parts),
+-                        },
++                        {"role": "user", "content": step.feedback},
+                     ]
+                 )
+                 completion_kwargs["messages"] = current_messages
+-                code_iterations += 1
++                code_loop.iterations += 1
+ 
+-            await _compute_cost()
++            _compute_cost()
+             if agent_turn is not None and not client_disconnected and success:
+-                if agent_resource_subject is None:
+-                    raise AgentRuntimeUnavailable("Agent authorization context is unavailable")
+-                agent_review = await finalize_agent_completion(
+-                    plan=agent_turn.plan,
+-                    output_text=collected_content,
+-                    resource_subject=agent_resource_subject,
+-                )
+-                reviewed_content = (
+-                    agent_review.display_text if agent_review.status == "ready" else agent_review.safe_response
+-                )
+-                collected_content = reviewed_content or ("This Agent response could not be displayed safely.")
+-                if persister:
+-                    persister.set_completion_metadata(
+-                        {
+-                            "agentStatus": ("succeeded" if agent_review.status == "ready" else "blocked"),
+-                            "completionReasonCode": agent_review.reason_code,
+-                            "citations": _agent_citation_metadata(
+-                                agent_turn,
+-                                agent_review,
+-                            ),
+-                        }
+-                    )
+-                    try:
+-                        await persister.on_content(collected_content)
+-                    except Exception:  # noqa: BLE001 -- session is rolled back and the caller continues without the write
+-                        await db.rollback()
+-                        persister.reset_persist_state()
++                await _review_agent_output()
+                 yield _sse_delta_chunk(collected_content)
+-                agent_output_displayed = True
+         except GeneratorExit:
+             # The ASGI server closed the generator (client gone). Nothing may be
+             # yielded from here on; the finally block below still settles.
+@@ -1220,187 +1066,51 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
+             was_cancelled = True
+             success = False
+             error_message = "Request cancelled"
+-            if active_started_at is not None:
+-                usage_events.append(
+-                    capture_usage_event(
+-                        active_response,
+-                        fallback_response=active_last_chunk,
+-                        ai_model=ai_model,
+-                        provider_type=provider_type,
+-                        service_type="llm",
+-                        operation_name="chat_completion",
+-                        model_id=model,
+-                        attempt_index=len(usage_events),
+-                        status="cancelled",
+-                        started_at=active_started_at,
+-                        completed_at=datetime.datetime.utcnow(),
+-                        prompt_tokens=active_prompt_tokens,
+-                        completion_tokens=active_completion_tokens,
+-                        cached_tokens=active_cached_tokens,
+-                        prompt=active_messages,
+-                        completion="",
+-                        error_message=str(exc) or error_message,
+-                    )
+-                )
+-                prompt_tokens += active_prompt_tokens
+-                completion_tokens += active_completion_tokens
+-                cached_tokens += active_cached_tokens
++            if attempt is not None:
++                _absorb(attempt, status="cancelled", error_message=str(exc) or error_message, completion="")
++                attempt = None
+             raise
+-        except Exception as exc:  # noqa: BLE001 -- session is rolled back and the caller continues without the write
+-            if active_started_at is not None:
+-                failed_event = capture_usage_event(
+-                    active_response,
+-                    fallback_response=active_last_chunk,
++        except Exception as exc:  # noqa: BLE001 -- provider failures become an SSE error frame; settlement still runs
++            failed_event = None
++            if attempt is not None:
++                _absorb(attempt, status="failed", error_message=str(exc), completion="")
++                failed_event = usage_events[-1]
++                attempt = None
++                if tools.code_interpreter:
++                    await _record_ci_failure(failed_event, str(exc))
++            if _should_retry_non_stream(provider, exc):
++                retry = NonStreamRetry(
+                     ai_model=ai_model,
+                     provider_type=provider_type,
+-                    service_type="llm",
+-                    operation_name="chat_completion",
+-                    model_id=model,
+-                    attempt_index=len(usage_events),
+-                    status="failed",
+-                    started_at=active_started_at,
+-                    completed_at=datetime.datetime.utcnow(),
+-                    prompt_tokens=active_prompt_tokens,
+-                    completion_tokens=active_completion_tokens,
+-                    cached_tokens=active_cached_tokens,
+-                    prompt=active_messages,
+-                    completion="",
+-                    error_message=str(exc),
++                    model=model,
++                    completion_kwargs=completion_kwargs,
++                    completion_fn=acompletion,
+                 )
+-                usage_events.append(failed_event)
+-                prompt_tokens += active_prompt_tokens
+-                completion_tokens += active_completion_tokens
+-                cached_tokens += active_cached_tokens
+-                if tools.code_interpreter:
+-                    try:
+-                        await _record_code_interpreter_failure(
+-                            ai_model=ai_model,
+-                            provider=provider,
+-                            base_url=base_url,
+-                            api_key=api_key,
+-                            event=failed_event,
+-                            detail=str(exc),
+-                        )
+-                    except Exception:
+-                        logger.exception("Failed to record Code Interpreter compatibility failure")
+-            active_response = None
+-            active_last_chunk = None
+-            active_started_at = None
+-            active_messages = None
+-            active_prompt_tokens = 0
+-            active_completion_tokens = 0
+-            active_cached_tokens = 0
+-            if _should_retry_non_stream(provider, exc):
+-                retry_started_at = datetime.datetime.utcnow()
+                 try:
+-                    retry_kwargs = dict(completion_kwargs)
+-                    retry_kwargs["stream"] = False
+-                    retry_kwargs.pop("stream_options", None)
+-                    retry_response = await acompletion(**retry_kwargs)
+-                    stream_end_at = time.perf_counter()
+-                    content, (pt, ct, cache) = _extract_non_stream_content(retry_response)
+-                    collected_content = content
+-                    if pt == 0 and content:
+-                        try:
+-                            prompt_count_kwargs: dict = {"messages": retry_kwargs.get("messages", messages)}
+-                            _apply_litellm_provider_kwargs(
+-                                prompt_count_kwargs,
+-                                provider_type,
+-                                model,
+-                            )
+-                            pt = int(litellm.token_counter(**prompt_count_kwargs) or 0)
+-                            completion_count_kwargs: dict = {
+-                                "model": model,
+-                                "text": content,
+-                            }
+-                            llm_provider = resolve_litellm_provider(provider_type)
+-                            if llm_provider:
+-                                completion_count_kwargs["custom_llm_provider"] = llm_provider
+-                            ct = int(litellm.token_counter(**completion_count_kwargs) or 0)
+-                        except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
+-                            pass
+-                    usage_events.append(
+-                        capture_usage_event(
+-                            retry_response,
+-                            ai_model=ai_model,
+-                            provider_type=provider_type,
+-                            service_type="llm",
+-                            operation_name="chat_completion_retry",
+-                            model_id=model,
+-                            attempt_index=len(usage_events),
+-                            status="succeeded",
+-                            started_at=retry_started_at,
+-                            completed_at=datetime.datetime.utcnow(),
+-                            prompt_tokens=pt,
+-                            completion_tokens=ct,
+-                            cached_tokens=cache,
+-                            prompt=retry_kwargs.get("messages", messages),
+-                            completion=content,
+-                        )
+-                    )
+-                    prompt_tokens += pt
+-                    completion_tokens += ct
+-                    cached_tokens += cache
+-                    if content and agent_turn is None:
+-                        yield _sse_delta_chunk(content)
+-                    if persister and content and agent_turn is None:
+-                        try:
+-                            await persister.on_content(collected_content)
+-                        except Exception:  # noqa: BLE001 -- session is rolled back and the caller continues without the write
+-                            await db.rollback()
+-                            persister.reset_persist_state()
+-                    await _compute_cost()
+-                    if agent_turn is not None:
+-                        if agent_resource_subject is None:
+-                            raise AgentRuntimeUnavailable("Agent authorization context is unavailable")
+-                        agent_review = await finalize_agent_completion(
+-                            plan=agent_turn.plan,
+-                            output_text=collected_content,
+-                            resource_subject=agent_resource_subject,
+-                        )
+-                        reviewed_content = (
+-                            agent_review.display_text if agent_review.status == "ready" else agent_review.safe_response
+-                        )
+-                        collected_content = reviewed_content or ("This Agent response could not be displayed safely.")
+-                        if persister:
+-                            persister.set_completion_metadata(
+-                                {
+-                                    "agentStatus": ("succeeded" if agent_review.status == "ready" else "blocked"),
+-                                    "completionReasonCode": agent_review.reason_code,
+-                                    "citations": _agent_citation_metadata(
+-                                        agent_turn,
+-                                        agent_review,
+-                                    ),
+-                                }
+-                            )
+-                            try:
+-                                await persister.on_content(collected_content)
+-                            except Exception:  # noqa: BLE001 -- session is rolled back and the caller continues without the write
+-                                await db.rollback()
+-                                persister.reset_persist_state()
+-                        yield _sse_delta_chunk(collected_content)
+-                        agent_output_displayed = True
++                    await retry.run()
+                 except Exception as retry_exc:  # noqa: BLE001 -- error text is surfaced to the caller
+                     usage_events.append(
+-                        capture_usage_event(
+-                            None,
+-                            ai_model=ai_model,
+-                            provider_type=provider_type,
+-                            service_type="llm",
+-                            operation_name="chat_completion_retry",
+-                            model_id=model,
+-                            attempt_index=len(usage_events),
+-                            status="failed",
+-                            started_at=retry_started_at,
+-                            completed_at=datetime.datetime.utcnow(),
+-                            prompt=retry_kwargs.get("messages", messages),
+-                            completion="",
+-                            error_message=str(retry_exc),
++                        retry.usage_event(
++                            attempt_index=len(usage_events), status="failed", error_message=str(retry_exc)
+                         )
+                     )
+                     success = False
+                     error_message = _format_provider_error(retry_exc, provider)[:500]
+                     yield _sse_error_frame(error_message)
++                else:
++                    stream_end_at = time.perf_counter()
++                    collected_content = retry.content
++                    usage_events.append(retry.usage_event(attempt_index=len(usage_events), status="succeeded"))
++                    prompt_tokens += retry.prompt_tokens
++                    completion_tokens += retry.completion_tokens
++                    cached_tokens += retry.cached_tokens
++                    if retry.content and agent_turn is None:
++                        yield _sse_delta_chunk(retry.content)
++                        await _persist_content(collected_content)
++                    _compute_cost()
++                    if agent_turn is not None:
++                        await _review_agent_output()
++                        yield _sse_delta_chunk(collected_content)
+             else:
+                 success = False
+                 error_message = _format_provider_error(exc, provider)[:500]
+diff --git a/backend/mypy-baseline.txt b/backend/mypy-baseline.txt
+index caaee5c..c07d0c5 100644
+--- a/backend/mypy-baseline.txt
++++ b/backend/mypy-baseline.txt
+@@ -100,8 +100,6 @@ app/services/project_composer_pref_service.py:0: error: Argument 1 to "_check_to
+ app/services/project_memory_service.py:0: error: Argument 3 to "_is_owner" has incompatible type "int | None"; expected "int"  [arg-type]
+ app/services/provider_reconciliation_service.py:0: error: Argument "api_key" to "fetch_actual_cost" of "ProviderReconciliationAdapter" has incompatible type "str | None"; expected "str"  [arg-type]
+ app/services/proxy_service.py:0: error: Argument "api_key" to "_record_code_interpreter_failure" has incompatible type "str | None"; expected "str"  [arg-type]
+-app/services/proxy_service.py:0: error: Argument "api_key" to "_record_code_interpreter_failure" has incompatible type "str | None"; expected "str"  [arg-type]
+-app/services/proxy_service.py:0: error: Argument "api_key" to "_record_code_interpreter_failure" has incompatible type "str | None"; expected "str"  [arg-type]
+ app/services/proxy_service.py:0: error: Argument "api_key" to "_record_code_interpreter_success" has incompatible type "str | None"; expected "str"  [arg-type]
+ app/services/proxy_service.py:0: error: Argument 1 to "int" has incompatible type "int | None"; expected "str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc"  [arg-type]
+ app/services/proxy_service.py:0: error: Argument 2 to "resolve_model_and_key" has incompatible type "str | Any | None"; expected "str"  [arg-type]
+-- 
+2.43.0
+

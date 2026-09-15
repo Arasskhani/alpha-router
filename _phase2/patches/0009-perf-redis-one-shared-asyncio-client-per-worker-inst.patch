@@ -1,0 +1,634 @@
+From 3a202040988a5a049ed68c0a44b067ad7e6c1e3d Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 15:38:58 +0000
+Subject: [PATCH 09/22] perf(redis): one shared asyncio client per worker
+ instead of a new pool per operation
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Bug (B-14): rate_limit, presence_service, code_interpreter_capacity_service,
+auth_exchange, twofa_pending, saml_state and the readiness probe each
+called redis.asyncio.from_url() per operation and aclose()d it right after:
+a new connection pool, TCP connect and AUTH for every rate-limit check,
+presence ping and one-time code. Under load that is a connect storm against
+Redis and a latency tax on every request.
+
+Change: app/core/redis_client.get_redis() returns a lazily built client
+bound to the running event loop (so a fresh loop per test never reuses a
+dead loop's connections), 2s socket timeouts, health checks every 30s. All
+seven call sites use it and no longer close what they get; the lifespan
+closes it once on shutdown. The knowledge worker keeps its dedicated client
+(blocking XREADGROUP should not share a pool with request handlers).
+
+Tests: tests/test_redis_client_singleton.py — one build per loop/URL, close
+then rebuild, different loop -> new client; 100 rate-limit checks + 100
+presence pings + 50 codes -> exactly one client and zero aclose() calls.
+The presence test that asserted a close per call now asserts the opposite.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ backend/app/core/redis_client.py              |  70 +++++++++++
+ backend/app/main.py                           |   3 +
+ backend/app/services/auth_exchange.py         |  15 +--
+ .../code_interpreter_capacity_service.py      |  28 +----
+ backend/app/services/presence_service.py      |  21 +---
+ backend/app/services/rate_limit.py            |   8 +-
+ backend/app/services/readiness_service.py     |  14 +--
+ backend/app/services/saml_state.py            |  16 +--
+ backend/app/services/twofa_pending.py         |  15 +--
+ backend/tests/test_presence_service.py        |   6 +-
+ backend/tests/test_redis_client_singleton.py  | 114 ++++++++++++++++++
+ 11 files changed, 218 insertions(+), 92 deletions(-)
+ create mode 100644 backend/app/core/redis_client.py
+ create mode 100644 backend/tests/test_redis_client_singleton.py
+
+diff --git a/backend/app/core/redis_client.py b/backend/app/core/redis_client.py
+new file mode 100644
+index 0000000..f595a0f
+--- /dev/null
++++ b/backend/app/core/redis_client.py
+@@ -0,0 +1,70 @@
++"""One Redis client (and connection pool) per worker process.
++
++Six services used to call ``redis.asyncio.from_url`` for every operation and
++``aclose()`` it right after: a new pool, a new TCP connection and a new AUTH
++round-trip per rate-limit check, per presence ping, per one-time code. Under
++load that is a connect storm against Redis and a measurable latency tax on
++every request.
++
++``get_redis()`` returns a lazily created client bound to the *running event
++loop*; the pool is reused for the life of the process and closed once from
++the lifespan. The client is looked up per loop so test suites that spin up a
++fresh loop per test never reuse connections that belong to a dead loop.
++
++Callers must not ``aclose()`` what they get from here. The knowledge worker
++keeps its own dedicated client (``knowledge_queue.create_knowledge_redis``):
++blocking XREADGROUP calls should not share a pool with request handlers.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import logging
++
++import redis.asyncio as redis_async
++
++from app.config import effective_redis_url
++
++logger = logging.getLogger(__name__)
++
++_clients: dict[int, tuple[asyncio.AbstractEventLoop, str, redis_async.Redis]] = {}
++
++
++def _build(url: str) -> redis_async.Redis:
++    return redis_async.from_url(
++        url,
++        decode_responses=True,
++        socket_connect_timeout=2.0,
++        socket_timeout=2.0,
++        health_check_interval=30,
++        retry_on_timeout=False,
++    )
++
++
++def get_redis() -> redis_async.Redis:
++    """Shared client for the current event loop. Never close it yourself."""
++    loop = asyncio.get_running_loop()
++    url = effective_redis_url()
++    entry = _clients.get(id(loop))
++    if entry is not None and entry[0] is loop and entry[1] == url:
++        return entry[2]
++    client = _build(url)
++    _clients[id(loop)] = (loop, url, client)
++    return client
++
++
++async def close_redis() -> None:
++    """Close the client owned by the current loop (call from the lifespan)."""
++    loop = asyncio.get_running_loop()
++    entry = _clients.pop(id(loop), None)
++    if entry is None:
++        return
++    try:
++        await entry[2].aclose()
++    except Exception:
++        logger.debug("closing shared redis client failed", exc_info=True)
++
++
++def reset_for_tests() -> None:
++    """Forget every cached client without awaiting (test isolation only)."""
++    _clients.clear()
+diff --git a/backend/app/main.py b/backend/app/main.py
+index e51decf..deb269a 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -736,6 +736,9 @@ async def lifespan(app: FastAPI):
+     await leader.stop()
+     stop_scheduler()
+     await close_openrouter_http_client()
++    from app.core.redis_client import close_redis
++
++    await close_redis()
+     await engine.dispose()
+     shutdown_telemetry()
+ 
+diff --git a/backend/app/services/auth_exchange.py b/backend/app/services/auth_exchange.py
+index 876a8b1..c42eb97 100644
+--- a/backend/app/services/auth_exchange.py
++++ b/backend/app/services/auth_exchange.py
+@@ -15,7 +15,7 @@ import time
+ 
+ import redis.asyncio as redis_async
+ 
+-from app.config import effective_redis_url
++from app.core.redis_client import get_redis
+ from app.services.observability import increment
+ 
+ _CODE_TTL_SECONDS = 30
+@@ -26,7 +26,8 @@ _mem_store: dict[str, tuple[str, float]] = {}
+ 
+ 
+ def _client() -> redis_async.Redis:
+-    return redis_async.from_url(effective_redis_url(), decode_responses=True)
++    """Shared per-process client (never closed here)."""
++    return get_redis()
+ 
+ 
+ def _prune_expired(now: float) -> None:
+@@ -47,11 +48,6 @@ async def store_token(code: str, payload: dict) -> None:
+         return
+     except Exception:
+         increment("redis_fallback")
+-    finally:
+-        try:
+-            await client.aclose()
+-        except Exception:
+-            pass
+     expires = time.monotonic() + _CODE_TTL_SECONDS
+     async with _mem_lock:
+         _prune_expired(time.monotonic())
+@@ -70,11 +66,6 @@ async def consume_code(code: str) -> dict | None:
+     except Exception:
+         increment("redis_fallback")
+         raw = None
+-    finally:
+-        try:
+-            await client.aclose()
+-        except Exception:
+-            pass
+     if not raw:
+         async with _mem_lock:
+             now = time.monotonic()
+diff --git a/backend/app/services/code_interpreter_capacity_service.py b/backend/app/services/code_interpreter_capacity_service.py
+index 164fb8e..5baa722 100644
+--- a/backend/app/services/code_interpreter_capacity_service.py
++++ b/backend/app/services/code_interpreter_capacity_service.py
+@@ -22,7 +22,8 @@ from typing import Any
+ 
+ from fastapi import HTTPException
+ 
+-from app.config import effective_redis_url, get_settings
++from app.core.redis_client import get_redis
++from app.config import get_settings
+ from app.services.observability import increment
+ 
+ CAPACITY_BUSY_CODE = "code_interpreter_capacity_busy"
+@@ -280,10 +281,8 @@ def _unavailable_exception(retry_after: int) -> HTTPException:
+ 
+ 
+ def _redis_client():
+-    """Build a Redis asyncio client from effective_redis_url (may raise)."""
+-    import redis.asyncio as redis_async
+-
+-    return redis_async.from_url(effective_redis_url(), decode_responses=True)
++    """Shared per-process client (may raise; never closed here)."""
++    return get_redis()
+ 
+ 
+ def _normalize_permit(permit: CapacityPermit | str) -> str:
+@@ -292,15 +291,6 @@ def _normalize_permit(permit: CapacityPermit | str) -> str:
+     return str(permit)
+ 
+ 
+-async def _aclose(client: Any) -> None:
+-    if client is None:
+-        return
+-    try:
+-        await client.aclose()
+-    except Exception:
+-        pass
+-
+-
+ async def acquire_code_interpreter_turn(
+     subject: str,
+     *,
+@@ -357,8 +347,6 @@ async def acquire_code_interpreter_turn(
+         )
+     except Exception as exc:
+         raise _unavailable_exception(retry_after) from exc
+-    finally:
+-        await _aclose(client)
+ 
+     status = int(result[0]) if result else 0
+     if status == 1:
+@@ -393,8 +381,6 @@ async def release_code_interpreter_turn(permit: CapacityPermit | str) -> bool:
+         return bool(int(result or 0))
+     except Exception:
+         return False
+-    finally:
+-        await _aclose(client)
+ 
+ 
+ async def heartbeat_code_interpreter_turn(permit: CapacityPermit | str) -> bool:
+@@ -428,8 +414,6 @@ async def heartbeat_code_interpreter_turn(permit: CapacityPermit | str) -> bool:
+         return bool(int(result or 0))
+     except Exception as exc:
+         raise _unavailable_exception(cfg["retry_after"]) from exc
+-    finally:
+-        await _aclose(client)
+ 
+ 
+ async def code_interpreter_capacity_stats() -> dict[str, Any]:
+@@ -451,8 +435,6 @@ async def code_interpreter_capacity_stats() -> dict[str, Any]:
+         )
+     except Exception as exc:
+         raise _unavailable_exception(base_cfg["retry_after"]) from exc
+-    finally:
+-        await _aclose(client)
+ 
+     limit = cfg["global_max"]
+     return {
+@@ -514,8 +496,6 @@ async def sync_code_interpreter_capacity_policy(db: Any) -> dict[str, int]:
+         )
+     except Exception as exc:
+         raise _unavailable_exception(policy["retry_after_seconds"]) from exc
+-    finally:
+-        await _aclose(client)
+     return policy
+ 
+ 
+diff --git a/backend/app/services/presence_service.py b/backend/app/services/presence_service.py
+index b597981..07b1782 100644
+--- a/backend/app/services/presence_service.py
++++ b/backend/app/services/presence_service.py
+@@ -18,7 +18,8 @@ from __future__ import annotations
+ 
+ from collections.abc import Sequence
+ 
+-from app.config import effective_redis_url, get_settings
++from app.core.redis_client import get_redis
++from app.config import get_settings
+ from app.services.observability import increment
+ 
+ _KEY_PREFIX = "presence:user:"
+@@ -31,21 +32,13 @@ _MIN_TTL_SECONDS = 30
+ 
+ 
+ def _client():
++    """Shared per-process client (never closed here)."""
+     try:
+-        import redis.asyncio as redis_async
+-
+-        return redis_async.from_url(effective_redis_url(), decode_responses=True)
++        return get_redis()
+     except Exception:
+         return None
+ 
+ 
+-async def _close(client) -> None:
+-    try:
+-        await client.aclose()
+-    except Exception:
+-        pass
+-
+-
+ def presence_key(user_id: int) -> str:
+     return f"{_KEY_PREFIX}{int(user_id)}"
+ 
+@@ -73,8 +66,6 @@ async def mark_online(user_id: int) -> bool:
+     except Exception:
+         increment("redis_fallback")
+         return False
+-    finally:
+-        await _close(client)
+ 
+ 
+ async def clear_presence(user_id: int) -> None:
+@@ -88,8 +79,6 @@ async def clear_presence(user_id: int) -> None:
+         await client.delete(presence_key(user_id))
+     except Exception:
+         increment("redis_fallback")
+-    finally:
+-        await _close(client)
+ 
+ 
+ async def online_user_ids(user_ids: Sequence[int]) -> set[int] | None:
+@@ -122,6 +111,4 @@ async def online_user_ids(user_ids: Sequence[int]) -> set[int] | None:
+     except Exception:
+         increment("redis_fallback")
+         return None
+-    finally:
+-        await _close(client)
+     return {uid for uid, value in zip(ids, values) if value}
+diff --git a/backend/app/services/rate_limit.py b/backend/app/services/rate_limit.py
+index 83a8eea..5440d25 100644
+--- a/backend/app/services/rate_limit.py
++++ b/backend/app/services/rate_limit.py
+@@ -19,7 +19,7 @@ from threading import Lock
+ 
+ from fastapi import HTTPException
+ 
+-from app.config import effective_redis_url
++from app.core.redis_client import get_redis
+ from app.services.observability import increment
+ 
+ _lock = Lock()
+@@ -33,10 +33,9 @@ _RATE_LIMIT_EXCEEDED = "Rate limit exceeded. Try again shortly."
+ 
+ 
+ def _client():
++    """Shared per-process client (never closed here)."""
+     try:
+-        import redis.asyncio as redis_async
+-
+-        return redis_async.from_url(effective_redis_url(), decode_responses=True)
++        return get_redis()
+     except Exception:
+         return None
+ 
+@@ -69,7 +68,6 @@ async def check_rate_limit(
+             pipe.zcard(key)
+             pipe.expire(key, window_seconds + 5)
+             _, _, count, _ = await pipe.execute()
+-            await client.aclose()
+             if int(count) > limit:
+                 raise HTTPException(status_code=429, detail=_RATE_LIMIT_EXCEEDED)
+             return
+diff --git a/backend/app/services/readiness_service.py b/backend/app/services/readiness_service.py
+index 6ec1028..a1f198f 100644
+--- a/backend/app/services/readiness_service.py
++++ b/backend/app/services/readiness_service.py
+@@ -27,7 +27,7 @@ from typing import Any
+ 
+ from sqlalchemy import text
+ 
+-from app.config import effective_redis_url, get_settings
++from app.config import get_settings
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -87,14 +87,12 @@ async def _check_database() -> None:
+ 
+ 
+ async def _check_redis() -> None:
+-    import redis.asyncio as redis_async
++    from app.core.redis_client import get_redis
+ 
+-    client = redis_async.from_url(effective_redis_url(), socket_connect_timeout=1.5, socket_timeout=1.5)
+-    try:
+-        if not await client.ping():
+-            raise RuntimeError("PING returned false")
+-    finally:
+-        await client.aclose()
++    # The shared pool: a broken pooled connection is exactly what the probe
++    # should notice, and the 2s timeouts on the client bound it.
++    if not await get_redis().ping():
++        raise RuntimeError("PING returned false")
+ 
+ 
+ async def _check_qdrant() -> None:
+diff --git a/backend/app/services/saml_state.py b/backend/app/services/saml_state.py
+index ae18842..436fc4d 100644
+--- a/backend/app/services/saml_state.py
++++ b/backend/app/services/saml_state.py
+@@ -25,7 +25,8 @@ from typing import Any
+ 
+ import redis.asyncio as redis_async
+ 
+-from app.config import effective_redis_url, get_settings
++from app.config import get_settings
++from app.core.redis_client import get_redis
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -43,12 +44,8 @@ ClientFactory = Callable[[], Any]
+ 
+ 
+ def _default_client() -> redis_async.Redis:
+-    return redis_async.from_url(
+-        effective_redis_url(),
+-        decode_responses=True,
+-        socket_connect_timeout=2.0,
+-        socket_timeout=2.0,
+-    )
++    """Shared per-process client (never closed here)."""
++    return get_redis()
+ 
+ 
+ _client_factory: ClientFactory = _default_client
+@@ -69,11 +66,6 @@ async def _with_client(op):
+     except Exception as exc:
+         logger.error("SAML state store unavailable: %s", type(exc).__name__)
+         raise SamlStateUnavailable(str(exc)) from exc
+-    finally:
+-        try:
+-            await client.aclose()
+-        except Exception:
+-            pass
+ 
+ 
+ async def remember_authn_request(request_id: str) -> None:
+diff --git a/backend/app/services/twofa_pending.py b/backend/app/services/twofa_pending.py
+index 94e03dd..f09a0bc 100644
+--- a/backend/app/services/twofa_pending.py
++++ b/backend/app/services/twofa_pending.py
+@@ -9,7 +9,7 @@ import time
+ 
+ import redis.asyncio as redis_async
+ 
+-from app.config import effective_redis_url
++from app.core.redis_client import get_redis
+ from app.services.observability import increment
+ 
+ _TTL_SECONDS = 300
+@@ -20,7 +20,8 @@ _mem_store: dict[str, tuple[str, float]] = {}
+ 
+ 
+ def _client() -> redis_async.Redis:
+-    return redis_async.from_url(effective_redis_url(), decode_responses=True)
++    """Shared per-process client (never closed here)."""
++    return get_redis()
+ 
+ 
+ def generate_pending_token() -> str:
+@@ -35,11 +36,6 @@ async def store_pending(token: str, payload: dict) -> None:
+         return
+     except Exception:
+         increment("redis_fallback")
+-    finally:
+-        try:
+-            await client.aclose()
+-        except Exception:
+-            pass
+     expires = time.monotonic() + _TTL_SECONDS
+     async with _mem_lock:
+         _mem_store[token] = (raw, expires)
+@@ -58,11 +54,6 @@ async def consume_pending(token: str) -> dict | None:
+     except Exception:
+         increment("redis_fallback")
+         raw = None
+-    finally:
+-        try:
+-            await client.aclose()
+-        except Exception:
+-            pass
+     if not raw:
+         async with _mem_lock:
+             now = time.monotonic()
+diff --git a/backend/tests/test_presence_service.py b/backend/tests/test_presence_service.py
+index 0a2305d..30ba6c3 100644
+--- a/backend/tests/test_presence_service.py
++++ b/backend/tests/test_presence_service.py
+@@ -52,13 +52,15 @@ def _install(monkeypatch, client: FakeRedis | None, *, settings: FakeSettings |
+     return client
+ 
+ 
+-def test_mark_online_sets_key_with_ttl_and_releases_the_client(monkeypatch) -> None:
++def test_mark_online_sets_key_with_ttl_and_keeps_the_shared_client_open(monkeypatch) -> None:
+     client = _install(monkeypatch, FakeRedis())
+ 
+     assert asyncio.run(presence_service.mark_online(7)) is True
+     assert client.store == {"presence:user:7": "1"}
+     assert client.ttls["presence:user:7"] == 90
+-    assert client.closed is True
++    # The client is the per-process singleton now; closing it here would
++    # tear down the pool for every other caller.
++    assert client.closed is False
+ 
+ 
+ def test_ttl_is_floored_so_a_tab_cannot_expire_between_pings(monkeypatch) -> None:
+diff --git a/backend/tests/test_redis_client_singleton.py b/backend/tests/test_redis_client_singleton.py
+new file mode 100644
+index 0000000..f26c708
+--- /dev/null
++++ b/backend/tests/test_redis_client_singleton.py
+@@ -0,0 +1,114 @@
++"""One Redis client per worker: built once per loop, never closed by callers."""
++
++from __future__ import annotations
++
++import asyncio
++from unittest.mock import AsyncMock, MagicMock, patch
++
++from app.core import redis_client
++
++
++def test_get_redis_builds_once_per_loop_and_url(monkeypatch):
++    redis_client.reset_for_tests()
++    built = []
++
++    def fake_build(url):
++        built.append(url)
++        c = MagicMock(name=f"redis-{len(built)}")
++        c.aclose = AsyncMock()
++        return c
++
++    monkeypatch.setattr(redis_client, "_build", fake_build)
++    monkeypatch.setattr(redis_client, "effective_redis_url", lambda: "redis://a:6379/0")
++
++    async def run():
++        first = redis_client.get_redis()
++        for _ in range(100):
++            assert redis_client.get_redis() is first
++        assert built == ["redis://a:6379/0"]
++        # URL change (settings reload in tests/ops) -> a new client.
++        monkeypatch.setattr(redis_client, "effective_redis_url", lambda: "redis://b:6379/0")
++        second = redis_client.get_redis()
++        assert second is not first and len(built) == 2
++        await redis_client.close_redis()
++        second.aclose.assert_awaited_once()
++        # Closed: the next call builds again.
++        redis_client.get_redis()
++        assert len(built) == 3
++
++    asyncio.run(run())
++
++    # A different event loop never reuses the previous loop's client.
++    async def run2():
++        redis_client.get_redis()
++
++    asyncio.run(run2())
++    assert len(built) == 4
++    redis_client.reset_for_tests()
++
++
++def test_hot_paths_share_the_client_and_never_close_it(monkeypatch):
++    """100 rate-limit checks + 100 presence pings + 50 one-time codes = 1 client, 0 aclose."""
++    redis_client.reset_for_tests()
++
++    class FakePipe:
++        def __init__(self, store):
++            self.store = store
++            self.ops = []
++
++        def __getattr__(self, name):
++            def op(*a, **k):
++                self.ops.append(name)
++                return self
++            return op
++
++        async def execute(self):
++            out = []
++            for name in self.ops:
++                out.append(1 if name in ("zcard", "delete") else None)
++            self.ops = []
++            return out
++
++    class FakeRedis:
++        instances = 0
++
++        def __init__(self):
++            FakeRedis.instances += 1
++            self.closed = 0
++            self.store = {}
++
++        def pipeline(self):
++            return FakePipe(self.store)
++
++        async def set(self, k, v, ex=None, nx=False):
++            self.store[k] = v
++            return True
++
++        async def delete(self, k):
++            return 1 if self.store.pop(k, None) is not None else 0
++
++        async def mget(self, keys):
++            return [self.store.get(k) for k in keys]
++
++        async def aclose(self):
++            self.closed += 1
++
++    monkeypatch.setattr(redis_client, "_build", lambda url: FakeRedis())
++    monkeypatch.setattr(redis_client, "effective_redis_url", lambda: "redis://x/0")
++
++    from app.services import auth_exchange, presence_service, rate_limit
++
++    async def run():
++        with patch.object(presence_service, "presence_enabled", lambda: True):
++            for i in range(100):
++                await rate_limit.check_rate_limit(f"k{i}", limit=10)
++                await presence_service.mark_online(i)
++            for i in range(50):
++                await auth_exchange.store_token(f"c{i}", {"i": i})
++        client = redis_client.get_redis()
++        assert FakeRedis.instances == 1
++        assert client.closed == 0
++        assert await presence_service.online_user_ids([1, 2, 999]) == {1, 2}
++
++    asyncio.run(run())
++    redis_client.reset_for_tests()
+-- 
+2.43.0
+

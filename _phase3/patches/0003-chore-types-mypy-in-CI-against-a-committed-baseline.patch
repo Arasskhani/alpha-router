@@ -1,0 +1,313 @@
+From ba6ff5aff73738962a1249ab92b6a393db6d6934 Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 18:57:54 +0000
+Subject: [PATCH 03/11] chore(types): mypy in CI against a committed baseline
+
+`scripts/mypy-check.sh` runs mypy (backend/mypy.ini) and filters the
+output through mypy-baseline; any error not listed in
+backend/mypy-baseline.txt fails the job. `--sync` regenerates the file
+after a fix. 144 errors / 42 files are frozen today.
+
+Two real fixes were needed before mypy could run at all:
+- ldap_config: a backslash inside an f-string expression (PEP 701) is
+  valid Python 3.12 but mypy's parser rejects it; the split is hoisted
+  into a variable.
+- main.py: `import app.models` bound the *package* to the name `app`,
+  which the module later rebinds to the FastAPI instance. It worked at
+  runtime only because of ordering; it is now `import app.models as
+  _orm_models` and 45 spurious "Module has no attribute" errors vanish.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ .gitlab-ci.yml                      |  12 ++
+ backend/app/main.py                 |   2 +-
+ backend/app/services/ldap_config.py |   3 +-
+ backend/mypy-baseline.txt           | 186 ++++++++++++++++++++++++++++
+ backend/mypy.ini                    |  12 ++
+ scripts/mypy-check.sh               |  11 ++
+ 6 files changed, 224 insertions(+), 2 deletions(-)
+ create mode 100644 backend/mypy-baseline.txt
+ create mode 100644 backend/mypy.ini
+ create mode 100644 scripts/mypy-check.sh
+
+diff --git a/.gitlab-ci.yml b/.gitlab-ci.yml
+index efd8bb4a..8af4be1e 100644
+--- a/.gitlab-ci.yml
++++ b/.gitlab-ci.yml
+@@ -41,6 +41,18 @@ backend-lint:
+     # Full rule set (backend/ruff.toml) plus formatting; both are hard gates.
+     - cd backend && ruff check . && ruff format --check .
+ 
++# Type errors are frozen in backend/mypy-baseline.txt; the job fails on any
++# error not in the baseline. Fix errors and run `scripts/mypy-check.sh --sync`
++# to shrink it — never to grow it.
++backend-typecheck:
++  stage: verify
++  image: python:3.12-slim
++  <<: *backend-rules
++  script:
++    - python -m pip install --no-cache-dir -r backend/requirements.txt
++    - python -m pip install --no-cache-dir "mypy==1.20.2" mypy-baseline
++    - bash scripts/mypy-check.sh
++
+ backend-tests:
+   stage: verify
+   image: python:3.12-slim
+diff --git a/backend/app/main.py b/backend/app/main.py
+index d2010b2f..8c5e5c6e 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+ from fastapi.staticfiles import StaticFiles
+ from sqlalchemy import select, text
+ 
+-import app.models  # Register every ORM table before schema startup.
++import app.models as _orm_models  # noqa: F401 -- registers every ORM table before schema startup
+ from app.api import (
+     admin,
+     admin_agent_evaluations,
+diff --git a/backend/app/services/ldap_config.py b/backend/app/services/ldap_config.py
+index 1550e655..31a79788 100644
+--- a/backend/app/services/ldap_config.py
++++ b/backend/app/services/ldap_config.py
+@@ -149,7 +149,8 @@ def format_login_identity(username: str, domain: str) -> tuple[str, str, str]:
+         sam = raw.split("@", 1)[0]
+         return raw, sam, raw
+     if "\\" in raw:
+-        return raw, raw.split("\\", 1)[1], f"{raw.split('\\', 1)[1]}@{domain}" if domain else raw
++        sam = raw.split("\\", 1)[1]
++        return raw, sam, f"{sam}@{domain}" if domain else raw
+     if domain:
+         upn = f"{raw}@{domain}"
+         return upn, raw, upn
+diff --git a/backend/mypy-baseline.txt b/backend/mypy-baseline.txt
+new file mode 100644
+index 00000000..edb0312d
+--- /dev/null
++++ b/backend/mypy-baseline.txt
+@@ -0,0 +1,186 @@
++app/api/admin.py:0: error: Argument 3 to "sync_connection_with_flash" has incompatible type "str | None"; expected "str"  [arg-type]
++app/api/admin.py:0: error: Incompatible types in assignment (expression has type "str", target has type "list[dict[str, str]]")  [assignment]
++app/api/admin_agents.py:0: error: Item "None" of "str | None" has no attribute "strip"  [union-attr]
++app/api/admin_knowledge.py:0: error: "object" has no attribute "__iter__"; maybe "__dir__" or "__str__"? (not iterable)  [attr-defined]
++app/api/admin_knowledge.py:0: error: "object" has no attribute "__iter__"; maybe "__dir__" or "__str__"? (not iterable)  [attr-defined]
++app/api/admin_knowledge.py:0: error: "object" has no attribute "__iter__"; maybe "__dir__" or "__str__"? (not iterable)  [attr-defined]
++app/api/admin_knowledge.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
++app/api/admin_knowledge.py:0: error: No overload variant of "list" matches argument type "object"  [call-overload]
++app/api/admin_knowledge.py:0: note: Possible overload variants:
++app/api/admin_knowledge.py:0: note: Possible overload variants:
++app/api/admin_knowledge.py:0: note: def [_T] list() -> list[_T]
++app/api/admin_knowledge.py:0: note: def [_T] list(Iterable[_T], /) -> list[_T]
++app/api/admin_knowledge.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
++app/api/admin_knowledge.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
++app/api/deps.py:0: error: No overload variant of "get" of "dict" matches argument types "str", "tuple[()]"  [call-overload]
++app/api/deps.py:0: note: Error code "call-overload" not covered by "type: ignore" comment
++app/api/deps.py:0: note: Possible overload variants:
++app/api/deps.py:0: note: def [_T] get(self, Literal['overview', 'models_api', 'people_access', 'integrations', 'data_reports', 'agents_knowledge', 'developer', 'security'], _T, /) -> tuple[Literal['dashboard', 'chat', 'media', 'connections', 'models', 'api_keys', 'roles', 'users', 'deleted_users', 'groups', 'plans', 'authentication', 'smtp', 'storage', 'reports', 'api_logs', 'operations', 'database', 'agents', 'admin_guide', 'user_manual', 'security_settings'], ...] | _T
++app/api/deps.py:0: note: def get(self, Literal['overview', 'models_api', 'people_access', 'integrations', 'data_reports', 'agents_knowledge', 'developer', 'security'], None = ..., /) -> tuple[Literal['dashboard', 'chat', 'media', 'connections', 'models', 'api_keys', 'roles', 'users', 'deleted_users', 'groups', 'plans', 'authentication', 'smtp', 'storage', 'reports', 'api_logs', 'operations', 'database', 'agents', 'admin_guide', 'user_manual', 'security_settings'], ...] | None
++app/api/deps.py:0: note: def get(self, Literal['overview', 'models_api', 'people_access', 'integrations', 'data_reports', 'agents_knowledge', 'developer', 'security'], tuple[Literal['dashboard', 'chat', 'media', 'connections', 'models', 'api_keys', 'roles', 'users', 'deleted_users', 'groups', 'plans', 'authentication', 'smtp', 'storage', 'reports', 'api_logs', 'operations', 'database', 'agents', 'admin_guide', 'user_manual', 'security_settings'], ...], /) -> tuple[Literal['dashboard', 'chat', 'media', 'connections', 'models', 'api_keys', 'roles', 'users', 'deleted_users', 'groups', 'plans', 'authentication', 'smtp', 'storage', 'reports', 'api_logs', 'operations', 'database', 'agents', 'admin_guide', 'user_manual', 'security_settings'], ...]
++app/sandbox_broker.py:0: error: Argument 1 to "_validate_artifact_content" has incompatible type "Any | None"; expected "str"  [arg-type]
++app/sandbox_broker.py:0: error: Argument 1 to "splitext" has incompatible type "Any | None"; expected "PathLike[Any]"  [arg-type]
++app/sandbox_broker.py:0: error: Dict entry 0 has incompatible type "str": "Any | None"; expected "str": "str | int"  [dict-item]
++app/sandbox_broker.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
++app/sandbox_broker.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
++app/sandbox_broker.py:0: error: No overload variant of "list" matches argument type "object"  [call-overload]
++app/sandbox_broker.py:0: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]
++app/sandbox_broker.py:0: note: Possible overload variants:
++app/sandbox_broker.py:0: note: Possible overload variants:
++app/sandbox_broker.py:0: note: Possible overload variants:
++app/sandbox_broker.py:0: note: def [_T] list() -> list[_T]
++app/sandbox_broker.py:0: note: def [_T] list(Iterable[_T], /) -> list[_T]
++app/sandbox_broker.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
++app/sandbox_broker.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
++app/sandbox_broker.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
++app/sandbox_broker.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
++app/schema_migrations.py:0: error: Module "alembic" has no attribute "command"  [attr-defined]
++app/services/activity_pdf_service.py:0: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]
++app/services/activity_service.py:0: error: Dict entry 4 has incompatible type "str": "str"; expected "str": "list[dict[str, str]]"  [dict-item]
++app/services/agent_policy_service.py:0: error: Incompatible types in assignment (expression has type "frozenset[str]", variable has type "tuple[str, ...]")  [assignment]
++app/services/budget_reservation_service.py:0: error: Argument 1 to "_locked_user_stmt" has incompatible type "int | None"; expected "int"  [arg-type]
++app/services/budget_reservation_service.py:0: error: Argument 1 to "int" has incompatible type "int | None"; expected "str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc"  [arg-type]
++app/services/chat_docx_service.py:0: error: Item "None" of "Match[str] | None" has no attribute "group"  [union-attr]
++app/services/chat_docx_service.py:0: error: Item "None" of "Match[str] | None" has no attribute "group"  [union-attr]
++app/services/chat_docx_service.py:0: error: Item "None" of "Match[str] | None" has no attribute "group"  [union-attr]
++app/services/chat_export_service.py:0: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]
++app/services/chat_import_export.py:0: error: Incompatible types in assignment (expression has type "int", target has type "str")  [assignment]
++app/services/chat_tools_service.py:0: error: Item "None" of "Any | dict[Any, Any] | None" has no attribute "get"  [union-attr]
++app/services/chat_tools_service.py:0: error: Item "None" of "Any | dict[Any, Any] | None" has no attribute "get"  [union-attr]
++app/services/chat_tools_service.py:0: error: Item "None" of "Any | dict[Any, Any] | None" has no attribute "get"  [union-attr]
++app/services/chat_tools_service.py:0: error: Item "None" of "Any | dict[Any, Any] | None" has no attribute "get"  [union-attr]
++app/services/client_ip.py:0: error: Argument 1 to "append" of "list" has incompatible type "IPv4Address | IPv6Address"; expected "IPv4Address"  [arg-type]
++app/services/client_ip.py:0: error: Argument 1 to "ip_in_networks" has incompatible type "IPv4Address | IPv6Address | None"; expected "IPv4Address | IPv6Address"  [arg-type]
++app/services/code_interpreter_probe_service.py:0: error: Argument "api_key" to "_call_kwargs" has incompatible type "str | None"; expected "str"  [arg-type]
++app/services/code_interpreter_probe_service.py:0: error: Argument "api_key" to "_call_kwargs" has incompatible type "str | None"; expected "str"  [arg-type]
++app/services/code_interpreter_service.py:0: error: Argument "name" to "SandboxArtifact" has incompatible type "Any | None"; expected "str"  [arg-type]
++app/services/code_interpreter_service.py:0: error: Argument 1 to "Path" has incompatible type "Any | None"; expected "str | PathLike[str]"  [arg-type]
++app/services/code_interpreter_service.py:0: error: Argument 1 to "_validate_artifact_content" has incompatible type "Any | None"; expected "str"  [arg-type]
++app/services/image_billing_service.py:0: error: Argument 1 to "_compute_token_cost_usd" has incompatible type "SimpleNamespace"; expected "AIModel"  [arg-type]
++app/services/image_model_resolver.py:0: error: Argument 1 to "float" has incompatible type "float | int | None"; expected "str | Buffer | SupportsFloat | SupportsIndex"  [arg-type]
++app/services/image_model_resolver.py:0: error: Argument 1 to "int" has incompatible type "float | int | None"; expected "str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc"  [arg-type]
++app/services/image_model_resolver.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
++app/services/image_model_resolver.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
++app/services/image_model_resolver.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
++app/services/image_model_resolver.py:0: note: Possible overload variants:
++app/services/image_model_resolver.py:0: note: Possible overload variants:
++app/services/image_model_resolver.py:0: note: Possible overload variants:
++app/services/image_model_resolver.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
++app/services/image_model_resolver.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
++app/services/image_model_resolver.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
++app/services/image_model_resolver.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
++app/services/image_model_resolver.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
++app/services/image_model_resolver.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
++app/services/knowledge_connector_service.py:0: error: Incompatible types in assignment (expression has type "ConnectorItem | None", variable has type "ConnectorItem")  [assignment]
++app/services/knowledge_embedding_service.py:0: error: Argument "api_key" to "ResolvedEmbeddingModel" has incompatible type "str | None"; expected "str"  [arg-type]
++app/services/knowledge_parser_runner.py:0: error: Cannot assign to a type  [misc]
++app/services/knowledge_parser_runner.py:0: note: Error code "misc" not covered by "type: ignore" comment
++app/services/knowledge_parser_sandbox.py:0: error: Module has no attribute "CREATE_NEW_PROCESS_GROUP"  [attr-defined]
++app/services/knowledge_retention_service.py:0: error: "object" has no attribute "__iter__"; maybe "__dir__" or "__str__"? (not iterable)  [attr-defined]
++app/services/knowledge_retention_service.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
++app/services/knowledge_retention_service.py:0: error: No overload variant of "list" matches argument type "object"  [call-overload]
++app/services/knowledge_retention_service.py:0: note: Possible overload variants:
++app/services/knowledge_retention_service.py:0: note: Possible overload variants:
++app/services/knowledge_retention_service.py:0: note: def [_T] list() -> list[_T]
++app/services/knowledge_retention_service.py:0: note: def [_T] list(Iterable[_T], /) -> list[_T]
++app/services/knowledge_retention_service.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
++app/services/knowledge_retention_service.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
++app/services/knowledge_worker_service.py:0: error: Incompatible import of "fail_job" (imported name has type "def fail_job(db: Any, job: UserMemoryJob, *, worker_id: str, error: Exception | str, retryable: bool = ...) -> Coroutine[Any, Any, JobResult]", local name has type "def fail_job(db: Any, job: ProjectMemoryJob, *, worker_id: str, error: Exception | str, retryable: bool = ...) -> Coroutine[Any, Any, JobResult]")  [assignment]
++app/services/ldap_sync.py:0: error: Incompatible types in assignment (expression has type "User | None", variable has type "User")  [assignment]
++app/services/ldap_sync.py:0: error: Incompatible types in assignment (expression has type "UserGroup | None", variable has type "UserGroup")  [assignment]
++app/services/model_sync.py:0: error: Item "None" of "Any | dict[Any, Any] | None" has no attribute "get"  [union-attr]
++app/services/model_tool_compatibility_service.py:0: error: Incompatible types in assignment (expression has type "Any | None", variable has type "str")  [assignment]
++app/services/model_tool_compatibility_service.py:0: error: Incompatible types in assignment (expression has type "Any | None", variable has type "str")  [assignment]
++app/services/openrouter_video_service.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
++app/services/openrouter_video_service.py:0: note: Possible overload variants:
++app/services/openrouter_video_service.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
++app/services/openrouter_video_service.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
++app/services/operations_service.py:0: error: Name "point" already defined on line 0  [no-redef]
++app/services/project_composer_pref_service.py:0: error: Argument 1 to "_check_tools_size" has incompatible type "Any | dict[Any, Any] | None"; expected "dict[str, Any]"  [arg-type]
++app/services/project_memory_service.py:0: error: Argument 3 to "_is_owner" has incompatible type "int | None"; expected "int"  [arg-type]
++app/services/provider_reconciliation_service.py:0: error: Argument "api_key" to "fetch_actual_cost" of "ProviderReconciliationAdapter" has incompatible type "str | None"; expected "str"  [arg-type]
++app/services/proxy_service.py:0: error: Argument "api_key" to "_record_code_interpreter_failure" has incompatible type "str | None"; expected "str"  [arg-type]
++app/services/proxy_service.py:0: error: Argument "api_key" to "_record_code_interpreter_failure" has incompatible type "str | None"; expected "str"  [arg-type]
++app/services/proxy_service.py:0: error: Argument "api_key" to "_record_code_interpreter_failure" has incompatible type "str | None"; expected "str"  [arg-type]
++app/services/proxy_service.py:0: error: Argument "api_key" to "_record_code_interpreter_success" has incompatible type "str | None"; expected "str"  [arg-type]
++app/services/proxy_service.py:0: error: Argument 1 to "heartbeat_code_interpreter_turn" has incompatible type "Any | None"; expected "CapacityPermit | str"  [arg-type]
++app/services/proxy_service.py:0: error: Argument 1 to "int" has incompatible type "int | None"; expected "str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc"  [arg-type]
++app/services/proxy_service.py:0: error: Argument 2 to "resolve_model_and_key" has incompatible type "str | Any | None"; expected "str"  [arg-type]
++app/services/proxy_service.py:0: error: Incompatible types in assignment (expression has type "tuple[Any]", variable has type "tuple[()]")  [assignment]
++app/services/proxy_service.py:0: error: Incompatible types in assignment (expression has type "tuple[Any]", variable has type "tuple[()]")  [assignment]
++app/services/proxy_service.py:0: error: Item "None" of "AIModel | None" has no attribute "provider_type"  [union-attr]
++app/services/qdrant_service.py:0: error: Item "SparseValues" of "Sequence[float] | SparseValues" has no attribute "__iter__" (not iterable)  [union-attr]
++app/services/rbac.py:0: error: Item "None" of "RoleDefinition | None" has no attribute "name"  [union-attr]
++app/services/reports_service.py:0: error: Argument 2 to "report_activity_summary" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_agent_usage" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_all_projects_usage" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_alpha_router_api_key_usage" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_deleted_users" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_failed_requests" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_model_error_rates" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_new_users" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_office_usage" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_org_cost_summary" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_slow_models_latency" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_slow_requests" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_token_breakdown" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_top_models_by_spend" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_top_users_by_spend" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_usage_by_api_source" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_usage_by_app" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_usage_by_prompt_language" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_usage_by_provider" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_user_budget_usage" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_user_model_usage" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 2 to "report_users_no_recent_login" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_activity_summary" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_agent_usage" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_all_projects_usage" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_alpha_router_api_key_usage" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_deleted_users" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_department_top_models" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_failed_requests" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_group_members_usage" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_model_error_rates" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_new_users" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_office_usage" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_org_cost_summary" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_plan_usage" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_project_media_usage_summary" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_project_usage_by_member" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_project_usage_by_model" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_project_usage_summary" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_slow_models_latency" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_slow_requests" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_token_breakdown" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_top_models_by_spend" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_top_users_by_spend" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_usage_by_api_source" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_usage_by_app" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_usage_by_prompt_language" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_usage_by_provider" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_user_budget_usage" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 3 to "report_user_model_usage" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 4 to "report_department_top_models" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 4 to "report_group_members_usage" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 4 to "report_plan_usage" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 4 to "report_project_media_usage_summary" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 4 to "report_project_usage_by_member" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 4 to "report_project_usage_by_model" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Argument 4 to "report_project_usage_summary" has incompatible type "Any | None"; expected "datetime"  [arg-type]
++app/services/reports_service.py:0: error: Incompatible return value type (got "tuple[str, str, str]", expected "tuple[bytes, str, str]")  [return-value]
++app/services/reports_service.py:0: error: Incompatible return value type (got "tuple[str, str, str]", expected "tuple[bytes, str, str]")  [return-value]
++app/services/reports_service.py:0: error: Incompatible types in assignment (expression has type "BytesIO", variable has type "StringIO")  [assignment]
++app/services/reports_service.py:0: error: Incompatible types in assignment (expression has type "BytesIO", variable has type "StringIO")  [assignment]
++app/services/resource_access_service.py:0: error: Argument 1 to "is_valid_role_slug" has incompatible type "int"; expected "str | None"  [arg-type]
++app/services/resource_access_service.py:0: error: Incompatible types in assignment (expression has type "str | None", variable has type "int")  [assignment]
++app/services/resource_access_service.py:0: error: Incompatible types in assignment (expression has type "str | None", variable has type "int")  [assignment]
++app/services/ssrf_guard.py:0: error: Argument 1 to "append" of "list" has incompatible type "str | int"; expected "str"  [arg-type]
++app/services/user_chat_storage_service.py:0: error: Incompatible types in assignment (expression has type "dict[str, Any]", target has type "str")  [assignment]
++app/services/video_catalog_service.py:0: error: Item "None" of "Any | dict[Any, Any] | None" has no attribute "get"  [union-attr]
++app/services/video_catalog_service.py:0: error: Item "None" of "Any | dict[Any, Any] | None" has no attribute "get"  [union-attr]
++app/services/video_job_service.py:0: error: Argument "api_key" to "cancel" of "VideoProviderAdapter" has incompatible type "str | None"; expected "str"  [arg-type]
++app/services/video_job_service.py:0: error: Argument "api_key" to "poll" of "VideoProviderAdapter" has incompatible type "str | None"; expected "str"  [arg-type]
++app/services/video_providers/openrouter.py:0: error: Item "None" of "Any | dict[Any, Any] | None" has no attribute "get"  [union-attr]
++app/services/video_providers/openrouter.py:0: error: Item "None" of "Any | dict[Any, Any] | None" has no attribute "get"  [union-attr]
++app/services/video_providers/replicate.py:0: error: Item "None" of "Any | dict[Any, Any] | None" has no attribute "get"  [union-attr]
+diff --git a/backend/mypy.ini b/backend/mypy.ini
+new file mode 100644
+index 00000000..34d86497
+--- /dev/null
++++ b/backend/mypy.ini
+@@ -0,0 +1,12 @@
++# Phase 3: mypy runs in CI against a committed baseline (mypy-baseline.txt).
++# `mypy-baseline filter` fails the job on any error that is not in the
++# baseline; `mypy-baseline sync` regenerates it after a deliberate fix.
++# The baseline may only shrink.
++[mypy]
++python_version = 3.12
++ignore_missing_imports = True
++follow_imports = normal
++show_error_codes = True
++warn_unused_ignores = False
++no_implicit_optional = True
++exclude = (?x)(^alembic/|^tests/)
+diff --git a/scripts/mypy-check.sh b/scripts/mypy-check.sh
+new file mode 100644
+index 00000000..dd0f541a
+--- /dev/null
++++ b/scripts/mypy-check.sh
+@@ -0,0 +1,11 @@
++#!/usr/bin/env bash
++# Type-check the backend against the committed baseline.
++#   scripts/mypy-check.sh          -> fail on errors not in backend/mypy-baseline.txt
++#   scripts/mypy-check.sh --sync   -> rewrite the baseline (after fixing errors; it may only shrink)
++set -euo pipefail
++cd "$(dirname "$0")/../backend"
++mode="${1:-filter}"
++case "$mode" in
++  --sync) (mypy app || true) | mypy-baseline sync --baseline-path mypy-baseline.txt --sort-baseline ;;
++  *)      (mypy app || true) | mypy-baseline filter --baseline-path mypy-baseline.txt --sort-baseline --no-colors ;;
++esac
+-- 
+2.43.0
+

@@ -1,0 +1,384 @@
+From cafdaf84548cdd651cf9850922f6564b53a3a2fd Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 14:10:26 +0000
+Subject: [PATCH 07/10] fix(http): separate the JSON body ceiling from the
+ upload ceiling
+
+RequestBodyLimitMiddleware applied one ceiling to every route. That ceiling
+follows the Storage transfer limits (defaults published as ~1 GiB, hard max
+2 GiB), and FastAPI/pydantic buffer a JSON body in full before any handler
+runs -- so anyone who could reach /api/auth/login (CSRF-exempt, pre-auth)
+could push a 1 GiB JSON body into each worker's memory.
+
+- request_body_limit_service.request_body_limit_for(path): the upload ceiling
+  applies only to LARGE_BODY_PATH_PREFIXES (multipart upload routes, and the
+  chat/gateway JSON routes that legitimately carry inline base64 images for
+  vision models, plus chat-session sync payloads); every other route gets the
+  new MAX_JSON_BODY_BYTES (default 8 MiB, never above the upload ceiling).
+- The published limit file is now read at most once per 5s and only when its
+  mtime changed; previously every HTTP request did stat+read+json.loads.
+- If the handler already sent http.response.start when the streamed body
+  crosses the limit, the middleware no longer emits a second response start
+  (a protocol error); it closes the request instead.
+- tls_edge_service.render_nginx_config mirrors the tiers: 'location /' gets
+  the JSON ceiling, a regex location for the large-body prefixes inherits the
+  http-level upload ceiling. The http-level directive is unchanged so
+  read_nginx_client_max_body_mb() and the edge sync keep working.
+- .env.example documents MAX_JSON_BODY_BYTES and the new meaning of
+  MAX_REQUEST_BODY_BYTES.
+
+Tests: tests/test_bounded_io.py -- 5 MiB JSON to /api/auth/login -> 413 while
+the same body passes /api/chat/completions and a multipart upload route; no
+duplicate response start after the handler answered; published limit parsed
+once per TTL window.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ .env.example                                  |   6 ++
+ backend/app/config.py                         |   7 ++
+ backend/app/services/bounded_io.py            |  20 +++-
+ .../services/request_body_limit_service.py    |  66 +++++++++++-
+ backend/app/services/tls_edge_service.py      |  44 ++++++--
+ backend/tests/test_bounded_io.py              | 100 ++++++++++++++++++
+ 6 files changed, 226 insertions(+), 17 deletions(-)
+
+diff --git a/.env.example b/.env.example
+index f42d9a9..478377a 100644
+--- a/.env.example
++++ b/.env.example
+@@ -234,7 +234,13 @@ SANDBOX_MAX_TRACKED_JOBS=10000
+ # Values are bytes unless noted. Runtime clamps every override to a hard safety
+ # ceiling (request body up to 1 GiB); lowering these values is supported for
+ # smaller deployments.
++# Upload ceiling: multipart file routes plus the chat/gateway JSON bodies that
++# carry inline images. In practice the Storage transfer limits (Admin →
++# Storage) publish the effective value; this is only the fallback.
+ MAX_REQUEST_BODY_BYTES=1073741824
++# Every other JSON request (login, admin CRUD, settings). Keep this small:
++# such bodies are parsed in memory, and /api/auth/login is reachable pre-auth.
++MAX_JSON_BODY_BYTES=8388608
+ MAX_ATTACHMENT_BYTES=12582912
+ MAX_ATTACHMENTS_TOTAL_BYTES=37748736
+ MAX_VOICE_UPLOAD_BYTES=26214400
+diff --git a/backend/app/config.py b/backend/app/config.py
+index 350740b..1965bfa 100644
+--- a/backend/app/config.py
++++ b/backend/app/config.py
+@@ -239,7 +239,14 @@ class Settings(BaseSettings):
+     )
+ 
+     # Bounded I/O defaults. Callers clamp overrides to hard safety ceilings.
++    # Upload ceiling (multipart file routes and the chat/gateway JSON bodies
++    # that can legitimately carry inline images). Normally overridden by the
++    # Storage transfer limits published to the TLS state volume.
+     max_request_body_bytes: int = 1024 * 1024 * 1024
++    # Ceiling for every other JSON request (auth, admin CRUD, settings...).
++    # FastAPI buffers and parses these bodies in full, so a large value here
++    # is a memory-exhaustion vector for anyone who can reach /api/auth/login.
++    max_json_body_bytes: int = 8 * 1024 * 1024  # env: MAX_JSON_BODY_BYTES
+     max_attachment_bytes: int = 12 * 1024 * 1024
+     max_attachments_total_bytes: int = 36 * 1024 * 1024
+     max_voice_upload_bytes: int = 25 * 1024 * 1024
+diff --git a/backend/app/services/bounded_io.py b/backend/app/services/bounded_io.py
+index b1bbdd0..63e84ab 100644
+--- a/backend/app/services/bounded_io.py
++++ b/backend/app/services/bounded_io.py
+@@ -32,11 +32,11 @@ class RequestBodyLimitMiddleware:
+             await self.app(scope, receive, send)
+             return
+ 
+-        from app.services.request_body_limit_service import effective_request_body_limit_bytes
++        from app.services.request_body_limit_service import request_body_limit_for
+ 
+         limit = clamp_limit(
+-            effective_request_body_limit_bytes(),
+-            minimum=1024 * 1024,
++            request_body_limit_for(scope.get("path") or ""),
++            minimum=64 * 1024,
+             maximum=2048 * 1024 * 1024,
+         )
+         headers = {
+@@ -55,6 +55,7 @@ class RequestBodyLimitMiddleware:
+                 return
+ 
+         received = 0
++        response_started = False
+ 
+         async def limited_receive():
+             nonlocal received
+@@ -65,9 +66,20 @@ class RequestBodyLimitMiddleware:
+                     raise _RequestTooLarge()
+             return message
+ 
++        async def tracking_send(message):
++            nonlocal response_started
++            if message.get("type") == "http.response.start":
++                response_started = True
++            await send(message)
++
+         try:
+-            await self.app(scope, limited_receive, send)
++            await self.app(scope, limited_receive, tracking_send)
+         except _RequestTooLarge:
++            if response_started:
++                # The handler already began answering (streaming body read);
++                # a second http.response.start would be a protocol error.
++                # Dropping the connection is the only honest outcome.
++                return
+             response = JSONResponse(status_code=413, content={"detail": "Request body too large"})
+             await response(scope, receive, send)
+ 
+diff --git a/backend/app/services/request_body_limit_service.py b/backend/app/services/request_body_limit_service.py
+index da532fa..18efb2b 100644
+--- a/backend/app/services/request_body_limit_service.py
++++ b/backend/app/services/request_body_limit_service.py
+@@ -84,9 +84,71 @@ def read_published_request_body_limit_mb() -> int | None:
+     return max(1, min(REQUEST_BODY_HARD_MAX_MB, value))
+ 
+ 
++# Routes whose bodies are allowed to be as large as the upload ceiling:
++# multipart file uploads, and the chat/gateway JSON bodies that carry inline
++# base64 images for vision models. Everything else is ordinary JSON and gets
++# ``max_json_body_bytes``.
++LARGE_BODY_PATH_PREFIXES: tuple[str, ...] = (
++    "/api/chat/",            # completions (inline images), attachments/process, voice
++    "/v1/",                  # OpenAI-compatible gateway (inline images, embeddings input)
++    "/api/images",           # image edit/reference payloads
++    "/api/videos",           # reference images
++    "/api/speech",           # long TTS inputs
++    "/api/projects/",        # resource / media uploads
++    "/api/user/media",       # media library uploads
++    "/api/user/chats",       # full-session sync payloads
++    "/api/user/chat-sessions",
++    "/api/admin/knowledge/", # document uploads
++    "/api/admin/security/tls/",  # certificate bundles
++)
++
++_PUBLISHED_CACHE_TTL_SECONDS = 5.0
++_published_cache: tuple[float, float | None, int | None] = (0.0, None, None)  # (checked_at, mtime, mb)
++
++
++def is_large_body_path(path: str) -> bool:
++    return path.startswith(LARGE_BODY_PATH_PREFIXES)
++
++
++def request_body_limit_for(path: str) -> int:
++    """Per-request ceiling: upload ceiling for known large-body routes, else JSON ceiling."""
++    if is_large_body_path(path):
++        return effective_request_body_limit_bytes()
++    settings = get_settings()
++    json_limit = int(getattr(settings, "max_json_body_bytes", 8 * 1024 * 1024) or 0)
++    # Never exceed the upload ceiling and never go below 64 KiB.
++    return max(64 * 1024, min(json_limit, effective_request_body_limit_bytes()))
++
++
++def _read_published_cached() -> int | None:
++    """read_published_request_body_limit_mb() with an mtime-aware short cache.
++
++    The middleware asks for the ceiling on every request; a stat() every 5s is
++    fine, a stat()+read()+json.loads() per request is not.
++    """
++    global _published_cache
++    import time
++
++    now = time.monotonic()
++    checked_at, cached_mtime, cached_mb = _published_cache
++    if now - checked_at < _PUBLISHED_CACHE_TTL_SECONDS:
++        return cached_mb
++    path = request_body_limit_path()
++    try:
++        mtime: float | None = path.stat().st_mtime
++    except OSError:
++        mtime = None
++    if mtime is not None and mtime == cached_mtime:
++        _published_cache = (now, cached_mtime, cached_mb)
++        return cached_mb
++    value = read_published_request_body_limit_mb() if mtime is not None else None
++    _published_cache = (now, mtime, value)
++    return value
++
++
+ def effective_request_body_limit_bytes() -> int:
+-    """Best-effort ceiling for RequestBodyLimitMiddleware (all workers)."""
+-    published = read_published_request_body_limit_mb()
++    """Best-effort upload ceiling for RequestBodyLimitMiddleware (all workers)."""
++    published = _read_published_cached()
+     if published is not None:
+         return published * 1024 * 1024
+ 
+diff --git a/backend/app/services/tls_edge_service.py b/backend/app/services/tls_edge_service.py
+index db7908e..ebd57cc 100644
+--- a/backend/app/services/tls_edge_service.py
++++ b/backend/app/services/tls_edge_service.py
+@@ -81,7 +81,33 @@ def render_nginx_config(
+     has_chain: bool,
+     upstream: str = "127.0.0.1:8080",
+     max_body_mb: int = DEFAULT_MAX_BODY_MB,
++    json_body_mb: int | None = None,
+ ) -> str:
++    """Render the edge config.
++
++    ``max_body_mb`` is the upload ceiling and stays on the http block (the
++    value read_nginx_client_max_body_mb() reads back). Ordinary JSON routes get
++    ``json_body_mb`` (defaults to MAX_JSON_BODY_BYTES) in ``location /``; the
++    large-body routes listed in request_body_limit_service inherit the upload
++    ceiling through a regex location, mirroring the app middleware tiers.
++    """
++    from app.services.request_body_limit_service import LARGE_BODY_PATH_PREFIXES
++
++    if json_body_mb is None:
++        json_body_mb = max(1, -(-int(get_settings().max_json_body_bytes) // (1024 * 1024)))
++    json_body_mb = max(1, min(int(json_body_mb), max(1, int(max_body_mb))))
++    large_paths = "|".join(re.escape(prefix.lstrip("/")) for prefix in LARGE_BODY_PATH_PREFIXES)
++    proxy_directives = f"""            proxy_pass http://{upstream};
++            proxy_http_version 1.1;
++            proxy_set_header Host $host;
++            proxy_set_header X-Real-IP $remote_addr;
++            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
++            proxy_set_header X-Forwarded-Proto https;
++            proxy_set_header Upgrade $http_upgrade;
++            proxy_set_header Connection $connection_upgrade;
++            proxy_buffering off;
++            proxy_read_timeout 3600s;
++            proxy_send_timeout 3600s;"""
+     hsts = ""
+     if hsts_enabled:
+         hsts = '    add_header Strict-Transport-Security "max-age=31536000" always;\n'
+@@ -131,18 +157,14 @@ http {{
+         ssl_session_timeout 1d;
+         ssl_session_cache shared:SSL:10m;
+ {stapling}{hsts}
++        # Ordinary JSON: small ceiling (mirrors MAX_JSON_BODY_BYTES).
+         location / {{
+-            proxy_pass http://{upstream};
+-            proxy_http_version 1.1;
+-            proxy_set_header Host $host;
+-            proxy_set_header X-Real-IP $remote_addr;
+-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+-            proxy_set_header X-Forwarded-Proto https;
+-            proxy_set_header Upgrade $http_upgrade;
+-            proxy_set_header Connection $connection_upgrade;
+-            proxy_buffering off;
+-            proxy_read_timeout 3600s;
+-            proxy_send_timeout 3600s;
++            client_max_body_size {json_body_mb}m;
++{proxy_directives}
++        }}
++        # Uploads and inline-image chat bodies: inherit the http-level ceiling.
++        location ~ ^/({large_paths}) {{
++{proxy_directives}
+         }}
+     }}
+ }}
+diff --git a/backend/tests/test_bounded_io.py b/backend/tests/test_bounded_io.py
+index c2436ae..d73f2dd 100644
+--- a/backend/tests/test_bounded_io.py
++++ b/backend/tests/test_bounded_io.py
+@@ -159,3 +159,103 @@ def test_bounded_get_blocks_redirect_before_second_request() -> None:
+     ):
+         asyncio.run(run())
+     assert requests == 1
++
++
++def _run_middleware(path: str, body: bytes, *, content_type: str):
++    """Drive RequestBodyLimitMiddleware with one chunked (no Content-Length) body."""
++    sent: list[dict] = []
++
++    async def receive():
++        return {"type": "http.request", "body": body, "more_body": False}
++
++    async def send(message):
++        sent.append(message)
++
++    async def app(scope, receive, send):
++        del scope
++        await receive()
++        await send({"type": "http.response.start", "status": 200, "headers": []})
++        await send({"type": "http.response.body", "body": b"ok"})
++
++    scope = {
++        "type": "http",
++        "path": path,
++        "headers": [(b"content-type", content_type.encode())],
++    }
++    asyncio.run(RequestBodyLimitMiddleware(app)(scope, receive, send))
++    return sent
++
++
++def test_json_routes_get_the_small_ceiling_and_upload_routes_the_large_one() -> None:
++    five_mib = b"{" + b" " * (5 * 1024 * 1024) + b"}"
++    with (
++        patch(
++            "app.services.request_body_limit_service.effective_request_body_limit_bytes",
++            return_value=1024 * 1024 * 1024,
++        ),
++        patch(
++            "app.services.request_body_limit_service.get_settings",
++            return_value=type("S", (), {"max_json_body_bytes": 4 * 1024 * 1024})(),
++        ),
++    ):
++        # Pre-auth JSON route: 5 MiB must be refused although the upload ceiling is 1 GiB.
++        sent = _run_middleware("/api/auth/login", five_mib, content_type="application/json")
++        assert [m.get("status") for m in sent if m["type"] == "http.response.start"] == [413]
++
++        # Chat completions may carry inline images: same 5 MiB passes.
++        sent = _run_middleware("/api/chat/completions", five_mib, content_type="application/json")
++        assert [m.get("status") for m in sent if m["type"] == "http.response.start"] == [200]
++
++        # Multipart upload route: passes too.
++        sent = _run_middleware(
++            "/api/admin/knowledge/bases/1/documents", five_mib, content_type="multipart/form-data; boundary=x"
++        )
++        assert [m.get("status") for m in sent if m["type"] == "http.response.start"] == [200]
++
++
++def test_no_second_response_start_when_handler_already_answered() -> None:
++    sent: list[dict] = []
++    chunks = [b"x" * 1024, b"x" * (200 * 1024)]
++
++    async def receive():
++        body = chunks.pop(0)
++        return {"type": "http.request", "body": body, "more_body": bool(chunks)}
++
++    async def send(message):
++        sent.append(message)
++
++    async def app(scope, receive, send):
++        del scope
++        await send({"type": "http.response.start", "status": 200, "headers": []})
++        while (await receive()).get("more_body"):
++            pass
++
++    scope = {"type": "http", "path": "/api/auth/login", "headers": []}
++    with patch(
++        "app.services.request_body_limit_service.request_body_limit_for",
++        return_value=64 * 1024,
++    ):
++        asyncio.run(RequestBodyLimitMiddleware(app)(scope, receive, send))
++    starts = [m for m in sent if m["type"] == "http.response.start"]
++    assert len(starts) == 1 and starts[0]["status"] == 200
++
++
++def test_published_limit_is_cached_by_mtime(tmp_path, monkeypatch) -> None:
++    from app.services import request_body_limit_service as svc
++
++    monkeypatch.setattr(svc, "request_body_limit_path", lambda: tmp_path / "request-body-limit.json")
++    monkeypatch.setattr(svc, "_published_cache", (0.0, None, None))
++    reads = {"n": 0}
++    real = svc.read_published_request_body_limit_mb
++
++    def counting():
++        reads["n"] += 1
++        return real()
++
++    monkeypatch.setattr(svc, "read_published_request_body_limit_mb", counting)
++    (tmp_path / "request-body-limit.json").write_text('{"request_body_mb": 64}', encoding="utf-8")
++
++    assert svc.effective_request_body_limit_bytes() == 64 * 1024 * 1024
++    for _ in range(50):
++        svc.effective_request_body_limit_bytes()
++    assert reads["n"] == 1, "one parse per TTL window, not one per request"
+-- 
+2.43.0
+

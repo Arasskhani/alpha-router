@@ -1,0 +1,109 @@
+From ccf1e4d9b72107f52bcb86553b9d8cd8d992d56f Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 10:46:49 +0000
+Subject: [PATCH 4/7] test: align stale tests with current signatures and the
+ Primary Owner model
+
+- test_budget_reservations: create_embedding gained the keyword-only
+  user_api_key_id (gateway.py passes it); the test predated the parameter.
+- test_projects_domain / test_projects_management: since 9f47d81 the creator
+  becomes 'primary_owner' (never assignable via API) and only that role holds
+  project.delete / member.manage_owners; regular 'owner' is a strict subset.
+  Tests now assert that model and additionally check the Primary Owner cannot
+  be demoted.
+
+With this the backend suite is green: 1260 passed, 3 skipped (Python 3.12).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ backend/tests/test_budget_reservations.py |  1 +
+ backend/tests/test_projects_domain.py     | 13 ++++++++++---
+ backend/tests/test_projects_management.py |  7 ++++---
+ 3 files changed, 15 insertions(+), 6 deletions(-)
+
+diff --git a/backend/tests/test_budget_reservations.py b/backend/tests/test_budget_reservations.py
+index b48ff9e0..d8f2d744 100644
+--- a/backend/tests/test_budget_reservations.py
++++ b/backend/tests/test_budget_reservations.py
+@@ -347,6 +347,7 @@ def test_embedding_failure_settles_committed_hold_independently() -> None:
+                     source="user_key",
+                     skip_budget=False,
+                     alpha_router_api_key_id=None,
++                    user_api_key_id=None,
+                     client_app="test",
+                     source_ip=None,
+                 )
+diff --git a/backend/tests/test_projects_domain.py b/backend/tests/test_projects_domain.py
+index ac9ad989..e85a4d2d 100644
+--- a/backend/tests/test_projects_domain.py
++++ b/backend/tests/test_projects_domain.py
+@@ -1,6 +1,7 @@
+ """Tests for the Projects domain model, ACL service, and membership invariants."""
+ 
+ import asyncio
++import pytest
+ 
+ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+ 
+@@ -112,7 +113,10 @@ def test_resolve_project_access_owner_can_view_and_edit():
+                 assert access.is_member is True
+                 assert access.role == "owner"
+                 assert access.can("project.edit") is True
+-                assert access.can("project.delete") is True
++                # Only the Primary Owner may delete a project; a regular Owner
++                # is a strict subset (see _CAPABILITIES in project_access_service).
++                assert access.can("project.delete") is False
++                assert access.can("member.manage_owners") is False
+                 assert access.can("chat.write") is True
+         finally:
+             await engine.dispose()
+@@ -345,8 +349,11 @@ def test_ensure_not_last_owner_allows_demote_when_multiple_owners():
+                 db.add(ProjectMember(project_id="proj-1", user_id=second.id, role=PROJECT_ROLE_OWNER))
+                 await db.flush()
+ 
+-                # Should not raise
+-                await ensure_not_last_owner(db, project_id="proj-1", user_id=owner.id, new_role=PROJECT_ROLE_VIEWER)
++                # A regular Owner may be demoted while a Primary Owner remains.
++                await ensure_not_last_owner(db, project_id="proj-1", user_id=second.id, new_role=PROJECT_ROLE_VIEWER)
++                # The Primary Owner itself is always protected.
++                with pytest.raises(ProjectAccessError):
++                    await ensure_not_last_owner(db, project_id="proj-1", user_id=owner.id, new_role=PROJECT_ROLE_VIEWER)
+         finally:
+             await engine.dispose()
+ 
+diff --git a/backend/tests/test_projects_management.py b/backend/tests/test_projects_management.py
+index afd3591c..121a10d1 100644
+--- a/backend/tests/test_projects_management.py
++++ b/backend/tests/test_projects_management.py
+@@ -65,7 +65,8 @@ def test_create_project_makes_creator_owner():
+             async with factory() as db:
+                 owner = await _user(db, "owner")
+                 proj = await create_project(db, user=owner, name="Alpha")
+-                assert proj["myRole"] == "owner"
++                # The creator becomes the (single, non-assignable) Primary Owner.
++                assert proj["myRole"] == "primary_owner"
+                 assert proj["isMember"] is True
+                 assert proj["visibility"] == "private"
+                 members = await db.execute(
+@@ -73,7 +74,7 @@ def test_create_project_makes_creator_owner():
+                 )
+                 rows = members.all()
+                 assert len(rows) == 1
+-                assert rows[0].role == "owner"
++                assert rows[0].role == "primary_owner"
+         finally:
+             await engine.dispose()
+ 
+@@ -386,7 +387,7 @@ def test_list_members_returns_all():
+                 members = await list_members(db, project_id=pid, user=owner)
+                 assert len(members) == 2
+                 roles = {m["role"] for m in members}
+-                assert roles == {"owner", "viewer"}
++                assert roles == {"primary_owner", "viewer"}
+         finally:
+             await engine.dispose()
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,564 @@
+From b30fd96e0ac27572372fdc9be20d73103ffab347 Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 15:29:33 +0000
+Subject: [PATCH 06/22] fix(budget): a gateway key with no credit limit is
+ blocked unless explicitly unlimited
+
+Bug: credit_limit_usd <= 0 on an Alpharouter API key meant "no cap", so a
+key created with the field left empty (the UI hint even said "0 also means
+no cap") could spend without any per-period ceiling, and nothing in the
+admin list distinguished "unlimited on purpose" from "forgotten".
+
+Change:
+- alpha_router_api_keys.unlimited_budget (Boolean, nullable so layer-2
+  schema patching can add it). ensure_key_usable answers 402 "no credit
+  limit configured" when the limit is <= 0 and the flag is not set; every
+  gateway request and reservation goes through it.
+- Admin API: create refuses limit 0 without unlimited_budget=true; patch
+  refuses leaving a key with neither. key_to_dict and the audit changelog
+  carry the flag.
+- db_migrate.backfill_api_key_unlimited_budget maps rows created before the
+  column (NULL) from the old semantics once: no positive limit -> true,
+  otherwise false. Existing keys keep working; admins can now see which are
+  unlimited. Called from app.migrate and the lifespan after column patches.
+- UI: "Unlimited budget" checkbox with a warning; the list shows
+  "Unlimited" or "Blocked (no limit set)" instead of a dash.
+
+Verified on PostgreSQL 16: dropped the column, seeded legacy rows, ran
+python -m app.migrate -> column added, nocap row true, capped row false.
+
+Tests: tests/test_api_key_unlimited_budget.py (402 vs unlimited vs capped,
+admin create/patch validation, backfill mapping); test fixtures that relied
+on the implicit no-cap now say unlimited_budget=True.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ backend/app/api/admin.py                      |  15 ++
+ backend/app/db_migrate.py                     |  26 ++++
+ backend/app/main.py                           |   2 +
+ backend/app/migrate.py                        |   2 +
+ backend/app/models/api_key.py                 |   5 +
+ .../services/alpha_router_api_key_audit.py    |   2 +
+ .../services/alpha_router_api_key_service.py  |  13 ++
+ .../services/budget_reservation_service.py    |   2 +
+ .../tests/test_api_key_connection_policy.py   |   1 +
+ backend/tests/test_api_key_model_policy.py    |   1 +
+ .../tests/test_api_key_unlimited_budget.py    | 140 ++++++++++++++++++
+ backend/tests/test_gateway_auth.py            |   3 +
+ .../components/apiKeys/ApiKeyFormModal.tsx    |  22 ++-
+ frontend/src/pages/admin/ApiKeys.tsx          |   8 +-
+ 14 files changed, 240 insertions(+), 2 deletions(-)
+ create mode 100644 backend/tests/test_api_key_unlimited_budget.py
+
+diff --git a/backend/app/api/admin.py b/backend/app/api/admin.py
+index 3f0352e..6ee4253 100644
+--- a/backend/app/api/admin.py
++++ b/backend/app/api/admin.py
+@@ -734,6 +734,8 @@ class ApiKeyCreate(BaseModel):
+     name: str
+     owner_user_id: int
+     credit_limit_usd: float = 0
++    # Must be true when credit_limit_usd is 0: no silent blank cheques.
++    unlimited_budget: bool = False
+     reset_period: Literal["daily", "weekly", "monthly"] = "monthly"
+     expiration_days: int | None = None
+     restrict_connections: bool = False
+@@ -746,6 +748,7 @@ class ApiKeyPatch(BaseModel):
+     name: str | None = None
+     owner_user_id: int | None = None
+     credit_limit_usd: float | None = None
++    unlimited_budget: bool | None = None
+     reset_period: Literal["daily", "weekly", "monthly"] | None = None
+     expiration_days: int | None = None
+     expiration_never: bool | None = None
+@@ -766,6 +769,10 @@ async def create_alpha_router_key(
+         raise HTTPException(400, detail="Owner user not found")
+     if body.credit_limit_usd < 0:
+         raise HTTPException(400, detail="Credit limit must be >= 0")
++    if body.credit_limit_usd <= 0 and not body.unlimited_budget:
++        raise HTTPException(
++            400, detail="Set a credit limit greater than 0, or explicitly mark the key as unlimited"
++        )
+     raw, prefix, key_hash = generate_api_key()
+     now = datetime.utcnow()
+     expires_at = compute_expires_at(now, body.expiration_days)
+@@ -775,6 +782,7 @@ async def create_alpha_router_key(
+         key_hash=key_hash,
+         owner_user_id=body.owner_user_id,
+         credit_limit_usd=float(body.credit_limit_usd),
++        unlimited_budget=bool(body.unlimited_budget),
+         reset_period=body.reset_period,
+         expires_at=expires_at,
+         period_started_at=now,
+@@ -1791,6 +1799,13 @@ async def patch_alpha_router_key(
+             raise HTTPException(400, detail="Credit limit must be >= 0")
+         k.credit_limit_usd = float(body.credit_limit_usd)
+         patches["credit_limit_usd"] = k.credit_limit_usd
++    if body.unlimited_budget is not None:
++        k.unlimited_budget = bool(body.unlimited_budget)
++        patches["unlimited_budget"] = k.unlimited_budget
++    if float(k.credit_limit_usd or 0) <= 0 and not bool(k.unlimited_budget):
++        raise HTTPException(
++            400, detail="Set a credit limit greater than 0, or explicitly mark the key as unlimited"
++        )
+     if body.reset_period is not None:
+         k.reset_period = body.reset_period
+         patches["reset_period"] = k.reset_period
+diff --git a/backend/app/db_migrate.py b/backend/app/db_migrate.py
+index 8d89be3..fdf6fd9 100644
+--- a/backend/app/db_migrate.py
++++ b/backend/app/db_migrate.py
+@@ -175,6 +175,32 @@ async def apply_schema_column_patches() -> None:
+         await conn.run_sync(patch)
+ 
+ 
++async def backfill_api_key_unlimited_budget() -> None:
++    """One-time data migration for ``alpha_router_api_keys.unlimited_budget``.
++
++    Before this column existed, ``credit_limit_usd <= 0`` meant "no cap". To
++    keep every existing key working exactly as before, rows that still have
++    NULL in the new column get ``true`` when they had no positive limit and
++    ``false`` otherwise. New keys always carry an explicit value, so this
++    touches nothing after the first run. Admins should review the keys now
++    flagged unlimited (the UI marks them).
++    """
++    async with engine.begin() as conn:
++        try:
++            await conn.execute(
++                text(
++                    "UPDATE alpha_router_api_keys SET unlimited_budget = "
++                    "CASE WHEN credit_limit_usd IS NULL OR credit_limit_usd <= 0 "
++                    "THEN TRUE ELSE FALSE END WHERE unlimited_budget IS NULL"
++                )
++            )
++        except Exception as exc:
++            message = str(exc).lower()
++            if "does not exist" in message or "no such table" in message or "no such column" in message:
++                return
++            raise
++
++
+ async def validate_agent_platform_schema() -> None:
+     """Fail startup when the versioned Agent Platform migration was not applied."""
+ 
+diff --git a/backend/app/main.py b/backend/app/main.py
+index 558f1f7..e51decf 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -58,6 +58,7 @@ from app.core.security import hash_password
+ from app.database import AsyncSessionLocal, Base, engine
+ from app.db_migrate import (
+     apply_schema_column_patches,
++    backfill_api_key_unlimited_budget,
+     validate_accounting_schema,
+     validate_agent_platform_schema,
+ )
+@@ -580,6 +581,7 @@ async def lifespan(app: FastAPI):
+             tables=legacy_metadata_tables(Base.metadata),
+         )
+     await apply_schema_column_patches()
++    await backfill_api_key_unlimited_budget()
+     await validate_agent_platform_schema()
+     await validate_accounting_schema()
+ 
+diff --git a/backend/app/migrate.py b/backend/app/migrate.py
+index 1347baf..32cd146 100644
+--- a/backend/app/migrate.py
++++ b/backend/app/migrate.py
+@@ -10,6 +10,7 @@ import app.models  # noqa: F401
+ from app.database import Base, engine
+ from app.db_migrate import (
+     apply_schema_column_patches,
++    backfill_api_key_unlimited_budget,
+     validate_accounting_schema,
+     validate_agent_platform_schema,
+ )
+@@ -28,6 +29,7 @@ async def _bootstrap_legacy_schema() -> None:
+             tables=legacy_metadata_tables(Base.metadata),
+         )
+     await apply_schema_column_patches()
++    await backfill_api_key_unlimited_budget()
+     await engine.dispose()
+ 
+ 
+diff --git a/backend/app/models/api_key.py b/backend/app/models/api_key.py
+index 4c68223..ebb146e 100644
+--- a/backend/app/models/api_key.py
++++ b/backend/app/models/api_key.py
+@@ -64,6 +64,11 @@ class AlphaRouterApiKey(Base):
+     notes = Column(Text, nullable=True)
+     owner_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+     credit_limit_usd = Column(Float, default=0.0)
++    # Explicit opt-out from the credit limit. A key with credit_limit_usd <= 0
++    # and this false is *blocked*, not unlimited. Nullable so the column can be
++    # added to existing tables; db_migrate.backfill_api_key_unlimited_budget
++    # sets it from the old implicit semantics ("0 meant no cap") exactly once.
++    unlimited_budget = Column(Boolean, nullable=True, default=False)
+     reset_period = Column(String(16), default="monthly")  # daily | weekly | monthly
+     expires_at = Column(DateTime, nullable=True)
+     period_used_usd = Column(Float, default=0.0)
+diff --git a/backend/app/services/alpha_router_api_key_audit.py b/backend/app/services/alpha_router_api_key_audit.py
+index b1d9295..da17594 100644
+--- a/backend/app/services/alpha_router_api_key_audit.py
++++ b/backend/app/services/alpha_router_api_key_audit.py
+@@ -16,6 +16,7 @@ FIELD_LABELS: dict[str, str] = {
+     "name": "Name",
+     "owner_user_id": "Owner",
+     "credit_limit_usd": "Credit limit (USD)",
++    "unlimited_budget": "Unlimited budget",
+     "reset_period": "Reset period",
+     "expires_at": "Expiration",
+     "is_active": "Active",
+@@ -196,6 +197,7 @@ async def log_api_key_deleted(
+             "key_prefix": (getattr(key, "key_prefix", None) or "")[:12],
+             "owner_user_id": key.owner_user_id,
+             "credit_limit_usd": key.credit_limit_usd,
++            "unlimited_budget": bool(getattr(key, "unlimited_budget", False)),
+             "is_active": bool(key.is_active),
+         },
+     )
+diff --git a/backend/app/services/alpha_router_api_key_service.py b/backend/app/services/alpha_router_api_key_service.py
+index 7fbf427..921ccd0 100644
+--- a/backend/app/services/alpha_router_api_key_service.py
++++ b/backend/app/services/alpha_router_api_key_service.py
+@@ -73,10 +73,22 @@ async def ensure_key_usable(db: AsyncSession, key: AlphaRouterApiKey) -> None:
+         raise HTTPException(status_code=403, detail="API key is disabled")
+     await maybe_reset_key_period(db, key)
+     limit = float(key.credit_limit_usd or 0)
++    if limit <= 0 and not key_is_unlimited(key):
++        # Formerly "0 means no cap": a forgotten field silently made the key a
++        # blank cheque. Unlimited is now an explicit admin decision.
++        raise HTTPException(
++            status_code=402,
++            detail="API key has no credit limit configured; ask an administrator to set one",
++        )
+     if limit > 0 and float(key.period_used_usd or 0) >= limit:
+         raise HTTPException(status_code=402, detail="API key credit limit exceeded for this period")
+ 
+ 
++def key_is_unlimited(key: AlphaRouterApiKey) -> bool:
++    """True only when an admin explicitly marked the key as unlimited."""
++    return bool(getattr(key, "unlimited_budget", False))
++
++
+ async def record_key_usage(db: AsyncSession, key: AlphaRouterApiKey, cost_usd: float) -> None:
+     if cost_usd <= 0:
+         return
+@@ -124,6 +136,7 @@ def key_to_dict(
+         "owner_username": owner.get("username") if owner else None,
+         "owner_display_name": owner.get("display_name") if owner else None,
+         "credit_limit_usd": float(key.credit_limit_usd or 0),
++        "unlimited_budget": key_is_unlimited(key),
+         "reset_period": key.reset_period or "monthly",
+         "expires_at": expires.isoformat() if expires else None,
+         "expiration_never": expires is None,
+diff --git a/backend/app/services/budget_reservation_service.py b/backend/app/services/budget_reservation_service.py
+index 4c77f0d..94d3b83 100644
+--- a/backend/app/services/budget_reservation_service.py
++++ b/backend/app/services/budget_reservation_service.py
+@@ -570,6 +570,8 @@ async def reserve(
+         limit = float(key.credit_limit_usd or 0)
+         used = float(key.period_used_usd or 0)
+         held = float(key.period_reserved_usd or 0)
++        # ensure_key_usable has already refused limit <= 0 unless the key is
++        # explicitly unlimited, so "limit > 0" here means "a cap applies".
+         if limit > 0:
+             held, amount = await _admit_hold(
+                 db,
+diff --git a/backend/tests/test_api_key_connection_policy.py b/backend/tests/test_api_key_connection_policy.py
+index dec0d89..61bd58e 100644
+--- a/backend/tests/test_api_key_connection_policy.py
++++ b/backend/tests/test_api_key_connection_policy.py
+@@ -216,6 +216,7 @@ async def _test_gateway_models_list_respects_allowlist() -> None:
+                 key_prefix=raw[:16],
+                 key_hash=hash_api_key(raw),
+                 is_active=True,
++                unlimited_budget=True,  # no cap must now be explicit
+             )
+             db.add(key)
+             await db.flush()
+diff --git a/backend/tests/test_api_key_model_policy.py b/backend/tests/test_api_key_model_policy.py
+index 578530e..95acbe1 100644
+--- a/backend/tests/test_api_key_model_policy.py
++++ b/backend/tests/test_api_key_model_policy.py
+@@ -206,6 +206,7 @@ async def _test_gateway_models_list_respects_model_allowlist() -> None:
+                 key_hash=hash_api_key(raw),
+                 is_active=True,
+                 owner_user_id=owner.id,
++                unlimited_budget=True,  # no cap must now be explicit
+             )
+             db.add(key)
+             await db.flush()
+diff --git a/backend/tests/test_api_key_unlimited_budget.py b/backend/tests/test_api_key_unlimited_budget.py
+new file mode 100644
+index 0000000..496abd5
+--- /dev/null
++++ b/backend/tests/test_api_key_unlimited_budget.py
+@@ -0,0 +1,140 @@
++"""A gateway key with no positive credit limit is blocked unless explicitly unlimited."""
++
++from __future__ import annotations
++
++import asyncio
++import datetime
++
++import pytest
++from fastapi import HTTPException
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
++
++import app.models  # noqa: F401
++from app.database import Base
++from app.models.api_key import AlphaRouterApiKey
++from app.models.user import User
++from app.services.alpha_router_api_key_service import ensure_key_usable, key_to_dict
++
++
++async def _db():
++    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
++    async with engine.begin() as conn:
++        await conn.run_sync(Base.metadata.create_all)
++    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False), engine
++
++
++def _key(name, *, limit, unlimited):
++    return AlphaRouterApiKey(
++        name=name, key_prefix=f"ar_{name}"[:16], key_hash=f"h_{name}" + "0" * 20, is_active=True,
++        credit_limit_usd=limit, unlimited_budget=unlimited, reset_period="monthly",
++        period_used_usd=0.0, period_started_at=datetime.datetime.utcnow(),
++    )
++
++
++def test_zero_limit_blocks_unless_unlimited():
++    async def run():
++        factory, engine = await _db()
++        try:
++            async with factory() as db:
++                owner = User(username="o", email="o@t", hashed_password="x", auth_provider="local", is_active=True)
++                db.add(owner)
++                await db.flush()
++                blocked = _key("blocked", limit=0.0, unlimited=False)
++                unlimited = _key("unlimited", limit=0.0, unlimited=True)
++                capped = _key("capped", limit=5.0, unlimited=False)
++                for k in (blocked, unlimited, capped):
++                    k.owner_user_id = owner.id
++                db.add_all([blocked, unlimited, capped])
++                await db.commit()
++
++                with pytest.raises(HTTPException) as exc:
++                    await ensure_key_usable(db, blocked)
++                assert exc.value.status_code == 402
++                assert "no credit limit" in exc.value.detail
++
++                await ensure_key_usable(db, unlimited)
++                await ensure_key_usable(db, capped)
++
++                capped.period_used_usd = 5.0
++                with pytest.raises(HTTPException) as exc2:
++                    await ensure_key_usable(db, capped)
++                assert exc2.value.status_code == 402
++
++                payload = key_to_dict(unlimited)
++                assert payload["unlimited_budget"] is True and payload["credit_limit_usd"] == 0.0
++        finally:
++            await engine.dispose()
++
++    asyncio.run(run())
++
++
++def test_admin_api_refuses_a_key_with_neither_limit_nor_unlimited():
++    from app.api.admin import ApiKeyCreate, ApiKeyPatch, create_alpha_router_key, patch_alpha_router_key
++
++    async def run():
++        factory, engine = await _db()
++        try:
++            async with factory() as db:
++                admin = User(username="a", email="a@t", hashed_password="x", auth_provider="local", is_active=True)
++                db.add(admin)
++                await db.commit()
++
++                with pytest.raises(HTTPException) as exc:
++                    await create_alpha_router_key(
++                        ApiKeyCreate(name="k", owner_user_id=admin.id, credit_limit_usd=0), db, admin
++                    )
++                assert exc.value.status_code == 400
++
++                created = await create_alpha_router_key(
++                    ApiKeyCreate(name="k", owner_user_id=admin.id, credit_limit_usd=0, unlimited_budget=True), db, admin
++                )
++                key_id = created["id"] if isinstance(created, dict) and "id" in created else None
++                if key_id is None:
++                    row = (await db.execute(text("SELECT id FROM alpha_router_api_keys WHERE name='k'"))).scalar_one()
++                    key_id = int(row)
++
++                # Turning the flag off without giving a limit is refused.
++                with pytest.raises(HTTPException) as exc2:
++                    await patch_alpha_router_key(key_id, ApiKeyPatch(unlimited_budget=False), db, admin)
++                assert exc2.value.status_code == 400
++                # Off + a real limit is fine.
++                await patch_alpha_router_key(key_id, ApiKeyPatch(unlimited_budget=False, credit_limit_usd=10), db, admin)
++                row = await db.get(AlphaRouterApiKey, key_id)
++                assert row.unlimited_budget is False and row.credit_limit_usd == 10.0
++        finally:
++            await engine.dispose()
++
++    asyncio.run(run())
++
++
++def test_backfill_keeps_existing_keys_working():
++    """Rows created before the column existed have NULL; the backfill maps old semantics."""
++    from app import db_migrate
++
++    async def run():
++        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
++        async with engine.begin() as conn:
++            await conn.run_sync(Base.metadata.create_all)
++            await conn.execute(
++                text(
++                    "INSERT INTO alpha_router_api_keys (name, key_prefix, key_hash, is_active, credit_limit_usd, unlimited_budget, period_reserved_usd, restrict_connections, restrict_models) "
++                    "VALUES ('old-nocap','p1','h1',1,0,NULL,0,0,0), ('old-cap','p2','h2',1,3.5,NULL,0,0,0), ('new','p3','h3',1,0,0,0,0,0)"
++                )
++            )
++        original = db_migrate.engine
++        db_migrate.engine = engine
++        try:
++            await db_migrate.backfill_api_key_unlimited_budget()
++            async with engine.connect() as conn:
++                rows = dict(
++                    (await conn.execute(text("SELECT name, unlimited_budget FROM alpha_router_api_keys"))).all()
++                )
++            assert bool(rows["old-nocap"]) is True   # kept working, now explicit
++            assert bool(rows["old-cap"]) is False
++            assert bool(rows["new"]) is False        # explicit values are never touched
++        finally:
++            db_migrate.engine = original
++            await engine.dispose()
++
++    asyncio.run(run())
+diff --git a/backend/tests/test_gateway_auth.py b/backend/tests/test_gateway_auth.py
+index 8bd0540..f46f025 100644
+--- a/backend/tests/test_gateway_auth.py
++++ b/backend/tests/test_gateway_auth.py
+@@ -92,6 +92,7 @@ async def _seed_alpha_router_key(
+     raw_key="alpha_router_gatewaykey_test456",
+     credit_limit_usd=0.0,
+     period_used_usd=0.0,
++    unlimited_budget=None,
+ ):
+     async with session_factory() as db:
+         key = AlphaRouterApiKey(
+@@ -100,6 +101,8 @@ async def _seed_alpha_router_key(
+             key_hash=hash_api_key(raw_key),
+             is_active=True,
+             credit_limit_usd=credit_limit_usd,
++            # A key without a positive limit is blocked unless explicitly unlimited.
++            unlimited_budget=(credit_limit_usd <= 0) if unlimited_budget is None else unlimited_budget,
+             reset_period="monthly",
+             period_used_usd=period_used_usd,
+             period_started_at=datetime.datetime.utcnow(),
+diff --git a/frontend/src/components/apiKeys/ApiKeyFormModal.tsx b/frontend/src/components/apiKeys/ApiKeyFormModal.tsx
+index a0004c9..947041c 100644
+--- a/frontend/src/components/apiKeys/ApiKeyFormModal.tsx
++++ b/frontend/src/components/apiKeys/ApiKeyFormModal.tsx
+@@ -10,6 +10,8 @@ export type ApiKeyFormValues = {
+   name: string;
+   owner_user_id: number;
+   credit_limit_usd: number | null;
++  /** Explicit opt-out from the credit limit; required when the limit is empty/0. */
++  unlimited_budget: boolean;
+   reset_period: "daily" | "weekly" | "monthly";
+   expiration_days: number | null;
+   expiration_never: boolean;
+@@ -32,6 +34,7 @@ const defaultValues: ApiKeyFormValues = {
+   name: "",
+   owner_user_id: 0,
+   credit_limit_usd: null,
++  unlimited_budget: false,
+   reset_period: "monthly",
+   expiration_days: null,
+   expiration_never: false,
+@@ -53,6 +56,7 @@ export default function ApiKeyFormModal({ open, title, initial, onClose, onSubmi
+       name: initial?.name ?? "",
+       owner_user_id: initial?.owner_user_id ?? 0,
+       credit_limit_usd: initial?.credit_limit_usd ?? null,
++      unlimited_budget: initial?.unlimited_budget ?? false,
+       reset_period: initial?.reset_period ?? "monthly",
+       expiration_days: initial?.expiration_days ?? null,
+       expiration_never: initial?.expiration_never ?? false,
+@@ -126,8 +130,24 @@ export default function ApiKeyFormModal({ open, title, initial, onClose, onSubmi
+               }))
+             }
+           />
+-          <span className="muted-text api-key-form__hint">Leave empty for no cap; 0 also means no cap</span>
++          <span className="muted-text api-key-form__hint">
++            A key without a positive limit is blocked unless you mark it unlimited below.
++          </span>
++        </label>
++        <label className="api-key-form__label" style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
++          <input
++            type="checkbox"
++            checked={form.unlimited_budget}
++            onChange={(e) => setForm((f) => ({ ...f, unlimited_budget: e.target.checked }))}
++          />
++          <span>Unlimited budget (no credit cap)</span>
+         </label>
++        {form.unlimited_budget ? (
++          <p className="form-hint form-hint--warning">
++            This key can spend without any per-period ceiling. Every request is still billed to the
++            owner&apos;s account.
++          </p>
++        ) : null}
+         <label className="api-key-form__label">
+           Reset limit every…
+           <select
+diff --git a/frontend/src/pages/admin/ApiKeys.tsx b/frontend/src/pages/admin/ApiKeys.tsx
+index e53dca5..702681e 100644
+--- a/frontend/src/pages/admin/ApiKeys.tsx
++++ b/frontend/src/pages/admin/ApiKeys.tsx
+@@ -49,6 +49,7 @@ type AlphaRouterKey = {
+   owner_username: string | null;
+   owner_display_name: string | null;
+   credit_limit_usd: number;
++  unlimited_budget: boolean;
+   reset_period: "daily" | "weekly" | "monthly";
+   expires_at: string | null;
+   expiration_never: boolean;
+@@ -175,6 +176,7 @@ export default function AdminApiKeys() {
+         name: values.name,
+         owner_user_id: values.owner_user_id,
+         credit_limit_usd: values.credit_limit_usd ?? 0,
++        unlimited_budget: values.unlimited_budget,
+         reset_period: values.reset_period,
+         expiration_days: values.expiration_never ? null : values.expiration_days,
+         restrict_connections: values.restrict_connections,
+@@ -202,6 +204,7 @@ export default function AdminApiKeys() {
+         name: values.name,
+         owner_user_id: values.owner_user_id,
+         credit_limit_usd: values.credit_limit_usd ?? 0,
++        unlimited_budget: values.unlimited_budget,
+         reset_period: values.reset_period,
+         expiration_days: values.expiration_never ? null : values.expiration_days,
+         expiration_never: values.expiration_never,
+@@ -375,7 +378,9 @@ export default function AdminApiKeys() {
+                   <td className="col-sm">{formatUsd(k.total_used_usd)}</td>
+                   <td className="col-md">
+                     <div className="api-keys-limit">
+-                      <span>{limit > 0 ? formatUsd(limit) : "—"}</span>
++                      <span>
++                        {limit > 0 ? formatUsd(limit) : k.unlimited_budget ? "Unlimited" : "Blocked (no limit set)"}
++                      </span>
+                       {limit > 0 ? (
+                         <div className="api-keys-limit-bar" aria-hidden>
+                           <div className="api-keys-limit-fill" style={{ width: `${periodPct}%` }} />
+@@ -478,6 +483,7 @@ export default function AdminApiKeys() {
+                 name: editKey.name,
+                 owner_user_id: editKey.owner_user_id ?? undefined,
+                 credit_limit_usd: editKey.credit_limit_usd,
++                unlimited_budget: editKey.unlimited_budget,
+                 reset_period: editKey.reset_period,
+                 expiration_never: editKey.expiration_never,
+                 expiration_days: editKey.expiration_never
+-- 
+2.43.0
+

@@ -1,0 +1,204 @@
+From 2c821249361d9295ae7fa8d29237237730303ec5 Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 18:01:30 +0000
+Subject: [PATCH 22/22] fix(ops): app loggers at INFO; idempotent scheduler
+ shutdown
+
+Found by booting the real 2-worker uvicorn stack during the Phase 0-2
+review:
+
+- The root logger is pinned at WARNING (to keep third-party libraries
+  quiet), so the "This worker is now the scheduler leader" line and every
+  other INFO message from app.* was silently dropped. Add
+  configure_app_log_level() driven by APP_LOG_LEVEL (default INFO) that
+  raises only the application namespaces, leaving root untouched.
+- On every worker exit the leader's on_release callback and the lifespan
+  both called stop_scheduler() in the same tick; AsyncIOScheduler defers
+  shutdown to the loop so `running` was still True and the second call
+  raised SchedulerNotRunningError. stop_scheduler() is now idempotent.
+
+Verified: leader line logged exactly once across 2 workers, SIGTERM
+shutdown has no tracebacks, /ready 200.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ .env.example                                  |  3 ++
+ backend/app/config.py                         |  3 ++
+ backend/app/main.py                           |  2 +
+ backend/app/services/observability.py         | 19 ++++++++
+ backend/app/services/scheduler.py             | 14 +++++-
+ .../tests/test_ops_logging_and_shutdown.py    | 43 +++++++++++++++++++
+ 6 files changed, 83 insertions(+), 1 deletion(-)
+ create mode 100644 backend/tests/test_ops_logging_and_shutdown.py
+
+diff --git a/.env.example b/.env.example
+index 68ec7c6..c166b81 100644
+--- a/.env.example
++++ b/.env.example
+@@ -157,6 +157,9 @@ METRICS_ENABLED=true
+ # scrape job with Authorization: Bearer <this value>.
+ METRICS_BEARER_TOKEN=
+ JSON_LOGGING_ENABLED=true
++# Level for the application's own loggers (app.*). The root logger stays at
++# WARNING so third-party libraries remain quiet. Use DEBUG when diagnosing.
++APP_LOG_LEVEL=INFO
+ # OTLP tracing is opt-in and fails startup when enabled without an endpoint.
+ OTEL_ENABLED=false
+ OTEL_SERVICE_NAME=alpharouter
+diff --git a/backend/app/config.py b/backend/app/config.py
+index 3bcd4df..1161520 100644
+--- a/backend/app/config.py
++++ b/backend/app/config.py
+@@ -58,6 +58,9 @@ class Settings(BaseSettings):
+     # deployments boot unchanged. "production" enables the startup guard that
+     # refuses to boot while insecure defaults are still configured.
+     environment: str = "development"
++    # Level for the application's own loggers (alpha_router.* and app.*); the
++    # root logger and third-party libraries stay at WARNING.
++    app_log_level: str = "INFO"  # env: APP_LOG_LEVEL
+     secret_key: str = "change-me-in-production"
+     jwt_algorithm: str = "HS256"
+     # Token lifetime. Default 8h (480 min) — balances UX against stolen-token
+diff --git a/backend/app/main.py b/backend/app/main.py
+index a7b6d1d..ca982f8 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -77,6 +77,7 @@ from app.services.csrf_protection import CsrfProtectionMiddleware
+ from app.services.docs_guard import OpenApiDocsGuardMiddleware
+ from app.services.observability import (
+     ObservabilityMiddleware,
++    configure_app_log_level,
+     configure_json_logging,
+     configure_telemetry,
+     increment,
+@@ -570,6 +571,7 @@ _PRODUCTION_GUARD_LOG = logging.getLogger(f"{LOGGER_NAMESPACE}.production_guard"
+ @asynccontextmanager
+ async def lifespan(app: FastAPI):
+     configure_json_logging(settings.json_logging_enabled)
++    configure_app_log_level(getattr(settings, "app_log_level", "INFO"))
+     configure_telemetry(
+         enabled=settings.otel_enabled,
+         service_name=settings.otel_service_name,
+diff --git a/backend/app/services/observability.py b/backend/app/services/observability.py
+index c392edb..24a4f25 100644
+--- a/backend/app/services/observability.py
++++ b/backend/app/services/observability.py
+@@ -29,6 +29,8 @@ from prometheus_client import (
+     multiprocess,
+ )
+ from prometheus_client import Counter as PrometheusCounter
++
++from app.branding import LOGGER_NAMESPACE
+ from starlette.types import ASGIApp, Message, Receive, Scope, Send
+ 
+ _KNOWN_EVENTS = frozenset(
+@@ -404,6 +406,23 @@ class JsonLogFormatter(logging.Formatter):
+         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+ 
+ 
++def configure_app_log_level(level_name: str) -> None:
++    """Make the application's own INFO lines visible.
++
++    The root logger stays at WARNING (third-party noise), but every logger the
++    app writes to - the ``alpha_router`` namespace and the ``app.*`` module
++    loggers - gets APP_LOG_LEVEL (INFO by default). Under uvicorn nothing set
++    these before, so operational lines such as "This worker is now the
++    scheduler leader" or "LDAP sync: prune suppressed" were silently dropped.
++    """
++    level = getattr(logging, str(level_name or "INFO").upper(), logging.INFO)
++    root = logging.getLogger()
++    if not root.handlers:
++        root.addHandler(logging.StreamHandler())
++    for name in (LOGGER_NAMESPACE, "app"):
++        logging.getLogger(name).setLevel(level)
++
++
+ def configure_json_logging(enabled: bool) -> None:
+     if not enabled:
+         return
+diff --git a/backend/app/services/scheduler.py b/backend/app/services/scheduler.py
+index 4a2be68..6bc5dcc 100644
+--- a/backend/app/services/scheduler.py
++++ b/backend/app/services/scheduler.py
+@@ -319,8 +319,10 @@ async def job_reclaim_stale_video_jobs():
+ 
+ 
+ def start_scheduler():
++    global _shutdown_requested
+     if scheduler.running:
+         return
++    _shutdown_requested = False
+     # Check every 30 minutes which connections are due for their own sync_interval_hours
+     scheduler.add_job(job_sync_all_models, "interval", minutes=30, id="model_sync")
+     # Budget periods are month-of-UTC everywhere else (ensure_budget_period,
+@@ -440,6 +442,16 @@ async def job_refresh_dynamic_schedules() -> None:
+             logger.exception("Failed to refresh %s", getattr(refresh, "__name__", refresh))
+ 
+ 
++_shutdown_requested = False
++
++
+ def stop_scheduler():
+-    if scheduler.running:
++    """Idempotent: AsyncIOScheduler.shutdown() is deferred to the loop, so
++    ``scheduler.running`` stays True until that callback runs and a second
++    call in the same tick scheduled a second shutdown that raised
++    SchedulerNotRunningError (seen on every worker exit: the leader's
++    on_release and the lifespan both called this)."""
++    global _shutdown_requested
++    if scheduler.running and not _shutdown_requested:
++        _shutdown_requested = True
+         scheduler.shutdown(wait=False)
+diff --git a/backend/tests/test_ops_logging_and_shutdown.py b/backend/tests/test_ops_logging_and_shutdown.py
+new file mode 100644
+index 0000000..fd8a950
+--- /dev/null
++++ b/backend/tests/test_ops_logging_and_shutdown.py
+@@ -0,0 +1,43 @@
++"""Boot smoke-test regressions: app loggers at INFO, idempotent scheduler stop.
++
++Both came out of running the real two-worker uvicorn boot: the leader line
++was logged at INFO under a WARNING root and never appeared, and every worker
++exit raised SchedulerNotRunningError because the leader's release callback
++and the lifespan both stopped the scheduler in the same tick.
++"""
++
++from __future__ import annotations
++
++import logging
++from unittest.mock import patch
++
++from app.branding import LOGGER_NAMESPACE
++from app.services import scheduler as sched
++from app.services.observability import configure_app_log_level
++
++
++def test_configure_app_log_level_touches_only_app_loggers():
++    root = logging.getLogger()
++    previous_root = root.level
++    try:
++        root.setLevel(logging.WARNING)
++        configure_app_log_level("debug")
++        assert logging.getLogger(LOGGER_NAMESPACE).level == logging.DEBUG
++        assert logging.getLogger("app").level == logging.DEBUG
++        assert root.level == logging.WARNING
++        configure_app_log_level("not-a-level")
++        assert logging.getLogger("app").level == logging.INFO
++    finally:
++        root.setLevel(previous_root)
++        configure_app_log_level("INFO")
++
++
++def test_stop_scheduler_is_idempotent():
++    with (
++        patch.object(sched, "_shutdown_requested", False),
++        patch.object(type(sched.scheduler), "running", property(lambda self: True)),
++        patch.object(sched.scheduler, "shutdown") as shutdown,
++    ):
++        sched.stop_scheduler()
++        sched.stop_scheduler()
++        assert shutdown.call_count == 1
+-- 
+2.43.0
+

@@ -1,0 +1,106 @@
+From a1b3c7a9e72a8c8427e16bdecadcd2a2cba60ad5 Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 17:33:41 +0000
+Subject: [PATCH 16/22] fix(chat): unknown chat_session_id is opaque again;
+ only a foreign existing session is refused
+
+Regression from the 2.13 batch (B-26): resolve_owned_chat_session answered
+404 for any session id the server did not know. The frontend creates chat
+sessions client-side and syncs them to the server fire-and-forget, and
+Private Mode sessions are never synced, so attaching a file or recording a
+voice note in a private chat - or in a brand-new chat before its first sync
+- failed with "Chat session not found".
+
+An unknown id has nothing to leak; it is stored opaquely as before. The
+check now refuses only a session that exists and belongs to someone else
+(without chat.write on its project). Found in the post-phase self-review.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ backend/app/services/chat_session_access.py   | 32 +++++++++++++------
+ .../tests/test_security_hardening_batch.py    | 10 +++---
+ 2 files changed, 28 insertions(+), 14 deletions(-)
+
+diff --git a/backend/app/services/chat_session_access.py b/backend/app/services/chat_session_access.py
+index f15afaf..f20b12b 100644
+--- a/backend/app/services/chat_session_access.py
++++ b/backend/app/services/chat_session_access.py
+@@ -2,8 +2,20 @@
+ 
+ ``chat_session_id`` arrives in several multipart forms (attachments, voice
+ notes, attach-from-media) and used to be looked up as-is: the caller could
+-name any session, have uploads scoped to that session's project and leave
+-voice notes and media rows pointing at a conversation that is not theirs.
++name any *existing* session, have uploads scoped to that session's project
++and leave voice notes and media rows pointing at a conversation that is not
++theirs.
++
++Two kinds of id must keep working and are deliberately not refused:
++
++* ids the server has never seen. The frontend creates sessions client-side
++  and syncs them later (fire-and-forget), and Private Mode sessions are never
++  synced at all. There is nothing to leak from an unknown id; it is stored
++  opaquely exactly as before.
++* the caller's own sessions, and project sessions they can write in.
++
++Only a session that exists and belongs to someone else is refused (404, so
++the existence of other people's sessions is not confirmed).
+ """
+ 
+ from __future__ import annotations
+@@ -20,22 +32,22 @@ async def resolve_owned_chat_session(
+     user: object,
+     chat_session_id: str | None,
+ ) -> ChatSession | None:
+-    """Return the session when ``user`` may write into it; None when no id given.
++    """Return the session when it exists and ``user`` may write into it.
+ 
+-    Allowed: the session's own user, or a member of the session's project who
+-    holds ``chat.write`` there (shared project conversations). Anything else
+-    is a 404 so the existence of other people's sessions is not confirmed.
++    ``None`` when no id was given *or* the id is unknown to the server (see
++    module docstring). Raises 404 for an existing session the caller may not
++    use.
+     """
+     sid = (chat_session_id or "").strip()
+     if not sid:
+         return None
+     user_id = getattr(user, "id", None)
+     session = await db.get(ChatSession, sid)
+-    if session is None or user_id is None:
+-        raise HTTPException(status_code=404, detail="Chat session not found")
+-    if int(session.user_id) == int(user_id):
++    if session is None:
++        return None
++    if user_id is not None and int(session.user_id) == int(user_id):
+         return session
+-    if session.project_id:
++    if session.project_id and user_id is not None:
+         from app.services.project_access_service import resolve_project_access
+ 
+         access = await resolve_project_access(db, project_id=session.project_id, user=user)
+diff --git a/backend/tests/test_security_hardening_batch.py b/backend/tests/test_security_hardening_batch.py
+index f73b414..6a10454 100644
+--- a/backend/tests/test_security_hardening_batch.py
++++ b/backend/tests/test_security_hardening_batch.py
+@@ -235,10 +235,12 @@ def test_chat_session_must_belong_to_caller_or_writable_project():
+                 await db.commit()
+                 assert (await resolve_owned_chat_session(db, user=me, chat_session_id="mine")).id == "mine"
+                 assert await resolve_owned_chat_session(db, user=me, chat_session_id=None) is None
+-                for sid in ("theirs", "does-not-exist"):
+-                    with pytest.raises(HTTPException) as exc:
+-                        await resolve_owned_chat_session(db, user=me, chat_session_id=sid)
+-                    assert exc.value.status_code == 404
++                # Unknown ids are the client's private / not-yet-synced sessions:
++                # opaque, allowed (a 404 here broke attachments in Private Mode).
++                assert await resolve_owned_chat_session(db, user=me, chat_session_id="not-synced-yet") is None
++                with pytest.raises(HTTPException) as exc:
++                    await resolve_owned_chat_session(db, user=me, chat_session_id="theirs")
++                assert exc.value.status_code == 404
+         finally:
+             await engine.dispose()
+ 
+-- 
+2.43.0
+

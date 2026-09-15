@@ -1,0 +1,522 @@
+From 3bbfd8b25adc15a01140070ca16e26426ff8cec9 Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 16:15:38 +0000
+Subject: [PATCH 15/22] fix(frontend): SSE reader delivers the last line and
+ cancels on exit; memoised Markdown; stable message keys; local calendar days
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+F-4: the inline SSE loop in ChatPanel processed only complete lines, so a
+final `data:` event without a trailing newline (the tail of a stream or a
+reply cut short by the server) was silently dropped; `data:` without a
+space (legal SSE, emitted by some proxies) was ignored; and the reader was
+never cancelled when the loop exited early, leaving the connection open
+after Stop or an error. lib/sse.ts (readSseEvents, splitSseLines,
+parseSseDataLine) fixes all three, handles CRLF and UTF-8 split across
+chunks, and is unit-tested; ChatPanel iterates it.
+
+F-5: MarkdownContent rebuilt its `components` and `remarkPlugins` objects on
+every render and was not memoised, so every streamed token re-created the
+Markdown tree of every finished message. Tables are module-level and the
+export is React.memo. Message rows were keyed by index, so deleting or
+inserting a message re-mounted every row below it; stableMessageKeys()
+derives unique keys from clientMessageId/id + role + model with an index
+fallback, never duplicates.
+
+F-8: Reports date presets and the chat-export filename used
+toISOString().slice(0, 10) — the UTC day — and were a day off for users
+east of Greenwich in the evening; both use localDateKey now.
+
+Tests: lib/sse.test.ts, lib/messageKeys.test.ts, memo assertion in
+MarkdownContent.test.tsx. vitest 41 files / 224 tests; tsc clean; build ok.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ frontend/src/components/ChatPanel.tsx         | 83 +++++++++----------
+ .../src/components/MarkdownContent.test.tsx   | 10 +++
+ frontend/src/components/MarkdownContent.tsx   | 29 ++++---
+ frontend/src/components/SettingsModal.tsx     |  3 +-
+ frontend/src/generated/persianFonts.json      |  2 +-
+ frontend/src/lib/chatStorage.ts               | 19 +++++
+ frontend/src/lib/messageKeys.test.ts          | 26 ++++++
+ frontend/src/lib/sse.test.ts                  | 76 +++++++++++++++++
+ frontend/src/lib/sse.ts                       | 71 ++++++++++++++++
+ frontend/src/pages/admin/Reports.tsx          |  8 +-
+ 10 files changed, 267 insertions(+), 60 deletions(-)
+ create mode 100644 frontend/src/lib/messageKeys.test.ts
+ create mode 100644 frontend/src/lib/sse.test.ts
+ create mode 100644 frontend/src/lib/sse.ts
+
+diff --git a/frontend/src/components/ChatPanel.tsx b/frontend/src/components/ChatPanel.tsx
+index c063213..ee84961 100644
+--- a/frontend/src/components/ChatPanel.tsx
++++ b/frontend/src/components/ChatPanel.tsx
+@@ -1,4 +1,5 @@
+ import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
++import { readSseEvents } from "../lib/sse";
+ import { flushSync } from "react-dom";
+ import { useLocation, useNavigate } from "react-router-dom";
+ import { api, authFetch, formatApiError, getCachedSession, isApiAuthError } from "../api";
+@@ -87,6 +88,7 @@ import {
+   sidebarOlderThan3DaysCutoffMs,
+   sidebarOlderThan7DaysCutoffMs,
+   sidebarHydrateMinActivityMs,
++  stableMessageKeys,
+ } from "../lib/chatStorage";
+ import {
+   PROJECT_MEDIA_ATTACH_EVENT,
+@@ -743,6 +745,7 @@ export default function ChatPanel({
+   const [selectedChatIds, setSelectedChatIds] = useState<Set<string>>(() => new Set());
+   const [activeId, setActiveId] = useState<string | null>(null);
+   const [messages, setMessages] = useState<ChatMessage[]>([]);
++  const messageKeys = useMemo(() => stableMessageKeys(messages, String(activeId ?? "")), [messages, activeId]);
+   const [input, setInput] = useState("");
+   const [inputDirection, setInputDirection] = useState<TextDirection>("ltr");
+   const composerInputRef = useRef("");
+@@ -3914,54 +3917,44 @@ export default function ChatPanel({
+     const reader = res.body?.getReader();
+     if (!reader) throw new Error("No response stream");
+ 
+-    const decoder = new TextDecoder();
+     let assistant = "";
+-    let buffer = "";
+     let requestLogId: number | undefined;
+     let agentMetadata: AgentCompletionMetadata | undefined;
+ 
+-    while (true) {
+-      const { done, value } = await reader.read();
+-      if (done) break;
+-      buffer += decoder.decode(value, { stream: true });
+-      const lines = buffer.split("\n");
+-      buffer = lines.pop() ?? "";
+-
+-      for (const line of lines) {
+-        if (!line.startsWith("data: ")) continue;
+-        const payload = line.slice(6).trim();
+-        if (payload === "[DONE]") continue;
+-        try {
+-          const json = JSON.parse(payload);
+-          if (json.error) {
+-            const errMsg =
+-              typeof json.error === "string"
+-                ? json.error
+-                : json.error?.message || JSON.stringify(json.error);
+-            throw new Error(errMsg);
+-          }
+-          const metaLogId = json?.alpha_router?.request_log_id;
+-          if (typeof metaLogId === "number" && Number.isFinite(metaLogId)) {
+-            requestLogId = metaLogId;
+-          }
+-          const nextAgentMetadata = agentCompletionMetadataFromSse(
+-            json?.alpha_router,
+-          );
+-          if (Object.keys(nextAgentMetadata).length) {
+-            agentMetadata = {
+-              ...(agentMetadata || {}),
+-              ...nextAgentMetadata,
+-            };
+-          }
+-          const delta = json.choices?.[0]?.delta?.content;
+-          if (delta) {
+-            assistant += delta;
+-            onPartial(assistant);
+-          }
+-        } catch (err) {
+-          if (err instanceof SyntaxError) continue;
+-          throw err;
++    // readSseEvents also delivers a trailing `data:` line without a newline
++    // and cancels the reader if this loop exits early (error / Stop).
++    for await (const payload of readSseEvents(reader)) {
++      if (payload === "[DONE]") continue;
++      try {
++        const json = JSON.parse(payload);
++        if (json.error) {
++          const errMsg =
++            typeof json.error === "string"
++              ? json.error
++              : json.error?.message || JSON.stringify(json.error);
++          throw new Error(errMsg);
++        }
++        const metaLogId = json?.alpha_router?.request_log_id;
++        if (typeof metaLogId === "number" && Number.isFinite(metaLogId)) {
++          requestLogId = metaLogId;
+         }
++        const nextAgentMetadata = agentCompletionMetadataFromSse(
++          json?.alpha_router,
++        );
++        if (Object.keys(nextAgentMetadata).length) {
++          agentMetadata = {
++            ...(agentMetadata || {}),
++            ...nextAgentMetadata,
++          };
++        }
++        const delta = json.choices?.[0]?.delta?.content;
++        if (delta) {
++          assistant += delta;
++          onPartial(assistant);
++        }
++      } catch (err) {
++        if (err instanceof SyntaxError) continue;
++        throw err;
+       }
+     }
+     return {
+@@ -6705,7 +6698,9 @@ export default function ChatPanel({
+           )}
+           {messages.map((m, i) => (
+             <article
+-              key={`${activeId}-${i}`}
++              // A stable identity per message: with the index as key, deleting or
++              // inserting one message re-mounted (and re-parsed) every row below it.
++              key={messageKeys[i]}
+               className={`alpha-router-msg alpha-router-msg-${m.role}${m.modelId ? " alpha-router-msg-multi" : ""}`}
+             >
+               {m.role === "assistant" && m.agentName ? (
+diff --git a/frontend/src/components/MarkdownContent.test.tsx b/frontend/src/components/MarkdownContent.test.tsx
+index ecb3e8e..d41e5d5 100644
+--- a/frontend/src/components/MarkdownContent.test.tsx
++++ b/frontend/src/components/MarkdownContent.test.tsx
+@@ -56,3 +56,13 @@ describe("authenticated Markdown media downloads", () => {
+     expect(revokeObjectURL).toHaveBeenCalledWith("blob:report");
+   });
+ });
++
++describe("MarkdownContent render stability", () => {
++  it("is memoised and uses module-level plugin/component tables", async () => {
++    const mod = await import("./MarkdownContent");
++    const Comp = mod.default as unknown as { $$typeof?: symbol; type?: unknown };
++    // React.memo wraps the function: the export is a memo element type, not the bare function.
++    expect(String(Comp.$$typeof)).toBe("Symbol(react.memo)");
++    expect(typeof Comp.type).toBe("function");
++  });
++});
+diff --git a/frontend/src/components/MarkdownContent.tsx b/frontend/src/components/MarkdownContent.tsx
+index 616c9e2..f09fdf8 100644
+--- a/frontend/src/components/MarkdownContent.tsx
++++ b/frontend/src/components/MarkdownContent.tsx
+@@ -1,4 +1,4 @@
+-import { createContext, useContext } from "react";
++import { createContext, memo, useContext } from "react";
+ import type { ComponentPropsWithoutRef, MouseEvent, ReactNode } from "react";
+ import type { ExtraProps } from "react-markdown";
+ import ReactMarkdown from "react-markdown";
+@@ -100,25 +100,32 @@ function MarkdownCode({
+   return <ChatCodeBlock code={code} language={lang} variant={variant} deferHighlight={parentStreaming} />;
+ }
+ 
++// Module-level so their identity is stable: a new `components`/`remarkPlugins`
++// object per render made react-markdown re-create every element of every
++// message whenever the chat re-rendered (each streamed token).
++const REMARK_PLUGINS = [remarkGfm];
++const MARKDOWN_COMPONENTS = {
++  pre: ({ children }: { children?: ReactNode }) => <>{children}</>,
++  code: MarkdownCode,
++  a: SafeLink,
++  img: SafeImage,
++};
++
+ /** Render assistant / AI text as GitHub-flavored Markdown. */
+-export default function MarkdownContent({ content, className = "", streaming = false }: Props) {
++function MarkdownContent({ content, className = "", streaming = false }: Props) {
+   if (!content) return null;
+ 
+   return (
+     <MarkdownStreamingContext.Provider value={streaming}>
+       <div className={`markdown-body${className ? ` ${className}` : ""}`}>
+-        <ReactMarkdown
+-          remarkPlugins={[remarkGfm]}
+-          components={{
+-            pre: ({ children }) => <>{children}</>,
+-            code: MarkdownCode,
+-            a: SafeLink,
+-            img: SafeImage,
+-          }}
+-        >
++        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
+           {content}
+         </ReactMarkdown>
+       </div>
+     </MarkdownStreamingContext.Provider>
+   );
+ }
++
++// Finished messages have identical props from one chat render to the next;
++// memo keeps their Markdown trees untouched while a sibling is streaming.
++export default memo(MarkdownContent);
+diff --git a/frontend/src/components/SettingsModal.tsx b/frontend/src/components/SettingsModal.tsx
+index f7e8a34..30c4a51 100644
+--- a/frontend/src/components/SettingsModal.tsx
++++ b/frontend/src/components/SettingsModal.tsx
+@@ -1,4 +1,5 @@
+ import { FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
++import { localDateKey } from "./activity/formatters";
+ import { api, authFetch, formatApiError } from "../api";
+ import { fetchUserPrefsFromServer, saveUserPrefs, type UserTheme } from "../lib/chatStorage";
+ import {
+@@ -862,7 +863,7 @@ function DataControlPanel() {
+         throw new Error(text || `Export failed (${res.status})`);
+       }
+       const blob = await res.blob();
+-      const stamp = new Date().toISOString().slice(0, 10);
++      const stamp = localDateKey(new Date()); // the user's own calendar day, not UTC
+       const url = URL.createObjectURL(blob);
+       const a = document.createElement("a");
+       a.href = url;
+diff --git a/frontend/src/generated/persianFonts.json b/frontend/src/generated/persianFonts.json
+index 93a72c1..8ecb61e 100644
+--- a/frontend/src/generated/persianFonts.json
++++ b/frontend/src/generated/persianFonts.json
+@@ -1,5 +1,5 @@
+ {
+-  "generatedAt": "2026-09-14T15:07:31.728Z",
++  "generatedAt": "2026-09-14T16:15:14.539Z",
+   "families": [
+     {
+       "id": "vazir",
+diff --git a/frontend/src/lib/chatStorage.ts b/frontend/src/lib/chatStorage.ts
+index 9c1b69e..184aac6 100644
+--- a/frontend/src/lib/chatStorage.ts
++++ b/frontend/src/lib/chatStorage.ts
+@@ -2348,3 +2348,22 @@ export async function enhanceImagePrompt(
+ ): Promise<string | null> {
+   return enhancePrompt(model, prompt, mode, "image");
+ }
++
++/**
++ * React keys for a message list. Prefers the message's own identity
++ * (`clientMessageId`, then `id`) so inserting or removing a row does not
++ * re-mount every row below it; a user prompt and the assistant replies it
++ * produced can share a `clientMessageId`, so role and model are part of the
++ * key, and any remaining collision falls back to the index rather than
++ * handing React duplicate keys.
++ */
++export function stableMessageKeys(messages: ChatMessage[], scope: string): string[] {
++  const seen = new Set<string>();
++  return messages.map((m, i) => {
++    const identity = m.clientMessageId ?? m.id;
++    let key = identity ? `${scope}-${m.role}-${m.modelId ?? ""}-${identity}` : `${scope}-${i}`;
++    if (seen.has(key)) key = `${key}-${i}`;
++    seen.add(key);
++    return key;
++  });
++}
+diff --git a/frontend/src/lib/messageKeys.test.ts b/frontend/src/lib/messageKeys.test.ts
+new file mode 100644
+index 0000000..864e5cb
+--- /dev/null
++++ b/frontend/src/lib/messageKeys.test.ts
+@@ -0,0 +1,26 @@
++import { describe, expect, it } from "vitest";
++import { stableMessageKeys, type ChatMessage } from "./chatStorage";
++
++const m = (over: Partial<ChatMessage>): ChatMessage => ({ role: "user", content: "", ...over });
++
++describe("stableMessageKeys", () => {
++  it("keeps a row's key when a row above it is removed", () => {
++    const list = [m({ clientMessageId: "c1" }), m({ role: "assistant", clientMessageId: "c1" }), m({ clientMessageId: "c2" })];
++    const before = stableMessageKeys(list, "s");
++    const after = stableMessageKeys(list.slice(1), "s");
++    expect(after).toEqual(before.slice(1));
++  });
++
++  it("never returns duplicate keys", () => {
++    const list = [
++      m({ clientMessageId: "c1" }),
++      m({ clientMessageId: "c1" }), // pathological duplicate
++      m({ role: "assistant", clientMessageId: "c1", modelId: "a" }),
++      m({ role: "assistant", clientMessageId: "c1", modelId: "b" }),
++      m({}),
++      m({}),
++    ];
++    const keys = stableMessageKeys(list, "s");
++    expect(new Set(keys).size).toBe(keys.length);
++  });
++});
+diff --git a/frontend/src/lib/sse.test.ts b/frontend/src/lib/sse.test.ts
+new file mode 100644
+index 0000000..056d241
+--- /dev/null
++++ b/frontend/src/lib/sse.test.ts
+@@ -0,0 +1,76 @@
++import { describe, expect, it } from "vitest";
++import { parseSseDataLine, readSseEvents, splitSseLines } from "./sse";
++
++function streamOf(chunks: string[], { neverClose = false } = {}) {
++  const encoder = new TextEncoder();
++  let i = 0;
++  let cancelled = false;
++  const reader = {
++    async read() {
++      if (i < chunks.length) return { done: false as const, value: encoder.encode(chunks[i++]) };
++      if (neverClose) return new Promise<never>(() => {});
++      return { done: true as const, value: undefined };
++    },
++    async cancel() {
++      cancelled = true;
++    },
++    releaseLock() {},
++    closed: Promise.resolve(undefined),
++  } as unknown as ReadableStreamDefaultReader<Uint8Array>;
++  return { reader, isCancelled: () => cancelled };
++}
++
++async function collect(reader: ReadableStreamDefaultReader<Uint8Array>) {
++  const out: string[] = [];
++  for await (const p of readSseEvents(reader)) out.push(p);
++  return out;
++}
++
++describe("sse", () => {
++  it("parses data lines with and without the space, ignores comments", () => {
++    expect(parseSseDataLine("data: {\"a\":1}")).toBe("{\"a\":1}");
++    expect(parseSseDataLine("data:{\"a\":1}")).toBe("{\"a\":1}");
++    expect(parseSseDataLine(": keep-alive")).toBeNull();
++    expect(parseSseDataLine("event: ping")).toBeNull();
++    expect(parseSseDataLine("")).toBeNull();
++  });
++
++  it("splits CRLF and LF and keeps the unterminated tail", () => {
++    expect(splitSseLines("data: a\r\ndata: b\npartial")).toEqual({ lines: ["data: a", "data: b"], rest: "partial" });
++  });
++
++  it("delivers a final data line that has no trailing newline", async () => {
++    const { reader } = streamOf(["data: one\n\ndata: two\n", "data: three"]);
++    expect(await collect(reader)).toEqual(["one", "two", "three"]);
++  });
++
++  it("reassembles a payload split across chunks, including multi-byte characters", async () => {
++    const text = 'data: {"t":"سلام دنیا"}\n';
++    const bytes = new TextEncoder().encode(text);
++    // Cut in the middle of a UTF-8 sequence.
++    const encoderChunks = [bytes.slice(0, 14), bytes.slice(14)];
++    let i = 0;
++    const reader = {
++      async read() {
++        if (i < encoderChunks.length) return { done: false as const, value: encoderChunks[i++] };
++        return { done: true as const, value: undefined };
++      },
++      async cancel() {},
++    } as unknown as ReadableStreamDefaultReader<Uint8Array>;
++    expect(await collect(reader)).toEqual(['{"t":"سلام دنیا"}']);
++  });
++
++  it("cancels the reader when the consumer stops early", async () => {
++    const { reader, isCancelled } = streamOf(["data: a\ndata: b\n", "data: c\n"], { neverClose: true });
++    for await (const p of readSseEvents(reader)) {
++      if (p === "b") break;
++    }
++    expect(isCancelled()).toBe(true);
++  });
++
++  it("does not cancel a stream that finished on its own", async () => {
++    const { reader, isCancelled } = streamOf(["data: a\n"]);
++    await collect(reader);
++    expect(isCancelled()).toBe(false);
++  });
++});
+diff --git a/frontend/src/lib/sse.ts b/frontend/src/lib/sse.ts
+new file mode 100644
+index 0000000..c5070ce
+--- /dev/null
++++ b/frontend/src/lib/sse.ts
+@@ -0,0 +1,71 @@
++/**
++ * Server-Sent Events reader for the chat completion stream.
++ *
++ * Pulled out of ChatPanel so it can be unit-tested. Three defects in the
++ * inline version are fixed here:
++ *  - a final `data:` line without a trailing newline (the last chunk of a
++ *    stream, or a reply cut short by the server) was dropped, because only
++ *    complete lines were processed and the leftover buffer was discarded;
++ *  - `data:` immediately followed by the payload (no space) — legal per the
++ *    SSE spec and emitted by some proxies — was ignored;
++ *  - the underlying reader was never cancelled when the consumer stopped
++ *    early (Stop button, thrown error), so the connection stayed open.
++ */
++
++const DATA_PREFIX = /^data:\s?/;
++
++/** Split accumulated text into complete lines and the unterminated remainder. */
++export function splitSseLines(buffer: string): { lines: string[]; rest: string } {
++  const normalized = buffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
++  const lines = normalized.split("\n");
++  const rest = lines.pop() ?? "";
++  return { lines, rest };
++}
++
++/** Payload of a `data:` line, or null for comments/other fields/blank lines. */
++export function parseSseDataLine(line: string): string | null {
++  if (!DATA_PREFIX.test(line)) return null;
++  return line.replace(DATA_PREFIX, "").trim();
++}
++
++/**
++ * Yield every `data:` payload from a byte stream, including one left in the
++ * buffer when the stream ends. Cancels the reader when iteration stops early.
++ */
++export async function* readSseEvents(
++  reader: ReadableStreamDefaultReader<Uint8Array>,
++  decoder: TextDecoder = new TextDecoder(),
++): AsyncGenerator<string, void, undefined> {
++  let buffer = "";
++  let finished = false;
++  try {
++    while (true) {
++      const { done, value } = await reader.read();
++      if (done) {
++        finished = true;
++        break;
++      }
++      buffer += decoder.decode(value, { stream: true });
++      const { lines, rest } = splitSseLines(buffer);
++      buffer = rest;
++      for (const line of lines) {
++        const payload = parseSseDataLine(line);
++        if (payload !== null && payload !== "") yield payload;
++      }
++    }
++    // Flush the decoder and whatever line had no trailing newline.
++    buffer += decoder.decode();
++    for (const line of buffer.split("\n")) {
++      const payload = parseSseDataLine(line);
++      if (payload !== null && payload !== "") yield payload;
++    }
++  } finally {
++    if (!finished) {
++      try {
++        await reader.cancel();
++      } catch {
++        // The stream may already be closed; nothing to release.
++      }
++    }
++  }
++}
+diff --git a/frontend/src/pages/admin/Reports.tsx b/frontend/src/pages/admin/Reports.tsx
+index 6380ab9..7e028f1 100644
+--- a/frontend/src/pages/admin/Reports.tsx
++++ b/frontend/src/pages/admin/Reports.tsx
+@@ -1,4 +1,5 @@
+ import { FormEvent, useEffect, useMemo, useState } from "react";
++import { localDateKey } from "../../components/activity/formatters";
+ import AdminPage from "../../components/AdminPage";
+ import UserOwnerSelect from "../../components/apiKeys/UserOwnerSelect";
+ import { api, authFetch, formatApiError } from "../../api";
+@@ -69,9 +70,10 @@ const emptyParams: ParamState = {
+   group_by: "model",
+ };
+ 
+-function isoDate(d: Date): string {
+-  return d.toISOString().slice(0, 10);
+-}
++// Calendar day in the admin's own timezone. toISOString() gave the UTC day,
++// so "last 7 days" started/ended a day off for anyone east of Greenwich in
++// the evening (and the preset never matched what the table showed).
++const isoDate = localDateKey;
+ 
+ const DATE_PRESETS = [
+   { value: "7", label: "Last 7 days", days: 7 },
+-- 
+2.43.0
+

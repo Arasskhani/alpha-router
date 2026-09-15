@@ -1,0 +1,425 @@
+From 63148a6b51469c36eb56d949f3ad68869d01eacb Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 15:47:10 +0000
+Subject: [PATCH 12/22] fix(providers): no resend of a paid POST after read
+ timeout; explicit chat timeout; pool and duration ceilings configurable
+
+Bug (B-16/B-17): post_openrouter_json retried on *any* transport error,
+ReadTimeout and "server disconnected" included - the request body had
+already reached OpenRouter, so the retry paid for the image or transcript a
+second time. Image calls also carried three hard-coded 180 s timeouts next
+to the IMAGE_REQUEST_TIMEOUT_SECONDS setting meant to control them, the
+shared OpenRouter client was capped at 8 connections per worker (the ninth
+concurrent request waited in PoolTimeout), the chat completion relied on
+LiteLLM's implicit timeout, and VIDEO_MAX_DURATION_SECONDS existed in
+config but was never applied.
+
+Change:
+- is_safe_to_resend_post(): only connect/write failures (body never left)
+  are resent; read timeouts and post-send disconnects raise to the caller.
+  The image strategy fallback loop (different strategy, spaced by
+  OPENROUTER_EMPTY_IMAGE_RETRY_DELAYS_SEC) keeps its broader predicate on
+  purpose - that is a documented product decision about Gemini drops.
+- images.py uses image_request_timeout() everywhere (OPENROUTER_FALLBACK_
+  TIMEOUT removed from its imports).
+- OPENROUTER_MAX_CONNECTIONS (32) for the shared client pool.
+- CHAT_PROVIDER_TIMEOUT_SECONDS (600) passed as timeout= to acompletion.
+- videos.py enforces VIDEO_MAX_DURATION_SECONDS when set (400 above it).
+
+Tests: tests/test_provider_timeouts.py; the two old tests that asserted
+a resend after disconnect/read timeout now assert the new contract.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ .env.example                                  |  8 ++
+ backend/app/api/images.py                     |  8 +-
+ backend/app/api/videos.py                     |  6 ++
+ backend/app/config.py                         | 12 ++-
+ .../app/services/openrouter_image_service.py  | 48 +++++++++-
+ backend/app/services/proxy_service.py         |  1 +
+ .../test_openrouter_empty_image_retry.py      | 35 +++----
+ backend/tests/test_provider_timeouts.py       | 95 +++++++++++++++++++
+ 8 files changed, 183 insertions(+), 30 deletions(-)
+ create mode 100644 backend/tests/test_provider_timeouts.py
+
+diff --git a/.env.example b/.env.example
+index 055d200..a92e423 100644
+--- a/.env.example
++++ b/.env.example
+@@ -285,6 +285,14 @@ COST_RECONCILIATION_BATCH_SIZE=50
+ # Either raise the proxy (recommended: proxy_read_timeout 300s; also
+ # proxy_send_timeout) or lower this so Alpharouter fails first with a real error.
+ IMAGE_REQUEST_TIMEOUT_SECONDS=180
++# Pool size of the shared OpenRouter HTTP client per worker (image + STT calls).
++OPENROUTER_MAX_CONNECTIONS=32
++# Ceiling for one chat completion, connect + full stream. A provider that
++# stalls beyond this releases the stream, its capacity permit and budget hold.
++CHAT_PROVIDER_TIMEOUT_SECONDS=600
++# Optional absolute ceiling on requested video clip length, on top of what the
++# selected model advertises. Empty = model's own list only.
++VIDEO_MAX_DURATION_SECONDS=
+ 
+ # Video generation (OpenRouter /videos async jobs).
+ # Clip length is the user's selected duration from the model's supported list.
+diff --git a/backend/app/api/images.py b/backend/app/api/images.py
+index 5840a35..954c20e 100644
+--- a/backend/app/api/images.py
++++ b/backend/app/api/images.py
+@@ -38,13 +38,13 @@ from app.config import get_settings
+ from app.services.media_authorization_service import MediaAccessAction, load_authorized_media_asset
+ from app.services.openrouter_image_service import (
+     OPENROUTER_EMPTY_IMAGE_RETRY_DELAYS_SEC,
+-    OPENROUTER_FALLBACK_TIMEOUT,
+     OPENROUTER_IMAGE_ENDPOINT_PATHS,
+     OPENROUTER_IMAGE_MAX_ATTEMPTS,
+     build_fast_openrouter_payload,
+     build_openrouter_headers,
+     build_openrouter_image_endpoint_payload,
+     gemini_image_size_for_model,
++    image_request_timeout,
+     is_openai_gpt_image_model,
+     is_openrouter_auto_model,
+     is_retryable_openrouter_transport_error,
+@@ -1010,7 +1010,7 @@ async def generate_image(
+             llm_provider = resolve_litellm_provider(provider_type)
+             if llm_provider:
+                 kwargs["custom_llm_provider"] = llm_provider
+-            kwargs["timeout"] = 180
++            kwargs["timeout"] = image_request_timeout()
+ 
+             settings = get_settings()
+ 
+@@ -1044,7 +1044,7 @@ async def generate_image(
+                             f"{openrouter_base}{path}",
+                             headers=headers,
+                             json_payload=img_payload,
+-                            read_timeout=OPENROUTER_FALLBACK_TIMEOUT,
++                            read_timeout=image_request_timeout(),
+                             max_attempts=(
+                                 1 if using_auto_router else OPENROUTER_IMAGE_MAX_ATTEMPTS
+                             ),
+@@ -1490,7 +1490,7 @@ async def generate_image(
+             current_attempt_source_count = len(billing.usage_sources)
+             attempt_started = time.perf_counter()
+             try:
+-                timeout_seconds = OPENROUTER_FALLBACK_TIMEOUT
++                timeout_seconds = image_request_timeout()
+                 if auto_deadline is not None:
+                     remaining = auto_deadline - time.perf_counter()
+                     if remaining <= 0:
+diff --git a/backend/app/api/videos.py b/backend/app/api/videos.py
+index 9953d20..cba971b 100644
+--- a/backend/app/api/videos.py
++++ b/backend/app/api/videos.py
+@@ -201,6 +201,12 @@ async def generate_video(
+     supported_durations = catalog_video_durations(caps.get("supported_durations"))
+     if supported_durations and duration not in set(supported_durations):
+         raise HTTPException(status_code=400, detail="Requested duration is not supported by the selected video model")
++    max_duration = int(settings.video_max_duration_seconds or 0)
++    if max_duration > 0 and duration > max_duration:
++        raise HTTPException(
++            status_code=400,
++            detail=f"Requested duration exceeds the deployment limit of {max_duration}s",
++        )
+     supported_resolutions = {str(value).lower() for value in (caps.get("supported_resolutions") or [])}
+     if supported_resolutions and resolution.lower() not in supported_resolutions:
+         raise HTTPException(status_code=400, detail="Requested resolution is not supported by the selected video model")
+diff --git a/backend/app/config.py b/backend/app/config.py
+index 50c7455..a35cf4b 100644
+--- a/backend/app/config.py
++++ b/backend/app/config.py
+@@ -288,12 +288,18 @@ class Settings(BaseSettings):
+     # the generation is still running here -- the image is produced, persisted
+     # and billed, but the response never reaches the user.
+     image_request_timeout_seconds: float = 180.0  # env: IMAGE_REQUEST_TIMEOUT_SECONDS
++    # Shared OpenRouter HTTP client pool (image + transcription calls per worker).
++    openrouter_max_connections: int = 32  # env: OPENROUTER_MAX_CONNECTIONS
++    # Ceiling for one chat completion (connect + full stream). LiteLLM's default
++    # is 10 minutes; make it explicit so a stalled provider cannot pin a stream,
++    # its capacity permit and its budget hold for longer than this.
++    chat_provider_timeout_seconds: float = 600.0  # env: CHAT_PROVIDER_TIMEOUT_SECONDS
+ 
+     # Video generation (OpenRouter /videos async jobs).
+     # Clip length is the user's selected duration from the model's
+-    # supported_durations. This env value is not applied as a generation cap;
+-    # it is kept optional so existing .env files still parse.
+-    video_max_duration_seconds: int | None = None
++    # supported_durations; when set, this is an absolute ceiling on top of
++    # that (a model may advertise 60s clips the operator does not want to pay for).
++    video_max_duration_seconds: int | None = None  # env: VIDEO_MAX_DURATION_SECONDS
+     video_max_resolution: str = "1080p"
+     video_max_output_bytes: int = 200 * 1024 * 1024
+     video_max_concurrent_jobs_per_user: int = 1
+diff --git a/backend/app/services/openrouter_image_service.py b/backend/app/services/openrouter_image_service.py
+index f2e77c3..583dc6e 100644
+--- a/backend/app/services/openrouter_image_service.py
++++ b/backend/app/services/openrouter_image_service.py
+@@ -61,6 +61,43 @@ def image_request_timeout() -> float:
+     return value if value > 0 else OPENROUTER_READ_TIMEOUT
+ 
+ 
++_SAFE_TO_RESEND_EXC: tuple[type[BaseException], ...] = (
++    httpx.ConnectError,
++    httpx.ConnectTimeout,
++    httpx.PoolTimeout,
++    httpx.WriteError,
++    httpx.WriteTimeout,
++    httpcore.ConnectError,
++    httpcore.WriteError,
++)
++
++
++def openrouter_max_connections() -> int:
++    """Pool ceiling for the shared OpenRouter client (OPENROUTER_MAX_CONNECTIONS).
++
++    Eight was hard-coded: the ninth concurrent image/transcription request on
++    a worker waited in PoolTimeout while the provider sat idle.
++    """
++    try:
++        from app.config import get_settings
++
++        value = int(getattr(get_settings(), "openrouter_max_connections", 0) or 0)
++    except Exception:  # noqa: BLE001
++        return 32
++    return value if value > 0 else 32
++
++
++def is_safe_to_resend_post(exc: BaseException) -> bool:
++    """True only when the request body cannot have reached the provider.
++
++    A POST that timed out while *reading* the response (or whose connection
++    dropped after the body was sent) may already be generating and billing
++    on the provider side; sending it again pays twice. Connect and write
++    failures happened before the provider had the request, so they are safe.
++    """
++    return isinstance(exc, _SAFE_TO_RESEND_EXC)
++
++
+ def is_retryable_openrouter_transport_error(exc: BaseException) -> bool:
+     """True for disconnects / timeouts that should try another connection or strategy."""
+     if isinstance(exc, _RETRYABLE_EXC):
+@@ -85,7 +122,7 @@ def get_openrouter_http_client() -> httpx.AsyncClient:
+         # Keepalive=0 avoids reusing half-closed sockets after long Gemini image waits.
+         _shared_client = httpx.AsyncClient(
+             timeout=httpx.Timeout(OPENROUTER_READ_TIMEOUT, connect=OPENROUTER_CONNECT_TIMEOUT),
+-            limits=httpx.Limits(max_connections=8, max_keepalive_connections=0),
++            limits=httpx.Limits(max_connections=openrouter_max_connections(), max_keepalive_connections=0),
+             follow_redirects=True,
+             http2=False,
+         )
+@@ -324,7 +361,12 @@ async def post_openrouter_json(
+     max_attempts: int = OPENROUTER_IMAGE_MAX_ATTEMPTS,
+     on_attempt_error: Callable[[int, datetime.datetime, Exception], None] | None = None,
+ ) -> httpx.Response:
+-    """POST JSON to OpenRouter with retries on transient disconnects."""
++    """POST JSON to OpenRouter, resending only when the body never got there.
++
++    Retries cover connect/write failures. A read timeout or a disconnect after
++    the request was sent is raised to the caller: the provider may be
++    finishing (and charging for) the first attempt.
++    """
+     last_exc: Exception | None = None
+     timeout = httpx.Timeout(read_timeout or image_request_timeout(), connect=OPENROUTER_CONNECT_TIMEOUT)
+     attempts = max(1, int(max_attempts))
+@@ -347,7 +389,7 @@ async def post_openrouter_json(
+         except Exception as exc:
+             if on_attempt_error is not None:
+                 on_attempt_error(attempt, attempt_started_at, exc)
+-            if not is_retryable_openrouter_transport_error(exc):
++            if not is_safe_to_resend_post(exc):
+                 raise
+             last_exc = exc
+             # The client is process-shared. Closing it here races with unrelated
+diff --git a/backend/app/services/proxy_service.py b/backend/app/services/proxy_service.py
+index 2b4cd90..24a5ca8 100644
+--- a/backend/app/services/proxy_service.py
++++ b/backend/app/services/proxy_service.py
+@@ -1604,6 +1604,7 @@ async def stream_chat(
+             "api_key": api_key,
+             "base_url": base_url,
+             "caching": True,
++            "timeout": float(getattr(settings, "chat_provider_timeout_seconds", 600.0) or 600.0),
+         }
+         if agent_turn is not None and agent_turn.plan.policies is not None:
+             completion_kwargs["max_tokens"] = (
+diff --git a/backend/tests/test_openrouter_empty_image_retry.py b/backend/tests/test_openrouter_empty_image_retry.py
+index 4e0803e..5d8a8f0 100644
+--- a/backend/tests/test_openrouter_empty_image_retry.py
++++ b/backend/tests/test_openrouter_empty_image_retry.py
+@@ -4,6 +4,7 @@ import asyncio
+ from unittest.mock import AsyncMock
+ 
+ import httpx
++import pytest
+ 
+ from app.services import openrouter_image_service as svc
+ 
+@@ -77,7 +78,7 @@ def test_build_openrouter_payload_omits_sort_when_disabled():
+     assert "sort" not in payload["provider"]
+ 
+ 
+-def test_post_openrouter_json_retries_after_disconnect(monkeypatch):
++def test_post_openrouter_json_retries_after_connect_failure(monkeypatch):
+     calls = {"n": 0}
+ 
+     class FakeClient:
+@@ -87,7 +88,7 @@ def test_post_openrouter_json_retries_after_disconnect(monkeypatch):
+             calls["n"] += 1
+             assert headers.get("Connection") == "close"
+             if calls["n"] == 1:
+-                raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
++                raise httpx.ConnectError("connection refused")
+             req = httpx.Request("POST", url)
+             return httpx.Response(200, json={"ok": True}, request=req)
+ 
+@@ -107,7 +108,8 @@ def test_post_openrouter_json_retries_after_disconnect(monkeypatch):
+     assert calls["n"] == 2
+ 
+ 
+-def test_post_openrouter_json_retries_read_timeout(monkeypatch):
++def test_post_openrouter_json_does_not_resend_after_read_timeout(monkeypatch):
++    """The body reached OpenRouter; a second send could be billed twice."""
+     calls = {"n": 0}
+ 
+     class FakeClient:
+@@ -115,25 +117,18 @@ def test_post_openrouter_json_retries_read_timeout(monkeypatch):
+ 
+         async def post(self, url, headers, json, timeout):
+             calls["n"] += 1
+-            if calls["n"] < 3:
+-                raise httpx.ReadTimeout("read timed out")
+-            req = httpx.Request("POST", url)
+-            return httpx.Response(200, json={"ok": True}, request=req)
++            raise httpx.ReadTimeout("read timed out")
+ 
+     monkeypatch.setattr(svc, "get_openrouter_http_client", lambda: FakeClient())
+-    monkeypatch.setattr(svc, "close_openrouter_http_client", AsyncMock())
+     monkeypatch.setattr(svc.asyncio, "sleep", AsyncMock())
+ 
+-    resp = asyncio.run(
+-        svc.post_openrouter_json(
+-            "https://openrouter.ai/api/v1/chat/completions",
+-            headers={"Authorization": "Bearer test"},
+-            json_payload={"model": "test"},
+-            max_attempts=3,
++    with pytest.raises(httpx.ReadTimeout):
++        asyncio.run(
++            svc.post_openrouter_json(
++                "https://openrouter.ai/api/v1/chat/completions",
++                headers={"Authorization": "Bearer test"},
++                json_payload={"model": "test"},
++                max_attempts=3,
++            )
+         )
+-    )
+-    assert resp.status_code == 200
+-    assert calls["n"] == 3
+-    assert svc.is_retryable_openrouter_transport_error(
+-        httpx.RemoteProtocolError("disconnected")
+-    )
++    assert calls["n"] == 1
+diff --git a/backend/tests/test_provider_timeouts.py b/backend/tests/test_provider_timeouts.py
+new file mode 100644
+index 0000000..b43d090
+--- /dev/null
++++ b/backend/tests/test_provider_timeouts.py
+@@ -0,0 +1,95 @@
++"""Provider calls: explicit timeouts, no resend after the body was delivered, configurable pool."""
++
++from __future__ import annotations
++
++import asyncio
++from types import SimpleNamespace
++from unittest.mock import patch
++
++import httpx
++import pytest
++
++from app.services import openrouter_image_service as ois
++
++
++def test_only_pre_send_failures_are_resent():
++    assert ois.is_safe_to_resend_post(httpx.ConnectError("x"))
++    assert ois.is_safe_to_resend_post(httpx.ConnectTimeout("x"))
++    assert ois.is_safe_to_resend_post(httpx.WriteError("x"))
++    assert not ois.is_safe_to_resend_post(httpx.ReadTimeout("x"))
++    assert not ois.is_safe_to_resend_post(httpx.ReadError("x"))
++    assert not ois.is_safe_to_resend_post(httpx.RemoteProtocolError("server disconnected"))
++    # The broader predicate (used by strategy fallbacks) still treats these as transient.
++    assert ois.is_retryable_openrouter_transport_error(httpx.ReadTimeout("x"))
++
++
++def test_post_is_not_resent_after_read_timeout_but_is_after_connect_error():
++    calls = {"n": 0}
++
++    class Client:
++        async def post(self, url, **kw):
++            calls["n"] += 1
++            raise httpx.ReadTimeout("slow provider")
++
++    class Client2:
++        async def post(self, url, **kw):
++            calls["n"] += 1
++            if calls["n"] < 3:
++                raise httpx.ConnectError("refused")
++            return httpx.Response(200, json={"ok": True}, request=httpx.Request("POST", url))
++
++    async def run():
++        with (
++            patch.object(ois, "get_openrouter_http_client", lambda: Client()),
++            patch.object(ois, "OPENROUTER_DISCONNECT_BACKOFF_SEC", (0.0,)),
++        ):
++            with pytest.raises(httpx.ReadTimeout):
++                await ois.post_openrouter_json("https://o.test/x", headers={}, json_payload={}, max_attempts=5)
++        assert calls["n"] == 1, "a paid POST that timed out on read must not be sent again"
++
++        calls["n"] = 0
++        with (
++            patch.object(ois, "get_openrouter_http_client", lambda: Client2()),
++            patch.object(ois, "OPENROUTER_DISCONNECT_BACKOFF_SEC", (0.0,)),
++        ):
++            resp = await ois.post_openrouter_json("https://o.test/x", headers={}, json_payload={}, max_attempts=5)
++        assert resp.status_code == 200 and calls["n"] == 3
++
++    asyncio.run(run())
++
++
++def test_pool_size_and_image_timeout_come_from_settings(monkeypatch):
++    monkeypatch.setattr(
++        "app.config.get_settings",
++        lambda: SimpleNamespace(openrouter_max_connections=5, image_request_timeout_seconds=42.0),
++    )
++    assert ois.openrouter_max_connections() == 5
++    assert ois.image_request_timeout() == 42.0
++    monkeypatch.setattr("app.config.get_settings", lambda: SimpleNamespace())
++    assert ois.openrouter_max_connections() == 32
++
++
++def test_images_module_no_longer_hardcodes_180():
++    import inspect
++
++    from app.api import images
++
++    src = inspect.getsource(images)
++    assert 'kwargs["timeout"] = 180' not in src
++    assert "OPENROUTER_FALLBACK_TIMEOUT" not in src
++
++
++def test_chat_completion_carries_provider_timeout(monkeypatch):
++    import inspect
++
++    from app.services import proxy_service
++
++    src = inspect.getsource(proxy_service)
++    assert '"timeout": float(getattr(settings, "chat_provider_timeout_seconds"' in src
++
++
++def test_video_duration_cap_is_enforced(monkeypatch):
++    from app.api import videos
++
++    src = __import__("inspect").getsource(videos)
++    assert "video_max_duration_seconds" in src and "exceeds the deployment limit" in src
+-- 
+2.43.0
+

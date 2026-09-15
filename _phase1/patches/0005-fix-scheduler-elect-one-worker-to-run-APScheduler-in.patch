@@ -1,0 +1,472 @@
+From 1e26010ba832484c968dbfa1702b5ca907c8e4da Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 14:03:47 +0000
+Subject: [PATCH 05/10] fix(scheduler): elect one worker to run APScheduler
+ instead of every uvicorn worker
+
+start_scheduler() ran unconditionally in each worker's lifespan, so with the
+default --workers 4 every cron job executed four times: four
+system_metrics_snapshots per hour (skewing the Operations dashboard), four
+model syncs, four budget resets and four reconcile_drifted_reserved_counters
+runs racing on the same rows.
+
+app/services/scheduler_leader.py: leadership = pg_try_advisory_xact_lock
+(id 56023115, sibling of the DDL/bootstrap locks in main.py) held inside an
+open transaction on a dedicated connection. Holding it transactionally is what
+makes it correct behind PgBouncer's transaction pooling: the open transaction
+pins one server connection to this process for as long as it lives. The
+leader heartbeats on that connection every 15s and steps down (stopping its
+scheduler) when the heartbeat fails; non-leaders retry every 30s, so a dead
+leader is replaced within about half a minute. SQLite: first caller leads.
+
+main.py: SchedulerLeader with on_acquire=start_scheduler+schedule refreshes,
+on_release=stop_scheduler; one synchronous attempt at startup so
+single-worker deployments and tests behave as before, then the background
+loop. The video worker stays on every worker: it claims with
+FOR UPDATE SKIP LOCKED and is safe by design.
+
+Admin-edited schedules (storage cleanup, chat retention, directory sync) are
+saved through whichever worker serves the request, which is usually not the
+leader. The leader therefore re-reads them from the database every minute
+(job_refresh_dynamic_schedules); this also fixes the pre-existing drift where
+only the worker that handled the admin request ever learned of the change.
+auth_sync_scheduler no longer starts the scheduler on non-leaders.
+
+Tests: tests/test_scheduler_leader.py (state machine on SQLite; exclusivity
+and hand-over on PostgreSQL under RUN_POSTGRES_RESERVATION_CANARY, added to
+the CI canary job).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ .gitlab-ci.yml                              |   2 +-
+ backend/app/main.py                         |  34 +++-
+ backend/app/services/auth_sync_scheduler.py |   6 +-
+ backend/app/services/scheduler.py           |  26 +++
+ backend/app/services/scheduler_leader.py    | 171 ++++++++++++++++++++
+ backend/tests/test_scheduler_leader.py      | 111 +++++++++++++
+ 6 files changed, 344 insertions(+), 6 deletions(-)
+ create mode 100644 backend/app/services/scheduler_leader.py
+ create mode 100644 backend/tests/test_scheduler_leader.py
+
+diff --git a/.gitlab-ci.yml b/.gitlab-ci.yml
+index 6bd4161..de9b9f7 100644
+--- a/.gitlab-ci.yml
++++ b/.gitlab-ci.yml
+@@ -73,7 +73,7 @@ backend-postgres-canary:
+     - python -m pip install --no-cache-dir pytest
+     - cd backend
+     - python -m app.migrate
+-    - PYTHONPATH=. python -m pytest tests/test_budget_reservations_postgres.py -q -rs
++    - PYTHONPATH=. python -m pytest tests/test_budget_reservations_postgres.py tests/test_scheduler_leader.py -q -rs
+ 
+ deployment-config:
+   stage: verify
+diff --git a/backend/app/main.py b/backend/app/main.py
+index 6095db6..0eb6091 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -90,6 +90,7 @@ from app.services.scheduler import (
+     start_scheduler,
+     stop_scheduler,
+ )
++from app.services.scheduler_leader import SchedulerLeader, install_leader
+ from app.services.security_headers import SecurityHeadersMiddleware
+ from app.services.user_chat_storage_service import ensure_user_chat_store
+ from app.services.video_job_service import start_video_worker, stop_video_worker
+@@ -698,14 +699,39 @@ async def lifespan(app: FastAPI):
+         await ensure_all_model_compatibility_rows(db)
+         await db.commit()
+ 
+-    start_scheduler()
++    # One scheduler per deployment, not per uvicorn worker: the leader holds a
++    # PostgreSQL advisory lock (see scheduler_leader.py). Losing the lock stops
++    # the scheduler on this worker; another worker picks it up on its next retry.
++    async def _become_scheduler_leader() -> None:
++        start_scheduler()
++        await refresh_storage_cleanup_schedule()
++        await refresh_chat_retention_cleanup_schedule()
++        await refresh_auth_sync_schedules()
++
++    leader = SchedulerLeader(
++        engine,
++        on_acquire=_become_scheduler_leader,
++        on_release=stop_scheduler,
++    )
++    install_leader(leader)
++    # Try synchronously once so a single-worker deployment (and every test)
++    # has its scheduler running before the first request; the background loop
++    # then keeps heartbeating / retrying.
++    try:
++        if await leader.try_acquire():
++            await _become_scheduler_leader()
++    except Exception:
++        logging.getLogger(LOGGER_NAMESPACE).exception(
++            "Scheduler leader election failed at startup; will retry in background"
++        )
++    leader.start()
++    # The video worker claims jobs with FOR UPDATE SKIP LOCKED and is safe to
++    # run on every worker; it stays outside the election on purpose.
+     start_video_worker()
+-    await refresh_storage_cleanup_schedule()
+-    await refresh_chat_retention_cleanup_schedule()
+-    await refresh_auth_sync_schedules()
+     configure_litellm_cache()
+     yield
+     await stop_video_worker()
++    await leader.stop()
+     stop_scheduler()
+     await close_openrouter_http_client()
+     await engine.dispose()
+diff --git a/backend/app/services/auth_sync_scheduler.py b/backend/app/services/auth_sync_scheduler.py
+index f48ecb7..70855ce 100644
+--- a/backend/app/services/auth_sync_scheduler.py
++++ b/backend/app/services/auth_sync_scheduler.py
+@@ -49,5 +49,9 @@ async def refresh_auth_sync_schedules() -> None:
+             id="ldap_directory_sync",
+         )
+ 
+-    if not scheduler.running and scheduler.get_jobs():
++    # Only the elected leader runs jobs; on other workers the entries stay
++    # pending and become live if this worker is ever elected.
++    from app.services.scheduler_leader import is_leader
++
++    if is_leader() and not scheduler.running and scheduler.get_jobs():
+         scheduler.start()
+diff --git a/backend/app/services/scheduler.py b/backend/app/services/scheduler.py
+index 6cb5b6c..c6c4765 100644
+--- a/backend/app/services/scheduler.py
++++ b/backend/app/services/scheduler.py
+@@ -375,9 +375,35 @@ def start_scheduler():
+         max_instances=1,
+         coalesce=True,
+     )
++    # Admin-controlled schedules (storage cleanup, chat retention, directory
++    # sync) are edited through whichever uvicorn worker serves the request,
++    # which is usually not the leader. The leader re-reads them from the
++    # database every minute so a change applies without a restart.
++    scheduler.add_job(
++        job_refresh_dynamic_schedules,
++        "interval",
++        minutes=1,
++        id="refresh_dynamic_schedules",
++        max_instances=1,
++        coalesce=True,
++    )
+     scheduler.start()
+ 
+ 
++async def job_refresh_dynamic_schedules() -> None:
++    from app.services.auth_sync_scheduler import refresh_auth_sync_schedules
++
++    for refresh in (
++        refresh_storage_cleanup_schedule,
++        refresh_chat_retention_cleanup_schedule,
++        refresh_auth_sync_schedules,
++    ):
++        try:
++            await refresh()
++        except Exception:
++            logger.exception("Failed to refresh %s", getattr(refresh, "__name__", refresh))
++
++
+ def stop_scheduler():
+     if scheduler.running:
+         scheduler.shutdown(wait=False)
+diff --git a/backend/app/services/scheduler_leader.py b/backend/app/services/scheduler_leader.py
+new file mode 100644
+index 0000000..2e16471
+--- /dev/null
++++ b/backend/app/services/scheduler_leader.py
+@@ -0,0 +1,171 @@
++"""Single-instance election for the in-process APScheduler.
++
++Compose runs uvicorn with several workers and every worker used to call
++``start_scheduler()`` in its lifespan, so each cron job ran N times: N metric
++snapshots per hour, N model syncs, N budget resets racing on the same rows.
++
++Leadership is a PostgreSQL advisory lock held inside an open transaction on a
++dedicated connection. Holding it *transactionally* (``pg_try_advisory_xact_lock``
++in a transaction that is never committed) rather than at session level is what
++makes it work behind PgBouncer in transaction-pooling mode: an open transaction
++pins the client to one server connection, so the lock really belongs to this
++process for as long as the transaction lives. The cost is one pinned connection
++per leader, which is one per deployment.
++
++Non-leaders keep retrying every ``RETRY_SECONDS``; the leader heartbeats on the
++same connection and steps down (stopping its scheduler) the moment the
++heartbeat fails, so a killed leader is replaced within about one retry period.
++
++SQLite (tests, single-process dev) has no advisory locks: the first caller is
++always the leader.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import logging
++from collections.abc import Awaitable, Callable
++
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
++
++logger = logging.getLogger(__name__)
++
++# Sibling of the DDL (56023113) and admin-bootstrap (56023114) locks in main.py.
++LEADER_LOCK_ID = 56023115
++RETRY_SECONDS = 30.0
++HEARTBEAT_SECONDS = 15.0
++
++
++class SchedulerLeader:
++    def __init__(
++        self,
++        engine: AsyncEngine,
++        *,
++        on_acquire: Callable[[], Awaitable[None] | None],
++        on_release: Callable[[], Awaitable[None] | None],
++        retry_seconds: float = RETRY_SECONDS,
++        heartbeat_seconds: float = HEARTBEAT_SECONDS,
++    ) -> None:
++        self._engine = engine
++        self._on_acquire = on_acquire
++        self._on_release = on_release
++        self._retry = retry_seconds
++        self._heartbeat = heartbeat_seconds
++        self._conn: AsyncConnection | None = None
++        self._task: asyncio.Task | None = None
++        self._stopping = False
++        self.is_leader = False
++
++    # -- lock primitives -----------------------------------------------------
++
++    async def try_acquire(self) -> bool:
++        """Take the lock if free. Returns True when this process is now leader."""
++        if self.is_leader:
++            return True
++        if self._engine.dialect.name != "postgresql":
++            self.is_leader = True
++            return True
++        conn = await self._engine.connect()
++        try:
++            await conn.begin()
++            got = (
++                await conn.execute(
++                    text("SELECT pg_try_advisory_xact_lock(:lock_id)"),
++                    {"lock_id": LEADER_LOCK_ID},
++                )
++            ).scalar()
++        except Exception:
++            await conn.close()
++            raise
++        if not got:
++            await conn.rollback()
++            await conn.close()
++            return False
++        self._conn = conn
++        self.is_leader = True
++        return True
++
++    async def heartbeat_ok(self) -> bool:
++        """True while the pinned transaction (and therefore the lock) is alive."""
++        if self._conn is None:
++            return self.is_leader and self._engine.dialect.name != "postgresql"
++        try:
++            await self._conn.execute(text("SELECT 1"))
++            return True
++        except Exception:
++            logger.warning("Scheduler leader heartbeat failed; stepping down", exc_info=True)
++            return False
++
++    async def release(self) -> None:
++        """Give the lock back (transaction rollback) and forget leadership."""
++        was_leader = self.is_leader
++        self.is_leader = False
++        conn, self._conn = self._conn, None
++        if conn is not None:
++            try:
++                await conn.rollback()
++            except Exception:
++                logger.debug("rollback on leader release failed", exc_info=True)
++            try:
++                await conn.close()
++            except Exception:
++                logger.debug("close on leader release failed", exc_info=True)
++        if was_leader:
++            await _maybe_await(self._on_release())
++
++    # -- background loop ------------------------------------------------------
++
++    def start(self) -> None:
++        if self._task is None:
++            self._stopping = False
++            self._task = asyncio.create_task(self._run(), name="scheduler-leader")
++
++    async def stop(self) -> None:
++        self._stopping = True
++        task, self._task = self._task, None
++        if task is not None:
++            task.cancel()
++            await asyncio.gather(task, return_exceptions=True)
++        await self.release()
++
++    async def _run(self) -> None:
++        while not self._stopping:
++            try:
++                if not self.is_leader:
++                    if await self.try_acquire():
++                        logger.info("This worker is now the scheduler leader")
++                        await _maybe_await(self._on_acquire())
++                    else:
++                        await asyncio.sleep(self._retry)
++                        continue
++                await asyncio.sleep(self._heartbeat)
++                if not await self.heartbeat_ok():
++                    await self.release()
++            except asyncio.CancelledError:
++                raise
++            except Exception:
++                logger.exception("Scheduler leader loop error; retrying")
++                await self.release()
++                await asyncio.sleep(self._retry)
++
++
++async def _maybe_await(result: Awaitable[None] | None) -> None:
++    if result is not None:
++        await result
++
++
++_leader: SchedulerLeader | None = None
++
++
++def get_leader() -> SchedulerLeader | None:
++    return _leader
++
++
++def is_leader() -> bool:
++    return bool(_leader and _leader.is_leader)
++
++
++def install_leader(leader: SchedulerLeader) -> None:
++    global _leader
++    _leader = leader
+diff --git a/backend/tests/test_scheduler_leader.py b/backend/tests/test_scheduler_leader.py
+new file mode 100644
+index 0000000..b5ff3ba
+--- /dev/null
++++ b/backend/tests/test_scheduler_leader.py
+@@ -0,0 +1,111 @@
++"""Scheduler leader election.
++
++The SQLite part checks the state machine (acquire -> on_acquire, heartbeat
++failure -> on_release, stop -> release). The PostgreSQL part (opt-in canary,
++same flag as the reservation canary) proves mutual exclusion of the advisory
++lock across two independent connections and hand-over after release.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import os
++
++import pytest
++from sqlalchemy.ext.asyncio import create_async_engine
++
++from app.services import scheduler_leader
++from app.services.scheduler_leader import SchedulerLeader
++
++
++def test_sqlite_first_caller_is_leader_and_callbacks_fire():
++    async def run():
++        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
++        events: list[str] = []
++        try:
++            leader = SchedulerLeader(
++                engine,
++                on_acquire=lambda: events.append("acquire"),
++                on_release=lambda: events.append("release"),
++                retry_seconds=0.01,
++                heartbeat_seconds=0.01,
++            )
++            assert await leader.try_acquire() is True
++            assert leader.is_leader is True
++            # try_acquire does not call on_acquire itself; the caller (lifespan/loop) does.
++            assert events == []
++            assert await leader.heartbeat_ok() is True
++            await leader.release()
++            assert leader.is_leader is False
++            assert events == ["release"]
++
++            # Background loop: acquires, fires on_acquire, then stop() releases.
++            leader.start()
++            for _ in range(200):
++                if "acquire" in events:
++                    break
++                await asyncio.sleep(0.005)
++            assert "acquire" in events
++            await leader.stop()
++            assert events[-1] == "release"
++            assert leader.is_leader is False
++        finally:
++            await engine.dispose()
++
++    asyncio.run(run())
++
++
++def test_module_level_is_leader_reflects_installed_instance():
++    async def run():
++        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
++        try:
++            previous = scheduler_leader.get_leader()
++            leader = SchedulerLeader(engine, on_acquire=lambda: None, on_release=lambda: None)
++            scheduler_leader.install_leader(leader)
++            assert scheduler_leader.is_leader() is False
++            await leader.try_acquire()
++            assert scheduler_leader.is_leader() is True
++            await leader.release()
++            assert scheduler_leader.is_leader() is False
++            if previous is not None:
++                scheduler_leader.install_leader(previous)
++        finally:
++            await engine.dispose()
++
++    asyncio.run(run())
++
++
++@pytest.mark.skipif(
++    os.getenv("RUN_POSTGRES_RESERVATION_CANARY") != "1",
++    reason="opt-in PostgreSQL canary",
++)
++def test_postgres_lock_is_exclusive_and_hands_over():
++    async def run():
++        # A private engine: pooled connections of the shared app engine belong
++        # to whichever event loop an earlier test used.
++        from app.config import get_settings
++        from app.database import asyncpg_connect_args
++
++        engine = create_async_engine(get_settings().database_url, connect_args=asyncpg_connect_args())
++        a_events: list[str] = []
++        b_events: list[str] = []
++        a = SchedulerLeader(engine, on_acquire=lambda: a_events.append("acq"), on_release=lambda: a_events.append("rel"))
++        b = SchedulerLeader(engine, on_acquire=lambda: b_events.append("acq"), on_release=lambda: b_events.append("rel"))
++        try:
++            assert await a.try_acquire() is True
++            # Second process (separate connection, separate transaction) must not win.
++            assert await b.try_acquire() is False
++            assert b.is_leader is False
++            assert await a.heartbeat_ok() is True
++
++            await a.release()
++            assert a_events == ["rel"]
++            # Lock is free again: the other process takes over.
++            assert await b.try_acquire() is True
++            assert await a.try_acquire() is False
++        finally:
++            await a.release()
++            await b.release()
++            await engine.dispose()
++
++    asyncio.run(run())
+-- 
+2.43.0
+

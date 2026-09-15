@@ -1,0 +1,364 @@
+From 55689770407dcfdedd670e69f145cbd0f9cf2ce4 Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 15:36:22 +0000
+Subject: [PATCH 08/22] fix(video): runner stops when its lease is taken over;
+ poll loop commits before waiting; cancel yields to a finished provider job
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Bug (B-8): _run_video_job reloaded the row every poll to see cancels but
+never checked that it still owned the lease. When a lease expired mid-job
+and claim_due_video_jobs handed the row to a second worker, both runners
+kept polling, both ingested, both billed. Bug (B-37): each poll iteration
+did refresh -> write lease -> sleep -> provider poll -> commit, so the
+transaction and its pooled connection stayed open for the whole provider
+wait (seconds per iteration, minutes per job). Cancel released the budget
+hold and marked the job cancelled even when the provider had already
+finished and charged for the clip.
+
+Change:
+- LeaseLost: raised after refresh when lease_owner != the claim this runner
+  started with; the runner rolls back and returns without touching status,
+  the reservation or billing (metric video_job_lease_lost).
+- The lease bump is committed before sleep/poll; the write-back after the
+  poll is its own short transaction.
+- cancel_video_job polls the provider once first; state == completed ->
+  VideoJobAlreadyCompleted (API answers 409, the runner ingests and bills
+  as usual). Otherwise cancel proceeds unchanged.
+
+Tests: tests/test_video_job_lease.py — a takeover during the first poll
+leaves the row to the new owner with no usage row from the old runner;
+cancel refuses when the provider reports completed and still works when it
+does not.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ backend/app/api/videos.py                 |  10 +-
+ backend/app/services/video_job_service.py |  56 ++++++-
+ backend/tests/test_video_job_lease.py     | 176 ++++++++++++++++++++++
+ 3 files changed, 234 insertions(+), 8 deletions(-)
+ create mode 100644 backend/tests/test_video_job_lease.py
+
+diff --git a/backend/app/api/videos.py b/backend/app/api/videos.py
+index ab1e471..9953d20 100644
+--- a/backend/app/api/videos.py
++++ b/backend/app/api/videos.py
+@@ -37,6 +37,7 @@ from app.services.openrouter_video_service import (
+ )
+ from app.services.secret_crypto import decrypt_secret
+ from app.services.video_job_service import (
++    VideoJobAlreadyCompleted,
+     cancel_video_job,
+     create_video_job,
+     kick_video_job,
+@@ -335,6 +336,13 @@ async def cancel_video_job_endpoint(
+     job = await db.get(VideoGenerationJob, job_id)
+     if job is None or job.user_id != user.id:
+         raise HTTPException(status_code=404, detail="Job not found")
+-    job = await cancel_video_job(db, job)
++    try:
++        job = await cancel_video_job(db, job)
++    except VideoJobAlreadyCompleted:
++        await db.commit()
++        raise HTTPException(
++            status_code=409,
++            detail="The provider already finished this video; it will be delivered and billed.",
++        )
+     await db.commit()
+     return serialize_job(job)
+diff --git a/backend/app/services/video_job_service.py b/backend/app/services/video_job_service.py
+index 6344eed..190155e 100644
+--- a/backend/app/services/video_job_service.py
++++ b/backend/app/services/video_job_service.py
+@@ -40,6 +40,20 @@ _ACTIVE_TASKS: dict[str, asyncio.Task] = {}
+ _WORKER_TASK: asyncio.Task | None = None
+ _WORKER_STOP = asyncio.Event()
+ _TERMINAL = frozenset({"completed", "failed", "cancelled"})
++
++
++class LeaseLost(RuntimeError):
++    """Another worker now owns this job's lease; this runner must stop touching it.
++
++    Raised inside the poll loop when the row's ``lease_owner`` no longer
++    matches the claim this runner started with (the lease expired and
++    ``claim_due_video_jobs`` handed the job to someone else). The job row,
++    the reservation and billing all belong to the new owner from that point.
++    """
++
++
++class VideoJobAlreadyCompleted(RuntimeError):
++    """The provider finished the job before the cancel reached it."""
+ # How long a claimed job stays leased to one worker, and how often a long
+ # phase renews that lease. The heartbeat must stay well under the lease so a
+ # single slow beat never lets a second worker claim a job that is running.
+@@ -290,15 +304,29 @@ async def cancel_video_job(db: AsyncSession, job: VideoGenerationJob) -> VideoGe
+             conn = await db.get(Connection, job.connection_id) if job.connection_id else None
+             if model and conn and conn.is_active:
+                 adapter = get_video_adapter(job.provider_type, adapter_key=job.adapter_key)
++                api_key = decrypt_secret(conn.api_key_encrypted)
++                ref = ProviderJobRef(
++                    provider_type=job.provider_type,
++                    provider_job_id=job.provider_job_id,
++                    polling_url=job.provider_polling_url,
++                )
++                # The provider may already have finished (and charged for) the
++                # clip. Cancelling now would release the hold and drop a paid
++                # result on the floor; let the runner ingest and bill it.
++                try:
++                    snapshot = await adapter.poll(api_key=api_key, base_url=conn.base_url, job=ref)
++                except Exception:
++                    snapshot = None
++                if snapshot is not None and snapshot.state == "completed":
++                    job.cancel_requested_at = None
++                    raise VideoJobAlreadyCompleted(job.id)
+                 await adapter.cancel(
+-                    api_key=decrypt_secret(conn.api_key_encrypted),
++                    api_key=api_key,
+                     base_url=conn.base_url,
+-                    job=ProviderJobRef(
+-                        provider_type=job.provider_type,
+-                        provider_job_id=job.provider_job_id,
+-                        polling_url=job.provider_polling_url,
+-                    ),
++                    job=ref,
+                 )
++        except VideoJobAlreadyCompleted:
++            raise
+         except Exception:
+             _LOG.warning("Provider cancel failed for video job %s", job.id, exc_info=True)
+     job.status = "cancelled"
+@@ -496,6 +524,7 @@ async def _run_video_job(job_id: str) -> None:
+ 
+         duration = parse_video_duration(params.get("duration"))
+         success = False
++        lease_lost = False
+         error_message: str | None = None
+         settings = get_settings()
+         deadline = time.monotonic() + float(settings.video_job_timeout_seconds or 600)
+@@ -567,11 +596,16 @@ async def _run_video_job(job_id: str) -> None:
+             while status not in _TERMINAL:
+                 if time.monotonic() > deadline:
+                     raise TimeoutError("Video generation timed out")
+-                # Reload cancel state
++                # Reload cancel + ownership state
+                 await db.refresh(job)
+                 if job.status == "cancelled":
+                     raise asyncio.CancelledError()
++                if lease_owner and job.lease_owner != lease_owner:
++                    raise LeaseLost(job_id)
+                 job.lease_expires_at = _now() + datetime.timedelta(seconds=_LEASE_SECONDS)
++                # Commit before sleeping/polling: otherwise this transaction (and
++                # its pooled connection) stays open for the whole provider wait.
++                await db.commit()
+                 await asyncio.sleep(poll_interval)
+                 final_snapshot = await adapter.poll(
+                     api_key=api_key,
+@@ -691,6 +725,12 @@ async def _run_video_job(job_id: str) -> None:
+             job.error_message = None
+             success = True
+             await db.commit()
++        except LeaseLost:
++            # Not ours any more: no status change, no release, no billing.
++            lease_lost = True
++            await db.rollback()
++            _LOG.warning("Video job %s lease taken over by another worker; runner %s stops", job_id, lease_owner)
++            increment("video_job_lease_lost")
+         except asyncio.CancelledError:
+             await db.refresh(job)
+             if job.status != "cancelled":
+@@ -718,6 +758,8 @@ async def _run_video_job(job_id: str) -> None:
+             _LOG.warning("Video job %s failed: %s", job_id, error_message)
+             increment("video_job_failed")
+         finally:
++            if lease_lost:
++                return
+             try:
+                 elapsed_ms = (time.perf_counter() - started) * 1000.0
+                 log_id = await log_video_usage(
+diff --git a/backend/tests/test_video_job_lease.py b/backend/tests/test_video_job_lease.py
+new file mode 100644
+index 0000000..548e661
+--- /dev/null
++++ b/backend/tests/test_video_job_lease.py
+@@ -0,0 +1,176 @@
++"""Video runner: a lost lease stops the runner; cancel yields to a finished provider job."""
++
++from __future__ import annotations
++
++import asyncio
++import json
++import os
++import tempfile
++import uuid
++from types import SimpleNamespace
++from unittest.mock import AsyncMock, patch
++
++import pytest
++from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
++
++import app.models  # noqa: F401
++from app.database import Base
++from app.models.user import User
++from app.models.video import VideoGenerationJob
++from app.services import video_job_service as vjs
++from app.services.video_providers.contracts import ProviderJobRef, ProviderJobSnapshot
++
++
++class _FakeAdapter:
++    """Provider that stays 'running' until told otherwise."""
++
++    provider_type = "openrouter"
++    adapter_version = "test"
++
++    def __init__(self) -> None:
++        self.state = "running"
++        self.polls = 0
++        self.cancels = 0
++
++    async def submit(self, *, api_key, base_url, request):
++        return ProviderJobRef(provider_type="openrouter", provider_job_id="prov-1")
++
++    async def poll(self, *, api_key, base_url, job):
++        self.polls += 1
++        return ProviderJobSnapshot(state=self.state, raw={"n": self.polls})
++
++    async def cancel(self, *, api_key, base_url, job):
++        self.cancels += 1
++        return True
++
++
++async def _factory():
++    fd, path = tempfile.mkstemp(suffix=".db")
++    os.close(fd)
++    engine = create_async_engine(f"sqlite+aiosqlite:///{path}", connect_args={"check_same_thread": False})
++    async with engine.begin() as conn:
++        await conn.run_sync(Base.metadata.create_all)
++
++    async def dispose():
++        await engine.dispose()
++        try:
++            os.remove(path)
++        except OSError:
++            pass
++
++    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False), dispose
++
++
++async def _seed(db, *, status="submitted", lease_owner="worker-A", provider_job_id="prov-1"):
++    user = User(username="v", email="v@t", hashed_password="x", auth_provider="local", is_active=True)
++    db.add(user)
++    await db.flush()
++    job = VideoGenerationJob(
++        id=str(uuid.uuid4()), user_id=user.id, model_id="video-model", provider_type="openrouter",
++        adapter_key="openrouter", status=status, prompt="p", persist=1,
++        params_json=json.dumps({"duration": 5}), lease_owner=lease_owner,
++        provider_job_id=provider_job_id,
++    )
++    db.add(job)
++    await db.commit()
++    return user, job
++
++
++def test_runner_stops_without_billing_when_lease_is_taken_over():
++    async def run():
++        factory, dispose = await _factory()
++        adapter = _FakeAdapter()
++        billing = AsyncMock(return_value=None)
++        try:
++            async with factory() as db:
++                user, job = await _seed(db)
++                job_id = job.id
++
++            async def takeover():
++                # Wait for the runner's first poll, then another worker claims the job.
++                for _ in range(200):
++                    if adapter.polls >= 1:
++                        break
++                    await asyncio.sleep(0.01)
++                async with factory() as db:
++                    row = await db.get(VideoGenerationJob, job_id)
++                    row.lease_owner = "worker-B"
++                    await db.commit()
++
++            settings = SimpleNamespace(video_job_timeout_seconds=30, video_job_poll_interval_ms=50)
++            with (
++                patch.object(vjs, "AsyncSessionLocal", factory),
++                patch.object(vjs, "get_video_adapter", lambda *a, **k: adapter),
++                patch.object(vjs, "get_settings", lambda: settings),
++                patch.object(vjs, "log_video_usage", billing),
++            ):
++                # Give the runner a connection to use.
++                from app.models.connection import Connection
++                from app.models.model_catalog import AIModel
++
++                async with factory() as db:
++                    conn = Connection(name="c", provider_type="openrouter", api_key_encrypted="enc", is_active=True)
++                    db.add(conn)
++                    await db.flush()
++                    model = AIModel(connection_id=conn.id, external_id="video-model", provider_type="openrouter", display_name="v", is_video_model=True)
++                    db.add(model)
++                    await db.flush()
++                    row = await db.get(VideoGenerationJob, job_id)
++                    row.catalog_model_id = model.id
++                    row.connection_id = conn.id
++                    await db.commit()
++
++                with patch("app.services.secret_crypto.decrypt_secret", lambda v: "k"):
++                    await asyncio.gather(vjs._run_video_job(job_id), takeover())
++
++            async with factory() as db:
++                row = await db.get(VideoGenerationJob, job_id)
++            # The row belongs to worker-B now: status untouched by the old runner,
++            # lease not cleared, and no usage row written by it.
++            assert row.lease_owner == "worker-B"
++            assert row.status not in ("failed", "cancelled", "completed")
++            billing.assert_not_awaited()
++        finally:
++            await dispose()
++
++    asyncio.run(run())
++
++
++def test_cancel_yields_when_provider_already_completed():
++    async def run():
++        factory, dispose = await _factory()
++        adapter = _FakeAdapter()
++        adapter.state = "completed"
++        try:
++            from app.models.connection import Connection
++            from app.models.model_catalog import AIModel
++
++            async with factory() as db:
++                user, job = await _seed(db, status="running")
++                conn = Connection(name="c", provider_type="openrouter", api_key_encrypted="enc", is_active=True)
++                db.add(conn)
++                await db.flush()
++                model = AIModel(connection_id=conn.id, external_id="video-model", provider_type="openrouter", display_name="v", is_video_model=True)
++                db.add(model)
++                await db.flush()
++                job.catalog_model_id = model.id
++                job.connection_id = conn.id
++                await db.commit()
++
++                with (
++                    patch.object(vjs, "get_video_adapter", lambda *a, **k: adapter),
++                    patch("app.services.secret_crypto.decrypt_secret", lambda v: "k"),
++                ):
++                    with pytest.raises(vjs.VideoJobAlreadyCompleted):
++                        await vjs.cancel_video_job(db, job)
++                    assert adapter.cancels == 0
++                    assert job.status == "running" and job.cancel_requested_at is None
++
++                    # Still running at the provider: cancel proceeds as before.
++                    adapter.state = "running"
++                    out = await vjs.cancel_video_job(db, job)
++                    assert out.status == "cancelled" and adapter.cancels == 1
++        finally:
++            await dispose()
++
++    asyncio.run(run())
+-- 
+2.43.0
+

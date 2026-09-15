@@ -1,0 +1,72 @@
+From 8cd3af50f89147fb9bc174e3b5ce5708c0038c85 Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 10:46:49 +0000
+Subject: [PATCH 3/7] fix(projects): increment chat session counters in SQL to
+ stop lost updates
+
+append_project_chat_message did 'row.message_count = message_count + 1' in
+Python. Two concurrent appends read the same stale value, so unique sequences
+were assigned but message_count (and revision) lost one increment per race --
+exactly what test_concurrent_message_append_unique_sequences caught (8 != 10).
+Emit 'message_count = COALESCE(message_count,0) + 1' server-side and refresh
+the two attributes after flush so the returned payload stays accurate.
+
+Also aligns test_deleted_project_excluded_from_my_list with the documented
+behaviour (admin docs: 'Delete marks the project deletion_pending. Members
+still see it until purge', with a Restore action in Projects.tsx): a
+soft-deleted project stays in the owner's list with status deletion_pending.
+
+Note: project_room_service.py:392 and user_chat_storage_service.py:1194 use
+the same Python-side pattern; tracked for a follow-up MR.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ backend/app/services/project_chat_service.py | 8 ++++++--
+ backend/tests/test_projects_security.py      | 7 +++++--
+ 2 files changed, 11 insertions(+), 4 deletions(-)
+
+diff --git a/backend/app/services/project_chat_service.py b/backend/app/services/project_chat_service.py
+index e1307da3..d65bd3ac 100644
+--- a/backend/app/services/project_chat_service.py
++++ b/backend/app/services/project_chat_service.py
+@@ -520,11 +520,15 @@ async def append_project_chat_message(
+                 created_at=dt.datetime.utcnow(),
+             )
+             db.add(msg)
+-            row.message_count = int(row.message_count or 0) + 1
++            # SQL-side increments: two concurrent appends each read the same
++            # stale Python value, so ``count + 1`` in Python loses one update
++            # (unique sequences, wrong message_count). Let the database add.
++            row.message_count = func.coalesce(ChatSession.message_count, 0) + 1
+             row.last_message_at = dt.datetime.utcnow()
+-            row.revision = int(row.revision or 1) + 1
++            row.revision = func.coalesce(ChatSession.revision, 1) + 1
+             row.updated_at = dt.datetime.utcnow()
+             await db.flush()
++            await db.refresh(row, attribute_names=["message_count", "revision"])
+             if msg.role == "assistant":
+                 # Only a completed exchange is worth mining, and the check stays
+                 # ahead of the import so member turns pay nothing on this path.
+diff --git a/backend/tests/test_projects_security.py b/backend/tests/test_projects_security.py
+index bae9b00a..fa455591 100644
+--- a/backend/tests/test_projects_security.py
++++ b/backend/tests/test_projects_security.py
+@@ -683,9 +683,12 @@ def test_deleted_project_excluded_from_my_list():
+             async with factory() as db:
+                 owner, _, _ = await _setup_project(db, PROJ)
+                 await delete_project(db, project_id=PROJ, user=owner)
++                # Soft-delete is reversible: members keep seeing the project
++                # (status "deletion_pending", with a Restore action in the UI)
++                # until purge_expired_deleted_projects removes it.
+                 mine, total = await list_my_projects(db, user=owner)
+-                assert total == 0
+-                assert mine == []
++                assert total == 1
++                assert [p["status"] for p in mine] == ["deletion_pending"]
+         finally:
+             await engine.dispose()
+ 
+-- 
+2.43.0
+

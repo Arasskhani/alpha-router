@@ -1,0 +1,555 @@
+From aeafa60e58122ea7033741398078d7ad1f301665 Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 21:38:16 +0000
+Subject: [PATCH 02/12] feat(budget): money columns become NUMERIC;
+ reserved-counter drift is measured
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Balances, holds, credit limits and per-request costs on users,
+alpha_router_api_keys, budget_plans, budget_reservations and request_logs
+were `double precision`; catalog prices on ai_models too. Every SQL-side
+increment accumulated binary rounding error, which is the reason the
+reserved-counter repair job exists.
+
+- `app.database.MoneyUSD = Numeric(20, 12, asdecimal=False)` and
+  `UnitPriceUSD = Numeric(24, 14, asdecimal=False)`; fifteen columns switch
+  to them. `asdecimal=False` keeps every caller on float — no code outside
+  the models changes; the ledger tables (already Numeric/Decimal) stay the
+  source of truth.
+- Revision 5c1d2e3f4a5b: `ALTER COLUMN ... TYPE NUMERIC USING ROUND(col::numeric,
+  scale)` on PostgreSQL (SQLite is untyped and skipped). Idempotent by nature.
+- `reconcile_drifted_reserved_counters` now reports what it found: gauge
+  `alpharouter_budget_reserved_drift_usd` (0 when counters were exact) and
+  event `budget_reserved_drift_repaired` per subject. Plan 4.2 says the
+  repair job can be retired after a month at zero — this is the instrument.
+- tests/test_money_numeric_postgres.py (canary): 1000 × 0.001 increments
+  land on exactly "1.000000000000", the ORM reads 1.0 as float, and the
+  reconciliation finds no drift.
+
+Verified: existing database upgraded in place, drift gate 0; full suite
+1371 passed; canary 13 passed.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ .gitlab-ci.yml                                |  2 +-
+ .../5c1d2e3f4a5b_money_columns_numeric.py     | 78 ++++++++++++++++
+ backend/app/database.py                       | 13 +++
+ backend/app/models/api_key.py                 | 12 +--
+ backend/app/models/budget.py                  |  6 +-
+ backend/app/models/budget_reservation.py      |  8 +-
+ backend/app/models/logging.py                 |  8 +-
+ backend/app/models/model_catalog.py           |  6 +-
+ backend/app/models/user.py                    | 10 +-
+ .../services/budget_reservation_service.py    | 16 +++-
+ backend/app/services/observability.py         | 16 ++++
+ backend/tests/test_money_numeric_postgres.py  | 92 +++++++++++++++++++
+ 12 files changed, 236 insertions(+), 31 deletions(-)
+ create mode 100644 backend/alembic/versions/5c1d2e3f4a5b_money_columns_numeric.py
+ create mode 100644 backend/tests/test_money_numeric_postgres.py
+
+diff --git a/.gitlab-ci.yml b/.gitlab-ci.yml
+index 6f7cb67..ebffb59 100644
+--- a/.gitlab-ci.yml
++++ b/.gitlab-ci.yml
+@@ -90,7 +90,7 @@ backend-postgres-canary:
+     - python -m pip install --no-cache-dir -r backend/requirements-dev.txt
+     - cd backend
+     - python -m app.migrate
+-    - PYTHONPATH=. python -m pytest tests/test_budget_reservations_postgres.py tests/test_budget_reconcile_race_postgres.py tests/test_scheduler_leader.py tests/test_readiness.py tests/test_schema_baseline.py -q -rs
++    - PYTHONPATH=. python -m pytest tests/test_budget_reservations_postgres.py tests/test_budget_reconcile_race_postgres.py tests/test_scheduler_leader.py tests/test_readiness.py tests/test_schema_baseline.py tests/test_money_numeric_postgres.py -q -rs
+ 
+ deployment-config:
+   stage: verify
+diff --git a/backend/alembic/versions/5c1d2e3f4a5b_money_columns_numeric.py b/backend/alembic/versions/5c1d2e3f4a5b_money_columns_numeric.py
+new file mode 100644
+index 0000000..941bf50
+--- /dev/null
++++ b/backend/alembic/versions/5c1d2e3f4a5b_money_columns_numeric.py
+@@ -0,0 +1,78 @@
++"""Money columns: Float -> Numeric.
++
++Revision ID: 5c1d2e3f4a5b
++Revises: 4b0c1d2e3f4a
++Create Date: 2026-09-14
++
++Phase 4.2. Balances, holds, credit limits and per-request costs were
++``double precision``; every SQL-side increment (``budget_used_usd =
++budget_used_usd + :x``) accumulated binary rounding error and the periodic
++reconciliation had to paper over it. They become ``NUMERIC(20, 12)``
++(catalog prices ``NUMERIC(24, 14)``); the ORM reads them back as float
++(``asdecimal=False``) so callers are unchanged.
++
++``USING col::numeric`` rounds each stored double to 12 places, which is the
++value the application always meant. SQLite has no column types to alter.
++"""
++
++from __future__ import annotations
++
++from collections.abc import Sequence
++
++import sqlalchemy as sa
++
++from alembic import op
++
++revision: str = "5c1d2e3f4a5b"
++down_revision: str | None = "4b0c1d2e3f4a"
++branch_labels: str | Sequence[str] | None = None
++depends_on: str | Sequence[str] | None = None
++
++_MONEY: tuple[tuple[str, str], ...] = (
++    ("alpha_router_api_keys", "credit_limit_usd"),
++    ("alpha_router_api_keys", "period_used_usd"),
++    ("alpha_router_api_keys", "period_reserved_usd"),
++    ("alpha_router_api_keys", "total_used_usd"),
++    ("budget_plans", "monthly_budget_usd"),
++    ("budget_reservations", "reserved_usd"),
++    ("budget_reservations", "actual_usd"),
++    ("request_logs", "total_cost_usd"),
++    ("request_logs", "provider_cost_usd"),
++    ("request_logs", "calculated_cost_usd"),
++    ("users", "monthly_budget_usd"),
++    ("users", "budget_used_usd"),
++    ("users", "budget_reserved_usd"),
++)
++_PRICE: tuple[tuple[str, str], ...] = (
++    ("ai_models", "input_cost_per_1k"),
++    ("ai_models", "output_cost_per_1k"),
++)
++
++
++def _alter(table: str, column: str, precision: int, scale: int) -> None:
++    op.execute(
++        f"ALTER TABLE {table} ALTER COLUMN {column} TYPE NUMERIC({precision}, {scale}) "
++        f"USING ROUND({column}::numeric, {scale})"
++    )
++
++
++def upgrade() -> None:
++    bind = op.get_bind()
++    if bind.dialect.name != "postgresql":
++        return
++    inspector = sa.inspect(bind)
++    tables = set(inspector.get_table_names())
++    for table, column in _MONEY:
++        if table in tables:
++            _alter(table, column, 20, 12)
++    for table, column in _PRICE:
++        if table in tables:
++            _alter(table, column, 24, 14)
++
++
++def downgrade() -> None:
++    bind = op.get_bind()
++    if bind.dialect.name != "postgresql":
++        return
++    for table, column in _MONEY + _PRICE:
++        op.execute(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE DOUBLE PRECISION USING {column}::double precision")
+diff --git a/backend/app/database.py b/backend/app/database.py
+index 7e5a89b..38e34bd 100644
+--- a/backend/app/database.py
++++ b/backend/app/database.py
+@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator
+ from typing import Any
+ from uuid import uuid4
+ 
++from sqlalchemy import Numeric
+ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+ from sqlalchemy.orm import DeclarativeBase
+ 
+@@ -82,3 +83,15 @@ async def get_read_db() -> AsyncGenerator[AsyncSession, None]:
+         except Exception:
+             await session.rollback()
+             raise
++
++
++# --- Money column types (Phase 4.2) -----------------------------------------
++# Balances, holds, limits and per-request costs are stored as exact decimals
++# so SQL-side arithmetic (``budget_used_usd = budget_used_usd + :x``) never
++# accumulates binary-float error. ``asdecimal=False`` keeps the Python side on
++# floats: the accounting code, the JSON API and the tests all speak float, and
++# the rounding on the way in (12 places) is far below any billing unit.
++# Ledger tables (``usage_events`` etc.) already use Numeric(20, 12) with
++# Decimal results and are the source of truth for reconciliation.
++MoneyUSD = Numeric(20, 12, asdecimal=False)
++UnitPriceUSD = Numeric(24, 14, asdecimal=False)
+diff --git a/backend/app/models/api_key.py b/backend/app/models/api_key.py
+index ebb146e..0d5d341 100644
+--- a/backend/app/models/api_key.py
++++ b/backend/app/models/api_key.py
+@@ -1,10 +1,10 @@
+ """Alpharouter gateway keys (admin) and per-user keys."""
+ 
+ import datetime
+-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Table, Text
++from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Table, Text
+ from sqlalchemy.orm import relationship
+ 
+-from app.database import Base
++from app.database import Base, MoneyUSD
+ 
+ alpha_router_api_key_connections = Table(
+     "alpha_router_api_key_connections",
+@@ -63,7 +63,7 @@ class AlphaRouterApiKey(Base):
+     last_used_at = Column(DateTime, nullable=True)
+     notes = Column(Text, nullable=True)
+     owner_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+-    credit_limit_usd = Column(Float, default=0.0)
++    credit_limit_usd = Column(MoneyUSD, default=0.0)
+     # Explicit opt-out from the credit limit. A key with credit_limit_usd <= 0
+     # and this false is *blocked*, not unlimited. Nullable so the column can be
+     # added to existing tables; db_migrate.backfill_api_key_unlimited_budget
+@@ -71,9 +71,9 @@ class AlphaRouterApiKey(Base):
+     unlimited_budget = Column(Boolean, nullable=True, default=False)
+     reset_period = Column(String(16), default="monthly")  # daily | weekly | monthly
+     expires_at = Column(DateTime, nullable=True)
+-    period_used_usd = Column(Float, default=0.0)
+-    period_reserved_usd = Column(Float, nullable=False, server_default="0", default=0.0)
+-    total_used_usd = Column(Float, default=0.0)
++    period_used_usd = Column(MoneyUSD, default=0.0)
++    period_reserved_usd = Column(MoneyUSD, nullable=False, server_default="0", default=0.0)
++    total_used_usd = Column(MoneyUSD, default=0.0)
+     period_started_at = Column(DateTime, nullable=True)
+     restrict_connections = Column(Boolean, default=False, nullable=False, server_default="0")
+     restrict_models = Column(Boolean, default=False, nullable=False, server_default="0")
+diff --git a/backend/app/models/budget.py b/backend/app/models/budget.py
+index cec2fe0..d8d8383 100644
+--- a/backend/app/models/budget.py
++++ b/backend/app/models/budget.py
+@@ -1,10 +1,10 @@
+ """Budget plans and assignments to users or groups."""
+ 
+ import datetime
+-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String
++from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+ from sqlalchemy.orm import relationship
+ 
+-from app.database import Base
++from app.database import Base, MoneyUSD
+ 
+ 
+ class BudgetPlan(Base):
+@@ -12,7 +12,7 @@ class BudgetPlan(Base):
+ 
+     id = Column(Integer, primary_key=True)
+     name = Column(String(128), unique=True, nullable=False)
+-    monthly_budget_usd = Column(Float, nullable=False, default=0.0)
++    monthly_budget_usd = Column(MoneyUSD, nullable=False, default=0.0)
+     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+ 
+     assignments = relationship("PlanAssignment", back_populates="plan")
+diff --git a/backend/app/models/budget_reservation.py b/backend/app/models/budget_reservation.py
+index 2340e2f..04d27ed 100644
+--- a/backend/app/models/budget_reservation.py
++++ b/backend/app/models/budget_reservation.py
+@@ -2,9 +2,9 @@
+ 
+ import datetime
+ 
+-from sqlalchemy import Column, DateTime, Float, Integer, String
++from sqlalchemy import Column, DateTime, Integer, String
+ 
+-from app.database import Base
++from app.database import Base, MoneyUSD
+ 
+ 
+ class BudgetReservation(Base):
+@@ -16,8 +16,8 @@ class BudgetReservation(Base):
+     idempotency_key = Column(String(160), nullable=False, unique=True, index=True)
+     operation = Column(String(32), nullable=False)
+     model_id = Column(String(512), nullable=True)
+-    reserved_usd = Column(Float, nullable=False)
+-    actual_usd = Column(Float, nullable=True)
++    reserved_usd = Column(MoneyUSD, nullable=False)
++    actual_usd = Column(MoneyUSD, nullable=True)
+     status = Column(String(16), nullable=False, default="held", index=True)
+     request_log_id = Column(Integer, nullable=True)
+     created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+diff --git a/backend/app/models/logging.py b/backend/app/models/logging.py
+index e08aac0..ae6e387 100644
+--- a/backend/app/models/logging.py
++++ b/backend/app/models/logging.py
+@@ -4,7 +4,7 @@ import datetime
+ from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
+ from sqlalchemy.orm import relationship
+ 
+-from app.database import Base
++from app.database import Base, MoneyUSD
+ 
+ 
+ class RequestLog(Base):
+@@ -42,9 +42,9 @@ class RequestLog(Base):
+     prompt_tokens = Column(Integer, default=0)
+     completion_tokens = Column(Integer, default=0)
+     cached_tokens = Column(Integer, default=0)
+-    total_cost_usd = Column(Float, default=0.0)
+-    provider_cost_usd = Column(Float, nullable=True)
+-    calculated_cost_usd = Column(Float, nullable=True)
++    total_cost_usd = Column(MoneyUSD, default=0.0)
++    provider_cost_usd = Column(MoneyUSD, nullable=True)
++    calculated_cost_usd = Column(MoneyUSD, nullable=True)
+     cost_source = Column(String(32), nullable=True, default="unknown", index=True)
+     cost_confidence = Column(String(24), nullable=True, default="unknown", index=True)
+     has_unpriced_usage = Column(Boolean, nullable=True, default=False, index=True)
+diff --git a/backend/app/models/model_catalog.py b/backend/app/models/model_catalog.py
+index 4547b77..5a55309 100644
+--- a/backend/app/models/model_catalog.py
++++ b/backend/app/models/model_catalog.py
+@@ -16,7 +16,7 @@ from sqlalchemy import (
+ )
+ from sqlalchemy.orm import relationship
+ 
+-from app.database import Base
++from app.database import Base, UnitPriceUSD
+ 
+ 
+ class AIModel(Base):
+@@ -42,8 +42,8 @@ class AIModel(Base):
+     is_video_model = Column(Boolean, default=False)
+ 
+     # Per 1K token USD from provider (nullable if provider does not expose)
+-    input_cost_per_1k = Column(Float, nullable=True)
+-    output_cost_per_1k = Column(Float, nullable=True)
++    input_cost_per_1k = Column(UnitPriceUSD, nullable=True)
++    output_cost_per_1k = Column(UnitPriceUSD, nullable=True)
+     # Some providers return per-token; we normalize to per-1k on sync
+     pricing_unit = Column(String(16), default="1k")  # 1k | 1m
+     pricing_raw = Column(Text, nullable=True)  # JSON snapshot from provider
+diff --git a/backend/app/models/user.py b/backend/app/models/user.py
+index e3a6904..823aa0c 100644
+--- a/backend/app/models/user.py
++++ b/backend/app/models/user.py
+@@ -1,12 +1,12 @@
+ """User accounts, RBAC, and directory profile fields."""
+ 
+ import datetime
+-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Table, Text, UniqueConstraint
++from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Table, Text, UniqueConstraint
+ from sqlalchemy.dialects.postgresql import JSONB
+ from sqlalchemy.orm import relationship
+ from sqlalchemy.types import JSON
+ 
+-from app.database import Base
++from app.database import Base, MoneyUSD
+ 
+ JsonDocument = JSON().with_variant(JSONB(), "postgresql")
+ 
+@@ -67,9 +67,9 @@ class User(Base):
+     reporting_to = Column(String(255), nullable=True)
+ 
+     # Budget: resolved from plan assignment; cached monthly remaining
+-    monthly_budget_usd = Column(Float, default=0.0)
+-    budget_used_usd = Column(Float, default=0.0)
+-    budget_reserved_usd = Column(Float, nullable=False, server_default="0", default=0.0)
++    monthly_budget_usd = Column(MoneyUSD, default=0.0)
++    budget_used_usd = Column(MoneyUSD, default=0.0)
++    budget_reserved_usd = Column(MoneyUSD, nullable=False, server_default="0", default=0.0)
+     budget_period_start = Column(DateTime, nullable=True)
+ 
+     # Local-account TOTP (2FA). Secret is Fernet-encrypted at rest.
+diff --git a/backend/app/services/budget_reservation_service.py b/backend/app/services/budget_reservation_service.py
+index 19f9fd7..866449c 100644
+--- a/backend/app/services/budget_reservation_service.py
++++ b/backend/app/services/budget_reservation_service.py
+@@ -14,6 +14,7 @@ from app.models.api_key import AlphaRouterApiKey
+ from app.models.budget_reservation import BudgetReservation
+ from app.models.model_catalog import AIModel
+ from app.models.user import User
++from app.services.observability import increment, observe_budget_reserved_drift
+ from app.services.budget_service import (
+     BUDGET_EXCEEDED_DETAIL,
+     NO_PLAN_BUDGET_DETAIL,
+@@ -672,8 +673,8 @@ async def _drifted_subject_ids(
+     counter_column,
+     id_column,
+     tolerance: float = 1e-6,
+-) -> list[int]:
+-    """Subject ids whose reserved counter sits above their open ``held`` rows."""
++) -> list[tuple[int, float]]:
++    """(subject id, drift USD) for counters that sit above their open ``held`` rows."""
+     held_totals = (
+         select(
+             BudgetReservation.subject_id.label("sid"),
+@@ -698,7 +699,7 @@ async def _drifted_subject_ids(
+         )
+     ).all()
+     return [
+-        int(subject_id)
++        (int(subject_id), float(counter or 0) - float(held_sum or 0))
+         for subject_id, counter, held_sum in rows
+         if float(counter or 0) - float(held_sum or 0) > tolerance
+     ]
+@@ -730,6 +731,7 @@ async def reconcile_drifted_reserved_counters(db: AsyncSession) -> int:
+         if not got:
+             return 0
+     repaired = 0
++    drift_total = 0.0
+     for subject_type, id_column, counter_column in (
+         (SUBJECT_USER, User.id, User.budget_reserved_usd),
+         (
+@@ -738,15 +740,19 @@ async def reconcile_drifted_reserved_counters(db: AsyncSession) -> int:
+             AlphaRouterApiKey.period_reserved_usd,
+         ),
+     ):
+-        subject_ids = await _drifted_subject_ids(
++        drifted = await _drifted_subject_ids(
+             db,
+             subject_type=subject_type,
+             counter_column=counter_column,
+             id_column=id_column,
+         )
+-        for subject_id in subject_ids:
++        for subject_id, drift_usd in drifted:
+             await reconcile_subject_reserved(db, subject_type, subject_id)
+             repaired += 1
++            drift_total += drift_usd
++            increment("budget_reserved_drift_repaired")
++    # Reported even when zero so the dashboard shows "checked, exact".
++    observe_budget_reserved_drift(drift_total)
+     return repaired
+ 
+ 
+diff --git a/backend/app/services/observability.py b/backend/app/services/observability.py
+index 0509d12..97b2420 100644
+--- a/backend/app/services/observability.py
++++ b/backend/app/services/observability.py
+@@ -41,6 +41,7 @@ _KNOWN_EVENTS = frozenset(
+         "csrf_failure",
+         "repeated_401",
+         "budget_hold_leak",
++        "budget_reserved_drift_repaired",
+         "code_interpreter_capacity_rejected",
+         "code_interpreter_lease_expired",
+         "code_interpreter_cancelled",
+@@ -206,6 +207,12 @@ _MEMORY_EMBEDDING_BACKLOG = Gauge(
+     multiprocess_mode="livemostrecent",
+     **_metric_kwargs,
+ )
++_BUDGET_RESERVED_DRIFT = Gauge(
++    "alpharouter_budget_reserved_drift_usd",
++    "USD by which reserved counters exceeded their open holds at the last reconciliation run.",
++    multiprocess_mode="livemostrecent",
++    **_metric_kwargs,
++)
+ _DEPENDENCY_READY = Gauge(
+     "alpharouter_dependency_ready",
+     "Dependency readiness (1 ready, 0 unavailable).",
+@@ -346,6 +353,15 @@ def set_memory_embedding_backlog(count: int) -> None:
+     _MEMORY_EMBEDDING_BACKLOG.set(max(0, int(count)))
+ 
+ 
++def observe_budget_reserved_drift(total_usd: float) -> None:
++    """Record the drift the reconciliation job found (0 when counters were exact).
++
++    Phase 4.2 moved the counters to NUMERIC; once this stays at zero for a
++    month the repair job can be retired (plan step 4.2).
++    """
++    _BUDGET_RESERVED_DRIFT.set(max(0.0, float(total_usd or 0.0)))
++
++
+ def set_dependency_ready(component: str, ready: bool) -> None:
+     clean = str(component or "").strip().lower()
+     if clean not in _DEPENDENCIES:
+diff --git a/backend/tests/test_money_numeric_postgres.py b/backend/tests/test_money_numeric_postgres.py
+new file mode 100644
+index 0000000..1de8c58
+--- /dev/null
++++ b/backend/tests/test_money_numeric_postgres.py
+@@ -0,0 +1,92 @@
++"""Money columns are exact decimals (Phase 4.2). PostgreSQL canary.
++
++With ``double precision`` a thousand SQL-side increments of 0.001 landed on
++1.0000000000000007 and the reconciliation job had to repair the counter. With
++``NUMERIC(20, 12)`` the sum is exactly 1.000000000000 and the drift gauge
++reads 0.
++"""
++
++from __future__ import annotations
++
++import os
++import uuid
++
++import pytest
++from sqlalchemy import delete, select, text
++from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
++
++from app.models.user import User
++from app.services import budget_reservation_service as brs
++
++pytestmark = pytest.mark.skipif(
++    os.getenv("RUN_POSTGRES_RESERVATION_CANARY") != "1",
++    reason="opt-in PostgreSQL canary",
++)
++
++
++def _engine():
++    from app.config import get_settings
++    from app.database import asyncpg_connect_args
++
++    return create_async_engine(get_settings().database_url, connect_args=asyncpg_connect_args())
++
++
++async def test_thousand_increments_are_exact_and_reconcile_finds_no_drift(monkeypatch):
++    engine = _engine()
++    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
++    suffix = uuid.uuid4().hex[:8]
++    user_id = None
++    observed: list[float] = []
++    monkeypatch.setattr(brs, "observe_budget_reserved_drift", observed.append)
++    try:
++        async with factory() as db:
++            column_type = (
++                await db.execute(
++                    text(
++                        "SELECT data_type, numeric_scale FROM information_schema.columns "
++                        "WHERE table_name = 'users' AND column_name = 'budget_used_usd'"
++                    )
++                )
++            ).one()
++            assert tuple(column_type) == ("numeric", 12)
++
++            user = User(
++                username=f"numeric-{suffix}",
++                email=f"numeric-{suffix}@t",
++                hashed_password="x",
++                auth_provider="local",
++                is_active=True,
++                monthly_budget_usd=100.0,
++                budget_used_usd=0.0,
++                budget_reserved_usd=0.0,
++            )
++            db.add(user)
++            await db.commit()
++            user_id = user.id
++
++            for _ in range(1000):
++                await db.execute(
++                    text("UPDATE users SET budget_used_usd = budget_used_usd + :x WHERE id = :id"),
++                    {"x": 0.001, "id": user_id},
++                )
++            await db.commit()
++
++            exact = (
++                await db.execute(text("SELECT budget_used_usd::text FROM users WHERE id = :id"), {"id": user_id})
++            ).scalar_one()
++            assert exact == "1.000000000000"
++            loaded = (await db.execute(select(User).where(User.id == user_id))).scalar_one()
++            await db.refresh(loaded)  # identity map still holds the pre-update value
++            assert isinstance(loaded.budget_used_usd, float)
++            assert loaded.budget_used_usd == 1.0
++
++            repaired = await brs.reconcile_drifted_reserved_counters(db)
++            await db.commit()
++            assert repaired == 0
++            assert observed and observed[-1] == 0.0
++    finally:
++        if user_id is not None:
++            async with factory() as db:
++                await db.execute(delete(User).where(User.id == user_id))
++                await db.commit()
++        await engine.dispose()
+-- 
+2.43.0
+

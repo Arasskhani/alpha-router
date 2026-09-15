@@ -1,0 +1,210 @@
+From 895dcd017a748e96544e9c437f26e86c2b42868e Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Tue, 15 Sep 2026 05:54:47 +0000
+Subject: [PATCH 14/19] fix(agents): stop sending a stale Agent selection when
+ the preview is off
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A chat remembers its Agent in local state, so on an installation that has
+AGENTS_PLATFORM_ENABLED=false — the new default — every message in a chat
+that had an Agent selected before the upgrade was refused at preflight with
+400 "The Agent platform is not enabled". The picker is disabled once the
+catalog 404s, so the user could not even clear the selection.
+
+agentSelectionForSession() now reports no Agent while the feature is off, so
+nothing downstream (request body, specialist-turn routing, banners) acts on
+the stale choice; the picker is hidden rather than shown disabled, and the
+catalog is not fetched at all. The flag reaches the client in the session
+payload, and a server that does not report `features` is treated as having
+the feature on, so an older backend is unaffected.
+
+The backend guard keeps returning 400 for a caller that explicitly asks for
+an Agent. A backend test pins the other half of that: the app sends
+`agent_auto_route: false` on every ordinary turn, which must not be read as
+an Agent request.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ backend/tests/test_agents_platform_flag.py | 30 +++++++++++++++++
+ frontend/src/components/ChatPanel.tsx      | 13 ++++++--
+ frontend/src/lib/platformFeatures.test.ts  | 38 ++++++++++++++++++++++
+ frontend/src/lib/session.ts                | 11 +++++++
+ 4 files changed, 89 insertions(+), 3 deletions(-)
+ create mode 100644 frontend/src/lib/platformFeatures.test.ts
+
+diff --git a/backend/tests/test_agents_platform_flag.py b/backend/tests/test_agents_platform_flag.py
+index aeedad7..6d4243c 100644
+--- a/backend/tests/test_agents_platform_flag.py
++++ b/backend/tests/test_agents_platform_flag.py
+@@ -58,3 +58,33 @@ async def test_agent_fields_in_chat_body_are_refused(db_session, user):
+         )
+     assert exc.value.status_code == 400
+     assert "Agent platform" in str(exc.value.detail)
++
++
++async def test_ordinary_chat_body_is_not_refused_when_disabled(db_session, user):
++    """The app sends ``agent_auto_route: false`` on every non-private turn.
++
++    That is not a request for an Agent, so it must reach model resolution
++    instead of the preview's 400 -- otherwise switching the preview off breaks
++    chat outright.
++    """
++    body = {
++        "model": "vendor/good",
++        "messages": [{"role": "user", "content": "hi"}],
++        "agent_auto_route": False,
++    }
++    with (
++        patch.object(proxy_service.settings, "agents_platform_enabled", False),
++        pytest.raises(HTTPException) as exc,
++    ):
++        await proxy_service.preflight_stream_chat(
++            db_session,
++            body,
++            user_id=user.id,
++            skip_budget=True,
++            alpha_router_api_key_id=None,
++            source="alpha_router_chat",
++        )
++    # No model named "vendor/good" exists in this test database: reaching the
++    # 404 proves the Agent guard let the request through.
++    assert exc.value.status_code == 404
++    assert "Model not enabled" in str(exc.value.detail)
+diff --git a/frontend/src/components/ChatPanel.tsx b/frontend/src/components/ChatPanel.tsx
+index 870f083..e337132 100644
+--- a/frontend/src/components/ChatPanel.tsx
++++ b/frontend/src/components/ChatPanel.tsx
+@@ -115,7 +115,7 @@ import {
+   notifyReplyReady,
+   REPLY_READY_FOCUS_EVENT,
+ } from "../lib/replyReadyNotify";
+-import { getSessionUser, isSessionActive, logout } from "../lib/session";
++import { getSessionUser, isPlatformFeatureEnabled, isSessionActive, logout } from "../lib/session";
+ import { copyFreshChatTools, anyChatToolEnabled, isAllowedVideoDuration, toolsToApiPayload, type ChatToolsState } from "../lib/chatTools";
+ import MediaViewerModal from "./MediaViewerModal";
+ import ChatAttachmentMessage from "./chat/ChatAttachmentMessage";
+@@ -482,6 +482,7 @@ export default function ChatPanel({
+   const [modelPickerMode, setModelPickerMode] = useState<"replace" | "append" | null>(null);
+   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
+   const sessionUser = getSessionUser();
++  const agentsPlatformEnabled = isPlatformFeatureEnabled("agents_platform");
+   const sessionUsername = sessionUser?.username ?? "";
+   const welcomeName = sessionUser?.display_name || sessionUsername;
+   const projectAuthorDisplayName = isProjectChat
+@@ -902,6 +903,10 @@ export default function ChatPanel({
+   }
+ 
+   function agentSelectionForSession(sessionId: string): string {
++    // A chat keeps its Agent choice locally, so an installation that switched
++    // the preview off would keep sending it and get a 400 on every message --
++    // with the picker disabled, the user could not even clear it.
++    if (!agentsPlatformEnabled) return NO_AGENT_SELECTION;
+     const session = sessionsRef.current.find((item) => item.id === sessionId);
+     const bound = session?.currentAgentId
+       ? agentCatalog.find((agent) => agent.id === session.currentAgentId)
+@@ -1536,7 +1541,7 @@ export default function ChatPanel({
+   }, [readOnly, defaultModel, userPrefsReady]);
+ 
+   useEffect(() => {
+-    if (readOnly || !sessionUsername) {
++    if (readOnly || !sessionUsername || !agentsPlatformEnabled) {
+       setAgentCatalog([]);
+       return;
+     }
+@@ -1553,7 +1558,7 @@ export default function ChatPanel({
+     return () => {
+       cancelled = true;
+     };
+-  }, [readOnly, sessionUsername]);
++  }, [readOnly, sessionUsername, agentsPlatformEnabled]);
+ 
+   useEffect(() => {
+     if (
+@@ -7081,6 +7086,7 @@ export default function ChatPanel({
+                     speechCapabilities={selectedModels[0]}
+                   />
+                   </div>
++                  {agentsPlatformEnabled ? (
+                   <div className="alpha-router-tools-picker" ref={agentMenuRef}>
+                     <button
+                       ref={agentTriggerRef}
+@@ -7123,6 +7129,7 @@ export default function ChatPanel({
+                       onClose={() => setAgentMenuOpen(false)}
+                     />
+                   </div>
++                  ) : null}
+                   <button
+                     type="button"
+                     className={`alpha-router-composer-ctrl alpha-router-translate-eng-btn${translateToEngBusy ? " is-busy" : ""}`}
+diff --git a/frontend/src/lib/platformFeatures.test.ts b/frontend/src/lib/platformFeatures.test.ts
+new file mode 100644
+index 0000000..91bc88c
+--- /dev/null
++++ b/frontend/src/lib/platformFeatures.test.ts
+@@ -0,0 +1,38 @@
++import { describe, expect, it, vi, afterEach } from "vitest";
++
++vi.mock("../api", () => ({
++  getCachedSession: vi.fn(),
++  authFetch: vi.fn(),
++  clearCachedSession: vi.fn(),
++}));
++vi.mock("./privateMediaStore", () => ({ clearPrivateMediaStore: vi.fn() }));
++
++import { getCachedSession as realGetCachedSession, type SessionInfo } from "../api";
++import { isPlatformFeatureEnabled } from "./session";
++
++const getCachedSession = vi.mocked(realGetCachedSession);
++
++function session(extra: Record<string, unknown>): SessionInfo {
++  return { username: "u", role: "user", is_active: true, auth_provider: "local", ...extra };
++}
++
++afterEach(() => getCachedSession.mockReset());
++
++describe("isPlatformFeatureEnabled", () => {
++  it("is off only when the server says so", () => {
++    getCachedSession.mockReturnValue(session({ features: { agents_platform: false } }));
++    expect(isPlatformFeatureEnabled("agents_platform")).toBe(false);
++  });
++
++  it("is on when the server enables it", () => {
++    getCachedSession.mockReturnValue(session({ features: { agents_platform: true } }));
++    expect(isPlatformFeatureEnabled("agents_platform")).toBe(true);
++  });
++
++  it("is on when the server does not report features at all (older backend)", () => {
++    getCachedSession.mockReturnValue(session({}));
++    expect(isPlatformFeatureEnabled("agents_platform")).toBe(true);
++    getCachedSession.mockReturnValue(null);
++    expect(isPlatformFeatureEnabled("agents_platform")).toBe(true);
++  });
++});
+diff --git a/frontend/src/lib/session.ts b/frontend/src/lib/session.ts
+index 6b54732..4a74b34 100644
+--- a/frontend/src/lib/session.ts
++++ b/frontend/src/lib/session.ts
+@@ -23,6 +23,17 @@ export function getSessionUser(): {
+   };
+ }
+ 
++/**
++ * A preview feature the server can switch off (``/api/auth/session.features``).
++ *
++ * Unknown means on: an older server does not send the block at all, and a
++ * frontend that hid its features there would look broken.
++ */
++export function isPlatformFeatureEnabled(feature: string): boolean {
++  const features = getCachedSession()?.features as Record<string, boolean | undefined> | undefined;
++  return features?.[feature] !== false;
++}
++
+ export function formatSessionDuration(loginAt: number): string {
+   const sec = Math.floor((Date.now() - loginAt) / 1000);
+   if (sec < 60) return "Just now";
+-- 
+2.43.0
+

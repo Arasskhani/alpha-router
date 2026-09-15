@@ -1,0 +1,673 @@
+From 474aaa78152c582f989c1f93195b461fc76b968a Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 15:17:31 +0000
+Subject: [PATCH 04/22] fix(admin): typed confirmation and audit for
+ irreversible deletes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Bug: "clear all API logs" and "delete all media" were one unauthenticated-
+by-phrase API call away for anyone with the menu's write permission; the
+three-step dialogs lived only in the browser. Deleting a connection, an
+Alpharouter API key or a personal key left no trace at all, and the per-
+resource changelog tables cascade away with the resource, so nothing could
+be reconstructed afterwards.
+
+Change:
+- DELETE /api/admin/logs and POST /api/admin/storage/clear-cache now need
+  Super Admin (on top of the menu write permission) and a body
+  {"confirm": "DELETE ALL LOGS" | "DELETE ALL MEDIA"}; wrong phrase -> 400.
+  A security_audit_events row with the row count (logs) or asset count and
+  total bytes (media) is written *before* the delete.
+- log_connection_deleted / log_api_key_deleted write to
+  security_audit_events (no FK to the resource, so it survives) with a
+  snapshot that excludes the API key / key hash; admin and self-service
+  personal key deletion write user_api_key_deleted.
+- UI: the third dialog step in ApiLogs and StorageManagement is now a typed
+  prompt and the phrase is posted to the server.
+
+Tests: tests/test_destructive_admin_ops.py — wrong/missing phrase leaves
+data intact and writes no audit; correct phrase deletes and audits counts;
+connection/key/personal-key deletions leave audit rows without secrets;
+cross-user personal key deletion still 404.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ backend/app/api/admin.py                      |  80 +++++++-
+ backend/app/api/logs.py                       |  39 +++-
+ backend/app/api/user_routes.py                |  15 +-
+ .../services/alpha_router_api_key_audit.py    |  29 +++
+ backend/app/services/connection_audit.py      |  27 +++
+ backend/tests/test_destructive_admin_ops.py   | 190 ++++++++++++++++++
+ frontend/src/pages/admin/ApiLogs.tsx          |  15 +-
+ .../src/pages/admin/StorageManagement.tsx     |  14 +-
+ 8 files changed, 392 insertions(+), 17 deletions(-)
+ create mode 100644 backend/tests/test_destructive_admin_ops.py
+
+diff --git a/backend/app/api/admin.py b/backend/app/api/admin.py
+index 3906b3b..3f0352e 100644
+--- a/backend/app/api/admin.py
++++ b/backend/app/api/admin.py
+@@ -5,7 +5,7 @@ import io
+ from datetime import date, datetime, timedelta
+ from typing import Literal
+ 
+-from fastapi import APIRouter, Depends, HTTPException, Query
++from fastapi import APIRouter, Depends, HTTPException, Query, Request
+ from fastapi.responses import Response, StreamingResponse
+ from pydantic import BaseModel
+ from sqlalchemy import and_, delete, exists, func, insert, or_, select, update
+@@ -103,10 +103,13 @@ from app.services.activity_pdf_service import ActivityPdfError, render_activity_
+ from app.services.reports_service import export_activity_logs_workbook
+ from app.services.scheduler import refresh_chat_retention_cleanup_schedule, refresh_storage_cleanup_schedule
+ from app.services.db_monitor_service import collect_database_monitor
++from app.services.client_ip import resolve_client_ip
++from app.services.security_audit import log_security_event
+ from app.services.connection_audit import (
+     connection_snapshot,
+     fetch_connection_changelog,
+     log_connection_created,
++    log_connection_deleted,
+     log_connection_status,
+     log_connection_updated,
+     touch_connection_modified,
+@@ -114,6 +117,7 @@ from app.services.connection_audit import (
+ from app.services.alpha_router_api_key_audit import (
+     fetch_api_key_changelog,
+     log_api_key_created,
++    log_api_key_deleted,
+     log_api_key_status,
+     log_api_key_updated,
+     touch_key_modified,
+@@ -1568,7 +1572,12 @@ async def update_connection(
+ 
+ 
+ @router.delete("/connections/{conn_id}")
+-async def delete_connection(conn_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(require_connections_write)):
++async def delete_connection(
++    conn_id: int,
++    request: Request,
++    db: AsyncSession = Depends(get_db),
++    admin: User = Depends(require_connections_write),
++):
+     conn = await db.get(Connection, conn_id)
+     if not conn:
+         raise HTTPException(404)
+@@ -1576,6 +1585,9 @@ async def delete_connection(conn_id: int, db: AsyncSession = Depends(get_db), _:
+     catalog_ids = (
+         await db.execute(select(AIModel.id).where(AIModel.connection_id == conn_id))
+     ).scalars().all()
++    await log_connection_deleted(
++        db, conn=conn, actor=admin, actor_ip=_client_ip(request), model_count=len(catalog_ids)
++    )
+     await clear_global_default_if_ids(db, list(catalog_ids))
+     await db.execute(delete(AIModel).where(AIModel.connection_id == conn_id))
+     await db.delete(conn)
+@@ -1847,12 +1859,14 @@ async def patch_alpha_router_key(
+ @router.delete("/api-keys/{key_id}")
+ async def delete_alpha_router_key(
+     key_id: int,
++    request: Request,
+     db: AsyncSession = Depends(get_db),
+-    _: User = Depends(require_api_keys_write),
++    admin: User = Depends(require_api_keys_write),
+ ):
+     k = await db.get(AlphaRouterApiKey, key_id)
+     if not k:
+         raise HTTPException(404)
++    await log_api_key_deleted(db, key=k, actor=admin, actor_ip=_client_ip(request))
+     await db.delete(k)
+     await db.commit()
+     return {"ok": True}
+@@ -2338,12 +2352,26 @@ async def list_user_api_keys(db: AsyncSession = Depends(get_db), _: User = Depen
+ 
+ 
+ @router.delete("/user-api-keys/{key_id}")
+-async def delete_user_api_key(key_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(require_users_write)):
++async def delete_user_api_key(
++    key_id: int,
++    request: Request,
++    db: AsyncSession = Depends(get_db),
++    admin: User = Depends(require_users_write),
++):
+     from app.models.api_key import UserApiKey
+ 
+     k = await db.get(UserApiKey, key_id)
+     if not k:
+         raise HTTPException(404)
++    await log_security_event(
++        db,
++        actor=admin,
++        actor_ip=_client_ip(request),
++        action="user_api_key_deleted",
++        resource_type="user_api_key",
++        resource_id=str(k.id),
++        detail={"user_id": k.user_id, "name": getattr(k, "name", None)},
++    )
+     await db.delete(k)
+     await db.commit()
+     return {"ok": True}
+@@ -3450,9 +3478,51 @@ async def admin_purge_expired_chat(
+     return {"ok": True, **result}
+ 
+ 
++def _client_ip(request: Request) -> str | None:
++    try:
++        return resolve_client_ip(request)
++    except Exception:
++        return request.client.host if request.client else None
++
++
++class DestructiveConfirmIn(BaseModel):
++    """Server-side typed confirmation for irreversible, platform-wide deletes."""
++
++    confirm: str = ""
++
++
++CLEAR_ALL_MEDIA_PHRASE = "DELETE ALL MEDIA"
++
++
+ @router.post("/storage/clear-cache")
+-async def admin_clear_storage_cache(db: AsyncSession = Depends(get_db), _: User = Depends(require_storage_write)):
++async def admin_clear_storage_cache(
++    body: DestructiveConfirmIn,
++    request: Request,
++    db: AsyncSession = Depends(get_db),
++    admin: User = Depends(require_storage_write),
++    _: User = Depends(require_super_admin),
++):
++    """Delete every media asset. Super Admin, typed phrase, audited before the delete."""
++    if body.confirm.strip() != CLEAR_ALL_MEDIA_PHRASE:
++        raise HTTPException(
++            status_code=400,
++            detail=f'Type "{CLEAR_ALL_MEDIA_PHRASE}" in confirm to delete all media.',
++        )
++    from app.models.media import MediaAsset
++
++    count, total_bytes = (
++        await db.execute(select(func.count(), func.coalesce(func.sum(MediaAsset.size_bytes), 0)).select_from(MediaAsset))
++    ).one()
++    await log_security_event(
++        db,
++        actor=admin,
++        actor_ip=_client_ip(request),
++        action="media_cleared_all",
++        resource_type="storage",
++        detail={"asset_count": int(count or 0), "total_bytes": int(total_bytes or 0)},
++    )
+     result = await clear_all_media(db)
++    await db.commit()
+     return {"ok": True, **result}
+ 
+ 
+diff --git a/backend/app/api/logs.py b/backend/app/api/logs.py
+index 1991ed9..902d67a 100644
+--- a/backend/app/api/logs.py
++++ b/backend/app/api/logs.py
+@@ -3,13 +3,14 @@
+ import json
+ from datetime import datetime
+ 
+-from fastapi import APIRouter, Depends, HTTPException, Query
++from fastapi import APIRouter, Depends, HTTPException, Query, Request
+ from fastapi.responses import Response
+ from pydantic import BaseModel, Field
+ from sqlalchemy import delete, func, or_, select
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.api.deps import (
++    require_super_admin,
+     get_current_user,
+     require_active_user,
+     require_api_keys,
+@@ -1048,12 +1049,44 @@ async def reconcile_costs(
+     }
+ 
+ 
++CLEAR_ALL_LOGS_PHRASE = "DELETE ALL LOGS"
++
++
++class ClearLogsIn(BaseModel):
++    confirm: str = ""
++
++
+ @router.delete("/admin/logs")
+ async def clear_admin_logs(
++    body: ClearLogsIn,
++    request: Request,
+     db: AsyncSession = Depends(get_db),
+-    _: User = Depends(require_api_logs_write),
++    admin: User = Depends(require_api_logs_write),
++    _: User = Depends(require_super_admin),
+ ):
+-    """Permanently delete all API request log rows."""
++    """Permanently delete all API request log rows.
++
++    Irreversible and platform-wide, so: Super Admin only, the phrase must be
++    typed and verified here (the three-step UI dialog is not a control), and
++    the row count goes to the security audit table *before* the delete.
++    """
++    if body.confirm.strip() != CLEAR_ALL_LOGS_PHRASE:
++        raise HTTPException(
++            status_code=400,
++            detail=f'Type "{CLEAR_ALL_LOGS_PHRASE}" in confirm to purge the request log.',
++        )
++    from app.services.client_ip import resolve_client_ip
++    from app.services.security_audit import log_security_event
++
++    total = int((await db.execute(select(func.count()).select_from(RequestLog))).scalar_one() or 0)
++    await log_security_event(
++        db,
++        actor=admin,
++        actor_ip=resolve_client_ip(request),
++        action="request_logs_cleared_all",
++        resource_type="request_log",
++        detail={"row_count": total},
++    )
+     result = await db.execute(delete(RequestLog))
+     await db.commit()
+     return {"ok": True, "deleted": result.rowcount}
+diff --git a/backend/app/api/user_routes.py b/backend/app/api/user_routes.py
+index a7ec07e..006a75e 100644
+--- a/backend/app/api/user_routes.py
++++ b/backend/app/api/user_routes.py
+@@ -1,6 +1,6 @@
+ """End-user panel API."""
+ 
+-from fastapi import APIRouter, Depends, HTTPException, Query
++from fastapi import APIRouter, Depends, HTTPException, Query, Request
+ from pydantic import BaseModel, Field
+ from sqlalchemy import select
+ from sqlalchemy.ext.asyncio import AsyncSession
+@@ -122,12 +122,25 @@ async def create_user_key(
+ @router.delete("/api-keys/{key_id}")
+ async def delete_user_key(
+     key_id: int,
++    request: Request,
+     user: User = Depends(require_active_user),
+     db: AsyncSession = Depends(get_db),
+ ):
+     key = await db.get(UserApiKey, key_id)
+     if not key or key.user_id != user.id:
+         raise HTTPException(status_code=404, detail="API key not found")
++    from app.services.client_ip import resolve_client_ip
++    from app.services.security_audit import log_security_event
++
++    await log_security_event(
++        db,
++        actor=user,
++        actor_ip=resolve_client_ip(request),
++        action="user_api_key_deleted",
++        resource_type="user_api_key",
++        resource_id=str(key.id),
++        detail={"user_id": key.user_id, "name": getattr(key, "name", None), "self_service": True},
++    )
+     await db.delete(key)
+     await db.commit()
+     return {"ok": True}
+diff --git a/backend/app/services/alpha_router_api_key_audit.py b/backend/app/services/alpha_router_api_key_audit.py
+index d8e64d1..b1d9295 100644
+--- a/backend/app/services/alpha_router_api_key_audit.py
++++ b/backend/app/services/alpha_router_api_key_audit.py
+@@ -172,6 +172,35 @@ async def log_api_key_updated(
+     )
+ 
+ 
++async def log_api_key_deleted(
++    db: AsyncSession,
++    *,
++    key: AlphaRouterApiKey,
++    actor: User,
++    actor_ip: str | None = None,
++) -> None:
++    """Deletion goes to the security audit table: the per-key changelog
++    cascades away with the key. Only the key prefix is recorded, never the
++    secret."""
++    from app.services.security_audit import log_security_event
++
++    await log_security_event(
++        db,
++        actor=actor,
++        actor_ip=actor_ip,
++        action="api_key_deleted",
++        resource_type="alpha_router_api_key",
++        resource_id=str(key.id),
++        detail={
++            "name": key.name,
++            "key_prefix": (getattr(key, "key_prefix", None) or "")[:12],
++            "owner_user_id": key.owner_user_id,
++            "credit_limit_usd": key.credit_limit_usd,
++            "is_active": bool(key.is_active),
++        },
++    )
++
++
+ async def log_api_key_status(
+     db: AsyncSession,
+     *,
+diff --git a/backend/app/services/connection_audit.py b/backend/app/services/connection_audit.py
+index ba03609..ecf0ee8 100644
+--- a/backend/app/services/connection_audit.py
++++ b/backend/app/services/connection_audit.py
+@@ -100,6 +100,33 @@ async def log_connection_updated(
+     await log_connection_audit(db, conn=conn, actor=actor, action="updated", changes=changes)
+ 
+ 
++async def log_connection_deleted(
++    db: AsyncSession,
++    *,
++    conn: Connection,
++    actor: User,
++    actor_ip: str | None = None,
++    model_count: int = 0,
++) -> None:
++    """Record a deletion where it will still exist afterwards.
++
++    ConnectionAuditLog rows cascade away with the connection, so the deletion
++    itself goes to the security audit table (no FK to the resource) with a
++    snapshot of what was removed. The API key is never part of the snapshot.
++    """
++    from app.services.security_audit import log_security_event
++
++    await log_security_event(
++        db,
++        actor=actor,
++        actor_ip=actor_ip,
++        action="connection_deleted",
++        resource_type="connection",
++        resource_id=str(conn.id),
++        detail={**connection_snapshot(conn), "model_count": int(model_count)},
++    )
++
++
+ async def log_connection_status(db: AsyncSession, *, conn: Connection, actor: User, enabled: bool) -> None:
+     action = "enabled" if enabled else "disabled"
+     changes = [
+diff --git a/backend/tests/test_destructive_admin_ops.py b/backend/tests/test_destructive_admin_ops.py
+new file mode 100644
+index 0000000..df0b465
+--- /dev/null
++++ b/backend/tests/test_destructive_admin_ops.py
+@@ -0,0 +1,190 @@
++"""Irreversible admin operations: typed confirmation verified server-side, audited first.
++
++The endpoint functions are called directly against an in-memory SQLite
++schema; FastAPI dependencies are plain parameters here.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import json
++from types import SimpleNamespace
++from unittest.mock import patch
++
++import pytest
++from fastapi import HTTPException
++from sqlalchemy import select
++from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
++
++import app.models  # noqa: F401
++from app.database import Base
++from app.models.api_key import AlphaRouterApiKey, UserApiKey
++from app.models.connection import Connection
++from app.models.logging import RequestLog
++from app.models.media import MediaAsset
++from app.models.security import SecurityAuditEvent
++from app.models.user import User
++
++
++def _request():
++    return SimpleNamespace(client=SimpleNamespace(host="10.1.2.3"), headers={})
++
++
++async def _db():
++    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
++    async with engine.begin() as conn:
++        await conn.run_sync(Base.metadata.create_all)
++    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False), engine
++
++
++async def _admin(db):
++    u = User(username="root", email="root@t", hashed_password="x", auth_provider="local", is_active=True)
++    db.add(u)
++    await db.flush()
++    return u
++
++
++async def _events(db, action):
++    rows = (await db.execute(select(SecurityAuditEvent).where(SecurityAuditEvent.action == action))).scalars().all()
++    return [(r.resource_id, json.loads(r.detail_json)) for r in rows]
++
++
++def test_clear_all_logs_needs_phrase_and_records_row_count():
++    from app.api.logs import CLEAR_ALL_LOGS_PHRASE, ClearLogsIn, clear_admin_logs
++
++    async def run():
++        factory, engine = await _db()
++        try:
++            async with factory() as db:
++                admin = await _admin(db)
++                for i in range(3):
++                    db.add(RequestLog(model_id=f"m{i}", user_id=admin.id))
++                await db.commit()
++
++                with pytest.raises(HTTPException) as exc:
++                    await clear_admin_logs(ClearLogsIn(confirm=""), _request(), db, admin, admin)
++                assert exc.value.status_code == 400
++                with pytest.raises(HTTPException):
++                    await clear_admin_logs(ClearLogsIn(confirm="delete all logs"), _request(), db, admin, admin)
++                assert len((await db.execute(select(RequestLog))).scalars().all()) == 3
++                assert await _events(db, "request_logs_cleared_all") == []
++
++                out = await clear_admin_logs(ClearLogsIn(confirm=CLEAR_ALL_LOGS_PHRASE), _request(), db, admin, admin)
++                assert out["deleted"] == 3
++                assert (await db.execute(select(RequestLog))).scalars().all() == []
++                events = await _events(db, "request_logs_cleared_all")
++                assert events == [(None, {"row_count": 3})]
++        finally:
++            await engine.dispose()
++
++    asyncio.run(run())
++
++
++def test_clear_all_media_needs_phrase_and_records_count_and_bytes():
++    from app.api import admin as admin_api
++
++    async def run():
++        factory, engine = await _db()
++        try:
++            async with factory() as db:
++                admin = await _admin(db)
++                for i in range(2):
++                    db.add(MediaAsset(user_id=admin.id, file_name=f"f{i}", storage_path=f"cdn/u/{i}", size_bytes=1000 + i))
++                await db.commit()
++
++                with pytest.raises(HTTPException) as exc:
++                    await admin_api.admin_clear_storage_cache(
++                        admin_api.DestructiveConfirmIn(confirm="nope"), _request(), db, admin, admin
++                    )
++                assert exc.value.status_code == 400
++                assert len((await db.execute(select(MediaAsset))).scalars().all()) == 2
++
++                with patch("app.services.storage_service.oss.delete_object"):
++                    out = await admin_api.admin_clear_storage_cache(
++                        admin_api.DestructiveConfirmIn(confirm=admin_api.CLEAR_ALL_MEDIA_PHRASE),
++                        _request(), db, admin, admin,
++                    )
++                assert out["removed_files"] == 2
++                events = await _events(db, "media_cleared_all")
++                assert events == [(None, {"asset_count": 2, "total_bytes": 2001})]
++        finally:
++            await engine.dispose()
++
++    asyncio.run(run())
++
++
++def test_connection_and_key_deletions_leave_an_audit_row_that_survives():
++    from app.api import admin as admin_api
++
++    async def run():
++        factory, engine = await _db()
++        try:
++            async with factory() as db:
++                admin = await _admin(db)
++                conn = Connection(name="OpenRouter prod", provider_type="openrouter", api_key_encrypted="enc", is_active=True)
++                db.add(conn)
++                await db.flush()
++                key = AlphaRouterApiKey(
++                    name="ci-bot", key_prefix="ar_abc123", key_hash="h" * 20, owner_user_id=admin.id,
++                    credit_limit_usd=25.0, is_active=True,
++                )
++                db.add(key)
++                await db.flush()
++                ukey = UserApiKey(user_id=admin.id, name="personal", key_prefix="uk_1", key_hash="k" * 20)
++                db.add(ukey)
++                await db.commit()
++                conn_id, key_id, ukey_id = conn.id, key.id, ukey.id
++
++                await admin_api.delete_connection(conn_id, _request(), db, admin)
++                await admin_api.delete_alpha_router_key(key_id, _request(), db, admin)
++                await admin_api.delete_user_api_key(ukey_id, _request(), db, admin)
++
++                assert await db.get(Connection, conn_id) is None
++                assert await db.get(AlphaRouterApiKey, key_id) is None
++                assert await db.get(UserApiKey, ukey_id) is None
++
++                (rid, detail), = await _events(db, "connection_deleted")
++                assert rid == str(conn_id)
++                assert detail["name"] == "OpenRouter prod" and detail["provider_type"] == "openrouter"
++                assert "api_key" not in json.dumps(detail).lower().replace("api_key_encrypted", "")
++
++                (rid, detail), = await _events(db, "api_key_deleted")
++                assert rid == str(key_id)
++                assert detail["name"] == "ci-bot" and detail["key_prefix"] == "ar_abc123"
++                assert "key_hash" not in detail
++
++                (rid, detail), = await _events(db, "user_api_key_deleted")
++                assert rid == str(ukey_id) and detail["user_id"] == admin.id
++        finally:
++            await engine.dispose()
++
++    asyncio.run(run())
++
++
++def test_self_service_key_deletion_is_audited():
++    from app.api.user_routes import delete_user_key
++
++    async def run():
++        factory, engine = await _db()
++        try:
++            async with factory() as db:
++                me = await _admin(db)
++                other = User(username="other", email="o@t", hashed_password="x", auth_provider="local", is_active=True)
++                db.add(other)
++                await db.flush()
++                mine = UserApiKey(user_id=me.id, name="mine", key_prefix="uk_2", key_hash="a" * 20)
++                theirs = UserApiKey(user_id=other.id, name="theirs", key_prefix="uk_3", key_hash="b" * 20)
++                db.add_all([mine, theirs])
++                await db.commit()
++
++                with pytest.raises(HTTPException) as exc:
++                    await delete_user_key(theirs.id, _request(), me, db)
++                assert exc.value.status_code == 404
++
++                await delete_user_key(mine.id, _request(), me, db)
++                (rid, detail), = await _events(db, "user_api_key_deleted")
++                assert rid == str(mine.id) and detail["self_service"] is True
++        finally:
++            await engine.dispose()
++
++    asyncio.run(run())
+diff --git a/frontend/src/pages/admin/ApiLogs.tsx b/frontend/src/pages/admin/ApiLogs.tsx
+index e028b4b..cfa51ec 100644
+--- a/frontend/src/pages/admin/ApiLogs.tsx
++++ b/frontend/src/pages/admin/ApiLogs.tsx
+@@ -60,7 +60,7 @@ async function downloadCsvExport(path: string): Promise<void> {
+ }
+ 
+ export default function ApiLogs({ apiKeyId }: Props) {
+-  const { confirm } = useConfirm();
++  const { confirm, prompt } = useConfirm();
+   const writeLock = useAdminWriteLock();
+   const [searchParams] = useSearchParams();
+   const fromKeyRoute = Number.isFinite(apiKeyId) && (apiKeyId as number) > 0;
+@@ -220,18 +220,25 @@ export default function ApiLogs({ apiKeyId }: Props) {
+     });
+     if (!step2) return;
+ 
+-    const step3 = await confirm({
++    // The server verifies this phrase too (and requires Super Admin): the
++    // dialog is a courtesy, the typed phrase is the control.
++    const typed = await prompt({
+       title: "Final confirmation",
+       message:
+         "You are about to purge ALL API logs from Alpharouter. Only continue if you intentionally want an empty log table.",
++      promptLabel: 'Type "DELETE ALL LOGS" to confirm',
++      promptExactMatch: "DELETE ALL LOGS",
+       confirmLabel: "Clear all logs now",
+       danger: true,
+     });
+-    if (!step3) return;
++    if (typed !== "DELETE ALL LOGS") return;
+ 
+     setLoading(true);
+     try {
+-      await api("/api/admin/logs", { method: "DELETE" });
++      await api("/api/admin/logs", {
++        method: "DELETE",
++        body: JSON.stringify({ confirm: typed }),
++      });
+       setItems([]);
+       await load();
+     } finally {
+diff --git a/frontend/src/pages/admin/StorageManagement.tsx b/frontend/src/pages/admin/StorageManagement.tsx
+index de2fe6e..90f1eaa 100644
+--- a/frontend/src/pages/admin/StorageManagement.tsx
++++ b/frontend/src/pages/admin/StorageManagement.tsx
+@@ -38,7 +38,7 @@ function humanSize(bytes: number) {
+ }
+ 
+ export default function StorageManagement() {
+-  const { confirm } = useConfirm();
++  const { confirm, prompt } = useConfirm();
+   const [stats, setStats] = useState<StorageOverview | null>(null);
+   const [quotaGb, setQuotaGb] = useState(1);
+   const [projectQuotaGb, setProjectQuotaGb] = useState(1);
+@@ -240,22 +240,28 @@ export default function StorageManagement() {
+     });
+     if (!step2) return;
+ 
+-    const step3 = await confirm({
++    // Verified server-side as well (Super Admin + exact phrase).
++    const typed = await prompt({
+       title: "Clear all media — final confirmation",
+       message:
+         `Final step: delete all ${fileCount.toLocaleString()} files (${sizeLabel}) from storage now. ` +
+         "There is no backup step inside Alpharouter. Confirm only if you are certain.",
++      promptLabel: 'Type "DELETE ALL MEDIA" to confirm',
++      promptExactMatch: "DELETE ALL MEDIA",
+       confirmLabel: "Delete all media now",
+       cancelLabel: "Cancel",
+       danger: true,
+     });
+-    if (!step3) return;
++    if (typed !== "DELETE ALL MEDIA") return;
+ 
+     setClearing(true);
+     setError("");
+     setFlash("");
+     try {
+-      const res = await api<{ removed_files: number }>("/api/admin/storage/clear-cache", { method: "POST" });
++      const res = await api<{ removed_files: number }>("/api/admin/storage/clear-cache", {
++        method: "POST",
++        body: JSON.stringify({ confirm: typed }),
++      });
+       setFlash(`All media deleted. Removed ${res.removed_files} files.`);
+       await load();
+     } catch (e) {
+-- 
+2.43.0
+

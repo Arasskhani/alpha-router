@@ -1,0 +1,329 @@
+From 07e1e87ebabe679a0409067df1ccb0219b9a785f Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 15:33:05 +0000
+Subject: [PATCH 07/22] fix(budget): reconcile locks the subject before
+ summing; period rollover runs on a locked row
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Bug (B-7): reconcile_subject_reserved summed the open held rows first and
+took the subject's FOR UPDATE lock second. While `reserve` held that lock
+with a new reservation not yet committed, the sum read the pre-reservation
+snapshot, waited for the lock, then wrote the stale sum over the counter
+the reservation had just increased: a live hold that was no longer counted,
+i.e. an overspend by exactly that amount. Demonstrated on PostgreSQL: the
+new canary fails on the old code with `assert 0.0 == 2.5`.
+
+Bug (B-33): ensure_budget_period rewrote budget_used_usd and
+budget_reserved_usd on the request-scoped User loaded without a lock, so a
+month rollover raced with reservations/settlements that update the same
+columns under SELECT ... FOR UPDATE in other transactions.
+
+Change:
+- reconcile_subject_reserved: lock first, sum second.
+- reconcile_drifted_reserved_counters: pg_try_advisory_xact_lock(56023116);
+  returns 0 when another instance holds it (leader election is the primary
+  guard, this is defence in depth for manual runs / a second deployment).
+- ensure_budget_period: on a pending rollover, re-read the user FOR UPDATE
+  (populate_existing) and re-check before writing.
+- CI canary now also runs test_budget_reconcile_race_postgres.py and
+  test_readiness.py.
+
+Tests: tests/test_budget_reconcile_race_postgres.py — reconcile blocks on
+the in-flight reservation and lands on the true sum; the drift repair is
+single-flight behind the advisory lock.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ .gitlab-ci.yml                                |   2 +-
+ .../services/budget_reservation_service.py    |  56 +++++---
+ backend/app/services/budget_service.py        |  20 ++-
+ .../test_budget_reconcile_race_postgres.py    | 131 ++++++++++++++++++
+ 4 files changed, 186 insertions(+), 23 deletions(-)
+ create mode 100644 backend/tests/test_budget_reconcile_race_postgres.py
+
+diff --git a/.gitlab-ci.yml b/.gitlab-ci.yml
+index 4688b1c..4617c3a 100644
+--- a/.gitlab-ci.yml
++++ b/.gitlab-ci.yml
+@@ -73,7 +73,7 @@ backend-postgres-canary:
+     - python -m pip install --no-cache-dir pytest
+     - cd backend
+     - python -m app.migrate
+-    - PYTHONPATH=. python -m pytest tests/test_budget_reservations_postgres.py tests/test_scheduler_leader.py -q -rs
++    - PYTHONPATH=. python -m pytest tests/test_budget_reservations_postgres.py tests/test_budget_reconcile_race_postgres.py tests/test_scheduler_leader.py tests/test_readiness.py -q -rs
+ 
+ deployment-config:
+   stage: verify
+diff --git a/backend/app/services/budget_reservation_service.py b/backend/app/services/budget_reservation_service.py
+index 94d3b83..6fb9c73 100644
+--- a/backend/app/services/budget_reservation_service.py
++++ b/backend/app/services/budget_reservation_service.py
+@@ -7,7 +7,7 @@ import uuid
+ 
+ import litellm
+ from fastapi import HTTPException
+-from sqlalchemy import func, select
++from sqlalchemy import func, select, text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.config import get_settings
+@@ -24,6 +24,9 @@ from app.services.alpha_router_api_key_service import ensure_key_usable
+ 
+ SUBJECT_USER = "user"
+ SUBJECT_ALPHA_ROUTER_KEY = "alpha_router_key"
++# Sibling of the DDL (56023113), admin-bootstrap (56023114) and scheduler
++# leader (56023115) locks.
++RECONCILE_LOCK_ID = 56023116
+ STATUS_HELD = "held"
+ STATUS_SETTLED = "settled"
+ STATUS_RELEASED = "released"
+@@ -786,7 +789,21 @@ async def reconcile_subject_reserved(
+     subject_type: str,
+     subject_id: int,
+ ) -> float:
+-    """Set the subject reserved counter to the sum of open HELD rows."""
++    """Set the subject reserved counter to the sum of open HELD rows.
++
++    Lock *first*, sum *second*. ``reserve`` holds the subject row FOR UPDATE
++    while it inserts the reservation and bumps the counter in one
++    transaction. Summing before taking that lock reads a snapshot without the
++    in-flight row, then waits for the lock, then writes the stale sum over
++    the counter the reservation just increased - the hold exists but is no
++    longer counted, so the subject can overspend by exactly that amount.
++    """
++    if subject_type == SUBJECT_USER:
++        subject = (await db.execute(_locked_user_stmt(subject_id))).scalar_one_or_none()
++    elif subject_type == SUBJECT_ALPHA_ROUTER_KEY:
++        subject = (await db.execute(_locked_key_stmt(subject_id))).scalar_one_or_none()
++    else:
++        subject = None
+     held = float(
+         (
+             await db.execute(
+@@ -799,22 +816,11 @@ async def reconcile_subject_reserved(
+         ).scalar_one()
+     )
+     held = round(max(0.0, held), 8)
+-    if subject_type == SUBJECT_USER:
+-        user = (
+-            await db.execute(
+-                _locked_user_stmt(subject_id)
+-            )
+-        ).scalar_one_or_none()
+-        if user:
+-            user.budget_reserved_usd = held
+-    elif subject_type == SUBJECT_ALPHA_ROUTER_KEY:
+-        key = (
+-            await db.execute(
+-                _locked_key_stmt(subject_id)
+-            )
+-        ).scalar_one_or_none()
+-        if key:
+-            key.period_reserved_usd = held
++    if subject is not None:
++        if subject_type == SUBJECT_USER:
++            subject.budget_reserved_usd = held
++        else:
++            subject.period_reserved_usd = held
+     await db.flush()
+     return held
+ 
+@@ -868,7 +874,21 @@ async def reconcile_drifted_reserved_counters(db: AsyncSession) -> int:
+     consuming budget) until period rollover.
+ 
+     Returns the number of subjects repaired.
++
++    Only one instance may run this at a time: the scheduler leader election
++    already guarantees that, and the transaction-scoped advisory lock below
++    is the defence in depth for a manual run or a second deployment sharing
++    the database. When the lock is taken elsewhere this call returns 0.
+     """
++    if db.bind is not None and db.bind.dialect.name == "postgresql":
++        got = (
++            await db.execute(
++                text("SELECT pg_try_advisory_xact_lock(:lock_id)"),
++                {"lock_id": RECONCILE_LOCK_ID},
++            )
++        ).scalar()
++        if not got:
++            return 0
+     repaired = 0
+     for subject_type, id_column, counter_column in (
+         (SUBJECT_USER, User.id, User.budget_reserved_usd),
+diff --git a/backend/app/services/budget_service.py b/backend/app/services/budget_service.py
+index 8ba3893..e88c9a1 100644
+--- a/backend/app/services/budget_service.py
++++ b/backend/app/services/budget_service.py
+@@ -298,13 +298,25 @@ async def ensure_budget_period(db: AsyncSession, user: User) -> None:
+     if not user.budget_period_start or user.budget_period_start < month_start:
+         from app.services.budget_reservation_service import (
+             SUBJECT_USER,
++            _locked_user_stmt,
+             release_open_holds_for_subject,
+         )
+ 
+-        await release_open_holds_for_subject(db, SUBJECT_USER, int(user.id))
+-        user.budget_period_start = month_start
+-        user.budget_used_usd = await get_month_usage(db, user.id)
+-        user.budget_reserved_usd = 0.0
++        # Callers pass the request-scoped User loaded without a lock. The
++        # rollover rewrites budget_used_usd / budget_reserved_usd, which
++        # ``reserve`` and ``release`` update under SELECT ... FOR UPDATE in
++        # other transactions; writing them from an unlocked snapshot lost
++        # those updates. Take the row lock (refreshing the instance) and
++        # re-check: another request may have rolled the period over already.
++        locked = (await db.execute(_locked_user_stmt(int(user.id)))).scalar_one_or_none()
++        if locked is None:
++            return
++        user = locked
++        if not user.budget_period_start or user.budget_period_start < month_start:
++            await release_open_holds_for_subject(db, SUBJECT_USER, int(user.id))
++            user.budget_period_start = month_start
++            user.budget_used_usd = await get_month_usage(db, user.id)
++            user.budget_reserved_usd = 0.0
+     user.monthly_budget_usd = await resolve_monthly_budget(db, user)
+     await db.flush()
+ 
+diff --git a/backend/tests/test_budget_reconcile_race_postgres.py b/backend/tests/test_budget_reconcile_race_postgres.py
+new file mode 100644
+index 0000000..5789209
+--- /dev/null
++++ b/backend/tests/test_budget_reconcile_race_postgres.py
+@@ -0,0 +1,131 @@
++"""Reserved-counter reconciliation must not undo an in-flight reservation.
++
++PostgreSQL canary (same opt-in flag as the reservation canary). Transaction A
++reserves and stays open; transaction B reconciles the same subject. With the
++lock-then-sum order B waits for A and lands on the true sum. The old
++sum-then-lock order read 0, waited, then wrote 0 over A's counter.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import os
++import uuid
++
++import pytest
++from sqlalchemy import delete, select, text
++from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
++
++from app.models.budget import BudgetPlan, PlanAssignment
++from app.models.budget_reservation import BudgetReservation
++from app.models.user import User
++from app.services import budget_reservation_service as brs
++
++pytestmark = pytest.mark.skipif(
++    os.getenv("RUN_POSTGRES_RESERVATION_CANARY") != "1",
++    reason="opt-in PostgreSQL canary",
++)
++
++
++def _engine():
++    from app.config import get_settings
++    from app.database import asyncpg_connect_args
++
++    return create_async_engine(get_settings().database_url, connect_args=asyncpg_connect_args())
++
++
++def test_reconcile_waits_for_the_in_flight_reservation():
++    async def run():
++        engine = _engine()
++        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
++        suffix = uuid.uuid4().hex[:8]
++        user_id = None
++        plan_id = None
++        try:
++            async with factory() as db:
++                user = User(
++                    username=f"race-{suffix}", email=f"race-{suffix}@t", hashed_password="x",
++                    auth_provider="local", is_active=True, monthly_budget_usd=100.0,
++                    budget_used_usd=0.0, budget_reserved_usd=0.0,
++                )
++                plan = BudgetPlan(name=f"race-{suffix}", monthly_budget_usd=100.0)
++                db.add_all([user, plan])
++                await db.flush()
++                db.add(PlanAssignment(plan_id=plan.id, user_id=user.id))
++                await db.commit()
++                user_id = user.id
++                plan_id = plan.id
++
++            a_holding = asyncio.Event()
++            a_release = asyncio.Event()
++
++            async def tx_a():
++                async with factory() as db:
++                    await brs.reserve(
++                        db, user_id=user_id, alpha_router_api_key_id=None, amount_usd=2.5,
++                        operation="chat", model_id="m", idempotency_key=f"race-{suffix}",
++                    )
++                    a_holding.set()          # row inserted, counter bumped, lock held
++                    await a_release.wait()
++                    await db.commit()
++
++            async def tx_b():
++                await a_holding.wait()
++                async with factory() as db:
++                    # Starts while A holds the FOR UPDATE lock; must block, not read stale.
++                    task = asyncio.ensure_future(brs.reconcile_subject_reserved(db, brs.SUBJECT_USER, user_id))
++                    await asyncio.sleep(0.3)
++                    assert not task.done(), "reconcile should be waiting on A's row lock"
++                    a_release.set()
++                    held = await task
++                    await db.commit()
++                    return held
++
++            held_b, _ = await asyncio.gather(tx_b(), tx_a())
++            assert held_b == 2.5
++
++            async with factory() as db:
++                counter = (await db.execute(select(User.budget_reserved_usd).where(User.id == user_id))).scalar_one()
++                rows = (await db.execute(
++                    select(BudgetReservation.reserved_usd).where(
++                        BudgetReservation.subject_type == brs.SUBJECT_USER,
++                        BudgetReservation.subject_id == user_id,
++                        BudgetReservation.status == brs.STATUS_HELD,
++                    )
++                )).scalars().all()
++            assert rows == [2.5]
++            assert float(counter) == 2.5, "counter must equal the sum of held rows after reconcile"
++        finally:
++            if user_id is not None:
++                async with factory() as db:
++                    await db.execute(delete(BudgetReservation).where(BudgetReservation.subject_id == user_id))
++                    await db.execute(delete(PlanAssignment).where(PlanAssignment.user_id == user_id))
++                    await db.execute(delete(User).where(User.id == user_id))
++                    if plan_id is not None:
++                        await db.execute(delete(BudgetPlan).where(BudgetPlan.id == plan_id))
++                    await db.commit()
++            await engine.dispose()
++
++    asyncio.run(run())
++
++
++def test_drift_repair_is_single_flight_via_advisory_lock():
++    async def run():
++        engine = _engine()
++        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
++        try:
++            async with factory() as holder, factory() as other:
++                # Someone else holds the reconcile lock in an open transaction.
++                got = (await holder.execute(
++                    text("SELECT pg_try_advisory_xact_lock(:id)"), {"id": brs.RECONCILE_LOCK_ID}
++                )).scalar()
++                assert got is True
++                assert await brs.reconcile_drifted_reserved_counters(other) == 0
++                await holder.rollback()
++                # Free again: runs (nothing to repair, but it did run - no early return).
++                assert await brs.reconcile_drifted_reserved_counters(other) >= 0
++                await other.rollback()
++        finally:
++            await engine.dispose()
++
++    asyncio.run(run())
+-- 
+2.43.0
+

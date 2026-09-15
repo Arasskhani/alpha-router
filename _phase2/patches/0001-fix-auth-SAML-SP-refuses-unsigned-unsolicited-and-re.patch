@@ -1,0 +1,930 @@
+From 2c09418cab0eda6d1ae47eaeab08a81cf6d9b959 Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 15:00:36 +0000
+Subject: [PATCH 01/22] fix(auth): SAML SP refuses unsigned, unsolicited and
+ replayed responses
+
+Bug: the admin form could switch off strict validation and the signed-
+assertion requirement (an unsigned assertion is a forged login), the ACS
+never told python3-saml which AuthnRequest it was expecting (InResponseTo
+was not checked, so a captured Response could be replayed and IdP-initiated
+responses were accepted), and nothing remembered assertion ids.
+
+Change:
+- strict and wantAssertionsSigned are forced on; ALLOW_INSECURE_SAML=false
+  (new, env) is the only way to honour the admin toggles. public_view reports
+  security_locked and the UI disables the two checkboxes.
+- wantMessagesSigned stays off on purpose: most IdPs sign the Assertion, not
+  the Response envelope; strict mode already requires one signature and
+  checks InResponseTo/Destination/Audience inside the signed assertion.
+- /saml/login remembers the AuthnRequest id in Redis (saml:req:<id>, TTL
+  SAML_REQUEST_TTL_SECONDS=600). /saml/acs reads InResponseTo, consumes the
+  request exactly once (missing/unknown -> 401) and passes the id to
+  process_response so the library verifies it against the signed assertion.
+- Accepted assertion ids are kept (SET NX) until their NotOnOrAfter; a
+  second use -> 401. Every refusal writes a saml_response_rejected audit row.
+- The store fails closed: Redis down -> 503, no per-worker memory fallback
+  (it would randomly reject logins or let replays through across workers).
+
+Tests: tests/test_saml_hardening.py builds real Responses signed with a
+generated IdP key: signed+bound accepted; unsigned rejected even when the
+admin unticked the box; InResponseTo mismatch rejected by the library;
+unsolicited refused; endpoint refuses the same Response twice and the same
+assertion under a fresh request; 503 without Redis.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ .env.example                                |   8 +
+ backend/app/api/auth.py                     |  65 +++-
+ backend/app/config.py                       |   6 +
+ backend/app/services/saml_sp.py             |  90 ++++-
+ backend/app/services/saml_state.py          | 114 ++++++
+ backend/tests/test_saml_hardening.py        | 392 ++++++++++++++++++++
+ frontend/src/pages/admin/Authentication.tsx |  10 +
+ 7 files changed, 671 insertions(+), 14 deletions(-)
+ create mode 100644 backend/app/services/saml_state.py
+ create mode 100644 backend/tests/test_saml_hardening.py
+
+diff --git a/.env.example b/.env.example
+index 478377a..1192e83 100644
+--- a/.env.example
++++ b/.env.example
+@@ -390,6 +390,14 @@ LDAP_LINK_LOCAL_PASSWORD_ACCOUNTS=false
+ SAML_ENABLED=false
+ SAML_IDP_METADATA_URL=
+ SAML_ENTITY_ID=
++# Signed assertions and strict validation are mandatory. Only set this to true
++# on a throwaway lab to test an IdP that cannot sign; an unsigned assertion is
++# a forged login. The admin UI toggles are locked while this is false.
++ALLOW_INSECURE_SAML=false
++# A login started at /api/auth/saml/login must return to the ACS within this
++# many seconds. Responses that answer no outstanding request (IdP-initiated or
++# replayed) are refused. Needs Redis; without it SAML login answers 503.
++SAML_REQUEST_TTL_SECONDS=600
+ 
+ # --- OIDC (optional; prefer Admin → Authentication) ------------------------
+ # Generic OpenID Connect (Authorization Code + PKCE). Prefer configuring in the
+diff --git a/backend/app/api/auth.py b/backend/app/api/auth.py
+index 29390e9..a01a1a2 100644
+--- a/backend/app/api/auth.py
++++ b/backend/app/api/auth.py
+@@ -43,9 +43,16 @@ from app.services.oidc_client import (
+ from app.services.saml_sp import (
+     login_redirect_url,
+     logout_redirect_url,
++    peek_in_response_to,
+     process_acs,
+     sp_metadata_xml,
+ )
++from app.services.saml_state import (
++    SamlStateUnavailable,
++    consume_authn_request,
++    register_assertion,
++    remember_authn_request,
++)
+ from app.services.user_chat_storage_service import ensure_user_chat_store
+ from app.services.username_norm import find_user_by_username_ci, normalize_username
+ from app.services.user_lifecycle_service import record_user_login
+@@ -281,11 +288,15 @@ async def saml_login(request: Request, db: AsyncSession = Depends(get_db)):
+     if not cfg.get("enabled"):
+         raise HTTPException(status_code=400, detail="SAML is disabled")
+     try:
+-        url = await asyncio.to_thread(login_redirect_url, cfg, _request_public_url(request))
++        url, request_id = await asyncio.to_thread(login_redirect_url, cfg, _request_public_url(request))
+     except ValueError as exc:
+         raise HTTPException(status_code=400, detail=str(exc)) from exc
+     except Exception as exc:
+         raise HTTPException(status_code=400, detail=f"SAML login failed: {exc}") from exc
++    try:
++        await remember_authn_request(request_id)
++    except SamlStateUnavailable as exc:
++        raise HTTPException(status_code=503, detail="SAML login is temporarily unavailable") from exc
+     return RedirectResponse(url)
+ 
+ 
+@@ -301,13 +312,44 @@ async def saml_acs(
+     if not cfg.get("enabled"):
+         raise HTTPException(status_code=400, detail="SAML is disabled")
+     form = {"SAMLResponse": SAMLResponse}
++
++    # 1. The Response must answer an AuthnRequest this SP issued and not yet
++    #    consumed. The id is read untrusted here; python3-saml re-checks it
++    #    against the signed assertion inside process_acs.
++    in_response_to = peek_in_response_to(SAMLResponse)
++    try:
++        solicited = await consume_authn_request(in_response_to)
++    except SamlStateUnavailable as exc:
++        raise HTTPException(status_code=503, detail="SAML login is temporarily unavailable") from exc
++    if not solicited:
++        await _audit_saml_rejection(db, request, "unsolicited_or_replayed_response", in_response_to)
++        raise HTTPException(
++            status_code=401,
++            detail="SAML response does not match an outstanding login request",
++        )
++
+     try:
+-        profile = await asyncio.to_thread(process_acs, cfg, _request_public_url(request), form)
++        profile = await asyncio.to_thread(
++            process_acs, cfg, _request_public_url(request), form, request_id=in_response_to
++        )
+     except ValueError as exc:
++        await _audit_saml_rejection(db, request, "assertion_invalid", in_response_to)
+         raise HTTPException(status_code=401, detail=str(exc)) from exc
+     except Exception as exc:
++        await _audit_saml_rejection(db, request, "assertion_invalid", in_response_to)
+         raise HTTPException(status_code=401, detail=f"SAML ACS failed: {exc}") from exc
+ 
++    # 2. Defense in depth: the same assertion must never log in twice.
++    assertion_id = str(profile.pop("assertion_id", "") or "")
++    not_on_or_after = profile.pop("assertion_not_on_or_after", None)
++    try:
++        fresh = await register_assertion(assertion_id, not_on_or_after)
++    except SamlStateUnavailable as exc:
++        raise HTTPException(status_code=503, detail="SAML login is temporarily unavailable") from exc
++    if not fresh:
++        await _audit_saml_rejection(db, request, "assertion_replayed", assertion_id)
++        raise HTTPException(status_code=401, detail="SAML assertion was already used")
++
+     user = await _upsert_directory_user(db, profile, "saml")
+     slugs = await get_user_role_slugs(db, user.id)
+     await record_user_login(db, user)
+@@ -332,6 +374,25 @@ async def saml_acs(
+     return RedirectResponse(f"{frontend_url}/login?code={xchg_code}")
+ 
+ 
++async def _audit_saml_rejection(db: AsyncSession, request: Request, reason: str, ref: str | None) -> None:
++    """Record a refused SAML Response; never let bookkeeping mask the 401."""
++    try:
++        from app.services.security_audit import log_security_event
++
++        await log_security_event(
++            db,
++            actor=None,
++            actor_ip=request.client.host if request.client else None,
++            action="saml_response_rejected",
++            resource_type="saml",
++            resource_id=(ref or "")[:64] or None,
++            detail={"reason": reason},
++        )
++        await db.commit()
++    except Exception:
++        logger.warning("could not record SAML rejection audit event", exc_info=True)
++
++
+ async def _sso_exchange(
+     body: ExchangeRequest,
+     response: Response,
+diff --git a/backend/app/config.py b/backend/app/config.py
+index 1965bfa..0562f67 100644
+--- a/backend/app/config.py
++++ b/backend/app/config.py
+@@ -326,6 +326,12 @@ class Settings(BaseSettings):
+     saml_enabled: bool = False
+     saml_idp_metadata_url: str = ""
+     saml_entity_id: str = ""
++    # Lab-only escape hatch: lets an admin switch off strict validation and the
++    # signed-assertion requirement from the UI. Never set this in production;
++    # an unsigned assertion is a forged login.
++    allow_insecure_saml: bool = False  # env: ALLOW_INSECURE_SAML
++    # How long an outstanding AuthnRequest id stays valid for its ACS response.
++    saml_request_ttl_seconds: int = 600  # env: SAML_REQUEST_TTL_SECONDS
+     # OIDC (env fallback when no DB row)
+     oidc_enabled: bool = False
+     oidc_issuer: str = ""
+diff --git a/backend/app/services/saml_sp.py b/backend/app/services/saml_sp.py
+index 68f3913..1c98387 100644
+--- a/backend/app/services/saml_sp.py
++++ b/backend/app/services/saml_sp.py
+@@ -2,6 +2,7 @@
+ 
+ from __future__ import annotations
+ 
++import base64
+ import logging
+ from typing import Any
+ from urllib.parse import urljoin, urlsplit
+@@ -10,7 +11,9 @@ import httpx
+ from onelogin.saml2.auth import OneLogin_Saml2_Auth
+ from onelogin.saml2.idp_metadata_parser import OneLogin_Saml2_IdPMetadataParser
+ from onelogin.saml2.settings import OneLogin_Saml2_Settings
++from onelogin.saml2.xml_utils import OneLogin_Saml2_XML
+ 
++from app.config import get_settings
+ from app.services.auth_urls import public_api_base
+ from app.services.ssrf_guard import SSRFBlockedError, assert_response_target_safe, assert_url_safe
+ 
+@@ -72,8 +75,9 @@ def public_view(cfg: dict[str, Any]) -> dict[str, Any]:
+         "attr_username": str(merged.get("attr_username") or DEFAULT_ATTR_USERNAME),
+         "attr_email": str(merged.get("attr_email") or DEFAULT_ATTR_EMAIL),
+         "attr_display_name": str(merged.get("attr_display_name") or DEFAULT_ATTR_DISPLAY_NAME),
+-        "strict": bool(merged.get("strict", True)),
+-        "want_assertions_signed": bool(merged.get("want_assertions_signed", True)),
++        "strict": _effective_flag(merged, "strict"),
++        "want_assertions_signed": _effective_flag(merged, "want_assertions_signed"),
++        "security_locked": security_locked(),
+     }
+ 
+ 
+@@ -85,6 +89,18 @@ def _safe_public_base() -> bool:
+         return False
+ 
+ 
++def security_locked() -> bool:
++    """True unless ALLOW_INSECURE_SAML is set: strict validation and signed
++    assertions are then mandatory regardless of what the admin form says."""
++    return not bool(getattr(get_settings(), "allow_insecure_saml", False))
++
++
++def _effective_flag(cfg: dict[str, Any], key: str) -> bool:
++    if security_locked():
++        return True
++    return bool(cfg.get(key, True))
++
++
+ def validate_idp_metadata_url(url: str) -> str:
+     """Validate IdP metadata URL shape and SSRF safety (DNS / private ranges).
+ 
+@@ -134,8 +150,8 @@ def validate_saml_config(cfg: dict[str, Any]) -> dict[str, Any]:
+         "attr_username": (view.get("attr_username") or DEFAULT_ATTR_USERNAME).strip(),
+         "attr_email": (view.get("attr_email") or DEFAULT_ATTR_EMAIL).strip(),
+         "attr_display_name": (view.get("attr_display_name") or DEFAULT_ATTR_DISPLAY_NAME).strip(),
+-        "strict": bool(view.get("strict", True)),
+-        "want_assertions_signed": bool(view.get("want_assertions_signed", True)),
++        "strict": _effective_flag(view, "strict"),
++        "want_assertions_signed": _effective_flag(view, "want_assertions_signed"),
+     }
+ 
+ 
+@@ -205,7 +221,12 @@ def _load_idp_data(cfg: dict[str, Any]) -> dict[str, Any]:
+ 
+ 
+ def _security_settings(cfg: dict[str, Any]) -> dict[str, Any]:
+-    want_signed = bool(cfg.get("want_assertions_signed", True))
++    # wantAssertionsSigned is what stops a forged login; it is forced on unless
++    # ALLOW_INSECURE_SAML. wantMessagesSigned stays off on purpose: most IdPs
++    # (Entra ID by default) sign the Assertion, not the Response envelope, and
++    # in strict mode python3-saml already requires at least one signature and
++    # checks InResponseTo/Destination/Audience inside the signed assertion.
++    want_signed = _effective_flag(cfg, "want_assertions_signed")
+     return {
+         "nameIdEncrypted": False,
+         "authnRequestsSigned": False,
+@@ -246,7 +267,7 @@ def _sp_settings_block(cfg: dict[str, Any]) -> dict[str, Any]:
+ def build_sp_only_settings(cfg: dict[str, Any]) -> dict[str, Any]:
+     """Settings sufficient to emit SP metadata — no IdP required."""
+     return {
+-        "strict": bool(cfg.get("strict", True)),
++        "strict": _effective_flag(cfg, "strict"),
+         "debug": False,
+         "sp": _sp_settings_block(cfg),
+         # Placeholder IdP so python3-saml accepts the settings object; not used for metadata.
+@@ -267,7 +288,7 @@ def build_saml_settings(cfg: dict[str, Any]) -> dict[str, Any]:
+     if not idp.get("entityId") or not idp.get("singleSignOnService", {}).get("url"):
+         raise ValueError("IdP metadata is missing entityId or SSO URL")
+     return {
+-        "strict": bool(cfg.get("strict", True)),
++        "strict": _effective_flag(cfg, "strict"),
+         "debug": False,
+         "sp": _sp_settings_block(cfg),
+         "idp": idp,
+@@ -301,17 +322,56 @@ def _auth_from_request(cfg: dict[str, Any], req: dict) -> OneLogin_Saml2_Auth:
+     return OneLogin_Saml2_Auth(req, old_settings=settings)
+ 
+ 
+-def login_redirect_url(cfg: dict[str, Any], request_url: str) -> str:
++def login_redirect_url(cfg: dict[str, Any], request_url: str) -> tuple[str, str]:
++    """Build the IdP redirect. Returns ``(url, authn_request_id)``.
++
++    The caller must remember the request id (see ``saml_state``) so the ACS
++    step can insist on ``InResponseTo`` matching a request this SP issued.
++    """
+     req = prepare_request_data(request_url)
+     auth = _auth_from_request(cfg, req)
+-    return auth.login()
++    url = auth.login()
++    request_id = auth.get_last_request_id()
++    if not request_id:
++        raise ValueError("SAML AuthnRequest has no ID")
++    return url, request_id
+ 
+ 
+-def process_acs(cfg: dict[str, Any], request_url: str, form: dict[str, Any]) -> dict[str, Any]:
+-    """Validate SAMLResponse and return a normalized profile dict."""
++def peek_in_response_to(saml_response_b64: str) -> str | None:
++    """Read ``InResponseTo`` off the Response element *before* validation.
++
++    Only the attribute is read; nothing here is trusted. Its sole use is to look
++    up the outstanding AuthnRequest whose id then feeds ``process_acs`` for the
++    real, signature-backed comparison.
++    """
++    try:
++        raw = base64.b64decode(saml_response_b64, validate=False)
++        doc = OneLogin_Saml2_XML.to_etree(raw)
++    except Exception:
++        return None
++    value = doc.get("InResponseTo")
++    return str(value).strip() if value else None
++
++
++def process_acs(
++    cfg: dict[str, Any],
++    request_url: str,
++    form: dict[str, Any],
++    *,
++    request_id: str | None = None,
++) -> dict[str, Any]:
++    """Validate SAMLResponse and return a normalized profile dict.
++
++    ``request_id`` is the AuthnRequest id this SP issued; python3-saml then
++    rejects a Response whose ``InResponseTo`` differs. Unsolicited
++    (IdP-initiated) responses are refused: without an outstanding request there
++    is nothing to bind the assertion to, which is what makes replay possible.
++    """
+     req = prepare_request_data(request_url, form=form)
+     auth = _auth_from_request(cfg, req)
+-    auth.process_response()
++    if not request_id:
++        raise ValueError("SAML response is unsolicited (no matching AuthnRequest)")
++    auth.process_response(request_id=request_id)
+     errors = auth.get_errors()
+     if errors:
+         reason = auth.get_last_error_reason() or "; ".join(errors)
+@@ -328,11 +388,17 @@ def process_acs(cfg: dict[str, Any], request_url: str, form: dict[str, Any]) ->
+         raise ValueError("SAML response did not include a username or NameID")
+     if not name_id:
+         raise ValueError("SAML response is missing NameID (required as external identity)")
++    assertion_id = (auth.get_last_assertion_id() or "").strip()
++    if not assertion_id:
++        raise ValueError("SAML assertion is missing its ID")
+     return {
+         "username": username,
+         "email": email,
+         "display_name": display_name or username,
+         "external_id": name_id,
++        # Replay bookkeeping (consumed by the ACS endpoint, not part of the profile).
++        "assertion_id": assertion_id,
++        "assertion_not_on_or_after": auth.get_last_assertion_not_on_or_after(),
+     }
+ 
+ 
+diff --git a/backend/app/services/saml_state.py b/backend/app/services/saml_state.py
+new file mode 100644
+index 0000000..ae18842
+--- /dev/null
++++ b/backend/app/services/saml_state.py
+@@ -0,0 +1,114 @@
++"""Outstanding SAML AuthnRequests and seen assertion ids (Redis, fail-closed).
++
++Two small sets keep the SP honest about which Responses it accepts:
++
++* ``saml:req:<id>`` — an AuthnRequest this SP issued and has not yet seen a
++  Response for. Written by ``/saml/login``, consumed exactly once by the ACS.
++  A Response whose ``InResponseTo`` is missing or not in this set is refused,
++  which closes both IdP-initiated logins and replay of a captured Response.
++* ``saml:asn:<id>`` — assertion ids already accepted, kept until the
++  assertion's own ``NotOnOrAfter``. Defense in depth behind the first set.
++
++Redis is shared by all uvicorn workers, so the login and the ACS may land on
++different workers. There is deliberately no in-memory fallback: with Redis
++down a per-worker dict would either let replays through (assertion set) or
++reject legitimate logins at random (request set). Callers get
++``SamlStateUnavailable`` and answer 503.
++"""
++
++from __future__ import annotations
++
++import logging
++import time
++from collections.abc import Callable
++from typing import Any
++
++import redis.asyncio as redis_async
++
++from app.config import effective_redis_url, get_settings
++
++logger = logging.getLogger(__name__)
++
++_REQ_PREFIX = "saml:req:"
++_ASN_PREFIX = "saml:asn:"
++_MIN_ASSERTION_TTL_SECONDS = 60
++_MAX_ASSERTION_TTL_SECONDS = 24 * 3600
++
++
++class SamlStateUnavailable(RuntimeError):
++    """Redis could not be reached; SAML login cannot be validated safely."""
++
++
++ClientFactory = Callable[[], Any]
++
++
++def _default_client() -> redis_async.Redis:
++    return redis_async.from_url(
++        effective_redis_url(),
++        decode_responses=True,
++        socket_connect_timeout=2.0,
++        socket_timeout=2.0,
++    )
++
++
++_client_factory: ClientFactory = _default_client
++
++
++def set_client_factory(factory: ClientFactory | None) -> None:
++    """Test seam: swap the Redis client factory (None restores the default)."""
++    global _client_factory
++    _client_factory = factory or _default_client
++
++
++async def _with_client(op):
++    client = _client_factory()
++    try:
++        return await op(client)
++    except SamlStateUnavailable:
++        raise
++    except Exception as exc:
++        logger.error("SAML state store unavailable: %s", type(exc).__name__)
++        raise SamlStateUnavailable(str(exc)) from exc
++    finally:
++        try:
++            await client.aclose()
++        except Exception:
++            pass
++
++
++async def remember_authn_request(request_id: str) -> None:
++    ttl = max(30, int(getattr(get_settings(), "saml_request_ttl_seconds", 600) or 600))
++
++    async def op(client):
++        await client.set(_REQ_PREFIX + request_id, "1", ex=ttl)
++
++    await _with_client(op)
++
++
++async def consume_authn_request(request_id: str | None) -> bool:
++    """Atomically remove the outstanding request. False if it was not there."""
++    if not request_id:
++        return False
++
++    async def op(client):
++        # DEL returns the number of keys removed: 1 means we owned the request.
++        return int(await client.delete(_REQ_PREFIX + request_id) or 0) == 1
++
++    return await _with_client(op)
++
++
++async def register_assertion(assertion_id: str, not_on_or_after: float | None) -> bool:
++    """Record the assertion id. False when it was seen before (replay)."""
++    if not assertion_id:
++        return False
++    now = time.time()
++    if not_on_or_after:
++        ttl = int(float(not_on_or_after) - now)
++    else:
++        ttl = _MIN_ASSERTION_TTL_SECONDS * 5
++    ttl = max(_MIN_ASSERTION_TTL_SECONDS, min(_MAX_ASSERTION_TTL_SECONDS, ttl))
++
++    async def op(client):
++        return bool(await client.set(_ASN_PREFIX + assertion_id, "1", ex=ttl, nx=True))
++
++    return await _with_client(op)
+diff --git a/backend/tests/test_saml_hardening.py b/backend/tests/test_saml_hardening.py
+new file mode 100644
+index 0000000..0d9367d
+--- /dev/null
++++ b/backend/tests/test_saml_hardening.py
+@@ -0,0 +1,392 @@
++"""SAML SP hardening: locked security flags, InResponseTo binding, replay refusal.
++
++A throwaway IdP key pair is generated per module and real Responses are built
++and signed with python3-saml's own utilities, so the negative cases exercise
++the library's validation path rather than mocks of it.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import base64
++import datetime as dt
++import uuid
++from types import SimpleNamespace
++from unittest.mock import AsyncMock, patch
++
++import pytest
++from cryptography import x509
++from cryptography.hazmat.primitives import hashes, serialization
++from cryptography.hazmat.primitives.asymmetric import rsa
++from cryptography.x509.oid import NameOID
++from fastapi import HTTPException
++from onelogin.saml2.utils import OneLogin_Saml2_Utils
++
++from app.services import saml_sp, saml_state
++
++SP_BASE = "https://alpha-router.example"
++IDP_ENTITY = "https://idp.example.com/metadata"
++IDP_SSO = "https://idp.example.com/sso"
++ACS = f"{SP_BASE}/api/auth/saml/acs"
++SP_ENTITY = f"{SP_BASE}/api/auth/saml/metadata"
++
++
++# --------------------------------------------------------------------------- IdP fixture
++
++
++def _make_idp_keypair() -> tuple[str, str]:
++    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
++    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "idp.example.com")])
++    now = dt.datetime.now(dt.timezone.utc)
++    cert = (
++        x509.CertificateBuilder()
++        .subject_name(name)
++        .issuer_name(name)
++        .public_key(key.public_key())
++        .serial_number(x509.random_serial_number())
++        .not_valid_before(now - dt.timedelta(days=1))
++        .not_valid_after(now + dt.timedelta(days=365))
++        .sign(key, hashes.SHA256())
++    )
++    key_pem = key.private_bytes(
++        serialization.Encoding.PEM,
++        serialization.PrivateFormat.TraditionalOpenSSL,
++        serialization.NoEncryption(),
++    ).decode()
++    cert_pem = cert.public_bytes(serialization.Encoding.PEM).decode()
++    return key_pem, cert_pem
++
++
++IDP_KEY, IDP_CERT = _make_idp_keypair()
++
++
++def _idp_metadata_xml() -> str:
++    cert_body = "".join(line for line in IDP_CERT.splitlines() if "CERTIFICATE" not in line)
++    return f"""<?xml version="1.0"?>
++<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="{IDP_ENTITY}">
++  <md:IDPSSODescriptor WantAuthnRequestsSigned="false" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
++    <md:KeyDescriptor use="signing">
++      <ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
++        <ds:X509Data><ds:X509Certificate>{cert_body}</ds:X509Certificate></ds:X509Data>
++      </ds:KeyInfo>
++    </md:KeyDescriptor>
++    <md:NameIDFormat>urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified</md:NameIDFormat>
++    <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="{IDP_SSO}"/>
++  </md:IDPSSODescriptor>
++</md:EntityDescriptor>"""
++
++
++def _cfg(**overrides) -> dict:
++    cfg = {
++        "enabled": True,
++        "idp_metadata_xml": _idp_metadata_xml(),
++        "idp_metadata_url": "",
++        "entity_id": SP_ENTITY,
++        "attr_username": saml_sp.DEFAULT_ATTR_USERNAME,
++        "attr_email": saml_sp.DEFAULT_ATTR_EMAIL,
++        "attr_display_name": saml_sp.DEFAULT_ATTR_DISPLAY_NAME,
++        "strict": True,
++        "want_assertions_signed": True,
++    }
++    cfg.update(overrides)
++    return cfg
++
++
++def _ts(delta_seconds: int) -> str:
++    t = dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=delta_seconds)
++    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
++
++
++def _build_response(
++    *,
++    in_response_to: str | None,
++    sign_assertion: bool = True,
++    assertion_id: str | None = None,
++    name_id: str = "alice@example.com",
++) -> str:
++    """Return a base64 SAMLResponse (HTTP-POST binding)."""
++    resp_id = "_" + uuid.uuid4().hex
++    asn_id = assertion_id or ("_" + uuid.uuid4().hex)
++    irt_resp = f' InResponseTo="{in_response_to}"' if in_response_to else ""
++    irt_scd = f' InResponseTo="{in_response_to}"' if in_response_to else ""
++    assertion = f"""<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xs="http://www.w3.org/2001/XMLSchema"
++      ID="{asn_id}" Version="2.0" IssueInstant="{_ts(0)}">
++    <saml:Issuer>{IDP_ENTITY}</saml:Issuer>
++    <saml:Subject>
++      <saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified">{name_id}</saml:NameID>
++      <saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
++        <saml:SubjectConfirmationData NotOnOrAfter="{_ts(300)}" Recipient="{ACS}"{irt_scd}/>
++      </saml:SubjectConfirmation>
++    </saml:Subject>
++    <saml:Conditions NotBefore="{_ts(-60)}" NotOnOrAfter="{_ts(300)}">
++      <saml:AudienceRestriction><saml:Audience>{SP_ENTITY}</saml:Audience></saml:AudienceRestriction>
++    </saml:Conditions>
++    <saml:AuthnStatement AuthnInstant="{_ts(0)}" SessionIndex="{resp_id}">
++      <saml:AuthnContext><saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:Password</saml:AuthnContextClassRef></saml:AuthnContext>
++    </saml:AuthnStatement>
++    <saml:AttributeStatement>
++      <saml:Attribute Name="{saml_sp.DEFAULT_ATTR_USERNAME}"><saml:AttributeValue xsi:type="xs:string">alice</saml:AttributeValue></saml:Attribute>
++      <saml:Attribute Name="{saml_sp.DEFAULT_ATTR_EMAIL}"><saml:AttributeValue xsi:type="xs:string">{name_id}</saml:AttributeValue></saml:Attribute>
++    </saml:AttributeStatement>
++  </saml:Assertion>"""
++    if sign_assertion:
++        # Sign the Assertion element itself (what wantAssertionsSigned checks),
++        # the way most IdPs do; the Response envelope stays unsigned.
++        signed = OneLogin_Saml2_Utils.add_sign(assertion, IDP_KEY, IDP_CERT)
++        assertion = signed.decode() if isinstance(signed, bytes) else signed
++        if assertion.startswith("<?xml"):
++            assertion = assertion.split("?>", 1)[1]
++    xml = f"""<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
++    ID="{resp_id}" Version="2.0" IssueInstant="{_ts(0)}" Destination="{ACS}"{irt_resp}>
++  <saml:Issuer>{IDP_ENTITY}</saml:Issuer>
++  <samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>
++  {assertion}
++</samlp:Response>"""
++    raw = xml.encode()
++    return base64.b64encode(raw).decode()
++
++
++@pytest.fixture(autouse=True)
++def _public_base(monkeypatch):
++    monkeypatch.setattr(saml_sp, "public_api_base", lambda: SP_BASE)
++    yield
++
++
++# --------------------------------------------------------------------------- locked flags
++
++
++def test_security_flags_are_forced_on_by_default(monkeypatch):
++    monkeypatch.setattr(saml_sp, "get_settings", lambda: SimpleNamespace(allow_insecure_saml=False))
++    sec = saml_sp._security_settings({"want_assertions_signed": False, "strict": False})
++    assert sec["wantAssertionsSigned"] is True
++    settings = saml_sp.build_sp_only_settings({"strict": False, "entity_id": SP_ENTITY})
++    assert settings["strict"] is True
++    view = saml_sp.public_view({"strict": False, "want_assertions_signed": False})
++    assert view["strict"] is True and view["want_assertions_signed"] is True
++    assert view["security_locked"] is True
++    saved = saml_sp.validate_saml_config(
++        {"enabled": False, "entity_id": SP_ENTITY, "strict": False, "want_assertions_signed": False}
++    )
++    assert saved["strict"] is True and saved["want_assertions_signed"] is True
++
++
++def test_security_flags_follow_admin_only_with_lab_override(monkeypatch):
++    monkeypatch.setattr(saml_sp, "get_settings", lambda: SimpleNamespace(allow_insecure_saml=True))
++    sec = saml_sp._security_settings({"want_assertions_signed": False})
++    assert sec["wantAssertionsSigned"] is False
++    assert saml_sp.public_view({})["security_locked"] is False
++
++
++# --------------------------------------------------------------------------- SP flow
++
++
++def test_login_returns_request_id_that_the_redirect_carries():
++    url, request_id = saml_sp.login_redirect_url(_cfg(), f"{SP_BASE}/api/auth/saml/login")
++    assert url.startswith(IDP_SSO)
++    assert request_id.startswith("ONELOGIN_") and len(request_id) > 20
++
++
++def test_peek_in_response_to_reads_the_attribute_and_tolerates_junk():
++    assert saml_sp.peek_in_response_to(_build_response(in_response_to="_abc")) == "_abc"
++    assert saml_sp.peek_in_response_to(_build_response(in_response_to=None)) is None
++    assert saml_sp.peek_in_response_to("not base64!!") is None
++    assert saml_sp.peek_in_response_to(base64.b64encode(b"<broken").decode()) is None
++
++
++def test_signed_response_bound_to_request_is_accepted():
++    _, request_id = saml_sp.login_redirect_url(_cfg(), f"{SP_BASE}/api/auth/saml/login")
++    b64 = _build_response(in_response_to=request_id)
++    profile = saml_sp.process_acs(_cfg(), ACS, {"SAMLResponse": b64}, request_id=request_id)
++    assert profile["username"] == "alice"
++    assert profile["external_id"] == "alice@example.com"
++    assert profile["assertion_id"].startswith("_")
++    assert profile["assertion_not_on_or_after"] is not None
++
++
++def test_unsigned_assertion_is_rejected():
++    _, request_id = saml_sp.login_redirect_url(_cfg(), f"{SP_BASE}/api/auth/saml/login")
++    b64 = _build_response(in_response_to=request_id, sign_assertion=False)
++    with pytest.raises(ValueError, match="validation failed"):
++        saml_sp.process_acs(_cfg(), ACS, {"SAMLResponse": b64}, request_id=request_id)
++
++
++def test_unsigned_assertion_is_rejected_even_if_admin_unticked_the_box(monkeypatch):
++    monkeypatch.setattr(saml_sp, "get_settings", lambda: SimpleNamespace(allow_insecure_saml=False))
++    cfg = _cfg(want_assertions_signed=False, strict=False)
++    _, request_id = saml_sp.login_redirect_url(cfg, f"{SP_BASE}/api/auth/saml/login")
++    b64 = _build_response(in_response_to=request_id, sign_assertion=False)
++    with pytest.raises(ValueError, match="validation failed"):
++        saml_sp.process_acs(cfg, ACS, {"SAMLResponse": b64}, request_id=request_id)
++
++
++def test_in_response_to_mismatch_is_rejected_by_the_library():
++    _, request_id = saml_sp.login_redirect_url(_cfg(), f"{SP_BASE}/api/auth/saml/login")
++    b64 = _build_response(in_response_to="_someone_elses_request")
++    with pytest.raises(ValueError, match="InResponseTo"):
++        saml_sp.process_acs(_cfg(), ACS, {"SAMLResponse": b64}, request_id=request_id)
++
++
++def test_unsolicited_response_is_refused_before_validation():
++    b64 = _build_response(in_response_to=None)
++    with pytest.raises(ValueError, match="unsolicited"):
++        saml_sp.process_acs(_cfg(), ACS, {"SAMLResponse": b64}, request_id=None)
++
++
++# --------------------------------------------------------------------------- state store
++
++
++class _FakeRedis:
++    """Just enough of redis.asyncio for the two operations the store uses."""
++
++    store: dict[str, str] = {}
++    fail = False
++
++    async def set(self, key, value, ex=None, nx=False):
++        if self.fail:
++            raise ConnectionError("redis down")
++        if nx and key in self.store:
++            return None
++        self.store[key] = value
++        return True
++
++    async def delete(self, key):
++        if self.fail:
++            raise ConnectionError("redis down")
++        return 1 if self.store.pop(key, None) is not None else 0
++
++    async def aclose(self):
++        return None
++
++
++@pytest.fixture
++def fake_redis(monkeypatch):
++    _FakeRedis.store = {}
++    _FakeRedis.fail = False
++    saml_state.set_client_factory(_FakeRedis)
++    monkeypatch.setattr(saml_state, "get_settings", lambda: SimpleNamespace(saml_request_ttl_seconds=600))
++    yield _FakeRedis
++    saml_state.set_client_factory(None)
++
++
++def test_request_is_consumed_exactly_once(fake_redis):
++    async def run():
++        await saml_state.remember_authn_request("_r1")
++        assert await saml_state.consume_authn_request("_r1") is True
++        assert await saml_state.consume_authn_request("_r1") is False
++        assert await saml_state.consume_authn_request("_never_issued") is False
++        assert await saml_state.consume_authn_request(None) is False
++
++    asyncio.run(run())
++
++
++def test_assertion_id_is_accepted_once(fake_redis):
++    async def run():
++        assert await saml_state.register_assertion("_a1", None) is True
++        assert await saml_state.register_assertion("_a1", None) is False
++        assert await saml_state.register_assertion("", None) is False
++
++    asyncio.run(run())
++
++
++def test_store_fails_closed_without_redis(fake_redis):
++    fake_redis.fail = True
++
++    async def run():
++        with pytest.raises(saml_state.SamlStateUnavailable):
++            await saml_state.remember_authn_request("_r1")
++        with pytest.raises(saml_state.SamlStateUnavailable):
++            await saml_state.consume_authn_request("_r1")
++
++    asyncio.run(run())
++
++
++# --------------------------------------------------------------------------- ACS endpoint
++
++
++def _acs_request():
++    return SimpleNamespace(url=SimpleNamespace(path="/api/auth/saml/acs"), client=SimpleNamespace(host="10.0.0.9"))
++
++
++def test_acs_endpoint_refuses_replay_of_the_same_response(fake_redis, monkeypatch):
++    from app.api import auth as auth_api
++
++    monkeypatch.setattr(auth_api, "_request_public_url", lambda request: ACS)
++    cfg = _cfg()
++    db = AsyncMock()
++    user = SimpleNamespace(id=1, username="alice", token_version=0, is_active=True)
++    audit = AsyncMock()
++
++    async def run():
++        with (
++            patch.object(auth_api, "get_provider_config", new=AsyncMock(return_value=cfg)),
++            patch.object(auth_api, "_upsert_directory_user", new=AsyncMock(return_value=user)),
++            patch.object(auth_api, "get_user_role_slugs", new=AsyncMock(return_value=["user"])),
++            patch.object(auth_api, "record_user_login", new=AsyncMock()),
++            patch.object(auth_api, "store_token", new=AsyncMock()),
++            patch.object(auth_api, "validate_frontend_url", lambda url: SP_BASE),
++            patch("app.services.security_audit.log_security_event", new=audit),
++        ):
++            # Real login step: issues and remembers the request id.
++            _, request_id = saml_sp.login_redirect_url(cfg, f"{SP_BASE}/api/auth/saml/login")
++            await saml_state.remember_authn_request(request_id)
++            b64 = _build_response(in_response_to=request_id)
++
++            first = await auth_api.saml_acs(_acs_request(), b64, None, db)
++            assert first.status_code in (302, 307)
++            assert "/login?code=" in first.headers["location"]
++
++            # Same Response again: the request id is gone.
++            with pytest.raises(HTTPException) as exc:
++                await auth_api.saml_acs(_acs_request(), b64, None, db)
++            assert exc.value.status_code == 401
++            assert "outstanding login request" in exc.value.detail
++            assert audit.await_args.kwargs["detail"] == {"reason": "unsolicited_or_replayed_response"}
++
++            # Even with a fresh request id, an already-seen assertion is refused.
++            _, request_id2 = saml_sp.login_redirect_url(cfg, f"{SP_BASE}/api/auth/saml/login")
++            await saml_state.remember_authn_request(request_id2)
++            first_assertion_id = next(k for k in fake_redis.store if k.startswith("saml:asn:")).split(":", 2)[2]
++            replay = _build_response(in_response_to=request_id2, assertion_id=first_assertion_id)
++            with pytest.raises(HTTPException) as exc2:
++                await auth_api.saml_acs(_acs_request(), replay, None, db)
++            assert exc2.value.status_code == 401
++            assert "already used" in exc2.value.detail
++
++    asyncio.run(run())
++
++
++def test_acs_endpoint_refuses_idp_initiated_response(fake_redis, monkeypatch):
++    from app.api import auth as auth_api
++
++    monkeypatch.setattr(auth_api, "_request_public_url", lambda request: ACS)
++    db = AsyncMock()
++
++    async def run():
++        with (
++            patch.object(auth_api, "get_provider_config", new=AsyncMock(return_value=_cfg())),
++            patch("app.services.security_audit.log_security_event", new=AsyncMock()),
++        ):
++            with pytest.raises(HTTPException) as exc:
++                await auth_api.saml_acs(_acs_request(), _build_response(in_response_to=None), None, db)
++            assert exc.value.status_code == 401
++
++    asyncio.run(run())
++
++
++def test_acs_and_login_answer_503_when_redis_is_down(fake_redis, monkeypatch):
++    from app.api import auth as auth_api
++
++    monkeypatch.setattr(auth_api, "_request_public_url", lambda request: ACS)
++    fake_redis.fail = True
++    db = AsyncMock()
++
++    async def run():
++        with patch.object(auth_api, "get_provider_config", new=AsyncMock(return_value=_cfg())):
++            with pytest.raises(HTTPException) as exc:
++                await auth_api.saml_login(_acs_request(), db)
++            assert exc.value.status_code == 503
++            with pytest.raises(HTTPException) as exc2:
++                await auth_api.saml_acs(_acs_request(), _build_response(in_response_to="_x"), None, db)
++            assert exc2.value.status_code == 503
++
++    asyncio.run(run())
+diff --git a/frontend/src/pages/admin/Authentication.tsx b/frontend/src/pages/admin/Authentication.tsx
+index 838e98c..3dcd736 100644
+--- a/frontend/src/pages/admin/Authentication.tsx
++++ b/frontend/src/pages/admin/Authentication.tsx
+@@ -34,6 +34,8 @@ type SamlCfg = {
+   attr_display_name: string;
+   strict: boolean;
+   want_assertions_signed: boolean;
++  /** Server-enforced: both flags are locked to true unless ALLOW_INSECURE_SAML. */
++  security_locked?: boolean;
+ };
+ 
+ type OidcCfg = {
+@@ -662,6 +664,7 @@ export default function Authentication() {
+             <input
+               type="checkbox"
+               checked={saml.want_assertions_signed}
++              disabled={saml.security_locked !== false}
+               onChange={(e) => setSaml({ ...saml, want_assertions_signed: e.target.checked })}
+             />
+             <span className="muted-text">Require signed assertions</span>
+@@ -670,10 +673,17 @@ export default function Authentication() {
+             <input
+               type="checkbox"
+               checked={saml.strict}
++              disabled={saml.security_locked !== false}
+               onChange={(e) => setSaml({ ...saml, strict: e.target.checked })}
+             />
+             <span className="muted-text">Strict SAML validation</span>
+           </label>
++          {saml.security_locked !== false && (
++            <p className="muted-text" style={{ marginTop: 6, fontSize: "0.85em" }}>
++              Signed assertions and strict validation are always on. Only a lab deployment with
++              ALLOW_INSECURE_SAML=true can change them.
++            </p>
++          )}
+ 
+           <div className="dialog-actions" style={{ marginTop: 12 }}>
+             <button className="btn" type="submit" disabled={saving}>
+-- 
+2.43.0
+

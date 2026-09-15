@@ -1,0 +1,1866 @@
+From f9cbdf493a6e7c98c5ed0a12714cbe9779a58834 Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 20:01:52 +0000
+Subject: [PATCH 09/11] refactor(frontend): remove unused exports, types, a
+ dependency and two dead prefs; knip gates CI
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+knip reported 112 unused exports, 25 unused exported types and one unused
+dependency (@tanstack/react-virtual). `knip --fix` dropped the `export`
+keyword where the symbol is still used inside its own module (70 cases) and
+removed the dependency; the symbols that then had no reader at all were
+deleted with a small TypeScript-AST codemod
+(scripts/codemods/remove-unused-decls.mjs, kept for reference), iterating
+until eslint's no-unused-vars was clean — 37 functions/constants plus the
+imports that only fed them. Types that only one module needs are now local.
+
+Also removed:
+- `UserPrefs.language`: normalised to the literal "en" and never read.
+- The `sessionStorage` "msgcache" entries: written on every cache update,
+  never read; only deleted on logout.
+- `scripts/export-combined-docs.tsx` is kept — it is a manual docs
+  exporter, not dead code (run with a TS runner).
+
+CI: `npm run knip` in frontend-tests-and-build; knip.json now only names
+the script entries (Vite/vitest entries are auto-detected).
+
+Verified: eslint 0 errors, tsc clean, knip clean, vitest 224 passed,
+vite build ok.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ .gitlab-ci.yml                                |  2 +
+ frontend/knip.json                            |  6 +-
+ frontend/package.json                         |  2 +-
+ frontend/src/components/ColorPickerModal.tsx  |  2 +-
+ frontend/src/components/DocsShell.tsx         |  2 +-
+ frontend/src/components/SidebarNav.tsx        |  4 +-
+ .../src/components/activity/formatters.ts     | 21 +----
+ frontend/src/components/activity/insights.ts  | 19 +----
+ .../activity/overview/explore/ExploreMenu.tsx |  2 +-
+ .../overview/explore/explorePresets.ts        |  5 --
+ frontend/src/components/activity/types.ts     | 11 ++-
+ .../components/chat/ChatModelPickerModal.tsx  |  2 +-
+ .../components/chat/ComposerControlIcons.tsx  | 12 ---
+ frontend/src/components/chat/PromptQueue.tsx  |  2 +-
+ frontend/src/components/icons/navIcons.tsx    | 10 +--
+ .../models/SetDefaultModelModal.tsx           |  2 +-
+ .../operations/OperationsTimeRangeMenu.tsx    |  6 --
+ .../src/context/ChatModelChromeContext.tsx    |  2 +-
+ frontend/src/lib/agentActivity.ts             |  2 +-
+ frontend/src/lib/agentChat.ts                 |  2 +-
+ frontend/src/lib/agentPlatform.ts             |  2 +-
+ frontend/src/lib/agentPolicyForm.ts           |  2 +-
+ frontend/src/lib/audioWav.ts                  |  8 +-
+ frontend/src/lib/chatAttachments.ts           |  7 +-
+ frontend/src/lib/chatCodeInterpreterModels.ts |  2 +-
+ frontend/src/lib/chatImage.ts                 | 34 ++------
+ frontend/src/lib/chatImageModels.ts           |  7 +-
+ frontend/src/lib/chatMessages.ts              |  2 +-
+ frontend/src/lib/chatModelPresets.ts          |  8 --
+ frontend/src/lib/chatModels.ts                |  7 +-
+ frontend/src/lib/chatScroll.ts                |  4 +-
+ frontend/src/lib/chatSpeech.ts                | 27 ++-----
+ frontend/src/lib/chatSpeechModels.ts          |  5 +-
+ frontend/src/lib/chatStorage.ts               | 13 ----
+ frontend/src/lib/chatTools.ts                 | 28 +------
+ frontend/src/lib/chatVideo.ts                 | 14 ++--
+ frontend/src/lib/chatVideoModels.ts           | 15 +---
+ frontend/src/lib/chatWelcome.ts               |  2 +-
+ frontend/src/lib/connectionProviders.ts       |  2 +-
+ frontend/src/lib/dateTime.ts                  |  2 +-
+ frontend/src/lib/imageSize.ts                 | 77 +------------------
+ frontend/src/lib/mediaLibrary.ts              |  2 +-
+ frontend/src/lib/modelCatalog.ts              |  4 +-
+ frontend/src/lib/modelProvider.ts             |  2 +-
+ frontend/src/lib/persianFonts.ts              |  2 +-
+ frontend/src/lib/privateMediaStore.ts         | 25 +-----
+ frontend/src/lib/projectRoomsApi.ts           |  8 --
+ frontend/src/lib/projectsApi.ts               | 32 ++------
+ frontend/src/lib/rbac.ts                      | 39 ++--------
+ frontend/src/lib/replyReadyNotify.ts          |  2 +-
+ frontend/src/lib/requestLogCostDetails.ts     |  4 +-
+ frontend/src/lib/securitySettings.ts          |  5 +-
+ frontend/src/lib/session.ts                   |  3 -
+ frontend/src/lib/themeCache.ts                |  8 +-
+ frontend/src/lib/userMemories.ts              | 11 +--
+ frontend/src/lib/userPanelNav.ts              |  2 +-
+ frontend/src/lib/voiceInput.ts                |  4 +-
+ frontend/src/nav/types.ts                     | 24 ------
+ scripts/codemods/remove-unused-decls.mjs      | 47 +++++++++++
+ 59 files changed, 157 insertions(+), 451 deletions(-)
+ create mode 100644 scripts/codemods/remove-unused-decls.mjs
+
+diff --git a/.gitlab-ci.yml b/.gitlab-ci.yml
+index 45aa0a6b..0de98847 100644
+--- a/.gitlab-ci.yml
++++ b/.gitlab-ci.yml
+@@ -160,6 +160,8 @@ frontend-tests-and-build:
+     # eslint: errors fail; the warning budget (--max-warnings in package.json)
+     # is the Phase 3 baseline and may only be lowered.
+     - npm run lint
++    # Unused exports/types/dependencies fail the build (knip.json).
++    - npm run knip
+     - npm test
+     - npm run build
+ 
+diff --git a/frontend/knip.json b/frontend/knip.json
+index 0d230dcb..538c28fb 100644
+--- a/frontend/knip.json
++++ b/frontend/knip.json
+@@ -1,7 +1,5 @@
+ {
+   "$schema": "https://unpkg.com/knip@5/schema.json",
+-  "entry": ["src/main.tsx", "scripts/*.mjs", "vite.config.ts"],
+-  "project": ["src/**/*.{ts,tsx}", "scripts/**/*.mjs"],
+-  "ignore": ["src/generated/**", "src/vite-env.d.ts"],
+-  "ignoreDependencies": []
++  "entry": ["scripts/*.mjs"],
++  "project": ["src/**/*.{ts,tsx}", "scripts/**/*.mjs"]
+ }
+diff --git a/frontend/package.json b/frontend/package.json
+index 39e30b75..5f8b3f12 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -9,12 +9,12 @@
+     "typecheck": "tsc -b",
+     "lint": "eslint . --max-warnings 286",
+     "lint:strict": "eslint . --max-warnings 0",
++    "knip": "knip",
+     "test": "vitest run",
+     "fonts:generate": "node scripts/generate-persian-fonts.mjs"
+   },
+   "dependencies": {
+     "@lobehub/icons-static-svg": "^1.94.0",
+-    "@tanstack/react-virtual": "^3.13.12",
+     "highlight.js": "^11.11.1",
+     "react": "^18.3.1",
+     "react-dom": "^18.3.1",
+diff --git a/frontend/src/components/ColorPickerModal.tsx b/frontend/src/components/ColorPickerModal.tsx
+index e166e476..7ea08be6 100644
+--- a/frontend/src/components/ColorPickerModal.tsx
++++ b/frontend/src/components/ColorPickerModal.tsx
+@@ -1,6 +1,6 @@
+ import Modal from "./Modal";
+ 
+-export const FOLDER_COLOR_PRESETS: Array<{ id: string; value: string | null; label: string }> = [
++const FOLDER_COLOR_PRESETS: Array<{ id: string; value: string | null; label: string }> = [
+   { id: "default", value: null, label: "Default" },
+   { id: "indigo", value: "#6366f1", label: "Indigo" },
+   { id: "violet", value: "#8b5cf6", label: "Violet" },
+diff --git a/frontend/src/components/DocsShell.tsx b/frontend/src/components/DocsShell.tsx
+index 6d2ba78e..745b0e90 100644
+--- a/frontend/src/components/DocsShell.tsx
++++ b/frontend/src/components/DocsShell.tsx
+@@ -1,7 +1,7 @@
+ import { ReactNode, useEffect, useMemo, useState } from "react";
+ import { useLocation } from "react-router-dom";
+ 
+-export type DocNavItem = { id: string; title: string };
++type DocNavItem = { id: string; title: string };
+ export type DocNavGroup = [string, DocNavItem[]];
+ export type DocSectionDef = { id: string; title: string; group?: string; content: ReactNode };
+ 
+diff --git a/frontend/src/components/SidebarNav.tsx b/frontend/src/components/SidebarNav.tsx
+index 0f9b83dd..51f1f208 100644
+--- a/frontend/src/components/SidebarNav.tsx
++++ b/frontend/src/components/SidebarNav.tsx
+@@ -1,7 +1,7 @@
+ import { useEffect, useRef, useState, type MouseEvent } from "react";
+ import { Link, useLocation } from "react-router-dom";
+ import { NavIcon } from "./icons/navIcons";
+-import { flattenNav, isNavGrouped, type NavItem, type NavSection } from "../nav/types";
++import { isNavGrouped, type NavItem, type NavSection } from "../nav/types";
+ import { STORAGE_KEYS } from "../lib/brand";
+ 
+ type Props = {
+@@ -171,4 +171,4 @@ export default function SidebarNav({ nav, className = "", linkClassName, onNavig
+ }
+ 
+ /** Flat list for mobile drawer title search etc. */
+-export { flattenNav };
++;
+diff --git a/frontend/src/components/activity/formatters.ts b/frontend/src/components/activity/formatters.ts
+index d68a0296..c4927b21 100644
+--- a/frontend/src/components/activity/formatters.ts
++++ b/frontend/src/components/activity/formatters.ts
+@@ -1,4 +1,4 @@
+-import type { HeatmapMetric, MetricKind, Period } from "./types";
++import type { HeatmapMetric, Period } from "./types";
+ 
+ export function formatSpend(v: number) {
+   if (v >= 10_000) return `$${Math.round(v / 1000)}K`;
+@@ -27,18 +27,6 @@ export function formatHeatmapValue(metric: HeatmapMetric, v: number) {
+   return formatRequests(v);
+ }
+ 
+-export function formatMetricValue(kind: MetricKind, v: number) {
+-  if (kind === "spend") return formatSpend(v);
+-  if (kind === "tokens") return formatTokens(v);
+-  return formatRequests(v);
+-}
+-
+-export function formatBreakdownValue(kind: MetricKind, v: number) {
+-  if (kind === "spend") return formatSpend(v);
+-  if (kind === "tokens") return formatTokens(v);
+-  return String(v);
+-}
+-
+ export function periodLabel(period: Period) {
+   const labels: Record<Period, string> = {
+     "15m": "Past 15 Minutes",
+@@ -68,13 +56,6 @@ export function periodShortBadge(period: Period) {
+   };
+   return badges[period] ?? "1d";
+ }
+-
+-export function promptsCardPeriodLabel(period: import("./types").PromptsPeriod) {
+-  if (period === "day") return "Today";
+-  if (period === "week") return "Last 7 Days";
+-  return "Last 30 Days";
+-}
+-
+ export function groupByLabel(groupBy: string) {
+   if (groupBy === "app") return "By API Key";
+   if (groupBy === "user") return "By Creator";
+diff --git a/frontend/src/components/activity/insights.ts b/frontend/src/components/activity/insights.ts
+index 78363d22..f0d70481 100644
+--- a/frontend/src/components/activity/insights.ts
++++ b/frontend/src/components/activity/insights.ts
+@@ -2,12 +2,11 @@ import type {
+   ActivityInsights,
+   ActivityPayload,
+   HeatmapMetric,
+-  PromptsCardData,
+   PromptsPeriod,
+   UsageMetricStats,
+ } from "./types";
+ 
+-export function periodFooterLabel(period: PromptsPeriod) {
++function periodFooterLabel(period: PromptsPeriod) {
+   if (period === "day") return "Today";
+   if (period === "week") return "This Week";
+   return "This Month";
+@@ -45,22 +44,6 @@ function normalizeUsageStats(
+     },
+   };
+ }
+-
+-export function resolvePrompts(data: ActivityPayload, promptsPeriod: PromptsPeriod): PromptsCardData {
+-  if (data.prompts) return data.prompts;
+-  const insights = resolveInsights(data);
+-  return {
+-    period: promptsPeriod,
+-    chart: data.chart,
+-    models: data.models,
+-    total: data.totals.requests,
+-    change_pct: insights.change_pct.prompts,
+-    period_footer_label: periodFooterLabel(promptsPeriod),
+-    period_prompts: insights.period_prompts,
+-    streak_days: insights.streak_days,
+-  };
+-}
+-
+ export function resolveInsights(data: ActivityPayload): ActivityInsights {
+   const base: ActivityInsights = {
+     streak_days: 0,
+diff --git a/frontend/src/components/activity/overview/explore/ExploreMenu.tsx b/frontend/src/components/activity/overview/explore/ExploreMenu.tsx
+index 3085f609..4090c02f 100644
+--- a/frontend/src/components/activity/overview/explore/ExploreMenu.tsx
++++ b/frontend/src/components/activity/overview/explore/ExploreMenu.tsx
+@@ -1,6 +1,6 @@
+ import { useEffect, useMemo, useRef, useState } from "react";
+ 
+-export type ExploreMenuOption = { value: string; label: string };
++type ExploreMenuOption = { value: string; label: string };
+ 
+ type Props = {
+   value: string;
+diff --git a/frontend/src/components/activity/overview/explore/explorePresets.ts b/frontend/src/components/activity/overview/explore/explorePresets.ts
+index 5f922a43..a82cbb47 100644
+--- a/frontend/src/components/activity/overview/explore/explorePresets.ts
++++ b/frontend/src/components/activity/overview/explore/explorePresets.ts
+@@ -59,11 +59,6 @@ export function explorePresetFromFocus(focus: OverviewFocus | null): Partial<Exp
+   };
+   return map[focus] ?? null;
+ }
+-
+-export function metricLabel(metric: ExploreMetric): string {
+-  return EXPLORE_METRIC_OPTIONS.find((o) => o.value === metric)?.label ?? metric;
+-}
+-
+ export function groupLabel(group: ExploreGroup): string {
+   return EXPLORE_GROUP_OPTIONS.find((o) => o.value === group)?.label ?? group;
+ }
+diff --git a/frontend/src/components/activity/types.ts b/frontend/src/components/activity/types.ts
+index 65d50f07..0d3256e8 100644
+--- a/frontend/src/components/activity/types.ts
++++ b/frontend/src/components/activity/types.ts
+@@ -2,10 +2,9 @@ export type Period = "15m" | "30m" | "1h" | "3h" | "day" | "2d" | "week" | "mont
+ export type PromptsPeriod = "day" | "week" | "month";
+ export type GroupBy = "model" | "app" | "user";
+ export type TimezoneMode = "local" | "utc";
+-export type MetricKind = "spend" | "requests" | "tokens";
+ export type HeatmapMetric = "requests" | "tokens" | "spend";
+ 
+-export type SegmentMeta = {
++type SegmentMeta = {
+   key: string;
+   label: string;
+   color: string;
+@@ -38,7 +37,7 @@ export type UsageMetricStats = {
+   total: number;
+ };
+ 
+-export type PromptsCardData = {
++type PromptsCardData = {
+   period: PromptsPeriod;
+   chart: Record<string, string | number>[];
+   models: SegmentMeta[];
+@@ -119,13 +118,13 @@ export type ExploreTopMode = "top" | "bottom";
+ export type ExploreRankBy = "metric" | "requests";
+ export type ExploreChartType = "bar" | "line" | "area";
+ 
+-export type ExploreSegment = {
++type ExploreSegment = {
+   key: string;
+   label: string;
+   color: string;
+ };
+ 
+-export type ExploreTableRow = {
++type ExploreTableRow = {
+   key: string;
+   label: string;
+   color: string;
+@@ -181,7 +180,7 @@ export type OverviewListItem = {
+   tokens: number;
+ };
+ 
+-export type OverviewChartSeries = {
++type OverviewChartSeries = {
+   key: string;
+   label: string;
+   color: string;
+diff --git a/frontend/src/components/chat/ChatModelPickerModal.tsx b/frontend/src/components/chat/ChatModelPickerModal.tsx
+index 6270802d..dd5a09eb 100644
+--- a/frontend/src/components/chat/ChatModelPickerModal.tsx
++++ b/frontend/src/components/chat/ChatModelPickerModal.tsx
+@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
+ import ModelName from "../ModelName";
+ import { catalogMonthLabel } from "../../lib/chatModelPresets";
+ 
+-export type PickerModel = {
++type PickerModel = {
+   id: string;
+   name?: string;
+   external_id?: string;
+diff --git a/frontend/src/components/chat/ComposerControlIcons.tsx b/frontend/src/components/chat/ComposerControlIcons.tsx
+index 7e8c5a8a..8107feab 100644
+--- a/frontend/src/components/chat/ComposerControlIcons.tsx
++++ b/frontend/src/components/chat/ComposerControlIcons.tsx
+@@ -1,15 +1,3 @@
+-/** Inline icons for composer Model / Tools / To ENG controls. */
+-
+-export function ComposerModelIcon() {
+-  return (
+-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+-      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+-      <rect x="14" y="3" width="7" height="7" rx="1.5" />
+-      <rect x="3" y="14" width="7" height="7" rx="1.5" />
+-      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+-    </svg>
+-  );
+-}
+ 
+ /** Open-end wrench silhouette for the composer Tools control (no box). */
+ export function ComposerToolsIcon() {
+diff --git a/frontend/src/components/chat/PromptQueue.tsx b/frontend/src/components/chat/PromptQueue.tsx
+index 48aeffef..26c2c1a3 100644
+--- a/frontend/src/components/chat/PromptQueue.tsx
++++ b/frontend/src/components/chat/PromptQueue.tsx
+@@ -4,7 +4,7 @@ import {
+   shouldShowPromptQueueBar,
+ } from "../../lib/promptQueue";
+ 
+-export type PromptQueueViewItem = {
++type PromptQueueViewItem = {
+   id: string;
+   preview: string;
+ };
+diff --git a/frontend/src/components/icons/navIcons.tsx b/frontend/src/components/icons/navIcons.tsx
+index 18589a0b..f417a6ff 100644
+--- a/frontend/src/components/icons/navIcons.tsx
++++ b/frontend/src/components/icons/navIcons.tsx
+@@ -20,7 +20,7 @@ const svgProps = {
+   "aria-hidden": true as const,
+ };
+ 
+-export function IconChat({ className = "" }: IconProps) {
++function IconChat({ className = "" }: IconProps) {
+   return (
+     <svg {...svgProps} className={className}>
+       <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+@@ -28,7 +28,7 @@ export function IconChat({ className = "" }: IconProps) {
+   );
+ }
+ 
+-export function IconMedia({ className = "" }: IconProps) {
++function IconMedia({ className = "" }: IconProps) {
+   return (
+     <svg {...svgProps} className={className}>
+       <rect x="3" y="3" width="18" height="18" rx="2" />
+@@ -61,7 +61,7 @@ export function IconLogs({ className = "" }: IconProps) {
+   );
+ }
+ 
+-export function IconManual({ className = "" }: IconProps) {
++function IconManual({ className = "" }: IconProps) {
+   return (
+     <svg {...svgProps} className={className}>
+       <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+@@ -70,7 +70,7 @@ export function IconManual({ className = "" }: IconProps) {
+   );
+ }
+ 
+-export function IconAdmin({ className = "" }: IconProps) {
++function IconAdmin({ className = "" }: IconProps) {
+   return (
+     <svg {...svgProps} className={className}>
+       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+@@ -88,7 +88,7 @@ export function IconFolder({ className = "" }: IconProps) {
+   );
+ }
+ 
+-export function IconProjects({ className = "" }: IconProps) {
++function IconProjects({ className = "" }: IconProps) {
+   return (
+     <svg {...svgProps} className={className}>
+       <path d="M9 11H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2z" />
+diff --git a/frontend/src/components/models/SetDefaultModelModal.tsx b/frontend/src/components/models/SetDefaultModelModal.tsx
+index 7df0e66c..a2f75dd1 100644
+--- a/frontend/src/components/models/SetDefaultModelModal.tsx
++++ b/frontend/src/components/models/SetDefaultModelModal.tsx
+@@ -4,7 +4,7 @@ import Modal from "../Modal";
+ import ModelName from "../ModelName";
+ import type { CatalogModel } from "../../lib/modelCatalog";
+ 
+-export type DefaultKindKey = "chat" | "voice" | "image" | "video";
++type DefaultKindKey = "chat" | "voice" | "image" | "video";
+ 
+ export type DefaultKind = {
+   key: DefaultKindKey;
+diff --git a/frontend/src/components/operations/OperationsTimeRangeMenu.tsx b/frontend/src/components/operations/OperationsTimeRangeMenu.tsx
+index 2d3030f6..e4d86216 100644
+--- a/frontend/src/components/operations/OperationsTimeRangeMenu.tsx
++++ b/frontend/src/components/operations/OperationsTimeRangeMenu.tsx
+@@ -51,12 +51,6 @@ const META: Record<OpsRangeKey, { label: string; badge: string }> = {
+   this_week: { label: "This Week", badge: "TW" },
+   prev_week: { label: "Prev Week", badge: "PW" },
+ };
+-
+-export function parseOpsRangeKey(raw: string | null): OpsRangeKey {
+-  if (raw && raw in META) return raw as OpsRangeKey;
+-  return DEFAULT_OPS_RANGE;
+-}
+-
+ type Props = {
+   value: OpsRangeKey;
+   onChange: (key: OpsRangeKey) => void;
+diff --git a/frontend/src/context/ChatModelChromeContext.tsx b/frontend/src/context/ChatModelChromeContext.tsx
+index 68268e27..5d60b09c 100644
+--- a/frontend/src/context/ChatModelChromeContext.tsx
++++ b/frontend/src/context/ChatModelChromeContext.tsx
+@@ -1,6 +1,6 @@
+ import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+ 
+-export type ChatModelChromeSelection = {
++type ChatModelChromeSelection = {
+   id: string;
+   name: string;
+   external_id?: string;
+diff --git a/frontend/src/lib/agentActivity.ts b/frontend/src/lib/agentActivity.ts
+index 5b35b1c5..931c06a7 100644
+--- a/frontend/src/lib/agentActivity.ts
++++ b/frontend/src/lib/agentActivity.ts
+@@ -1,6 +1,6 @@
+ import { humanAgentStatus } from "./agentPlatform";
+ 
+-export const AGENT_ACTIVITY_PATH = "/admin/agent-activity";
++const AGENT_ACTIVITY_PATH = "/admin/agent-activity";
+ 
+ export type RuntimeHealthStatus = "blocked" | "failed";
+ 
+diff --git a/frontend/src/lib/agentChat.ts b/frontend/src/lib/agentChat.ts
+index 7b740edb..96179ce4 100644
+--- a/frontend/src/lib/agentChat.ts
++++ b/frontend/src/lib/agentChat.ts
+@@ -177,7 +177,7 @@ export async function fetchAgentCitation(
+ }
+ 
+ /** Matches backend knowledge_citation_service markers embedded in agent answers. */
+-export const AGENT_CITATION_MARKER_RE = /\[\[cite:([A-Za-z0-9._:-]{1,128})\]\]/g;
++const AGENT_CITATION_MARKER_RE = /\[\[cite:([A-Za-z0-9._:-]{1,128})\]\]/g;
+ 
+ /**
+  * Stable [1]/[2] numbering for Verified sources and inline markers.
+diff --git a/frontend/src/lib/agentPlatform.ts b/frontend/src/lib/agentPlatform.ts
+index 1009a506..6e009a92 100644
+--- a/frontend/src/lib/agentPlatform.ts
++++ b/frontend/src/lib/agentPlatform.ts
+@@ -64,7 +64,7 @@ export type ResourceAccessRecord = {
+   >;
+ };
+ 
+-export type KnowledgeVersionRecord = {
++type KnowledgeVersionRecord = {
+   id: string;
+   document_id: string;
+   version_number: number;
+diff --git a/frontend/src/lib/agentPolicyForm.ts b/frontend/src/lib/agentPolicyForm.ts
+index 3d6de8e4..9cef197e 100644
+--- a/frontend/src/lib/agentPolicyForm.ts
++++ b/frontend/src/lib/agentPolicyForm.ts
+@@ -16,7 +16,7 @@ function asPolicyObject(value: unknown): Record<string, unknown> {
+   return { ...value } as Record<string, unknown>;
+ }
+ 
+-export function asStringList(value: unknown): string[] {
++function asStringList(value: unknown): string[] {
+   if (!Array.isArray(value)) return [];
+   const seen = new Set<string>();
+   const items: string[] = [];
+diff --git a/frontend/src/lib/audioWav.ts b/frontend/src/lib/audioWav.ts
+index 3eb028cf..7a40348c 100644
+--- a/frontend/src/lib/audioWav.ts
++++ b/frontend/src/lib/audioWav.ts
+@@ -35,12 +35,6 @@ function offlineAudioContextCtor(): OfflineAudioContextCtor | null {
+   const w = window as Window & { webkitOfflineAudioContext?: OfflineAudioContextCtor };
+   return window.OfflineAudioContext || w.webkitOfflineAudioContext || null;
+ }
+-
+-/** True when this browser can decode and re-encode audio at all. */
+-export function canEncodeWav(): boolean {
+-  return Boolean(audioContextCtor() && offlineAudioContextCtor());
+-}
+-
+ /**
+  * Downmix to mono at `sampleRate`.
+  *
+@@ -78,7 +72,7 @@ function writeAscii(view: DataView, offset: number, text: string): void {
+ }
+ 
+ /** Wrap mono float samples in a canonical 16-bit PCM RIFF/WAVE container. */
+-export function encodeWav(samples: Float32Array, sampleRate: number): Blob {
++function encodeWav(samples: Float32Array, sampleRate: number): Blob {
+   const dataBytes = samples.length * BYTES_PER_SAMPLE;
+   const buffer = new ArrayBuffer(WAV_HEADER_BYTES + dataBytes);
+   const view = new DataView(buffer);
+diff --git a/frontend/src/lib/chatAttachments.ts b/frontend/src/lib/chatAttachments.ts
+index baf235b1..e6ec974e 100644
+--- a/frontend/src/lib/chatAttachments.ts
++++ b/frontend/src/lib/chatAttachments.ts
+@@ -23,9 +23,6 @@ export type AttachmentMessagePayload = {
+ };
+ 
+ export const DEFAULT_MAX_ATTACHMENTS = 5;
+-/** @deprecated Prefer the admin-configured limit from `/api/chat/attachment-limits`. */
+-export const MAX_ATTACHMENTS = DEFAULT_MAX_ATTACHMENTS;
+-
+ const BLOCKED_EXTENSIONS = new Set([
+   "apk", "app", "application", "asp", "aspx", "bat", "bin", "cab", "cmd", "com", "cpl", "crt",
+   "deb", "dll", "dmg", "exe", "gadget", "hta", "htm", "html", "inf", "ins", "iso", "jar", "js",
+@@ -206,7 +203,7 @@ const IMAGE_EDIT_PROMPT_HINTS: RegExp[] = [
+   /(قسمت|بخش).*(عکس|تصویر)/,
+ ];
+ 
+-export function promptTextFromUserContent(content: string): string {
++function promptTextFromUserContent(content: string): string {
+   const attach = readAttachmentMessage(content);
+   if (attach) return attach.userText.trim();
+   return content.trim();
+@@ -372,7 +369,7 @@ function blobToDataUrl(blob: Blob): Promise<string> {
+   });
+ }
+ 
+-export async function resolveAttachmentImageUrlForApi(raw: string): Promise<string | undefined> {
++async function resolveAttachmentImageUrlForApi(raw: string): Promise<string | undefined> {
+   const trimmed = (raw || "").trim();
+   if (!trimmed) return undefined;
+   if (isPrivateBlobRef(trimmed) || trimmed.startsWith("blob:")) {
+diff --git a/frontend/src/lib/chatCodeInterpreterModels.ts b/frontend/src/lib/chatCodeInterpreterModels.ts
+index 945f4a83..e3fc1ae4 100644
+--- a/frontend/src/lib/chatCodeInterpreterModels.ts
++++ b/frontend/src/lib/chatCodeInterpreterModels.ts
+@@ -2,7 +2,7 @@
+ 
+ import { isAutoRouterModel, type ChatModelRef } from "./chatModels";
+ 
+-export type CodeInterpreterCompatibilityStatus =
++type CodeInterpreterCompatibilityStatus =
+   | "compatible"
+   | "unknown"
+   | "probing"
+diff --git a/frontend/src/lib/chatImage.ts b/frontend/src/lib/chatImage.ts
+index 3a94a01e..633e5ebe 100644
+--- a/frontend/src/lib/chatImage.ts
++++ b/frontend/src/lib/chatImage.ts
+@@ -1,11 +1,9 @@
+ import {
+   type ChatMessage,
+   cancelStreamingReplyOnServer,
+-  fetchSessionWithMessages,
+-  isPrivateChat,
+   syncSessionMessages,
+ } from "./chatStorage";
+-import { referenceImageFromUserContent, resolveReferenceImageFromUserContent } from "./chatAttachments";
++import { resolveReferenceImageFromUserContent } from "./chatAttachments";
+ import { isPrivateBlobRef, resolvePrivateMediaUrlForApi } from "./privateMediaStore";
+ import { authFetch } from "../api";
+ import { humanizeGatewayError } from "./gatewayErrors";
+@@ -54,10 +52,10 @@ type ImageResponse = {
+ };
+ 
+ /** Must exceed the backend OpenRouter read timeout (180s) so server errors win. */
+-export const IMAGE_GENERATION_TIMEOUT_MS = 240_000;
+-export const IMAGE_PREPARATION_TIMEOUT_MS = 15_000;
+-export const IMAGE_TIMEOUT_MESSAGE = "Image generation timed out.";
+-export const IMAGE_PREPARATION_TIMEOUT_MESSAGE =
++const IMAGE_GENERATION_TIMEOUT_MS = 240_000;
++const IMAGE_PREPARATION_TIMEOUT_MS = 15_000;
++const IMAGE_TIMEOUT_MESSAGE = "Image generation timed out.";
++const IMAGE_PREPARATION_TIMEOUT_MESSAGE =
+   "Preparing the image request timed out. Please retry.";
+ 
+ const activeJobs = new Map<string, AbortController>();
+@@ -177,21 +175,6 @@ export function lastAssistantImageUrl(messages: ChatMessage[]): string | undefin
+   }
+   return undefined;
+ }
+-
+-/**
+- * Image-to-image reference: explicit attachment, or prior assistant image when editing.
+- */
+-export function resolveImageGenerationReference(
+-  userContent: string,
+-  history: ChatMessage[],
+-  usePriorAssistantImage = false,
+-): string | undefined {
+-  const fromUser = referenceImageFromUserContent(userContent);
+-  if (fromUser) return fromUser;
+-  if (usePriorAssistantImage) return lastAssistantImageUrl(history);
+-  return undefined;
+-}
+-
+ /** Async variant — resolves private blob refs for img2img API calls. */
+ export async function resolveImageGenerationReferenceAsync(
+   userContent: string,
+@@ -215,7 +198,7 @@ export function sessionHasPendingImage(messages: ChatMessage[]): boolean {
+ }
+ 
+ /** Drop stale pending placeholders superseded by a later assistant message. */
+-export function stripOrphanImagePending(messages: ChatMessage[]): ChatMessage[] {
++function stripOrphanImagePending(messages: ChatMessage[]): ChatMessage[] {
+   const last = messages.at(-1);
+   if (last?.content === IMAGE_PENDING_MARKER) return messages;
+   return messages.filter((m) => m.content !== IMAGE_PENDING_MARKER);
+@@ -638,8 +621,3 @@ export async function runBackgroundImageGeneration(opts: {
+     notify(sessionId);
+   }
+ }
+-
+-export async function sessionIsPrivate(sessionId: string): Promise<boolean> {
+-  const session = await fetchSessionWithMessages(sessionId);
+-  return isPrivateChat(session);
+-}
+diff --git a/frontend/src/lib/chatImageModels.ts b/frontend/src/lib/chatImageModels.ts
+index 5a9b20ae..c1e93840 100644
+--- a/frontend/src/lib/chatImageModels.ts
++++ b/frontend/src/lib/chatImageModels.ts
+@@ -1,7 +1,6 @@
+ /** Image-capable chat model detection and preferred model selection for Image Generation tool. */
+ 
+ import {
+-  AUTO_ROUTER_EXTERNAL_ID,
+   isAutoRouterModel,
+   type ChatModelRef,
+ } from "./chatModels";
+@@ -15,7 +14,7 @@ export type ImageCapableModelRef = ChatModelRef & {
+ };
+ 
+ /** The admin-chosen default for a capability, when it is still usable. */
+-export function findSystemDefaultModel<T extends { default_kinds?: string[] }>(
++function findSystemDefaultModel<T extends { default_kinds?: string[] }>(
+   models: T[],
+   kind: string,
+   usable: (m: T) => boolean,
+@@ -97,7 +96,7 @@ export function findImageGenerationFallbackModel<T extends ImageCapableModelRef>
+ }
+ 
+ /** First enabled image model excluding Auto Router (for upstream image API calls). */
+-export function findConcreteImageGenerationModel<T extends ImageCapableModelRef>(
++function findConcreteImageGenerationModel<T extends ImageCapableModelRef>(
+   models: T[],
+ ): T | undefined {
+   // Admin's pick wins over catalog order, which is otherwise arbitrary.
+@@ -167,4 +166,4 @@ export function resolveSessionModelForTools<T extends ImageCapableModelRef>(
+   return fallbackToDefault(undefined);
+ }
+ 
+-export { AUTO_ROUTER_EXTERNAL_ID, isAutoRouterModel };
++;
+diff --git a/frontend/src/lib/chatMessages.ts b/frontend/src/lib/chatMessages.ts
+index 68ffdde8..1f22c42c 100644
+--- a/frontend/src/lib/chatMessages.ts
++++ b/frontend/src/lib/chatMessages.ts
+@@ -1,5 +1,5 @@
+ /** Shown in Chat when no models are enabled / available. */
+-export const CHAT_NO_MODELS_MESSAGE =
++const CHAT_NO_MODELS_MESSAGE =
+   "No models are currently available. Contact your administrator";
+ 
+ const LEGACY_NO_MODELS_PATTERNS = [
+diff --git a/frontend/src/lib/chatModelPresets.ts b/frontend/src/lib/chatModelPresets.ts
+index 87e22419..7dd03cef 100644
+--- a/frontend/src/lib/chatModelPresets.ts
++++ b/frontend/src/lib/chatModelPresets.ts
+@@ -5,11 +5,3 @@ export const MAX_MULTI_MODELS = 4;
+ export function catalogMonthLabel(now = new Date()): string {
+   return now.toLocaleString("en-US", { month: "long", year: "numeric" });
+ }
+-
+-export function shortcutModKey(): string {
+-  if (typeof navigator === "undefined") return "Ctrl";
+-  const platform = navigator.platform || "";
+-  const ua = navigator.userAgent || "";
+-  if (/Mac|iPhone|iPad|iPod/i.test(platform) || /Mac OS/i.test(ua)) return "⌘";
+-  return "Ctrl";
+-}
+diff --git a/frontend/src/lib/chatModels.ts b/frontend/src/lib/chatModels.ts
+index 097d1f0f..13425eb3 100644
+--- a/frontend/src/lib/chatModels.ts
++++ b/frontend/src/lib/chatModels.ts
+@@ -20,7 +20,7 @@ export function modelSupportsTextChat(m?: ChatModelRef | null): boolean {
+   return kinds.includes("text");
+ }
+ 
+-export const AUTO_ROUTER_EXTERNAL_ID = "openrouter/auto";
++const AUTO_ROUTER_EXTERNAL_ID = "openrouter/auto";
+ 
+ /** True for openrouter/auto, openrouter/auto-beta, and display name "Auto Router*". */
+ export function isAutoRouterExternalId(externalId?: string | null): boolean {
+@@ -40,11 +40,6 @@ export function isAutoRouterModel(m?: ChatModelRef | null): boolean {
+   const name = (m.name || "").trim().toLowerCase();
+   return name === "auto router" || name.startsWith("auto router ");
+ }
+-
+-export function findAutoRouterModel(models: ChatModelRef[]): ChatModelRef | undefined {
+-  return models.find(isAutoRouterModel);
+-}
+-
+ /** Prefer Auto Router, otherwise the first text-capable catalog model. */
+ export function findTextChatFallbackModel<T extends ChatModelRef>(models: T[]): T | undefined {
+   const autoRouter = models.find((m) => isAutoRouterModel(m) && modelSupportsTextChat(m));
+diff --git a/frontend/src/lib/chatScroll.ts b/frontend/src/lib/chatScroll.ts
+index c6ea56b6..565bbccb 100644
+--- a/frontend/src/lib/chatScroll.ts
++++ b/frontend/src/lib/chatScroll.ts
+@@ -1,5 +1,5 @@
+ /** Distance from bottom (px) still treated as "pinned" for auto-scroll. */
+-export const CHAT_SCROLL_PIN_THRESHOLD = 96;
++const CHAT_SCROLL_PIN_THRESHOLD = 96;
+ 
+ export function isNearScrollBottom(
+   el: Pick<HTMLElement, "scrollHeight" | "scrollTop" | "clientHeight">,
+@@ -8,7 +8,7 @@ export function isNearScrollBottom(
+   return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
+ }
+ 
+-export function isChatScrollable(
++function isChatScrollable(
+   el: Pick<HTMLElement, "scrollHeight" | "clientHeight">,
+   slack = 24,
+ ): boolean {
+diff --git a/frontend/src/lib/chatSpeech.ts b/frontend/src/lib/chatSpeech.ts
+index 78617a5a..ebd9b584 100644
+--- a/frontend/src/lib/chatSpeech.ts
++++ b/frontend/src/lib/chatSpeech.ts
+@@ -33,16 +33,16 @@ type SpeechResponse = {
+ };
+ 
+ /** Must exceed the backend speech timeout (120s) so server errors win. */
+-export const SPEECH_GENERATION_TIMEOUT_MS = 150_000;
+-export const SPEECH_PREPARATION_TIMEOUT_MS = 15_000;
+-export const SPEECH_TIMEOUT_MESSAGE = "Speech generation timed out.";
+-export const SPEECH_PREPARATION_TIMEOUT_MESSAGE =
++const SPEECH_GENERATION_TIMEOUT_MS = 150_000;
++const SPEECH_PREPARATION_TIMEOUT_MS = 15_000;
++const SPEECH_TIMEOUT_MESSAGE = "Speech generation timed out.";
++const SPEECH_PREPARATION_TIMEOUT_MESSAGE =
+   "Preparing the speech request timed out. Please retry.";
+ 
+ const activeJobs = new Map<string, AbortController>();
+ const listeners = new Set<(sessionId: string) => void>();
+ 
+-export class SpeechPreparationTimeoutError extends Error {
++class SpeechPreparationTimeoutError extends Error {
+   constructor() {
+     super(SPEECH_PREPARATION_TIMEOUT_MESSAGE);
+     this.name = "SpeechPreparationTimeoutError";
+@@ -54,7 +54,7 @@ function speechAbortError(): DOMException {
+ }
+ 
+ /** Bound pre-request chat sync and release immediately when the speech job stops. */
+-export async function awaitSpeechPreparation<T>(
++async function awaitSpeechPreparation<T>(
+   work: (signal: AbortSignal) => Promise<T>,
+   jobSignal: AbortSignal,
+   timeoutMs = SPEECH_PREPARATION_TIMEOUT_MS,
+@@ -109,11 +109,6 @@ export function subscribeBackgroundSpeechUpdates(listener: (sessionId: string) =
+ export function isBackgroundSpeechRunning(sessionId: string): boolean {
+   return activeJobs.has(sessionId);
+ }
+-
+-export function getBackgroundSpeechSessionIds(): string[] {
+-  return [...activeJobs.keys()];
+-}
+-
+ export function stopBackgroundSpeechGeneration(sessionId: string) {
+   const controller = activeJobs.get(sessionId);
+   if (controller) {
+@@ -123,7 +118,7 @@ export function stopBackgroundSpeechGeneration(sessionId: string) {
+   }
+ }
+ 
+-export function buildSpeechMessage(payload: SpeechPayload): string {
++function buildSpeechMessage(payload: SpeechPayload): string {
+   return `${SPEECH_MESSAGE_PREFIX}${JSON.stringify(payload)}`;
+ }
+ 
+@@ -135,12 +130,6 @@ export function parseSpeechMessage(content: string): SpeechPayload | null {
+     return null;
+   }
+ }
+-
+-export function sessionHasPendingSpeech(messages: ChatMessage[]): boolean {
+-  const last = messages.at(-1);
+-  return last?.role === "assistant" && last.content === SPEECH_PENDING_MARKER;
+-}
+-
+ export function shouldRouteToSpeechGeneration(args: {
+   speechGenerationEnabled: boolean;
+   modelSupportsSpeech: boolean;
+@@ -149,7 +138,7 @@ export function shouldRouteToSpeechGeneration(args: {
+ }
+ 
+ /** Drop stale pending placeholders superseded by a later assistant message. */
+-export function stripOrphanSpeechPending(messages: ChatMessage[]): ChatMessage[] {
++function stripOrphanSpeechPending(messages: ChatMessage[]): ChatMessage[] {
+   const last = messages.at(-1);
+   if (last?.content === SPEECH_PENDING_MARKER) return messages;
+   return messages.filter((m) => m.content !== SPEECH_PENDING_MARKER);
+diff --git a/frontend/src/lib/chatSpeechModels.ts b/frontend/src/lib/chatSpeechModels.ts
+index 945c18fe..648b20d8 100644
+--- a/frontend/src/lib/chatSpeechModels.ts
++++ b/frontend/src/lib/chatSpeechModels.ts
+@@ -1,7 +1,6 @@
+ /** Speech-capable chat model detection for Text-to-Speech tool. */
+ 
+ import {
+-  AUTO_ROUTER_EXTERNAL_ID,
+   isAutoRouterModel,
+   type ChatModelRef,
+ } from "./chatModels";
+@@ -39,7 +38,7 @@ export function modelSupportsSpeech(
+   return modelSupportsTextToSpeech(m, catalog);
+ }
+ 
+-export function findConcreteSpeechGenerationModel<T extends SpeechCapableModelRef>(
++function findConcreteSpeechGenerationModel<T extends SpeechCapableModelRef>(
+   models: T[],
+ ): T | undefined {
+   return models.find((m) => !isAutoRouterModel(m) && dedicatedTextToSpeech(m));
+@@ -117,4 +116,4 @@ export function resolveSessionModelForSpeechTools<T extends SpeechCapableModelRe
+   return fallbackToDefault(undefined);
+ }
+ 
+-export { AUTO_ROUTER_EXTERNAL_ID, isAutoRouterModel };
++;
+diff --git a/frontend/src/lib/chatStorage.ts b/frontend/src/lib/chatStorage.ts
+index 9bdc4fa2..e3f1f6c5 100644
+--- a/frontend/src/lib/chatStorage.ts
++++ b/frontend/src/lib/chatStorage.ts
+@@ -40,7 +40,6 @@ export type UserPrefs = {
+   default_model: string | null;
+   theme: UserTheme;
+   timezone: string;
+-  language: string;
+   /** "auto" sends no language hint to speech-to-text; "en"/"fa" force one. */
+   voice_recording_language: VoiceLang;
+   /** Catalog ref for speech-to-text; empty = the admin-selected default. */
+@@ -136,9 +135,6 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
+   const timezone = typeof raw?.timezone === "string" && raw.timezone.trim()
+     ? raw.timezone.trim()
+     : "UTC";
+-  const language = typeof raw?.language === "string" && raw.language.trim()
+-    ? raw.language.trim().toLowerCase()
+-    : "en";
+   const voiceRecordingLang = normalizeVoiceLang(
+     typeof raw?.voice_recording_language === "string" ? raw.voice_recording_language : null,
+   );
+@@ -157,7 +153,6 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
+     default_model: model,
+     theme,
+     timezone,
+-    language: language === "en" ? "en" : "en",
+     voice_recording_language: voiceRecordingLang,
+     transcription_model: transcriptionModel,
+     persian_font: persianFont,
+@@ -431,14 +426,6 @@ export function setCachedSessionMessages(
+   data: CachedMessages,
+ ): void {
+   messageCache.set(cacheKey(sessionId), data);
+-  try {
+-    sessionStorage.setItem(
+-      `${STORAGE_KEYS.privateChats}:msgcache:${sessionId}`,
+-      JSON.stringify({ revision: data.revision, oldestSequence: data.oldestSequence }),
+-    );
+-  } catch {
+-    /* optional */
+-  }
+ }
+ 
+ function markSessionDirty(sessionId: string, metadataOnly = false) {
+diff --git a/frontend/src/lib/chatTools.ts b/frontend/src/lib/chatTools.ts
+index 249e47ff..f9d68177 100644
+--- a/frontend/src/lib/chatTools.ts
++++ b/frontend/src/lib/chatTools.ts
+@@ -1,5 +1,3 @@
+-import { STORAGE_KEYS } from "./brand";
+-
+ import {
+   DEFAULT_CUSTOM_ASPECT_RATIO,
+   DEFAULT_IMAGE_ASPECT_PRESET,
+@@ -9,9 +7,9 @@ import {
+   type ImageAspectPresetId,
+ } from "./imageSize";
+ 
+-export type WebSearchDepth = "low" | "medium" | "high";
+-export type VideoResolution = "480p" | "720p" | "1080p";
+-export type SpeechFormat = "mp3";
++type WebSearchDepth = "low" | "medium" | "high";
++type VideoResolution = "480p" | "720p" | "1080p";
++type SpeechFormat = "mp3";
+ 
+ export type ChatToolsState = {
+   webSearch: boolean;
+@@ -37,7 +35,7 @@ export type ChatToolsState = {
+ };
+ 
+ /** All tools off — used for new chats and reset. */
+-export const FRESH_CHAT_TOOLS: ChatToolsState = {
++const FRESH_CHAT_TOOLS: ChatToolsState = {
+   webSearch: false,
+   webSearchDepth: "medium",
+   webFetch: false,
+@@ -178,18 +176,6 @@ export function normalizeChatTools(raw?: Partial<ChatToolsState> | null): ChatTo
+     codeInterpreter: raw.codeInterpreter ?? FRESH_CHAT_TOOLS.codeInterpreter,
+   };
+ }
+-
+-/** @deprecated Global tools prefs; sessions store their own tools now. */
+-export function loadChatTools(): ChatToolsState {
+-  try {
+-    const raw = localStorage.getItem(STORAGE_KEYS.chatTools);
+-    if (!raw) return { ...FRESH_CHAT_TOOLS };
+-    return normalizeChatTools(JSON.parse(raw) as Partial<ChatToolsState>);
+-  } catch {
+-    return { ...FRESH_CHAT_TOOLS };
+-  }
+-}
+-
+ export function toolsToApiPayload(state: ChatToolsState) {
+   return {
+     web_search: state.webSearch,
+@@ -204,9 +190,3 @@ export function toolsToApiPayload(state: ChatToolsState) {
+     },
+   };
+ }
+-
+-export function webSearchDepthLabel(depth: WebSearchDepth) {
+-  if (depth === "low") return "Low";
+-  if (depth === "high") return "High";
+-  return "Medium";
+-}
+diff --git a/frontend/src/lib/chatVideo.ts b/frontend/src/lib/chatVideo.ts
+index e1e25f5c..826db863 100644
+--- a/frontend/src/lib/chatVideo.ts
++++ b/frontend/src/lib/chatVideo.ts
+@@ -39,7 +39,7 @@ type VideoJobResponse = {
+   request_log_id?: number;
+ };
+ 
+-export const VIDEO_POLL_INTERVAL_MS = 2500;
++const VIDEO_POLL_INTERVAL_MS = 2500;
+ /**
+  * Client-side polling budget.
+  *
+@@ -55,13 +55,13 @@ export const VIDEO_POLL_INTERVAL_MS = 2500;
+  * normally, leaving "Video generation timed out." in the chat while the video
+  * landed in the media library.
+  */
+-export const VIDEO_GENERATION_TIMEOUT_MS = 1_200_000;
+-export const VIDEO_TIMEOUT_MESSAGE = "Video generation timed out.";
+-export const VIDEO_STILL_PROCESSING_MESSAGE =
++const VIDEO_GENERATION_TIMEOUT_MS = 1_200_000;
++const VIDEO_TIMEOUT_MESSAGE = "Video generation timed out.";
++const VIDEO_STILL_PROCESSING_MESSAGE =
+   "This video is taking longer than usual. It is still generating on the server and will appear here, and in your media library, once it finishes.";
+ 
+ /** Raised when the client budget runs out while the server job is still alive. */
+-export class VideoStillProcessingError extends Error {
++class VideoStillProcessingError extends Error {
+   readonly jobId: string;
+   readonly status: string;
+ 
+@@ -119,7 +119,7 @@ export function parseVideoMessage(content: string): VideoPayload | null {
+   }
+ }
+ 
+-export function lastAssistantImageUrlForVideo(messages: ChatMessage[]): string | undefined {
++function lastAssistantImageUrlForVideo(messages: ChatMessage[]): string | undefined {
+   for (let i = messages.length - 1; i >= 0; i -= 1) {
+     const msg = messages[i];
+     if (msg.role !== "assistant") continue;
+@@ -139,7 +139,7 @@ export function lastAssistantImageUrlForVideo(messages: ChatMessage[]): string |
+   return undefined;
+ }
+ 
+-export async function resolveVideoGenerationReferenceAsync(
++async function resolveVideoGenerationReferenceAsync(
+   userContent: string,
+   history: ChatMessage[],
+   usePriorAssistantImage = false,
+diff --git a/frontend/src/lib/chatVideoModels.ts b/frontend/src/lib/chatVideoModels.ts
+index 1dbf03ac..caa6c1fe 100644
+--- a/frontend/src/lib/chatVideoModels.ts
++++ b/frontend/src/lib/chatVideoModels.ts
+@@ -1,7 +1,6 @@
+ /** Video-capable chat model detection for Video Generation tool. */
+ 
+ import {
+-  AUTO_ROUTER_EXTERNAL_ID,
+   isAutoRouterModel,
+   type ChatModelRef,
+ } from "./chatModels";
+@@ -34,16 +33,6 @@ export function modelSupportsTextToVideo(
+   if (isAutoRouterModel(m)) return autoRouterCanGenerateVideos(catalog);
+   return dedicatedTextToVideo(m);
+ }
+-
+-export function modelSupportsImageToVideo(
+-  m?: VideoCapableModelRef,
+-  catalog?: VideoCapableModelRef[],
+-): boolean {
+-  if (!m) return false;
+-  if (isAutoRouterModel(m)) return autoRouterCanGenerateVideos(catalog);
+-  return dedicatedImageToVideo(m);
+-}
+-
+ export function modelSupportsVideos(
+   m?: VideoCapableModelRef,
+   catalog?: VideoCapableModelRef[],
+@@ -53,7 +42,7 @@ export function modelSupportsVideos(
+   return dedicatedTextToVideo(m) || dedicatedImageToVideo(m);
+ }
+ 
+-export function findConcreteVideoGenerationModel<T extends VideoCapableModelRef>(
++function findConcreteVideoGenerationModel<T extends VideoCapableModelRef>(
+   models: T[],
+ ): T | undefined {
+   // Admin's pick wins over catalog order, which is otherwise arbitrary.
+@@ -120,4 +109,4 @@ export function resolveSessionModelForVideoTools<T extends VideoCapableModelRef>
+   return fallbackToDefault(undefined);
+ }
+ 
+-export { AUTO_ROUTER_EXTERNAL_ID, isAutoRouterModel };
++;
+diff --git a/frontend/src/lib/chatWelcome.ts b/frontend/src/lib/chatWelcome.ts
+index 6776be92..4e06d15d 100644
+--- a/frontend/src/lib/chatWelcome.ts
++++ b/frontend/src/lib/chatWelcome.ts
+@@ -5,7 +5,7 @@ export const COMPOSER_DEFAULT_PLACEHOLDER = "Ask anything";
+ 
+ type TimeOfDay = "morning" | "afternoon" | "evening";
+ 
+-export function getTimeOfDay(now = new Date()): TimeOfDay {
++function getTimeOfDay(now = new Date()): TimeOfDay {
+   const hour = now.getHours();
+   if (hour >= 5 && hour < 12) return "morning";
+   if (hour >= 12 && hour < 18) return "afternoon";
+diff --git a/frontend/src/lib/connectionProviders.ts b/frontend/src/lib/connectionProviders.ts
+index 78dbc372..e87e30fb 100644
+--- a/frontend/src/lib/connectionProviders.ts
++++ b/frontend/src/lib/connectionProviders.ts
+@@ -11,7 +11,7 @@ export type ConnectionProviderPreset = {
+   aliases?: string[];
+ };
+ 
+-export const CONNECTION_PROVIDER_PRESETS: readonly ConnectionProviderPreset[] = [
++const CONNECTION_PROVIDER_PRESETS: readonly ConnectionProviderPreset[] = [
+   {
+     id: "openrouter",
+     label: "OpenRouter",
+diff --git a/frontend/src/lib/dateTime.ts b/frontend/src/lib/dateTime.ts
+index 7d7ee718..9eb2f8d8 100644
+--- a/frontend/src/lib/dateTime.ts
++++ b/frontend/src/lib/dateTime.ts
+@@ -15,7 +15,7 @@ const LOCAL_DATE: Intl.DateTimeFormatOptions = {
+ };
+ 
+ /** Parse API datetimes stored as naive UTC (ISO without timezone suffix). */
+-export function parseApiDateTime(iso: string | null | undefined): Date | null {
++function parseApiDateTime(iso: string | null | undefined): Date | null {
+   if (!iso) return null;
+   const trimmed = iso.trim();
+   if (!trimmed) return null;
+diff --git a/frontend/src/lib/imageSize.ts b/frontend/src/lib/imageSize.ts
+index f463d87a..9ec96606 100644
+--- a/frontend/src/lib/imageSize.ts
++++ b/frontend/src/lib/imageSize.ts
+@@ -1,4 +1,3 @@
+-import { safeBrowserUrl } from "./browserUrlPolicy";
+ 
+ /** Image aspect-ratio presets — aligned with OpenRouter `image_config.aspect_ratio`. */
+ 
+@@ -28,7 +27,7 @@ export const SUPPORTED_ASPECT_RATIOS = [
+   "21:9",
+ ] as const;
+ 
+-export type SupportedAspectRatio = (typeof SUPPORTED_ASPECT_RATIOS)[number];
++type SupportedAspectRatio = (typeof SUPPORTED_ASPECT_RATIOS)[number];
+ 
+ export const IMAGE_ASPECT_PRESETS: ImageAspectPreset[] = [
+   { id: "square", label: "Square", shortLabel: "1:1", aspectRatio: "1:1" },
+@@ -37,10 +36,6 @@ export const IMAGE_ASPECT_PRESETS: ImageAspectPreset[] = [
+   { id: "landscape", label: "Landscape", shortLabel: "3:2", aspectRatio: "3:2" },
+   { id: "portrait", label: "Portrait", shortLabel: "2:3", aspectRatio: "2:3" },
+ ];
+-
+-/** @deprecated Use IMAGE_ASPECT_PRESETS */
+-export const IMAGE_SIZE_PRESETS = IMAGE_ASPECT_PRESETS;
+-
+ const PRESET_BY_ID = Object.fromEntries(
+   IMAGE_ASPECT_PRESETS.map((p) => [p.id, p]),
+ ) as Record<Exclude<ImageAspectPresetId, "custom">, ImageAspectPreset>;
+@@ -52,21 +47,6 @@ const ASPECT_RATIO_TO_PRESET: Record<string, ImageAspectPresetId> = {
+   "3:2": "landscape",
+   "2:3": "portrait",
+ };
+-
+-/** Default WxH per aspect ratio for providers that still require `size`. */
+-const ASPECT_RATIO_TO_DEFAULT_SIZE: Record<string, string> = {
+-  "1:1": "1024x1024",
+-  "16:9": "1344x768",
+-  "9:16": "768x1344",
+-  "3:2": "1248x832",
+-  "2:3": "832x1248",
+-  "4:3": "1184x888",
+-  "3:4": "888x1184",
+-  "4:5": "896x1120",
+-  "5:4": "1120x896",
+-  "21:9": "1536x656",
+-};
+-
+ const ASPECT_PATTERN = /^(\d+)\s*:\s*(\d+)$/i;
+ const LEGACY_SIZE_PATTERN = /^(\d+)\s*x\s*(\d+)$/i;
+ 
+@@ -127,17 +107,6 @@ export function normalizeImageAspectPreset(raw?: string | null): ImageAspectPres
+   if (raw && raw in PRESET_BY_ID) return raw as ImageAspectPresetId;
+   return DEFAULT_IMAGE_ASPECT_PRESET;
+ }
+-
+-export function aspectRatioFromPreset(
+-  preset: ImageAspectPresetId,
+-  customAspect?: string,
+-): string {
+-  if (preset === "custom") {
+-    return normalizeCustomAspectRatio(customAspect) ?? DEFAULT_CUSTOM_ASPECT_RATIO;
+-  }
+-  return PRESET_BY_ID[preset].aspectRatio;
+-}
+-
+ export function presetFromAspectRatio(aspectRatio?: string | null): ImageAspectPresetId | undefined {
+   if (!aspectRatio) return undefined;
+   const normalized = normalizeCustomAspectRatio(aspectRatio);
+@@ -145,19 +114,7 @@ export function presetFromAspectRatio(aspectRatio?: string | null): ImageAspectP
+   return ASPECT_RATIO_TO_PRESET[normalized] ?? "custom";
+ }
+ 
+-export function aspectLabelForPreset(preset: ImageAspectPresetId, customAspect?: string): string {
+-  if (preset === "custom") {
+-    return normalizeCustomAspectRatio(customAspect) ?? DEFAULT_CUSTOM_ASPECT_RATIO;
+-  }
+-  return PRESET_BY_ID[preset].shortLabel;
+-}
+-
+-export function defaultSizeForAspectRatio(aspectRatio: string): string {
+-  const normalized = normalizeCustomAspectRatio(aspectRatio) ?? aspectRatio;
+-  return ASPECT_RATIO_TO_DEFAULT_SIZE[normalized] ?? "1024x1024";
+-}
+-
+-export function resolveSessionAspectRatio(tools: {
++function resolveSessionAspectRatio(tools: {
+   imageAspectRatio: ImageAspectPresetId;
+   imageCustomAspectRatio?: string;
+   /** @deprecated legacy WxH field */
+@@ -194,7 +151,7 @@ function applyAspectToken(token: string, found: { preset?: ImageAspectPresetId;
+ }
+ 
+ /** Parse explicit aspect hints from prompt; strip matched tokens from cleaned prompt. */
+-export function parseAspectRatioFromPrompt(prompt: string): {
++function parseAspectRatioFromPrompt(prompt: string): {
+   cleanedPrompt: string;
+   preset?: ImageAspectPresetId;
+   aspectRatio?: string;
+@@ -308,31 +265,3 @@ export function resolveRegenerateImageGeneration(opts: {
+     hasReference: false,
+   });
+ }
+-
+-/** Read pixel dimensions from a data URL or same-origin/http(s) image URL. */
+-export function readReferenceImageDimensions(
+-  referenceUrl: string,
+-): Promise<{ width: number; height: number } | null> {
+-  const ref = safeBrowserUrl(referenceUrl, "image");
+-  if (!ref) return Promise.resolve(null);
+-
+-  return new Promise((resolve) => {
+-    const img = new Image();
+-    img.onload = () => {
+-      const w = img.naturalWidth;
+-      const h = img.naturalHeight;
+-      resolve(w > 0 && h > 0 ? { width: w, height: h } : null);
+-    };
+-    img.onerror = () => resolve(null);
+-    if (ref.startsWith("data:") || ref.startsWith("blob:")) {
+-      img.src = ref;
+-      return;
+-    }
+-    if (ref.startsWith("http://") || ref.startsWith("https://") || ref.startsWith("/")) {
+-      img.crossOrigin = "anonymous";
+-      img.src = ref;
+-      return;
+-    }
+-    resolve(null);
+-  });
+-}
+diff --git a/frontend/src/lib/mediaLibrary.ts b/frontend/src/lib/mediaLibrary.ts
+index 175c42f8..16b74e56 100644
+--- a/frontend/src/lib/mediaLibrary.ts
++++ b/frontend/src/lib/mediaLibrary.ts
+@@ -90,7 +90,7 @@ export function formatMediaDate(iso?: string): string {
+ }
+ 
+ /** Collapse duplicate media rows (same image persisted twice) for Media UI display. */
+-export function mediaDedupeKey(m: MediaItem): string {
++function mediaDedupeKey(m: MediaItem): string {
+   const hash = (m.content_hash || "").trim().toLowerCase();
+   if (hash) return `hash:${hash}`;
+   const prompt = (m.source_prompt || "").trim().toLowerCase();
+diff --git a/frontend/src/lib/modelCatalog.ts b/frontend/src/lib/modelCatalog.ts
+index 824744d4..686be1ed 100644
+--- a/frontend/src/lib/modelCatalog.ts
++++ b/frontend/src/lib/modelCatalog.ts
+@@ -10,7 +10,7 @@ export type ModelKind =
+ 
+ export type ModelAccessType = "public" | "private";
+ 
+-export type CodeInterpreterCompatibilityInfo = {
++type CodeInterpreterCompatibilityInfo = {
+   status: "compatible" | "unknown" | "probing" | "degraded" | "incompatible";
+   compatible: boolean;
+   selectable: boolean;
+@@ -109,7 +109,7 @@ export type ModelEnabledFilter = "on" | "off";
+ export type ModelAccessFilter = ModelAccessType;
+ export const MODEL_NEW_WINDOWS = [1, 3, 7, 14, 30] as const;
+ export type ModelNewFilter = (typeof MODEL_NEW_WINDOWS)[number];
+-export const MODEL_NEW_WINDOW_MS = 24 * 60 * 60 * 1000;
++const MODEL_NEW_WINDOW_MS = 24 * 60 * 60 * 1000;
+ 
+ export function isNewlyListedModel(
+   model: CatalogModel,
+diff --git a/frontend/src/lib/modelProvider.ts b/frontend/src/lib/modelProvider.ts
+index c3b9ad21..baf33de4 100644
+--- a/frontend/src/lib/modelProvider.ts
++++ b/frontend/src/lib/modelProvider.ts
+@@ -29,7 +29,7 @@ const ALIASES: Record<string, string> = {
+  * Resolve the brand slug used for logos.
+  * Prefer model-id specifics (e.g. Gemini sparkle) over a coarse provider label.
+  */
+-export function providerFromModelId(modelId: string | null | undefined): string {
++function providerFromModelId(modelId: string | null | undefined): string {
+   const raw = (modelId || "").trim().toLowerCase();
+   if (!raw) return "unknown";
+ 
+diff --git a/frontend/src/lib/persianFonts.ts b/frontend/src/lib/persianFonts.ts
+index 351f3813..65307aa6 100644
+--- a/frontend/src/lib/persianFonts.ts
++++ b/frontend/src/lib/persianFonts.ts
+@@ -18,7 +18,7 @@ export function listPersianFontOptions(): PersianFontOption[] {
+   return Array.isArray(data.families) ? data.families : [];
+ }
+ 
+-export function isKnownPersianFontId(id: string | null | undefined): boolean {
++function isKnownPersianFontId(id: string | null | undefined): boolean {
+   const trimmed = (id || "").trim();
+   if (!trimmed) return false;
+   return listPersianFontOptions().some((f) => f.id === trimmed);
+diff --git a/frontend/src/lib/privateMediaStore.ts b/frontend/src/lib/privateMediaStore.ts
+index 15c49bc9..5ea0d9fe 100644
+--- a/frontend/src/lib/privateMediaStore.ts
++++ b/frontend/src/lib/privateMediaStore.ts
+@@ -1,6 +1,6 @@
+ /** IndexedDB blob storage for Private Mode chat media (images / attachments). */
+ 
+-export const PRIVATE_BLOB_REF_PREFIX = "private-blob://";
++const PRIVATE_BLOB_REF_PREFIX = "private-blob://";
+ 
+ export const PRIVATE_MEDIA_DB_NAME = "alpha_router_private_media";
+ const DB_VERSION = 1;
+@@ -19,11 +19,11 @@ export function isPrivateBlobRef(url: string): boolean {
+   return url.startsWith(PRIVATE_BLOB_REF_PREFIX);
+ }
+ 
+-export function privateBlobRefId(ref: string): string {
++function privateBlobRefId(ref: string): string {
+   return ref.slice(PRIVATE_BLOB_REF_PREFIX.length);
+ }
+ 
+-export function refForHydratedBlobUrl(blobUrl: string): string | undefined {
++function refForHydratedBlobUrl(blobUrl: string): string | undefined {
+   return blobUrlToRef.get(blobUrl);
+ }
+ 
+@@ -83,7 +83,7 @@ async function readBlob(id: string): Promise<Blob | null> {
+ }
+ 
+ /** Store a data URL or Blob; returns a stable `private-blob://` ref for localStorage JSON. */
+-export async function storePrivateBlob(dataUrlOrBlob: string | Blob): Promise<string> {
++async function storePrivateBlob(dataUrlOrBlob: string | Blob): Promise<string> {
+   const blob =
+     typeof dataUrlOrBlob === "string" ? dataUrlToBlob(dataUrlOrBlob) : dataUrlOrBlob;
+   const id = newBlobId();
+@@ -113,23 +113,6 @@ export async function resolvePrivateBlobRef(ref: string): Promise<string> {
+   blobUrlToRef.set(blobUrl, ref);
+   return blobUrl;
+ }
+-
+-export async function deletePrivateBlob(id: string): Promise<void> {
+-  const db = await openDb();
+-  await new Promise<void>((resolve, reject) => {
+-    const tx = db.transaction(STORE_NAME, "readwrite");
+-    tx.objectStore(STORE_NAME).delete(id);
+-    tx.oncomplete = () => {
+-      db.close();
+-      resolve();
+-    };
+-    tx.onerror = () => {
+-      db.close();
+-      reject(tx.error ?? new Error("Could not delete private media."));
+-    };
+-  });
+-}
+-
+ /** Delete all IndexedDB media kept for browser-only Private Mode. */
+ export async function clearPrivateMediaStore(): Promise<void> {
+   for (const blobUrl of blobUrlToRef.keys()) URL.revokeObjectURL(blobUrl);
+diff --git a/frontend/src/lib/projectRoomsApi.ts b/frontend/src/lib/projectRoomsApi.ts
+index adb0de29..1867543a 100644
+--- a/frontend/src/lib/projectRoomsApi.ts
++++ b/frontend/src/lib/projectRoomsApi.ts
+@@ -144,14 +144,6 @@ export async function createProjectRoom(
+   );
+   return normalizeProjectRoom(data);
+ }
+-
+-export async function getProjectRoom(projectId: string, roomId: string): Promise<ProjectRoom> {
+-  const data = await api<Record<string, unknown>>(
+-    `/api/projects/${encodeURIComponent(projectId)}/rooms/${encodeURIComponent(roomId)}`,
+-  );
+-  return normalizeProjectRoom(data);
+-}
+-
+ export async function deleteProjectRoom(
+   projectId: string,
+   roomId: string,
+diff --git a/frontend/src/lib/projectsApi.ts b/frontend/src/lib/projectsApi.ts
+index 08f7aa52..bfd39aa2 100644
+--- a/frontend/src/lib/projectsApi.ts
++++ b/frontend/src/lib/projectsApi.ts
+@@ -7,7 +7,7 @@ import type { ChatToolsState } from "./chatTools";
+ 
+ export type ProjectRole = "primary_owner" | "owner" | "contributor" | "viewer";
+ export type ProjectVisibility = "private" | "public";
+-export type ProjectStatus = "active" | "archived" | "deletion_pending";
++type ProjectStatus = "active" | "archived" | "deletion_pending";
+ 
+ export function isProjectOwnerRole(role?: string | null): boolean {
+   return role === "primary_owner" || role === "owner";
+@@ -54,14 +54,14 @@ export function needsPublicTypedConfirm(
+   return current !== "public" && next === "public";
+ }
+ 
+-export type ProjectOverviewCounts = {
++type ProjectOverviewCounts = {
+   members: number;
+   chats: number;
+   resources: number;
+   media: number;
+ };
+ 
+-export type ProjectOverviewUsage = {
++type ProjectOverviewUsage = {
+   windowDays: number;
+   totalCostUsd: number;
+   mediaCostUsd: number;
+@@ -142,7 +142,7 @@ export function projectResourceKnowledgeStatus(resource: ProjectResource): strin
+   return (resource.versionStatus || resource.documentStatus || resource.status || "").trim();
+ }
+ 
+-export const PROJECT_RESOURCE_WAITING_LABEL = "Waiting for Admin Approval";
++const PROJECT_RESOURCE_WAITING_LABEL = "Waiting for Admin Approval";
+ 
+ /** User-facing resource status: hide KB pipeline until the file is Published. */
+ export function projectResourceUserStatus(resource: ProjectResource): string {
+@@ -167,7 +167,7 @@ export function projectResourceTooManyFilesMessage(selectedCount: number): strin
+   );
+ }
+ 
+-export type ProjectMemoryOrigin = "manual" | "auto_chat";
++type ProjectMemoryOrigin = "manual" | "auto_chat";
+ 
+ export type ProjectMemory = {
+   id: string;
+@@ -509,13 +509,6 @@ export async function deleteAllAutoProjectMemories(
+     method: "DELETE",
+   });
+ }
+-
+-export async function exportProjectMemories(
+-  projectId: string,
+-): Promise<{ memories: ProjectMemory[]; total: number }> {
+-  return api(`/api/projects/${encodeURIComponent(projectId)}/memories/export`);
+-}
+-
+ export async function createProjectMemory(
+   projectId: string,
+   content: string,
+@@ -593,7 +586,7 @@ export type ProjectMediaItem = {
+ };
+ 
+ /** sessionStorage key for queuing a project media file into the next chat turn. */
+-export const PROJECT_MEDIA_ATTACH_KEY = "alphaRouter.projectMediaAttach";
++const PROJECT_MEDIA_ATTACH_KEY = "alphaRouter.projectMediaAttach";
+ export const PROJECT_MEDIA_ATTACH_EVENT = "alpharouter:project-media-attach";
+ export const PROJECT_MEDIA_ATTACH_CONSUMED_EVENT = "alpharouter:project-media-attach-consumed";
+ 
+@@ -677,19 +670,6 @@ export async function uploadProjectMedia(
+   });
+ }
+ 
+-export async function getProjectMedia(
+-  projectId: string,
+-  mediaId: number,
+-): Promise<ProjectMediaItem> {
+-  return api(
+-    `/api/projects/${encodeURIComponent(projectId)}/media/${encodeURIComponent(String(mediaId))}`,
+-  );
+-}
+-
+-export function projectMediaDownloadUrl(projectId: string, mediaId: number): string {
+-  return `/api/projects/${encodeURIComponent(projectId)}/media/${encodeURIComponent(String(mediaId))}/download`;
+-}
+-
+ export type ProjectChatSession = {
+   id: string;
+   title: string;
+diff --git a/frontend/src/lib/rbac.ts b/frontend/src/lib/rbac.ts
+index 2785f383..8a7b1625 100644
+--- a/frontend/src/lib/rbac.ts
++++ b/frontend/src/lib/rbac.ts
+@@ -46,13 +46,7 @@ const AGENT_PLATFORM_ROLES = new Set([
+ ]);
+ 
+ /** End-user features — not gated by scoped admin read-only roles. */
+-export const USER_APP_MENUS: MenuKey[] = ["chat", "media", "user_manual"];
+-
+-export function isUserAppPath(pathname: string): boolean {
+-  const path = pathname.replace(/\/$/, "") || "/";
+-  return path === "/app" || path.startsWith("/app/");
+-}
+-
++const USER_APP_MENUS: MenuKey[] = ["chat", "media", "user_manual"];
+ export function normalizeRole(role: string | undefined | null): string {
+   const slug = (role || USER).trim().toLowerCase();
+   if (slug === LEGACY_ADMIN) return FULL_ADMIN;
+@@ -65,16 +59,6 @@ export function isAdminPanelRole(role: string | undefined | null): boolean {
+   return slug !== USER && !slug.endsWith("_user");
+ }
+ 
+-export function isReadOnlyAdminRole(role: string | undefined | null): boolean {
+-  const slug = normalizeRole(role);
+-  return slug === READ_ONLY_FULL_ADMIN || slug.endsWith("_read_only_administrator");
+-}
+-
+-export function isFullAdministrator(role: string | undefined | null): boolean {
+-  const slug = normalizeRole(role);
+-  return slug === FULL_ADMIN || slug === SUPER_ADMIN;
+-}
+-
+ /** Matches backend ``user_has_super_admin_access`` (super_admin or full/legacy admin). */
+ export function userHasSuperAdminAccess(
+   roles: string[] | undefined | null,
+@@ -172,7 +156,7 @@ export function isAdminUserFeaturePath(pathname: string): boolean {
+   return menu !== null && USER_APP_MENUS.includes(menu);
+ }
+ 
+-export function accessibleMenuKeys(role: string | undefined | null): MenuKey[] | null {
++function accessibleMenuKeys(role: string | undefined | null): MenuKey[] | null {
+   const slug = normalizeRole(role);
+   if (slug === FULL_ADMIN || slug === READ_ONLY_FULL_ADMIN || slug === SUPER_ADMIN) return null;
+   if (AGENT_PLATFORM_ROLES.has(slug)) return ["agents"];
+@@ -191,7 +175,7 @@ export function canAccessMenu(role: string | undefined | null, menu: MenuKey): b
+   return allowed.includes(menu);
+ }
+ 
+-export function accessibleMenuKeysFromRoles(roles: string[] | undefined | null): MenuKey[] | null {
++function accessibleMenuKeysFromRoles(roles: string[] | undefined | null): MenuKey[] | null {
+   const slugs = (roles ?? []).map(normalizeRole).filter(Boolean);
+   if (!slugs.length) return [];
+   let all = false;
+@@ -230,7 +214,7 @@ export function filterAdminNav(sections: NavSection[], role: string | undefined
+     .filter((section) => section.items.length > 0);
+ }
+ 
+-export function isAdminPathAllowed(pathname: string, role: string | undefined | null): boolean {
++function isAdminPathAllowed(pathname: string, role: string | undefined | null): boolean {
+   const path = pathname.replace(/\/$/, "") || "/";
+   if (!path.startsWith("/admin")) return false;
+   const allowed = accessibleMenuKeys(role);
+@@ -245,17 +229,6 @@ export function getMyActivityPath(role: string): string {
+ export function roleLabel(catalog: RoleRecord[], slug: string): string {
+   return catalog.find((r) => r.slug === normalizeRole(slug))?.name ?? normalizeRole(slug);
+ }
+-
+-export function groupRolesByCategory(roles: RoleRecord[]): Map<string, RoleRecord[]> {
+-  const map = new Map<string, RoleRecord[]>();
+-  for (const role of roles) {
+-    const group = role.category;
+-    if (!map.has(group)) map.set(group, []);
+-    map.get(group)!.push(role);
+-  }
+-  return map;
+-}
+-
+ export function filterAdminNavFromSession(
+   sections: NavSection[],
+   session: SessionRbac | null,
+@@ -292,7 +265,7 @@ export function isAdminPathAllowedForSession(
+   return isAdminPathAllowed(path, session?.role ?? fallbackRole);
+ }
+ 
+-export function canWriteMenu(role: string | undefined | null, menu: MenuKey): boolean {
++function canWriteMenu(role: string | undefined | null, menu: MenuKey): boolean {
+   const slug = normalizeRole(role);
+   if (!isAdminPanelRole(slug)) return false;
+   if (USER_APP_MENUS.includes(menu)) return true;
+@@ -302,7 +275,7 @@ export function canWriteMenu(role: string | undefined | null, menu: MenuKey): bo
+   return true;
+ }
+ 
+-export function userCanWriteMenu(roles: string[] | undefined | null, menu: MenuKey): boolean {
++function userCanWriteMenu(roles: string[] | undefined | null, menu: MenuKey): boolean {
+   const slugs = (roles ?? []).map(normalizeRole).filter(isAdminPanelRole);
+   if (!slugs.length) return false;
+   const contributors = slugs.filter((slug) => canAccessMenu(slug, menu));
+diff --git a/frontend/src/lib/replyReadyNotify.ts b/frontend/src/lib/replyReadyNotify.ts
+index 34c68336..07eff731 100644
+--- a/frontend/src/lib/replyReadyNotify.ts
++++ b/frontend/src/lib/replyReadyNotify.ts
+@@ -42,7 +42,7 @@ function shouldDedupe(sessionId: string, messageKey: string): boolean {
+   return false;
+ }
+ 
+-export function isUserAwayFromSession(
++function isUserAwayFromSession(
+   sessionId: string,
+   activeId: string | null | undefined,
+ ): boolean {
+diff --git a/frontend/src/lib/requestLogCostDetails.ts b/frontend/src/lib/requestLogCostDetails.ts
+index 3c1f0625..7368875c 100644
+--- a/frontend/src/lib/requestLogCostDetails.ts
++++ b/frontend/src/lib/requestLogCostDetails.ts
+@@ -31,7 +31,7 @@ export type RequestLogSummary = {
+   success: boolean;
+ };
+ 
+-export type CostLineItem = {
++type CostLineItem = {
+   category: string;
+   quantity: number;
+   unit: string;
+@@ -40,7 +40,7 @@ export type CostLineItem = {
+   pricing_source: string;
+ };
+ 
+-export type CostEvent = {
++type CostEvent = {
+   id: string;
+   provider_type: string;
+   service_type: string;
+diff --git a/frontend/src/lib/securitySettings.ts b/frontend/src/lib/securitySettings.ts
+index d9fb6fba..715d5751 100644
+--- a/frontend/src/lib/securitySettings.ts
++++ b/frontend/src/lib/securitySettings.ts
+@@ -1,7 +1,6 @@
+-export const ADMIN_IP_MODES = ["off", "monitor", "enforce"] as const;
+-export type AdminIpMode = (typeof ADMIN_IP_MODES)[number];
++export type AdminIpMode = "off" | "monitor" | "enforce";
+ 
+-export const RESERVED_HTTPS_PORTS = [
++const RESERVED_HTTPS_PORTS = [
+   8080, 8081, 5432, 6432, 6379, 6333, 6334, 8333, 3310, 9333, 23646,
+ ] as const;
+ 
+diff --git a/frontend/src/lib/session.ts b/frontend/src/lib/session.ts
+index ef79012d..6b547321 100644
+--- a/frontend/src/lib/session.ts
++++ b/frontend/src/lib/session.ts
+@@ -70,9 +70,6 @@ export async function logout() {
+     for (const key of Object.keys(localStorage)) {
+       if (key.startsWith(`${STORAGE_KEYS.privateChats}:`)) localStorage.removeItem(key);
+     }
+-    for (const key of Object.keys(sessionStorage)) {
+-      if (key.startsWith(`${STORAGE_KEYS.privateChats}:msgcache:`)) sessionStorage.removeItem(key);
+-    }
+     try {
+       await clearPrivateMediaStore();
+     } catch {
+diff --git a/frontend/src/lib/themeCache.ts b/frontend/src/lib/themeCache.ts
+index 1e3d4de2..68d4b0a1 100644
+--- a/frontend/src/lib/themeCache.ts
++++ b/frontend/src/lib/themeCache.ts
+@@ -10,7 +10,7 @@ export type CachedTheme =
+   | "mint-system";
+ 
+ /** Effective document theme used by `[data-theme]`. */
+-export type ResolvedTheme = "light" | "dark" | "mint" | "dark-mint";
++type ResolvedTheme = "light" | "dark" | "mint" | "dark-mint";
+ 
+ /** Named theme shown in the Theme dropdown. */
+ export type NamedTheme = "default" | "mint" | "dark-mint";
+@@ -41,11 +41,11 @@ export function saveCachedTheme(theme: CachedTheme): void {
+   localStorage.setItem(STORAGE_KEYS.theme, theme);
+ }
+ 
+-export function prefersDarkScheme(): boolean {
++function prefersDarkScheme(): boolean {
+   return typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches;
+ }
+ 
+-export function resolveTheme(theme: CachedTheme): ResolvedTheme {
++function resolveTheme(theme: CachedTheme): ResolvedTheme {
+   if (theme === "system") {
+     return prefersDarkScheme() ? "dark" : "light";
+   }
+@@ -55,7 +55,7 @@ export function resolveTheme(theme: CachedTheme): ResolvedTheme {
+   return theme;
+ }
+ 
+-export function colorSchemeFor(resolved: ResolvedTheme): "light" | "dark" {
++function colorSchemeFor(resolved: ResolvedTheme): "light" | "dark" {
+   return resolved === "dark" || resolved === "dark-mint" ? "dark" : "light";
+ }
+ 
+diff --git a/frontend/src/lib/userMemories.ts b/frontend/src/lib/userMemories.ts
+index c0c53791..8a1313d6 100644
+--- a/frontend/src/lib/userMemories.ts
++++ b/frontend/src/lib/userMemories.ts
+@@ -27,7 +27,7 @@ function trimOrNull(value: unknown): string | null {
+   return typeof value === "string" && value.trim() ? value.trim() : null;
+ }
+ 
+-export type UserMemoriesPayload = {
++type UserMemoriesPayload = {
+   memories: UserMemory[];
+   total: number;
+   limit?: number;
+@@ -72,15 +72,6 @@ export async function fetchUserMemoriesBundle(opts?: {
+   };
+ }
+ 
+-export async function fetchUserMemoriesPage(limit: number, offset: number) {
+-  return fetchUserMemoriesBundle({ limit, offset });
+-}
+-
+-export async function listUserMemories(): Promise<UserMemory[]> {
+-  const data = await fetchUserMemoriesBundle();
+-  return data.memories;
+-}
+-
+ export async function updateUserMemory(
+   id: string,
+   updates: { enabled?: boolean },
+diff --git a/frontend/src/lib/userPanelNav.ts b/frontend/src/lib/userPanelNav.ts
+index 2d12f9a2..fc7d111d 100644
+--- a/frontend/src/lib/userPanelNav.ts
++++ b/frontend/src/lib/userPanelNav.ts
+@@ -38,7 +38,7 @@ export function topbarShortcutsForSession(session: SessionRbac | null): NavItem[
+ }
+ 
+ /** Routes allowed for disabled (read-only) users besides direct URL blocking. */
+-export const USER_READ_ONLY_PATHS = [
++const USER_READ_ONLY_PATHS = [
+   "/app/chat",
+   "/app/projects",
+   "/app/media",
+diff --git a/frontend/src/lib/voiceInput.ts b/frontend/src/lib/voiceInput.ts
+index f72903e9..0de75b1c 100644
+--- a/frontend/src/lib/voiceInput.ts
++++ b/frontend/src/lib/voiceInput.ts
+@@ -31,7 +31,7 @@ type SpeechRecognitionInstance = {
+ 
+ type SpeechRecognitionCtor = new () => SpeechRecognitionInstance;
+ 
+-export function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
++function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
+   const w = window as Window & {
+     SpeechRecognition?: SpeechRecognitionCtor;
+     webkitSpeechRecognition?: SpeechRecognitionCtor;
+@@ -57,7 +57,7 @@ export function normalizeVoiceLang(lang?: string | null): VoiceLang {
+ }
+ 
+ /** Map a voice-recording language code to a BCP-47 locale for the browser recognizer. */
+-export function voiceLangToLocale(lang?: string | null): string {
++function voiceLangToLocale(lang?: string | null): string {
+   const norm = normalizeVoiceLang(lang);
+   if (norm === "fa") return "fa-IR";
+   if (norm === "en") return "en-US";
+diff --git a/frontend/src/nav/types.ts b/frontend/src/nav/types.ts
+index a5d72558..d6b79bc3 100644
+--- a/frontend/src/nav/types.ts
++++ b/frontend/src/nav/types.ts
+@@ -8,8 +8,6 @@ export type CategoryKey =
+   | "agents_knowledge"
+   | "developer";
+ 
+-
+-
+ export type MenuKey =
+ 
+   | "dashboard"
+@@ -56,8 +54,6 @@ export type MenuKey =
+ 
+   | "security_settings";
+ 
+-
+-
+ export type NavIconKey = "chat" | "media" | "activity" | "manual" | "admin" | "folder" | "projects";
+ 
+ export type NavItem = {
+@@ -68,8 +64,6 @@ export type NavItem = {
+   icon?: NavIconKey;
+ };
+ 
+-
+-
+ export type NavSection = {
+ 
+   title: string;
+@@ -86,26 +80,8 @@ export type NavSection = {
+ 
+ };
+ 
+-
+-
+ export function isNavGrouped(nav: NavItem[] | NavSection[]): nav is NavSection[] {
+ 
+   return nav.length > 0 && "items" in nav[0];
+ 
+ }
+-
+-
+-
+-export function flattenNav(nav: NavItem[] | NavSection[]): NavItem[] {
+-
+-  if (isNavGrouped(nav)) {
+-
+-    return nav.flatMap((s) => s.items);
+-
+-  }
+-
+-  return nav;
+-
+-}
+-
+-
+diff --git a/scripts/codemods/remove-unused-decls.mjs b/scripts/codemods/remove-unused-decls.mjs
+new file mode 100644
+index 00000000..08797419
+--- /dev/null
++++ b/scripts/codemods/remove-unused-decls.mjs
+@@ -0,0 +1,47 @@
++// Remove top-level declarations named in a "file:line name" list (from eslint no-unused-vars).
++import { createRequire } from "node:module";
++const require = createRequire(process.cwd() + "/");
++const ts = require("typescript");
++import fs from "node:fs";
++const input = fs.readFileSync(0, "utf8").trim().split("\n").filter(Boolean);
++const byFile = {};
++for (const line of input) {
++  const m = line.match(/^(\S+?):(\d+) '([^']+)'/);
++  if (!m) continue;
++  (byFile[m[1]] ??= new Set()).add(m[3]);
++}
++let removed = 0;
++for (const [file, names] of Object.entries(byFile)) {
++  const text = fs.readFileSync(file, "utf8");
++  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
++  const ranges = [];
++  for (const st of sf.statements) {
++    let matched = false;
++    if (ts.isFunctionDeclaration(st) && st.name && names.has(st.name.text)) matched = true;
++    if (ts.isVariableStatement(st)) {
++      const decls = st.declarationList.declarations;
++      if (decls.length === 1 && ts.isIdentifier(decls[0].name) && names.has(decls[0].name.text)) matched = true;
++    }
++    if (ts.isClassDeclaration(st) && st.name && names.has(st.name.text)) matched = true;
++    if (!matched) continue;
++    // include leading comments (JSDoc) that belong to this statement
++    const start = st.getFullStart();
++    let end = st.getEnd();
++    // swallow one trailing newline run
++    while (end < text.length && text[end] === "\n") end++;
++    ranges.push([start, end, st.name?.text ?? "var"]);
++  }
++  if (!ranges.length) continue;
++  // Clamp overlapping ranges: a statement's full start includes the trivia
++  // after the previous statement, which we may already have swallowed.
++  ranges.sort((a, b) => a[0] - b[0]);
++  for (let i = 0; i < ranges.length - 1; i++) ranges[i][1] = Math.min(ranges[i][1], ranges[i + 1][0]);
++  ranges.sort((a, b) => b[0] - a[0]);
++  let out = text;
++  for (const [s, e] of ranges) out = out.slice(0, s) + "\n" + out.slice(e);
++  out = out.replace(/\n{3,}/g, "\n\n");
++  fs.writeFileSync(file, out);
++  removed += ranges.length;
++  console.log(file + ": " + ranges.map((r) => r[2]).join(", "));
++}
++console.log("removed", removed);
+-- 
+2.43.0
+

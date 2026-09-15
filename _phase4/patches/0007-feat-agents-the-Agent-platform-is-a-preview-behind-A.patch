@@ -1,0 +1,278 @@
+From 9d5ce0b8780b0d9a2e56ced1ec085e38e0daea0f Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 22:38:21 +0000
+Subject: [PATCH 07/12] feat(agents): the Agent platform is a preview behind
+ AGENTS_PLATFORM_ENABLED (default off)
+
+Plan step 4.5 asked for a decision per dormant subsystem: wire it with a
+date, delete it, or put it behind a flag labelled as future work. This
+takes the third option for the whole platform (agents, knowledge bases,
+tool registry, evaluations, governance, document ACL) so the product
+decision can be made subsystem by subsystem later without dead routes
+being reachable in the meantime:
+
+- `agents_platform_enabled` (env AGENTS_PLATFORM_ENABLED, default false).
+- app.main mounts the five agent routers only when it is on; otherwise
+  /api/agents and /api/admin/{agents,knowledge,...} do not exist (404).
+- preflight_stream_chat refuses a chat body that carries agent fields with
+  400 when the flag is off, so the proxy never enters the agent path.
+- /api/auth/session gains `features: {"agents_platform": bool}`; the admin
+  navigation filters preview menus from that flag (and blocks direct
+  /admin/agents... navigation), and the section is titled
+  "Agents & Knowledge (preview)" when on. The chat agent picker already
+  degrades to nothing when the catalog request fails.
+- The knowledge_scheduler compose service is unchanged: its workers are
+  idle without documents and keep the data plane consistent for installs
+  that turn the flag on.
+
+The import coupling inside proxy_service (agent request parsing, runtime
+errors) stays because the chat path legitimately consumes the platform
+when it is enabled; it is now a single guarded entry point.
+
+Tests: flag default, routers absent, session flag, preflight refusal.
+1375 tests; frontend tsc/eslint/vitest/knip clean.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ .env.example                               |  5 ++
+ backend/app/api/auth.py                    |  2 +
+ backend/app/config.py                      |  5 ++
+ backend/app/main.py                        | 13 +++--
+ backend/app/services/proxy_service.py      |  2 +
+ backend/tests/test_agents_platform_flag.py | 60 ++++++++++++++++++++++
+ frontend/src/lib/rbac.ts                   | 28 ++++++++--
+ frontend/src/nav/adminNav.ts               |  2 +-
+ 8 files changed, 108 insertions(+), 9 deletions(-)
+ create mode 100644 backend/tests/test_agents_platform_flag.py
+
+diff --git a/.env.example b/.env.example
+index d41e5bf..3aef6d1 100644
+--- a/.env.example
++++ b/.env.example
+@@ -141,6 +141,11 @@ KNOWLEDGE_RETRIEVAL_MAX_CHUNKS_PER_DOCUMENT=3
+ KNOWLEDGE_RETRIEVAL_CONTEXT_TOKEN_BUDGET=6000
+ KNOWLEDGE_RETRIEVAL_DENSE_SCORE_THRESHOLD=0.05
+ KNOWLEDGE_RETRIEVAL_SPARSE_SCORE_THRESHOLD=0.01
++# Specialist Agent platform (preview, Phase 4.5). Off by default: the agent,
++# knowledge, tool-registry, evaluation and governance routers are not mounted,
++# chat requests carrying agent fields are refused, and the admin navigation
++# hides the section. The knowledge_scheduler service still runs its workers.
++AGENTS_PLATFORM_ENABLED=false
+ # Specialist Agent runtime ceilings. Agent-version policies can only lower
+ # these values; they cannot create unbounded handoff or tool-call loops.
+ AGENT_ROUTER_MAX_CANDIDATES=64
+diff --git a/backend/app/api/auth.py b/backend/app/api/auth.py
+index 5f78d1f..644e442 100644
+--- a/backend/app/api/auth.py
++++ b/backend/app/api/auth.py
+@@ -96,6 +96,8 @@ async def auth_session(user: User = Depends(get_current_user), db: AsyncSession
+         "is_active": bool(user.is_active),
+         "auth_provider": user.auth_provider or "local",
+         **session_payload_for_slugs(slugs),
++        # Feature flags the UI needs to hide preview sections (Phase 4.5).
++        "features": {"agents_platform": bool(settings.agents_platform_enabled)},
+     }
+ 
+ 
+diff --git a/backend/app/config.py b/backend/app/config.py
+index 481e5ec..d9d06a4 100644
+--- a/backend/app/config.py
++++ b/backend/app/config.py
+@@ -64,6 +64,11 @@ class Settings(BaseSettings):
+     # baseline. Set false once an install has run the new migrate once; the
+     # default flips to false in the next release.
+     legacy_schema_bootstrap: bool = True  # env: LEGACY_SCHEMA_BOOTSTRAP
++    # Phase 4.5: the Specialist Agent platform (agents, knowledge bases, tool
++    # registry, evaluations, governance) is a preview. Off by default: its
++    # routers are not mounted, chat requests carrying agent fields are refused
++    # and the admin navigation hides the section.
++    agents_platform_enabled: bool = False  # env: AGENTS_PLATFORM_ENABLED
+     secret_key: str = "change-me-in-production"
+     jwt_algorithm: str = "HS256"
+     # Token lifetime. Default 8h (480 min) — balances UX against stolen-token
+diff --git a/backend/app/main.py b/backend/app/main.py
+index 5dd7472..031479f 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -752,12 +752,15 @@ app.add_middleware(AdminIpGuardMiddleware)
+ app.include_router(auth.router)
+ app.include_router(gateway.router)
+ app.include_router(admin.router)
+-app.include_router(admin_agent_evaluations.router)
+-app.include_router(admin_agent_governance.router)
+-app.include_router(admin_agents.router)
+-app.include_router(admin_knowledge.router)
++if settings.agents_platform_enabled:
++    # Preview feature (Phase 4.5): mounted only when explicitly enabled.
++    app.include_router(admin_agent_evaluations.router)
++    app.include_router(admin_agent_governance.router)
++    app.include_router(admin_agents.router)
++    app.include_router(admin_knowledge.router)
+ app.include_router(admin_memory.router)
+-app.include_router(agents.router)
++if settings.agents_platform_enabled:
++    app.include_router(agents.router)
+ app.include_router(user_routes.router)
+ app.include_router(user_media.router)
+ app.include_router(user_chats.router)
+diff --git a/backend/app/services/proxy_service.py b/backend/app/services/proxy_service.py
+index 4bb90ad..dc256b9 100644
+--- a/backend/app/services/proxy_service.py
++++ b/backend/app/services/proxy_service.py
+@@ -505,6 +505,8 @@ async def preflight_stream_chat(  # noqa: C901 -- Phase 4 split; complexity must
+                 )
+             ).effective
+         agent_options = parse_agent_request(body) if operation == "chat" else None
++        if agent_options is not None and not settings.agents_platform_enabled:
++            raise HTTPException(status_code=400, detail="The Agent platform is not enabled on this installation")
+         if agent_options is not None:
+             agent_turn = await prepare_agent_turn(
+                 db,
+diff --git a/backend/tests/test_agents_platform_flag.py b/backend/tests/test_agents_platform_flag.py
+new file mode 100644
+index 0000000..aeedad7
+--- /dev/null
++++ b/backend/tests/test_agents_platform_flag.py
+@@ -0,0 +1,60 @@
++"""AGENTS_PLATFORM_ENABLED (Phase 4.5): off by default, and off means off everywhere.
++
++* The agent routers are not mounted (404, not 401/403), so nothing behind them
++  is reachable at all.
++* A chat request that carries agent fields is refused at preflight with 400.
++* The session payload tells the UI, which hides the section.
++"""
++
++from __future__ import annotations
++
++from unittest.mock import patch
++
++import pytest
++from fastapi import HTTPException
++
++from app.config import get_settings
++from app.services import proxy_service
++
++
++def test_flag_is_off_by_default():
++    assert get_settings().agents_platform_enabled is False
++
++
++async def test_agent_routes_are_not_mounted_when_disabled(client):
++    assert get_settings().agents_platform_enabled is False
++    resp = await client.get("/api/agents")
++    assert resp.status_code == 404
++    # Admin paths sit behind the IP-guard middleware (which needs the real
++    # database), so check the route table itself for those.
++    from app.main import app
++
++    mounted = {getattr(route, "path", "") for route in app.routes}
++    assert not any(path.startswith(("/api/admin/agents", "/api/admin/knowledge", "/api/agents")) for path in mounted)
++
++
++async def test_session_payload_carries_the_flag(client, user):
++    from app.core.security import create_access_token
++
++    client.cookies.set(get_settings().session_cookie_name, create_access_token(user.username, "user"))
++    resp = await client.get("/api/auth/session")
++    assert resp.status_code == 200
++    assert resp.json()["features"] == {"agents_platform": False}
++
++
++async def test_agent_fields_in_chat_body_are_refused(db_session, user):
++    body = {"model": "vendor/good", "messages": [{"role": "user", "content": "hi"}], "agent_id": "a1"}
++    with (
++        patch.object(proxy_service.settings, "agents_platform_enabled", False),
++        pytest.raises(HTTPException) as exc,
++    ):
++        await proxy_service.preflight_stream_chat(
++            db_session,
++            body,
++            user_id=user.id,
++            skip_budget=True,
++            alpha_router_api_key_id=None,
++            source="alpha_router_chat",
++        )
++    assert exc.value.status_code == 400
++    assert "Agent platform" in str(exc.value.detail)
+diff --git a/frontend/src/lib/rbac.ts b/frontend/src/lib/rbac.ts
+index 8a7b162..b4497c0 100644
+--- a/frontend/src/lib/rbac.ts
++++ b/frontend/src/lib/rbac.ts
+@@ -1,4 +1,4 @@
+-import type { CategoryKey, MenuKey, NavSection } from "../nav/types";
++import type { CategoryKey, MenuKey, NavItem, NavSection } from "../nav/types";
+ 
+ export type { CategoryKey, MenuKey };
+ 
+@@ -24,8 +24,23 @@ export type SessionRbac = {
+   is_admin_panel?: boolean;
+   menus?: MenuKey[] | null;
+   categories?: CategoryKey[] | null;
++  /** Server feature flags (Phase 4.5). Missing = feature on, for older backends. */
++  features?: { agents_platform?: boolean } | null;
+ };
+ 
++/** Menus that belong to preview features and disappear when the feature is off. */
++const PREVIEW_FEATURE_MENUS: Record<string, MenuKey> = { agents_platform: "agents" };
++
++function disabledPreviewMenus(session: SessionRbac | null): Set<MenuKey> {
++  const off = new Set<MenuKey>();
++  const features = session?.features;
++  if (!features) return off;
++  for (const [feature, menu] of Object.entries(PREVIEW_FEATURE_MENUS)) {
++    if ((features as Record<string, boolean | undefined>)[feature] === false) off.add(menu);
++  }
++  return off;
++}
++
+ const FULL_ADMIN = "full_administrator";
+ const READ_ONLY_FULL_ADMIN = "read_only_full_administrator";
+ const SUPER_ADMIN = "super_admin";
+@@ -239,14 +254,18 @@ export function filterAdminNavFromSession(
+       ? session.menus
+       : accessibleMenuKeysFromRoles(session?.roles?.length ? session.roles : [session?.role ?? fallbackRole]);
+ 
++  const hidden = disabledPreviewMenus(session);
++  const visible = (item: NavItem) => item.menuKey == null || !hidden.has(item.menuKey);
+   if (allowed === null) {
+-    return sections.map((section) => ({ ...section, items: [...section.items] }));
++    return sections
++      .map((section) => ({ ...section, items: section.items.filter(visible) }))
++      .filter((section) => section.items.length > 0);
+   }
+   const allowedSet = new Set(allowed);
+   return sections
+     .map((section) => ({
+       ...section,
+-      items: section.items.filter((item) => item.menuKey == null || allowedSet.has(item.menuKey)),
++      items: section.items.filter((item) => visible(item) && (item.menuKey == null || allowedSet.has(item.menuKey))),
+     }))
+     .filter((section) => section.items.length > 0);
+ }
+@@ -258,6 +277,9 @@ export function isAdminPathAllowedForSession(
+ ): boolean {
+   const path = pathname.replace(/\/$/, "") || "/";
+   if (!path.startsWith("/admin")) return false;
++  for (const menu of disabledPreviewMenus(session)) {
++    if (pathMatchesMenu(path, menu)) return false;
++  }
+   if (session && session.menus !== undefined) {
+     if (session.menus === null) return true;
+     return session.menus.some((menu) => pathMatchesMenu(path, menu));
+diff --git a/frontend/src/nav/adminNav.ts b/frontend/src/nav/adminNav.ts
+index fe902b1..ced26f6 100644
+--- a/frontend/src/nav/adminNav.ts
++++ b/frontend/src/nav/adminNav.ts
+@@ -33,7 +33,7 @@ export const adminNavSections: NavSection[] = [
+     ],
+   },
+   {
+-    title: "Agents & Knowledge",
++    title: "Agents & Knowledge (preview)",
+     categoryKey: "agents_knowledge",
+     items: [
+       { to: "/admin/agents", label: "Overview", menuKey: "agents" },
+-- 
+2.43.0
+

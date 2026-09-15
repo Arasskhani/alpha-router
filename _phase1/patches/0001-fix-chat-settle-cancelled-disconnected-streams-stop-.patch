@@ -1,0 +1,545 @@
+From f3deaa3fb30136e7e991cd8fe93eada87a77cbc9 Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 13:43:34 +0000
+Subject: [PATCH 01/10] fix(chat): settle cancelled/disconnected streams; stop
+ consuming upstream on Stop
+
+Two related defects in stream_chat's shutdown path:
+
+1. Settlement was skipped on client disconnect. Starlette cancels a
+   StreamingResponse body via an anyio cancel scope, and anyio re-delivers
+   CancelledError at every following await until the scope exits. The
+   finalizer's first await (heartbeat gather / asyncio.shield(...)) was
+   therefore re-cancelled and persister.finalize, memory-usage recording,
+   _persist_stream_usage (settle + RequestLog) and finalize_agent_run never
+   ran: the hold stayed 'held' until TTL (default 2h) and consumed tokens were
+   never charged. asyncio.shield protects the inner coroutine, not the frame.
+   The whole finalizer now runs inside anyio.CancelScope(shield=True); the
+   trailing metadata/[DONE] yields stay outside it and are suppressed once the
+   consumer is gone (yielding from a cancelled or closing generator either
+   swallows the cancellation or raises 'async generator ignored GeneratorExit').
+   GeneratorExit (server-side aclose) is handled explicitly so that path is
+   settled too. finish_metered_usage gets the same frame-level shield.
+
+2. Stop did not interrupt the provider stream. client_disconnected only muted
+   yields; the loop drained the upstream generator to its natural end and the
+   full completion was billed. The loop now breaks as soon as the disconnect
+   is detected and best-effort closes the LiteLLM stream wrapper
+   (_close_upstream_stream); the existing post-loop code estimates tokens for
+   what was received so the partial turn is settled with cost_source=estimated.
+
+Tests (tests/test_stream_cancellation_settles.py) drive stream_chat under a
+real anyio task group cancel, through agen.aclose(), and through
+request.is_disconnected(); on the previous code they fail with
+'settlement must run once even when cancelled', 'async generator ignored
+GeneratorExit' and an infinite provider drain respectively.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ backend/app/services/metered_usage_service.py |  13 +-
+ backend/app/services/proxy_service.py         |  77 ++++-
+ .../tests/test_stream_cancellation_settles.py | 322 ++++++++++++++++++
+ 3 files changed, 390 insertions(+), 22 deletions(-)
+ create mode 100644 backend/tests/test_stream_cancellation_settles.py
+
+diff --git a/backend/app/services/metered_usage_service.py b/backend/app/services/metered_usage_service.py
+index ed1b5a2..b7ad1bc 100644
+--- a/backend/app/services/metered_usage_service.py
++++ b/backend/app/services/metered_usage_service.py
+@@ -3,6 +3,8 @@
+ from __future__ import annotations
+ 
+ import asyncio
++
++import anyio
+ import datetime
+ import logging
+ import uuid
+@@ -191,9 +193,8 @@ async def finish_metered_usage(
+                 )
+         return False
+ 
+-    task = asyncio.create_task(_persist())
+-    try:
+-        await asyncio.shield(task)
+-    except asyncio.CancelledError:
+-        await task
+-        raise
++    # Shield the frame, not just the coroutine: under Starlette's anyio cancel
++    # scope a plain 'await task' in the except branch is re-cancelled before the
++    # settlement finishes (see proxy_service.stream_chat finalizer).
++    with anyio.CancelScope(shield=True):
++        await _persist()
+diff --git a/backend/app/services/proxy_service.py b/backend/app/services/proxy_service.py
+index a11ba77..600450f 100644
+--- a/backend/app/services/proxy_service.py
++++ b/backend/app/services/proxy_service.py
+@@ -4,6 +4,8 @@ Costs are taken from provider usage objects — never adjusted by Alpharouter.
+ """
+ 
+ import asyncio
++
++import anyio
+ import datetime
+ import json
+ import logging
+@@ -1894,6 +1896,13 @@ async def stream_chat(
+                             client_disconnected = True
+                         else:
+                             persister.schedule_cancel_poll()
++                    if client_disconnected:
++                        # Stop consuming the provider stream now: every further
++                        # chunk is generated (and billed upstream) for nobody.
++                        # The post-loop code estimates usage for what was
++                        # received so the partial turn is still settled.
++                        await _close_upstream_stream(response)
++                        break
+                     pt, ct, cache = _usage_from_chunk(chunk)
+                     chunk_usage = (
+                         chunk.get("usage")
+@@ -2269,6 +2278,14 @@ async def stream_chat(
+                         persister.reset_persist_state()
+                 yield _sse_delta_chunk(collected_content)
+                 agent_output_displayed = True
++        except GeneratorExit:
++            # The ASGI server closed the generator (client gone). Nothing may be
++            # yielded from here on; the finally block below still settles.
++            was_cancelled = True
++            client_disconnected = True
++            success = False
++            error_message = "Request cancelled"
++            raise
+         except asyncio.CancelledError as exc:
+             was_cancelled = True
+             success = False
+@@ -2479,6 +2496,15 @@ async def stream_chat(
+                 error_message = _format_provider_error(exc, provider)[:500]
+                 yield f"data: {json.dumps({'error': error_message})}\n\n".encode()
+         finally:
++          # Starlette cancels a streaming response through an anyio cancel
++          # scope when the client disconnects. anyio delivers that
++          # cancellation at *every* subsequent await until the scope exits, so
++          # without a shield the first await below re-raises CancelledError and
++          # settlement (release hold, RequestLog, persister.finalize, agent
++          # finalization) is skipped: the hold leaks until TTL and consumed
++          # tokens are never charged. asyncio.shield() alone protects the inner
++          # coroutine but not this frame, so shield the whole finalizer.
++          with anyio.CancelScope(shield=True):
+             if capacity_heartbeat_task is not None:
+                 capacity_heartbeat_task.cancel()
+                 await asyncio.gather(
+@@ -2486,16 +2512,14 @@ async def stream_chat(
+                     return_exceptions=True,
+                 )
+             try:
+-                await asyncio.shield(_release_capacity_permit())
++                await _release_capacity_permit()
+             except Exception:
+                 logger.exception("Failed to release Code Interpreter capacity permit")
+             if persister:
+                 try:
+-                    await asyncio.shield(
+-                        persister.finalize(
+-                            success=success,
+-                            error_message=error_message,
+-                        )
++                    await persister.finalize(
++                        success=success,
++                        error_message=error_message,
+                     )
+                 except Exception:
+                     await db.rollback()
+@@ -2609,7 +2633,7 @@ async def stream_chat(
+                         )
+                 return None
+ 
+-            stream_request_log_id = await asyncio.shield(_persist_stream_usage())
++            stream_request_log_id = await _persist_stream_usage()
+             agent_terminal_status: str | None = None
+             if agent_turn is not None:
+                 if was_cancelled or client_disconnected:
+@@ -2676,7 +2700,7 @@ async def stream_chat(
+                                 agent_turn.run_id,
+                             )
+ 
+-                await asyncio.shield(_persist_agent_finalization())
++                await _persist_agent_finalization()
+ 
+             response_metadata: dict[str, object] = {}
+             if (
+@@ -2702,14 +2726,35 @@ async def stream_chat(
+                     citations = _agent_citation_metadata(agent_turn, agent_review)
+                     if citations:
+                         response_metadata["citations"] = citations
+-            if response_metadata:
+-                meta_payload = json.dumps(
+-                    {"alpha_router": response_metadata},
+-                    separators=(",", ":"),
+-                )
+-                yield f"data: {meta_payload}\n\n".encode()
+-            if not was_cancelled:
+-                yield b"data: [DONE]\n\n"
++          # Yields must stay outside the shielded scope and never run once the
++          # consumer is gone: yielding from a cancelled/closed generator would
++          # swallow the cancellation or raise "generator ignored GeneratorExit".
++          if response_metadata and not was_cancelled and not client_disconnected:
++              meta_payload = json.dumps(
++                  {"alpha_router": response_metadata},
++                  separators=(",", ":"),
++              )
++              yield f"data: {meta_payload}\n\n".encode()
++          if not was_cancelled and not client_disconnected:
++              yield b"data: [DONE]\n\n"
++
++
++async def _close_upstream_stream(response) -> None:
++    """Best-effort close of a LiteLLM stream wrapper and its underlying iterator."""
++    seen: set[int] = set()
++    for target in (response, getattr(response, "completion_stream", None)):
++        if target is None or id(target) in seen:
++            continue
++        seen.add(id(target))
++        aclose = getattr(target, "aclose", None)
++        if aclose is None:
++            continue
++        try:
++            result = aclose()
++            if asyncio.iscoroutine(result):
++                await result
++        except Exception:
++            logger.debug("Ignoring error while closing upstream stream", exc_info=True)
+ 
+ 
+ def _embedding_input_text(input_value) -> str:
+diff --git a/backend/tests/test_stream_cancellation_settles.py b/backend/tests/test_stream_cancellation_settles.py
+new file mode 100644
+index 0000000..ebb14dc
+--- /dev/null
++++ b/backend/tests/test_stream_cancellation_settles.py
+@@ -0,0 +1,322 @@
++"""A cancelled or disconnected chat stream must still settle.
++
++Starlette cancels ``StreamingResponse`` bodies through an anyio cancel scope
++when the client disconnects. anyio re-delivers that cancellation at every
++subsequent ``await`` until the scope exits, so an unshielded ``finally`` block
++in ``stream_chat`` used to abort at its first await: the reservation stayed
++held, no RequestLog was written and the persister never finalized. These tests
++drive ``stream_chat`` under a real anyio task group (cancel path), through
++``aclose()`` (GeneratorExit path) and through ``request.is_disconnected``
++(early-break path) and assert settlement ran in all three.
++"""
++
++from __future__ import annotations
++
++import asyncio
++from types import SimpleNamespace
++from unittest.mock import AsyncMock, MagicMock, patch
++
++import anyio
++import pytest
++
++from app.services import proxy_service
++
++
++def _chunk(content: str) -> SimpleNamespace:
++    return SimpleNamespace(
++        choices=[SimpleNamespace(delta=SimpleNamespace(content=content))],
++        usage=None,
++    )
++
++
++class _FakePersister:
++    def __init__(self) -> None:
++        self.finalized: dict | None = None
++        self.contents: list[str] = []
++
++    async def prepare(self) -> None:
++        return None
++
++    def schedule_content(self, content: str) -> None:
++        self.contents.append(content)
++
++    def peek_cancel_requested(self) -> bool:
++        return False
++
++    def schedule_cancel_poll(self) -> None:
++        return None
++
++    async def is_cancel_requested(self, *, force: bool = False) -> bool:
++        del force
++        return False
++
++    def reset_persist_state(self) -> None:
++        return None
++
++    async def finalize(self, *, success: bool, error_message: str | None = None) -> None:
++        # A real finalize awaits the database; keep an await here so the
++        # re-cancellation bug (if reintroduced) would trip on it.
++        await asyncio.sleep(0)
++        self.finalized = {"success": success, "error_message": error_message}
++
++
++class _SlowProvider:
++    """Async iterator yielding a chunk every few ms until closed."""
++
++    def __init__(self, delay: float = 0.02) -> None:
++        self.delay = delay
++        self.yielded = 0
++        self.closed = False
++
++    def __aiter__(self):
++        return self
++
++    async def __anext__(self):
++        if self.closed:
++            raise StopAsyncIteration
++        await asyncio.sleep(self.delay)
++        self.yielded += 1
++        return _chunk(f"tok{self.yielded} ")
++
++    async def aclose(self) -> None:
++        self.closed = True
++
++
++def _resolved() -> SimpleNamespace:
++    return SimpleNamespace(
++        ai_model=SimpleNamespace(
++            provider_type="openrouter",
++            input_cost_per_1k=0.001,
++            output_cost_per_1k=0.002,
++            external_id="vendor/good",
++            display_name="Good model",
++            connection_id=7,
++        ),
++        api_key="sk-test",
++        base_url="https://example.com/v1",
++        provider_type="openrouter",
++        model_id="vendor/good",
++        code_interpreter_capacity_permit=SimpleNamespace(
++            lease_id="lease-cancel",
++            subject="user:1",
++        ),
++    )
++
++
++def _patches(provider: _SlowProvider, persister: _FakePersister, log_usage: AsyncMock, release: AsyncMock):
++    async def fake_acompletion(**kwargs):
++        del kwargs
++        return provider
++
++    fake_db = AsyncMock()
++    fake_db.execute = AsyncMock(
++        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
++    )
++    fake_ctx = MagicMock()
++    fake_ctx.__aenter__ = AsyncMock(return_value=fake_db)
++    fake_ctx.__aexit__ = AsyncMock(return_value=None)
++
++    return (
++        patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
++        patch.object(
++            proxy_service,
++            "parse_tools_config",
++            return_value=SimpleNamespace(code_interpreter=True),
++        ),
++        patch.object(
++            proxy_service,
++            "augment_messages_with_tools",
++            AsyncMock(side_effect=lambda db, m, t, **_kwargs: m),
++        ),
++        patch.object(proxy_service, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
++        patch.object(proxy_service, "acompletion", side_effect=fake_acompletion),
++        patch.object(proxy_service, "persister_from_body", return_value=persister),
++        patch.object(proxy_service, "_usage_from_stream_wrapper", return_value=(0, 0, 0)),
++        patch.object(proxy_service, "_compute_token_cost_usd", return_value=0.0),
++        patch.object(proxy_service, "log_usage", log_usage),
++        patch.object(proxy_service, "record_compatibility_result", side_effect=AsyncMock()),
++        patch.object(proxy_service, "release_code_interpreter_turn", release),
++        patch.object(proxy_service, "openrouter_auto_plugin", AsyncMock(return_value=None)),
++    )
++
++
++def _body() -> dict:
++    return {
++        "model": "vendor/good",
++        "messages": [{"role": "user", "content": "Write a long story"}],
++        "persist_chat": True,
++        "chat_session_id": "s1",
++    }
++
++
++def _request(disconnected: AsyncMock | None = None) -> MagicMock:
++    request = MagicMock()
++    request.client = SimpleNamespace(host="127.0.0.1")
++    request.is_disconnected = disconnected or AsyncMock(return_value=False)
++    return request
++
++
++def _enter_all(patches):
++    from contextlib import ExitStack
++
++    stack = ExitStack()
++    for p in patches:
++        stack.enter_context(p)
++    return stack
++
++
++def test_task_group_cancellation_still_settles() -> None:
++    """Starlette-style cancel: anyio cancel scope around the consumer."""
++
++    async def run() -> dict:
++        provider = _SlowProvider()
++        persister = _FakePersister()
++        log_usage = AsyncMock(return_value=42)
++        release = AsyncMock(return_value=True)
++        chunks: list[bytes] = []
++        consumer_error: BaseException | None = None
++
++        async def consume() -> None:
++            nonlocal consumer_error
++            try:
++                async for chunk in proxy_service.stream_chat(
++                    _request(),
++                    _body(),
++                    user_id=1,
++                    username="admin",
++                    source="alpha_router_chat",
++                    skip_budget=False,
++                    resolved=_resolved(),
++                ):
++                    chunks.append(chunk)
++            except BaseException as exc:  # noqa: BLE001 - we want to inspect it
++                consumer_error = exc
++                raise
++
++        with _enter_all(_patches(provider, persister, log_usage, release)):
++            async with anyio.create_task_group() as tg:
++                tg.start_soon(consume)
++                # Let a few chunks flow, then pull the plug like a disconnect.
++                while len(chunks) < 3:
++                    await asyncio.sleep(0.005)
++                tg.cancel_scope.cancel()
++            # Give any (wrongly) detached background work a moment.
++            await asyncio.sleep(0.05)
++
++        return {
++            "log_usage_calls": log_usage.await_count,
++            "finalized": persister.finalized,
++            "release_calls": release.await_count,
++            "output": b"".join(chunks).decode(),
++            "log_kwargs": log_usage.await_args.kwargs if log_usage.await_args else {},
++            "consumer_error": consumer_error,
++        }
++
++    result = asyncio.run(run())
++
++    assert result["log_usage_calls"] == 1, "settlement must run once even when cancelled"
++    assert result["finalized"] == {"success": False, "error_message": "Request cancelled"}
++    assert result["release_calls"] == 1
++    assert result["log_kwargs"]["success"] is False
++    assert result["log_kwargs"]["error_message"] == "Request cancelled"
++    assert "[DONE]" not in result["output"], "nothing may be yielded after cancellation"
++    assert isinstance(result["consumer_error"], asyncio.CancelledError)
++
++
++def test_generator_aclose_still_settles() -> None:
++    """ASGI server closes the generator (GeneratorExit path)."""
++
++    async def run() -> dict:
++        provider = _SlowProvider()
++        persister = _FakePersister()
++        log_usage = AsyncMock(return_value=42)
++        release = AsyncMock(return_value=True)
++        chunks: list[bytes] = []
++
++        with _enter_all(_patches(provider, persister, log_usage, release)):
++            agen = proxy_service.stream_chat(
++                _request(),
++                _body(),
++                user_id=1,
++                username="admin",
++                source="alpha_router_chat",
++                skip_budget=False,
++                resolved=_resolved(),
++            )
++            async for chunk in agen:
++                chunks.append(chunk)
++                if len(chunks) >= 3:
++                    break
++            # Must not raise "async generator ignored GeneratorExit".
++            await agen.aclose()
++
++        return {
++            "log_usage_calls": log_usage.await_count,
++            "finalized": persister.finalized,
++            "release_calls": release.await_count,
++            "output": b"".join(chunks).decode(),
++        }
++
++    result = asyncio.run(run())
++
++    assert result["log_usage_calls"] == 1
++    assert result["finalized"] == {"success": False, "error_message": "Request cancelled"}
++    assert result["release_calls"] == 1
++    assert "[DONE]" not in result["output"]
++
++
++def test_detected_disconnect_stops_consuming_upstream() -> None:
++    """request.is_disconnected() -> break out of the provider stream immediately."""
++
++    async def run() -> dict:
++        provider = _SlowProvider()
++        persister = _FakePersister()
++        log_usage = AsyncMock(return_value=42)
++        release = AsyncMock(return_value=True)
++        chunks: list[bytes] = []
++        calls = {"n": 0}
++
++        async def disconnected() -> bool:
++            calls["n"] += 1
++            return calls["n"] > 3
++
++        with _enter_all(_patches(provider, persister, log_usage, release)):
++            async for chunk in proxy_service.stream_chat(
++                _request(AsyncMock(side_effect=disconnected)),
++                _body(),
++                user_id=1,
++                username="admin",
++                source="alpha_router_chat",
++                skip_budget=False,
++                resolved=_resolved(),
++            ):
++                chunks.append(chunk)
++
++        return {
++            "provider_yielded": provider.yielded,
++            "provider_closed": provider.closed,
++            "log_usage_calls": log_usage.await_count,
++            "finalized": persister.finalized,
++            "output": b"".join(chunks).decode(),
++        }
++
++    result = asyncio.run(run())
++
++    # Without the early break the fake provider would be drained forever
++    # (it never ends); a handful of chunks proves we stopped at the disconnect.
++    assert result["provider_yielded"] <= 6
++    assert result["provider_closed"] is True
++    assert result["log_usage_calls"] == 1
++    assert result["finalized"] is not None
++    assert "[DONE]" not in result["output"]
++
++
++@pytest.mark.parametrize("attr", ["aclose"])
++def test_close_upstream_stream_is_best_effort(attr: str) -> None:
++    class Broken:
++        async def aclose(self):
++            raise RuntimeError("boom")
++
++    asyncio.run(proxy_service._close_upstream_stream(Broken()))
++    asyncio.run(proxy_service._close_upstream_stream(object()))
++    asyncio.run(proxy_service._close_upstream_stream(None))
+-- 
+2.43.0
+

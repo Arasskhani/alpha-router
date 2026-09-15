@@ -1,0 +1,84 @@
+From 6ac8a5995b6172ea1161e7a29d9f316117ab53bc Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Tue, 15 Sep 2026 05:56:41 +0000
+Subject: [PATCH 19/19] fix(frontend): patch a trailing assistant row that lost
+ its clientMessageId
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The identity guard added with the sync rewrite treated "one side has an id,
+the other does not" as two different messages, so it skipped the patch for
+exactly the rows that need it: a speech or video placeholder replaced in
+place by an error notice has no id, while the server copy it replaced has
+one. The error text never reached the server.
+
+The guard now refuses only when both ids exist and differ — the one case it
+was written for, another device's reply sitting where ours should be.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ frontend/src/lib/chatStorage.ts       | 15 +++++++++++----
+ frontend/src/lib/chatSyncDiff.test.ts | 15 +++++++++++++++
+ 2 files changed, 26 insertions(+), 4 deletions(-)
+
+diff --git a/frontend/src/lib/chatStorage.ts b/frontend/src/lib/chatStorage.ts
+index 9194817..b2b0c1e 100644
+--- a/frontend/src/lib/chatStorage.ts
++++ b/frontend/src/lib/chatStorage.ts
+@@ -1989,10 +1989,17 @@ export async function syncSessionMessages(
+   }
+ }
+ 
+-/** Two rows are the same message when their clientMessageIds match, or neither carries one (legacy rows). */
+-function sameMessageIdentity(a: ChatMessage, b: ChatMessage): boolean {
+-  if (a.clientMessageId && b.clientMessageId) return a.clientMessageId === b.clientMessageId;
+-  return !a.clientMessageId && !b.clientMessageId;
++/**
++ * Whether the last local row and the last server row are the same message.
++ *
++ * Only two ids that both exist and differ prove otherwise — that is another
++ * device's reply sitting where ours should be, and patching it would overwrite
++ * someone else's message. A missing id does not: a row replaced in place (a
++ * speech or image placeholder becoming an error notice) has no id while the
++ * server copy it replaced has one, and that row still has to be patched.
++ */
++export function sameMessageIdentity(a: ChatMessage, b: ChatMessage): boolean {
++  return !(a.clientMessageId && b.clientMessageId && a.clientMessageId !== b.clientMessageId);
+ }
+ 
+ /**
+diff --git a/frontend/src/lib/chatSyncDiff.test.ts b/frontend/src/lib/chatSyncDiff.test.ts
+index 250d1dd..546158d 100644
+--- a/frontend/src/lib/chatSyncDiff.test.ts
++++ b/frontend/src/lib/chatSyncDiff.test.ts
+@@ -10,6 +10,7 @@ import {
+   mergeRemoteChatSessions,
+   messagesMissingOnServer,
+   pickMergedMessages,
++  sameMessageIdentity,
+   type ChatMessage,
+   type ChatSession,
+ } from "./chatStorage";
+@@ -228,3 +229,17 @@ describe("fetchAllSessionMessagesFromServer", () => {
+     expect(mockedApi).toHaveBeenCalledTimes(1);
+   });
+ });
++
++describe("sameMessageIdentity", () => {
++  it("refuses only when two different ids both exist (another device's reply)", () => {
++    expect(sameMessageIdentity(msg({ content: "a", clientMessageId: "x" }), msg({ content: "b", clientMessageId: "y" }))).toBe(false);
++    expect(sameMessageIdentity(msg({ content: "a", clientMessageId: "x" }), msg({ content: "b", clientMessageId: "x" }))).toBe(true);
++  });
++
++  it("still matches a row that lost its id when it was replaced in place", () => {
++    // A speech placeholder swapped locally for an error notice: the patch has
++    // to reach the server row it replaced.
++    expect(sameMessageIdentity(msg({ content: "Speech failed.", role: "assistant" }), msg({ content: "__SPEECH_PENDING__", clientMessageId: "a1", role: "assistant" }))).toBe(true);
++    expect(sameMessageIdentity(msg({ content: "legacy" }), msg({ content: "legacy" }))).toBe(true);
++  });
++});
+-- 
+2.43.0
+

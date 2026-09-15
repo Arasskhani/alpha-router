@@ -1,0 +1,299 @@
+From 05f588bd37dafd9d8fb9dd1dcc16069d2ecc88bd Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 17:45:00 +0000
+Subject: [PATCH 20/22] fix: end-of-phase-2 polish batch (B-36, B-38, B-39,
+ B-40)
+
+The plan routed these to a "polish" batch at the end of Phase 2 and they
+were skipped; the self-review picked them up.
+
+- B-36 POST /api/chat/voice runs the media quota check synchronously and
+  answers media_pending=false + media_error when the recording will not be
+  kept, instead of media_pending=true for a background store that then
+  failed silently. The UI shows that message; transcript delivery unchanged.
+- B-38 Browser speech recognition joins consecutive sessions with a space
+  ("...done Now..." instead of "...doneNow...") both while previewing and
+  when committing.
+- B-39 User docs: voice language is Auto-detect / English / Persian and
+  there is no "refine step"; admin docs no longer list "voice refinement";
+  modelCatalog.ts drops the never-emitted is_transcription_default in favour
+  of default_kinds, which the API actually sends.
+- B-40 .env.example had COMPOSE_PROJECT_NAME twice; the app's /tmp tmpfs
+  was 10 GiB of RAM for ZIP packs whose default ceiling is 256 MiB - now 2g
+  with the sizing rule in the comment. sync_edge_body_limit compares both
+  ceilings (upload and JSON) before deciding nginx.conf is unchanged, so a
+  MAX_JSON_BODY_BYTES change reaches the edge without an upload-ceiling
+  change; the per-worker generation bump only happens when the file really
+  differs.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ .env.example                               |  3 --
+ backend/app/api/chat.py                    | 44 +++++++++++++++-------
+ backend/app/services/tls_edge_service.py   | 32 ++++++++++++++--
+ docker-compose.yml                         |  6 ++-
+ frontend/src/components/ChatPanel.tsx      |  7 +++-
+ frontend/src/generated/persianFonts.json   |  2 +-
+ frontend/src/lib/modelCatalog.ts           |  4 +-
+ frontend/src/lib/voiceInput.ts             | 10 ++++-
+ frontend/src/pages/admin/docs/sections.tsx |  2 +-
+ frontend/src/pages/user/docs/sections.tsx  |  6 +--
+ 10 files changed, 85 insertions(+), 31 deletions(-)
+
+diff --git a/.env.example b/.env.example
+index a92e423..68ec7c6 100644
+--- a/.env.example
++++ b/.env.example
+@@ -35,9 +35,6 @@ ALPHAROUTER_IMAGE_TAG=latest
+ #                           fallback or plaintext transport setting is active.
+ ENVIRONMENT=development
+ 
+-# Docker Compose project name (container/network/volume prefix). Default is the folder name.
+-COMPOSE_PROJECT_NAME=alpha-router
+-
+ # --- Database (App -> PgBouncer -> Postgres) --------------------------------
+ # Canonical PostgreSQL role and database identity.
+ POSTGRES_USER=alpha_router
+diff --git a/backend/app/api/chat.py b/backend/app/api/chat.py
+index da6b0bb..e703b8c 100644
+--- a/backend/app/api/chat.py
++++ b/backend/app/api/chat.py
+@@ -511,18 +511,35 @@ async def voice_message(
+             status_code=502, detail="Transcription failed. Please try again."
+         ) from exc
+ 
+-    # Identity primitives are captured now: the ORM user expires with the
+-    # request session, and the storage task outlives it.
+-    background_tasks.add_task(
+-        _store_voice_note,
+-        user_id=int(user.id),
+-        username=str(user.username or ""),
+-        raw=raw,
+-        mime=mime,
+-        filename=filename,
+-        transcript=transcript,
+-        chat_session_id=chat_session_id,
+-    )
++    # The quota check is one cheap SUM; do it now so the caller learns *in
++    # the response* when the recording will not be kept, instead of getting
++    # media_pending=true for an upload that then fails silently in the
++    # background (B-36). The object-store write itself stays deferred.
++    from app.services.user_media_service import MediaQuotaExceededError, ensure_user_media_quota
++
++    media_pending = True
++    media_error: str | None = None
++    try:
++        await ensure_user_media_quota(db, int(user.id), len(raw))
++    except MediaQuotaExceededError as exc:
++        media_pending = False
++        media_error = (
++            f"Media storage quota exceeded ({exc.used_bytes + exc.incoming_bytes} of {exc.quota_bytes} bytes); "
++            "the recording was transcribed but not saved."
++        )
++    if media_pending:
++        # Identity primitives are captured now: the ORM user expires with the
++        # request session, and the storage task outlives it.
++        background_tasks.add_task(
++            _store_voice_note,
++            user_id=int(user.id),
++            username=str(user.username or ""),
++            raw=raw,
++            mime=mime,
++            filename=filename,
++            transcript=transcript,
++            chat_session_id=chat_session_id,
++        )
+     return {
+         # The asset is written after this response, so its id and url are not
+         # known yet. They stay in the payload as nulls so the response shape is
+@@ -531,7 +548,8 @@ async def voice_message(
+         "url": None,
+         "transcript": transcript,
+         "mime_type": mime,
+-        "media_pending": True,
++        "media_pending": media_pending,
++        "media_error": media_error,
+     }
+ 
+ 
+diff --git a/backend/app/services/tls_edge_service.py b/backend/app/services/tls_edge_service.py
+index 79ca510..6242497 100644
+--- a/backend/app/services/tls_edge_service.py
++++ b/backend/app/services/tls_edge_service.py
+@@ -94,7 +94,7 @@ def render_nginx_config(
+     from app.services.request_body_limit_service import LARGE_BODY_PATH_PREFIXES
+ 
+     if json_body_mb is None:
+-        json_body_mb = max(1, -(-int(get_settings().max_json_body_bytes) // (1024 * 1024)))
++        json_body_mb = default_json_body_mb()
+     json_body_mb = max(1, min(int(json_body_mb), max(1, int(max_body_mb))))
+     large_paths = "|".join(re.escape(prefix.lstrip("/")) for prefix in LARGE_BODY_PATH_PREFIXES)
+     proxy_directives = f"""            proxy_pass http://{upstream};
+@@ -255,6 +255,26 @@ async def _set_setting(db: AsyncSession, key: str, value: str) -> None:
+         db.add(SystemSetting(key=key, value=value))
+ 
+ 
++def default_json_body_mb() -> int:
++    """MAX_JSON_BODY_BYTES rounded up to whole megabytes (nginx granularity)."""
++    return max(1, -(-int(get_settings().max_json_body_bytes) // (1024 * 1024)))
++
++
++def nginx_conf_matches(text: str, *, max_body_mb: int, json_body_mb: int | None = None) -> bool:
++    """True when a rendered nginx.conf already carries both body ceilings.
++
++    The reconcile used to compare only the http-level (upload) ceiling, so a
++    change of MAX_JSON_BODY_BYTES alone never reached the edge until the
++    upload ceiling happened to move too.
++    """
++    match = _NGINX_BODY_RE.search(text)
++    if not match or int(match.group(1)) != int(max_body_mb):
++        return False
++    json_mb = default_json_body_mb() if json_body_mb is None else int(json_body_mb)
++    json_mb = max(1, min(json_mb, max(1, int(max_body_mb))))
++    return f"client_max_body_size {json_mb}m;" in text
++
++
+ def read_nginx_client_max_body_mb(conf_path: Path | None = None) -> int | None:
+     path = conf_path or (tls_state_dir() / "nginx.conf")
+     if not path.is_file():
+@@ -314,8 +334,14 @@ async def sync_edge_body_limit(db: AsyncSession) -> dict[str, Any]:
+             "reason": "https_disabled",
+         }
+ 
+-    current_mb = read_nginx_client_max_body_mb()
+-    if current_mb == body_mb and (tls_state_dir() / "nginx.conf").is_file():
++    conf_path = tls_state_dir() / "nginx.conf"
++    current_text = ""
++    if conf_path.is_file():
++        try:
++            current_text = conf_path.read_text(encoding="utf-8")
++        except OSError:
++            current_text = ""
++    if current_text and nginx_conf_matches(current_text, max_body_mb=body_mb):
+         return {
+             "attempted": True,
+             "queued": False,
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 3097d22..6b48b3c 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -336,8 +336,10 @@ services:
+     volumes:
+       - alpha_router_tls:/app/tls
+     tmpfs:
+-      # ZIP download packs under /tmp; keep headroom above max ZIP download setting.
+-      - /tmp:rw,nosuid,nodev,size=10g
++      # ZIP download packs are assembled under /tmp. tmpfs is RAM: size it for
++      # MAX_ZIP_AGGREGATE_BYTES (256 MiB default) x UVICORN_WORKERS with headroom,
++      # not for the whole host. Raise it together with those settings.
++      - /tmp:rw,nosuid,nodev,size=2g
+       - /home/alpha_router:rw,nosuid,nodev,size=64m,uid=10001,gid=10001,mode=700
+       - /app/app/storage:rw,nosuid,nodev,size=256m,uid=10001,gid=10001,mode=700
+     command:
+diff --git a/frontend/src/components/ChatPanel.tsx b/frontend/src/components/ChatPanel.tsx
+index ee84961..d00b7f7 100644
+--- a/frontend/src/components/ChatPanel.tsx
++++ b/frontend/src/components/ChatPanel.tsx
+@@ -5843,7 +5843,12 @@ export default function ChatPanel({
+     if (durationSeconds > 0) fd.append("duration_seconds", durationSeconds.toFixed(2));
+     const res = await authFetch("/api/chat/voice", { method: "POST", body: fd });
+     if (!res.ok) throw new Error(parseApiError(await res.text(), res.status).message);
+-    const data = (await res.json()) as { transcript?: string };
++    const data = (await res.json()) as { transcript?: string; media_pending?: boolean; media_error?: string | null };
++    if (data.media_pending === false && data.media_error) {
++      // The transcript is fine; only the recording itself was not kept
++      // (media quota). Say so instead of silently dropping the audio.
++      setChatError(data.media_error);
++    }
+     return (data.transcript || "").trim();
+   }
+ 
+diff --git a/frontend/src/generated/persianFonts.json b/frontend/src/generated/persianFonts.json
+index 8ecb61e..921e263 100644
+--- a/frontend/src/generated/persianFonts.json
++++ b/frontend/src/generated/persianFonts.json
+@@ -1,5 +1,5 @@
+ {
+-  "generatedAt": "2026-09-14T16:15:14.539Z",
++  "generatedAt": "2026-09-14T17:43:12.811Z",
+   "families": [
+     {
+       "id": "vazir",
+diff --git a/frontend/src/lib/modelCatalog.ts b/frontend/src/lib/modelCatalog.ts
+index 1a66d3a..824744d 100644
+--- a/frontend/src/lib/modelCatalog.ts
++++ b/frontend/src/lib/modelCatalog.ts
+@@ -31,8 +31,8 @@ export type CatalogModel = {
+   admin_disabled?: boolean;
+   /** Admin system default for users who have not chosen a personal default. */
+   is_system_default?: boolean;
+-  /** Admin default speech-to-text model for the mic button. */
+-  is_transcription_default?: boolean;
++  /** Kinds this model is the system default for (e.g. "text", "transcription", "image"). */
++  default_kinds?: string[];
+   access_type?: ModelAccessType;
+   assignment_counts?: { users: number; groups: number };
+   input_cost_per_1k: number | null;
+diff --git a/frontend/src/lib/voiceInput.ts b/frontend/src/lib/voiceInput.ts
+index 88ea8c0..f72903e 100644
+--- a/frontend/src/lib/voiceInput.ts
++++ b/frontend/src/lib/voiceInput.ts
+@@ -90,7 +90,9 @@ export class BrowserSpeechCapture {
+   private failedSessions = 0;
+ 
+   private get text(): string {
+-    return (this.committed + this.sessionText).trim();
++    if (!this.committed) return this.sessionText.trim();
++    if (!this.sessionText) return this.committed.trim();
++    return `${this.committed.trimEnd()} ${this.sessionText.trimStart()}`.trim();
+   }
+ 
+   /**
+@@ -140,7 +142,11 @@ export class BrowserSpeechCapture {
+     rec.onend = () => {
+       const wasFast = Date.now() - this.sessionStartedAt < _FAILED_SESSION_MS;
+       if (wasFast && !this.sessionText) this.failedSessions += 1;
+-      this.committed += this.sessionText;
++      // Sessions end at pauses; without a separator the last word of one and
++      // the first of the next ran together ("...doneNow...").
++      if (this.sessionText) {
++        this.committed = this.committed ? `${this.committed.trimEnd()} ${this.sessionText.trimStart()}` : this.sessionText;
++      }
+       this.sessionText = "";
+       this.recognition = null;
+       // Bail out instead of spinning when the recognizer service is unreachable.
+diff --git a/frontend/src/pages/admin/docs/sections.tsx b/frontend/src/pages/admin/docs/sections.tsx
+index 45da105..2d8320e 100644
+--- a/frontend/src/pages/admin/docs/sections.tsx
++++ b/frontend/src/pages/admin/docs/sections.tsx
+@@ -2273,7 +2273,7 @@ export const docSections: DocSection[] = [
+         <h3>What counts</h3>
+         <ul>
+           <li>Every chat/embedding/image provider attempt, including retry, fallback, tool loop, and code loop iterations</li>
+-          <li>Automatic title generation, prompt enhancement/translation, voice refinement, and transcription</li>
++          <li>Automatic title generation, prompt enhancement/translation, and transcription</li>
+           <li>
+             Web search/fetch requests; metered units such as request, credit, second, character, or image are supported
+           </li>
+diff --git a/frontend/src/pages/user/docs/sections.tsx b/frontend/src/pages/user/docs/sections.tsx
+index b20f1b0..b1aef7e 100644
+--- a/frontend/src/pages/user/docs/sections.tsx
++++ b/frontend/src/pages/user/docs/sections.tsx
+@@ -442,10 +442,10 @@ export const userManualSections: DocSection[] = [
+         <ul>
+           <li>Record or upload audio for transcription into the composer.</li>
+           <li>
+-            Choose voice recording language in Settings → General (English or Persian) so transcription matches your
+-            speech.
++            Choose the voice recording language in Settings → General (Auto-detect, English or Persian) so
++            transcription matches your speech; Auto-detect lets the model decide.
+           </li>
+-          <li>Optional refine step can clean up a transcript before you send it as a prompt.</li>
++          <li>The transcript lands in the composer as-is; edit it there before sending.</li>
+         </ul>
+       </>
+     ),
+-- 
+2.43.0
+

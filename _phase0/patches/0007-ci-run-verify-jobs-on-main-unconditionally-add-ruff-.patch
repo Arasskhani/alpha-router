@@ -1,0 +1,148 @@
+From 1ac8ada89c16a4536986824ea4d6304c3558b58a Mon Sep 17 00:00:00 2001
+From: Majid Arasskhani <M.Arasskhani@gosilkroad.net>
+Date: Mon, 14 Sep 2026 10:54:10 +0000
+Subject: [PATCH 7/7] ci: run verify jobs on main unconditionally; add ruff
+ gate and PostgreSQL canary job
+
+- Every verify/audit job now also runs on the default branch regardless of
+  changed paths (shared '.always-on-default' rule). Previously a backend-only
+  merge never re-ran frontend jobs, so 'frontend-sources' failing on HEAD and
+  'npm ci' being broken went unnoticed.
+- backend-lint: 'ruff check' with the defect-class rule set in backend/ruff.toml.
+- backend-postgres-canary: PostgreSQL 16 service, runs the real migration
+  entrypoint (python -m app.migrate, same as db-init) and the opt-in
+  reservation canary (RUN_POSTGRES_RESERVATION_CANARY=1). The row-locking
+  money path was previously never exercised in CI because SQLite ignores
+  FOR UPDATE / SKIP LOCKED.
+- frontend-sources also triggers on scripts/check-frontend-sources.sh.
+
+Verified locally on Python 3.12 + PostgreSQL 16: migrate applies all 21
+revisions; canary 2 passed; ruff clean; vitest 39/215; vite build ok.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UTnpHajSmkk2JMLfuQoV7o
+---
+ .gitlab-ci.yml | 69 ++++++++++++++++++++++++++++++++++++++++++--------
+ 1 file changed, 58 insertions(+), 11 deletions(-)
+
+diff --git a/.gitlab-ci.yml b/.gitlab-ci.yml
+index 5c5d1c86..fca15026 100644
+--- a/.gitlab-ci.yml
++++ b/.gitlab-ci.yml
+@@ -11,19 +11,70 @@ workflow:
+     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+     - if: '$CI_COMMIT_BRANCH'
+ 
+-backend-tests:
+-  stage: verify
+-  image: python:3.12-slim
++# Every verify job runs unconditionally on the default branch. Path-scoped
++# 'changes' rules alone let a backend-only merge skip the frontend jobs (and
++# vice-versa), so a red job could sit on main unnoticed for weeks.
++.always-on-default: &always-on-default
++  if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
++
++.backend-rules: &backend-rules
+   rules:
++    - *always-on-default
+     - changes:
+         - backend/**/*
+         - .gitlab-ci.yml
++
++.frontend-rules: &frontend-rules
++  rules:
++    - *always-on-default
++    - changes:
++        - frontend/**/*
++        - scripts/check-frontend-sources.sh
++        - .gitlab-ci.yml
++
++backend-lint:
++  stage: verify
++  image: python:3.12-slim
++  <<: *backend-rules
++  script:
++    - python -m pip install --no-cache-dir ruff
++    # Defect-class rules only (see backend/ruff.toml); style rules arrive in Phase 3.
++    - cd backend && ruff check .
++
++backend-tests:
++  stage: verify
++  image: python:3.12-slim
++  <<: *backend-rules
+   script:
+     - python -m pip install --no-cache-dir -r backend/requirements.txt
+     - python -m pip install --no-cache-dir pytest
+     - python -m pip check
+     - PYTHONPATH=backend python -m pytest backend/tests -q
+ 
++# The money path relies on SELECT ... FOR UPDATE / SKIP LOCKED, which SQLite
++# silently ignores. Run the real migration entrypoint (the same one db-init
++# executes) and the opt-in reservation canary against PostgreSQL 16.
++backend-postgres-canary:
++  stage: verify
++  image: python:3.12-slim
++  <<: *backend-rules
++  services:
++    - name: postgres:16-alpine
++      alias: postgres
++  variables:
++    POSTGRES_USER: alpha_router
++    POSTGRES_PASSWORD: ci-canary
++    POSTGRES_DB: alpha_router_test
++    POSTGRES_HOST_AUTH_METHOD: trust
++    DATABASE_URL: postgresql+asyncpg://alpha_router:ci-canary@postgres:5432/alpha_router_test
++    RUN_POSTGRES_RESERVATION_CANARY: "1"
++  script:
++    - python -m pip install --no-cache-dir -r backend/requirements.txt
++    - python -m pip install --no-cache-dir pytest
++    - cd backend
++    - python -m app.migrate
++    - PYTHONPATH=. python -m pytest tests/test_budget_reservations_postgres.py -q -rs
++
+ deployment-config:
+   stage: verify
+   image: docker:27-cli
+@@ -55,10 +106,7 @@ deployment-config:
+ frontend-sources:
+   stage: verify
+   image: node:20
+-  rules:
+-    - changes:
+-        - frontend/**/*
+-        - .gitlab-ci.yml
++  <<: *frontend-rules
+   script:
+     - bash scripts/check-frontend-sources.sh
+ 
+@@ -71,10 +119,7 @@ frontend-tests-and-build:
+         - frontend/package-lock.json
+     paths:
+       - frontend/.npm/
+-  rules:
+-    - changes:
+-        - frontend/**/*
+-        - .gitlab-ci.yml
++  <<: *frontend-rules
+   before_script:
+     - cd frontend
+     - npm ci --cache .npm --prefer-offline
+@@ -86,6 +131,7 @@ frontend-audit:
+   stage: audit
+   image: node:20
+   rules:
++    - *always-on-default
+     - changes:
+         - frontend/package.json
+         - frontend/package-lock.json
+@@ -100,6 +146,7 @@ backend-audit:
+   stage: audit
+   image: python:3.12-slim
+   rules:
++    - *always-on-default
+     - changes:
+         - backend/requirements.txt
+         - .gitlab-ci.yml
+-- 
+2.43.0
+

@@ -37,27 +37,37 @@ from app.schema_registry import legacy_metadata_tables
 async def _legacy_catch_up() -> None:
     """Create legacy tables/columns an old installation still lacks (no-op at head)."""
 
-    async with engine.begin() as conn:
-        if conn.dialect.name == "postgresql":
-            await conn.execute(text("SELECT pg_advisory_xact_lock(56023113)"))
-        await conn.run_sync(
-            Base.metadata.create_all,
-            tables=legacy_metadata_tables(Base.metadata),
-        )
-    await apply_schema_column_patches()
-    await backfill_api_key_unlimited_budget()
-    await engine.dispose()
+    try:
+        async with engine.begin() as conn:
+            if conn.dialect.name == "postgresql":
+                await conn.execute(text("SELECT pg_advisory_xact_lock(56023113)"))
+            await conn.run_sync(
+                Base.metadata.create_all,
+                tables=legacy_metadata_tables(Base.metadata),
+            )
+        await apply_schema_column_patches()
+        await backfill_api_key_unlimited_budget()
+    finally:
+        # Each step runs in its own asyncio.run() loop and may be retried. A
+        # pool left behind by a failed attempt belongs to a loop that is now
+        # closed, and the retry would die on "attached to a different loop"
+        # instead of reconnecting — so dispose on the way out either way.
+        await engine.dispose()
 
 
 async def _backfill_only() -> None:
-    await backfill_api_key_unlimited_budget()
-    await engine.dispose()
+    try:
+        await backfill_api_key_unlimited_budget()
+    finally:
+        await engine.dispose()
 
 
 async def _validate() -> None:
-    await validate_agent_platform_schema()
-    await validate_accounting_schema()
-    await engine.dispose()
+    try:
+        await validate_agent_platform_schema()
+        await validate_accounting_schema()
+    finally:
+        await engine.dispose()
 
 
 _CONNECT_ATTEMPTS = 6

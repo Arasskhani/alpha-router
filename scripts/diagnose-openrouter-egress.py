@@ -13,7 +13,7 @@ It answers three questions, in order:
    15 s connect budget the app allows?
 3. Does keeping the connection alive avoid all of that? The video path forces
    ``Connection: close`` and disables keep-alive, so it pays 1-3 again for
-   every poll — up to ~240 times per video. This prints both side by side.
+   every poll - up to ~240 times per video. This prints both side by side.
 
 Nothing is written and no API key is used: every request is an unauthenticated
 GET that only needs the connection to be established.

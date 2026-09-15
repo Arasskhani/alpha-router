@@ -69,6 +69,7 @@ class CapacityLease:
     stream_reservation_id: str | None
     lost: asyncio.Event = field(default_factory=asyncio.Event)
     heartbeat_task: asyncio.Task | None = None
+    abandoned: bool = False
 
     def start_heartbeat(self) -> None:
         if self.permit is not None and self.heartbeat_task is None:
@@ -105,7 +106,15 @@ class CapacityLease:
         await release_code_interpreter_turn(self.permit)
 
     async def abandon(self, reason: str) -> None:
-        """Preparation failed: give the hold and the permit back (shielded)."""
+        """Preparation failed: give the hold and the permit back (shielded).
+
+        Idempotent, so an inner handler and the outer guard around the whole
+        preparation cannot release the same permit twice — which would free a
+        Code Interpreter slot another turn is already holding.
+        """
+        if self.abandoned:
+            return
+        self.abandoned = True
         try:
             await asyncio.shield(self.release_reservation())
         except Exception:
@@ -325,154 +334,162 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
     )
     lease.start_heartbeat()
 
-    completion_kwargs: dict = {
-        "messages": messages,
-        "stream": True,
-        "api_key": api_key,
-        "base_url": base_url,
-        "caching": True,
-        "timeout": float(getattr(settings, "chat_provider_timeout_seconds", 600.0) or 600.0),
-    }
-    if agent_turn is not None and agent_turn.plan.policies is not None:
-        completion_kwargs["max_tokens"] = agent_turn.plan.policies.model.max_output_tokens
-        if agent_turn.plan.policies.model.temperature is not None:
-            completion_kwargs["temperature"] = agent_turn.plan.policies.model.temperature
-    model = apply_litellm_provider_kwargs(completion_kwargs, provider_type, model)
-    provider = (provider_type or ai_model.provider_type or "").lower()
-    if tools.code_interpreter and provider == "openrouter" and is_auto_router_model_id(ai_model.external_id):
-        auto_router_extra_body = await adaptive_openrouter_extra_body(ai_model)
-        if auto_router_extra_body:
-            completion_kwargs["extra_body"] = auto_router_extra_body
-    if provider in ("openai", "azure", "openrouter", "anthropic", "xai"):
-        completion_kwargs["stream_options"] = {"include_usage": True}
+    # Everything from here on can raise (provider kwargs, augmentation, the
+    # workspace inventory, the persister). The lease is live by now, so any
+    # escape has to hand the permit and the budget hold back; abandon() is
+    # idempotent, so the handlers inside still report their own reason first.
+    try:
+        completion_kwargs: dict = {
+            "messages": messages,
+            "stream": True,
+            "api_key": api_key,
+            "base_url": base_url,
+            "caching": True,
+            "timeout": float(getattr(settings, "chat_provider_timeout_seconds", 600.0) or 600.0),
+        }
+        if agent_turn is not None and agent_turn.plan.policies is not None:
+            completion_kwargs["max_tokens"] = agent_turn.plan.policies.model.max_output_tokens
+            if agent_turn.plan.policies.model.temperature is not None:
+                completion_kwargs["temperature"] = agent_turn.plan.policies.model.temperature
+        model = apply_litellm_provider_kwargs(completion_kwargs, provider_type, model)
+        provider = (provider_type or ai_model.provider_type or "").lower()
+        if tools.code_interpreter and provider == "openrouter" and is_auto_router_model_id(ai_model.external_id):
+            auto_router_extra_body = await adaptive_openrouter_extra_body(ai_model)
+            if auto_router_extra_body:
+                completion_kwargs["extra_body"] = auto_router_extra_body
+        if provider in ("openai", "azure", "openrouter", "anthropic", "xai"):
+            completion_kwargs["stream_options"] = {"include_usage": True}
 
-    if agent_turn is None:
-        try:
-            messages = await augment_messages_with_tools(
-                db,
-                messages,
-                tools,
-                user_id=user_id,
-                alpha_router_api_key_id=alpha_router_api_key_id,
-                username=username,
-                reserve_budget=not skip_budget,
-            )
-        except BaseException:
-            await lease.abandon("tool setup error")
-            raise
-    private_mode = await resolve_private_mode_for_memory(db, body, user_id=user_id)
-    if agent_turn is None:
-        try:
-            chat_session_id = str(body.get("chat_session_id") or "").strip() or None
-            session_project_id = await resolve_session_project_id(db, chat_session_id)
-            project_memory_project_id = session_project_id
-            messages = await augment_messages_with_profile(
-                db,
-                messages,
-                user_id=user_id,
-                private_mode=private_mode,
-            )
-            if session_project_id is None:
-                # A project thread is shared with teammates, so it sees only
-                # project memory. Personal facts stay out of it entirely.
-                messages = await augment_messages_with_memory(
+        if agent_turn is None:
+            try:
+                messages = await augment_messages_with_tools(
+                    db,
+                    messages,
+                    tools,
+                    user_id=user_id,
+                    alpha_router_api_key_id=alpha_router_api_key_id,
+                    username=username,
+                    reserve_budget=not skip_budget,
+                )
+            except BaseException:
+                await lease.abandon("tool setup error")
+                raise
+        private_mode = await resolve_private_mode_for_memory(db, body, user_id=user_id)
+        if agent_turn is None:
+            try:
+                chat_session_id = str(body.get("chat_session_id") or "").strip() or None
+                session_project_id = await resolve_session_project_id(db, chat_session_id)
+                project_memory_project_id = session_project_id
+                messages = await augment_messages_with_profile(
                     db,
                     messages,
                     user_id=user_id,
                     private_mode=private_mode,
-                    query=extract_query_text(messages),
-                    injected_ids=injected_memory_ids,
                 )
-            messages = await augment_messages_with_project_context(
-                db,
-                messages,
-                user_id=user_id,
-                chat_session_id=chat_session_id,
-                client_project_id=str(body.get("project_id") or body.get("projectId") or "").strip() or None,
-                query=extract_query_text(messages),
-                injected_memory_ids=injected_project_memory_ids,
-            )
-        except BaseException:
-            await lease.abandon("memory setup error")
-            raise
-    messages = apply_prompt_cache_breakpoints(messages)
-    original_messages = list(body.get("messages", []))
-    resolved_workspace_files = getattr(
-        resolved,
-        "code_interpreter_workspace_files",
-        None,
-    )
-    workspace_files = (
-        resolved_workspace_files
-        if tools.code_interpreter and resolved_workspace_files is not None
-        else (workspace_files_from_messages(original_messages) if tools.code_interpreter else {})
-    )
-    if tools.code_interpreter and workspace_files:
-        inventory = code_interpreter_workspace_message(workspace_files)
-        if inventory:
-            messages = list(messages)
-            if messages and messages[0].get("role") == "system" and isinstance(messages[0].get("content"), str):
-                messages[0] = {
-                    "role": "system",
-                    "content": f"{messages[0]['content']}\n\n{inventory}",
-                }
-            else:
-                messages = [
-                    {"role": "system", "content": inventory},
-                    *messages,
-                ]
-    current_messages = list(messages)
-    completion_kwargs["messages"] = current_messages
-
-    persister = None
-    if source == "alpha_router_chat" and user_id:
-        persister = persister_from_body(
-            db,
-            user_id=user_id,
-            body=body,
-            model_id=model,
-            model_name=ai_model.display_name or ai_model.external_id or model,
-        )
-        if persister:
-            try:
-                if agent_turn is not None:
-                    persister.set_completion_metadata(
-                        {
-                            "agentRunId": agent_turn.run_id,
-                            "agentId": agent_turn.plan.selected_agent_id,
-                            "agentVersionId": (agent_turn.plan.selected_agent_version_id),
-                            "agentName": (
-                                agent_turn.plan.target.agent.name if agent_turn.plan.target is not None else None
-                            ),
-                            "routingOutcome": agent_turn.plan.routing_outcome,
-                        }
+                if session_project_id is None:
+                    # A project thread is shared with teammates, so it sees only
+                    # project memory. Personal facts stay out of it entirely.
+                    messages = await augment_messages_with_memory(
+                        db,
+                        messages,
+                        user_id=user_id,
+                        private_mode=private_mode,
+                        query=extract_query_text(messages),
+                        injected_ids=injected_memory_ids,
                     )
-                await persister.prepare()
-            except Exception:  # noqa: BLE001 -- session is rolled back and the caller continues without the write
-                await db.rollback()
-                persister = None
+                messages = await augment_messages_with_project_context(
+                    db,
+                    messages,
+                    user_id=user_id,
+                    chat_session_id=chat_session_id,
+                    client_project_id=str(body.get("project_id") or body.get("projectId") or "").strip() or None,
+                    query=extract_query_text(messages),
+                    injected_memory_ids=injected_project_memory_ids,
+                )
+            except BaseException:
+                await lease.abandon("memory setup error")
+                raise
+        messages = apply_prompt_cache_breakpoints(messages)
+        original_messages = list(body.get("messages", []))
+        resolved_workspace_files = getattr(
+            resolved,
+            "code_interpreter_workspace_files",
+            None,
+        )
+        workspace_files = (
+            resolved_workspace_files
+            if tools.code_interpreter and resolved_workspace_files is not None
+            else (workspace_files_from_messages(original_messages) if tools.code_interpreter else {})
+        )
+        if tools.code_interpreter and workspace_files:
+            inventory = code_interpreter_workspace_message(workspace_files)
+            if inventory:
+                messages = list(messages)
+                if messages and messages[0].get("role") == "system" and isinstance(messages[0].get("content"), str):
+                    messages[0] = {
+                        "role": "system",
+                        "content": f"{messages[0]['content']}\n\n{inventory}",
+                    }
+                else:
+                    messages = [
+                        {"role": "system", "content": inventory},
+                        *messages,
+                    ]
+        current_messages = list(messages)
+        completion_kwargs["messages"] = current_messages
 
-    return TurnContext(
-        messages=messages,
-        current_messages=current_messages,
-        completion_kwargs=completion_kwargs,
-        tools=tools,
-        ai_model=ai_model,
-        api_key=api_key,
-        base_url=base_url,
-        provider_type=provider_type,
-        provider=provider,
-        model=model,
-        workspace_files=workspace_files,
-        lease=lease,
-        persister=persister,
-        agent_turn=agent_turn,
-        agent_resource_subject=agent_resource_subject,
-        project_id_for_billing=project_id_for_billing,
-        project_memory_project_id=project_memory_project_id,
-        injected_memory_ids=injected_memory_ids,
-        injected_project_memory_ids=injected_project_memory_ids,
-    )
+        persister = None
+        if source == "alpha_router_chat" and user_id:
+            persister = persister_from_body(
+                db,
+                user_id=user_id,
+                body=body,
+                model_id=model,
+                model_name=ai_model.display_name or ai_model.external_id or model,
+            )
+            if persister:
+                try:
+                    if agent_turn is not None:
+                        persister.set_completion_metadata(
+                            {
+                                "agentRunId": agent_turn.run_id,
+                                "agentId": agent_turn.plan.selected_agent_id,
+                                "agentVersionId": (agent_turn.plan.selected_agent_version_id),
+                                "agentName": (
+                                    agent_turn.plan.target.agent.name if agent_turn.plan.target is not None else None
+                                ),
+                                "routingOutcome": agent_turn.plan.routing_outcome,
+                            }
+                        )
+                    await persister.prepare()
+                except Exception:  # noqa: BLE001 -- session is rolled back and the caller continues without the write
+                    await db.rollback()
+                    persister = None
+
+        return TurnContext(
+            messages=messages,
+            current_messages=current_messages,
+            completion_kwargs=completion_kwargs,
+            tools=tools,
+            ai_model=ai_model,
+            api_key=api_key,
+            base_url=base_url,
+            provider_type=provider_type,
+            provider=provider,
+            model=model,
+            workspace_files=workspace_files,
+            lease=lease,
+            persister=persister,
+            agent_turn=agent_turn,
+            agent_resource_subject=agent_resource_subject,
+            project_id_for_billing=project_id_for_billing,
+            project_memory_project_id=project_memory_project_id,
+            injected_memory_ids=injected_memory_ids,
+            injected_project_memory_ids=injected_project_memory_ids,
+        )
+    except BaseException:
+        await lease.abandon("turn preparation error")
+        raise
 
 
 # Historical names, still imported by proxy_service and patched by tests.

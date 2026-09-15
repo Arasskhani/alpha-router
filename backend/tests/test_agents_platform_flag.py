@@ -58,3 +58,33 @@ async def test_agent_fields_in_chat_body_are_refused(db_session, user):
         )
     assert exc.value.status_code == 400
     assert "Agent platform" in str(exc.value.detail)
+
+
+async def test_ordinary_chat_body_is_not_refused_when_disabled(db_session, user):
+    """The app sends ``agent_auto_route: false`` on every non-private turn.
+
+    That is not a request for an Agent, so it must reach model resolution
+    instead of the preview's 400 -- otherwise switching the preview off breaks
+    chat outright.
+    """
+    body = {
+        "model": "vendor/good",
+        "messages": [{"role": "user", "content": "hi"}],
+        "agent_auto_route": False,
+    }
+    with (
+        patch.object(proxy_service.settings, "agents_platform_enabled", False),
+        pytest.raises(HTTPException) as exc,
+    ):
+        await proxy_service.preflight_stream_chat(
+            db_session,
+            body,
+            user_id=user.id,
+            skip_budget=True,
+            alpha_router_api_key_id=None,
+            source="alpha_router_chat",
+        )
+    # No model named "vendor/good" exists in this test database: reaching the
+    # 404 proves the Agent guard let the request through.
+    assert exc.value.status_code == 404
+    assert "Model not enabled" in str(exc.value.detail)

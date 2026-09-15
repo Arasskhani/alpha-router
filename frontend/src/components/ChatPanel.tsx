@@ -115,7 +115,7 @@ import {
   notifyReplyReady,
   REPLY_READY_FOCUS_EVENT,
 } from "../lib/replyReadyNotify";
-import { getSessionUser, isSessionActive, logout } from "../lib/session";
+import { getSessionUser, isPlatformFeatureEnabled, isSessionActive, logout } from "../lib/session";
 import { copyFreshChatTools, anyChatToolEnabled, isAllowedVideoDuration, toolsToApiPayload, type ChatToolsState } from "../lib/chatTools";
 import MediaViewerModal from "./MediaViewerModal";
 import ChatAttachmentMessage from "./chat/ChatAttachmentMessage";
@@ -482,6 +482,7 @@ export default function ChatPanel({
   const [modelPickerMode, setModelPickerMode] = useState<"replace" | "append" | null>(null);
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const sessionUser = getSessionUser();
+  const agentsPlatformEnabled = isPlatformFeatureEnabled("agents_platform");
   const sessionUsername = sessionUser?.username ?? "";
   const welcomeName = sessionUser?.display_name || sessionUsername;
   const projectAuthorDisplayName = isProjectChat
@@ -902,6 +903,10 @@ export default function ChatPanel({
   }
 
   function agentSelectionForSession(sessionId: string): string {
+    // A chat keeps its Agent choice locally, so an installation that switched
+    // the preview off would keep sending it and get a 400 on every message --
+    // with the picker disabled, the user could not even clear it.
+    if (!agentsPlatformEnabled) return NO_AGENT_SELECTION;
     const session = sessionsRef.current.find((item) => item.id === sessionId);
     const bound = session?.currentAgentId
       ? agentCatalog.find((agent) => agent.id === session.currentAgentId)
@@ -1536,7 +1541,7 @@ export default function ChatPanel({
   }, [readOnly, defaultModel, userPrefsReady]);
 
   useEffect(() => {
-    if (readOnly || !sessionUsername) {
+    if (readOnly || !sessionUsername || !agentsPlatformEnabled) {
       setAgentCatalog([]);
       return;
     }
@@ -1553,7 +1558,7 @@ export default function ChatPanel({
     return () => {
       cancelled = true;
     };
-  }, [readOnly, sessionUsername]);
+  }, [readOnly, sessionUsername, agentsPlatformEnabled]);
 
   useEffect(() => {
     if (
@@ -7081,6 +7086,7 @@ export default function ChatPanel({
                     speechCapabilities={selectedModels[0]}
                   />
                   </div>
+                  {agentsPlatformEnabled ? (
                   <div className="alpha-router-tools-picker" ref={agentMenuRef}>
                     <button
                       ref={agentTriggerRef}
@@ -7123,6 +7129,7 @@ export default function ChatPanel({
                       onClose={() => setAgentMenuOpen(false)}
                     />
                   </div>
+                  ) : null}
                   <button
                     type="button"
                     className={`alpha-router-composer-ctrl alpha-router-translate-eng-btn${translateToEngBusy ? " is-busy" : ""}`}

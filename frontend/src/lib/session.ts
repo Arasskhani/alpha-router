@@ -23,6 +23,17 @@ export function getSessionUser(): {
   };
 }
 
+/**
+ * A preview feature the server can switch off (``/api/auth/session.features``).
+ *
+ * Unknown means on: an older server does not send the block at all, and a
+ * frontend that hid its features there would look broken.
+ */
+export function isPlatformFeatureEnabled(feature: string): boolean {
+  const features = getCachedSession()?.features as Record<string, boolean | undefined> | undefined;
+  return features?.[feature] !== false;
+}
+
 export function formatSessionDuration(loginAt: number): string {
   const sec = Math.floor((Date.now() - loginAt) / 1000);
   if (sec < 60) return "Just now";

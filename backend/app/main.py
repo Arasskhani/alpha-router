@@ -82,6 +82,7 @@ from app.services.observability import (
     shutdown_telemetry,
 )
 from app.services.openrouter_image_service import close_openrouter_http_client
+from app.services.provider_http import close_provider_rest_client
 from app.services.proxy_service import configure_litellm_cache
 from app.services.scheduler import (
     refresh_chat_retention_cleanup_schedule,
@@ -681,6 +682,7 @@ async def lifespan(app: FastAPI):
     await leader.stop()
     stop_scheduler()
     await close_openrouter_http_client()
+    await close_provider_rest_client()
     from app.core.redis_client import close_redis
 
     await close_redis()

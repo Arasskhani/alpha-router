@@ -8,11 +8,8 @@ from urllib.parse import urlparse
 
 import httpx
 
-from app.services.openrouter_image_service import (
-    OPENROUTER_CONNECT_TIMEOUT,
-    build_openrouter_headers,
-    get_openrouter_http_client,
-)
+from app.services.openrouter_image_service import build_openrouter_headers
+from app.services.provider_http import get_provider_rest_client, provider_connect_timeout
 from app.core.constants import OPENROUTER_HOST, normalize_openrouter_base_url
 from app.config import get_settings
 import contextlib
@@ -149,9 +146,8 @@ async def submit_video_job(
 ) -> dict[str, Any]:
     url = openrouter_videos_base(base_url)
     headers = build_openrouter_headers(api_key, referer=referer)
-    headers.setdefault("Connection", "close")
-    client = get_openrouter_http_client()
-    timeout = httpx.Timeout(get_settings().provider_http_timeout_seconds, connect=OPENROUTER_CONNECT_TIMEOUT)
+    client = get_provider_rest_client()
+    timeout = httpx.Timeout(get_settings().provider_http_timeout_seconds, connect=provider_connect_timeout())
     response = await client.post(url, headers=headers, json=payload, timeout=timeout)
     if response.status_code >= 400:
         detail = (response.text or "")[:2000]
@@ -175,9 +171,8 @@ async def poll_video_job(
     referer: str | None = None,
 ) -> dict[str, Any]:
     headers = build_openrouter_headers(api_key, referer=referer)
-    headers.setdefault("Connection", "close")
-    client = get_openrouter_http_client()
-    timeout = httpx.Timeout(30.0, connect=OPENROUTER_CONNECT_TIMEOUT)
+    client = get_provider_rest_client()
+    timeout = httpx.Timeout(30.0, connect=provider_connect_timeout())
 
     url = (polling_url or "").strip()
     if url:

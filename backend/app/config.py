@@ -285,6 +285,14 @@ class Settings(BaseSettings):
     #   identity_http:   SAML metadata / OIDC discovery, token and userinfo
     #   speech_http:     text-to-speech synthesis (large audio bodies)
     provider_http_timeout_seconds: float = 60.0  # env: PROVIDER_HTTP_TIMEOUT_SECONDS
+    # How long one TCP+TLS handshake to a provider may take, and how many extra
+    # attempts httpcore may make. A healthy handshake costs tens of
+    # milliseconds, so the old 15s budget only delayed failures; retrying the
+    # *connect* is what actually survives a network that drops some new SYNs,
+    # and httpcore never re-sends a request that already reached the wire, so a
+    # video POST cannot be submitted (or billed) twice.
+    provider_connect_timeout_seconds: float = 5.0  # env: PROVIDER_CONNECT_TIMEOUT_SECONDS
+    provider_connect_retries: int = 3  # env: PROVIDER_CONNECT_RETRIES
     provider_lookup_timeout_seconds: float = 20.0  # env: PROVIDER_LOOKUP_TIMEOUT_SECONDS
     identity_http_timeout_seconds: float = 20.0  # env: IDENTITY_HTTP_TIMEOUT_SECONDS
     speech_http_timeout_seconds: float = 120.0  # env: SPEECH_HTTP_TIMEOUT_SECONDS

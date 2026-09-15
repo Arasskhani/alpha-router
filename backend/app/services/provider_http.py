@@ -27,7 +27,12 @@ So this client:
   handshake to a provider takes tens of milliseconds; a fifteen-second wait
   never recovers a connection, it only delays the failure;
 * honours ``HTTPS_PROXY``/``NO_PROXY`` (``trust_env``), so an operator whose
-  network cannot be fixed can route around it without a code change.
+  network cannot be fixed can route around it without a code change. Note the
+  limit of that: the SSRF-guarded client in ``ssrf_guard`` -- which downloads
+  the finished video and every other user-supplied URL -- deliberately keeps
+  ``trust_env`` off, because sending those through a proxy would hand the
+  destination back to the proxy and defeat its IP pinning. A proxy fixes the
+  control-plane calls, not the asset download.
 """
 
 from __future__ import annotations

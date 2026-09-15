@@ -84,3 +84,37 @@ async def test_the_video_path_no_longer_forces_a_new_connection():
     source = inspect.getsource(video)
     assert '"Connection", "close"' not in source
     assert "get_provider_rest_client" in source
+
+
+async def test_the_ssrf_safe_client_also_retries_its_handshake():
+    """Downloading a finished video is one handshake at the worst moment.
+
+    `fetch_video_asset` gets the clip after the provider has generated and
+    billed it. That fetch had a single connect attempt and a 10s budget, so on
+    a host losing new connections the job could die holding a paid-for video.
+    """
+    from app.services.ssrf_guard import PinnedNetworkBackend, safe_client
+
+    client = safe_client()
+    try:
+        pool = client._transport._pool
+        assert pool._retries == provider_connect_retries() >= 1
+        assert client.timeout.connect == provider_connect_timeout()
+        # Retrying must not cost the SSRF guarantee: every dial still goes
+        # through the pinning backend, which re-resolves and re-validates.
+        assert isinstance(pool._network_backend, PinnedNetworkBackend)
+        # And it must not start honouring a proxy, which would hand the
+        # destination back to the proxy and defeat that pinning.
+        assert client.trust_env is False
+    finally:
+        await client.aclose()
+
+
+async def test_an_explicit_argument_still_wins_over_the_safe_default():
+    from app.services.ssrf_guard import safe_client
+
+    client = safe_client(timeout=httpx.Timeout(3.0, connect=1.0))
+    try:
+        assert client.timeout.connect == 1.0
+    finally:
+        await client.aclose()

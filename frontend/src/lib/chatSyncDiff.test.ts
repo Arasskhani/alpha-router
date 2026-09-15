@@ -4,7 +4,9 @@ vi.mock("../api", () => ({ api: vi.fn() }));
 
 import { api } from "../api";
 import {
+  clearSessionMessageSyncQueue,
   fetchAllSessionMessagesFromServer,
+  markSessionMetadataDirty,
   mergeRemoteChatSessions,
   messagesMissingOnServer,
   pickMergedMessages,
@@ -63,6 +65,49 @@ describe("messagesMissingOnServer", () => {
     ];
     expect(messagesMissingOnServer(local, server).map((m) => m.content)).toEqual(["old-3", "new"]);
   });
+
+  it("does not re-append a row replaced in place, which lost its id", () => {
+    // The image flow persists a pending placeholder, then swaps it locally for
+    // an error notice built without a clientMessageId.
+    const server = [
+      msg({ content: "draw a cat", clientMessageId: "u1" }),
+      msg({ content: "__IMAGE_PENDING__", clientMessageId: "a1", role: "assistant" }),
+    ];
+    const local = [
+      msg({ content: "draw a cat", clientMessageId: "u1" }),
+      msg({ content: "Image generation failed.", role: "assistant" }),
+    ];
+    expect(messagesMissingOnServer(local, server)).toEqual([]);
+  });
+
+  it("appends only the tail, never a row from the middle", () => {
+    // Appending re-orders a middle row to the end, so it is left alone.
+    const server = [
+      msg({ content: "a", clientMessageId: "c1" }),
+      msg({ content: "c", clientMessageId: "c3" }),
+    ];
+    const local = [
+      msg({ content: "a", clientMessageId: "c1" }),
+      msg({ content: "b", clientMessageId: "c2" }),
+      msg({ content: "c", clientMessageId: "c3" }),
+      msg({ content: "d", clientMessageId: "c4" }),
+    ];
+    expect(messagesMissingOnServer(local, server).map((m) => m.clientMessageId)).toEqual(["c4"]);
+  });
+
+  it("appends the tail against a partial (newest-N) server window", () => {
+    const server = [
+      msg({ content: "old-99", clientMessageId: "c99" }),
+      msg({ content: "old-100", clientMessageId: "c100" }),
+    ];
+    const local = [
+      msg({ content: "old-1", clientMessageId: "c1" }),
+      msg({ content: "old-99", clientMessageId: "c99" }),
+      msg({ content: "old-100", clientMessageId: "c100" }),
+      msg({ content: "new", clientMessageId: "c101" }),
+    ];
+    expect(messagesMissingOnServer(local, server).map((m) => m.clientMessageId)).toEqual(["c101"]);
+  });
 });
 
 describe("pickMergedMessages", () => {
@@ -116,6 +161,22 @@ describe("mergeRemoteChatSessions", () => {
     const local = [session({ id: "s", currentAgentId: "local-agent", updatedAt: 300 })];
     const remote = [session({ id: "s", currentAgentId: "server-agent", updatedAt: 200 })];
     expect(mergeRemoteChatSessions(local, remote)[0].currentAgentId).toBe("server-agent");
+  });
+
+  it("keeps local fields while a metadata change is still queued for the server", () => {
+    // The remote row is newer *because* it has not seen our change yet; the
+    // pending PATCH would push it back a moment later.
+    markSessionMetadataDirty("s");
+    try {
+      const local = [session({ id: "s", model: "model-local", updatedAt: 100 })];
+      const remote = [session({ id: "s", model: "model-remote", updatedAt: 200 })];
+      expect(mergeRemoteChatSessions(local, remote)[0].model).toBe("model-local");
+    } finally {
+      clearSessionMessageSyncQueue("s");
+    }
+    const local = [session({ id: "s", model: "model-local", updatedAt: 100 })];
+    const remote = [session({ id: "s", model: "model-remote", updatedAt: 200 })];
+    expect(mergeRemoteChatSessions(local, remote)[0].model).toBe("model-remote");
   });
 
   it("keeps local messages for protected (streaming) sessions", () => {

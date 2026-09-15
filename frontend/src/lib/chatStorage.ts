@@ -646,9 +646,13 @@ export function mergeRemoteChatSessions(
       continue;
     }
 
-    const messages = pickMergedMessages(l, r, localUpdated, remoteUpdated);
-    // Newer copy wins; a tie keeps the local copy (it may hold unsynced edits).
-    const base = remoteUpdated > localUpdated ? { ...l, ...r } : { ...r, ...l };
+    // Newer copy wins; a tie, or a local change still waiting to be pushed,
+    // keeps the local fields.
+    const remoteWins = remoteUpdated > localUpdated && !hasUnsyncedLocalWrites(id);
+    const messages = remoteWins
+      ? pickMergedMessages(l, r, localUpdated, remoteUpdated)
+      : pickMergedMessages(l, r, 1, 0);
+    const base = remoteWins ? { ...l, ...r } : { ...r, ...l };
     merged.push({
       ...base,
       title,
@@ -677,6 +681,23 @@ export function clearPendingDelete(id: string): void {
 
 export function isPendingDelete(id: string): boolean {
   return pendingDeleteIds.has(id);
+}
+
+/**
+ * This tab holds changes to the session that the server has not accepted yet
+ * (queued message appends, or a metadata PATCH still to go out).
+ *
+ * Such a session must keep its local fields through a merge even when the
+ * server copy looks newer: the server row is newer precisely because it does
+ * not have our change yet, and the flush that follows would otherwise push
+ * back whatever the merge just overwrote.
+ */
+function hasUnsyncedLocalWrites(sessionId: string): boolean {
+  return (
+    dirtySessionIds.has(sessionId) ||
+    dirtyMetadataIds.has(sessionId) ||
+    (pendingAppendBySession.get(sessionId)?.length ?? 0) > 0
+  );
 }
 
 function mapApiMessage(raw: Record<string, unknown>): ChatMessage {
@@ -794,13 +815,19 @@ export async function fetchSessionMessagesFromServer(
 const FULL_HISTORY_MAX_MESSAGES = 5000;
 
 /**
- * Fetch the complete message history by walking `before` pages (oldest first
- * on return). Sync-by-diff needs the whole server list; a single 200-row page
- * silently truncated long chats and made every older message look "missing".
+ * Walk `before` pages of one session's history, newest page first, and return
+ * the rows oldest-first. Sync-by-diff needs more than the single 200-row page
+ * the old code read, which made every older message of a long chat look
+ * "missing".
+ *
+ * `minMessages` stops the walk as soon as that many rows are in hand: the
+ * append diff only has to cover the local message list, so an ordinary turn
+ * still costs exactly one request. Callers that must see the *whole* history
+ * (the full-replace PUT) omit it and check `truncated`.
  */
 export async function fetchAllSessionMessagesFromServer(
   sessionId: string,
-  opts?: { pageSize?: number; signal?: AbortSignal },
+  opts?: { pageSize?: number; minMessages?: number; signal?: AbortSignal },
 ): Promise<{ messages: ChatMessage[]; revision?: number; truncated: boolean }> {
   const pageSize = Math.min(500, Math.max(1, opts?.pageSize ?? 200));
   const pages: ChatMessage[][] = [];
@@ -819,6 +846,9 @@ export async function fetchAllSessionMessagesFromServer(
     const oldest = page.messages[0];
     if (!page.hasMore || !page.messages.length || oldest?.sequence == null) {
       return { messages: pages.reverse().flat(), revision, truncated: false };
+    }
+    if (opts?.minMessages != null && total >= opts.minMessages) {
+      return { messages: pages.reverse().flat(), revision, truncated: true };
     }
     if (total >= FULL_HISTORY_MAX_MESSAGES) {
       return { messages: pages.reverse().flat(), revision, truncated: true };
@@ -1871,13 +1901,12 @@ export async function syncSessionMessages(
   if (!live) return;
 
   await createSessionOnServerIfMissing(live, opts?.signal);
-  const { messages: serverMsgs, truncated } = await fetchAllSessionMessagesFromServer(sessionId, {
+  // Enough history to cover the local list: the diff only ever appends a tail,
+  // so rows older than that cannot change the outcome (see messagesMissingOnServer).
+  const { messages: serverMsgs } = await fetchAllSessionMessagesFromServer(sessionId, {
+    minMessages: messages.length + 1,
     signal: opts?.signal,
   });
-  if (truncated) {
-    console.warn("chat history too long to sync by diff; appending nothing", sessionId);
-    return;
-  }
   const missing = messagesMissingOnServer(messages, serverMsgs);
   const lastLocal = messages[messages.length - 1];
   const lastServer = serverMsgs[serverMsgs.length - 1];
@@ -1967,32 +1996,52 @@ function sameMessageIdentity(a: ChatMessage, b: ChatMessage): boolean {
 }
 
 /**
- * Local messages the server does not have yet, in local order.
+ * Local messages the server does not have yet — always a contiguous tail.
  *
- * The diff is keyed on `clientMessageId` — unique per `(session, client_message_id)`
- * in the database — so a message another device appended in the meantime no
- * longer shifts the positional cut and re-sends the wrong tail. Legacy rows
- * without a clientMessageId (written before the field existed) can only be
- * matched by position, which is what the old algorithm did for everything.
+ * The diff is keyed on `clientMessageId` (unique per `(session, client_message_id)`
+ * in the database), so a message another device appended in the meantime no
+ * longer shifts a positional cut and makes us re-send the wrong rows.
+ *
+ * Rows the id cannot match are paired with the next server row of the same
+ * role instead. Two kinds need that: messages written before the field
+ * existed, and a local row that *lost* its id because it was replaced in
+ * place — an image/speech placeholder turning into an error notice. Without
+ * the role pairing that replacement looks new and gets appended a second
+ * time, instead of patching the row the server already has.
+ *
+ * Only rows after the last one confirmed present are returned. The server API
+ * appends at the tail, so re-sending a row from the middle would move it to
+ * the end and scramble the order; leaving such a row alone is the safer
+ * failure. It is also what makes a partial (newest-N) server window safe to
+ * diff against: everything older simply falls outside the tail.
  */
 export function messagesMissingOnServer(local: ChatMessage[], server: ChatMessage[]): ChatMessage[] {
   const serverIds = new Set<string>();
-  let serverLegacyCount = 0;
-  for (const m of server) {
-    if (m.clientMessageId) serverIds.add(m.clientMessageId);
-    else serverLegacyCount += 1;
-  }
-  const missing: ChatMessage[] = [];
-  let localLegacySeen = 0;
-  for (const m of local) {
-    if (m.clientMessageId) {
-      if (!serverIds.has(m.clientMessageId)) missing.push(m);
-      continue;
+  const localIds = new Set<string>();
+  for (const m of server) if (m.clientMessageId) serverIds.add(m.clientMessageId);
+  for (const m of local) if (m.clientMessageId) localIds.add(m.clientMessageId);
+  // Server rows no local id claims: legacy rows, and rows whose local copy was replaced.
+  const unclaimed = server.filter((m) => !m.clientMessageId || !localIds.has(m.clientMessageId));
+
+  const candidates: { index: number; message: ChatMessage }[] = [];
+  let cursor = 0;
+  let lastPresent = -1;
+  local.forEach((message, index) => {
+    if (message.clientMessageId) {
+      // An id the server does not have was never sent: genuinely missing.
+      if (serverIds.has(message.clientMessageId)) lastPresent = index;
+      else candidates.push({ index, message });
+      return;
     }
-    localLegacySeen += 1;
-    if (localLegacySeen > serverLegacyCount) missing.push(m);
-  }
-  return missing;
+    const paired = unclaimed.findIndex((s, i) => i >= cursor && s.role === message.role);
+    if (paired >= 0) {
+      cursor = paired + 1;
+      lastPresent = index;
+      return;
+    }
+    candidates.push({ index, message });
+  });
+  return candidates.filter((c) => c.index > lastPresent).map((c) => c.message);
 }
 
 /** Sync full local message list to server: append missing rows, patch last assistant if updated. */

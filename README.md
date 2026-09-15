@@ -71,6 +71,14 @@ sudo ./scripts/install.sh --dev
 Default clone path is `/opt/alpha-router`. Override with
 `ALPHAROUTER_HOME=/home/alpha/alpha-router`.
 
+When it clones, `install.sh` checks out the newest release tag (`vX.Y.Z`)
+rather than the tip of `main`, so a fresh host runs code that was actually
+released. `ALPHAROUTER_GIT_REF=main` (or any branch or tag) overrides it; if
+the repository has no release tag yet, it falls back to `main` and says so.
+A host installed this way sits on a detached HEAD at that tag, and
+`upgrade.sh` moves it to the next *release* — it never fast-forwards a pinned
+host onto `main`.
+
 After CI publishes images:
 
 ```bash

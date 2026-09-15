@@ -154,6 +154,39 @@ deploy_mode_from_env() {
   fi
 }
 
+# Newest vX.Y.Z tag on the remote; empty when the repository has none.
+# (install.sh carries its own copy: it must resolve a tag before this library
+# exists on disk.)
+latest_release_tag() {
+  git -C "$ROOT_DIR" ls-remote --tags --refs origin 'v[0-9]*' 2>/dev/null \
+    | awk -F/ '{print $NF}' \
+    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+    | sort -t. -k1,1V -k2,2n -k3,3n \
+    | tail -n 1
+}
+
+# install.sh pins a fresh host to the newest release tag, which leaves the
+# checkout on a detached HEAD. `git pull origin HEAD` would quietly fast-forward
+# such a host onto the tip of main -- the unpinned behaviour the pin exists to
+# avoid -- so a pinned checkout moves from release to release instead.
+upgrade_pinned_release() {
+  local current tag
+  current="$(git -C "$ROOT_DIR" describe --tags --exact-match 2>/dev/null || true)"
+  [ -n "$current" ] || current="$(git -C "$ROOT_DIR" rev-parse --short HEAD)"
+  tag="$(latest_release_tag || true)"
+  if [ -z "$tag" ]; then
+    warn "Checkout is pinned to $current and origin has no release tag; skipping git update."
+    return 0
+  fi
+  if [ "$tag" = "$current" ]; then
+    log "Already on the newest release ($tag)."
+    return 0
+  fi
+  log "Updating pinned checkout: $current -> $tag"
+  git -C "$ROOT_DIR" fetch --depth 1 origin "refs/tags/$tag:refs/tags/$tag" --force
+  git -C "$ROOT_DIR" -c advice.detachedHead=false checkout "refs/tags/$tag"
+}
+
 git_pull_ff_only() {
   if [ ! -d "$ROOT_DIR/.git" ]; then
     log "Not a git checkout; skipping git pull (source was copied)."
@@ -165,6 +198,10 @@ git_pull_ff_only() {
   fi
   local branch remote
   branch="$(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD)"
+  if [ "$branch" = "HEAD" ]; then
+    upgrade_pinned_release
+    return 0
+  fi
   remote="origin"
   log "Fetching and fast-forwarding $branch..."
   git -C "$ROOT_DIR" fetch --prune "$remote"

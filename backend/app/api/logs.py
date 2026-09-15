@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
@@ -896,22 +897,39 @@ def _json_or_none(raw: str | None) -> dict | None:
     return parsed if isinstance(parsed, dict) else {"value": parsed}
 
 
-async def _cost_details_payload(db: AsyncSession, log_row: RequestLog) -> dict:
-    request_block = {
+async def _cost_details_payload(
+    db: AsyncSession,
+    log_row: RequestLog,
+    *,
+    operator_detail: bool = True,
+) -> dict:
+    """The cost ledger for one request log.
+
+    ``operator_detail`` is the difference between the two callers. The admin
+    API Logs page gets everything, including the provider's verbatim response
+    and the ids an operator needs to trace a request through the stack. The
+    end user looking at the cost of their own chat turn gets what the cost is
+    and why it failed, and none of the operating internals: the raw provider
+    payload (which exposes upstream routing), the connection row behind the
+    call, the correlation id, the provider job id and the recorded source IP.
+    Those answer an operator's questions, not the account holder's.
+    """
+    request_block: dict[str, Any] = {
         "id": log_row.id,
         "success": bool(log_row.success),
         "error_code": log_row.error_code,
         "error_message": log_row.error_message,
         "http_status": log_row.http_status,
-        "correlation_id": log_row.correlation_id,
-        "provider_job_id": log_row.provider_job_id,
         "response_time_ms": float(log_row.response_time_ms or 0),
         "source": log_row.source,
         "client_app": log_row.client_app,
-        "source_ip": log_row.source_ip,
         "model_id": log_row.model_id,
         "project_id": log_row.project_id,
     }
+    if operator_detail:
+        request_block["correlation_id"] = log_row.correlation_id
+        request_block["provider_job_id"] = log_row.provider_job_id
+        request_block["source_ip"] = log_row.source_ip
     if not log_row.usage_operation_id:
         return {
             "operation": None,
@@ -978,7 +996,6 @@ async def _cost_details_payload(db: AsyncSession, log_row: RequestLog) -> dict:
                 "attempt_index": event.attempt_index,
                 "upstream_request_id": event.upstream_request_id,
                 "status": event.status,
-                "connection_id": event.connection_id,
                 "quantity": event.quantity,
                 "unit": event.unit,
                 "started_at": (event.started_at.isoformat() if event.started_at else None),
@@ -1000,9 +1017,18 @@ async def _cost_details_payload(db: AsyncSession, log_row: RequestLog) -> dict:
                     event.last_reconciliation_attempt_at.isoformat() if event.last_reconciliation_attempt_at else None
                 ),
                 "error_message": event.error_message,
-                # The provider's own response for this attempt. Kept until the
-                # retention window configured on the API Logs page expires.
-                "raw_usage": _json_or_none(event.raw_usage_json),
+                # Operator-only (see the docstring): the provider's own response
+                # for this attempt, kept until the retention window configured on
+                # the Retention Policy page expires, and the connection row the
+                # call went out on.
+                **(
+                    {
+                        "raw_usage": _json_or_none(event.raw_usage_json),
+                        "connection_id": event.connection_id,
+                    }
+                    if operator_detail
+                    else {}
+                ),
                 "line_items": [
                     {
                         "category": line.category,
@@ -1225,4 +1251,4 @@ async def user_request_log_cost_details(
 ):
     """Cost ledger for one owned request log — same payload shape as admin cost-details."""
     log_row = await _owned_request_log(db, user, log_id)
-    return await _cost_details_payload(db, log_row)
+    return await _cost_details_payload(db, log_row, operator_detail=False)

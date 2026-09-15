@@ -55,13 +55,15 @@ type RequestFailureBlock = {
   error_code: string | null;
   error_message: string | null;
   http_status: number | null;
-  correlation_id: string | null;
-  provider_job_id: string | null;
   response_time_ms: number;
   source: string | null;
   client_app: string | null;
-  source_ip: string | null;
   model_id: string | null;
+  // Operator-only: the admin endpoint sends these, the user-facing one omits
+  // them entirely, so they are optional rather than nullable.
+  correlation_id?: string | null;
+  provider_job_id?: string | null;
+  source_ip?: string | null;
   project_id: string | null;
 };
 
@@ -87,9 +89,13 @@ type CostEvent = {
   reconciliation_attempts: number;
   last_reconciliation_attempt_at: string | null;
   error_message: string | null;
-  /** The provider's own response for this attempt, until the retention window passes. */
-  raw_usage: Record<string, unknown> | null;
-  connection_id: number | null;
+  /**
+   * Operator-only, and absent from the user-facing endpoint: the provider's own
+   * response for this attempt (kept until the retention window passes) and the
+   * connection row the call went out on.
+   */
+  raw_usage?: Record<string, unknown> | null;
+  connection_id?: number | null;
   quantity: number | null;
   unit: string | null;
   started_at: string | null;

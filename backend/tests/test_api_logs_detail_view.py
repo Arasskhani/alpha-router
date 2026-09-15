@@ -137,3 +137,43 @@ async def test_export_carries_the_same_detail_as_the_page(db_session, user) -> N
     csv_text = dataframe_to_csv_bytes(df).decode("utf-8")
     for header in ("Type", "Error Code", "HTTP Status", "Error", "Correlation Id", "Provider Job Id"):
         assert header in csv_text
+
+
+async def test_the_user_facing_payload_withholds_the_operating_internals(db_session, user) -> None:
+    """The same builder serves the chat cost modal; it must not leak operator detail.
+
+    `/user/request-logs/{id}/cost-details` is reachable by any signed-in user
+    for their own request, and it shares `_cost_details_payload` with the admin
+    API Logs page. When the failure-detail work added the provider's verbatim
+    response and the tracing ids, they reached that endpoint too.
+    """
+    log_id = await _failed_video_log(db_session, user)
+    row = await db_session.get(RequestLog, log_id)
+
+    operator = await _cost_details_payload(db_session, row)
+    owner = await _cost_details_payload(db_session, row, operator_detail=False)
+
+    # Why it failed is the user's business.
+    assert owner["request"]["error_code"] == "timeout"
+    assert owner["request"]["error_message"] == operator["request"]["error_message"]
+    assert owner["request"]["http_status"] == operator["request"]["http_status"]
+
+    # How we run is not.
+    for field in ("correlation_id", "provider_job_id", "source_ip"):
+        assert field in operator["request"], field
+        assert field not in owner["request"], field
+
+    for event in owner["events"]:
+        assert "raw_usage" not in event
+        assert "connection_id" not in event
+
+
+async def test_the_user_route_asks_for_the_narrow_payload(db_session, user) -> None:
+    """Guard the wiring, not just the builder."""
+    import inspect
+
+    from app.api import logs
+
+    source = inspect.getsource(logs.user_request_log_cost_details)
+    assert "operator_detail=False" in source
+    assert "operator_detail" not in inspect.getsource(logs.admin_log_cost_details)

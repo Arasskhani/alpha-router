@@ -42,7 +42,7 @@ function shouldDedupe(sessionId: string, messageKey: string): boolean {
   return false;
 }
 
-export function isUserAwayFromSession(
+function isUserAwayFromSession(
   sessionId: string,
   activeId: string | null | undefined,
 ): boolean {

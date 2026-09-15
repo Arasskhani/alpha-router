@@ -59,11 +59,6 @@ export function explorePresetFromFocus(focus: OverviewFocus | null): Partial<Exp
   };
   return map[focus] ?? null;
 }
-
-export function metricLabel(metric: ExploreMetric): string {
-  return EXPLORE_METRIC_OPTIONS.find((o) => o.value === metric)?.label ?? metric;
-}
-
 export function groupLabel(group: ExploreGroup): string {
   return EXPLORE_GROUP_OPTIONS.find((o) => o.value === group)?.label ?? group;
 }

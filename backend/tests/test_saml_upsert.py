@@ -1,7 +1,5 @@
 """Account-takeover prevention in _upsert_directory_user for SAML NameID binding."""
 
-import asyncio
-
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -95,20 +93,20 @@ async def _test_ldap_keeps_username_binding() -> None:
     await engine.dispose()
 
 
-def test_saml_binds_by_external_id_not_username():
-    asyncio.run(_test_saml_binds_by_external_id_not_username())
+async def test_saml_binds_by_external_id_not_username():
+    await _test_saml_binds_by_external_id_not_username()
 
 
-def test_saml_refuses_cross_provider_username_collision():
-    asyncio.run(_test_saml_refuses_cross_provider_username_collision())
+async def test_saml_refuses_cross_provider_username_collision():
+    await _test_saml_refuses_cross_provider_username_collision()
 
 
-def test_saml_same_provider_username_backfills_external_id():
-    asyncio.run(_test_saml_same_provider_username_backfills_external_id())
+async def test_saml_same_provider_username_backfills_external_id():
+    await _test_saml_same_provider_username_backfills_external_id()
 
 
-def test_ldap_keeps_username_binding():
-    asyncio.run(_test_ldap_keeps_username_binding())
+async def test_ldap_keeps_username_binding():
+    await _test_ldap_keeps_username_binding()
 
 
 async def _test_oidc_binds_by_sub_not_username() -> None:
@@ -151,9 +149,9 @@ async def _test_oidc_refuses_local_username_takeover() -> None:
     await engine.dispose()
 
 
-def test_oidc_binds_by_sub_not_username():
-    asyncio.run(_test_oidc_binds_by_sub_not_username())
+async def test_oidc_binds_by_sub_not_username():
+    await _test_oidc_binds_by_sub_not_username()
 
 
-def test_oidc_refuses_local_username_takeover():
-    asyncio.run(_test_oidc_refuses_local_username_takeover())
+async def test_oidc_refuses_local_username_takeover():
+    await _test_oidc_refuses_local_username_takeover()

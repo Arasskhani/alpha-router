@@ -1,12 +1,10 @@
 """Generated image/video bytes are copied into the project media library best-effort."""
 
-import asyncio
-
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import app.models  # noqa: F401
 from app.database import Base
-from app.models.project import PROJECT_ROLE_OWNER, PROJECT_ROLE_PRIMARY_OWNER, Project, ProjectMember, ProjectMediaAsset
+from app.models.project import PROJECT_ROLE_PRIMARY_OWNER, Project, ProjectMediaAsset, ProjectMember
 from app.models.user import User
 from app.services.project_media_service import (
     maybe_save_generated_media_to_project,
@@ -77,103 +75,92 @@ async def _count_media(db) -> int:
     return int(
         (
             await db.execute(
-                select(func.count()).select_from(ProjectMediaAsset).where(
-                    ProjectMediaAsset.project_id == PROJ
-                )
+                select(func.count()).select_from(ProjectMediaAsset).where(ProjectMediaAsset.project_id == PROJ)
             )
         ).scalar()
         or 0
     )
 
 
-def test_generated_image_saved_to_project_media():
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                owner = await _setup(db)
-                store = InMemoryObjectStore()
-                saved = await maybe_save_generated_media_to_project(
-                    db,
-                    project_id=PROJ,
-                    user=owner,
-                    content_bytes=b"\x89PNG generated-image",
-                    mime_type="image/png",
-                    file_name="generated.png",
-                    kind="image",
-                    source_model="test-model",
-                    source_prompt="a fox",
-                    chat_session_id="sess-gen",
-                    object_store=store,
-                )
-                assert saved is not None
-                assert saved["projectId"] == PROJ
-                assert saved["kind"] == "image"
-                assert saved["sourcePrompt"] == "a fox"
-                assert await _count_media(db) == 1
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+async def test_generated_image_saved_to_project_media():
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            owner = await _setup(db)
+            store = InMemoryObjectStore()
+            saved = await maybe_save_generated_media_to_project(
+                db,
+                project_id=PROJ,
+                user=owner,
+                content_bytes=b"\x89PNG generated-image",
+                mime_type="image/png",
+                file_name="generated.png",
+                kind="image",
+                source_model="test-model",
+                source_prompt="a fox",
+                chat_session_id="sess-gen",
+                object_store=store,
+            )
+            assert saved is not None
+            assert saved["projectId"] == PROJ
+            assert saved["kind"] == "image"
+            assert saved["sourcePrompt"] == "a fox"
+            assert await _count_media(db) == 1
+    finally:
+        await engine.dispose()
 
 
-def test_personal_generation_does_not_write_project_media():
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                owner = await _setup(db)
-                store = InMemoryObjectStore()
-                saved = await maybe_save_generated_media_to_project(
-                    db,
-                    project_id=None,
-                    user=owner,
-                    content_bytes=b"\x89PNG personal",
-                    mime_type="image/png",
-                    file_name="generated.png",
-                    kind="image",
-                    object_store=store,
-                )
-                assert saved is None
-                assert await _count_media(db) == 0
-                assert store._store == {}
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+async def test_personal_generation_does_not_write_project_media():
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            owner = await _setup(db)
+            store = InMemoryObjectStore()
+            saved = await maybe_save_generated_media_to_project(
+                db,
+                project_id=None,
+                user=owner,
+                content_bytes=b"\x89PNG personal",
+                mime_type="image/png",
+                file_name="generated.png",
+                kind="image",
+                object_store=store,
+            )
+            assert saved is None
+            assert await _count_media(db) == 0
+            assert store._store == {}
+    finally:
+        await engine.dispose()
 
 
-def test_quota_skip_does_not_fail_generation():
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                owner = await _setup(db)
-                store = InMemoryObjectStore()
-                await upload_project_media(
-                    db,
-                    project_id=PROJ,
-                    user=owner,
-                    file_name="fill.bin",
-                    mime_type="application/octet-stream",
-                    content_bytes=b"x" * 20,
-                    object_store=store,
-                    quota_bytes=20,
-                )
-                saved = await maybe_save_generated_media_to_project(
-                    db,
-                    project_id=PROJ,
-                    user=owner,
-                    content_bytes=b"y" * 8,
-                    mime_type="image/png",
-                    file_name="generated.png",
-                    kind="image",
-                    object_store=store,
-                    quota_bytes=20,
-                )
-                assert saved is None
-                assert await _count_media(db) == 1
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+async def test_quota_skip_does_not_fail_generation():
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            owner = await _setup(db)
+            store = InMemoryObjectStore()
+            await upload_project_media(
+                db,
+                project_id=PROJ,
+                user=owner,
+                file_name="fill.bin",
+                mime_type="application/octet-stream",
+                content_bytes=b"x" * 20,
+                object_store=store,
+                quota_bytes=20,
+            )
+            saved = await maybe_save_generated_media_to_project(
+                db,
+                project_id=PROJ,
+                user=owner,
+                content_bytes=b"y" * 8,
+                mime_type="image/png",
+                file_name="generated.png",
+                kind="image",
+                object_store=store,
+                quota_bytes=20,
+            )
+            assert saved is None
+            assert await _count_media(db) == 1
+    finally:
+        await engine.dispose()

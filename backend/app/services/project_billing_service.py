@@ -18,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.logging import RequestLog
 from app.models.project import PROJECT_STATUS_DELETION_PENDING, Project, ProjectMember
-from app.models.user import User
 from app.services.project_access_service import resolve_project_access
 
 PROJECT_REPORT_DEFAULT_DAYS = 30
@@ -66,9 +65,7 @@ async def resolve_project_id_for_request(
 
 
 async def _project_exists(db: AsyncSession, project_id: str) -> bool:
-    row = (
-        await db.execute(select(Project.id).where(Project.id == project_id))
-    ).first()
+    row = (await db.execute(select(Project.id).where(Project.id == project_id))).first()
     return row is not None
 
 
@@ -182,11 +179,7 @@ async def report_project_usage_by_member(
 
     member_user_ids = {
         r[0]
-        for r in (
-            await db.execute(
-                select(ProjectMember.user_id).where(ProjectMember.project_id == project_id)
-            )
-        ).all()
+        for r in (await db.execute(select(ProjectMember.user_id).where(ProjectMember.project_id == project_id))).all()
         if r[0] is not None
     }
 
@@ -227,9 +220,7 @@ async def report_project_usage_by_member(
     return pd.DataFrame(out)
 
 
-async def report_all_projects_usage(
-    db: AsyncSession, start: datetime.datetime, end: datetime.datetime
-) -> pd.DataFrame:
+async def report_all_projects_usage(db: AsyncSession, start: datetime.datetime, end: datetime.datetime) -> pd.DataFrame:
     """Org-wide per-project cost summary for the admin overview."""
 
     rows = (
@@ -253,11 +244,7 @@ async def report_all_projects_usage(
     project_ids = [r[0] for r in rows if r[0]]
     name_by_id: dict[str, str] = {}
     if project_ids:
-        name_rows = (
-            await db.execute(
-                select(Project.id, Project.name).where(Project.id.in_(project_ids))
-            )
-        ).all()
+        name_rows = (await db.execute(select(Project.id, Project.name).where(Project.id.in_(project_ids)))).all()
         name_by_id = {r[0]: r[1] for r in name_rows}
 
     media_rows = (
@@ -301,9 +288,7 @@ async def list_projects_usage_overview(
     projects = (
         (
             await db.execute(
-                select(Project)
-                .where(Project.status != PROJECT_STATUS_DELETION_PENDING)
-                .order_by(Project.name)
+                select(Project).where(Project.status != PROJECT_STATUS_DELETION_PENDING).order_by(Project.name)
             )
         )
         .scalars()

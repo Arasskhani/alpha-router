@@ -138,17 +138,21 @@ async def build_project_extraction_window(
     end = max(start, int(to_sequence))
     context_start = max(0, start - PRE_WINDOW_MESSAGES)
     rows = (
-        await db.execute(
-            select(ChatMessage)
-            .where(
-                ChatMessage.session_id == session_id,
-                ChatMessage.sequence >= context_start,
-                ChatMessage.sequence <= end,
-                ChatMessage.role.in_(("user", "assistant")),
+        (
+            await db.execute(
+                select(ChatMessage)
+                .where(
+                    ChatMessage.session_id == session_id,
+                    ChatMessage.sequence >= context_start,
+                    ChatMessage.sequence <= end,
+                    ChatMessage.role.in_(("user", "assistant")),
+                )
+                .order_by(ChatMessage.sequence.asc())
             )
-            .order_by(ChatMessage.sequence.asc())
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     turns: list[ProjectWindowTurn] = []
     for row in rows:
         text = extract_message_text(row.content)[:MAX_MESSAGE_CHARS]
@@ -175,43 +179,39 @@ async def build_project_extraction_window(
         total += cost
     kept.reverse()
     existing_rows = (
-        await db.execute(
-            select(ProjectMemory)
-            .where(
-                ProjectMemory.project_id == project_id,
-                ProjectMemory.deleted_at.is_(None),
-                ProjectMemory.enabled.is_(True),
+        (
+            await db.execute(
+                select(ProjectMemory)
+                .where(
+                    ProjectMemory.project_id == project_id,
+                    ProjectMemory.deleted_at.is_(None),
+                    ProjectMemory.enabled.is_(True),
+                )
+                .order_by(ProjectMemory.salience.desc(), ProjectMemory.updated_at.desc())
+                .limit(40)
             )
-            .order_by(
-                ProjectMemory.salience.desc(), ProjectMemory.updated_at.desc()
-            )
-            .limit(40)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return ProjectExtractionWindow(
         project_id=project_id,
         session_id=session_id,
         from_sequence=start,
         to_sequence=end,
         turns=kept,
-        existing=[
-            (row.id, row.category or "other", row.content or "") for row in existing_rows
-        ],
+        existing=[(row.id, row.category or "other", row.content or "") for row in existing_rows],
     )
 
 
 def _window_prompt(window: ProjectExtractionWindow) -> str:
     existing_lines = [
-        f"- id={memory_id} [{category}] {content}"
-        for memory_id, category, content in window.existing[:40]
+        f"- id={memory_id} [{category}] {content}" for memory_id, category, content in window.existing[:40]
     ]
     existing_block = "\n".join(existing_lines) or "(none)"
     turns = []
     for turn in window.turns:
-        if turn.role == "assistant":
-            speaker = "assistant"
-        else:
-            speaker = f"member {turn.author}" if turn.author else "member"
+        speaker = "assistant" if turn.role == "assistant" else f"member {turn.author}" if turn.author else "member"
         turns.append(f"[{speaker} #{turn.sequence}] {turn.text}")
     conversation = "\n".join(turns)
     return (
@@ -244,7 +244,7 @@ def parse_project_operations(
             continue
         try:
             content = normalize_memory_content(str(item.get("content") or ""))
-        except Exception:
+        except Exception:  # noqa: BLE001 -- one bad item must not abort the batch
             continue
         if looks_like_injection(content) or contains_secret(content):
             continue
@@ -285,9 +285,7 @@ def parse_project_operations(
     return out, dropped
 
 
-async def _semantic_near_dupe(
-    db: AsyncSession, project_id: str, content: str
-) -> ProjectMemory | None:
+async def _semantic_near_dupe(db: AsyncSession, project_id: str, content: str) -> ProjectMemory | None:
     try:
         from app.services.memory_embedding_service import (
             MemoryEmbeddingUnavailable,
@@ -318,15 +316,11 @@ async def _semantic_near_dupe(
     except MemoryEmbeddingUnavailable:
         return None
     except Exception:
-        logger.exception(
-            "Project semantic near-dupe check failed project_id=%s", project_id
-        )
+        logger.exception("Project semantic near-dupe check failed project_id=%s", project_id)
     return None
 
 
-async def _suppressed_semantically(
-    db: AsyncSession, project_id: str, content: str
-) -> bool:
+async def _suppressed_semantically(db: AsyncSession, project_id: str, content: str) -> bool:
     try:
         from app.services.memory_embedding_service import (
             MemoryEmbeddingUnavailable,
@@ -354,9 +348,7 @@ async def _suppressed_semantically(
     except MemoryEmbeddingUnavailable:
         return False
     except Exception:
-        logger.exception(
-            "Project semantic suppression check failed project_id=%s", project_id
-        )
+        logger.exception("Project semantic suppression check failed project_id=%s", project_id)
         return False
 
 
@@ -365,7 +357,7 @@ def _observe(op: str) -> None:
         from app.services.observability import observe_memory_item
 
         observe_memory_item(op, scope="project")
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
         pass
 
 
@@ -395,7 +387,7 @@ async def apply_project_memory_operations(
     for operation in operations[:MAX_OPS]:
         try:
             digest = memory_content_hash(operation.content)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- boundary with an external dependency; degraded result is returned
             result.skipped += 1
             continue
         if await is_project_hash_suppressed(db, project_id, digest):
@@ -422,19 +414,11 @@ async def apply_project_memory_operations(
             )
             continue
 
-        expires_at = (
-            now + dt.timedelta(days=int(operation.ttl_days))
-            if operation.ttl_days
-            else None
-        )
+        expires_at = now + dt.timedelta(days=int(operation.ttl_days)) if operation.ttl_days else None
 
         if operation.op in ("update", "supersede") and operation.target_id:
             target = await db.get(ProjectMemory, operation.target_id)
-            valid_target = (
-                target is not None
-                and target.project_id == project_id
-                and target.deleted_at is None
-            )
+            valid_target = target is not None and target.project_id == project_id and target.deleted_at is None
             # Owner-authored facts are authoritative: the extractor may not
             # rewrite or retire them.
             if valid_target and target.source_type == SOURCE_MANUAL:
@@ -456,14 +440,18 @@ async def apply_project_memory_operations(
                     result.skipped += 1
                     continue
                 conflict = (
-                    await db.execute(
-                        select(ProjectMemory).where(
-                            ProjectMemory.project_id == project_id,
-                            ProjectMemory.content_hash == digest,
-                            ProjectMemory.id != target.id,
+                    (
+                        await db.execute(
+                            select(ProjectMemory).where(
+                                ProjectMemory.project_id == project_id,
+                                ProjectMemory.content_hash == digest,
+                                ProjectMemory.id != target.id,
+                            )
                         )
                     )
-                ).scalars().first()
+                    .scalars()
+                    .first()
+                )
                 if conflict is not None:
                     # Another fact already says this; drop the op instead of
                     # failing the job and burning its retry budget.
@@ -574,9 +562,7 @@ async def extract_project_memory_operations(
     settings = await get_memory_settings(db)
     model_id = settings.get("extraction_model_id")
     user_content = _window_prompt(window)
-    repair_nudge = (
-        "Your previous reply was not valid JSON. Reply with a JSON object only."
-    )
+    repair_nudge = "Your previous reply was not valid JSON. Reply with a JSON object only."
     if completer is not None:
 
         async def _completer_once(*, repair: bool) -> str:
@@ -601,15 +587,13 @@ async def extract_project_memory_operations(
         litellm_model_for_provider,
         resolve_litellm_provider,
     )
-    from app.services.proxy_service import resolve_model_and_key
+    from app.services.model_resolution_service import resolve_model_and_key
     from app.services.usage_accounting_service import (
         capture_usage_event,
         persist_usage_operation,
     )
 
-    ai_model, api_key, base_url, provider_type = await resolve_model_and_key(
-        db, f"model::{int(model_id)}"
-    )
+    ai_model, api_key, base_url, provider_type = await resolve_model_and_key(db, f"model::{int(model_id)}")
     if not ai_model or not api_key:
         raise RuntimeError("Memory extraction model is unavailable")
 
@@ -618,9 +602,7 @@ async def extract_project_memory_operations(
         {"role": "user", "content": user_content},
     ]
     kwargs: dict[str, Any] = {
-        "model": litellm_model_for_provider(
-            ai_model.external_id, provider_type or ai_model.provider_type
-        ),
+        "model": litellm_model_for_provider(ai_model.external_id, provider_type or ai_model.provider_type),
         "messages": messages,
         "max_tokens": EXTRACT_MAX_TOKENS,
         "temperature": 0,
@@ -674,9 +656,7 @@ async def extract_project_memory_operations(
             raise ExtractionParseError(str(exc)) from exc
 
 
-async def handle_project_memory_extraction(
-    db: AsyncSession, job, *, completer: Any | None = None
-) -> None:
+async def handle_project_memory_extraction(db: AsyncSession, job, *, completer: Any | None = None) -> None:
     from app.config import get_settings
     from app.services.project_config_service import load_project_memory_flags
     from app.services.project_memory_job_service import is_eligible_session
@@ -711,12 +691,8 @@ async def handle_project_memory_extraction(
     )
     if not window.turns:
         return
-    last_member_turn = next(
-        (turn for turn in reversed(window.turns) if turn.role == "user"), None
-    )
-    operations, dropped = await extract_project_memory_operations(
-        db, window=window, completer=completer
-    )
+    last_member_turn = next((turn for turn in reversed(window.turns) if turn.role == "user"), None)
+    operations, dropped = await extract_project_memory_operations(db, window=window, completer=completer)
     result = await apply_project_memory_operations(
         db,
         project_id=job.project_id,

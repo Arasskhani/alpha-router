@@ -73,16 +73,12 @@ def test_image_only_catalog_model_does_not_request_text():
 
 
 def test_image_and_text_catalog_model_still_requests_both():
-    assert openrouter_image_modalities(
-        "google/gemini-2.5-flash-image", _raw(["image", "text"])
-    ) == ["image", "text"]
+    assert openrouter_image_modalities("google/gemini-2.5-flash-image", _raw(["image", "text"])) == ["image", "text"]
 
 
 def test_catalog_overrides_the_name_hint_list():
     """A hinted name whose catalog says image+text must not be forced image-only."""
-    assert openrouter_image_modalities(
-        "sourceful/riverflow-v2.5", _raw(["image", "text"])
-    ) == ["image", "text"]
+    assert openrouter_image_modalities("sourceful/riverflow-v2.5", _raw(["image", "text"])) == ["image", "text"]
     # ...and the reverse: an un-hinted name whose catalog says image-only.
     assert openrouter_image_modalities("acme/pretty-pictures", _raw(["image"])) == ["image"]
 
@@ -120,12 +116,7 @@ def test_image_only_models_route_to_the_dedicated_image_api():
 
 def test_image_and_text_models_stay_on_chat_completions():
     """Gemini image works through chat/completions today; do not reroute it."""
-    assert (
-        prefer_openrouter_images_generations(
-            "google/gemini-2.5-flash-image", _raw(["image", "text"])
-        )
-        is False
-    )
+    assert prefer_openrouter_images_generations("google/gemini-2.5-flash-image", _raw(["image", "text"])) is False
 
 
 def test_endpoint_routing_falls_back_to_name_hints():
@@ -208,16 +199,16 @@ def test_output_modality_404_detection():
     real_body = json.dumps(
         {
             "error": {
-                "message": (
-                    "No endpoints found that support the requested output "
-                    "modalities: image, text"
-                ),
+                "message": ("No endpoints found that support the requested output modalities: image, text"),
                 "code": 404,
             }
         }
     )
     assert _is_output_modality_404(httpx.Response(404, text=real_body)) is True
     # Any other 404, a success, or no response at all must not trigger a retry.
-    assert _is_output_modality_404(httpx.Response(404, text='{"error":{"message":"No endpoints found for meta/nope"}}')) is False
+    assert (
+        _is_output_modality_404(httpx.Response(404, text='{"error":{"message":"No endpoints found for meta/nope"}}'))
+        is False
+    )
     assert _is_output_modality_404(httpx.Response(200, text=real_body)) is False
     assert _is_output_modality_404(None) is False

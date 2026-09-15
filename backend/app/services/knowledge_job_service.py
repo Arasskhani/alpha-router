@@ -38,11 +38,7 @@ async def enqueue_knowledge_job(
     max_attempts: int | None = None,
 ) -> IngestionJob:
     existing = (
-        await db.execute(
-            select(IngestionJob).where(
-                IngestionJob.idempotency_key == idempotency_key
-            )
-        )
+        await db.execute(select(IngestionJob).where(IngestionJob.idempotency_key == idempotency_key))
     ).scalar_one_or_none()
     if existing is not None:
         return existing
@@ -86,17 +82,9 @@ async def enqueue_knowledge_job(
         inserted_id = (await db.execute(statement)).scalar_one_or_none()
         if inserted_id is None:
             return (
-                await db.execute(
-                    select(IngestionJob).where(
-                        IngestionJob.idempotency_key == idempotency_key
-                    )
-                )
+                await db.execute(select(IngestionJob).where(IngestionJob.idempotency_key == idempotency_key))
             ).scalar_one()
-        job = (
-            await db.execute(
-                select(IngestionJob).where(IngestionJob.id == inserted_id)
-            )
-        ).scalar_one()
+        job = (await db.execute(select(IngestionJob).where(IngestionJob.id == inserted_id))).scalar_one()
 
     await schedule_job_dispatch(
         db,
@@ -145,11 +133,7 @@ async def claim_knowledge_job(
     job = (await db.execute(statement)).scalar_one_or_none()
     if job is None or job.status in TERMINAL_JOB_STATUSES:
         return None
-    if (
-        job.status in {"leased", "processing"}
-        and job.lease_until is not None
-        and job.lease_until > current
-    ):
+    if job.status in {"leased", "processing"} and job.lease_until is not None and job.lease_until > current:
         return None
     if job.status not in {"pending", "retry", "leased", "processing"}:
         return None
@@ -160,9 +144,7 @@ async def claim_knowledge_job(
     job.status = "processing"
     job.attempt_count = int(job.attempt_count or 0) + 1
     job.lease_owner = worker_id
-    job.lease_until = current + datetime.timedelta(
-        seconds=settings.knowledge_job_lease_seconds
-    )
+    job.lease_until = current + datetime.timedelta(seconds=settings.knowledge_job_lease_seconds)
     job.started_at = job.started_at or current
     job.updated_at = current
     job.error_code = None
@@ -182,9 +164,7 @@ async def heartbeat_knowledge_job(
         return False
     settings = get_settings()
     current = now or datetime.datetime.utcnow()
-    job.lease_until = current + datetime.timedelta(
-        seconds=settings.knowledge_job_lease_seconds
-    )
+    job.lease_until = current + datetime.timedelta(seconds=settings.knowledge_job_lease_seconds)
     job.updated_at = current
     await db.flush()
     return True

@@ -1,7 +1,5 @@
 """Budget plan resolution and chat blocking without an assigned plan."""
 
-import asyncio
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -14,7 +12,7 @@ from app.services.budget_service import (
     budget_request_blocked,
     resolve_monthly_budget,
 )
-from app.services.plan_assignment_service import upsert_user_no_plan, upsert_group_plan
+from app.services.plan_assignment_service import upsert_group_plan, upsert_user_no_plan
 
 
 async def _test_no_plan_assignments_yield_zero_budget() -> None:
@@ -78,9 +76,7 @@ async def _test_explicit_no_plan_blocks_group_inheritance() -> None:
         )
         db.add(user)
         await db.flush()
-        await db.execute(
-            user_group_members.insert().values(user_id=user.id, group_id=group.id)
-        )
+        await db.execute(user_group_members.insert().values(user_id=user.id, group_id=group.id))
         await upsert_group_plan(db, group.id, plan.id)
         await upsert_user_no_plan(db, user.id)
         await db.commit()
@@ -106,29 +102,27 @@ async def _test_inherit_group_plan_without_user_override() -> None:
         )
         db.add(user)
         await db.flush()
-        await db.execute(
-            user_group_members.insert().values(user_id=user.id, group_id=group.id)
-        )
+        await db.execute(user_group_members.insert().values(user_id=user.id, group_id=group.id))
         await upsert_group_plan(db, group.id, plan.id)
         await db.commit()
         user = (await db.execute(select(User))).scalar_one()
         assert await resolve_monthly_budget(db, user) == 20.0
 
 
-def test_no_plan_assignments_yield_zero_budget():
-    asyncio.run(_test_no_plan_assignments_yield_zero_budget())
+async def test_no_plan_assignments_yield_zero_budget():
+    await _test_no_plan_assignments_yield_zero_budget()
 
 
-def test_direct_plan_assignment_sets_budget():
-    asyncio.run(_test_direct_plan_assignment_sets_budget())
+async def test_direct_plan_assignment_sets_budget():
+    await _test_direct_plan_assignment_sets_budget()
 
 
-def test_explicit_no_plan_blocks_group_inheritance():
-    asyncio.run(_test_explicit_no_plan_blocks_group_inheritance())
+async def test_explicit_no_plan_blocks_group_inheritance():
+    await _test_explicit_no_plan_blocks_group_inheritance()
 
 
-def test_inherit_group_plan_without_user_override():
-    asyncio.run(_test_inherit_group_plan_without_user_override())
+async def test_inherit_group_plan_without_user_override():
+    await _test_inherit_group_plan_without_user_override()
 
 
 def test_budget_request_blocked_without_plan():

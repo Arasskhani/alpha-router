@@ -1,6 +1,6 @@
 """Tests for project resource upload, listing, and deletion."""
 
-import asyncio
+import pytest
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -13,7 +13,6 @@ from app.models.project import (
     PROJECT_RESOURCE_STATUS_PROCESSING,
     PROJECT_RESOURCE_STATUS_REVOKED,
     PROJECT_ROLE_CONTRIBUTOR,
-    PROJECT_ROLE_OWNER,
     PROJECT_ROLE_PRIMARY_OWNER,
     PROJECT_ROLE_VIEWER,
     PROJECT_VISIBILITY_PRIVATE,
@@ -96,456 +95,462 @@ def _fake_upload_bytes(name: str = "test.txt", content: str = "hello world") -> 
     return content.encode("utf-8"), name, "text/plain"
 
 
-def test_ensure_knowledge_base_creates_once():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                owner, _, _ = await _setup_project(db)
-                project = await db.get(Project, PROJ_ID)
-                kb1 = await ensure_project_knowledge_base(db, project=project)
-                await db.flush()
-                assert kb1 is not None
-                assert project.knowledge_base_id == kb1.id
+async def test_ensure_knowledge_base_creates_once():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            owner, _, _ = await _setup_project(db)
+            project = await db.get(Project, PROJ_ID)
+            kb1 = await ensure_project_knowledge_base(db, project=project)
+            await db.flush()
+            assert kb1 is not None
+            assert project.knowledge_base_id == kb1.id
 
-                # Calling again should return the same KB.
-                kb2 = await ensure_project_knowledge_base(db, project=project)
-                assert kb2.id == kb1.id
-            async with factory() as db:
-                pass
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+            # Calling again should return the same KB.
+            kb2 = await ensure_project_knowledge_base(db, project=project)
+            assert kb2.id == kb1.id
+        async with factory() as db:
+            pass
+    finally:
+        await engine.dispose()
 
 
-def test_upload_resource_owner():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                owner, _, _ = await _setup_project(db)
-                data, name, mime = _fake_upload_bytes()
-                result = await upload_project_resource(
+async def test_upload_resource_owner():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            owner, _, _ = await _setup_project(db)
+            data, name, mime = _fake_upload_bytes()
+            result = await upload_project_resource(
+                db,
+                project_id=PROJ_ID,
+                user=owner,
+                file_name=name,
+                declared_mime=mime,
+                data=data,
+                title="My Resource",
+                object_store=InMemoryObjectStore(),
+            )
+            await db.flush()
+            assert result.resource is not None
+            assert result.resource.project_id == PROJ_ID
+            assert result.resource.title == "My Resource"
+            assert result.resource.status == PROJECT_RESOURCE_STATUS_PROCESSING
+            assert result.submission.document is not None
+            assert result.submission.version is not None
+        async with factory() as db:
+            pass
+    finally:
+        await engine.dispose()
+
+
+async def test_upload_resource_contributor():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            _, contrib, _ = await _setup_project(db)
+            data, name, mime = _fake_upload_bytes()
+            result = await upload_project_resource(
+                db,
+                project_id=PROJ_ID,
+                user=contrib,
+                file_name=name,
+                declared_mime=mime,
+                data=data,
+                object_store=InMemoryObjectStore(),
+            )
+            await db.flush()
+            assert result.resource is not None
+            assert result.resource.uploaded_by_user_id == contrib.id
+        async with factory() as db:
+            pass
+    finally:
+        await engine.dispose()
+
+
+async def test_upload_resource_viewer_denied():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            _, _, viewer = await _setup_project(db)
+            data, name, mime = _fake_upload_bytes()
+            from fastapi import HTTPException
+
+            try:
+                await upload_project_resource(
                     db,
                     project_id=PROJ_ID,
-                    user=owner,
+                    user=viewer,
                     file_name=name,
                     declared_mime=mime,
                     data=data,
-                    title="My Resource",
-                    object_store=InMemoryObjectStore(),
                 )
-                await db.flush()
-                assert result.resource is not None
-                assert result.resource.project_id == PROJ_ID
-                assert result.resource.title == "My Resource"
-                assert result.resource.status == PROJECT_RESOURCE_STATUS_PROCESSING
-                assert result.submission.document is not None
-                assert result.submission.version is not None
-            async with factory() as db:
-                pass
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+                pytest.fail("expected an exception")
+            except HTTPException as exc:
+                assert exc.status_code == 403
+    finally:
+        await engine.dispose()
 
 
-def test_upload_resource_contributor():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                _, contrib, _ = await _setup_project(db)
-                data, name, mime = _fake_upload_bytes()
-                result = await upload_project_resource(
+async def test_upload_resource_non_member_hidden():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            _, _, _ = await _setup_project(db)
+            stranger = await _user(db, "stranger")
+            data, name, mime = _fake_upload_bytes()
+            from fastapi import HTTPException
+
+            try:
+                await upload_project_resource(
                     db,
                     project_id=PROJ_ID,
-                    user=contrib,
+                    user=stranger,
                     file_name=name,
                     declared_mime=mime,
                     data=data,
-                    object_store=InMemoryObjectStore(),
                 )
-                await db.flush()
-                assert result.resource is not None
-                assert result.resource.uploaded_by_user_id == contrib.id
-            async with factory() as db:
-                pass
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+                pytest.fail("expected an exception")
+            except HTTPException as exc:
+                assert exc.status_code == 404
+    finally:
+        await engine.dispose()
 
 
-def test_upload_resource_viewer_denied():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                _, _, viewer = await _setup_project(db)
-                data, name, mime = _fake_upload_bytes()
-                from fastapi import HTTPException
-                try:
-                    await upload_project_resource(
-                        db,
-                        project_id=PROJ_ID,
-                        user=viewer,
-                        file_name=name,
-                        declared_mime=mime,
-                        data=data,
-                    )
-                    assert False
-                except HTTPException as exc:
-                    assert exc.status_code == 403
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
-
-
-def test_upload_resource_non_member_hidden():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                _, _, _ = await _setup_project(db)
-                stranger = await _user(db, "stranger")
-                data, name, mime = _fake_upload_bytes()
-                from fastapi import HTTPException
-                try:
-                    await upload_project_resource(
-                        db,
-                        project_id=PROJ_ID,
-                        user=stranger,
-                        file_name=name,
-                        declared_mime=mime,
-                        data=data,
-                    )
-                    assert False
-                except HTTPException as exc:
-                    assert exc.status_code == 404
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+async def test_list_resources_owner():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            owner, _, _ = await _setup_project(db)
+            data, name, mime = _fake_upload_bytes()
+            await upload_project_resource(
+                db,
+                project_id=PROJ_ID,
+                user=owner,
+                file_name=name,
+                declared_mime=mime,
+                data=data,
+                object_store=InMemoryObjectStore(),
+                title="A",
+            )
+            await upload_project_resource(
+                db,
+                project_id=PROJ_ID,
+                user=owner,
+                file_name="b.txt",
+                declared_mime=mime,
+                data=data,
+                title="B",
+                object_store=InMemoryObjectStore(),
+            )
+            await db.flush()
+            items, total = await list_project_resources(db, project_id=PROJ_ID, user=owner)
+            assert total == 2
+            assert len(items) == 2
+        async with factory() as db:
+            pass
+    finally:
+        await engine.dispose()
 
 
-def test_list_resources_owner():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                owner, _, _ = await _setup_project(db)
-                data, name, mime = _fake_upload_bytes()
-                await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
-                    object_store=InMemoryObjectStore(), title="A"
+async def test_list_resources_viewer_can_see():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            owner, _, viewer = await _setup_project(db)
+            data, name, mime = _fake_upload_bytes()
+            await upload_project_resource(
+                db,
+                project_id=PROJ_ID,
+                user=owner,
+                file_name=name,
+                declared_mime=mime,
+                data=data,
+                object_store=InMemoryObjectStore(),
+            )
+            await db.flush()
+            items, total = await list_project_resources(db, project_id=PROJ_ID, user=viewer)
+            assert total == 1
+            assert len(items) == 1
+            assert items[0]["versionStatus"] == "quarantined"
+        async with factory() as db:
+            pass
+    finally:
+        await engine.dispose()
+
+
+async def test_list_resources_shows_knowledge_review_status():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            owner, _, _ = await _setup_project(db)
+            data, name, mime = _fake_upload_bytes()
+            result = await upload_project_resource(
+                db,
+                project_id=PROJ_ID,
+                user=owner,
+                file_name=name,
+                declared_mime=mime,
+                data=data,
+                object_store=InMemoryObjectStore(),
+            )
+            result.submission.version.status = "review"
+            await db.flush()
+            items, total = await list_project_resources(db, project_id=PROJ_ID, user=owner)
+            assert total == 1
+            assert items[0]["versionStatus"] == "review"
+            assert items[0]["status"] == PROJECT_RESOURCE_STATUS_PROCESSING
+        async with factory() as db:
+            pass
+    finally:
+        await engine.dispose()
+
+
+async def test_list_resources_public_project():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            owner, _, _ = await _setup_project(db, visibility=PROJECT_VISIBILITY_PUBLIC)
+            data, name, mime = _fake_upload_bytes()
+            await upload_project_resource(
+                db,
+                project_id=PROJ_ID,
+                user=owner,
+                file_name=name,
+                declared_mime=mime,
+                data=data,
+                object_store=InMemoryObjectStore(),
+            )
+            await db.flush()
+            stranger = await _user(db, "stranger")
+            items, total = await list_project_resources(db, project_id=PROJ_ID, user=stranger)
+            assert total == 1
+        async with factory() as db:
+            pass
+    finally:
+        await engine.dispose()
+
+
+async def test_list_resources_non_member_private_hidden():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            _, _, _ = await _setup_project(db)
+            stranger = await _user(db, "stranger")
+            from fastapi import HTTPException
+
+            try:
+                await list_project_resources(db, project_id=PROJ_ID, user=stranger)
+                pytest.fail("expected an exception")
+            except HTTPException as exc:
+                assert exc.status_code == 404
+    finally:
+        await engine.dispose()
+
+
+async def test_list_resources_status_filter():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            owner, _, _ = await _setup_project(db)
+            data, name, mime = _fake_upload_bytes()
+            await upload_project_resource(
+                db,
+                project_id=PROJ_ID,
+                user=owner,
+                file_name=name,
+                declared_mime=mime,
+                data=data,
+                object_store=InMemoryObjectStore(),
+            )
+            await db.flush()
+            # All resources start in processing status.
+            items, total = await list_project_resources(
+                db, project_id=PROJ_ID, user=owner, status=PROJECT_RESOURCE_STATUS_PROCESSING
+            )
+            assert total == 1
+            items, total = await list_project_resources(db, project_id=PROJ_ID, user=owner, status="active")
+            assert total == 0
+        async with factory() as db:
+            pass
+    finally:
+        await engine.dispose()
+
+
+async def test_delete_resource_owner():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            owner, _, _ = await _setup_project(db)
+            data, name, mime = _fake_upload_bytes()
+            result = await upload_project_resource(
+                db,
+                project_id=PROJ_ID,
+                user=owner,
+                file_name=name,
+                declared_mime=mime,
+                data=data,
+                object_store=InMemoryObjectStore(),
+            )
+            await db.flush()
+            resource_id = result.resource.id
+            deleted = await delete_project_resource(db, project_id=PROJ_ID, resource_id=resource_id, user=owner)
+            assert deleted is True
+            resource = await db.get(ProjectResource, resource_id)
+            assert resource.status == PROJECT_RESOURCE_STATUS_REVOKED
+        async with factory() as db:
+            pass
+    finally:
+        await engine.dispose()
+
+
+async def test_delete_resource_contributor_own():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            _, contrib, _ = await _setup_project(db)
+            data, name, mime = _fake_upload_bytes()
+            result = await upload_project_resource(
+                db,
+                project_id=PROJ_ID,
+                user=contrib,
+                file_name=name,
+                declared_mime=mime,
+                data=data,
+                object_store=InMemoryObjectStore(),
+            )
+            await db.flush()
+            resource_id = result.resource.id
+            deleted = await delete_project_resource(db, project_id=PROJ_ID, resource_id=resource_id, user=contrib)
+            assert deleted is True
+        async with factory() as db:
+            pass
+    finally:
+        await engine.dispose()
+
+
+async def test_delete_resource_contributor_other_denied():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            owner, contrib, _ = await _setup_project(db)
+            data, name, mime = _fake_upload_bytes()
+            result = await upload_project_resource(
+                db,
+                project_id=PROJ_ID,
+                user=owner,
+                file_name=name,
+                declared_mime=mime,
+                data=data,
+                object_store=InMemoryObjectStore(),
+            )
+            await db.flush()
+            resource_id = result.resource.id
+            from fastapi import HTTPException
+
+            try:
+                await delete_project_resource(db, project_id=PROJ_ID, resource_id=resource_id, user=contrib)
+                pytest.fail("expected an exception")
+            except HTTPException as exc:
+                assert exc.status_code == 403
+        async with factory() as db:
+            pass
+    finally:
+        await engine.dispose()
+
+
+async def test_delete_resource_viewer_denied():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            owner, _, viewer = await _setup_project(db)
+            data, name, mime = _fake_upload_bytes()
+            result = await upload_project_resource(
+                db,
+                project_id=PROJ_ID,
+                user=owner,
+                file_name=name,
+                declared_mime=mime,
+                data=data,
+                object_store=InMemoryObjectStore(),
+            )
+            await db.flush()
+            resource_id = result.resource.id
+            from fastapi import HTTPException
+
+            try:
+                await delete_project_resource(db, project_id=PROJ_ID, resource_id=resource_id, user=viewer)
+                pytest.fail("expected an exception")
+            except HTTPException as exc:
+                assert exc.status_code == 403
+    finally:
+        await engine.dispose()
+
+
+async def test_delete_resource_wrong_project_returns_false():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            owner, _, _ = await _setup_project(db)
+            data, name, mime = _fake_upload_bytes()
+            result = await upload_project_resource(
+                db,
+                project_id=PROJ_ID,
+                user=owner,
+                file_name=name,
+                declared_mime=mime,
+                data=data,
+                object_store=InMemoryObjectStore(),
+            )
+            await db.flush()
+            # Try to delete from a different project.
+            db.add(
+                Project(
+                    id="proj-other",
+                    name="Other",
+                    status="active",
+                    visibility="private",
+                    created_by_user_id=owner.id,
+                    revision=1,
+                    acl_version=1,
                 )
-                await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name="b.txt", declared_mime=mime, data=data, title="B",
-                    object_store=InMemoryObjectStore(),
-                )
-                await db.flush()
-                items, total = await list_project_resources(db, project_id=PROJ_ID, user=owner)
-                assert total == 2
-                assert len(items) == 2
-            async with factory() as db:
-                pass
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+            )
+            db.add(ProjectMember(project_id="proj-other", user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))
+            await db.flush()
+            deleted = await delete_project_resource(
+                db, project_id="proj-other", resource_id=result.resource.id, user=owner
+            )
+            assert deleted is False
+    finally:
+        await engine.dispose()
 
 
-def test_list_resources_viewer_can_see():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                owner, _, viewer = await _setup_project(db)
-                data, name, mime = _fake_upload_bytes()
-                await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
-                    object_store=InMemoryObjectStore(),
-                )
-                await db.flush()
-                items, total = await list_project_resources(db, project_id=PROJ_ID, user=viewer)
-                assert total == 1
-                assert len(items) == 1
-                assert items[0]["versionStatus"] == "quarantined"
-            async with factory() as db:
-                pass
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
-
-
-def test_list_resources_shows_knowledge_review_status():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                owner, _, _ = await _setup_project(db)
-                data, name, mime = _fake_upload_bytes()
-                result = await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
-                    object_store=InMemoryObjectStore(),
-                )
-                result.submission.version.status = "review"
-                await db.flush()
-                items, total = await list_project_resources(db, project_id=PROJ_ID, user=owner)
-                assert total == 1
-                assert items[0]["versionStatus"] == "review"
-                assert items[0]["status"] == PROJECT_RESOURCE_STATUS_PROCESSING
-            async with factory() as db:
-                pass
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
-
-
-def test_list_resources_public_project():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                owner, _, _ = await _setup_project(db, visibility=PROJECT_VISIBILITY_PUBLIC)
-                data, name, mime = _fake_upload_bytes()
-                await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
-                    object_store=InMemoryObjectStore(),
-                )
-                await db.flush()
-                stranger = await _user(db, "stranger")
-                items, total = await list_project_resources(db, project_id=PROJ_ID, user=stranger)
-                assert total == 1
-            async with factory() as db:
-                pass
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
-
-
-def test_list_resources_non_member_private_hidden():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                _, _, _ = await _setup_project(db)
-                stranger = await _user(db, "stranger")
-                from fastapi import HTTPException
-                try:
-                    await list_project_resources(db, project_id=PROJ_ID, user=stranger)
-                    assert False
-                except HTTPException as exc:
-                    assert exc.status_code == 404
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
-
-
-def test_list_resources_status_filter():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                owner, _, _ = await _setup_project(db)
-                data, name, mime = _fake_upload_bytes()
-                result = await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
-                    object_store=InMemoryObjectStore(),
-                )
-                await db.flush()
-                # All resources start in processing status.
-                items, total = await list_project_resources(
-                    db, project_id=PROJ_ID, user=owner, status=PROJECT_RESOURCE_STATUS_PROCESSING
-                )
-                assert total == 1
-                items, total = await list_project_resources(
-                    db, project_id=PROJ_ID, user=owner, status="active"
-                )
-                assert total == 0
-            async with factory() as db:
-                pass
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
-
-
-def test_delete_resource_owner():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                owner, _, _ = await _setup_project(db)
-                data, name, mime = _fake_upload_bytes()
-                result = await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
-                    object_store=InMemoryObjectStore(),
-                )
-                await db.flush()
-                resource_id = result.resource.id
-                deleted = await delete_project_resource(
-                    db, project_id=PROJ_ID, resource_id=resource_id, user=owner
-                )
-                assert deleted is True
-                resource = await db.get(ProjectResource, resource_id)
-                assert resource.status == PROJECT_RESOURCE_STATUS_REVOKED
-            async with factory() as db:
-                pass
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
-
-
-def test_delete_resource_contributor_own():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                _, contrib, _ = await _setup_project(db)
-                data, name, mime = _fake_upload_bytes()
-                result = await upload_project_resource(
-                    db, project_id=PROJ_ID, user=contrib, file_name=name, declared_mime=mime, data=data,
-                    object_store=InMemoryObjectStore(),
-                )
-                await db.flush()
-                resource_id = result.resource.id
-                deleted = await delete_project_resource(
-                    db, project_id=PROJ_ID, resource_id=resource_id, user=contrib
-                )
-                assert deleted is True
-            async with factory() as db:
-                pass
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
-
-
-def test_delete_resource_contributor_other_denied():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                owner, contrib, _ = await _setup_project(db)
-                data, name, mime = _fake_upload_bytes()
-                result = await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
-                    object_store=InMemoryObjectStore(),
-                )
-                await db.flush()
-                resource_id = result.resource.id
-                from fastapi import HTTPException
-                try:
-                    await delete_project_resource(
-                        db, project_id=PROJ_ID, resource_id=resource_id, user=contrib
-                    )
-                    assert False
-                except HTTPException as exc:
-                    assert exc.status_code == 403
-            async with factory() as db:
-                pass
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
-
-
-def test_delete_resource_viewer_denied():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                owner, _, viewer = await _setup_project(db)
-                data, name, mime = _fake_upload_bytes()
-                result = await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
-                    object_store=InMemoryObjectStore(),
-                )
-                await db.flush()
-                resource_id = result.resource.id
-                from fastapi import HTTPException
-                try:
-                    await delete_project_resource(
-                        db, project_id=PROJ_ID, resource_id=resource_id, user=viewer
-                    )
-                    assert False
-                except HTTPException as exc:
-                    assert exc.status_code == 403
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
-
-
-def test_delete_resource_wrong_project_returns_false():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                owner, _, _ = await _setup_project(db)
-                data, name, mime = _fake_upload_bytes()
-                result = await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
-                    object_store=InMemoryObjectStore(),
-                )
-                await db.flush()
-                # Try to delete from a different project.
-                db.add(
-                    Project(
-                        id="proj-other",
-                        name="Other",
-                        status="active",
-                        visibility="private",
-                        created_by_user_id=owner.id,
-                        revision=1,
-                        acl_version=1,
-                    )
-                )
-                db.add(ProjectMember(project_id="proj-other", user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))
-                await db.flush()
-                deleted = await delete_project_resource(
-                    db, project_id="proj-other", resource_id=result.resource.id, user=owner
-                )
-                assert deleted is False
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
-
-
-def test_resource_links_to_knowledge_base():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                owner, _, _ = await _setup_project(db)
-                data, name, mime = _fake_upload_bytes()
-                result = await upload_project_resource(
-                    db, project_id=PROJ_ID, user=owner, file_name=name, declared_mime=mime, data=data,
-                    object_store=InMemoryObjectStore(),
-                )
-                await db.flush()
-                project = await db.get(Project, PROJ_ID)
-                assert project.knowledge_base_id is not None
-                kb = await db.get(KnowledgeBase, project.knowledge_base_id)
-                assert kb is not None
-                assert kb.access_type == "private"
-                doc = await db.get(KnowledgeDocument, result.resource.document_id)
-                assert doc is not None
-                assert doc.knowledge_base_id == kb.id
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+async def test_resource_links_to_knowledge_base():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            owner, _, _ = await _setup_project(db)
+            data, name, mime = _fake_upload_bytes()
+            result = await upload_project_resource(
+                db,
+                project_id=PROJ_ID,
+                user=owner,
+                file_name=name,
+                declared_mime=mime,
+                data=data,
+                object_store=InMemoryObjectStore(),
+            )
+            await db.flush()
+            project = await db.get(Project, PROJ_ID)
+            assert project.knowledge_base_id is not None
+            kb = await db.get(KnowledgeBase, project.knowledge_base_id)
+            assert kb is not None
+            assert kb.access_type == "private"
+            doc = await db.get(KnowledgeDocument, result.resource.document_id)
+            assert doc is not None
+            assert doc.knowledge_base_id == kb.id
+    finally:
+        await engine.dispose()
 
 
 async def _mark_latest_version_published(db, document_id: str) -> KnowledgeDocumentVersion:
@@ -562,62 +567,52 @@ async def _mark_latest_version_published(db, document_id: str) -> KnowledgeDocum
     return version
 
 
-def test_list_promotes_published_resource_to_active():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                owner, _, _ = await _setup_project(db)
-                data, name, mime = _fake_upload_bytes()
-                result = await upload_project_resource(
-                    db,
-                    project_id=PROJ_ID,
-                    user=owner,
-                    file_name=name,
-                    declared_mime=mime,
-                    data=data,
-                    object_store=InMemoryObjectStore(),
-                    title="Guide",
-                )
-                await _mark_latest_version_published(db, result.resource.document_id)
-                assert result.resource.status == PROJECT_RESOURCE_STATUS_PROCESSING
-                items, _total = await list_project_resources(
-                    db, project_id=PROJ_ID, user=owner
-                )
-                assert items[0]["status"] == PROJECT_RESOURCE_STATUS_ACTIVE
-                assert items[0]["versionStatus"] == "published"
-                resource = await db.get(ProjectResource, result.resource.id)
-                assert resource.status == PROJECT_RESOURCE_STATUS_ACTIVE
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+async def test_list_promotes_published_resource_to_active():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            owner, _, _ = await _setup_project(db)
+            data, name, mime = _fake_upload_bytes()
+            result = await upload_project_resource(
+                db,
+                project_id=PROJ_ID,
+                user=owner,
+                file_name=name,
+                declared_mime=mime,
+                data=data,
+                object_store=InMemoryObjectStore(),
+                title="Guide",
+            )
+            await _mark_latest_version_published(db, result.resource.document_id)
+            assert result.resource.status == PROJECT_RESOURCE_STATUS_PROCESSING
+            items, _total = await list_project_resources(db, project_id=PROJ_ID, user=owner)
+            assert items[0]["status"] == PROJECT_RESOURCE_STATUS_ACTIVE
+            assert items[0]["versionStatus"] == "published"
+            resource = await db.get(ProjectResource, result.resource.id)
+            assert resource.status == PROJECT_RESOURCE_STATUS_ACTIVE
+    finally:
+        await engine.dispose()
 
 
-def test_approve_path_syncs_project_resource():
-    async def run():
-        factory, engine = await _session_factory()
-        try:
-            async with factory() as db:
-                owner, _, _ = await _setup_project(db)
-                data, name, mime = _fake_upload_bytes()
-                result = await upload_project_resource(
-                    db,
-                    project_id=PROJ_ID,
-                    user=owner,
-                    file_name=name,
-                    declared_mime=mime,
-                    data=data,
-                    object_store=InMemoryObjectStore(),
-                )
-                await _mark_latest_version_published(db, result.resource.document_id)
-                updated = await sync_project_resources_for_document(
-                    db, document_id=result.resource.document_id
-                )
-                assert updated == 1
-                resource = await db.get(ProjectResource, result.resource.id)
-                assert resource.status == PROJECT_RESOURCE_STATUS_ACTIVE
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+async def test_approve_path_syncs_project_resource():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            owner, _, _ = await _setup_project(db)
+            data, name, mime = _fake_upload_bytes()
+            result = await upload_project_resource(
+                db,
+                project_id=PROJ_ID,
+                user=owner,
+                file_name=name,
+                declared_mime=mime,
+                data=data,
+                object_store=InMemoryObjectStore(),
+            )
+            await _mark_latest_version_published(db, result.resource.document_id)
+            updated = await sync_project_resources_for_document(db, document_id=result.resource.document_id)
+            assert updated == 1
+            resource = await db.get(ProjectResource, result.resource.id)
+            assert resource.status == PROJECT_RESOURCE_STATUS_ACTIVE
+    finally:
+        await engine.dispose()

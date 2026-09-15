@@ -39,9 +39,7 @@ class SparseEncodingProfile:
     @classmethod
     def from_dict(cls, raw: dict | None) -> SparseEncodingProfile:
         value = dict(raw or {})
-        algorithm = (
-            str(value.get("algorithm") or SPARSE_ENCODER_VERSION).strip().lower()
-        )
+        algorithm = str(value.get("algorithm") or SPARSE_ENCODER_VERSION).strip().lower()
         # Older draft releases used the generic label "bm25". Qdrant applies
         # collection-level IDF; this encoder supplies deterministic hashed TF.
         if algorithm == "bm25":
@@ -49,9 +47,7 @@ class SparseEncodingProfile:
         if algorithm != SPARSE_ENCODER_VERSION:
             raise ValueError(f"Unsupported sparse encoding algorithm: {algorithm}")
         hash_space = int(value.get("hash_space") or DEFAULT_HASH_SPACE)
-        max_document_terms = int(
-            value.get("max_document_terms") or DEFAULT_MAX_DOCUMENT_TERMS
-        )
+        max_document_terms = int(value.get("max_document_terms") or DEFAULT_MAX_DOCUMENT_TERMS)
         max_query_terms = int(value.get("max_query_terms") or DEFAULT_MAX_QUERY_TERMS)
         if hash_space < 65_536 or hash_space > DEFAULT_HASH_SPACE:
             raise ValueError("Sparse hash_space must be between 65536 and 2147483647")

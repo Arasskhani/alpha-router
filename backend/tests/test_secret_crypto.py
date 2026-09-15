@@ -1,6 +1,5 @@
 """Greenfield at-rest secret-encryption contracts."""
 
-import asyncio
 import json
 
 import pytest
@@ -96,13 +95,13 @@ async def _make_db() -> AsyncSession:
         expire_on_commit=False,
     )
     session = factory()
-    setattr(session, "_test_engine", engine)
+    session._test_engine = engine
     return session
 
 
 async def _dispose_db(session: AsyncSession) -> None:
     await session.close()
-    await getattr(session, "_test_engine").dispose()
+    await session._test_engine.dispose()
 
 
 async def _test_provider_config_persists_only_ciphertext():
@@ -133,8 +132,8 @@ async def _test_provider_config_persists_only_ciphertext():
         await _dispose_db(db)
 
 
-def test_provider_config_persists_only_ciphertext():
-    asyncio.run(_test_provider_config_persists_only_ciphertext())
+async def test_provider_config_persists_only_ciphertext():
+    await _test_provider_config_persists_only_ciphertext()
 
 
 def test_sensitive_fields_catalog():

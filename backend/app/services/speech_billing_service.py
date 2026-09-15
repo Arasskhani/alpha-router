@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.branding import CHAT_CLIENT_APP
 from app.core.language_detect import detect_prompt_language
 from app.models.model_catalog import AIModel
-from app.services.proxy_service import log_usage
+from app.services.usage_logging_service import log_usage
 from app.services.usage_accounting_service import capture_usage_event
 
 
@@ -38,6 +38,8 @@ async def log_speech_usage(
     response_time_ms: float,
     success: bool,
     error_message: str | None = None,
+    error_code: str | None = None,
+    http_status: int | None = None,
     source_ip: str | None = None,
     budget_reservation_id: str | None = None,
 ) -> int | None:
@@ -87,6 +89,8 @@ async def log_speech_usage(
         source="alpha_router_chat",
         success=success,
         error_message=error_message,
+        error_code=error_code,
+        http_status=http_status,
         client_app=client_app,
         budget_reservation_id=budget_reservation_id,
         usage_events=[usage_event],

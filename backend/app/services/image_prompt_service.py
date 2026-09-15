@@ -9,16 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.branding import CHAT_CLIENT_APP
 from app.core.language_detect import needs_english_translation
 from app.models.user import User
+from app.services.failure_details import failure_message
 from app.services.budget_service import budget_request_blocked, get_user_budget_state
 from app.services.model_capabilities import model_kinds, model_media_flags
 from app.services.model_tool_compatibility_service import is_auto_router_model_id
-from app.services.proxy_service import (
-    _apply_litellm_provider_kwargs,
-    _litellm_model_for_provider,
-    reserve_auxiliary_llm_usage,
-    resolve_model_and_key,
-    settle_auxiliary_usage,
-)
+from app.services.llm_providers import litellm_model_for_provider as _litellm_model_for_provider
+from app.services.provider_utils import _apply_litellm_provider_kwargs
+from app.services.model_resolution_service import resolve_model_and_key
+from app.services.usage_logging_service import reserve_auxiliary_llm_usage, settle_auxiliary_usage
 
 ENHANCE_MODES = ("improve", "translate", "translate_improve")
 ENHANCE_CONTEXTS = ("image", "chat")
@@ -28,6 +26,7 @@ _STRICT_TRANSLATE_MODES = frozenset({"translate", "translate_improve"})
 
 class PromptEnhanceError(Exception):
     """Prompt enhance/translate failed; callers should surface this to the client."""
+
 
 # Legacy aliases kept for older clients.
 _MODE_ALIASES = {
@@ -194,16 +193,10 @@ def _guard_translate_improve_output(result: str, original: str) -> str:
 def _user_message_for_mode(mode: str, original: str, context: str) -> str:
     if mode == "improve":
         label = "message" if context == "chat" else "prompt"
-        return (
-            f"Original {label} (preserve meaning and wording; minimal edits only):\n"
-            f"{original}"
-        )
+        return f"Original {label} (preserve meaning and wording; minimal edits only):\n{original}"
     if mode == "translate_improve":
         label = "message" if context == "chat" else "prompt"
-        return (
-            f"Original {label} (translate to English, then minimally improve; preserve intent):\n"
-            f"{original}"
-        )
+        return f"Original {label} (translate to English, then minimally improve; preserve intent):\n{original}"
     return original
 
 
@@ -316,7 +309,7 @@ async def enhance_user_prompt(
             messages=kwargs["messages"],
             max_tokens=int(kwargs["max_tokens"]),
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return _fail_or_fallback()
         return _fail_or_fallback(
             normalized_mode,
             "Could not reserve budget for translation. Try again shortly.",
@@ -341,20 +334,16 @@ async def enhance_user_prompt(
             result = _guard_translate_improve_output(result, original)
         if normalized_mode in _STRICT_TRANSLATE_MODES:
             if not result or result.strip() == original.strip():
-                raise PromptEnhanceError(
-                    "Translation returned unchanged text. Try another text model."
-                )
+                raise PromptEnhanceError("Translation returned unchanged text. Try another text model.")
             if needs_english_translation(result):
-                raise PromptEnhanceError(
-                    "Translation did not produce English. Try another text model."
-                )
+                raise PromptEnhanceError("Translation did not produce English. Try another text model.")
         success = True
         return result
     except PromptEnhanceError as exc:
-        error_message = str(exc)[:500]
+        error_message = failure_message(exc)[:500]
         raise
-    except Exception as exc:
-        error_message = str(exc)[:500]
+    except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
+        error_message = failure_message(exc)[:500]
         return _fail_or_fallback(
             normalized_mode,
             "Translation failed. Try again or choose another text model.",

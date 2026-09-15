@@ -1,6 +1,6 @@
 /** IndexedDB blob storage for Private Mode chat media (images / attachments). */
 
-export const PRIVATE_BLOB_REF_PREFIX = "private-blob://";
+const PRIVATE_BLOB_REF_PREFIX = "private-blob://";
 
 export const PRIVATE_MEDIA_DB_NAME = "alpha_router_private_media";
 const DB_VERSION = 1;
@@ -19,11 +19,11 @@ export function isPrivateBlobRef(url: string): boolean {
   return url.startsWith(PRIVATE_BLOB_REF_PREFIX);
 }
 
-export function privateBlobRefId(ref: string): string {
+function privateBlobRefId(ref: string): string {
   return ref.slice(PRIVATE_BLOB_REF_PREFIX.length);
 }
 
-export function refForHydratedBlobUrl(blobUrl: string): string | undefined {
+function refForHydratedBlobUrl(blobUrl: string): string | undefined {
   return blobUrlToRef.get(blobUrl);
 }
 
@@ -83,7 +83,7 @@ async function readBlob(id: string): Promise<Blob | null> {
 }
 
 /** Store a data URL or Blob; returns a stable `private-blob://` ref for localStorage JSON. */
-export async function storePrivateBlob(dataUrlOrBlob: string | Blob): Promise<string> {
+async function storePrivateBlob(dataUrlOrBlob: string | Blob): Promise<string> {
   const blob =
     typeof dataUrlOrBlob === "string" ? dataUrlToBlob(dataUrlOrBlob) : dataUrlOrBlob;
   const id = newBlobId();
@@ -113,23 +113,6 @@ export async function resolvePrivateBlobRef(ref: string): Promise<string> {
   blobUrlToRef.set(blobUrl, ref);
   return blobUrl;
 }
-
-export async function deletePrivateBlob(id: string): Promise<void> {
-  const db = await openDb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, "readwrite");
-    tx.objectStore(STORE_NAME).delete(id);
-    tx.oncomplete = () => {
-      db.close();
-      resolve();
-    };
-    tx.onerror = () => {
-      db.close();
-      reject(tx.error ?? new Error("Could not delete private media."));
-    };
-  });
-}
-
 /** Delete all IndexedDB media kept for browser-only Private Mode. */
 export async function clearPrivateMediaStore(): Promise<void> {
   for (const blobUrl of blobUrlToRef.keys()) URL.revokeObjectURL(blobUrl);

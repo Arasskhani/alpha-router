@@ -7,10 +7,6 @@ directly. This keeps the test hermetic and fast while validating the exact
 patterns used in app/main.py.
 """
 
-import asyncio
-import os
-import sys
-import tempfile
 from pathlib import Path
 
 import pytest

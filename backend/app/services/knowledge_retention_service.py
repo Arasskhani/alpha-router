@@ -115,13 +115,7 @@ async def schedule_document_purge(
 
     collections = await _collection_names_for_base(db, document.knowledge_base_id)
     versions = (
-        (
-            await db.execute(
-                select(KnowledgeDocumentVersion).where(
-                    KnowledgeDocumentVersion.document_id == document.id
-                )
-            )
-        )
+        (await db.execute(select(KnowledgeDocumentVersion).where(KnowledgeDocumentVersion.document_id == document.id)))
         .scalars()
         .all()
     )
@@ -231,15 +225,8 @@ async def schedule_expired_knowledge_retention(
     not_expired = 0
     job_ids: list[str] = []
     for document, knowledge_base in rows:
-        terminal_at = (
-            document.deleted_at
-            or document.revoked_at
-            or document.updated_at
-            or document.created_at
-        )
-        cutoff = current - datetime.timedelta(
-            days=max(1, int(knowledge_base.retention_days or 1))
-        )
+        terminal_at = document.deleted_at or document.revoked_at or document.updated_at or document.created_at
+        cutoff = current - datetime.timedelta(days=max(1, int(knowledge_base.retention_days or 1)))
         if terminal_at > cutoff:
             not_expired += 1
             continue
@@ -273,9 +260,7 @@ async def _pending_retention_job_ids(
                 select(IngestionJob.id).where(
                     IngestionJob.knowledge_base_id == knowledge_base_id,
                     IngestionJob.job_type == KNOWLEDGE_RETENTION_PURGE_JOB,
-                    IngestionJob.status.in_(
-                        ("pending", "retry", "leased", "processing")
-                    ),
+                    IngestionJob.status.in_(("pending", "retry", "leased", "processing")),
                 )
             )
         ).scalars()
@@ -317,7 +302,7 @@ async def execute_retention_purge_jobs(
                 worker_id=_INLINE_CLEANUP_WORKER,
             )
             purged += 1
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- boundary with an external dependency; degraded result is returned
             await fail_knowledge_job(
                 db,
                 job,
@@ -348,9 +333,7 @@ async def purge_expired_knowledge_retention(
         knowledge_base_id=knowledge_base_id,
     )
     job_ids = list(scheduled.get("job_ids") or [])
-    job_ids.extend(
-        await _pending_retention_job_ids(db, knowledge_base_id=knowledge_base_id)
-    )
+    job_ids.extend(await _pending_retention_job_ids(db, knowledge_base_id=knowledge_base_id))
     executed = await execute_retention_purge_jobs(
         db,
         job_ids=job_ids,

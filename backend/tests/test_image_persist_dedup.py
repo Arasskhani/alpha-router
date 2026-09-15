@@ -1,9 +1,9 @@
 """Ensure image payload collectors do not duplicate url + b64_json for one image."""
 
 from app.api.images import (
+    _coalesce_image_item,
     _collect_openrouter_images,
     _collect_standard_image_payload,
-    _coalesce_image_item,
     _dedupe_image_items,
 )
 

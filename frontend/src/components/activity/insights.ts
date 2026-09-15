@@ -2,12 +2,11 @@ import type {
   ActivityInsights,
   ActivityPayload,
   HeatmapMetric,
-  PromptsCardData,
   PromptsPeriod,
   UsageMetricStats,
 } from "./types";
 
-export function periodFooterLabel(period: PromptsPeriod) {
+function periodFooterLabel(period: PromptsPeriod) {
   if (period === "day") return "Today";
   if (period === "week") return "This Week";
   return "This Month";
@@ -45,22 +44,6 @@ function normalizeUsageStats(
     },
   };
 }
-
-export function resolvePrompts(data: ActivityPayload, promptsPeriod: PromptsPeriod): PromptsCardData {
-  if (data.prompts) return data.prompts;
-  const insights = resolveInsights(data);
-  return {
-    period: promptsPeriod,
-    chart: data.chart,
-    models: data.models,
-    total: data.totals.requests,
-    change_pct: insights.change_pct.prompts,
-    period_footer_label: periodFooterLabel(promptsPeriod),
-    period_prompts: insights.period_prompts,
-    streak_days: insights.streak_days,
-  };
-}
-
 export function resolveInsights(data: ActivityPayload): ActivityInsights {
   const base: ActivityInsights = {
     streak_days: 0,

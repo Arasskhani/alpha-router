@@ -45,9 +45,10 @@ def test_ensure_bucket_creates_when_missing():
     )
     client.head_bucket.side_effect = [not_found, None]
     client.create_bucket.return_value = {}
-    with patch.object(oss, "_client", return_value=client), patch(
-        "app.services.object_storage_service.get_settings"
-    ) as gs:
+    with (
+        patch.object(oss, "_client", return_value=client),
+        patch("app.services.object_storage_service.get_settings") as gs,
+    ):
         gs.return_value.s3_bucket = "alpha-router-media"
         gs.return_value.s3_endpoint_url = "http://seaweedfs:8333"
         with patch.object(oss, "verify_connection"):
@@ -57,9 +58,10 @@ def test_ensure_bucket_creates_when_missing():
 
 def test_client_uses_path_style_addressing():
     oss._client.cache_clear()
-    with patch("app.services.object_storage_service.boto3.client") as boto_client, patch(
-        "app.services.object_storage_service.get_settings"
-    ) as gs:
+    with (
+        patch("app.services.object_storage_service.boto3.client") as boto_client,
+        patch("app.services.object_storage_service.get_settings") as gs,
+    ):
         gs.return_value.s3_endpoint_url = "http://seaweedfs:8333"
         gs.return_value.s3_access_key = "k"
         gs.return_value.s3_secret_key = "s"

@@ -71,6 +71,14 @@ sudo ./scripts/install.sh --dev
 Default clone path is `/opt/alpha-router`. Override with
 `ALPHAROUTER_HOME=/home/alpha/alpha-router`.
 
+When it clones, `install.sh` checks out the newest release tag (`vX.Y.Z`)
+rather than the tip of `main`, so a fresh host runs code that was actually
+released. `ALPHAROUTER_GIT_REF=main` (or any branch or tag) overrides it; if
+the repository has no release tag yet, it falls back to `main` and says so.
+A host installed this way sits on a detached HEAD at that tag, and
+`upgrade.sh` moves it to the next *release* — it never fast-forwards a pinned
+host onto `main`.
+
 After CI publishes images:
 
 ```bash
@@ -108,6 +116,30 @@ Production guard check only:
 ```bash
 ./scripts/preflight-prod.sh
 ```
+
+### Backup, restore and rollback
+
+`upgrade.sh` takes a snapshot before it rebuilds or migrates anything
+(`scripts/backup.sh --consistent`, written to `./backups/<timestamp>/`, last
+7 kept) and tags the images that were running as `<image>:prev`. Snapshots
+hold a `pg_dump` of the database, the Qdrant / SeaweedFS / TLS volumes, `.env`
+and a `MANIFEST` with the git commit and image ids.
+
+```bash
+./scripts/backup.sh                       # on-demand, online (no downtime)
+./scripts/backup.sh --consistent          # stops qdrant/seaweedfs during the copy
+BACKUP_DIR=/mnt/backups ./scripts/backup.sh
+
+./scripts/restore.sh 20260914103000                    # database + volumes
+./scripts/restore.sh 20260914103000 --previous-images  # roll back a bad upgrade
+./scripts/restore.sh 20260914103000 --with-env         # also restore .env
+```
+
+Restore stops the stack (volumes are kept), replaces the database contents and
+data volumes with the snapshot, and starts the stack again; everything written
+after the snapshot is lost. Keep `./backups` (or `BACKUP_DIR`) on separate
+storage — it contains `.env` with all secrets. Set `SKIP_BACKUP=1` to upgrade
+without a snapshot.
 
 ### Manual quick start
 
@@ -348,7 +380,8 @@ environment. For a host-side backend/frontend loop:
 cd backend
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-dev.txt   # Linux CI/Docker use requirements.lock
+python -m app.migrate            # schema is owned by Alembic; workers run no DDL
 uvicorn app.main:app --reload --port 8080
 ```
 
@@ -362,18 +395,24 @@ npx vite
 
 The Vite development server proxies `/api` to `localhost:8080`.
 
-## Tests
+## Tests and quality gates
 
 ```bash
 cd backend
-pytest
+pytest                      # native async tests; fixtures in tests/conftest.py
+ruff check . && ruff format --check .
+../scripts/mypy-check.sh    # type errors not in mypy-baseline.txt fail
 ```
 
 ```bash
 cd frontend
+npm run lint && npm run knip
 npm test
 npm run build
 ```
+
+See `CONTRIBUTING.md` for the full list of gates, the commit-message format and
+`pre-commit install` — the hooks run the same tools CI runs.
 
 Final release verification also validates the resolved Compose model:
 

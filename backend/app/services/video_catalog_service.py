@@ -41,4 +41,3 @@ def normalize_video_capabilities(
         "pricing": metadata.get("pricing") or metadata.get("pricing_skus") or {},
         "adapter": getattr(get_video_adapter(provider_type), "adapter_version", "unknown"),
     }
-

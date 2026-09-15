@@ -9,7 +9,7 @@ from app.models.chat import ChatSession
 from app.models.media import MediaAsset
 from app.models.project import ProjectMediaAsset
 from app.models.user import User
-from app.services.attachment_extract import extract_document_text
+from app.services.attachment_extract import extract_document_text_bounded
 from app.services.attachment_policy import (
     AttachmentPolicyError,
     resolve_attachment_mime,
@@ -56,12 +56,18 @@ async def resolve_attach_scope(
     *,
     project_id: str | None,
     chat_session_id: str | None,
+    user: object | None = None,
 ) -> str | None:
     """Return the project id media_ids belong to, or None for personal media."""
     requested = (project_id or "").strip() or None
     session_project: str | None = None
     if chat_session_id:
-        session = await db.get(ChatSession, chat_session_id)
+        if user is not None:
+            from app.services.chat_session_access import resolve_owned_chat_session
+
+            session = await resolve_owned_chat_session(db, user=user, chat_session_id=chat_session_id)
+        else:
+            session = await db.get(ChatSession, chat_session_id)
         if session is not None:
             session_project = (session.project_id or "").strip() or None
     if requested and session_project and requested != session_project:
@@ -162,13 +168,14 @@ async def attachments_from_existing_media(
         db,
         project_id=project_id,
         chat_session_id=chat_session_id,
+        user=user,
     )
     if scoped_project_id:
         await require_capability(
             db,
             project_id=scoped_project_id,
             user=user,
-            capability="project.view",
+            capability="media.read",
         )
 
     out: list[dict] = []
@@ -214,10 +221,7 @@ async def attachments_from_existing_media(
         if total_bytes + size > total_limit:
             raise HTTPException(
                 status_code=413,
-                detail=(
-                    "Attachments exceed the total per-message limit "
-                    f"({max(1, total_limit // (1024 * 1024))} MB)."
-                ),
+                detail=(f"Attachments exceed the total per-message limit ({max(1, total_limit // (1024 * 1024))} MB)."),
             )
         total_bytes += size
 
@@ -238,7 +242,7 @@ async def attachments_from_existing_media(
                     )
                 else:
                     raw = await _read_personal_bytes(row)
-            text = extract_document_text(raw, filename)
+            text = await extract_document_text_bounded(raw, filename)
         out.append(
             _payload(
                 filename=filename,

@@ -8,13 +8,15 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.parse import urlparse
 
-import httpx
 
+from app.core.prompt_fences import RUNTIME_POLICY, untrusted_preamble, wrap_untrusted
 from app.branding import OUTBOUND_USER_AGENT
+from app.services.failure_details import failure_message
 from app.services.metered_usage_service import (
     finish_metered_usage,
     start_metered_usage,
 )
+from app.services.provider_utils import extract_prompt_text
 
 URL_RE = re.compile(r"https?://[^\s<>\[\]()\"']+", re.IGNORECASE)
 
@@ -46,9 +48,7 @@ def _last_user_text(messages: list[dict]) -> str:
             content = m.get("content")
             if isinstance(content, str):
                 return content.strip()
-    from app.services.proxy_service import _extract_prompt_text
-
-    return _extract_prompt_text(messages).strip()
+    return extract_prompt_text(messages).strip()
 
 
 def _search_result_limit(depth: str) -> int:
@@ -101,14 +101,14 @@ async def web_search_context(
                 error_message=str(exc) or "Search cancelled",
             )
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
         if metered is not None:
             await finish_metered_usage(
                 metered,
                 success=False,
                 quantity=None,
                 unit=None,
-                error_message=str(exc),
+                error_message=failure_message(exc),
             )
         return ""
     if metered is not None:
@@ -120,13 +120,18 @@ async def web_search_context(
         )
     if not rows:
         return ""
-    lines = ["Web search results (use for up-to-date facts; cite sources when relevant):"]
+    lines = []
     for i, row in enumerate(rows, 1):
         title = (row.get("title") or "").strip()
         href = (row.get("href") or row.get("link") or "").strip()
         body = (row.get("body") or row.get("snippet") or "").strip()
         lines.append(f"{i}. {title}\n   URL: {href}\n   {body}")
-    return "\n".join(lines)
+    return (
+        "Web search results (use for up-to-date facts; cite sources when relevant). "
+        + untrusted_preamble("search result text")
+        + "\n"
+        + wrap_untrusted("WEB_SEARCH_RESULTS", "\n".join(lines))
+    )
 
 
 class _MLStripper(HTMLParser):
@@ -147,7 +152,7 @@ def _html_to_text(html: str) -> str:
     try:
         parser.feed(html)
         parser.close()
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return re.sub(r"<[^>]+>", " ", html))
         return re.sub(r"<[^>]+>", " ", html)
     return re.sub(r"\s+", " ", parser.get_text()).strip()
 
@@ -207,7 +212,7 @@ async def fetch_url_text(
                 success=False,
                 quantity=None,
                 unit=None,
-                error_message=str(exc),
+                error_message=failure_message(exc),
             )
         raise
     if metered is not None:
@@ -232,7 +237,7 @@ async def web_fetch_context(
     urls = list(dict.fromkeys(URL_RE.findall(text)))[:3]
     if not urls:
         return ""
-    blocks: list[str] = ["Fetched page content for URLs in the user message:"]
+    blocks: list[str] = ["Fetched page content for URLs in the user message. " + untrusted_preamble("page content")]
     for url in urls:
         try:
             content = await fetch_url_text(
@@ -242,9 +247,9 @@ async def web_fetch_context(
                 username=username,
                 reserve_budget=reserve_budget,
             )
-            blocks.append(f"--- {url} ---\n{content[:8000]}")
-        except Exception as exc:
-            blocks.append(f"--- {url} ---\n(fetch failed: {exc})")
+            blocks.append(wrap_untrusted("WEB_PAGE", content[:8000], source=url))
+        except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
+            blocks.append(wrap_untrusted("WEB_PAGE", f"(fetch failed: {exc})", source=url))
     return "\n\n".join(blocks)
 
 
@@ -294,6 +299,9 @@ async def augment_messages_with_tools(
 
     if not system_blocks:
         return list(messages)
+
+    # Untrusted content is about to enter the prompt: state the rules first.
+    system_blocks.insert(0, RUNTIME_POLICY)
 
     prefix = [{"role": "system", "content": "\n\n".join(system_blocks)}]
     out = list(messages)

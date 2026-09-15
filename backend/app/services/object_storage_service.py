@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from functools import lru_cache
 
 import boto3
@@ -118,6 +119,41 @@ def get_object_bytes(key: str) -> bytes:
             raise ObjectNotFoundError(_normalize_key(key)) from exc
         raise
     return resp["Body"].read()
+
+
+class InvalidRangeError(ValueError):
+    """The requested byte range lies outside the object."""
+
+
+_CONTENT_RANGE_RE = re.compile(r"^bytes (\d+)-(\d+)/(\d+|\*)$")
+
+
+def get_object_range(key: str, range_spec: str) -> tuple[bytes, int, int, int]:
+    """Fetch only ``bytes=<range_spec>`` of an object.
+
+    Returns ``(body, start, end, total)``. ``range_spec`` is the value after
+    ``bytes=`` exactly as the client sent it (``0-1023``, ``1024-``, ``-500``);
+    S3 does the arithmetic and answers 206 with a Content-Range, so a seek in a
+    200 MB video costs one small GET instead of pulling the whole object.
+    """
+    settings = get_settings()
+    try:
+        resp = _client().get_object(Bucket=settings.s3_bucket, Key=_normalize_key(key), Range=f"bytes={range_spec}")
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in ("NoSuchKey", "404", "NotFound"):
+            raise ObjectNotFoundError(_normalize_key(key)) from exc
+        if code in ("InvalidRange", "416"):
+            raise InvalidRangeError(range_spec) from exc
+        raise
+    match = _CONTENT_RANGE_RE.match(str(resp.get("ContentRange") or ""))
+    body = resp["Body"].read()
+    if not match:
+        # The store ignored the Range header and sent everything.
+        return body, 0, max(0, len(body) - 1), len(body)
+    start, end, total = int(match.group(1)), int(match.group(2)), match.group(3)
+    total_int = int(total) if total != "*" else end + 1
+    return body, start, end, total_int
 
 
 def get_object_bytes_bounded(key: str, *, max_bytes: int) -> bytes:

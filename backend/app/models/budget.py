@@ -1,10 +1,10 @@
 """Budget plans and assignments to users or groups."""
 
 import datetime
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
-from app.database import Base
+from app.database import Base, MoneyUSD
 
 
 class BudgetPlan(Base):
@@ -12,7 +12,7 @@ class BudgetPlan(Base):
 
     id = Column(Integer, primary_key=True)
     name = Column(String(128), unique=True, nullable=False)
-    monthly_budget_usd = Column(Float, nullable=False, default=0.0)
+    monthly_budget_usd = Column(MoneyUSD, nullable=False, default=0.0)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     assignments = relationship("PlanAssignment", back_populates="plan")

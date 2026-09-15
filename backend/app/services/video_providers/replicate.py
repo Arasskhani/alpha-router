@@ -19,6 +19,8 @@ from app.services.video_providers.contracts import (
     ProviderJobSnapshot,
     VideoUsage,
 )
+from app.config import get_settings
+from app.services.provider_http import get_provider_rest_client, provider_connect_timeout
 
 
 class ReplicateVideoAdapter:
@@ -67,7 +69,9 @@ class ReplicateVideoAdapter:
         )
 
     async def poll(self, *, api_key: str, base_url: str | None, job: ProviderJobRef) -> ProviderJobSnapshot:
-        response = await self._request("GET", job.polling_url or urljoin(self._base(base_url), f"predictions/{job.provider_job_id}"), api_key)
+        response = await self._request(
+            "GET", job.polling_url or urljoin(self._base(base_url), f"predictions/{job.provider_job_id}"), api_key
+        )
         status = str(response.get("status") or "").lower()
         state = {
             "starting": "submitted",
@@ -93,7 +97,9 @@ class ReplicateVideoAdapter:
         response = await self._request("POST", url + "/cancel", api_key, allow_404=True)
         return bool(response is not None)
 
-    async def fetch_result(self, *, api_key: str, base_url: str | None, snapshot: ProviderJobSnapshot) -> ProviderAssetRef:
+    async def fetch_result(
+        self, *, api_key: str, base_url: str | None, snapshot: ProviderJobSnapshot
+    ) -> ProviderAssetRef:
         if not snapshot.asset_url:
             raise ValueError("Replicate completed without an output URL")
         return ProviderAssetRef(
@@ -124,8 +130,20 @@ class ReplicateVideoAdapter:
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError("Invalid Replicate URL")
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0), follow_redirects=False) as client:
-            response = await client.request(method, url, headers=self._headers(api_key), json=json_body)
+        # Replicate is the same async-job shape as OpenRouter -- one create,
+        # then a status GET every few seconds -- so it pays the same price for
+        # a fresh connection each time, and it used to build a whole new client
+        # per request. The shared provider client keeps the connection and
+        # retries the handshake.
+        client = get_provider_rest_client()
+        response = await client.request(
+            method,
+            url,
+            headers=self._headers(api_key),
+            json=json_body,
+            follow_redirects=False,
+            timeout=httpx.Timeout(get_settings().provider_http_timeout_seconds, connect=provider_connect_timeout()),
+        )
         if allow_404 and response.status_code == 404:
             return {}
         response.raise_for_status()
@@ -133,4 +151,3 @@ class ReplicateVideoAdapter:
         if not isinstance(payload, dict):
             raise ValueError("Replicate returned an invalid response")
         return payload
-

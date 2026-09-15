@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import contextlib
 import datetime
 import json
@@ -34,13 +33,70 @@ from app.services.storage_service import (
 from app.services.user_chat_storage_service import finalize_chat_session_video
 from app.services.project_media_service import collect_personal_media_ids, persist_scoped_chat_media
 from app.services.video_billing_service import VideoBillingCapture, log_video_usage
-from app.services.observability import increment
+from app.services.failure_details import CODE_CONNECT, CODE_TIMEOUT, describe_failure
+from app.services.observability import correlation_scope, increment
 
 _LOG = logging.getLogger("alpha_router.video_jobs")
 _ACTIVE_TASKS: dict[str, asyncio.Task] = {}
 _WORKER_TASK: asyncio.Task | None = None
 _WORKER_STOP = asyncio.Event()
 _TERMINAL = frozenset({"completed", "failed", "cancelled"})
+
+# A failed poll is not a failed job. The clip is still being generated on the
+# provider's side; all that broke is one status GET, and the next one a few
+# seconds later almost always succeeds. Killing the job on the first network
+# hiccup threw away work the user is billed for and reported a provider error
+# that never happened. Only an unbroken run of failures means the provider is
+# genuinely unreachable -- and the overall job deadline still applies
+# throughout, so this can never extend a job past its timeout.
+_MAX_CONSECUTIVE_POLL_FAILURES = 5
+
+
+def _note_upstream_failure(code: str) -> None:
+    """Count the failures that mean "we never reached the provider".
+
+    Separated from the generic failure counters because the operator action is
+    different: a provider error is the provider's problem, while a run of
+    these is this host's egress dropping connections, and it is invisible in
+    the logs until someone reads a stack trace.
+    """
+    if code in (CODE_CONNECT, CODE_TIMEOUT):
+        increment("upstream_connect_failure")
+
+
+def _is_transient_poll_failure(exc: BaseException) -> bool:
+    """True when retrying the same status GET is worth a try.
+
+    Transport errors and 429/5xx are the provider or the path between us
+    being briefly unavailable. A 4xx (bad job id, revoked key) or a malformed
+    body will fail identically forever, so those are raised at once.
+    """
+    import httpx
+
+    from app.services.openrouter_image_service import is_retryable_openrouter_transport_error
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code if exc.response is not None else 0
+        return status == 429 or status >= 500
+    if isinstance(exc, LeaseLost):
+        return False
+    return is_retryable_openrouter_transport_error(exc)
+
+
+class LeaseLost(RuntimeError):
+    """Another worker now owns this job's lease; this runner must stop touching it.
+
+    Raised inside the poll loop when the row's ``lease_owner`` no longer
+    matches the claim this runner started with (the lease expired and
+    ``claim_due_video_jobs`` handed the job to someone else). The job row,
+    the reservation and billing all belong to the new owner from that point.
+    """
+
+
+class VideoJobAlreadyCompleted(RuntimeError):
+    """The provider finished the job before the cancel reached it."""
+
+
 # How long a claimed job stays leased to one worker, and how often a long
 # phase renews that lease. The heartbeat must stay well under the lease so a
 # single slow beat never lets a second worker claim a job that is running.
@@ -86,10 +142,8 @@ def serialize_job(job: VideoGenerationJob, *, include_provider: bool = False) ->
     }
     request_log_id = params.get("request_log_id")
     if request_log_id is not None:
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             out["request_log_id"] = int(request_log_id)
-        except (TypeError, ValueError):
-            pass
     if include_provider:
         out["provider_job_id"] = job.provider_job_id
     return out
@@ -141,9 +195,7 @@ async def create_video_job(
     max_concurrent = max(1, int(settings.video_max_concurrent_jobs_per_user or 1))
     active = await count_active_jobs(db, user.id)
     if active >= max_concurrent:
-        raise PermissionError(
-            f"Video generation concurrency limit reached ({max_concurrent} active job(s))"
-        )
+        raise PermissionError(f"Video generation concurrency limit reached ({max_concurrent} active job(s))")
 
     duration = parse_video_duration(params.get("duration"))
     if duration is None:
@@ -250,7 +302,7 @@ async def _durable_worker_loop() -> None:
                 await asyncio.sleep(1.0)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 -- logged; expected failure of an external dependency
             _LOG.exception("Video durable worker iteration failed")
             await asyncio.sleep(2.0)
 
@@ -291,16 +343,30 @@ async def cancel_video_job(db: AsyncSession, job: VideoGenerationJob) -> VideoGe
             conn = await db.get(Connection, job.connection_id) if job.connection_id else None
             if model and conn and conn.is_active:
                 adapter = get_video_adapter(job.provider_type, adapter_key=job.adapter_key)
-                await adapter.cancel(
-                    api_key=decrypt_secret(conn.api_key_encrypted),
-                    base_url=conn.base_url,
-                    job=ProviderJobRef(
-                        provider_type=job.provider_type,
-                        provider_job_id=job.provider_job_id,
-                        polling_url=job.provider_polling_url,
-                    ),
+                api_key = decrypt_secret(conn.api_key_encrypted)
+                ref = ProviderJobRef(
+                    provider_type=job.provider_type,
+                    provider_job_id=job.provider_job_id,
+                    polling_url=job.provider_polling_url,
                 )
-        except Exception:
+                # The provider may already have finished (and charged for) the
+                # clip. Cancelling now would release the hold and drop a paid
+                # result on the floor; let the runner ingest and bill it.
+                try:
+                    snapshot = await adapter.poll(api_key=api_key, base_url=conn.base_url, job=ref)
+                except Exception:  # noqa: BLE001 -- falls back to a safe default value
+                    snapshot = None
+                if snapshot is not None and snapshot.state == "completed":
+                    job.cancel_requested_at = None
+                    raise VideoJobAlreadyCompleted(job.id)
+                await adapter.cancel(
+                    api_key=api_key,
+                    base_url=conn.base_url,
+                    job=ref,
+                )
+        except VideoJobAlreadyCompleted:
+            raise
+        except Exception:  # noqa: BLE001 -- logged; expected failure of an external dependency
             _LOG.warning("Provider cancel failed for video job %s", job.id, exc_info=True)
     job.status = "cancelled"
     job.error_code = "cancelled"
@@ -329,25 +395,27 @@ async def reclaim_stale_video_jobs() -> int:
             if not bool(locked.scalar()):
                 return 0
         rows = (
-            await db.execute(
-                select(VideoGenerationJob).where(
-                    # "submitted" and "ingesting" belong here too: a worker that
-                    # dies mid-submit or mid-ingest used to leave the job stuck
-                    # in those states forever, holding its budget reservation
-                    # and leaving the chat bubble pending with nothing to heal
-                    # it. Safe to sweep now only because a live run heartbeats
-                    # its lease, and the lease guard below skips those.
-                    VideoGenerationJob.status.in_(
-                        ("queued", "submitted", "running", "ingesting")
-                    ),
-                    VideoGenerationJob.updated_at < cutoff,
-                    (
-                        VideoGenerationJob.lease_expires_at.is_(None)
-                        | (VideoGenerationJob.lease_expires_at < _now())
-                    ),
+            (
+                await db.execute(
+                    select(VideoGenerationJob).where(
+                        # "submitted" and "ingesting" belong here too: a worker that
+                        # dies mid-submit or mid-ingest used to leave the job stuck
+                        # in those states forever, holding its budget reservation
+                        # and leaving the chat bubble pending with nothing to heal
+                        # it. Safe to sweep now only because a live run heartbeats
+                        # its lease, and the lease guard below skips those.
+                        VideoGenerationJob.status.in_(("queued", "submitted", "running", "ingesting")),
+                        VideoGenerationJob.updated_at < cutoff,
+                        (
+                            VideoGenerationJob.lease_expires_at.is_(None)
+                            | (VideoGenerationJob.lease_expires_at < _now())
+                        ),
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         for job in rows:
             job.status = "failed"
             job.error_code = "timeout"
@@ -378,8 +446,10 @@ async def reclaim_stale_video_jobs() -> int:
                         budget_reservation_id=job.budget_reservation_id,
                         job_id=job.id,
                         project_id=job.project_id,
+                        error_code=job.error_code or "reclaimed",
+                        provider_job_id=job.provider_job_id,
                     )
-            except Exception:
+            except Exception:  # noqa: BLE001 -- logged; expected failure of an external dependency
                 _LOG.exception("Failed settling reclaimed video job %s", job.id)
         if reclaimed:
             await db.commit()
@@ -435,7 +505,7 @@ async def _lease_heartbeat(job_id: str, owner: str | None):
             try:
                 if not await _touch_video_job_lease(job_id, owner):
                     return
-            except Exception:
+            except Exception:  # noqa: BLE001 -- logged; expected failure of an external dependency
                 _LOG.warning("Lease heartbeat failed for video job %s", job_id, exc_info=True)
 
     task = asyncio.create_task(beat(), name=f"video-lease-{job_id}")
@@ -448,7 +518,37 @@ async def _lease_heartbeat(job_id: str, owner: str | None):
             await task
 
 
-async def _run_video_job(job_id: str) -> None:
+def _provider_failure_text(snapshot: Any, status: str) -> str:
+    """Why the provider ended the job — never an empty string.
+
+    ``RuntimeError(snapshot.error_message)`` stored "None" when the provider
+    reported a terminal state without any reason, and the caller then showed
+    the user a bare "Video generation failed". When there is no text, say which
+    state the provider reported and quote a little of its last payload.
+    """
+    message = (getattr(snapshot, "error_message", None) or "").strip() if snapshot is not None else ""
+    if message:
+        return message[:2000]
+    provider_status = (getattr(snapshot, "provider_status", None) or status or "unknown").strip()
+    raw = getattr(snapshot, "raw", None)
+    excerpt = ""
+    if isinstance(raw, dict):
+        try:
+            excerpt = json.dumps(raw, ensure_ascii=False)[:500]
+        except (TypeError, ValueError):
+            excerpt = ""
+    base = f"Provider ended the job as '{provider_status}' without an error message"
+    return f"{base}: {excerpt}" if excerpt else base
+
+
+async def _run_video_job(job_id: str) -> None:  # noqa: C901 -- Phase 4 split; complexity must not grow
+    # The job id doubles as this run's correlation id, so every log line the
+    # worker writes carries it and the API Logs row points back at them.
+    with correlation_scope(job_id):
+        await _run_video_job_inner(job_id)
+
+
+async def _run_video_job_inner(job_id: str) -> None:  # noqa: C901 -- same body, one indent in
     started = time.perf_counter()
     async with AsyncSessionLocal() as db:
         job = await db.get(VideoGenerationJob, job_id)
@@ -497,7 +597,10 @@ async def _run_video_job(job_id: str) -> None:
 
         duration = parse_video_duration(params.get("duration"))
         success = False
+        lease_lost = False
         error_message: str | None = None
+        error_code: str | None = None
+        http_status: int | None = None
         settings = get_settings()
         deadline = time.monotonic() + float(settings.video_job_timeout_seconds or 600)
         poll_interval = max(0.5, float(settings.video_job_poll_interval_ms or 2500) / 1000.0)
@@ -542,7 +645,6 @@ async def _run_video_job(job_id: str) -> None:
                 reference_image_mime=reference_mime,
                 seed=params.get("seed"),
             )
-            referer = settings.frontend_url
             submit_started = _now()
             if job.provider_job_id:
                 provider_job = ProviderJobRef(
@@ -566,20 +668,47 @@ async def _run_video_job(job_id: str) -> None:
 
             final_snapshot = None
             status = "submitted"
+            poll_failures = 0
             while status not in _TERMINAL:
                 if time.monotonic() > deadline:
                     raise TimeoutError("Video generation timed out")
-                # Reload cancel state
+                # Reload cancel + ownership state
                 await db.refresh(job)
                 if job.status == "cancelled":
                     raise asyncio.CancelledError()
+                if lease_owner and job.lease_owner != lease_owner:
+                    raise LeaseLost(job_id)
                 job.lease_expires_at = _now() + datetime.timedelta(seconds=_LEASE_SECONDS)
+                # Commit before sleeping/polling: otherwise this transaction (and
+                # its pooled connection) stays open for the whole provider wait.
+                await db.commit()
                 await asyncio.sleep(poll_interval)
-                final_snapshot = await adapter.poll(
-                    api_key=api_key,
-                    base_url=base_url,
-                    job=provider_job,
-                )
+                try:
+                    final_snapshot = await adapter.poll(
+                        api_key=api_key,
+                        base_url=base_url,
+                        job=provider_job,
+                    )
+                except Exception as exc:  # noqa: BLE001 -- re-raised unless it is worth another poll
+                    if not _is_transient_poll_failure(exc):
+                        raise
+                    poll_failures += 1
+                    detail = describe_failure(exc)
+                    increment("video_poll_retry")
+                    _note_upstream_failure(detail.code)
+                    _LOG.warning(
+                        "video poll failed (%s/%s) job=%s: %s",
+                        poll_failures,
+                        _MAX_CONSECUTIVE_POLL_FAILURES,
+                        job_id,
+                        detail.message,
+                    )
+                    if poll_failures >= _MAX_CONSECUTIVE_POLL_FAILURES:
+                        raise
+                    # Back to the top: the deadline, the cancel check and the
+                    # lease heartbeat all run again before the next attempt.
+                    continue
+                poll_failures = 0
                 status = final_snapshot.state
                 job.provider_status_raw = json.dumps(final_snapshot.raw)[:20000]
                 # When the provider signals completion, transition to "ingesting"
@@ -597,7 +726,7 @@ async def _run_video_job(job_id: str) -> None:
             if status == "cancelled":
                 raise asyncio.CancelledError()
             if status != "completed" or final_snapshot is None:
-                raise RuntimeError(final_snapshot.error_message if final_snapshot else "Video generation failed")
+                raise RuntimeError(_provider_failure_text(final_snapshot, status))
 
             # Fetching the asset and writing it to object storage can outlast
             # the lease; beat while it runs so no second worker claims this job.
@@ -609,6 +738,7 @@ async def _run_video_job(job_id: str) -> None:
                 )
 
                 from app.services.video_media_ingest_service import fetch_video_asset
+
                 blob, mime = await fetch_video_asset(
                     url=asset_ref.url,
                     api_key=api_key,
@@ -619,11 +749,7 @@ async def _run_video_job(job_id: str) -> None:
                 # Ensure provider cost/duration land under usage.* so
                 # extract_normalized_usage can treat OpenRouter cost as exact.
                 usage_payload: dict = dict(usage.raw) if isinstance(usage.raw, dict) else {}
-                usage_obj = (
-                    dict(usage_payload["usage"])
-                    if isinstance(usage_payload.get("usage"), dict)
-                    else {}
-                )
+                usage_obj = dict(usage_payload["usage"]) if isinstance(usage_payload.get("usage"), dict) else {}
                 if usage.quantity is not None:
                     usage_obj.setdefault("duration_seconds", usage.quantity)
                 if usage.cost_usd is not None:
@@ -693,6 +819,12 @@ async def _run_video_job(job_id: str) -> None:
             job.error_message = None
             success = True
             await db.commit()
+        except LeaseLost:
+            # Not ours any more: no status change, no release, no billing.
+            lease_lost = True
+            await db.rollback()
+            _LOG.warning("Video job %s lease taken over by another worker; runner %s stops", job_id, lease_owner)
+            increment("video_job_lease_lost")
         except asyncio.CancelledError:
             await db.refresh(job)
             if job.status != "cancelled":
@@ -704,12 +836,19 @@ async def _run_video_job(job_id: str) -> None:
             job.lease_owner = None
             job.lease_expires_at = None
             error_message = job.error_message
+            error_code = job.error_code or "cancelled"
             billing.add_usage(None, success=False, error_message=error_message)
             await db.commit()
-        except Exception as exc:
-            error_message = str(exc)[:2000]
+        except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
+            # str(exc) is empty for every httpx timeout and a bare ConnectError,
+            # which used to store a failure with no reason at all.
+            failure = describe_failure(exc)
+            _note_upstream_failure(failure.code)
+            error_message = failure.message
+            error_code = failure.code
+            http_status = failure.http_status
             job.status = "failed"
-            job.error_code = "upstream_error"
+            job.error_code = failure.code
             job.error_message = error_message
             job.completed_at = _now()
             job.updated_at = _now()
@@ -720,47 +859,53 @@ async def _run_video_job(job_id: str) -> None:
             _LOG.warning("Video job %s failed: %s", job_id, error_message)
             increment("video_job_failed")
         finally:
-            try:
-                elapsed_ms = (time.perf_counter() - started) * 1000.0
-                log_id = await log_video_usage(
-                    db,
-                    user=user,
-                    capture=billing,
-                    prompt=job.prompt or "",
-                    response_time_ms=elapsed_ms,
-                    success=success,
-                    error_message=error_message,
-                    source_ip=job.source_ip,
-                    operation=job.operation,
-                    budget_reservation_id=job.budget_reservation_id,
-                    duration_seconds=duration,
-                    job_id=job.id,
-                    project_id=job.project_id,
-                )
-                if log_id and success:
-                    job_params: dict[str, Any] = {}
-                    if job.params_json:
-                        try:
-                            loaded = json.loads(job.params_json)
-                            if isinstance(loaded, dict):
-                                job_params = loaded
-                        except json.JSONDecodeError:
-                            job_params = {}
-                    job_params["request_log_id"] = int(log_id)
-                    job.params_json = json.dumps(job_params)
-                    assistant_cid = str(job_params.get("assistant_client_message_id") or "").strip()
-                    if job.chat_session_id:
-                        from app.services.user_chat_storage_service import (
-                            attach_request_log_id_to_chat_message,
-                        )
+            # A runner that lost its lease settles nothing; the new owner does.
+            if not lease_lost:
+                try:
+                    elapsed_ms = (time.perf_counter() - started) * 1000.0
+                    log_id = await log_video_usage(
+                        db,
+                        user=user,
+                        capture=billing,
+                        prompt=job.prompt or "",
+                        response_time_ms=elapsed_ms,
+                        success=success,
+                        error_message=error_message,
+                        source_ip=job.source_ip,
+                        operation=job.operation,
+                        budget_reservation_id=job.budget_reservation_id,
+                        duration_seconds=duration,
+                        job_id=job.id,
+                        project_id=job.project_id,
+                        error_code=error_code,
+                        http_status=http_status,
+                        provider_job_id=job.provider_job_id,
+                        correlation_id=job_id,
+                    )
+                    if log_id and success:
+                        job_params: dict[str, Any] = {}
+                        if job.params_json:
+                            try:
+                                loaded = json.loads(job.params_json)
+                                if isinstance(loaded, dict):
+                                    job_params = loaded
+                            except json.JSONDecodeError:
+                                job_params = {}
+                        job_params["request_log_id"] = int(log_id)
+                        job.params_json = json.dumps(job_params)
+                        assistant_cid = str(job_params.get("assistant_client_message_id") or "").strip()
+                        if job.chat_session_id:
+                            from app.services.user_chat_storage_service import (
+                                attach_request_log_id_to_chat_message,
+                            )
 
-                        await attach_request_log_id_to_chat_message(
-                            db,
-                            user.id,
-                            job.chat_session_id,
-                            int(log_id),
-                            client_message_id=assistant_cid or None,
-                        )
-                await db.commit()
-            except Exception:
-                _LOG.exception("Failed to settle video billing for job %s", job_id)
+                            await attach_request_log_id_to_chat_message(
+                                db,
+                                user.id,
+                                job.chat_session_id,
+                                int(log_id),
+                                client_message_id=assistant_cid or None,
+                            )
+                    await db.commit()
+                except Exception:  # noqa: BLE001 -- logged; expected failure of an external dependency
+                    _LOG.exception("Failed to settle video billing for job %s", job_id)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import ssl
 from typing import Any
 from urllib.parse import urlparse
 
@@ -19,6 +18,7 @@ def clean_bind_password(password: str | None) -> str:
     for ch in ("\u200e", "\u200f", "\u202a", "\u202b", "\u202c", "\u202d", "\u202e", "\ufeff"):
         cleaned = cleaned.replace(ch, "")
     return cleaned.strip()
+
 
 _AD_USER_FILTER = (
     "(&"
@@ -77,7 +77,7 @@ def discover_root_dse(host: str, port: int = _DEFAULT_PORT) -> dict[str, str]:
         conn.unbind()
         domain = infer_domain("", base_dn) if base_dn else ""
         return {"base_dn": base_dn, "domain": domain}
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return {})
         return {}
 
 
@@ -149,7 +149,8 @@ def format_login_identity(username: str, domain: str) -> tuple[str, str, str]:
         sam = raw.split("@", 1)[0]
         return raw, sam, raw
     if "\\" in raw:
-        return raw, raw.split("\\", 1)[1], f"{raw.split('\\', 1)[1]}@{domain}" if domain else raw
+        sam = raw.split("\\", 1)[1]
+        return raw, sam, f"{sam}@{domain}" if domain else raw
     if domain:
         upn = f"{raw}@{domain}"
         return upn, raw, upn

@@ -156,13 +156,19 @@ export default function ProjectWorkspacePage() {
 
   useEffect(() => {
     if (tab === "activity" && !canEdit) setTab("chats");
-    if (tab === "rooms" && project && !project.isMember) setTab("chats");
+    if (project && !project.isMember && (tab === "rooms" || tab === "media" || tab === "members" || tab === "settings")) {
+      setTab("chats");
+    }
   }, [tab, canEdit, project]);
 
   const conversationTabs: Tab[] = project?.isMember ? ["chats", "rooms"] : ["chats"];
+  // Memory, media, the member roster and the custom prompt are members-only on
+  // the server (403 for public viewers); do not offer tabs that would only fail.
   const tabs: Tab[] = canEdit
     ? [...conversationTabs, "resources", "media", "overview", "activity", "members", "settings"]
-    : [...conversationTabs, "resources", "media", "overview", "members", "settings"];
+    : project?.isMember
+      ? [...conversationTabs, "resources", "media", "overview", "members", "settings"]
+      : [...conversationTabs, "resources", "overview"];
 
   const tabContent =
     !project || tab === "chats"
@@ -338,10 +344,14 @@ function ProjectActionsMenu({
     setBusy(true);
     setErr("");
     try {
+      const goingPublic = visibility === "public" && project.visibility !== "public";
       await updateProject(project.id, {
         name: name.trim(),
         description: description.trim() || null,
         visibility,
+        // The server insists on the current name being echoed back before it
+        // flips a project to public; a stale client cannot do it by accident.
+        ...(goingPublic ? { confirm_public_name: project.name } : {}),
       });
       setEditOpen(false);
       setConfirmPublic(false);
@@ -480,7 +490,7 @@ function ProjectActionsMenu({
           </label>
           {visibility === "public" && project.visibility !== "public" ? (
             <p className="form-hint form-hint--warning">
-              Making this project public grants read access to every authenticated user. Only do this if all resources and chat content are safe to share organization-wide.
+              Making this project public grants every authenticated user read access to its chats and knowledge resources (memory, media, members and the custom prompt stay members-only). Only do this if that content is safe to share organization-wide.
             </p>
           ) : null}
           {err ? <p className="form-error">{err}</p> : null}
@@ -498,12 +508,12 @@ function ProjectActionsMenu({
       <ConfirmModal
         open={confirmPublic}
         title="Make this project public"
-        message="Type PUBLIC to confirm. Every authenticated user will be able to read this project's chats, resources, and media."
+        message={`Type the project name to confirm. Every authenticated user will be able to read this project's chats and knowledge resources. Memory, the media library, the member list and the custom prompt stay members-only.`}
         danger
         confirmLabel="Make public"
         cancelLabel="Cancel"
-        promptLabel="Type PUBLIC to confirm"
-        promptExactMatch="PUBLIC"
+        promptLabel="Type the project name to confirm"
+        promptExactMatch={project.name}
         onConfirm={() => void commitEdit()}
         onCancel={() => setConfirmPublic(false)}
       />

@@ -1,6 +1,5 @@
 """Object storage cleanup when media database persistence fails."""
 
-import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -27,7 +26,7 @@ class FailingDb:
         raise RuntimeError("database write failed")
 
 
-def test_new_object_is_removed_when_database_flush_fails() -> None:
+async def test_new_object_is_removed_when_database_flush_fails() -> None:
     deleted = []
 
     async def run():
@@ -54,5 +53,5 @@ def test_new_object_is_removed_when_database_flush_fails() -> None:
                     username="tester",
                 )
 
-    asyncio.run(run())
+    await run()
     assert len(deleted) == 1

@@ -15,7 +15,7 @@ class _RequestStub:
         return self.disconnected
 
 
-def test_image_work_returns_result_before_deadline():
+async def test_image_work_returns_result_before_deadline():
     async def _run():
         async def work():
             await asyncio.sleep(0)
@@ -27,34 +27,28 @@ def test_image_work_returns_result_before_deadline():
             timeout_seconds=1,
         )
 
-    assert asyncio.run(_run()) == "ok"
+    assert await _run() == "ok"
 
 
-def test_image_work_enforces_hard_deadline():
-    async def _run():
-        async def work():
-            await asyncio.sleep(1)
+async def test_image_work_enforces_hard_deadline():
+    async def work():
+        await asyncio.sleep(1)
 
-        with pytest.raises(asyncio.TimeoutError):
-            await _await_image_work(
-                work(),
-                request=_RequestStub(),
-                timeout_seconds=0.01,
-            )
-
-    asyncio.run(_run())
+    with pytest.raises(asyncio.TimeoutError):
+        await _await_image_work(
+            work(),
+            request=_RequestStub(),
+            timeout_seconds=0.01,
+        )
 
 
-def test_image_work_cancels_when_client_disconnects():
-    async def _run():
-        async def work():
-            await asyncio.sleep(1)
+async def test_image_work_cancels_when_client_disconnects():
+    async def work():
+        await asyncio.sleep(1)
 
-        with pytest.raises(ImageClientDisconnected):
-            await _await_image_work(
-                work(),
-                request=_RequestStub(disconnected=True),
-                timeout_seconds=1,
-            )
-
-    asyncio.run(_run())
+    with pytest.raises(ImageClientDisconnected):
+        await _await_image_work(
+            work(),
+            request=_RequestStub(disconnected=True),
+            timeout_seconds=1,
+        )

@@ -18,9 +18,7 @@ async def find_user_by_username_ci(db: AsyncSession, username: str) -> User | No
     key = normalize_username(username)
     if not key:
         return None
-    return (
-        await db.execute(select(User).where(func.lower(User.username) == key))
-    ).scalars().first()
+    return (await db.execute(select(User).where(func.lower(User.username) == key))).scalars().first()
 
 
 async def username_taken_ci(

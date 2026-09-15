@@ -1,5 +1,7 @@
 """Admin reports: catalog, query, export + scheduled email (SMTP)."""
 
+import json
+import re
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -109,12 +111,17 @@ def _report_params(body: ReportRequest) -> dict:
         raise HTTPException(400, "department required")
     if "group" in meta["params"] and body.report_type == "group_members_usage" and not body.group_id:
         raise HTTPException(400, "group_id required")
-    if "project" in meta["params"] and body.report_type in {
-        "project_usage_summary",
-        "project_usage_by_model",
-        "project_usage_by_member",
-        "project_media_usage_summary",
-    } and not body.project_id:
+    if (
+        "project" in meta["params"]
+        and body.report_type
+        in {
+            "project_usage_summary",
+            "project_usage_by_model",
+            "project_usage_by_member",
+            "project_media_usage_summary",
+        }
+        and not body.project_id
+    ):
         raise HTTPException(400, "project_id required")
 
     return params
@@ -164,32 +171,20 @@ async def report_options(db: AsyncSession = Depends(get_db), _: User = Depends(r
             .order_by(RequestLog.client_app)
         )
     ).all()
-    provider_rows = (
-        await db.execute(select(AIModel.provider_type).distinct().order_by(AIModel.provider_type))
-    ).all()
+    provider_rows = (await db.execute(select(AIModel.provider_type).distinct().order_by(AIModel.provider_type))).all()
     model_rows = (
-        await db.execute(
-            select(RequestLog.model_id).distinct().order_by(RequestLog.model_id).limit(500)
-        )
+        await db.execute(select(RequestLog.model_id).distinct().order_by(RequestLog.model_id).limit(500))
     ).all()
     keys = (
-        await db.execute(
-            select(AlphaRouterApiKey.id, AlphaRouterApiKey.name).order_by(
-                AlphaRouterApiKey.name
-            )
-        )
+        await db.execute(select(AlphaRouterApiKey.id, AlphaRouterApiKey.name).order_by(AlphaRouterApiKey.name))
     ).all()
-    agents = (
-        await db.execute(select(Agent).order_by(Agent.name, Agent.sort_order))
-    ).scalars().all()
+    agents = (await db.execute(select(Agent).order_by(Agent.name, Agent.sort_order))).scalars().all()
 
     from app.models.project import Project
 
     project_rows = (
         await db.execute(
-            select(Project.id, Project.name)
-            .where(Project.status != "deletion_pending")
-            .order_by(Project.name)
+            select(Project.id, Project.name).where(Project.status != "deletion_pending").order_by(Project.name)
         )
     ).all()
 
@@ -218,7 +213,9 @@ async def report_options(db: AsyncSession = Depends(get_db), _: User = Depends(r
 
 
 @router.post("/preview")
-async def preview_report(body: ReportRequest, db: AsyncSession = Depends(get_db), _: User = Depends(require_reports_write)):
+async def preview_report(
+    body: ReportRequest, db: AsyncSession = Depends(get_db), _: User = Depends(require_reports_write)
+):
     df = await _build_report_df(body, db)
     rows = df.to_dict(orient="records") if not df.empty else []
     columns = list(df.columns) if not df.empty else []
@@ -226,10 +223,14 @@ async def preview_report(body: ReportRequest, db: AsyncSession = Depends(get_db)
 
 
 @router.post("/export")
-async def export_report(body: ReportRequest, db: AsyncSession = Depends(get_db), _: User = Depends(require_reports_write)):
+async def export_report(
+    body: ReportRequest, db: AsyncSession = Depends(get_db), _: User = Depends(require_reports_write)
+):
     df = await _build_report_df(body, db)
     content, media, filename = reports_service.export_dataframe(df, body.format, body.report_type)
-    return Response(content=content, media_type=media, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    return Response(
+        content=content, media_type=media, headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
 
 
 class ScheduleIn(BaseModel):
@@ -238,6 +239,58 @@ class ScheduleIn(BaseModel):
     recipients: str
     parameters_json: str | None = None
     format: str = "pdf"
+
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_SCHEDULE_FORMATS = frozenset({"pdf", "xlsx", "csv"})
+_MAX_RECIPIENTS = 20
+
+
+def _validate_schedule(body: ScheduleIn) -> dict:
+    """Shared validation for admin and self-service schedules.
+
+    Rows land in the admin schedule list and will one day drive an emailer,
+    so every field is checked here: known report, a parseable 5-field cron,
+    well-formed recipient addresses, a known format and JSON parameters.
+    """
+    from apscheduler.triggers.cron import CronTrigger
+
+    if body.report_type not in {r["id"] for r in REPORT_CATALOG}:
+        raise HTTPException(400, "Unknown report_type")
+    cron = (body.cron_expression or "").strip()
+    if not cron or len(cron.split()) != 5:
+        raise HTTPException(400, "cron_expression must have 5 fields (minute hour day month weekday)")
+    try:
+        CronTrigger.from_crontab(cron)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, f"Invalid cron_expression: {exc}") from exc
+    recipients = [r.strip() for r in re.split(r"[,;\s]+", body.recipients or "") if r.strip()]
+    if not recipients:
+        raise HTTPException(400, "At least one recipient is required")
+    if len(recipients) > _MAX_RECIPIENTS:
+        raise HTTPException(400, f"At most {_MAX_RECIPIENTS} recipients")
+    bad = [r for r in recipients if not _EMAIL_RE.match(r) or len(r) > 254]
+    if bad:
+        raise HTTPException(400, f"Invalid recipient address: {bad[0]}")
+    fmt = (body.format or "pdf").lower()
+    if fmt not in _SCHEDULE_FORMATS:
+        raise HTTPException(400, "format must be one of pdf, xlsx, csv")
+    params = body.parameters_json
+    if params:
+        if len(params) > 8192:
+            raise HTTPException(400, "parameters_json is too large")
+        try:
+            if not isinstance(json.loads(params), dict):
+                raise ValueError("not an object")
+        except ValueError as exc:
+            raise HTTPException(400, "parameters_json must be a JSON object") from exc
+    return {
+        "report_type": body.report_type,
+        "cron_expression": cron,
+        "recipients": ",".join(recipients),
+        "parameters_json": params,
+        "format": fmt,
+    }
 
 
 @router.get("/schedules")
@@ -257,19 +310,11 @@ async def list_schedules(db: AsyncSession = Depends(get_db), _: User = Depends(r
 
 
 @router.post("/schedules")
-async def create_schedule(body: ScheduleIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_reports_write)):
-    if body.report_type not in {r["id"] for r in REPORT_CATALOG}:
-        raise HTTPException(400, "Unknown report_type")
-    db.add(
-        ReportSchedule(
-            report_type=body.report_type,
-            cron_expression=body.cron_expression,
-            recipients=body.recipients,
-            parameters_json=body.parameters_json,
-            format=body.format,
-            is_active=True,
-        )
-    )
+async def create_schedule(
+    body: ScheduleIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_reports_write)
+):
+    clean = _validate_schedule(body)
+    db.add(ReportSchedule(**clean, is_active=True))
     await db.commit()
     return {"ok": True}
 
@@ -280,17 +325,17 @@ async def user_schedule_report(
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Users may schedule their own reports; cannot configure SMTP."""
-    db.add(
-        ReportSchedule(
-            owner_user_id=user.id,
-            report_type=body.report_type,
-            cron_expression=body.cron_expression,
-            recipients=body.recipients,
-            parameters_json=body.parameters_json,
-            format=body.format,
-            is_active=True,
-        )
-    )
+    """Users may schedule their own reports; cannot configure SMTP.
+
+    Same validation as the admin endpoint, plus: a user may only send to
+    their own address (anything else would be an unauthenticated mailer
+    the moment the sender is wired up).
+    """
+    clean = _validate_schedule(body)
+    own = (user.email or "").strip().lower()
+    others = [r for r in clean["recipients"].split(",") if r.lower() != own]
+    if not own or others:
+        raise HTTPException(400, "Self-service schedules can only be sent to your own account email")
+    db.add(ReportSchedule(owner_user_id=user.id, **clean, is_active=True))
     await db.commit()
     return {"ok": True}

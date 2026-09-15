@@ -44,13 +44,20 @@ def _normalized_origin(value: str) -> str:
     return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
 
 
+def _is_production() -> bool:
+    return str(getattr(get_settings(), "environment", "") or "").lower() == "production"
+
+
+def development_origins() -> set[str]:
+    """Loopback origins accepted only outside production."""
+    if _is_production():
+        return set()
+    return {"http://127.0.0.1:8080", "http://localhost:8080"}
+
+
 def allowed_origins() -> set[str]:
     settings = get_settings()
-    configured = {
-        _normalized_origin(settings.frontend_url),
-        "http://127.0.0.1:8080",
-        "http://localhost:8080",
-    }
+    configured = {_normalized_origin(settings.frontend_url), *development_origins()}
     return {origin for origin in configured if origin}
 
 
@@ -77,6 +84,11 @@ def origin_allowed(origin: str) -> bool:
         return False
     if normalized in allowed_origins():
         return True
+    # Any http://<RFC1918 IP> origin used to pass in every environment, so a
+    # page on a compromised LAN host could make credentialed state-changing
+    # requests. Lab convenience only: production accepts FRONTEND_URL alone.
+    if _is_production():
+        return False
     return _is_private_http_origin(normalized)
 
 
@@ -94,11 +106,7 @@ class CsrfProtectionMiddleware:
         settings = get_settings()
         method = str(scope.get("method") or "").upper()
         path = str(scope.get("path") or "")
-        if (
-            not settings.enable_csrf
-            or method not in UNSAFE_METHODS
-            or not path.startswith("/api/")
-        ):
+        if not settings.enable_csrf or method not in UNSAFE_METHODS or not path.startswith("/api/"):
             await self.app(scope, receive, send)
             return
 
@@ -135,11 +143,7 @@ class CsrfProtectionMiddleware:
 
         cookie_token = request.cookies.get(settings.csrf_cookie_name) or ""
         header_token = request.headers.get(settings.csrf_header_name) or ""
-        if (
-            not cookie_token
-            or not header_token
-            or not hmac.compare_digest(cookie_token, header_token)
-        ):
+        if not cookie_token or not header_token or not hmac.compare_digest(cookie_token, header_token):
             increment("csrf_failure")
             response = JSONResponse(status_code=403, content={"detail": "CSRF validation failed"})
             await response(scope, receive, send)

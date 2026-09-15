@@ -36,14 +36,18 @@ async def run_user_memory_maintenance(db: AsyncSession) -> dict[str, int]:
     }
 
     expired = (
-        await db.execute(
-            select(UserMemory).where(
-                UserMemory.deleted_at.is_(None),
-                UserMemory.expires_at.is_not(None),
-                UserMemory.expires_at <= now,
+        (
+            await db.execute(
+                select(UserMemory).where(
+                    UserMemory.deleted_at.is_(None),
+                    UserMemory.expires_at.is_not(None),
+                    UserMemory.expires_at <= now,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     for row in expired:
         row.enabled = False
         row.deleted_at = now
@@ -61,15 +65,19 @@ async def run_user_memory_maintenance(db: AsyncSession) -> dict[str, int]:
     if stale_days > 0:
         cutoff = now - dt.timedelta(days=stale_days)
         stale = (
-            await db.execute(
-                select(UserMemory).where(
-                    UserMemory.deleted_at.is_(None),
-                    UserMemory.enabled.is_(True),
-                    UserMemory.last_used_at.is_not(None),
-                    UserMemory.last_used_at <= cutoff,
+            (
+                await db.execute(
+                    select(UserMemory).where(
+                        UserMemory.deleted_at.is_(None),
+                        UserMemory.enabled.is_(True),
+                        UserMemory.last_used_at.is_not(None),
+                        UserMemory.last_used_at <= cutoff,
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         for row in stale:
             row.enabled = False
             row.updated_at = now
@@ -86,22 +94,24 @@ async def run_user_memory_maintenance(db: AsyncSession) -> dict[str, int]:
     purge_days = int(settings.get("soft_delete_purge_days") or 30)
     purge_cutoff = now - dt.timedelta(days=purge_days)
     doomed = (
-        await db.execute(
-            select(UserMemory).where(
-                UserMemory.deleted_at.is_not(None),
-                UserMemory.deleted_at <= purge_cutoff,
+        (
+            await db.execute(
+                select(UserMemory).where(
+                    UserMemory.deleted_at.is_not(None),
+                    UserMemory.deleted_at <= purge_cutoff,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     if doomed:
         try:
             from app.services.memory_vector_service import MemoryVectorService
 
             service = MemoryVectorService()
             collection = await service.resolve_target_collection()
-            await service.delete_ids(
-                collection_name=collection, point_ids=[row.id for row in doomed]
-            )
+            await service.delete_ids(collection_name=collection, point_ids=[row.id for row in doomed])
         except Exception:
             logger.exception("Failed to delete purged memory vectors")
         for row in doomed:
@@ -124,16 +134,20 @@ async def run_user_memory_maintenance(db: AsyncSession) -> dict[str, int]:
     stats["suppressions_purged"] = int(supp_result.rowcount or 0)
 
     pending = (
-        await db.execute(
-            select(UserMemory)
-            .where(
-                UserMemory.deleted_at.is_(None),
-                UserMemory.embedding_status.in_(("pending", "failed")),
+        (
+            await db.execute(
+                select(UserMemory)
+                .where(
+                    UserMemory.deleted_at.is_(None),
+                    UserMemory.embedding_status.in_(("pending", "failed")),
+                )
+                .order_by(UserMemory.updated_at.desc())
+                .limit(REINDEX_BATCH)
             )
-            .order_by(UserMemory.updated_at.desc())
-            .limit(REINDEX_BATCH)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     from app.services.user_memory_service import _index_memory_vector
 
     for row in pending:
@@ -142,14 +156,10 @@ async def run_user_memory_maintenance(db: AsyncSession) -> dict[str, int]:
             stats["reembedded"] += 1
 
     event_cutoff = now - dt.timedelta(days=365)
-    pruned = await db.execute(
-        delete(UserMemoryEvent).where(UserMemoryEvent.created_at < event_cutoff)
-    )
+    pruned = await db.execute(delete(UserMemoryEvent).where(UserMemoryEvent.created_at < event_cutoff))
     stats["events_pruned"] = int(pruned.rowcount or 0)
 
-    project_stats = await _run_project_memory_maintenance(
-        db, settings=settings, now=now, event_cutoff=event_cutoff
-    )
+    project_stats = await _run_project_memory_maintenance(db, settings=settings, now=now, event_cutoff=event_cutoff)
     for key, value in project_stats.items():
         stats[f"project_{key}"] = value
 
@@ -182,7 +192,7 @@ async def run_user_memory_maintenance(db: AsyncSession) -> dict[str, int]:
         from app.services.observability import set_memory_embedding_backlog
 
         set_memory_embedding_backlog(remaining)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
         pass
     await db.flush()
     return stats
@@ -213,14 +223,18 @@ async def _run_project_memory_maintenance(
     }
 
     expired = (
-        await db.execute(
-            select(ProjectMemory).where(
-                ProjectMemory.deleted_at.is_(None),
-                ProjectMemory.expires_at.is_not(None),
-                ProjectMemory.expires_at <= now,
+        (
+            await db.execute(
+                select(ProjectMemory).where(
+                    ProjectMemory.deleted_at.is_(None),
+                    ProjectMemory.expires_at.is_not(None),
+                    ProjectMemory.expires_at <= now,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     for row in expired:
         row.enabled = False
         row.deleted_at = now
@@ -239,17 +253,21 @@ async def _run_project_memory_maintenance(
     if stale_days > 0:
         cutoff = now - dt.timedelta(days=stale_days)
         stale = (
-            await db.execute(
-                select(ProjectMemory).where(
-                    ProjectMemory.deleted_at.is_(None),
-                    ProjectMemory.enabled.is_(True),
-                    # Owner-authored facts never go stale on their own.
-                    ProjectMemory.source_type != SOURCE_MANUAL,
-                    ProjectMemory.last_used_at.is_not(None),
-                    ProjectMemory.last_used_at <= cutoff,
+            (
+                await db.execute(
+                    select(ProjectMemory).where(
+                        ProjectMemory.deleted_at.is_(None),
+                        ProjectMemory.enabled.is_(True),
+                        # Owner-authored facts never go stale on their own.
+                        ProjectMemory.source_type != SOURCE_MANUAL,
+                        ProjectMemory.last_used_at.is_not(None),
+                        ProjectMemory.last_used_at <= cutoff,
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         for row in stale:
             row.enabled = False
             row.updated_at = now
@@ -267,22 +285,24 @@ async def _run_project_memory_maintenance(
     purge_days = int(settings.get("soft_delete_purge_days") or 30)
     purge_cutoff = now - dt.timedelta(days=purge_days)
     doomed = (
-        await db.execute(
-            select(ProjectMemory).where(
-                ProjectMemory.deleted_at.is_not(None),
-                ProjectMemory.deleted_at <= purge_cutoff,
+        (
+            await db.execute(
+                select(ProjectMemory).where(
+                    ProjectMemory.deleted_at.is_not(None),
+                    ProjectMemory.deleted_at <= purge_cutoff,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     if doomed:
         try:
             from app.services.memory_vector_service import MemoryVectorService
 
             service = MemoryVectorService()
             collection = await service.resolve_target_collection()
-            await service.delete_ids(
-                collection_name=collection, point_ids=[row.id for row in doomed]
-            )
+            await service.delete_ids(collection_name=collection, point_ids=[row.id for row in doomed])
         except Exception:
             logger.exception("Failed to delete purged project memory vectors")
         for row in doomed:
@@ -304,24 +324,26 @@ async def _run_project_memory_maintenance(
     stats["suppressions_purged"] = int(supp_result.rowcount or 0)
 
     pending = (
-        await db.execute(
-            select(ProjectMemory)
-            .where(
-                ProjectMemory.deleted_at.is_(None),
-                ProjectMemory.embedding_status.in_(PENDING_STATUSES),
+        (
+            await db.execute(
+                select(ProjectMemory)
+                .where(
+                    ProjectMemory.deleted_at.is_(None),
+                    ProjectMemory.embedding_status.in_(PENDING_STATUSES),
+                )
+                .order_by(ProjectMemory.updated_at.desc())
+                .limit(REINDEX_BATCH)
             )
-            .order_by(ProjectMemory.updated_at.desc())
-            .limit(REINDEX_BATCH)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     for row in pending:
         await index_project_memory_vector(db, row)
         if row.embedding_status == "indexed":
             stats["reembedded"] += 1
 
-    pruned = await db.execute(
-        delete(ProjectMemoryEvent).where(ProjectMemoryEvent.created_at < event_cutoff)
-    )
+    pruned = await db.execute(delete(ProjectMemoryEvent).where(ProjectMemoryEvent.created_at < event_cutoff))
     stats["events_pruned"] = int(pruned.rowcount or 0)
     await db.flush()
     return stats
@@ -347,13 +369,17 @@ async def reindex_all_memories(db: AsyncSession) -> dict[str, int]:
     new_name = memory_collection_name(version=nxt)
     await service.ensure_collection(collection_name=new_name, dims=dims)
     rows = (
-        await db.execute(
-            select(UserMemory).where(
-                UserMemory.deleted_at.is_(None),
-                UserMemory.enabled.is_(True),
+        (
+            await db.execute(
+                select(UserMemory).where(
+                    UserMemory.deleted_at.is_(None),
+                    UserMemory.enabled.is_(True),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     indexed = 0
     for row in rows:
         row.embedding_status = "pending"
@@ -363,13 +389,17 @@ async def reindex_all_memories(db: AsyncSession) -> dict[str, int]:
         if row.embedding_status == "indexed":
             indexed += 1
     project_rows = (
-        await db.execute(
-            select(ProjectMemory).where(
-                ProjectMemory.deleted_at.is_(None),
-                ProjectMemory.enabled.is_(True),
+        (
+            await db.execute(
+                select(ProjectMemory).where(
+                    ProjectMemory.deleted_at.is_(None),
+                    ProjectMemory.enabled.is_(True),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     for row in project_rows:
         row.embedding_status = "pending"
         await index_project_memory_vector(db, row, collection=new_name)
@@ -380,9 +410,7 @@ async def reindex_all_memories(db: AsyncSession) -> dict[str, int]:
     # Suppression content is never stored, so those vectors cannot be rebuilt.
     # Hash suppression still blocks re-learning; drop the stale indexed claim.
     await db.execute(
-        update(UserMemorySuppression)
-        .where(UserMemorySuppression.vector_indexed.is_(True))
-        .values(vector_indexed=False)
+        update(UserMemorySuppression).where(UserMemorySuppression.vector_indexed.is_(True)).values(vector_indexed=False)
     )
     await db.execute(
         update(ProjectMemorySuppression)

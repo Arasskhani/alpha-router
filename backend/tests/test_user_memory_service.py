@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 import asyncio
 import datetime as dt
 from unittest.mock import patch
@@ -57,12 +58,12 @@ def test_normalize_and_hash() -> None:
     assert memory_content_hash("hello world") == memory_content_hash("  hello   world\n")
     try:
         normalize_memory_content("   ")
-        assert False, "expected empty rejection"
+        pytest.fail("expected empty rejection")
     except MemoryValidationError:
         pass
     try:
         normalize_memory_content("x" * 501)
-        assert False, "expected length rejection"
+        pytest.fail("expected length rejection")
     except MemoryValidationError:
         pass
 
@@ -97,12 +98,12 @@ async def _crud_and_inject() -> None:
 
         try:
             await update_memory(db, other.id, created["id"], content="hack")
-            assert False, "expected not found"
+            pytest.fail("expected not found")
         except MemoryNotFoundError:
             pass
         try:
             await delete_memory(db, other.id, created["id"])
-            assert False, "expected not found"
+            pytest.fail("expected not found")
         except MemoryNotFoundError:
             pass
 
@@ -128,31 +129,23 @@ async def _crud_and_inject() -> None:
             {"role": "assistant", "content": "Hello"},
         ]
         original = [dict(m) for m in messages]
-        augmented = await augment_messages_with_memory(
-            db, messages, user_id=user.id, private_mode=False
-        )
+        augmented = await augment_messages_with_memory(db, messages, user_id=user.id, private_mode=False)
         assert messages == original
         assert augmented[0]["role"] == "system"
         assert "Prefers dark mode" in augmented[0]["content"]
         assert augmented[1:] == original
 
         with_system = [{"role": "system", "content": "Tools active"}, *original]
-        merged = await augment_messages_with_memory(
-            db, with_system, user_id=user.id, private_mode=False
-        )
+        merged = await augment_messages_with_memory(db, with_system, user_id=user.id, private_mode=False)
         assert merged[0]["role"] == "system"
         assert "Tools active" in merged[0]["content"]
         assert "Prefers dark mode" in merged[0]["content"]
         assert merged[1:] == original
 
-        skipped = await augment_messages_with_memory(
-            db, original, user_id=user.id, private_mode=True
-        )
+        skipped = await augment_messages_with_memory(db, original, user_id=user.id, private_mode=True)
         assert skipped == original
 
-        none_user = await augment_messages_with_memory(
-            db, original, user_id=None, private_mode=False
-        )
+        none_user = await augment_messages_with_memory(db, original, user_id=None, private_mode=False)
         assert none_user == original
 
         db.add(
@@ -167,7 +160,7 @@ async def _crud_and_inject() -> None:
         await db.commit()
         try:
             await create_memory(db, user.id, "Secret fact", source_session_id="priv1")
-            assert False, "expected private session rejection"
+            pytest.fail("expected private session rejection")
         except MemoryValidationError:
             pass
 
@@ -188,24 +181,24 @@ async def _cap_eviction() -> None:
         db.add(SystemSetting(key="memory_max_per_user", value="10"))
         await db.flush()
         for i in range(10):
-            await create_memory(
-                db, user.id, f"Fact {i}", salience=0.1 + (i * 0.01)
-            )
+            await create_memory(db, user.id, f"Fact {i}", salience=0.1 + (i * 0.01))
         await db.commit()
-        created, was_new = await create_memory(
-            db, user.id, "One too many", salience=0.99
-        )
+        created, was_new = await create_memory(db, user.id, "One too many", salience=0.99)
         await db.commit()
         assert was_new is True
         assert created["content"] == "One too many"
         alive = (
-            await db.execute(
-                select(UserMemory).where(
-                    UserMemory.user_id == user.id,
-                    UserMemory.deleted_at.is_(None),
+            (
+                await db.execute(
+                    select(UserMemory).where(
+                        UserMemory.user_id == user.id,
+                        UserMemory.deleted_at.is_(None),
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(alive) == 10
         contents = {row.content for row in alive}
         assert "One too many" in contents
@@ -255,9 +248,7 @@ async def _supersede_expiry_suppression_retrieve() -> None:
         )
         await db.commit()
 
-        retrieved = await retrieve_memories(
-            db, user.id, query="I want pizza and soda for lunch"
-        )
+        retrieved = await retrieve_memories(db, user.id, query="I want pizza and soda for lunch")
         contents = [item.content for item in retrieved]
         assert any("normal range" in item for item in contents)
         assert "On vacation until last week" not in contents
@@ -266,12 +257,10 @@ async def _supersede_expiry_suppression_retrieve() -> None:
         await delete_memory(db, user.id, pizza["id"])
         await db.commit()
         suppressed = (
-            await db.execute(
-                select(UserMemorySuppression).where(
-                    UserMemorySuppression.user_id == user.id
-                )
-            )
-        ).scalars().all()
+            (await db.execute(select(UserMemorySuppression).where(UserMemorySuppression.user_id == user.id)))
+            .scalars()
+            .all()
+        )
         assert suppressed
         from app.services.memory_extraction_service import (
             MemoryOperation,
@@ -309,45 +298,40 @@ async def _timeout_fallback() -> None:
         user = await _add_user(db)
         db.add(SystemSetting(key="memory_retrieval_timeout_ms", value="50"))
         await db.flush()
-        await create_memory(
-            db, user.id, "Prefers sitting near a window", category="preference"
-        )
+        await create_memory(db, user.id, "Prefers sitting near a window", category="preference")
         await db.commit()
 
         async def _slow(*_args, **_kwargs):
             await asyncio.sleep(1)
             return []
 
-        with patch(
-            "app.services.user_memory_service._semantic_rows", side_effect=_slow
-        ), patch(
-            "app.services.user_memory_service._lexical_rows", side_effect=_slow
+        with (
+            patch("app.services.user_memory_service._semantic_rows", side_effect=_slow),
+            patch("app.services.user_memory_service._lexical_rows", side_effect=_slow),
         ):
-            facts = await retrieve_memories(
-                db, user.id, query="window seat please"
-            )
+            facts = await retrieve_memories(db, user.id, query="window seat please")
         assert any("window" in item.content for item in facts)
     await engine.dispose()
 
 
-def test_memory_crud_and_inject() -> None:
-    asyncio.run(_crud_and_inject())
+async def test_memory_crud_and_inject() -> None:
+    await _crud_and_inject()
 
 
-def test_memory_cap_evicts_lowest() -> None:
-    asyncio.run(_cap_eviction())
+async def test_memory_cap_evicts_lowest() -> None:
+    await _cap_eviction()
 
 
-def test_supersede_expiry_suppression_and_retrieve() -> None:
-    asyncio.run(_supersede_expiry_suppression_retrieve())
+async def test_supersede_expiry_suppression_and_retrieve() -> None:
+    await _supersede_expiry_suppression_retrieve()
 
 
-def test_retrieve_timeout_falls_back_to_recency() -> None:
-    asyncio.run(_timeout_fallback())
+async def test_retrieve_timeout_falls_back_to_recency() -> None:
+    await _timeout_fallback()
 
 
 async def _private_mode_resolve() -> None:
-    from app.services.proxy_service import _resolve_private_mode_for_memory
+    from app.services.chat_turn_context import _resolve_private_mode_for_memory
 
     engine, factory = await _make_session()
     async with factory() as db:
@@ -372,20 +356,14 @@ async def _private_mode_resolve() -> None:
         )
         await db.commit()
 
-        assert await _resolve_private_mode_for_memory(
-            db, {"private_mode": True}, user_id=user.id
-        )
-        assert not await _resolve_private_mode_for_memory(
-            db, {"chat_session_id": "pub1"}, user_id=user.id
-        )
-        assert await _resolve_private_mode_for_memory(
-            db, {"chat_session_id": "priv2"}, user_id=user.id
-        )
+        assert await _resolve_private_mode_for_memory(db, {"private_mode": True}, user_id=user.id)
+        assert not await _resolve_private_mode_for_memory(db, {"chat_session_id": "pub1"}, user_id=user.id)
+        assert await _resolve_private_mode_for_memory(db, {"chat_session_id": "priv2"}, user_id=user.id)
         assert await _resolve_private_mode_for_memory(
             db, {"chat_session_id": "pub1", "private_mode": True}, user_id=user.id
         )
     await engine.dispose()
 
 
-def test_resolve_private_mode_for_memory() -> None:
-    asyncio.run(_private_mode_resolve())
+async def test_resolve_private_mode_for_memory() -> None:
+    await _private_mode_resolve()

@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { readSseEvents } from "../lib/sse";
 import { flushSync } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api, authFetch, formatApiError, getCachedSession, isApiAuthError } from "../api";
@@ -87,6 +88,7 @@ import {
   sidebarOlderThan3DaysCutoffMs,
   sidebarOlderThan7DaysCutoffMs,
   sidebarHydrateMinActivityMs,
+  stableMessageKeys,
 } from "../lib/chatStorage";
 import {
   PROJECT_MEDIA_ATTACH_EVENT,
@@ -106,16 +108,14 @@ import {
 import { applyProjectChatSync, sortProjectSessions } from "../lib/projectChatSync";
 import {
   CHAT_REFRESH_EVENT_NAME,
-  isChatLeader,
   onChatLeaderChange,
 } from "../lib/chatLeader";
-import { formatLocalDateTimeFromMs } from "../lib/dateTime";
 import { BROWSER_EVENT_NAMES, PRODUCT_NAME, STORAGE_KEYS } from "../lib/brand";
 import {
   notifyReplyReady,
   REPLY_READY_FOCUS_EVENT,
 } from "../lib/replyReadyNotify";
-import { getSessionUser, isSessionActive, logout } from "../lib/session";
+import { getSessionUser, isPlatformFeatureEnabled, isSessionActive, logout } from "../lib/session";
 import { copyFreshChatTools, anyChatToolEnabled, isAllowedVideoDuration, toolsToApiPayload, type ChatToolsState } from "../lib/chatTools";
 import MediaViewerModal from "./MediaViewerModal";
 import ChatAttachmentMessage from "./chat/ChatAttachmentMessage";
@@ -163,8 +163,6 @@ import {
 import { wavFromRecording } from "../lib/audioWav";
 import {
   ATTACHMENT_ACCEPT,
-  AUDIO_MESSAGE_PREFIX,
-  attachmentDisplayText,
   attachmentMessage,
   buildApiMessageContentAsync,
   type ApiContentPart,
@@ -187,7 +185,6 @@ import {
   type ScreenshotFrame,
 } from "../lib/screenshotCapture";
 import {
-  buildImageMessage,
   buildStoppedImageMessages,
   mergeChatMessagesPreferLocal,
   IMAGE_MESSAGE_PREFIX,
@@ -202,7 +199,6 @@ import {
   sessionHasIncompleteTextReply,
   parseImageMessage,
   stopBackgroundImageGeneration,
-  stripOrphanImagePending,
   subscribeBackgroundImageUpdates,
   type ImagePayload,
 } from "../lib/chatImage";
@@ -216,14 +212,12 @@ import {
 } from "../lib/chatImageModels";
 import {
   isBackgroundVideoRunning,
-  parseVideoMessage,
   runBackgroundVideoGeneration,
   shouldRouteToVideoGeneration,
   stopBackgroundVideoGeneration,
   subscribeBackgroundVideoUpdates,
   VIDEO_MESSAGE_PREFIX,
   VIDEO_PENDING_MARKER,
-  type VideoPayload,
 } from "../lib/chatVideo";
 import {
   findVideoGenerationFallbackModel,
@@ -234,14 +228,12 @@ import {
 import {
   buildStoppedSpeechMessages,
   isBackgroundSpeechRunning,
-  parseSpeechMessage,
   runBackgroundSpeechGeneration,
   shouldRouteToSpeechGeneration,
   SPEECH_MESSAGE_PREFIX,
   SPEECH_PENDING_MARKER,
   stopBackgroundSpeechGeneration,
   subscribeBackgroundSpeechUpdates,
-  type SpeechPayload,
 } from "../lib/chatSpeech";
 import {
   findSpeechGenerationFallbackModel,
@@ -278,7 +270,7 @@ import {
   getComposerDraft,
   syncComposerDraft,
 } from "../lib/composerDrafts";
-import { inputDirectionForText, messageDirectionForText, textNeedsEnglishTranslation, type TextDirection } from "../lib/textDirection";
+import { inputDirectionForText, textNeedsEnglishTranslation, type TextDirection } from "../lib/textDirection";
 import {
   isPrivateBlobRef,
   resolvePrivateBlobRef,
@@ -309,6 +301,26 @@ import {
   AgentHandoffBanner,
 } from "./chat/AgentExperience";
 import AgentMenu from "./chat/AgentMenu";
+import {
+  shortModelName,
+  readAudioMessage,
+  removePromptThreadFromMessages,
+  promptTextFromUserContent,
+  displayTextForMessage,
+  messageDirectionForContent,
+  readVideoMessage,
+  readSpeechMessage,
+  messagesHavePendingSpeech,
+  messagesHavePendingVideo,
+  buildStoppedVideoMessages,
+  readImageMessage,
+  newQueueId,
+  queueItemPreview,
+  extractMarkdownImage,
+  isTextAssistantExportable,
+  chatMessageInfoTitle,
+  type QueuedPrompt,
+} from "../lib/chatPanelMessages";
 
 type Model = {
   id: string;
@@ -334,12 +346,6 @@ type Model = {
   supports_vision?: boolean;
   code_interpreter?: CodeInterpreterCompatibility | null;
 };
-type AudioPayload = { url: string; transcript: string };
-type QueuedPrompt = {
-  id: string;
-  text: string;
-  attachments: ProcessedAttachment[];
-};
 type TurnPhase = "preparing" | "searching" | "writing";
 
 function turnPhaseLabel(phase: TurnPhase): string {
@@ -364,219 +370,6 @@ function TurnStatusDots() {
     </span>
   );
 }
-function shortModelName(name: string, id: string) {
-  const n = name || id;
-  return n.length > 28 ? `${n.slice(0, 26)}…` : n;
-}
-
-function imageMessage(payload: ImagePayload) {
-  return buildImageMessage(payload);
-}
-
-function audioMessage(payload: AudioPayload) {
-  return `${AUDIO_MESSAGE_PREFIX}${JSON.stringify(payload)}`;
-}
-
-function readAudioMessage(content: string): AudioPayload | null {
-  if (content.startsWith(AUDIO_MESSAGE_PREFIX)) {
-    try {
-      return JSON.parse(content.slice(AUDIO_MESSAGE_PREFIX.length)) as AudioPayload;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
-/**
- * Remove a user prompt (and the assistant replies that follow it) from a
- * message list, identifying the prompt by its stable `clientMessageId`.
- *
- * `fallbackIndex` is only used when the target has no client id and the message
- * at that index still matches the target's role+content (defensive against the
- * list shifting under a background sync). Returns null when the target can no
- * longer be located safely, so callers can abort instead of deleting the wrong
- * thread.
- */
-function removePromptThreadFromMessages(
-  source: ChatMessage[],
-  target: ChatMessage,
-  fallbackIndex?: number,
-): ChatMessage[] | null {
-  let i = -1;
-  if (target.clientMessageId) {
-    i = source.findIndex((m) => m.clientMessageId === target.clientMessageId);
-  }
-  if (i < 0 && target.sentAt != null) {
-    i = source.findIndex((m) => m.role === "user" && m.sentAt === target.sentAt);
-  }
-  if (
-    i < 0 &&
-    fallbackIndex != null &&
-    source[fallbackIndex]?.role === "user" &&
-    source[fallbackIndex]?.content === target.content
-  ) {
-    i = fallbackIndex;
-  }
-  if (i < 0 || source[i]?.role !== "user") return null;
-  const next = [...source];
-  next.splice(i, 1);
-  while (next[i]?.role === "assistant") {
-    next.splice(i, 1);
-  }
-  return next;
-}
-
-function promptTextFromUserContent(content: string): string {
-  const attach = readAttachmentMessage(content);
-  if (attach) {
-    const text = attach.userText.trim();
-    if (text) return text;
-    if (attach.attachments.some((a) => a.kind === "image")) return "Edit this image";
-    return attachmentDisplayText(attach);
-  }
-  const audio = readAudioMessage(content);
-  if (audio?.transcript?.trim()) return audio.transcript.trim();
-  return content;
-}
-
-function displayTextForMessage(content: string): string {
-  const attach = readAttachmentMessage(content);
-  if (attach) return attachmentDisplayText(attach);
-  const audio = readAudioMessage(content);
-  if (audio?.transcript) return audio.transcript;
-  const image = readImageMessage(content);
-  if (image?.prompt?.trim()) return image.prompt.trim();
-  const video = readVideoMessage(content);
-  if (video?.prompt?.trim()) return video.prompt.trim();
-  const speech = readSpeechMessage(content);
-  if (speech?.prompt?.trim()) return speech.prompt.trim();
-  return content;
-}
-
-function messageDirectionForContent(content: string): TextDirection {
-  if (
-    content === IMAGE_PENDING_MARKER ||
-    content.startsWith(IMAGE_MESSAGE_PREFIX) ||
-    content === VIDEO_PENDING_MARKER ||
-    content.startsWith(VIDEO_MESSAGE_PREFIX) ||
-    content === SPEECH_PENDING_MARKER ||
-    content.startsWith(SPEECH_MESSAGE_PREFIX)
-  ) {
-    return "ltr";
-  }
-  const attach = readAttachmentMessage(content);
-  if (attach) {
-    return messageDirectionForText(attach.userText || attachmentDisplayText(attach));
-  }
-  const audio = readAudioMessage(content);
-  if (audio?.transcript) return messageDirectionForText(audio.transcript);
-  return messageDirectionForText(displayTextForMessage(content));
-}
-
-function readVideoMessage(content: string): VideoPayload | null {
-  return parseVideoMessage(content);
-}
-
-function readSpeechMessage(content: string): SpeechPayload | null {
-  return parseSpeechMessage(content);
-}
-
-/** Last assistant slot is a speech placeholder still being generated. */
-function messagesHavePendingSpeech(messages: ChatMessage[]): boolean {
-  const last = messages.at(-1);
-  return last?.role === "assistant" && last.content === SPEECH_PENDING_MARKER;
-}
-
-/** Last assistant slot is a video placeholder still being generated. */
-function messagesHavePendingVideo(messages: ChatMessage[]): boolean {
-  const last = messages.at(-1);
-  return last?.role === "assistant" && last.content === VIDEO_PENDING_MARKER;
-}
-
-function buildStoppedVideoMessages(
-  messages: ChatMessage[],
-  stoppedText = "Video generation stopped.",
-): ChatMessage[] {
-  const withoutPending = messages.filter((m) => m.content !== VIDEO_PENDING_MARKER);
-  const last = withoutPending.at(-1);
-  if (last?.role === "assistant" && last.content === stoppedText) return withoutPending;
-  return [
-    ...withoutPending,
-    { role: "assistant", content: stoppedText, receivedAt: Date.now() },
-  ];
-}
-
-function readImageMessage(content: string): ImagePayload | null {
-  if (content.startsWith(IMAGE_MESSAGE_PREFIX)) {
-    try {
-      return JSON.parse(content.slice(IMAGE_MESSAGE_PREFIX.length)) as ImagePayload;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
-function newQueueId() {
-  return `q-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function queueItemPreview(item: QueuedPrompt): string {
-  if (item.attachments.length) {
-    const names = item.attachments.map((a) => a.name).join(", ");
-    const text = item.text.trim();
-    return text ? `${text} · ${names}` : names;
-  }
-  return item.text.trim() || "(empty)";
-}
-
-function extractMarkdownImage(content: string): { imageUrl: string | null; text: string } {
-  const re = /!\[[^\]]*\]\((https?:\/\/[^\s)]+)\)/i;
-  const m = content.match(re);
-  if (!m) return { imageUrl: null, text: content };
-  const cleaned = content.replace(re, "").replace(/\n{3,}/g, "\n\n").trim();
-  return { imageUrl: m[1], text: cleaned };
-}
-
-/** CSV / Word / PDF actions only for real text replies (not image/audio/pending). */
-function isTextAssistantExportable(content: string): boolean {
-  if (!content?.trim()) return false;
-  if (content === IMAGE_PENDING_MARKER) return false;
-  if (content === VIDEO_PENDING_MARKER) return false;
-  if (content === SPEECH_PENDING_MARKER) return false;
-  if (readImageMessage(content)) return false;
-  if (readVideoMessage(content)) return false;
-  if (readSpeechMessage(content)) return false;
-  if (readAudioMessage(content)) return false;
-  const md = extractMarkdownImage(content);
-  if (md.imageUrl && !md.text.trim()) return false;
-  return true;
-}
-
-function formatChatMessageTime(ts?: number): string | null {
-  return formatLocalDateTimeFromMs(ts);
-}
-
-function chatMessageInfoTitle(message: ChatMessage, role: "user" | "assistant", messages: ChatMessage[], index: number): string {
-  if (role === "user") {
-    const sent = formatChatMessageTime(message.sentAt);
-    return sent ? `Sent: ${sent}` : "Send time not recorded for this message.";
-  }
-  let promptSent: string | null = null;
-  for (let j = index - 1; j >= 0; j -= 1) {
-    if (messages[j].role === "user") {
-      promptSent = formatChatMessageTime(messages[j].sentAt);
-      break;
-    }
-  }
-  const received = formatChatMessageTime(message.receivedAt);
-  const lines: string[] = [];
-  if (promptSent) lines.push(`Prompt sent: ${promptSent}`);
-  if (received) lines.push(`Response received: ${received}`);
-  return lines.length ? lines.join("\n") : "Timing not recorded for this message.";
-}
-
 function MessageInfoButton({
   title,
   onClick,
@@ -689,6 +482,7 @@ export default function ChatPanel({
   const [modelPickerMode, setModelPickerMode] = useState<"replace" | "append" | null>(null);
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const sessionUser = getSessionUser();
+  const agentsPlatformEnabled = isPlatformFeatureEnabled("agents_platform");
   const sessionUsername = sessionUser?.username ?? "";
   const welcomeName = sessionUser?.display_name || sessionUsername;
   const projectAuthorDisplayName = isProjectChat
@@ -726,7 +520,7 @@ export default function ChatPanel({
   const [olderLoadedCount, setOlderLoadedCount] = useState(0);
   const [messagesLoadingOlder, setMessagesLoadingOlder] = useState(false);
   const [messagesHasOlder, setMessagesHasOlder] = useState(false);
-  const [isLeaderTab, setIsLeaderTab] = useState(true);
+  const [, setIsLeaderTab] = useState(true);
   const serverSearchTimerRef = useRef<number | null>(null);
   const [chatsHydrated, setChatsHydrated] = useState(false);
   const [hydrateOutcome, setHydrateOutcome] = useState<"pending" | "ok" | "empty" | "error">("pending");
@@ -743,6 +537,7 @@ export default function ChatPanel({
   const [selectedChatIds, setSelectedChatIds] = useState<Set<string>>(() => new Set());
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const messageKeys = useMemo(() => stableMessageKeys(messages, String(activeId ?? "")), [messages, activeId]);
   const [input, setInput] = useState("");
   const [inputDirection, setInputDirection] = useState<TextDirection>("ltr");
   const composerInputRef = useRef("");
@@ -1103,13 +898,15 @@ export default function ChatPanel({
     return grouped;
   }, [filteredSessions]);
 
-  const currentModel = models.find((m) => m.id === model);
-
   function sessionPrivateMode(sessionId: string): boolean {
     return isPrivateChat(sessionsRef.current.find((s) => s.id === sessionId));
   }
 
   function agentSelectionForSession(sessionId: string): string {
+    // A chat keeps its Agent choice locally, so an installation that switched
+    // the preview off would keep sending it and get a 400 on every message --
+    // with the picker disabled, the user could not even clear it.
+    if (!agentsPlatformEnabled) return NO_AGENT_SELECTION;
     const session = sessionsRef.current.find((item) => item.id === sessionId);
     const bound = session?.currentAgentId
       ? agentCatalog.find((agent) => agent.id === session.currentAgentId)
@@ -1744,7 +1541,7 @@ export default function ChatPanel({
   }, [readOnly, defaultModel, userPrefsReady]);
 
   useEffect(() => {
-    if (readOnly || !sessionUsername) {
+    if (readOnly || !sessionUsername || !agentsPlatformEnabled) {
       setAgentCatalog([]);
       return;
     }
@@ -1761,7 +1558,7 @@ export default function ChatPanel({
     return () => {
       cancelled = true;
     };
-  }, [readOnly, sessionUsername]);
+  }, [readOnly, sessionUsername, agentsPlatformEnabled]);
 
   useEffect(() => {
     if (
@@ -3914,54 +3711,44 @@ export default function ChatPanel({
     const reader = res.body?.getReader();
     if (!reader) throw new Error("No response stream");
 
-    const decoder = new TextDecoder();
     let assistant = "";
-    let buffer = "";
     let requestLogId: number | undefined;
     let agentMetadata: AgentCompletionMetadata | undefined;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        const payload = line.slice(6).trim();
-        if (payload === "[DONE]") continue;
-        try {
-          const json = JSON.parse(payload);
-          if (json.error) {
-            const errMsg =
-              typeof json.error === "string"
-                ? json.error
-                : json.error?.message || JSON.stringify(json.error);
-            throw new Error(errMsg);
-          }
-          const metaLogId = json?.alpha_router?.request_log_id;
-          if (typeof metaLogId === "number" && Number.isFinite(metaLogId)) {
-            requestLogId = metaLogId;
-          }
-          const nextAgentMetadata = agentCompletionMetadataFromSse(
-            json?.alpha_router,
-          );
-          if (Object.keys(nextAgentMetadata).length) {
-            agentMetadata = {
-              ...(agentMetadata || {}),
-              ...nextAgentMetadata,
-            };
-          }
-          const delta = json.choices?.[0]?.delta?.content;
-          if (delta) {
-            assistant += delta;
-            onPartial(assistant);
-          }
-        } catch (err) {
-          if (err instanceof SyntaxError) continue;
-          throw err;
+    // readSseEvents also delivers a trailing `data:` line without a newline
+    // and cancels the reader if this loop exits early (error / Stop).
+    for await (const payload of readSseEvents(reader)) {
+      if (payload === "[DONE]") continue;
+      try {
+        const json = JSON.parse(payload);
+        if (json.error) {
+          const errMsg =
+            typeof json.error === "string"
+              ? json.error
+              : json.error?.message || JSON.stringify(json.error);
+          throw new Error(errMsg);
         }
+        const metaLogId = json?.alpha_router?.request_log_id;
+        if (typeof metaLogId === "number" && Number.isFinite(metaLogId)) {
+          requestLogId = metaLogId;
+        }
+        const nextAgentMetadata = agentCompletionMetadataFromSse(
+          json?.alpha_router,
+        );
+        if (Object.keys(nextAgentMetadata).length) {
+          agentMetadata = {
+            ...(agentMetadata || {}),
+            ...nextAgentMetadata,
+          };
+        }
+        const delta = json.choices?.[0]?.delta?.content;
+        if (delta) {
+          assistant += delta;
+          onPartial(assistant);
+        }
+      } catch (err) {
+        if (err instanceof SyntaxError) continue;
+        throw err;
       }
     }
     return {
@@ -5850,7 +5637,12 @@ export default function ChatPanel({
     if (durationSeconds > 0) fd.append("duration_seconds", durationSeconds.toFixed(2));
     const res = await authFetch("/api/chat/voice", { method: "POST", body: fd });
     if (!res.ok) throw new Error(parseApiError(await res.text(), res.status).message);
-    const data = (await res.json()) as { transcript?: string };
+    const data = (await res.json()) as { transcript?: string; media_pending?: boolean; media_error?: string | null };
+    if (data.media_pending === false && data.media_error) {
+      // The transcript is fine; only the recording itself was not kept
+      // (media quota). Say so instead of silently dropping the audio.
+      setChatError(data.media_error);
+    }
     return (data.transcript || "").trim();
   }
 
@@ -6705,7 +6497,9 @@ export default function ChatPanel({
           )}
           {messages.map((m, i) => (
             <article
-              key={`${activeId}-${i}`}
+              // A stable identity per message: with the index as key, deleting or
+              // inserting one message re-mounted (and re-parsed) every row below it.
+              key={messageKeys[i]}
               className={`alpha-router-msg alpha-router-msg-${m.role}${m.modelId ? " alpha-router-msg-multi" : ""}`}
             >
               {m.role === "assistant" && m.agentName ? (
@@ -7292,6 +7086,7 @@ export default function ChatPanel({
                     speechCapabilities={selectedModels[0]}
                   />
                   </div>
+                  {agentsPlatformEnabled ? (
                   <div className="alpha-router-tools-picker" ref={agentMenuRef}>
                     <button
                       ref={agentTriggerRef}
@@ -7334,6 +7129,7 @@ export default function ChatPanel({
                       onClose={() => setAgentMenuOpen(false)}
                     />
                   </div>
+                  ) : null}
                   <button
                     type="button"
                     className={`alpha-router-composer-ctrl alpha-router-translate-eng-btn${translateToEngBusy ? " is-busy" : ""}`}

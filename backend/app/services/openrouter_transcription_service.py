@@ -18,6 +18,7 @@ instead of a size estimate.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from dataclasses import dataclass, field
 from typing import Any
@@ -26,6 +27,7 @@ from app.services.openrouter_image_service import (
     build_openrouter_headers,
     post_openrouter_json,
 )
+from app.core.constants import normalize_openrouter_base_url
 
 #: Formats the OpenRouter transcription endpoint documents.
 _SUPPORTED_FORMATS = {"wav", "mp3", "flac", "m4a", "ogg", "webm", "aac", "mp4", "mpeg", "mpga"}
@@ -83,10 +85,7 @@ def audio_format_for(filename: str, mime_type: str) -> str:
 
 
 def transcription_url(base_url: str | None) -> str:
-    base = (base_url or "https://openrouter.ai/api/v1").strip().rstrip("/")
-    if "openrouter.ai" in base.lower() and "/api/" not in base.lower():
-        base = "https://openrouter.ai/api/v1"
-    return f"{base}/audio/transcriptions"
+    return f"{normalize_openrouter_base_url(base_url)}/audio/transcriptions"
 
 
 def _normalize_usage(raw: Any) -> dict[str, Any]:
@@ -104,8 +103,10 @@ def _error_message(status_code: int, body: str) -> str:
     snippet = (body or "").strip()
     if len(snippet) > 400:
         snippet = snippet[:400] + "…"
-    return f"OpenRouter transcription failed ({status_code}): {snippet}" if snippet else (
-        f"OpenRouter transcription failed ({status_code})."
+    return (
+        f"OpenRouter transcription failed ({status_code}): {snippet}"
+        if snippet
+        else (f"OpenRouter transcription failed ({status_code}).")
     )
 
 
@@ -126,10 +127,12 @@ async def transcribe_with_openrouter(
     if not audio_bytes:
         raise OpenRouterTranscriptionError("Empty audio file.")
 
+    # base64 of a 25 MB recording is ~100 ms of pure CPU; keep it off the loop.
+    encoded = await asyncio.to_thread(lambda: base64.b64encode(audio_bytes).decode("ascii"))
     payload: dict[str, Any] = {
         "model": model,
         "input_audio": {
-            "data": base64.b64encode(audio_bytes).decode("ascii"),
+            "data": encoded,
             "format": audio_format_for(filename, mime_type),
         },
     }
@@ -150,21 +153,15 @@ async def transcribe_with_openrouter(
     try:
         data = response.json()
     except ValueError as exc:
-        raise OpenRouterTranscriptionError(
-            "OpenRouter returned a non-JSON transcription response."
-        ) from exc
+        raise OpenRouterTranscriptionError("OpenRouter returned a non-JSON transcription response.") from exc
     if not isinstance(data, dict):
-        raise OpenRouterTranscriptionError(
-            "OpenRouter returned an unexpected transcription response."
-        )
+        raise OpenRouterTranscriptionError("OpenRouter returned an unexpected transcription response.")
 
     text = str(data.get("text") or "").strip()
     if not text:
         # Distinguish "nothing was said" from a transport problem: this is a
         # successful call that simply found no speech.
-        raise OpenRouterTranscriptionError(
-            "No speech detected. Try speaking closer to the microphone."
-        )
+        raise OpenRouterTranscriptionError("No speech detected. Try speaking closer to the microphone.")
 
     return OpenRouterTranscriptionResult(
         text=text,

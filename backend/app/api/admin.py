@@ -1,13 +1,14 @@
 """Admin REST API: connections, models, keys, plans, users, dashboard, debug."""
 
+import asyncio
 import csv
 import io
 from datetime import date, datetime, timedelta
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import and_, delete, exists, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,7 +32,7 @@ from app.api.deps import (
     require_deleted_users,
     require_deleted_users_write,
 )
-from app.core.security import generate_api_key, generate_api_key_for_user, hash_password
+from app.core.security import generate_api_key, hash_password
 from app.database import get_db
 from app.models.api_key import AlphaRouterApiKey
 from app.models.budget import BudgetPlan, PlanAssignment
@@ -65,7 +66,6 @@ from app.services.model_tool_compatibility_service import (
     is_code_interpreter_candidate,
     set_manual_override,
 )
-from app.services.global_default_chat_model import get_global_default_model_id
 from app.services.system_default_models import (
     DEFAULT_MODEL_KIND_KEYS,
     DEFAULT_MODEL_KINDS,
@@ -74,22 +74,11 @@ from app.services.system_default_models import (
     clear_defaults_if_ids,
     drop_unusable_defaults,
     get_all_default_model_ids,
+    get_default_model_id,
     set_default_model,
 )
 
 
-async def clear_global_default_if_ids(db: AsyncSession, model_ids) -> None:
-    """Clear every system default that points at one of these catalog rows.
-
-    Kept under the original name so all seven call sites (model delete, disable,
-    make-private, connection delete…) cover every kind of default automatically.
-    """
-    await clear_defaults_if_ids(db, model_ids)
-
-
-async def drop_unusable_global_default(db: AsyncSession) -> None:
-    """Drop any system default whose model is gone or no longer eligible."""
-    await drop_unusable_defaults(db)
 from app.services.model_sync import (
     disable_models_for_connection,
     enable_models_for_connection,
@@ -103,10 +92,13 @@ from app.services.activity_pdf_service import ActivityPdfError, render_activity_
 from app.services.reports_service import export_activity_logs_workbook
 from app.services.scheduler import refresh_chat_retention_cleanup_schedule, refresh_storage_cleanup_schedule
 from app.services.db_monitor_service import collect_database_monitor
+from app.services.client_ip import resolve_client_ip
+from app.services.security_audit import log_security_event
 from app.services.connection_audit import (
     connection_snapshot,
     fetch_connection_changelog,
     log_connection_created,
+    log_connection_deleted,
     log_connection_status,
     log_connection_updated,
     touch_connection_modified,
@@ -114,6 +106,7 @@ from app.services.connection_audit import (
 from app.services.alpha_router_api_key_audit import (
     fetch_api_key_changelog,
     log_api_key_created,
+    log_api_key_deleted,
     log_api_key_status,
     log_api_key_updated,
     touch_key_modified,
@@ -139,7 +132,6 @@ from app.services.api_key_model_policy import (
 from app.services.smtp_service import SmtpNotConfiguredError, SmtpSendError, send_email
 from app.services.username_norm import normalize_username, username_taken_ci
 from app.services.rbac import (
-    FULL_ADMIN_SLUG,
     USER_SLUG,
     actor_may_assign_roles,
     is_valid_role_slug,
@@ -158,7 +150,7 @@ from app.services.user_role_service import (
     user_has_full_administrator,
 )
 
-API_KEY_PAGE_SIZES = {10, 20, 30, 50}
+
 from app.services.storage_service import (
     clear_all_media,
     get_storage_settings,
@@ -189,14 +181,33 @@ from app.services.project_media_service import (
     set_project_media_quota_gb,
 )
 
+
+async def clear_global_default_if_ids(db: AsyncSession, model_ids) -> None:
+    """Clear every system default that points at one of these catalog rows.
+
+    Kept under the original name so all seven call sites (model delete, disable,
+    make-private, connection delete…) cover every kind of default automatically.
+    """
+    await clear_defaults_if_ids(db, model_ids)
+
+
+async def drop_unusable_global_default(db: AsyncSession) -> None:
+    """Drop any system default whose model is gone or no longer eligible."""
+    await drop_unusable_defaults(db)
+
+
+API_KEY_PAGE_SIZES = {10, 20, 30, 50}
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
 async def _ensure_not_last_full_admin_removal(db: AsyncSession, user_id: int, new_slugs: list[str]) -> None:
     current = await get_user_role_slugs(db, user_id)
-    if user_has_super_admin_access(current) and not user_has_super_admin_access(new_slugs):
-        if await count_full_administrators(db) <= 1:
-            raise HTTPException(400, detail="Cannot demote the last Full Administrator account")
+    if (
+        user_has_super_admin_access(current)
+        and not user_has_super_admin_access(new_slugs)
+        and await count_full_administrators(db) <= 1
+    ):
+        raise HTTPException(400, detail="Cannot demote the last Full Administrator account")
 
 
 async def _ensure_actor_may_assign_roles(
@@ -250,7 +261,7 @@ async def create_connection(
     admin: User = Depends(require_connections_write),
 ):
     """Add connection to list immediately; model sync is optional (use Sync Now in table)."""
-    base_url = (body.base_url or "").strip() or None
+    base_url = await _validated_connection_base_url(body.base_url)
     provider = (body.provider_type or "").strip().lower()
     if not provider:
         raise HTTPException(400, detail="Provider is required")
@@ -270,7 +281,7 @@ async def create_connection(
     if sync_now:
         try:
             synced = await sync_connection_models(db, conn, body.api_key)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
             sync_error = str(exc)[:300]
     await db.commit()
     return {"id": conn.id, "synced": synced, "sync_error": sync_error}
@@ -290,7 +301,7 @@ async def list_connections(db: AsyncSession = Depends(get_db), _: User = Depends
             .group_by(UsageEvent.connection_id)
         )
         usage_map = {r[0]: float(r[1]) for r in (await db.execute(usage_q)).all()}
-    except Exception:
+    except Exception:  # noqa: BLE001 -- falls back to a safe default value
         usage_map = {}
     return [
         {
@@ -358,8 +369,7 @@ async def list_admin_models(
 ):
     conn_count = (await db.execute(select(func.count()).select_from(Connection))).scalar() or 0
     if conn_count == 0:
-        await db.execute(delete(AIModel))
-        await db.commit()
+        # Read-only: orphan rows are cleaned when the last connection is deleted.
         return []
 
     stmt = select(AIModel)
@@ -384,9 +394,7 @@ async def list_admin_models(
             "enabled": m.is_enabled,
             "is_system_default": default_id is not None and int(m.id) == int(default_id),
             "default_kinds": [
-                key
-                for key, value in system_defaults.items()
-                if value is not None and int(value) == int(m.id)
+                key for key, value in system_defaults.items() if value is not None and int(value) == int(m.id)
             ],
             "admin_disabled": bool(m.admin_disabled),
             "access_type": (m.access_type or "public").strip().lower(),
@@ -443,7 +451,7 @@ async def get_models_system_default(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_models),
 ):
-    model_id = await get_global_default_model_id(db)
+    model_id = await get_default_model_id(db, "chat")
     return {"model_id": model_id}
 
 
@@ -529,13 +537,17 @@ async def get_model_code_interpreter_compatibility(
     events: list[dict] = []
     if row is not None:
         event_rows = (
-            await db.execute(
-                select(ModelToolCompatibilityEvent)
-                .where(ModelToolCompatibilityEvent.compatibility_id == row.id)
-                .order_by(ModelToolCompatibilityEvent.created_at.desc())
-                .limit(20)
+            (
+                await db.execute(
+                    select(ModelToolCompatibilityEvent)
+                    .where(ModelToolCompatibilityEvent.compatibility_id == row.id)
+                    .order_by(ModelToolCompatibilityEvent.created_at.desc())
+                    .limit(20)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         events = [
             {
                 "id": event.id,
@@ -632,7 +644,9 @@ async def run_model_code_interpreter_probe(
 
 
 @router.patch("/models/{model_id}/toggle")
-async def toggle_model(model_id: int, enabled: bool, db: AsyncSession = Depends(get_db), _: User = Depends(require_models_write)):
+async def toggle_model(
+    model_id: int, enabled: bool, db: AsyncSession = Depends(get_db), _: User = Depends(require_models_write)
+):
     m = await db.get(AIModel, model_id)
     if not m:
         raise HTTPException(404)
@@ -731,6 +745,8 @@ class ApiKeyCreate(BaseModel):
     name: str
     owner_user_id: int
     credit_limit_usd: float = 0
+    # Must be true when credit_limit_usd is 0: no silent blank cheques.
+    unlimited_budget: bool = False
     reset_period: Literal["daily", "weekly", "monthly"] = "monthly"
     expiration_days: int | None = None
     restrict_connections: bool = False
@@ -743,6 +759,7 @@ class ApiKeyPatch(BaseModel):
     name: str | None = None
     owner_user_id: int | None = None
     credit_limit_usd: float | None = None
+    unlimited_budget: bool | None = None
     reset_period: Literal["daily", "weekly", "monthly"] | None = None
     expiration_days: int | None = None
     expiration_never: bool | None = None
@@ -763,6 +780,8 @@ async def create_alpha_router_key(
         raise HTTPException(400, detail="Owner user not found")
     if body.credit_limit_usd < 0:
         raise HTTPException(400, detail="Credit limit must be >= 0")
+    if body.credit_limit_usd <= 0 and not body.unlimited_budget:
+        raise HTTPException(400, detail="Set a credit limit greater than 0, or explicitly mark the key as unlimited")
     raw, prefix, key_hash = generate_api_key()
     now = datetime.utcnow()
     expires_at = compute_expires_at(now, body.expiration_days)
@@ -772,6 +791,7 @@ async def create_alpha_router_key(
         key_hash=key_hash,
         owner_user_id=body.owner_user_id,
         credit_limit_usd=float(body.credit_limit_usd),
+        unlimited_budget=bool(body.unlimited_budget),
         reset_period=body.reset_period,
         expires_at=expires_at,
         period_started_at=now,
@@ -947,9 +967,7 @@ async def create_local_user(
             raise HTTPException(404, detail="Group not found")
         if group.source != "local":
             raise HTTPException(400, detail="Only local groups can be assigned when creating a local user")
-        await db.execute(
-            insert(user_group_members).values(user_id=user.id, group_id=body.group_id)
-        )
+        await db.execute(insert(user_group_members).values(user_id=user.id, group_id=body.group_id))
     if body.inherit_group_plan:
         from app.services.plan_assignment_service import clear_user_plan_override
 
@@ -1008,9 +1026,7 @@ def _apply_user_list_filters(
         )
         if slug == USER_SLUG:
             # Default end users may have no assignment rows yet.
-            has_any_assignment = exists(
-                select(UserRoleAssignment.user_id).where(UserRoleAssignment.user_id == User.id)
-            )
+            has_any_assignment = exists(select(UserRoleAssignment.user_id).where(UserRoleAssignment.user_id == User.id))
             stmt = stmt.where(or_(~has_any_assignment, has_assignment))
         else:
             stmt = stmt.where(has_assignment)
@@ -1355,11 +1371,7 @@ async def _list_admin_user_dicts(
             },
             "deleted_at": u.deleted_at.isoformat() if u.deleted_at else None,
             "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
-            "online": (
-                None
-                if online_ids is None
-                else (u.id in online_ids and bool(u.is_active))
-            ),
+            "online": (None if online_ids is None else (u.id in online_ids and bool(u.is_active))),
         }
         for u in users
     ]
@@ -1545,7 +1557,7 @@ async def update_connection(
     if body.api_key:
         conn.api_key_encrypted = encrypt_secret(body.api_key)
     if body.base_url is not None:
-        conn.base_url = (body.base_url or "").strip() or None
+        conn.base_url = await _validated_connection_base_url(body.base_url)
         patches["base_url"] = conn.base_url or ""
     if body.sync_interval_hours is not None:
         conn.sync_interval_hours = body.sync_interval_hours
@@ -1558,8 +1570,8 @@ async def update_connection(
         else:
             await disable_models_for_connection(db, conn_id)
             disabled_ids = (
-                await db.execute(select(AIModel.id).where(AIModel.connection_id == conn_id))
-            ).scalars().all()
+                (await db.execute(select(AIModel.id).where(AIModel.connection_id == conn_id))).scalars().all()
+            )
             await clear_global_default_if_ids(db, list(disabled_ids))
     if patches:
         touch_connection_modified(conn)
@@ -1569,14 +1581,18 @@ async def update_connection(
 
 
 @router.delete("/connections/{conn_id}")
-async def delete_connection(conn_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(require_connections_write)):
+async def delete_connection(
+    conn_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_connections_write),
+):
     conn = await db.get(Connection, conn_id)
     if not conn:
         raise HTTPException(404)
     # Explicit cleanup for DBs/environments where FK cascade may be disabled.
-    catalog_ids = (
-        await db.execute(select(AIModel.id).where(AIModel.connection_id == conn_id))
-    ).scalars().all()
+    catalog_ids = (await db.execute(select(AIModel.id).where(AIModel.connection_id == conn_id))).scalars().all()
+    await log_connection_deleted(db, conn=conn, actor=admin, actor_ip=_client_ip(request), model_count=len(catalog_ids))
     await clear_global_default_if_ids(db, list(catalog_ids))
     await db.execute(delete(AIModel).where(AIModel.connection_id == conn_id))
     await db.delete(conn)
@@ -1605,15 +1621,7 @@ async def list_api_key_connection_options(
     _: User = Depends(require_api_keys),
 ):
     """Connection picker for API key allowlists (api_keys menu access only)."""
-    rows = (
-        (
-            await db.execute(
-                select(Connection).order_by(Connection.name.asc(), Connection.id.asc())
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = (await db.execute(select(Connection).order_by(Connection.name.asc(), Connection.id.asc()))).scalars().all()
     return {"items": [connection_brief(c) for c in rows]}
 
 
@@ -1667,12 +1675,14 @@ async def list_alpha_router_keys(
     page = min(page, total_pages)
 
     rows = (
-        await db.execute(
-            stmt.order_by(AlphaRouterApiKey.created_at.desc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
+        (
+            await db.execute(
+                stmt.order_by(AlphaRouterApiKey.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     owner_ids = {k.owner_user_id for k in rows if k.owner_user_id}
     owners: dict[int, User] = {}
@@ -1686,9 +1696,7 @@ async def list_alpha_router_keys(
     items = []
     for k in rows:
         u = owners.get(k.owner_user_id) if k.owner_user_id else None
-        owner_info = (
-            {"email": u.email, "username": u.username, "display_name": u.display_name} if u else None
-        )
+        owner_info = {"email": u.email, "username": u.username, "display_name": u.display_name} if u else None
         apply_expiration(k)
         await maybe_reset_key_period(db, k)
         items.append(
@@ -1738,12 +1746,8 @@ async def patch_alpha_router_key(
     if not k:
         raise HTTPException(404)
 
-    before_conns = (
-        await map_allowed_connections(db, [k.id])
-    ).get(int(k.id), [])
-    before_models = (
-        await map_allowed_models(db, [k.id])
-    ).get(int(k.id), [])
+    before_conns = (await map_allowed_connections(db, [k.id])).get(int(k.id), [])
+    before_models = (await map_allowed_models(db, [k.id])).get(int(k.id), [])
     before = {
         "name": k.name,
         "owner_user_id": k.owner_user_id,
@@ -1780,6 +1784,11 @@ async def patch_alpha_router_key(
             raise HTTPException(400, detail="Credit limit must be >= 0")
         k.credit_limit_usd = float(body.credit_limit_usd)
         patches["credit_limit_usd"] = k.credit_limit_usd
+    if body.unlimited_budget is not None:
+        k.unlimited_budget = bool(body.unlimited_budget)
+        patches["unlimited_budget"] = k.unlimited_budget
+    if float(k.credit_limit_usd or 0) <= 0 and not bool(k.unlimited_budget):
+        raise HTTPException(400, detail="Set a credit limit greater than 0, or explicitly mark the key as unlimited")
     if body.reset_period is not None:
         k.reset_period = body.reset_period
         patches["reset_period"] = k.reset_period
@@ -1796,9 +1805,7 @@ async def patch_alpha_router_key(
 
     if body.restrict_connections is not None or body.allowed_connection_ids is not None:
         restrict = (
-            bool(body.restrict_connections)
-            if body.restrict_connections is not None
-            else bool(k.restrict_connections)
+            bool(body.restrict_connections) if body.restrict_connections is not None else bool(k.restrict_connections)
         )
         ids = (
             body.allowed_connection_ids
@@ -1817,15 +1824,9 @@ async def patch_alpha_router_key(
         patches["allowed_connections"] = connection_policy_label(restrict, names)
 
     if body.restrict_models is not None or body.allowed_model_ids is not None:
-        restrict_models = (
-            bool(body.restrict_models)
-            if body.restrict_models is not None
-            else bool(k.restrict_models)
-        )
+        restrict_models = bool(body.restrict_models) if body.restrict_models is not None else bool(k.restrict_models)
         model_ids = (
-            body.allowed_model_ids
-            if body.allowed_model_ids is not None
-            else [int(m["id"]) for m in before_models]
+            body.allowed_model_ids if body.allowed_model_ids is not None else [int(m["id"]) for m in before_models]
         )
         try:
             model_labels = await replace_key_allowed_models(
@@ -1848,12 +1849,14 @@ async def patch_alpha_router_key(
 @router.delete("/api-keys/{key_id}")
 async def delete_alpha_router_key(
     key_id: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_api_keys_write),
+    admin: User = Depends(require_api_keys_write),
 ):
     k = await db.get(AlphaRouterApiKey, key_id)
     if not k:
         raise HTTPException(404)
+    await log_api_key_deleted(db, key=k, actor=admin, actor_ip=_client_ip(request))
     await db.delete(k)
     await db.commit()
     return {"ok": True}
@@ -1870,17 +1873,11 @@ async def bulk_alpha_router_keys(
         raise HTTPException(status_code=400, detail="No API keys selected")
     ids = list(dict.fromkeys(body.ids))
     if action == "delete":
-        result = await db.execute(
-            delete(AlphaRouterApiKey).where(AlphaRouterApiKey.id.in_(ids))
-        )
+        result = await db.execute(delete(AlphaRouterApiKey).where(AlphaRouterApiKey.id.in_(ids)))
         await db.commit()
         return {"ok": True, "count": result.rowcount or 0}
     enabled = action == "on"
-    rows = (
-        await db.execute(
-            select(AlphaRouterApiKey).where(AlphaRouterApiKey.id.in_(ids))
-        )
-    ).scalars().all()
+    rows = (await db.execute(select(AlphaRouterApiKey).where(AlphaRouterApiKey.id.in_(ids)))).scalars().all()
     changed = 0
     for k in rows:
         if k.is_active == enabled:
@@ -2001,9 +1998,7 @@ async def patch_user(
     if body.email is not None:
         email = _clean_optional_str(body.email)
         if email:
-            clash = (
-                await db.execute(select(User).where(User.email == email, User.id != user_id))
-            ).scalars().first()
+            clash = (await db.execute(select(User).where(User.email == email, User.id != user_id))).scalars().first()
             if clash:
                 raise HTTPException(400, "Email already in use")
         user.email = email
@@ -2034,9 +2029,12 @@ async def patch_user(
     if body.reporting_to is not None:
         user.reporting_to = _clean_optional_str(body.reporting_to)
     if body.is_active is not None and user.is_active != body.is_active:
-        if not body.is_active and await user_has_full_administrator(db, user.id):
-            if await count_active_full_administrators(db) <= 1:
-                raise HTTPException(400, detail="Cannot disable the last active Full Administrator account")
+        if (
+            not body.is_active
+            and await user_has_full_administrator(db, user.id)
+            and await count_active_full_administrators(db) <= 1
+        ):
+            raise HTTPException(400, detail="Cannot disable the last active Full Administrator account")
         user.is_active = body.is_active
         # Disabling a user revokes their active sessions immediately so a
         # disabled account cannot keep making (even read-only) requests on
@@ -2126,7 +2124,7 @@ class UsersBulkIn(BaseModel):
 
 
 @router.post("/users/bulk")
-async def bulk_update_users(
+async def bulk_update_users(  # noqa: C901 -- Phase 4 split; complexity must not grow
     body: UsersBulkIn,
     db: AsyncSession = Depends(get_db),
     actor: User = Depends(require_users_write),
@@ -2189,9 +2187,7 @@ async def bulk_update_users(
                     )
                 ).first()
                 if not exists_row:
-                    await db.execute(
-                        insert(user_group_members).values(user_id=uid, group_id=body.group_id)
-                    )
+                    await db.execute(insert(user_group_members).values(user_id=uid, group_id=body.group_id))
                     changed += 1
         elif body.group_action == "remove":
             await db.execute(
@@ -2251,9 +2247,8 @@ async def delete_local_user(
         raise HTTPException(404)
     if user.deleted_at is not None:
         raise HTTPException(400, detail="User is already in Deleted Users")
-    if await user_has_full_administrator(db, user.id):
-        if await count_full_administrators(db) <= 1:
-            raise HTTPException(400, detail="Cannot delete the last Full Administrator account")
+    if await user_has_full_administrator(db, user.id) and await count_full_administrators(db) <= 1:
+        raise HTTPException(400, detail="Cannot delete the last Full Administrator account")
     await soft_delete_user(db, user)
     await db.commit()
     return {"ok": True, "soft_deleted": True}
@@ -2314,9 +2309,7 @@ async def list_user_api_keys(db: AsyncSession = Depends(get_db), _: User = Depen
 
     rows = (
         await db.execute(
-            select(UserApiKey, User)
-            .join(User, UserApiKey.user_id == User.id)
-            .order_by(UserApiKey.created_at.desc())
+            select(UserApiKey, User).join(User, UserApiKey.user_id == User.id).order_by(UserApiKey.created_at.desc())
         )
     ).all()
     roles_map = await get_roles_map(db, [u.id for _, u in rows])
@@ -2339,19 +2332,35 @@ async def list_user_api_keys(db: AsyncSession = Depends(get_db), _: User = Depen
 
 
 @router.delete("/user-api-keys/{key_id}")
-async def delete_user_api_key(key_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(require_users_write)):
+async def delete_user_api_key(
+    key_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_users_write),
+):
     from app.models.api_key import UserApiKey
 
     k = await db.get(UserApiKey, key_id)
     if not k:
         raise HTTPException(404)
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=_client_ip(request),
+        action="user_api_key_deleted",
+        resource_type="user_api_key",
+        resource_id=str(k.id),
+        detail={"user_id": k.user_id, "name": getattr(k, "name", None)},
+    )
     await db.delete(k)
     await db.commit()
     return {"ok": True}
 
 
 @router.get("/dashboard/error-rates")
-async def model_error_rates(period: str = "month", db: AsyncSession = Depends(get_db), _: User = Depends(require_dashboard)):
+async def model_error_rates(
+    period: str = "month", db: AsyncSession = Depends(get_db), _: User = Depends(require_dashboard)
+):
     since = _period_start(period)
     total_q = (
         select(RequestLog.model_id, func.count().label("total"))
@@ -2477,17 +2486,17 @@ async def _fetch_logs_since(
             return []
         q = q.where(RequestLog.user_id.in_(user_ids))
     if alpha_router_api_key_id is not None:
-        q = q.where(
-            RequestLog.alpha_router_api_key_id == alpha_router_api_key_id
-        )
+        q = q.where(RequestLog.alpha_router_api_key_id == alpha_router_api_key_id)
     if user_api_key_id is not None:
         if user_api_key_id < 0:
             return []
         q = q.where(RequestLog.user_api_key_id == user_api_key_id)
     if connection_id is not None:
         model_ids = (
-            await db.execute(select(AIModel.external_id).where(AIModel.connection_id == connection_id))
-        ).scalars().all()
+            (await db.execute(select(AIModel.external_id).where(AIModel.connection_id == connection_id)))
+            .scalars()
+            .all()
+        )
         if not model_ids:
             return []
         q = q.where(RequestLog.model_id.in_(list(model_ids)))
@@ -2527,9 +2536,7 @@ def _activity_query_filters(
         "username": (username or "").strip() or None,
         "app": (app or "").strip() or None,
         "response_status": response_status if response_status in ("success", "fail") else None,
-        "alpha_router_api_key_id": (
-            api_key_id if api_key_id and api_key_id > 0 else None
-        ),
+        "alpha_router_api_key_id": (api_key_id if api_key_id and api_key_id > 0 else None),
         "user_api_key_id": user_api_key_id,
     }
 
@@ -2537,11 +2544,7 @@ def _activity_query_filters(
 async def _period_api_key_filter_options(db: AsyncSession, rows: list) -> list[dict]:
     """API keys that appear in the selected activity period."""
     key_ids = sorted(
-        {
-            int(row.alpha_router_api_key_id)
-            for row in rows
-            if getattr(row, "alpha_router_api_key_id", None)
-        }
+        {int(row.alpha_router_api_key_id) for row in rows if getattr(row, "alpha_router_api_key_id", None)}
     )
     if not key_ids:
         return []
@@ -2599,17 +2602,11 @@ def activity_explore_opts(
     }
 
 
-async def _activity_options_and_meta(
-    db: AsyncSession, options_rows: list, group_by: str
-) -> tuple[dict, dict]:
+async def _activity_options_and_meta(db: AsyncSession, options_rows: list, group_by: str) -> tuple[dict, dict]:
     options = activity_service.filter_options(options_rows, group_by)
     options["available_api_keys"] = await _period_api_key_filter_options(db, options_rows)
     options["group_by"] = group_by
-    api_key_meta = {
-        str(item["key"]): item
-        for item in options["available_api_keys"]
-        if item.get("key") is not None
-    }
+    api_key_meta = {str(item["key"]): item for item in options["available_api_keys"] if item.get("key") is not None}
     return options, api_key_meta
 
 
@@ -3009,9 +3006,7 @@ async def user_activity(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, detail="User not found")
-    filters = _activity_query_filters(
-        model_id=model_id, username=None, app=app, response_status=response_status
-    )
+    filters = _activity_query_filters(model_id=model_id, username=None, app=app, response_status=response_status)
     payload, options, prompts_card = await _build_scoped_activity(
         db,
         period=period,
@@ -3048,9 +3043,7 @@ async def api_key_activity(
     key = await db.get(AlphaRouterApiKey, key_id)
     if not key:
         raise HTTPException(404, detail="API key not found")
-    filters = _activity_query_filters(
-        model_id=model_id, username=None, app=app, response_status=response_status
-    )
+    filters = _activity_query_filters(model_id=model_id, username=None, app=app, response_status=response_status)
     payload, options, prompts_card = await _build_scoped_activity(
         db,
         period=period,
@@ -3090,9 +3083,7 @@ async def api_key_activity_export(
     key = await db.get(AlphaRouterApiKey, key_id)
     if not key:
         raise HTTPException(404, detail="API key not found")
-    filters = _activity_query_filters(
-        model_id=model_id, username=None, app=app, response_status=response_status
-    )
+    filters = _activity_query_filters(model_id=model_id, username=None, app=app, response_status=response_status)
     return await _activity_export_response(
         db,
         format=format,
@@ -3114,8 +3105,8 @@ def _parse_changelog_date(raw: str | None) -> date | None:
         return None
     try:
         return date.fromisoformat(raw.strip()[:10])
-    except ValueError:
-        raise HTTPException(400, detail="Invalid date; use YYYY-MM-DD")
+    except ValueError as exc:
+        raise HTTPException(400, detail="Invalid date; use YYYY-MM-DD") from exc
 
 
 @router.get("/api-keys/{key_id}/changelog")
@@ -3270,9 +3261,7 @@ async def user_activity_export(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, detail="User not found")
-    filters = _activity_query_filters(
-        model_id=model_id, username=None, app=app, response_status=response_status
-    )
+    filters = _activity_query_filters(model_id=model_id, username=None, app=app, response_status=response_status)
     return await _activity_export_response(
         db,
         format=format,
@@ -3319,18 +3308,21 @@ async def get_storage_overview(db: AsyncSession = Depends(get_db), _: User = Dep
     stats = await storage_stats(db)
     by_kind_rows = (
         await db.execute(
-            select(MediaAsset.kind, func.count(MediaAsset.id), func.coalesce(func.sum(MediaAsset.size_bytes), 0))
-            .group_by(MediaAsset.kind)
+            select(
+                MediaAsset.kind, func.count(MediaAsset.id), func.coalesce(func.sum(MediaAsset.size_bytes), 0)
+            ).group_by(MediaAsset.kind)
         )
     ).all()
-    stats["by_kind"] = [
-        {"kind": r[0], "count": int(r[1] or 0), "size_bytes": int(r[2] or 0)}
-        for r in by_kind_rows
-    ]
+    stats["by_kind"] = [{"kind": r[0], "count": int(r[1] or 0), "size_bytes": int(r[2] or 0)} for r in by_kind_rows]
     stats["chat"] = {
         "stats": await chat_retention_stats(db),
         "settings": await get_chat_retention_settings(db),
     }
+    from app.services.log_detail_retention_service import get_raw_payload_retention
+
+    # Raw provider responses stored behind API Logs: the third thing this page
+    # governs, alongside media files and chat history.
+    stats["api_logs"] = await get_raw_payload_retention(db)
     quota_gb = await get_user_media_quota_gb(db)
     stats["settings"]["user_media_quota_gb"] = quota_gb
     stats["settings"]["user_media_quota_bytes"] = await get_user_media_quota_bytes(db)
@@ -3360,7 +3352,11 @@ async def patch_storage_settings(
     )
     if body.user_media_quota_gb is not None:
         quota_gb = await set_user_media_quota_gb(db, body.user_media_quota_gb)
-        settings = {**settings, "user_media_quota_gb": quota_gb, "user_media_quota_bytes": quota_gb * 1024 * 1024 * 1024}
+        settings = {
+            **settings,
+            "user_media_quota_gb": quota_gb,
+            "user_media_quota_bytes": quota_gb * 1024 * 1024 * 1024,
+        }
     if body.project_media_quota_gb is not None:
         project_quota_gb = await set_project_media_quota_gb(db, body.project_media_quota_gb)
         settings = {
@@ -3400,7 +3396,7 @@ async def patch_storage_settings(
         # Fire-and-queue only: never await edge nginx apply (avoids admin Save timeouts).
         try:
             edge_sync = await sync_edge_body_limit(db)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
             edge_sync = {
                 "attempted": True,
                 "queued": False,
@@ -3413,6 +3409,45 @@ async def patch_storage_settings(
     if edge_sync is not None:
         payload["edge_sync"] = edge_sync
     return payload
+
+
+class ApiLogRetentionSettingsPatch(BaseModel):
+    retention_days: int = Field(..., ge=1, le=365)
+
+
+@router.patch("/storage/api-log-settings")
+async def patch_api_log_retention_settings(
+    body: ApiLogRetentionSettingsPatch,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_storage_write),
+):
+    """How long the raw provider responses behind API Logs are kept.
+
+    Saving applies the new window at once — an operator who shortens it expects
+    what falls outside to be gone now, not at the next nightly run — so the
+    purge is part of this call and lands in the security audit with it.
+    """
+    from app.services.client_ip import resolve_client_ip
+    from app.services.log_detail_retention_service import (
+        get_raw_payload_retention,
+        purge_expired_raw_payloads,
+        set_raw_payload_retention_days,
+    )
+    from app.services.security_audit import log_security_event
+
+    saved = await set_raw_payload_retention_days(db, body.retention_days)
+    purged = await purge_expired_raw_payloads(db, days=saved["retention_days"])
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=resolve_client_ip(request),
+        action="api_logs_raw_payload_retention_changed",
+        resource_type="request_log",
+        detail={"retention_days": saved["retention_days"], **purged},
+    )
+    await db.commit()
+    return {"ok": True, "api_logs": await get_raw_payload_retention(db), "purged": purged}
 
 
 @router.patch("/storage/chat-settings")
@@ -3451,9 +3486,82 @@ async def admin_purge_expired_chat(
     return {"ok": True, **result}
 
 
+async def _validated_connection_base_url(raw: str | None) -> str | None:
+    """A provider base_url is fetched server-side with the connection's API key.
+
+    Without a check an admin-level account (or a CSRF'd admin) could point a
+    connection at http://169.254.169.254/ or an internal service and have
+    Alpharouter POST the credentialed model-sync/completion requests there.
+    ALLOW_SSRF_PRIVATE_RANGES=true keeps internal, self-hosted providers working.
+    """
+    from app.services.ssrf_guard import SSRFBlockedError, assert_url_safe
+
+    value = (raw or "").strip() or None
+    if value is None:
+        return None
+    if not value.lower().startswith(("http://", "https://")):
+        raise HTTPException(400, detail="base_url must start with http:// or https://")
+    try:
+        # assert_url_safe resolves DNS synchronously; keep it off the event loop.
+        await asyncio.to_thread(assert_url_safe, value)
+    except SSRFBlockedError as exc:
+        raise HTTPException(
+            400,
+            detail=(
+                "base_url points at a private, loopback or metadata address. "
+                "Set ALLOW_SSRF_PRIVATE_RANGES=true only for a trusted internal provider."
+            ),
+        ) from exc
+    return value
+
+
+def _client_ip(request: Request) -> str | None:
+    try:
+        return resolve_client_ip(request)
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return request.client.host if request.cl)
+        return request.client.host if request.client else None
+
+
+class DestructiveConfirmIn(BaseModel):
+    """Server-side typed confirmation for irreversible, platform-wide deletes."""
+
+    confirm: str = ""
+
+
+CLEAR_ALL_MEDIA_PHRASE = "DELETE ALL MEDIA"
+
+
 @router.post("/storage/clear-cache")
-async def admin_clear_storage_cache(db: AsyncSession = Depends(get_db), _: User = Depends(require_storage_write)):
+async def admin_clear_storage_cache(
+    body: DestructiveConfirmIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_storage_write),
+    _: User = Depends(require_super_admin),
+):
+    """Delete every media asset. Super Admin, typed phrase, audited before the delete."""
+    if body.confirm.strip() != CLEAR_ALL_MEDIA_PHRASE:
+        raise HTTPException(
+            status_code=400,
+            detail=f'Type "{CLEAR_ALL_MEDIA_PHRASE}" in confirm to delete all media.',
+        )
+    from app.models.media import MediaAsset
+
+    count, total_bytes = (
+        await db.execute(
+            select(func.count(), func.coalesce(func.sum(MediaAsset.size_bytes), 0)).select_from(MediaAsset)
+        )
+    ).one()
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=_client_ip(request),
+        action="media_cleared_all",
+        resource_type="storage",
+        detail={"asset_count": int(count or 0), "total_bytes": int(total_bytes or 0)},
+    )
     result = await clear_all_media(db)
+    await db.commit()
     return {"ok": True, **result}
 
 

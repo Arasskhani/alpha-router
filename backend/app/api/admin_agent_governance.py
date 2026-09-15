@@ -65,15 +65,7 @@ async def list_legal_holds(
         statement = statement.where(LegalHold.status == status)
     if resource_type:
         statement = statement.where(LegalHold.resource_type == resource_type)
-    rows = (
-        (
-            await db.execute(
-                statement.order_by(LegalHold.placed_at.desc()).limit(limit)
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = (await db.execute(statement.order_by(LegalHold.placed_at.desc()).limit(limit))).scalars().all()
     return {
         "items": [_hold_payload(row) for row in rows],
         "supported_resource_types": sorted(SUPPORTED_HOLD_RESOURCE_TYPES),

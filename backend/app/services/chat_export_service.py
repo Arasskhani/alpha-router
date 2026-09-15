@@ -49,22 +49,17 @@ def build_download_content_disposition(title: str | None, ext: str) -> str:
 
     ext = (ext or "").lstrip(".").lower() or "bin"
     raw_title = (title or "chat-export").strip() or "chat-export"
-    ascii_name = (
-        "".join(c for c in raw_title if (c.isascii() and c.isalnum()) or c in "-_")
-        or "chat-export"
-    )
+    ascii_name = "".join(c for c in raw_title if (c.isascii() and c.isalnum()) or c in "-_") or "chat-export"
     ascii_name = ascii_name[:60]
     utf8_name = quote(raw_title[:120], safe="")
-    return f'attachment; filename="{ascii_name}.{ext}"; filename*=UTF-8\'\'{utf8_name}.{ext}'
+    return f"attachment; filename=\"{ascii_name}.{ext}\"; filename*=UTF-8''{utf8_name}.{ext}"
 
 
 def _markdown_to_html(markdown_text: str) -> str:
     try:
         import markdown as md  # type: ignore
     except ImportError as exc:  # pragma: no cover
-        raise ChatExportError(
-            "markdown library not installed. Run: pip install markdown"
-        ) from exc
+        raise ChatExportError("markdown library not installed. Run: pip install markdown") from exc
     # Escape angle brackets and ampersands so no raw HTML from the user/model
     # can form tags. Markdown syntax (#, *, |, `, >, -) is unaffected.
     escaped = markdown_text.replace("&", "&amp;").replace("<", "&lt;")
@@ -146,14 +141,13 @@ def _launch_browser(playwright):
     if channel and channel != "chromium":
         try:
             return playwright.chromium.launch(channel=channel, **launch_kwargs)
-        except Exception as channel_exc:
+        except Exception as channel_exc:  # noqa: BLE001 -- logged; expected failure of an external dependency
             logger.warning("Playwright channel %s unavailable: %s", channel, channel_exc)
     try:
         return playwright.chromium.launch(**launch_kwargs)
     except Exception as bundled_exc:
         raise ChatExportError(
-            "No Chromium browser available for PDF export. Install Chrome or run: "
-            "playwright install chromium"
+            "No Chromium browser available for PDF export. Install Chrome or run: playwright install chromium"
         ) from bundled_exc
 
 

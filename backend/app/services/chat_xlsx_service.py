@@ -46,16 +46,16 @@ def _split_pipe_row(line: str) -> list[str]:
 
 
 def _parse_markdown_table(block: str) -> _Table | None:
-    lines = [l.strip() for l in block.splitlines() if l.strip()]
+    lines = [line.strip() for line in block.splitlines() if line.strip()]
     if len(lines) < 2:
         return None
-    if not all(l.startswith("|") or l.endswith("|") for l in lines):
+    if not all(line.startswith("|") or line.endswith("|") for line in lines):
         return None
     sep_cells = _split_pipe_row(lines[1])
     if not sep_cells or not all(re.fullmatch(r":?-+:?", c) for c in sep_cells):
         return None
     header = _split_pipe_row(lines[0])
-    rows = [_split_pipe_row(l) for l in lines[2:]]
+    rows = [_split_pipe_row(line) for line in lines[2:]]
     return _Table(header=header, rows=rows)
 
 
@@ -73,8 +73,8 @@ def extract_xlsx_tables(content: str) -> list[_Table]:
         raw = m.group(1).strip()
         if not raw:
             continue
-        lines = [l for l in raw.splitlines() if l.strip()]
-        rows = [[c.strip() for c in l.split(",")] for l in lines]
+        lines = [line for line in raw.splitlines() if line.strip()]
+        rows = [[c.strip() for c in line.split(",")] for line in lines]
         if rows:
             tables.append(_Table(header=rows[0], rows=rows[1:]))
     if tables:
@@ -96,17 +96,34 @@ def _autosize_columns(ws, col_count: int, sample_rows: list[list[str]]) -> None:
         ws.column_dimensions[letter].width = max_len + 2
 
 
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _safe_cell(value):
+    """Neutralise spreadsheet formula injection in model-authored text.
+
+    A cell starting with ``=``, ``+``, ``-`` or ``@`` is evaluated by Excel
+    and LibreOffice (``=HYPERLINK(...)``, ``=WEBSERVICE(...)``, DDE). The text
+    came from a chat reply the user asked to export, i.e. from a model that
+    may have been steered by a document or web page. Prefix with an
+    apostrophe so it stays literal text; numbers are left alone.
+    """
+    if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
 def _write_table(ws, table: _Table, *, start_row: int = 1) -> int:
     """Write ``table`` starting at ``start_row``; return next free row index."""
     header_font = Font(bold=True)
     row_i = start_row
     for col_i, cell in enumerate(table.header, start=1):
-        c = ws.cell(row=row_i, column=col_i, value=cell)
+        c = ws.cell(row=row_i, column=col_i, value=_safe_cell(cell))
         c.font = header_font
     row_i += 1
     for row in table.rows:
         for col_i, cell in enumerate(row, start=1):
-            ws.cell(row=row_i, column=col_i, value=cell)
+            ws.cell(row=row_i, column=col_i, value=_safe_cell(cell))
         row_i += 1
     width_rows = [table.header, *table.rows[:40]]
     _autosize_columns(ws, max(len(table.header), 1), width_rows)
@@ -128,7 +145,7 @@ def render_chat_xlsx(*, content: str, title: str | None = None) -> bytes:
     assert default is not None
     raw_title = (title or "Chat export").strip() or "Chat export"
     # Excel sheet titles: max 31 chars; forbid \ / * ? : [ ]
-    sheet_title = re.sub(r'[\\/*?:\[\]]+', "_", raw_title)[:31] or "Chat export"
+    sheet_title = re.sub(r"[\\/*?:\[\]]+", "_", raw_title)[:31] or "Chat export"
     default.title = sheet_title
 
     if len(tables) == 1:

@@ -5,13 +5,11 @@ from __future__ import annotations
 import csv
 import json
 import re
-import stat
 import unicodedata
-import zipfile
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from io import BytesIO, StringIO
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from docx import Document as WordDocument
 from openpyxl import load_workbook
@@ -19,6 +17,7 @@ from pptx import Presentation
 from pypdf import PdfReader
 
 from app.config import get_settings
+from app.core.archive_safety import ArchiveSafetyError, validate_ooxml_archive
 
 
 class UnsafeDocumentError(ValueError):
@@ -104,8 +103,7 @@ def sanitize_document_filename(file_name: str) -> str:
     base = "".join(
         character
         for character in unicodedata.normalize("NFC", base)
-        if character not in _BIDI_CONTROLS
-        and (character.isprintable() or character in {" ", "\t"})
+        if character not in _BIDI_CONTROLS and (character.isprintable() or character in {" ", "\t"})
     )
     base = re.sub(r"\s+", " ", base).strip(" .")
     if not base or len(base) > 240:
@@ -114,66 +112,10 @@ def sanitize_document_filename(file_name: str) -> str:
 
 
 def _validate_ooxml_archive(data: bytes, extension: str) -> None:
-    settings = get_settings()
     try:
-        archive = zipfile.ZipFile(BytesIO(data))
-    except zipfile.BadZipFile as exc:
-        raise UnsafeDocumentError("Office document is not a valid ZIP archive") from exc
-    with archive:
-        entries = archive.infolist()
-        if len(entries) > settings.knowledge_max_archive_entries:
-            raise UnsafeDocumentError("Office document contains too many archive entries")
-        total_compressed = 0
-        total_uncompressed = 0
-        names: set[str] = set()
-        for entry in entries:
-            normalized = entry.filename.replace("\\", "/")
-            path = PurePosixPath(normalized)
-            if (
-                not normalized
-                or normalized.startswith("/")
-                or ".." in path.parts
-                or "\x00" in normalized
-            ):
-                raise UnsafeDocumentError("Office document contains an unsafe archive path")
-            mode = (entry.external_attr >> 16) & 0xFFFF
-            if mode and stat.S_ISLNK(mode):
-                raise UnsafeDocumentError("Office document contains a symbolic link")
-            if entry.flag_bits & 0x1:
-                raise UnsafeDocumentError("Encrypted Office documents are not supported")
-            total_compressed += max(1, int(entry.compress_size or 0))
-            total_uncompressed += int(entry.file_size or 0)
-            names.add(normalized)
-            lowered = normalized.casefold()
-            if (
-                lowered.endswith("vbaproject.bin")
-                or "/embeddings/" in lowered
-                or lowered.startswith("customxml/")
-            ):
-                raise UnsafeDocumentError("Active or embedded Office content is not allowed")
-        if total_uncompressed > settings.knowledge_max_archive_uncompressed_bytes:
-            raise UnsafeDocumentError("Office document expands beyond the allowed size")
-        if (
-            total_uncompressed > 0
-            and total_uncompressed / max(1, total_compressed)
-            > settings.knowledge_max_archive_ratio
-        ):
-            raise UnsafeDocumentError("Office document has an unsafe compression ratio")
-
-        required = {
-            ".docx": "word/document.xml",
-            ".pptx": "ppt/presentation.xml",
-            ".xlsx": "xl/workbook.xml",
-        }[extension]
-        if required not in names or "[Content_Types].xml" not in names:
-            raise UnsafeDocumentError("Office document structure does not match its extension")
-
-        for entry in entries:
-            if not entry.filename.casefold().endswith(".rels"):
-                continue
-            relationship_xml = archive.read(entry)
-            if b'TargetMode="External"' in relationship_xml or b"TargetMode='External'" in relationship_xml:
-                raise UnsafeDocumentError("External Office document relationships are not allowed")
+        validate_ooxml_archive(data, extension)
+    except ArchiveSafetyError as exc:
+        raise UnsafeDocumentError(str(exc)) from exc
 
 
 def _validate_pdf(data: bytes) -> None:
@@ -262,9 +204,7 @@ def _normalize_extracted_text(value: str) -> str:
     value = unicodedata.normalize("NFC", (value or "").replace("\r\n", "\n").replace("\r", "\n"))
     value = value.replace("\x00", "")
     value = "".join(
-        character
-        for character in value
-        if character in {"\n", "\t"} or unicodedata.category(character) != "Cc"
+        character for character in value if character in {"\n", "\t"} or unicodedata.category(character) != "Cc"
     )
     value = re.sub(r"[ \t]+", " ", value)
     value = re.sub(r"\n{4,}", "\n\n\n", value)
@@ -390,7 +330,7 @@ def _ocr_pdf_page_text(
     raise UnsafeDocumentError(f"OCR failed for PDF page {page_number}{detail}") from last_error
 
 
-def parse_document(data: bytes, document: ValidatedDocument) -> ParsedDocument:
+def parse_document(data: bytes, document: ValidatedDocument) -> ParsedDocument:  # noqa: C901 -- Phase 4 split; complexity must not grow
     segments: list[ParsedSegment] = []
     metadata: dict = {"format": document.format_name}
     if document.format_name == "pdf":
@@ -403,13 +343,11 @@ def parse_document(data: bytes, document: ValidatedDocument) -> ParsedDocument:
             for page_number, page in enumerate(reader.pages, start=1):
                 try:
                     text = _normalize_extracted_text(page.extract_text() or "")
-                except Exception:
+                except Exception:  # noqa: BLE001 -- falls back to a safe default value
                     text = ""
                 if len(text) < settings.knowledge_ocr_min_text_characters:
                     if page_number > settings.knowledge_ocr_max_pages:
-                        raise UnsafeDocumentError(
-                            "Scanned PDF exceeds the OCR page limit"
-                        )
+                        raise UnsafeDocumentError("Scanned PDF exceeds the OCR page limit")
                     try:
                         normalized_ocr = _ocr_pdf_page_text(
                             data=data,
@@ -425,13 +363,10 @@ def parse_document(data: bytes, document: ValidatedDocument) -> ParsedDocument:
                     except Exception as exc:
                         if settings.knowledge_ocr_required:
                             raise UnsafeDocumentError(
-                                f"OCR failed for PDF page {page_number}: "
-                                f"{type(exc).__name__}: {exc}"
+                                f"OCR failed for PDF page {page_number}: {type(exc).__name__}: {exc}"
                             ) from exc
                 if text:
-                    segments.append(
-                        ParsedSegment(text=text, page_number=page_number)
-                    )
+                    segments.append(ParsedSegment(text=text, page_number=page_number))
         finally:
             if ocr_document_holder[0] is not None:
                 ocr_document_holder[0].close()
@@ -462,9 +397,7 @@ def parse_document(data: bytes, document: ValidatedDocument) -> ParsedDocument:
                 cells = [_normalize_extracted_text(cell.text) for cell in row.cells]
                 buffer.append(" | ".join(cell for cell in cells if cell))
         if buffer:
-            segments.append(
-                ParsedSegment(text="\n\n".join(buffer), section=current_heading)
-            )
+            segments.append(ParsedSegment(text="\n\n".join(buffer), section=current_heading))
     elif document.format_name == "pptx":
         presentation = Presentation(BytesIO(data))
         metadata["slide_count"] = len(presentation.slides)
@@ -490,11 +423,7 @@ def parse_document(data: bytes, document: ValidatedDocument) -> ParsedDocument:
             for sheet in workbook.worksheets:
                 rows: list[str] = []
                 for values in sheet.iter_rows(values_only=True):
-                    cells = [
-                        _normalize_extracted_text(str(value))
-                        for value in values
-                        if value is not None
-                    ]
+                    cells = [_normalize_extracted_text(str(value)) for value in values if value is not None]
                     if cells:
                         rows.append(" | ".join(cells))
                 if rows:
@@ -521,10 +450,7 @@ def parse_document(data: bytes, document: ValidatedDocument) -> ParsedDocument:
             )
         elif document.format_name == "csv":
             reader = csv.reader(StringIO(text))
-            text = "\n".join(
-                " | ".join(_normalize_extracted_text(cell) for cell in row)
-                for row in reader
-            )
+            text = "\n".join(" | ".join(_normalize_extracted_text(cell) for cell in row) for row in reader)
         normalized = _normalize_extracted_text(text)
         if normalized:
             segments.append(ParsedSegment(text=normalized))

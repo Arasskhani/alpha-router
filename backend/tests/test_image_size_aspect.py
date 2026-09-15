@@ -1,6 +1,5 @@
 """Unit tests for image size normalization and aspect-ratio mapping."""
 
-import asyncio
 import base64
 import io
 
@@ -42,12 +41,12 @@ async def _resolve_from_reference_image() -> None:
     assert aspect == "4:3"
 
 
-def test_resolve_generation_dimensions_from_aspect_ratio():
-    asyncio.run(_resolve_from_aspect_ratio())
+async def test_resolve_generation_dimensions_from_aspect_ratio():
+    await _resolve_from_aspect_ratio()
 
 
-def test_resolve_generation_dimensions_from_reference_image():
-    asyncio.run(_resolve_from_reference_image())
+async def test_resolve_generation_dimensions_from_reference_image():
+    await _resolve_from_reference_image()
 
 
 def test_normalize_aspect_ratio():

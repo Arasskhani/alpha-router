@@ -1,7 +1,6 @@
-export const ADMIN_IP_MODES = ["off", "monitor", "enforce"] as const;
-export type AdminIpMode = (typeof ADMIN_IP_MODES)[number];
+export type AdminIpMode = "off" | "monitor" | "enforce";
 
-export const RESERVED_HTTPS_PORTS = [
+const RESERVED_HTTPS_PORTS = [
   8080, 8081, 5432, 6432, 6379, 6333, 6334, 8333, 3310, 9333, 23646,
 ] as const;
 

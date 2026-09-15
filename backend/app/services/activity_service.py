@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from typing import Any
 
 import pandas as pd
@@ -78,8 +78,8 @@ def _uses_hourly_buckets(period: str) -> bool:
 
 def _as_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def _display_dt(dt: datetime, tz_mode: str) -> datetime:
@@ -169,11 +169,7 @@ def apply_activity_filters(
     if app_filter:
         out = [r for r in out if (r.source or "unknown").strip() == app_filter]
     if alpha_router_api_key_id is not None:
-        out = [
-            r
-            for r in out
-            if r.alpha_router_api_key_id == alpha_router_api_key_id
-        ]
+        out = [r for r in out if r.alpha_router_api_key_id == alpha_router_api_key_id]
     if user_api_key_id is not None:
         if user_api_key_id < 0:
             return []
@@ -186,9 +182,7 @@ def apply_activity_filters(
 
 
 def _aggregate_daily_metrics(rows: list[RequestLog], tz_mode: str) -> dict[str, dict[str, float]]:
-    daily: dict[str, dict[str, float]] = defaultdict(
-        lambda: {"requests": 0.0, "tokens": 0.0, "spend": 0.0}
-    )
+    daily: dict[str, dict[str, float]] = defaultdict(lambda: {"requests": 0.0, "tokens": 0.0, "spend": 0.0})
     for r in rows:
         dt = r.request_time or datetime.utcnow()
         day = _display_dt(dt, tz_mode).date().isoformat()
@@ -347,15 +341,9 @@ def _build_insights(
         "period_prompts": cur_requests,
         "heatmap": {"days": heatmap_days},
         "usage_stats": {
-            "requests": _metric_usage_stats(
-                heatmap_days, heatmap_daily, "requests", end=now, tz_mode=tz_mode
-            ),
-            "tokens": _metric_usage_stats(
-                heatmap_days, heatmap_daily, "tokens", end=now, tz_mode=tz_mode
-            ),
-            "spend": _metric_usage_stats(
-                heatmap_days, heatmap_daily, "spend", end=now, tz_mode=tz_mode
-            ),
+            "requests": _metric_usage_stats(heatmap_days, heatmap_daily, "requests", end=now, tz_mode=tz_mode),
+            "tokens": _metric_usage_stats(heatmap_days, heatmap_daily, "tokens", end=now, tz_mode=tz_mode),
+            "spend": _metric_usage_stats(heatmap_days, heatmap_daily, "spend", end=now, tz_mode=tz_mode),
         },
     }
 
@@ -410,7 +398,7 @@ def _entity_metric(row: RequestLog, metric: str) -> float:
     return float(row.total_cost_usd or 0)
 
 
-def _build_dimension_trends(
+def _build_dimension_trends(  # noqa: C901 -- Phase 4 split; complexity must not grow
     rows: list[RequestLog],
     prev_rows: list[RequestLog],
     *,
@@ -428,12 +416,8 @@ def _build_dimension_trends(
     spend_b: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     req_b: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     tok_b: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-    cur: dict[str, dict[str, float]] = defaultdict(
-        lambda: {"spend": 0.0, "requests": 0.0, "tokens": 0.0}
-    )
-    prev: dict[str, dict[str, float]] = defaultdict(
-        lambda: {"spend": 0.0, "requests": 0.0, "tokens": 0.0}
-    )
+    cur: dict[str, dict[str, float]] = defaultdict(lambda: {"spend": 0.0, "requests": 0.0, "tokens": 0.0})
+    prev: dict[str, dict[str, float]] = defaultdict(lambda: {"spend": 0.0, "requests": 0.0, "tokens": 0.0})
     daily_metric: dict[str, dict[str, dict[str, float]]] = {
         "spend": defaultdict(lambda: defaultdict(float)),
         "requests": defaultdict(lambda: defaultdict(float)),
@@ -634,9 +618,9 @@ def _build_trends(
             rows,
             prev_rows,
             key_fn=api_key_key,
-            label_fn=lambda _r, k: (key_meta.get(k) or {}).get("name")
-            or (key_meta.get(k) or {}).get("label")
-            or f"API key {k}",
+            label_fn=lambda _r, k: (
+                (key_meta.get(k) or {}).get("name") or (key_meta.get(k) or {}).get("label") or f"API key {k}"
+            ),
             subtitle_fn=lambda _r, k: (key_meta.get(k) or {}).get("prefix") or "",
             period=period,
             since=since,
@@ -754,10 +738,7 @@ def _explore_rollup_labels(rollup: str, since: datetime, now: datetime, tz_mode:
         t = since_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         while t <= now_local:
             keys.append(_explore_rollup_key(t, rollup, tz_mode))
-            if t.month == 12:
-                t = t.replace(year=t.year + 1, month=1)
-            else:
-                t = t.replace(month=t.month + 1)
+            t = t.replace(year=t.year + 1, month=1) if t.month == 12 else t.replace(month=t.month + 1)
         return keys
     t = since_local.replace(hour=0, minute=0, second=0, microsecond=0)
     while t <= now_local:
@@ -792,7 +773,7 @@ def _percentile_50(values: list[float]) -> float:
     return float((ordered[mid - 1] + ordered[mid]) / 2.0)
 
 
-def build_explore(
+def build_explore(  # noqa: C901 -- Phase 4 split; complexity must not grow
     rows: list[RequestLog],
     *,
     since: datetime,
@@ -971,11 +952,8 @@ def build_explore(
             totals_for_pct[ekey] = entity_metric_total(ekey)
         grand_total += abs(totals_for_pct[ekey]) if not is_latency else 0.0
 
-    if is_latency:
-        # % of total for latency: share of requests
-        req_total = sum(entity_req.get(k, 0) for k in ranked) or 1.0
-    else:
-        req_total = grand_total or 1.0
+    # % of total for latency: share of requests
+    req_total = (sum(entity_req.get(k, 0) for k in ranked) or 1.0) if is_latency else (grand_total or 1.0)
 
     for idx, ekey in enumerate(table_targets):
         series = entity_bucket_series(ekey)
@@ -1077,9 +1055,7 @@ def _build_overview(
     cached_by_b: dict[str, float] = defaultdict(float)
     model_spend_b: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     model_req_b: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-    model_stats: dict[str, dict[str, float]] = defaultdict(
-        lambda: {"spend": 0.0, "requests": 0.0, "tokens": 0.0}
-    )
+    model_stats: dict[str, dict[str, float]] = defaultdict(lambda: {"spend": 0.0, "requests": 0.0, "tokens": 0.0})
     user_tokens: dict[str, float] = defaultdict(float)
     app_tokens: dict[str, float] = defaultdict(float)
 
@@ -1234,10 +1210,7 @@ def _build_overview(
             if tokens <= 0:
                 continue
             parts = [p for p in key.replace(".", " ").replace("@", " ").split() if p]
-            if len(parts) >= 2:
-                initials = (parts[0][0] + parts[1][0]).upper()
-            else:
-                initials = (key[:2] or "?").upper()
+            initials = (parts[0][0] + parts[1][0]).upper() if len(parts) >= 2 else (key[:2] or "?").upper()
             out.append({"key": key, "label": key, "initials": initials, "tokens": int(tokens)})
         return out
 
@@ -1345,9 +1318,7 @@ def build_activity_payload(
     tz_mode = timezone if timezone in ("local", "utc") else "local"
     explore_opts = explore or {}
 
-    segment_stats: dict[str, dict[str, float]] = defaultdict(
-        lambda: {"spend": 0.0, "requests": 0.0, "tokens": 0.0}
-    )
+    segment_stats: dict[str, dict[str, float]] = defaultdict(lambda: {"spend": 0.0, "requests": 0.0, "tokens": 0.0})
     bucket_spend: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     bucket_requests: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     bucket_tokens: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
@@ -1398,7 +1369,7 @@ def build_activity_payload(
         chart.append(row)
 
     stack_order = list(top_segments)
-    if any(m not in top_set for m in segment_stats.keys()):
+    if any(m not in top_set for m in segment_stats):
         stack_order.append("__others__")
 
     segments_meta: list[dict[str, Any]] = []
@@ -1425,9 +1396,7 @@ def build_activity_payload(
     total_requests = len(rows)
     total_tokens = sum(v["tokens"] for _, v in ranked)
 
-    model_only: dict[str, dict[str, float]] = defaultdict(
-        lambda: {"spend": 0.0, "requests": 0.0, "tokens": 0.0}
-    )
+    model_only: dict[str, dict[str, float]] = defaultdict(lambda: {"spend": 0.0, "requests": 0.0, "tokens": 0.0})
     for r in rows:
         mk = (r.model_id or "unknown").strip() or "unknown"
         model_only[mk]["spend"] += float(r.total_cost_usd or 0)

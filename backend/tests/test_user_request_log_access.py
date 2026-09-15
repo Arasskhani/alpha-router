@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 
 import pytest
 from fastapi import HTTPException
@@ -115,5 +114,5 @@ async def _run() -> None:
     await engine.dispose()
 
 
-def test_owned_request_log_and_message_link():
-    asyncio.run(_run())
+async def test_owned_request_log_and_message_link():
+    await _run()

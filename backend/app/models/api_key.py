@@ -1,10 +1,10 @@
 """Alpharouter gateway keys (admin) and per-user keys."""
 
 import datetime
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Table, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Table, Text
 from sqlalchemy.orm import relationship
 
-from app.database import Base
+from app.database import Base, MoneyUSD
 
 alpha_router_api_key_connections = Table(
     "alpha_router_api_key_connections",
@@ -63,12 +63,17 @@ class AlphaRouterApiKey(Base):
     last_used_at = Column(DateTime, nullable=True)
     notes = Column(Text, nullable=True)
     owner_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
-    credit_limit_usd = Column(Float, default=0.0)
+    credit_limit_usd = Column(MoneyUSD, default=0.0)
+    # Explicit opt-out from the credit limit. A key with credit_limit_usd <= 0
+    # and this false is *blocked*, not unlimited. Nullable so the column can be
+    # added to existing tables; db_migrate.backfill_api_key_unlimited_budget
+    # sets it from the old implicit semantics ("0 meant no cap") exactly once.
+    unlimited_budget = Column(Boolean, nullable=True, default=False)
     reset_period = Column(String(16), default="monthly")  # daily | weekly | monthly
     expires_at = Column(DateTime, nullable=True)
-    period_used_usd = Column(Float, default=0.0)
-    period_reserved_usd = Column(Float, nullable=False, server_default="0", default=0.0)
-    total_used_usd = Column(Float, default=0.0)
+    period_used_usd = Column(MoneyUSD, default=0.0)
+    period_reserved_usd = Column(MoneyUSD, nullable=False, server_default="0", default=0.0)
+    total_used_usd = Column(MoneyUSD, default=0.0)
     period_started_at = Column(DateTime, nullable=True)
     restrict_connections = Column(Boolean, default=False, nullable=False, server_default="0")
     restrict_models = Column(Boolean, default=False, nullable=False, server_default="0")

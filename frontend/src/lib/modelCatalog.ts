@@ -10,7 +10,7 @@ export type ModelKind =
 
 export type ModelAccessType = "public" | "private";
 
-export type CodeInterpreterCompatibilityInfo = {
+type CodeInterpreterCompatibilityInfo = {
   status: "compatible" | "unknown" | "probing" | "degraded" | "incompatible";
   compatible: boolean;
   selectable: boolean;
@@ -31,8 +31,8 @@ export type CatalogModel = {
   admin_disabled?: boolean;
   /** Admin system default for users who have not chosen a personal default. */
   is_system_default?: boolean;
-  /** Admin default speech-to-text model for the mic button. */
-  is_transcription_default?: boolean;
+  /** Kinds this model is the system default for (e.g. "text", "transcription", "image"). */
+  default_kinds?: string[];
   access_type?: ModelAccessType;
   assignment_counts?: { users: number; groups: number };
   input_cost_per_1k: number | null;
@@ -109,7 +109,7 @@ export type ModelEnabledFilter = "on" | "off";
 export type ModelAccessFilter = ModelAccessType;
 export const MODEL_NEW_WINDOWS = [1, 3, 7, 14, 30] as const;
 export type ModelNewFilter = (typeof MODEL_NEW_WINDOWS)[number];
-export const MODEL_NEW_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MODEL_NEW_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export function isNewlyListedModel(
   model: CatalogModel,

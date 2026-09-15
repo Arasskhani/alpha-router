@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from pathlib import Path
@@ -81,9 +82,7 @@ async def _table_exists(db: AsyncSession, table: str, kind: str) -> bool:
     if kind == "sqlite":
         row = (
             await db.execute(
-                text(
-                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :name LIMIT 1"
-                ),
+                text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :name LIMIT 1"),
                 {"name": table},
             )
         ).first()
@@ -91,8 +90,7 @@ async def _table_exists(db: AsyncSession, table: str, kind: str) -> bool:
     row = (
         await db.execute(
             text(
-                "SELECT 1 FROM information_schema.tables "
-                "WHERE table_schema = 'public' AND table_name = :name LIMIT 1"
+                "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = :name LIMIT 1"
             ),
             {"name": table},
         )
@@ -105,6 +103,16 @@ async def _count_rows(db: AsyncSession, table: str) -> int | None:
     result = await db.execute(text(f'SELECT COUNT(*) FROM "{table}"'))
     val = result.scalar()
     return int(val) if val is not None else 0
+
+
+async def collect_system_metrics() -> dict[str, Any]:
+    """``_collect_system_metrics`` off the event loop.
+
+    psutil's ``cpu_percent(interval=...)`` sleeps for the sampling window
+    (0.15 s + 0.1 s here). Called inline that stalled every request on the
+    worker for a quarter second per admin refresh and per metrics snapshot.
+    """
+    return await asyncio.to_thread(_collect_system_metrics)
 
 
 def _collect_system_metrics() -> dict[str, Any]:
@@ -143,7 +151,7 @@ def _collect_system_metrics() -> dict[str, Any]:
             "memory_rss_bytes": int(mem.rss),
         }
         out["available"] = True
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
         out["error"] = str(exc)
     return out
 
@@ -171,9 +179,9 @@ async def collect_snapshot_metrics(db: AsyncSession) -> dict[str, Any]:
         elif kind == "postgresql":
             size = (await db.execute(text("SELECT pg_database_size(current_database())"))).scalar()
             out["db_size_bytes"] = int(size) if size is not None else None
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
         pass
-    system = _collect_system_metrics()
+    system = await collect_system_metrics()
     if system.get("available") and system.get("host"):
         out["host_cpu_percent"] = system["host"].get("cpu_percent")
         out["host_memory_percent"] = system["host"].get("memory_percent")
@@ -198,7 +206,7 @@ async def collect_database_monitor(db: AsyncSession) -> dict[str, Any]:
         "database_file_path": None,
         "postgres_connections": None,
         "tables": [],
-        "system": _collect_system_metrics(),
+        "system": await collect_system_metrics(),
         "error": None,
     }
 
@@ -250,7 +258,7 @@ async def collect_database_monitor(db: AsyncSession) -> dict[str, Any]:
                 continue
             try:
                 count = await _count_rows(db, table_name)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
                 tables_out.append(
                     {
                         "name": table_name,
@@ -270,7 +278,7 @@ async def collect_database_monitor(db: AsyncSession) -> dict[str, Any]:
                 }
             )
         out["tables"] = tables_out
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
         out["connected"] = False
         out["error"] = str(exc)
 

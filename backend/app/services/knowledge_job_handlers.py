@@ -100,16 +100,13 @@ async def handle_qdrant_activate_index(
     if target.status not in {"validating", "active"}:
         raise ValueError("Knowledge index must pass validation before activation")
     if int(target.indexed_point_count or 0) != int(target.expected_point_count or 0):
-        raise ValueError(
-            "Knowledge index point count does not match its release manifest"
-        )
+        raise ValueError("Knowledge index point count does not match its release manifest")
 
     current = (
         await db.execute(
             select(KnowledgeIndexVersion).where(
                 KnowledgeIndexVersion.knowledge_base_id == target.knowledge_base_id,
-                KnowledgeIndexVersion.active_scope_key
-                == f"kb-index:{target.knowledge_base_id}",
+                KnowledgeIndexVersion.active_scope_key == f"kb-index:{target.knowledge_base_id}",
                 KnowledgeIndexVersion.id != target.id,
             )
         )
@@ -143,11 +140,7 @@ async def handle_qdrant_delete_tombstone(
     collections = selector.get("collections")
     if isinstance(collections, list):
         collection_names = tuple(
-            dict.fromkeys(
-                str(item).strip()
-                for item in collections
-                if isinstance(item, str) and item.strip()
-            )
+            dict.fromkeys(str(item).strip() for item in collections if isinstance(item, str) and item.strip())
         )
     else:
         collection_names = ()
@@ -164,9 +157,7 @@ async def handle_qdrant_delete_tombstone(
     }
     if not collection_names and not tombstone.storage_key:
         raise ValueError("Deletion tombstone has no external resource selector")
-    if collection_names and (
-        field_name not in allowed_fields or not isinstance(value, str)
-    ):
+    if collection_names and (field_name not in allowed_fields or not isinstance(value, str)):
         raise ValueError("Deletion tombstone has an invalid vector selector")
 
     version: KnowledgeDocumentVersion | None = None
@@ -208,17 +199,11 @@ async def handle_qdrant_delete_tombstone(
         store = context.object_store or default_knowledge_object_store()
         await store.delete(tombstone.storage_key)
     if version is not None and document is not None:
-        await db.execute(
-            delete(KnowledgeChunk).where(
-                KnowledgeChunk.document_version_id == version.id
-            )
-        )
+        await db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_version_id == version.id))
         metadata = dict(version.metadata_json or {})
         metadata["retention"] = {
             "purged": True,
-            "purged_at": datetime.datetime.now(datetime.UTC)
-            .replace(tzinfo=None)
-            .isoformat(),
+            "purged_at": datetime.datetime.now(datetime.UTC).replace(tzinfo=None).isoformat(),
             "tombstone_id": tombstone.id,
         }
         version.metadata_json = metadata
@@ -291,13 +276,9 @@ async def handle_knowledge_index_build(
     await build_and_activate_knowledge_index(
         db,
         index_version_id=job.index_version_id,
-        published_by_user_id=(
-            int(published_by_user_id) if published_by_user_id is not None else None
-        ),
+        published_by_user_id=(int(published_by_user_id) if published_by_user_id is not None else None),
         qdrant=context.qdrant,
-        embedding_backend=(
-            context.embedding_backend or CatalogKnowledgeEmbeddingBackend()
-        ),
+        embedding_backend=(context.embedding_backend or CatalogKnowledgeEmbeddingBackend()),
     )
 
 

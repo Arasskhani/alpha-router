@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-export type ExploreMenuOption = { value: string; label: string };
+type ExploreMenuOption = { value: string; label: string };
 
 type Props = {
   value: string;

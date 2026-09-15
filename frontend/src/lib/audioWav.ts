@@ -35,12 +35,6 @@ function offlineAudioContextCtor(): OfflineAudioContextCtor | null {
   const w = window as Window & { webkitOfflineAudioContext?: OfflineAudioContextCtor };
   return window.OfflineAudioContext || w.webkitOfflineAudioContext || null;
 }
-
-/** True when this browser can decode and re-encode audio at all. */
-export function canEncodeWav(): boolean {
-  return Boolean(audioContextCtor() && offlineAudioContextCtor());
-}
-
 /**
  * Downmix to mono at `sampleRate`.
  *
@@ -78,7 +72,7 @@ function writeAscii(view: DataView, offset: number, text: string): void {
 }
 
 /** Wrap mono float samples in a canonical 16-bit PCM RIFF/WAVE container. */
-export function encodeWav(samples: Float32Array, sampleRate: number): Blob {
+function encodeWav(samples: Float32Array, sampleRate: number): Blob {
   const dataBytes = samples.length * BYTES_PER_SAMPLE;
   const buffer = new ArrayBuffer(WAV_HEADER_BYTES + dataBytes);
   const view = new DataView(buffer);

@@ -7,7 +7,6 @@ shape) rather than Redis itself.
 
 from __future__ import annotations
 
-import asyncio
 
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -150,8 +149,8 @@ async def _flow(fake: FakeRedis) -> None:
     await engine.dispose()
 
 
-def test_presence_http_surface(monkeypatch) -> None:
+async def test_presence_http_surface(monkeypatch) -> None:
     fake = FakeRedis()
     monkeypatch.setattr(presence_service, "_client", lambda: fake)
     monkeypatch.setattr(presence_service, "get_settings", lambda: FakeSettings())
-    asyncio.run(_flow(fake))
+    await _flow(fake)

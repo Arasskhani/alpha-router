@@ -61,6 +61,43 @@ def image_request_timeout() -> float:
     return value if value > 0 else OPENROUTER_READ_TIMEOUT
 
 
+_SAFE_TO_RESEND_EXC: tuple[type[BaseException], ...] = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.PoolTimeout,
+    httpx.WriteError,
+    httpx.WriteTimeout,
+    httpcore.ConnectError,
+    httpcore.WriteError,
+)
+
+
+def openrouter_max_connections() -> int:
+    """Pool ceiling for the shared OpenRouter client (OPENROUTER_MAX_CONNECTIONS).
+
+    Eight was hard-coded: the ninth concurrent image/transcription request on
+    a worker waited in PoolTimeout while the provider sat idle.
+    """
+    try:
+        from app.config import get_settings
+
+        value = int(getattr(get_settings(), "openrouter_max_connections", 0) or 0)
+    except Exception:  # noqa: BLE001
+        return 32
+    return value if value > 0 else 32
+
+
+def is_safe_to_resend_post(exc: BaseException) -> bool:
+    """True only when the request body cannot have reached the provider.
+
+    A POST that timed out while *reading* the response (or whose connection
+    dropped after the body was sent) may already be generating and billing
+    on the provider side; sending it again pays twice. Connect and write
+    failures happened before the provider had the request, so they are safe.
+    """
+    return isinstance(exc, _SAFE_TO_RESEND_EXC)
+
+
 def is_retryable_openrouter_transport_error(exc: BaseException) -> bool:
     """True for disconnects / timeouts that should try another connection or strategy."""
     if isinstance(exc, _RETRYABLE_EXC):
@@ -85,7 +122,7 @@ def get_openrouter_http_client() -> httpx.AsyncClient:
         # Keepalive=0 avoids reusing half-closed sockets after long Gemini image waits.
         _shared_client = httpx.AsyncClient(
             timeout=httpx.Timeout(OPENROUTER_READ_TIMEOUT, connect=OPENROUTER_CONNECT_TIMEOUT),
-            limits=httpx.Limits(max_connections=8, max_keepalive_connections=0),
+            limits=httpx.Limits(max_connections=openrouter_max_connections(), max_keepalive_connections=0),
             follow_redirects=True,
             http2=False,
         )
@@ -302,9 +339,7 @@ def is_transient_empty_openrouter_image_response(
     """
     if collected:
         return False
-    if openrouter_message_is_text_only(data):
-        return False
-    return True
+    return not openrouter_message_is_text_only(data)
 
 
 def build_openrouter_headers(api_key: str, *, referer: str | None = None) -> dict[str, str]:
@@ -324,7 +359,12 @@ async def post_openrouter_json(
     max_attempts: int = OPENROUTER_IMAGE_MAX_ATTEMPTS,
     on_attempt_error: Callable[[int, datetime.datetime, Exception], None] | None = None,
 ) -> httpx.Response:
-    """POST JSON to OpenRouter with retries on transient disconnects."""
+    """POST JSON to OpenRouter, resending only when the body never got there.
+
+    Retries cover connect/write failures. A read timeout or a disconnect after
+    the request was sent is raised to the caller: the provider may be
+    finishing (and charging for) the first attempt.
+    """
     last_exc: Exception | None = None
     timeout = httpx.Timeout(read_timeout or image_request_timeout(), connect=OPENROUTER_CONNECT_TIMEOUT)
     attempts = max(1, int(max_attempts))
@@ -347,7 +387,7 @@ async def post_openrouter_json(
         except Exception as exc:
             if on_attempt_error is not None:
                 on_attempt_error(attempt, attempt_started_at, exc)
-            if not is_retryable_openrouter_transport_error(exc):
+            if not is_safe_to_resend_post(exc):
                 raise
             last_exc = exc
             # The client is process-shared. Closing it here races with unrelated

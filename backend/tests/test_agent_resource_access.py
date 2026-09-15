@@ -1,7 +1,5 @@
 """Deny-first Agent and Knowledge resource ACL tests."""
 
-import asyncio
-
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import app.models  # noqa: F401
@@ -130,9 +128,7 @@ async def _test_private_assignments_cover_all_principal_types() -> None:
         group = UserGroup(name="legal", source="local")
         db.add(group)
         await db.flush()
-        await db.execute(
-            user_group_members.insert().values(user_id=group_member.id, group_id=group.id)
-        )
+        await db.execute(user_group_members.insert().values(user_id=group_member.id, group_id=group.id))
         agent = await _agent(db, "private")
         await set_agent_access(
             db,
@@ -262,32 +258,32 @@ async def _test_filter_and_acl_version_increment() -> None:
     await engine.dispose()
 
 
-def test_public_access_and_inactive_denial():
-    asyncio.run(_test_public_access_and_inactive_denial())
+async def test_public_access_and_inactive_denial():
+    await _test_public_access_and_inactive_denial()
 
 
-def test_private_assignments_cover_all_principal_types():
-    asyncio.run(_test_private_assignments_cover_all_principal_types())
+async def test_private_assignments_cover_all_principal_types():
+    await _test_private_assignments_cover_all_principal_types()
 
 
-def test_deny_overrides_public_and_allow():
-    asyncio.run(_test_deny_overrides_public_and_allow())
+async def test_deny_overrides_public_and_allow():
+    await _test_deny_overrides_public_and_allow()
 
 
-def test_super_admin_requires_explicit_break_glass():
-    asyncio.run(_test_super_admin_requires_explicit_break_glass())
+async def test_super_admin_requires_explicit_break_glass():
+    await _test_super_admin_requires_explicit_break_glass()
 
 
-def test_document_acl_restricts_inherited_kb_access():
-    asyncio.run(_test_document_acl_restricts_inherited_kb_access())
+async def test_document_acl_restricts_inherited_kb_access():
+    await _test_document_acl_restricts_inherited_kb_access()
 
 
-def test_kb_acl_is_required_even_with_document_allow():
-    asyncio.run(_test_kb_acl_is_required_even_with_document_allow())
+async def test_kb_acl_is_required_even_with_document_allow():
+    await _test_kb_acl_is_required_even_with_document_allow()
 
 
-def test_filter_and_acl_version_increment():
-    asyncio.run(_test_filter_and_acl_version_increment())
+async def test_filter_and_acl_version_increment():
+    await _test_filter_and_acl_version_increment()
 
 
 def test_compile_acl_payload_is_normalized_and_deny_aware():

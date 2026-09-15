@@ -21,6 +21,8 @@ from app.services.speech_providers.contracts import (
     SpeechProviderError,
 )
 from app.services.storage_service import audio_output_limit
+from app.core.constants import normalize_openrouter_base_url
+from app.config import get_settings
 
 _FORMAT_TO_MIME: dict[str, str] = {
     "mp3": "audio/mpeg",
@@ -28,15 +30,7 @@ _FORMAT_TO_MIME: dict[str, str] = {
 }
 
 
-def normalize_openrouter_base(base_url: str | None) -> str:
-    base = (base_url or "https://openrouter.ai/api/v1").strip().rstrip("/")
-    if not base:
-        return "https://openrouter.ai/api/v1"
-    low = base.lower()
-    # Admins often save https://openrouter.ai; force API root to avoid HTML pages.
-    if "openrouter.ai" in low and "/api/" not in low:
-        return "https://openrouter.ai/api/v1"
-    return base
+normalize_openrouter_base = normalize_openrouter_base_url
 
 
 def _audio_base(base_url: str | None) -> str:
@@ -56,7 +50,7 @@ def _provider_error_detail(response: Any) -> str:
     text = (getattr(response, "text", None) or "")[:800]
     try:
         payload = response.json()
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return text or "Speech provider request )
         return text or "Speech provider request failed"
     if not isinstance(payload, dict):
         return text or "Speech provider request failed"
@@ -81,7 +75,7 @@ class OpenRouterSpeechAdapter:
         # Chat TTS surface is mp3-only; pcm remains available for internal/API use.
         return ("mp3",)
 
-    async def generate(
+    async def generate(  # noqa: C901 -- Phase 4 split; complexity must not grow
         self,
         *,
         api_key: str,
@@ -117,7 +111,7 @@ class OpenRouterSpeechAdapter:
                 _audio_base(base_url),
                 json=payload,
                 headers=headers,
-                timeout=120.0,
+                timeout=get_settings().speech_http_timeout_seconds,
             )
         except Exception as exc:
             raise SpeechProviderError(
@@ -148,12 +142,10 @@ class OpenRouterSpeechAdapter:
             )
         # Guard against JSON error bodies returned with a 200 status.
         content_type = (response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-        if content_type.startswith("application/json") or (
-            len(blob) < 512 and blob.lstrip().startswith(b"{")
-        ):
+        if content_type.startswith("application/json") or (len(blob) < 512 and blob.lstrip().startswith(b"{")):
             try:
                 parsed = json.loads(blob.decode("utf-8", errors="replace"))
-            except Exception:
+            except Exception:  # noqa: BLE001 -- falls back to a safe default value
                 parsed = None
             if isinstance(parsed, dict) and (parsed.get("error") or parsed.get("message")):
                 detail = "Speech provider returned an error payload"

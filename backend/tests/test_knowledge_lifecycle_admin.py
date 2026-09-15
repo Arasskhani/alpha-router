@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime
 import uuid
 
@@ -153,34 +152,34 @@ async def _run_hard_delete_knowledge_base_tombstones_row() -> None:
         await db.commit()
         assert result["name"] == "Temp KB"
         assert store.deleted == ["knowledge/a.pdf"]
-        remaining = (
-            await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb.id))
-        ).scalar_one_or_none()
+        remaining = (await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb.id))).scalar_one_or_none()
         assert remaining is not None
         assert remaining.slug.startswith("purged-")
         assert remaining.status == "archived"
         assert result.get("tombstoned") is True
         docs = (
-            await db.execute(
-                select(KnowledgeDocument).where(KnowledgeDocument.knowledge_base_id == kb.id)
-            )
-        ).scalars().all()
+            (await db.execute(select(KnowledgeDocument).where(KnowledgeDocument.knowledge_base_id == kb.id)))
+            .scalars()
+            .all()
+        )
         assert all(doc.status == "deleted" for doc in docs)
         versions_left = (
-            await db.execute(
-                select(KnowledgeDocumentVersion).where(
-                    KnowledgeDocumentVersion.document_id.in_(
-                        [doc.id for doc in docs] or ["__none__"]
+            (
+                await db.execute(
+                    select(KnowledgeDocumentVersion).where(
+                        KnowledgeDocumentVersion.document_id.in_([doc.id for doc in docs] or ["__none__"])
                     )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert versions_left == []
         audit = (
-            await db.execute(
-                select(KnowledgeAuditEvent).where(KnowledgeAuditEvent.knowledge_base_id == kb.id)
-            )
-        ).scalars().all()
+            (await db.execute(select(KnowledgeAuditEvent).where(KnowledgeAuditEvent.knowledge_base_id == kb.id)))
+            .scalars()
+            .all()
+        )
         assert len(audit) == 1
     await engine.dispose()
 
@@ -291,20 +290,20 @@ async def _run_schedule_expired_retention_can_scope_to_one_base() -> None:
     await engine.dispose()
 
 
-def test_soft_revoke_document_marks_document():
-    asyncio.run(_run_soft_revoke_document_marks_document())
+async def test_soft_revoke_document_marks_document():
+    await _run_soft_revoke_document_marks_document()
 
 
-def test_hard_delete_knowledge_base_tombstones_row():
-    asyncio.run(_run_hard_delete_knowledge_base_tombstones_row())
+async def test_hard_delete_knowledge_base_tombstones_row():
+    await _run_hard_delete_knowledge_base_tombstones_row()
 
 
-def test_purge_agent_tombstones_row():
-    asyncio.run(_run_purge_agent_tombstones_row())
+async def test_purge_agent_tombstones_row():
+    await _run_purge_agent_tombstones_row()
 
 
-def test_schedule_expired_retention_can_scope_to_one_base():
-    asyncio.run(_run_schedule_expired_retention_can_scope_to_one_base())
+async def test_schedule_expired_retention_can_scope_to_one_base():
+    await _run_schedule_expired_retention_can_scope_to_one_base()
 
 
 async def _run_purge_expired_retention_removes_expired_files() -> None:
@@ -380,9 +379,7 @@ async def _run_purge_expired_retention_removes_expired_files() -> None:
             size_bytes=12,
             sha256="b" * 64,
         )
-        db.add_all(
-            [knowledge_base, expired, fresh, expired_version, fresh_version]
-        )
+        db.add_all([knowledge_base, expired, fresh, expired_version, fresh_version])
         await db.flush()
         result = await purge_expired_knowledge_retention(
             db,
@@ -398,8 +395,8 @@ async def _run_purge_expired_retention_removes_expired_files() -> None:
         assert (await db.get(KnowledgeDocument, fresh.id)).status == "revoked"
 
 
-def test_purge_expired_retention_removes_expired_files():
-    asyncio.run(_run_purge_expired_retention_removes_expired_files())
+async def test_purge_expired_retention_removes_expired_files():
+    await _run_purge_expired_retention_removes_expired_files()
 
 
 async def _run_overview_counts_only_live_documents() -> None:
@@ -433,17 +430,13 @@ async def _run_overview_counts_only_live_documents() -> None:
         await db.flush()
         live = [
             document
-            for document in (
-                await db.execute(select(KnowledgeDocument))
-            ).scalars().all()
+            for document in (await db.execute(select(KnowledgeDocument))).scalars().all()
             if is_live_knowledge_document(document)
         ]
-        assert {document.status for document in live} == set(
-            LIVE_KNOWLEDGE_DOCUMENT_STATUSES
-        )
+        assert {document.status for document in live} == set(LIVE_KNOWLEDGE_DOCUMENT_STATUSES)
         assert len(live) == 3
     await engine.dispose()
 
 
-def test_overview_counts_only_live_documents():
-    asyncio.run(_run_overview_counts_only_live_documents())
+async def test_overview_counts_only_live_documents():
+    await _run_overview_counts_only_live_documents()

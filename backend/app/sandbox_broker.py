@@ -117,6 +117,7 @@ async def _lifespan(_app: FastAPI):
         _runtime_ready = False
         await _shutdown_jobs()
 
+
 app = FastAPI(
     title=f"{PRODUCT_NAME} Sandbox Broker",
     docs_url=None,
@@ -246,10 +247,7 @@ class BrokerSecurityMiddleware:
             await self.app(scope, receive, send)
             return
 
-        headers = {
-            key.decode("latin-1").lower(): value.decode("latin-1")
-            for key, value in scope.get("headers", [])
-        }
+        headers = {key.decode("latin-1").lower(): value.decode("latin-1") for key, value in scope.get("headers", [])}
         try:
             _authorize(headers.get("authorization"))
         except HTTPException as exc:
@@ -314,7 +312,7 @@ async def _check_readiness() -> dict[str, str]:
             stderr=asyncio.subprocess.DEVNULL,
         )
         await asyncio.wait_for(check.wait(), timeout=3)
-    except (FileNotFoundError, TimeoutError, asyncio.TimeoutError):
+    except (FileNotFoundError, TimeoutError):
         raise HTTPException(status_code=503, detail="Sandbox runtime unavailable") from None
     if check.returncode != 0:
         raise HTTPException(status_code=503, detail="Sandbox image unavailable")
@@ -342,7 +340,7 @@ async def readyz() -> dict[str, str]:
 async def execute(body: ExecuteRequest) -> dict[str, object]:
     try:
         await asyncio.wait_for(_semaphore.acquire(), timeout=QUEUE_TIMEOUT_SECONDS)
-    except (TimeoutError, asyncio.TimeoutError):
+    except TimeoutError:
         raise HTTPException(status_code=429, detail="Sandbox capacity is busy") from None
     try:
         return await _run_container(body)
@@ -400,7 +398,7 @@ async def _force_remove(container_name: str) -> None:
         await asyncio.wait_for(cleanup.wait(), timeout=5)
 
 
-async def _run_container(body: ExecuteRequest, job: "_Job | None" = None) -> dict[str, object]:
+async def _run_container(body: ExecuteRequest, job: _Job | None = None) -> dict[str, object]:
     container_name = f"alpha-router-sandbox-{uuid.uuid4().hex}"
     payload = json.dumps(
         {"code": body.code, "files": body.files},
@@ -468,7 +466,7 @@ async def _run_container(body: ExecuteRequest, job: "_Job | None" = None) -> dic
             timeout=EXECUTION_TIMEOUT_SECONDS,
         )
         completed = True
-    except (TimeoutError, asyncio.TimeoutError):
+    except TimeoutError:
         raise HTTPException(status_code=504, detail="Sandbox execution timed out") from None
     except _OutputLimitExceeded:
         raise HTTPException(status_code=413, detail="Sandbox output exceeds limit") from None
@@ -520,13 +518,13 @@ async def _run_container(body: ExecuteRequest, job: "_Job | None" = None) -> dic
 
 
 def _now() -> datetime.datetime:
-    return datetime.datetime.now(datetime.timezone.utc)
+    return datetime.datetime.now(datetime.UTC)
 
 
 @dataclasses.dataclass
 class _Job:
     job_id: str
-    request: "ExecuteRequest | None" = None
+    request: ExecuteRequest | None = None
     state: JobState = JobState.PENDING
     created_at: datetime.datetime = dataclasses.field(default_factory=_now)
     updated_at: datetime.datetime = dataclasses.field(default_factory=_now)
@@ -582,9 +580,7 @@ async def _acquire_no_queue() -> bool:
     return True
 
 
-async def _terminate(
-    proc: asyncio.subprocess.Process | None, container_name: str | None
-) -> None:
+async def _terminate(proc: asyncio.subprocess.Process | None, container_name: str | None) -> None:
     """Kill the docker CLI process and force-remove its container."""
     if proc is not None:
         with contextlib.suppress(Exception):
@@ -659,17 +655,14 @@ def _reap_jobs_locked() -> None:
     stale = [
         job_id
         for job_id, job in _jobs.items()
-        if is_terminal(job.state)
-        and (now - job.updated_at).total_seconds() > JOB_RETENTION_SECONDS
+        if is_terminal(job.state) and (now - job.updated_at).total_seconds() > JOB_RETENTION_SECONDS
     ]
     for job_id in stale:
         _jobs.pop(job_id, None)
 
 
 def _evict_oldest_terminal_locked() -> bool:
-    terminal = [
-        (job.updated_at, job_id) for job_id, job in _jobs.items() if is_terminal(job.state)
-    ]
+    terminal = [(job.updated_at, job_id) for job_id, job in _jobs.items() if is_terminal(job.state)]
     if not terminal:
         return False
     terminal.sort()
@@ -786,9 +779,7 @@ async def cancel_job(job_id: str):
 @app.get("/v1/capacity")
 async def capacity() -> dict[str, object]:
     async with _jobs_lock:
-        active = sum(
-            1 for job in _jobs.values() if job.state in (JobState.PENDING, JobState.RUNNING)
-        )
+        active = sum(1 for job in _jobs.values() if job.state in (JobState.PENDING, JobState.RUNNING))
         tracked = len(_jobs)
     available = max(0, int(getattr(_semaphore, "_value", 0)))
     in_use = max(0, MAX_CONCURRENT_SANDBOXES - available)

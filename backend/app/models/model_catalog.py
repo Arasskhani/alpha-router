@@ -16,7 +16,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 
-from app.database import Base
+from app.database import Base, UnitPriceUSD
 
 
 class AIModel(Base):
@@ -42,8 +42,8 @@ class AIModel(Base):
     is_video_model = Column(Boolean, default=False)
 
     # Per 1K token USD from provider (nullable if provider does not expose)
-    input_cost_per_1k = Column(Float, nullable=True)
-    output_cost_per_1k = Column(Float, nullable=True)
+    input_cost_per_1k = Column(UnitPriceUSD, nullable=True)
+    output_cost_per_1k = Column(UnitPriceUSD, nullable=True)
     # Some providers return per-token; we normalize to per-1k on sync
     pricing_unit = Column(String(16), default="1k")  # 1k | 1m
     pricing_raw = Column(Text, nullable=True)  # JSON snapshot from provider
@@ -75,13 +75,9 @@ class ModelAccessAssignment(Base):
     )
 
     id = Column(Integer, primary_key=True)
-    model_id = Column(
-        Integer, ForeignKey("ai_models.id", ondelete="CASCADE"), nullable=False, index=True
-    )
+    model_id = Column(Integer, ForeignKey("ai_models.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
-    group_id = Column(
-        Integer, ForeignKey("user_groups.id", ondelete="CASCADE"), nullable=True, index=True
-    )
+    group_id = Column(Integer, ForeignKey("user_groups.id", ondelete="CASCADE"), nullable=True, index=True)
     assigned_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     model = relationship("AIModel", back_populates="access_assignments")

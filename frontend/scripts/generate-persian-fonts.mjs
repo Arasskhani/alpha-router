@@ -39,6 +39,16 @@ const WEIGHT_MAP = {
 
 const FONT_EXT_RE = /\.(woff2|woff)$/i;
 
+/** Write only when the content differs, so an unchanged catalog never touches mtime. */
+function writeIfChanged(file, content) {
+  try {
+    if (fs.readFileSync(file, "utf8") === content) return;
+  } catch {
+    /* first run */
+  }
+  fs.writeFileSync(file, content, "utf8");
+}
+
 function walkFiles(dir) {
   if (!fs.existsSync(dir)) return [];
   const out = [];
@@ -239,8 +249,9 @@ function main() {
   const files = walkFiles(FONTS_DIR);
   const families = buildCatalog(files);
 
+  // No timestamp: the manifest is tracked in git and regenerated on every
+  // build, so its content must depend only on public/fonts.
   const manifest = {
-    generatedAt: new Date().toISOString(),
     families: families.map((f) => ({
       id: f.id,
       label: f.label,
@@ -256,8 +267,8 @@ function main() {
     })),
   };
 
-  fs.writeFileSync(OUT_JSON, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-  fs.writeFileSync(OUT_CSS, emitCss(families), "utf8");
+  writeIfChanged(OUT_JSON, `${JSON.stringify(manifest, null, 2)}\n`);
+  writeIfChanged(OUT_CSS, emitCss(families));
 
   console.log(
     `[persian-fonts] ${families.length} famil${families.length === 1 ? "y" : "ies"} from ${files.length} file(s) → src/generated/`,

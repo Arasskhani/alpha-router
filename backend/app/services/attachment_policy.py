@@ -74,7 +74,6 @@ BLOCKED_EXTENSIONS: frozenset[str] = frozenset(
         "z",
         "url",
         "desktop",
-        "lnk",
         "torrent",
         "wasm",
         "elf",
@@ -83,8 +82,6 @@ BLOCKED_EXTENSIONS: frozenset[str] = frozenset(
         "sys",
         "drv",
         "ocx",
-        "cpl",
-        "hta",
         "xht",
         "shtml",
         "mht",
@@ -193,10 +190,7 @@ ALLOWED_DOCUMENT_EXTENSIONS: frozenset[str] = frozenset(
 )
 
 ALLOWED_EXTENSIONS = (
-    ALLOWED_IMAGE_EXTENSIONS
-    | ALLOWED_VIDEO_EXTENSIONS
-    | ALLOWED_AUDIO_EXTENSIONS
-    | ALLOWED_DOCUMENT_EXTENSIONS
+    ALLOWED_IMAGE_EXTENSIONS | ALLOWED_VIDEO_EXTENSIONS | ALLOWED_AUDIO_EXTENSIONS | ALLOWED_DOCUMENT_EXTENSIONS
 )
 
 # Extension → MIME for documents. Client Content-Type is never trusted for these.
@@ -362,9 +356,7 @@ def validate_attachment_filename(filename: str) -> tuple[str, str]:
 
     for ext in _all_extensions(filename):
         if ext in BLOCKED_EXTENSIONS:
-            raise AttachmentPolicyError(
-                f'File type ".{ext}" is not allowed for security reasons.'
-            )
+            raise AttachmentPolicyError(f'File type ".{ext}" is not allowed for security reasons.')
 
     ext = _extension(filename)
     if not ext:
@@ -394,9 +386,7 @@ def validate_attachment_size(size: int, *, max_bytes: int | None = None) -> None
     if limit <= 0:
         limit = MAX_ATTACHMENT_BYTES
     if size > limit:
-        raise AttachmentPolicyError(
-            f"File is too large (max {max(1, limit // (1024 * 1024))} MB)."
-        )
+        raise AttachmentPolicyError(f"File is too large (max {max(1, limit // (1024 * 1024))} MB).")
 
 
 def resolve_attachment_mime(
@@ -527,11 +517,9 @@ def build_media_content_disposition(file_name: str, *, disposition: str) -> str:
     disp = disposition if disposition in ("inline", "attachment") else "attachment"
     raw = (file_name or "download").replace("\\", "/").split("/")[-1]
     raw = raw.replace("\r", "").replace("\n", "").replace('"', "").strip() or "download"
-    ascii_name = (
-        "".join(c for c in raw if (c.isascii() and c.isalnum()) or c in "-_.") or "download"
-    )[:80]
+    ascii_name = ("".join(c for c in raw if (c.isascii() and c.isalnum()) or c in "-_.") or "download")[:80]
     utf8_name = quote(raw[:120], safe="")
-    return f'{disp}; filename="{ascii_name}"; filename*=UTF-8\'\'{utf8_name}'
+    return f"{disp}; filename=\"{ascii_name}\"; filename*=UTF-8''{utf8_name}"
 
 
 def media_response_type_and_disposition(
@@ -545,8 +533,10 @@ def media_response_type_and_disposition(
     stored = _normalize_mime(stored_mime)
 
     if is_inline_image_media(kind=kind_norm, mime=stored):
-        mime = stored if stored.startswith("image/") else resolve_attachment_mime(
-            filename=file_name, kind="image", client_mime=stored
+        mime = (
+            stored
+            if stored.startswith("image/")
+            else resolve_attachment_mime(filename=file_name, kind="image", client_mime=stored)
         )
         if mime in UNSAFE_MEDIA_MIMES or not mime.startswith("image/"):
             return (

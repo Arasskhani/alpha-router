@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import datetime
 import json
-from typing import Any, Iterable
+from typing import Any
+from collections.abc import Iterable
 
 from fastapi import HTTPException
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
@@ -59,9 +60,7 @@ def utcnow() -> datetime.datetime:
 
 def is_auto_router_model_id(model_id: str | None) -> bool:
     normalized = (model_id or "").strip().lower().lstrip("~")
-    return normalized in {"auto", "auto-beta"} or normalized.endswith(
-        ("/auto", "/auto-beta")
-    )
+    return normalized in {"auto", "auto-beta"} or normalized.endswith(("/auto", "/auto-beta"))
 
 
 def is_code_interpreter_candidate(model: AIModel) -> bool:
@@ -131,9 +130,7 @@ def compatibility_payload(
         "last_success_at": row.last_success_at.isoformat() if row and row.last_success_at else None,
         "last_failure_at": row.last_failure_at.isoformat() if row and row.last_failure_at else None,
         "next_probe_at": row.next_probe_at.isoformat() if row and row.next_probe_at else None,
-        "quarantine_until": (
-            row.quarantine_until.isoformat() if row and row.quarantine_until else None
-        ),
+        "quarantine_until": (row.quarantine_until.isoformat() if row and row.quarantine_until else None),
     }
 
 
@@ -230,13 +227,17 @@ async def ensure_model_compatibility_rows(
 
 async def ensure_all_model_compatibility_rows(db: AsyncSession) -> int:
     models = (
-        await db.execute(
-            select(AIModel).where(
-                AIModel.is_enabled.is_(True),
-                AIModel.admin_disabled.is_(False),
+        (
+            await db.execute(
+                select(AIModel).where(
+                    AIModel.is_enabled.is_(True),
+                    AIModel.admin_disabled.is_(False),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return await ensure_model_compatibility_rows(db, models)
 
 
@@ -249,13 +250,17 @@ async def compatibility_map_for_models(
     if not connection_ids:
         return {}
     rows = (
-        await db.execute(
-            select(ModelToolCompatibility).where(
-                ModelToolCompatibility.connection_id.in_(connection_ids),
-                ModelToolCompatibility.tool == CODE_INTERPRETER_TOOL,
+        (
+            await db.execute(
+                select(ModelToolCompatibility).where(
+                    ModelToolCompatibility.connection_id.in_(connection_ids),
+                    ModelToolCompatibility.tool == CODE_INTERPRETER_TOOL,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return {(int(row.connection_id), row.external_model_id): row for row in rows}
 
 
@@ -338,17 +343,14 @@ async def record_compatibility_result(
         hard = code in _HARD_FAILURE_REASONS
         unavailable = code == _UNAVAILABLE_FAILURE_REASON
         inconclusive = (
-            code in _INCONCLUSIVE_FAILURE_REASONS
-            and int(row.consecutive_failures) < _INCONCLUSIVE_FAILURE_LIMIT
+            code in _INCONCLUSIVE_FAILURE_REASONS and int(row.consecutive_failures) < _INCONCLUSIVE_FAILURE_LIMIT
         )
         penalty = 0.1 if (transient or inconclusive) else (0.45 if hard else 0.25)
         row.score = max(0.0, float(row.score or 0.5) - penalty)
         if transient or inconclusive:
             # Never hide a model on evidence that is not about tool support; a
             # previously verified model also keeps its verification.
-            row.status = (
-                STATUS_COMPATIBLE if int(row.total_successes or 0) > 0 else STATUS_UNKNOWN
-            )
+            row.status = STATUS_COMPATIBLE if int(row.total_successes or 0) > 0 else STATUS_UNKNOWN
             row.quarantine_until = None
             row.next_probe_at = now + datetime.timedelta(hours=1)
         elif unavailable:
@@ -383,9 +385,7 @@ async def record_compatibility_result(
             detail=(detail or "")[:2000] or None,
             requested_model_id=(requested_model_id or "")[:512] or None,
             upstream_request_id=(upstream_request_id or "")[:255] or None,
-            evidence_json=(
-                json.dumps(evidence, ensure_ascii=False)[:8000] if evidence else None
-            ),
+            evidence_json=(json.dumps(evidence, ensure_ascii=False)[:8000] if evidence else None),
         )
     )
     await db.flush()
@@ -474,14 +474,18 @@ async def openrouter_auto_plugin(
 ) -> dict[str, Any]:
     """Build adaptive OpenRouter constraints from evidence, never vendor names."""
     rows = (
-        await db.execute(
-            select(ModelToolCompatibility).where(
-                ModelToolCompatibility.connection_id == connection_id,
-                ModelToolCompatibility.tool == CODE_INTERPRETER_TOOL,
-                ModelToolCompatibility.external_model_id != requested_model_id,
+        (
+            await db.execute(
+                select(ModelToolCompatibility).where(
+                    ModelToolCompatibility.connection_id == connection_id,
+                    ModelToolCompatibility.tool == CODE_INTERPRETER_TOOL,
+                    ModelToolCompatibility.external_model_id != requested_model_id,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     compatible: list[str] = []
     excluded: list[str] = []
     for row in rows:
@@ -494,11 +498,7 @@ async def openrouter_auto_plugin(
             excluded.append(row.external_model_id)
 
     normalized = requested_model_id.strip().lower().lstrip("~")
-    plugin_id = (
-        "auto-beta-router"
-        if normalized in {"auto-beta", "openrouter/auto-beta"}
-        else "auto-router"
-    )
+    plugin_id = "auto-beta-router" if normalized in {"auto-beta", "openrouter/auto-beta"} else "auto-router"
     plugin: dict[str, Any] = {"id": plugin_id}
     # Once a verified pool exists, unknown future models cannot silently enter it.
     if compatible:
@@ -515,8 +515,7 @@ async def prune_compatibility_events(
 ) -> int:
     result = await db.execute(
         delete(ModelToolCompatibilityEvent).where(
-            ModelToolCompatibilityEvent.created_at
-            < utcnow() - datetime.timedelta(days=max(7, retention_days))
+            ModelToolCompatibilityEvent.created_at < utcnow() - datetime.timedelta(days=max(7, retention_days))
         )
     )
     return int(result.rowcount or 0)

@@ -232,9 +232,7 @@ def _acl_layer_filter(
     allow_field: str,
     principal_tokens: Sequence[str],
 ) -> models.Filter:
-    conditions: list[models.FieldCondition] = [
-        _match_value(scope_field, unrestricted_value)
-    ]
+    conditions: list[models.FieldCondition] = [_match_value(scope_field, unrestricted_value)]
     if principal_tokens:
         conditions.append(
             models.FieldCondition(
@@ -258,9 +256,7 @@ def build_qdrant_retrieval_filter(
         _match_value("status", "active"),
         models.Filter(
             should=[
-                models.IsEmptyCondition(
-                    is_empty=models.PayloadField(key="effective_from")
-                ),
+                models.IsEmptyCondition(is_empty=models.PayloadField(key="effective_from")),
                 models.FieldCondition(
                     key="effective_from",
                     range=models.DatetimeRange(lte=now),
@@ -269,9 +265,7 @@ def build_qdrant_retrieval_filter(
         ),
         models.Filter(
             should=[
-                models.IsEmptyCondition(
-                    is_empty=models.PayloadField(key="effective_to")
-                ),
+                models.IsEmptyCondition(is_empty=models.PayloadField(key="effective_to")),
                 models.FieldCondition(
                     key="effective_to",
                     range=models.DatetimeRange(gte=now),
@@ -410,11 +404,7 @@ async def _resolve_sources(
         if knowledge_base is None:
             continue
         if binding.release_mode == "pinned":
-            release = (
-                await db.get(KnowledgeRelease, binding.pinned_release_id)
-                if binding.pinned_release_id
-                else None
-            )
+            release = await db.get(KnowledgeRelease, binding.pinned_release_id) if binding.pinned_release_id else None
             if (
                 release is None
                 or release.knowledge_base_id != knowledge_base.id
@@ -426,8 +416,7 @@ async def _resolve_sources(
                 await db.execute(
                     select(KnowledgeRelease).where(
                         KnowledgeRelease.knowledge_base_id == knowledge_base.id,
-                        KnowledgeRelease.active_scope_key
-                        == f"kb-release:{knowledge_base.id}",
+                        KnowledgeRelease.active_scope_key == f"kb-release:{knowledge_base.id}",
                         KnowledgeRelease.status == "published",
                     )
                 )
@@ -498,14 +487,9 @@ async def _post_authorize_candidates(
             .where(KnowledgeChunk.id.in_(chunk_ids))
         )
     ).all()
-    row_by_chunk = {
-        str(chunk.id): (chunk, version, document) for chunk, version, document in rows
-    }
+    row_by_chunk = {str(chunk.id): (chunk, version, document) for chunk, version, document in rows}
     documents = list({document.id: document for _, _, document in rows}.values())
-    allowed_document_ids = {
-        document.id
-        for document in await filter_documents_for_subject(db, documents, subject)
-    }
+    allowed_document_ids = {document.id for document in await filter_documents_for_subject(db, documents, subject)}
     release_ids = sorted({candidate.release_id for candidate in bounded})
     memberships = {
         (str(release_id), str(document_version_id))
@@ -521,13 +505,7 @@ async def _post_authorize_candidates(
     releases = {
         release.id: release
         for release in (
-            (
-                await db.execute(
-                    select(KnowledgeRelease).where(KnowledgeRelease.id.in_(release_ids))
-                )
-            )
-            .scalars()
-            .all()
+            (await db.execute(select(KnowledgeRelease).where(KnowledgeRelease.id.in_(release_ids)))).scalars().all()
         )
     }
 
@@ -578,13 +556,7 @@ async def _post_authorize_candidates(
     parents = {
         chunk.id: chunk
         for chunk in (
-            (
-                await db.execute(
-                    select(KnowledgeChunk).where(KnowledgeChunk.id.in_(parent_ids))
-                )
-            )
-            .scalars()
-            .all()
+            (await db.execute(select(KnowledgeChunk).where(KnowledgeChunk.id.in_(parent_ids)))).scalars().all()
             if parent_ids
             else []
         )
@@ -607,10 +579,7 @@ async def _post_authorize_candidates(
                 context_chunk.content,
                 associated_data=f"knowledge-chunk:{context_chunk.id}",
             )
-            if (
-                chunk_plaintext_hash(int(context_chunk.chunk_index), context_text)
-                != context_chunk.content_hash
-            ):
+            if chunk_plaintext_hash(int(context_chunk.chunk_index), context_text) != context_chunk.content_hash:
                 raise ValueError("Knowledge parent chunk integrity verification failed")
         authorized.append(
             _AuthorizedCandidate(
@@ -643,9 +612,7 @@ def _citation_for(candidate: _AuthorizedCandidate) -> KnowledgeCitation:
         section=chunk.section,
         authority=version.authority,
         classification=version.classification,
-        effective_from=(
-            version.effective_from.isoformat() if version.effective_from else None
-        ),
+        effective_from=(version.effective_from.isoformat() if version.effective_from else None),
         effective_to=version.effective_to.isoformat() if version.effective_to else None,
         content_hash=chunk.content_hash,
     )
@@ -738,9 +705,7 @@ async def retrieve_knowledge(
         or agent_version.status not in {"published", "archived"}
         or (agent_version.status == "archived" and agent_version.published_at is None)
     ):
-        raise ValueError(
-            "A previously published Agent version is required for Knowledge retrieval"
-        )
+        raise ValueError("A previously published Agent version is required for Knowledge retrieval")
     policy = RetrievalPolicy.from_dict(agent_version.retrieval_policy)
     current_time = now or datetime.datetime.now(datetime.UTC)
     sources = await _resolve_sources(
@@ -785,9 +750,7 @@ async def retrieve_knowledge(
                     )
                 )[0]
                 vectors_by_profile[profile_key] = dense
-            sparse_profile = SparseEncodingProfile.from_dict(
-                index_version.sparse_profile
-            )
+            sparse_profile = SparseEncodingProfile.from_dict(index_version.sparse_profile)
             dense_hits, sparse_hits = await qdrant.hybrid_candidates(
                 collection_name=index_version.collection_name,
                 dense=dense,
@@ -836,20 +799,14 @@ async def retrieve_knowledge(
             context=KnowledgeContextPack("", (), 0, False),
             answerable=False,
             abstention_reason="no_authorized_evidence",
-            knowledge_release_ids=tuple(
-                sorted({source.release.id for source in sources})
-            ),
-            index_version_ids=tuple(
-                sorted({source.index_version.id for source in sources})
-            ),
+            knowledge_release_ids=tuple(sorted({source.release.id for source in sources})),
+            index_version_ids=tuple(sorted({source.index_version.id for source in sources})),
             candidate_count=len(all_fused),
             post_authorized_count=0,
             component_errors=tuple(component_errors),
         )
 
-    authorized_by_key = {
-        candidate.fused.chunk_id: candidate for candidate in authorized
-    }
+    authorized_by_key = {candidate.fused.chunk_id: candidate for candidate in authorized}
     reranked = await (reranker or DeterministicKnowledgeReranker()).rerank(
         query=clean_query,
         candidates=[
@@ -873,10 +830,7 @@ async def retrieve_knowledge(
             continue
         document_id = str(candidate.document.id)
         context_chunk_id = str(candidate.context_chunk.id)
-        if (
-            per_document[document_id] >= policy.max_chunks_per_document
-            or context_chunk_id in used_context_chunks
-        ):
+        if per_document[document_id] >= policy.max_chunks_per_document or context_chunk_id in used_context_chunks:
             continue
         per_document[document_id] += 1
         used_context_chunks.add(context_chunk_id)
@@ -900,11 +854,7 @@ async def retrieve_knowledge(
         token_budget=policy.context_token_budget,
     )
     included_ids = {citation.citation_id for citation in context.citations}
-    selected = [
-        evidence
-        for evidence in selected
-        if evidence.citation.citation_id in included_ids
-    ]
+    selected = [evidence for evidence in selected if evidence.citation.citation_id in included_ids]
     top_score = selected[0].rerank_score if selected else 0.0
     answerable = bool(selected) and top_score >= policy.minimum_answerability_score
     return KnowledgeRetrievalResult(
@@ -912,16 +862,9 @@ async def retrieve_knowledge(
         context=context,
         answerable=answerable,
         abstention_reason=None if answerable else "insufficient_evidence",
-        knowledge_release_ids=tuple(
-            sorted({evidence.citation.release_id for evidence in selected})
-        ),
+        knowledge_release_ids=tuple(sorted({evidence.citation.release_id for evidence in selected})),
         index_version_ids=tuple(
-            sorted(
-                {
-                    authorized_by_key[evidence.citation.chunk_id].fused.index_version_id
-                    for evidence in selected
-                }
-            )
+            sorted({authorized_by_key[evidence.citation.chunk_id].fused.index_version_id for evidence in selected})
         ),
         candidate_count=len(all_fused),
         post_authorized_count=len(authorized),

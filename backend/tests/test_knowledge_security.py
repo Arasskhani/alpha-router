@@ -34,10 +34,7 @@ def test_ooxml_active_content_and_archive_paths_are_rejected():
         validate_document(
             file_name="policy.docx",
             data=output.getvalue(),
-            claimed_mime_type=(
-                "application/vnd.openxmlformats-officedocument."
-                "wordprocessingml.document"
-            ),
+            claimed_mime_type=("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
         )
 
     traversal = BytesIO()
@@ -54,9 +51,7 @@ def test_ooxml_active_content_and_archive_paths_are_rejected():
 
 
 def test_chunking_is_deterministic_and_hierarchical():
-    text = "\n\n".join(
-        f"Section {index}. " + ("Policy language. " * 35) for index in range(30)
-    )
+    text = "\n\n".join(f"Section {index}. " + ("Policy language. " * 35) for index in range(30))
     segments = (ParsedSegment(text=text, page_number=7, section="Policy"),)
     first = chunk_segments(segments)
     second = chunk_segments(segments)
@@ -65,9 +60,7 @@ def test_chunking_is_deterministic_and_hierarchical():
     children = [chunk for chunk in first if chunk.kind == "child"]
     assert parents
     assert children
-    assert {chunk.parent_local_key for chunk in children} <= {
-        chunk.local_key for chunk in parents
-    }
+    assert {chunk.parent_local_key for chunk in children} <= {chunk.local_key for chunk in parents}
     assert all(chunk.page_number == 7 for chunk in first)
 
 
@@ -94,8 +87,7 @@ def test_scanned_pdf_uses_bounded_ocr(monkeypatch):
         pytesseract,
         "image_to_string",
         lambda *_args, **_kwargs: (
-            "این متن فارسی توسط OCR از صفحه اسکن‌شده استخراج شده است "
-            "و برای بازیابی سازمانی استفاده می‌شود."
+            "این متن فارسی توسط OCR از صفحه اسکن‌شده استخراج شده است و برای بازیابی سازمانی استفاده می‌شود."
         ),
     )
     validated = validate_document(
@@ -131,9 +123,7 @@ def test_pdf_ocr_retries_after_transient_render_failure(monkeypatch):
     monkeypatch.setattr(
         pytesseract,
         "image_to_string",
-        lambda *_args, **_kwargs: (
-            "Recovered OCR text after a transient renderer allocation failure."
-        ),
+        lambda *_args, **_kwargs: "Recovered OCR text after a transient renderer allocation failure.",
     )
     validated = validate_document(
         file_name="scan-retry.pdf",
@@ -180,5 +170,5 @@ async def _test_clamav_instream_protocol(monkeypatch) -> None:
     assert result.signature == "Eicar-Test-Signature"
 
 
-def test_clamav_instream_protocol(monkeypatch):
-    asyncio.run(_test_clamav_instream_protocol(monkeypatch))
+async def test_clamav_instream_protocol(monkeypatch):
+    await _test_clamav_instream_protocol(monkeypatch)

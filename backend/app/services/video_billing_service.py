@@ -11,7 +11,7 @@ from app.branding import CHAT_CLIENT_APP
 from app.core.language_detect import detect_prompt_language
 from app.models.model_catalog import AIModel
 from app.models.user import User
-from app.services.proxy_service import log_usage
+from app.services.usage_logging_service import log_usage
 from app.services.usage_accounting_service import PendingUsageEvent, capture_usage_event
 
 
@@ -81,14 +81,15 @@ async def log_video_usage(
     duration_seconds: int | None = None,
     job_id: str | None = None,
     project_id: str | None = None,
+    error_code: str | None = None,
+    http_status: int | None = None,
+    provider_job_id: str | None = None,
+    correlation_id: str | None = None,
 ) -> int | None:
     """Write RequestLog row and settle budget (same path as image/chat)."""
     model_id = (capture.model_id or "").strip() or "unknown"
     op = (operation or "generation").strip().lower()
-    if op == "img2vid":
-        op_name = "video:img2vid"
-    else:
-        op_name = f"video:{op}"
+    op_name = "video:img2vid" if op == "img2vid" else f"video:{op}"
 
     captured_sources = list(capture.usage_sources)
     usage_events: list[PendingUsageEvent] = []
@@ -137,9 +138,7 @@ async def log_video_usage(
         )
 
     total_cost = sum(
-        float(event.quote.final_cost_usd)
-        for event in usage_events
-        if event.quote.final_cost_usd is not None
+        float(event.quote.final_cost_usd) for event in usage_events if event.quote.final_cost_usd is not None
     )
     client_app = f"{CHAT_CLIENT_APP} (video:{op})"
     return await log_usage(
@@ -163,4 +162,8 @@ async def log_video_usage(
         operation_type="video",
         operation_idempotency_key=f"video:{job_id}" if job_id else None,
         project_id=project_id,
+        error_code=error_code,
+        http_status=http_status,
+        provider_job_id=provider_job_id,
+        correlation_id=correlation_id,
     )

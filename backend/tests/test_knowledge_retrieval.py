@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime
 import hashlib
 import os
@@ -336,9 +335,7 @@ async def _test_hybrid_index_retrieval_and_stale_acl_denial() -> None:
         )
         assert retrieval.answerable
         assert retrieval.evidence
-        assert {evidence.citation.document_id for evidence in retrieval.evidence} == {
-            seeded["documents"][0].id
-        }
+        assert {evidence.citation.document_id for evidence in retrieval.evidence} == {seeded["documents"][0].id}
         assert "Annual leave requests" in retrieval.context.text
         assert "enc:v1:" not in retrieval.context.text
         citation = retrieval.evidence[0].citation
@@ -359,9 +356,7 @@ async def _test_hybrid_index_retrieval_and_stale_acl_denial() -> None:
         # version becomes active; ACL and release authorization are still live.
         agent_version = await db.get(AgentVersion, seeded["agent_version"].id)
         agent_version.status = "archived"
-        agent_version.published_at = datetime.datetime.now(datetime.UTC).replace(
-            tzinfo=None
-        )
+        agent_version.published_at = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
         await db.flush()
         pinned = await retrieve_knowledge(
             db,
@@ -388,9 +383,7 @@ async def _test_hybrid_index_retrieval_and_stale_acl_denial() -> None:
             embedding_backend=embedding,
         )
         assert finance_retrieval.answerable
-        assert {
-            evidence.citation.document_id for evidence in finance_retrieval.evidence
-        } == {seeded["documents"][1].id}
+        assert {evidence.citation.document_id for evidence in finance_retrieval.evidence} == {seeded["documents"][1].id}
 
         unrelated = await retrieve_knowledge(
             db,
@@ -407,9 +400,9 @@ async def _test_hybrid_index_retrieval_and_stale_acl_denial() -> None:
             KnowledgeDocumentVersion,
             seeded["versions"][0].id,
         )
-        leave_version.effective_to = datetime.datetime.now(datetime.UTC).replace(
-            tzinfo=None
-        ) - datetime.timedelta(days=1)
+        leave_version.effective_to = datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - datetime.timedelta(
+            days=1
+        )
         await db.flush()
         expired = await retrieve_knowledge(
             db,
@@ -481,8 +474,8 @@ def test_rrf_combines_dense_and_sparse_rankings():
     assert fused[0].sparse_rank == 1
 
 
-def test_hybrid_index_retrieval_and_stale_acl_denial():
-    asyncio.run(_test_hybrid_index_retrieval_and_stale_acl_denial())
+async def test_hybrid_index_retrieval_and_stale_acl_denial():
+    await _test_hybrid_index_retrieval_and_stale_acl_denial()
 
 
 async def _test_live_qdrant_hybrid_acl_filter() -> None:
@@ -568,5 +561,5 @@ async def _test_live_qdrant_hybrid_acl_filter() -> None:
     os.environ.get("RUN_LIVE_QDRANT_TESTS") != "1",
     reason="live Qdrant integration is opt-in",
 )
-def test_live_qdrant_hybrid_acl_filter():
-    asyncio.run(_test_live_qdrant_hybrid_acl_filter())
+async def test_live_qdrant_hybrid_acl_filter():
+    await _test_live_qdrant_hybrid_acl_filter()

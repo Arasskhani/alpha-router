@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import io
 from typing import Any
 
@@ -87,11 +89,7 @@ def _extract_tabular(raw: bytes, ext: str) -> str:
 
 def extract_document_text(raw: bytes, filename: str) -> str:
     ext = _extension(filename)
-    if (
-        ext in ALLOWED_IMAGE_EXTENSIONS
-        or ext in ALLOWED_VIDEO_EXTENSIONS
-        or ext in ALLOWED_AUDIO_EXTENSIONS
-    ):
+    if ext in ALLOWED_IMAGE_EXTENSIONS or ext in ALLOWED_VIDEO_EXTENSIONS or ext in ALLOWED_AUDIO_EXTENSIONS:
         raise ValueError("Not a document file.")
 
     try:
@@ -108,7 +106,7 @@ def extract_document_text(raw: bytes, filename: str) -> str:
         if ext == "doc":
             return "(Legacy .doc files are not supported. Save as .docx and retry.)"
         return _truncate(_decode_text(raw)) or "(Empty file.)"
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
         return f"(Could not extract text from {filename}: {exc})"
 
 
@@ -141,9 +139,7 @@ def _looks_like_svg(raw: bytes) -> bool:
     low = head.lower()
     if low.startswith(b"<svg"):
         return True
-    if low.startswith(b"<?xml") and b"<svg" in low:
-        return True
-    return False
+    return bool(low.startswith(b"<?xml") and b"<svg" in low)
 
 
 def build_image_data_url(raw: bytes, mime_type: str, filename: str) -> str:
@@ -166,14 +162,24 @@ def build_image_data_url(raw: bytes, mime_type: str, filename: str) -> str:
     return f"data:{mime};base64,{encoded}"
 
 
-def processed_attachment_payload(
-    *,
-    filename: str,
-    kind: str,
-    mime_type: str,
-    url: str,
-    raw: bytes,
-) -> dict[str, Any]:
+async def extract_document_text_bounded(raw: bytes, filename: str) -> str:
+    """``extract_document_text`` off the event loop with a wall-clock ceiling.
+
+    The parsers (pypdf, openpyxl, python-docx) are synchronous and CPU-bound;
+    a crafted file can keep them busy for minutes. Running them inline would
+    stall every other request on this worker, so they go to a thread and the
+    caller gets a placeholder if the ceiling is hit.
+    """
+    from app.config import get_settings
+
+    timeout = max(1, int(getattr(get_settings(), "attachment_extract_timeout_seconds", 30) or 30))
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(extract_document_text, raw, filename), timeout=timeout)
+    except TimeoutError:
+        return f"(Text extraction from {filename} exceeded {timeout}s and was skipped.)"
+
+
+def _base_payload(*, filename: str, kind: str, mime_type: str, url: str, raw: bytes) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "name": filename,
         "kind": kind,
@@ -182,9 +188,34 @@ def processed_attachment_payload(
     }
     if kind == "image":
         payload["data_url"] = build_image_data_url(raw, mime_type, filename)
-    elif kind in {"video", "audio"}:
-        # Binary media is referenced by URL only (no text extraction).
-        pass
-    else:
+    return payload
+
+
+def processed_attachment_payload(
+    *,
+    filename: str,
+    kind: str,
+    mime_type: str,
+    url: str,
+    raw: bytes,
+) -> dict[str, Any]:
+    """Synchronous variant (tests, tools). Request handlers use the async one."""
+    payload = _base_payload(filename=filename, kind=kind, mime_type=mime_type, url=url, raw=raw)
+    if kind not in {"image", "video", "audio"}:
         payload["text"] = extract_document_text(raw, filename)
+    return payload
+
+
+async def processed_attachment_payload_async(
+    *,
+    filename: str,
+    kind: str,
+    mime_type: str,
+    url: str,
+    raw: bytes,
+) -> dict[str, Any]:
+    payload = _base_payload(filename=filename, kind=kind, mime_type=mime_type, url=url, raw=raw)
+    if kind not in {"image", "video", "audio"}:
+        # Binary media is referenced by URL only (no text extraction).
+        payload["text"] = await extract_document_text_bounded(raw, filename)
     return payload

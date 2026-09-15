@@ -187,9 +187,7 @@ class ProjectUserPref(Base):
     """Per-user workspace prefs (last opened chat / recency) for a project."""
 
     __tablename__ = "project_user_prefs"
-    __table_args__ = (
-        Index("ix_project_user_prefs_user_opened", "user_id", "last_opened_at"),
-    )
+    __table_args__ = (Index("ix_project_user_prefs_user_opened", "user_id", "last_opened_at"),)
 
     project_id = Column(
         String(36),
@@ -235,7 +233,7 @@ class ProjectInvitation(Base):
         nullable=False,
     )
     role = Column(String(16), nullable=False, default=PROJECT_ROLE_VIEWER)
-    token_hash = Column(String(128), nullable=False, unique=True)
+    token_hash = Column(String(128), nullable=False)
     max_uses = Column(Integer, nullable=False, default=1)
     use_count = Column(Integer, nullable=False, default=0)
     expires_at = Column(DateTime, nullable=False)
@@ -258,9 +256,7 @@ class ProjectConfigVersion(Base):
     """Immutable snapshot of project Advanced settings for reproducible AI runs."""
 
     __tablename__ = "project_config_versions"
-    __table_args__ = (
-        Index("ix_project_config_versions_project", "project_id"),
-    )
+    __table_args__ = (Index("ix_project_config_versions_project", "project_id"),)
 
     id = Column(String(36), primary_key=True)
     project_id = Column(
@@ -271,9 +267,7 @@ class ProjectConfigVersion(Base):
     revision = Column(Integer, nullable=False)
     custom_prompt = Column(Text, nullable=True)
     memory_enabled = Column(Boolean, nullable=False, default=True)
-    memory_auto_capture = Column(
-        Boolean, nullable=False, default=True, server_default=text("true")
-    )
+    memory_auto_capture = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     grounding_policy = Column(JsonDocument, nullable=False, default=dict)
     created_by_user_id = Column(
         Integer,
@@ -317,9 +311,7 @@ class ProjectMemory(Base):
     authority = Column(String(32), nullable=False, default="user")
     enabled = Column(Boolean, nullable=False, default=True)
     category = Column(String(32), nullable=False, default="other", server_default="other")
-    sensitivity = Column(
-        String(16), nullable=False, default="normal", server_default="normal"
-    )
+    sensitivity = Column(String(16), nullable=False, default="normal", server_default="normal")
     confidence = Column(Float, nullable=False, default=0.5, server_default="0.5")
     salience = Column(Float, nullable=False, default=0.5, server_default="0.5")
     expires_at = Column(DateTime, nullable=True)
@@ -340,9 +332,7 @@ class ProjectMemory(Base):
         ForeignKey("project_memories.id", ondelete="SET NULL"),
         nullable=True,
     )
-    embedding_status = Column(
-        String(16), nullable=False, default="pending", server_default="pending"
-    )
+    embedding_status = Column(String(16), nullable=False, default="pending", server_default="pending")
     embedding_model = Column(String(255), nullable=True)
     embedding_dims = Column(Integer, nullable=True)
     indexed_at = Column(DateTime, nullable=True)
@@ -521,9 +511,7 @@ class ProjectChatPin(Base):
     """Shared pin state for a project chat thread, visible to all members."""
 
     __tablename__ = "project_chat_pins"
-    __table_args__ = (
-        UniqueConstraint("project_id", "session_id", name="uq_project_chat_pins_session"),
-    )
+    __table_args__ = (UniqueConstraint("project_id", "session_id", name="uq_project_chat_pins_session"),)
 
     id = Column(String(36), primary_key=True)
     project_id = Column(
@@ -627,6 +615,8 @@ class ProjectResource(Base):
             "document_id",
             name="uq_project_resources_project_document",
         ),
+        # Named as revision c3d4e5f6a7b8 created it.
+        Index("ix_project_resources_project", "project_id"),
         Index("ix_project_resources_project_status", "project_id", "status"),
         Index("ix_project_resources_uploaded_by", "uploaded_by_user_id"),
     )
@@ -636,7 +626,6 @@ class ProjectResource(Base):
         String(36),
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     document_id = Column(
         String(36),
@@ -655,7 +644,6 @@ class ProjectResource(Base):
         Integer,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
-        index=True,
     )
     created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
     updated_at = Column(

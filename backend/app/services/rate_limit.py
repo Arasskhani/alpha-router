@@ -19,7 +19,7 @@ from threading import Lock
 
 from fastapi import HTTPException
 
-from app.config import effective_redis_url
+from app.core.redis_client import get_redis
 from app.services.observability import increment
 
 _lock = Lock()
@@ -33,11 +33,10 @@ _RATE_LIMIT_EXCEEDED = "Rate limit exceeded. Try again shortly."
 
 
 def _client():
+    """Shared per-process client (never closed here)."""
     try:
-        import redis.asyncio as redis_async
-
-        return redis_async.from_url(effective_redis_url(), decode_responses=True)
-    except Exception:
+        return get_redis()
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return None)
         return None
 
 
@@ -69,16 +68,15 @@ async def check_rate_limit(
             pipe.zcard(key)
             pipe.expire(key, window_seconds + 5)
             _, _, count, _ = await pipe.execute()
-            await client.aclose()
             if int(count) > limit:
                 raise HTTPException(status_code=429, detail=_RATE_LIMIT_EXCEEDED)
             return
         except HTTPException:
             raise
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 -- any Redis failure degrades to the in-memory limiter
             increment("redis_fallback")
             if fail_closed:
-                raise HTTPException(status_code=503, detail=_REDIS_UNAVAILABLE_LOGIN)
+                raise HTTPException(status_code=503, detail=_REDIS_UNAVAILABLE_LOGIN) from exc
             # Redis hiccup: fall through to in-memory fallback (fail-open).
     elif fail_closed:
         increment("redis_fallback")

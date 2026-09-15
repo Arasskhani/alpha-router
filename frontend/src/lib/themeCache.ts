@@ -10,7 +10,7 @@ export type CachedTheme =
   | "mint-system";
 
 /** Effective document theme used by `[data-theme]`. */
-export type ResolvedTheme = "light" | "dark" | "mint" | "dark-mint";
+type ResolvedTheme = "light" | "dark" | "mint" | "dark-mint";
 
 /** Named theme shown in the Theme dropdown. */
 export type NamedTheme = "default" | "mint" | "dark-mint";
@@ -41,11 +41,11 @@ export function saveCachedTheme(theme: CachedTheme): void {
   localStorage.setItem(STORAGE_KEYS.theme, theme);
 }
 
-export function prefersDarkScheme(): boolean {
+function prefersDarkScheme(): boolean {
   return typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
 
-export function resolveTheme(theme: CachedTheme): ResolvedTheme {
+function resolveTheme(theme: CachedTheme): ResolvedTheme {
   if (theme === "system") {
     return prefersDarkScheme() ? "dark" : "light";
   }
@@ -55,7 +55,7 @@ export function resolveTheme(theme: CachedTheme): ResolvedTheme {
   return theme;
 }
 
-export function colorSchemeFor(resolved: ResolvedTheme): "light" | "dark" {
+function colorSchemeFor(resolved: ResolvedTheme): "light" | "dark" {
   return resolved === "dark" || resolved === "dark-mint" ? "dark" : "light";
 }
 

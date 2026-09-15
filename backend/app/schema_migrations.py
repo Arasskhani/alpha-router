@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from pathlib import Path
 
@@ -25,10 +24,3 @@ def _alembic_config() -> Config:
 
 def upgrade_schema_sync(revision: str = "head") -> None:
     command.upgrade(_alembic_config(), revision)
-
-
-async def upgrade_schema(revision: str = "head") -> None:
-    """Upgrade in a worker thread because Alembic owns its async event loop."""
-
-    logger.info("Applying versioned database migrations through %s", revision)
-    await asyncio.to_thread(upgrade_schema_sync, revision)

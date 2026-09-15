@@ -5,7 +5,7 @@ export const COMPOSER_DEFAULT_PLACEHOLDER = "Ask anything";
 
 type TimeOfDay = "morning" | "afternoon" | "evening";
 
-export function getTimeOfDay(now = new Date()): TimeOfDay {
+function getTimeOfDay(now = new Date()): TimeOfDay {
   const hour = now.getHours();
   if (hour >= 5 && hour < 12) return "morning";
   if (hour >= 12 && hour < 18) return "afternoon";

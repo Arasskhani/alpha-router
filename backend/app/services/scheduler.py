@@ -1,7 +1,7 @@
 """Background jobs: model sync, monthly budget reset, scheduled reports."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, UTC
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
@@ -19,7 +19,17 @@ from app.services.storage_service import get_storage_settings, purge_expired_med
 from app.services.user_media_service import purge_user_media_older_than
 from app.models.user_media_prefs import UserMediaPreferences
 
-scheduler = AsyncIOScheduler()
+# misfire_grace_time: APScheduler's default is 1 second. After a leader
+# hand-over (the new leader starts its scheduler seconds after the old one
+# died), a slow event loop or a paused container, every cron whose instant
+# passed in the meantime is *skipped* silently - the monthly budget reset
+# among them. Five minutes of grace with coalescing runs each missed job once.
+# The timezone makes bare cron triggers (no explicit timezone=) fire in the
+# server's zone instead of UTC, matching what admins configure.
+scheduler = AsyncIOScheduler(
+    job_defaults={"misfire_grace_time": 300, "coalesce": True, "max_instances": 1},
+    timezone=get_server_timezone(),
+)
 logger = logging.getLogger("app.services.scheduler")
 
 
@@ -59,9 +69,7 @@ async def job_expire_budget_reservations():
         repaired = await reconcile_drifted_reserved_counters(db)
         await db.commit()
     if repaired:
-        logger.warning(
-            "Repaired drifted reserved budget counters for %s subject(s)", repaired
-        )
+        logger.warning("Repaired drifted reserved budget counters for %s subject(s)", repaired)
 
 
 async def job_reconcile_provider_costs():
@@ -78,13 +86,17 @@ async def job_reconcile_provider_costs():
         return
     async with AsyncSessionLocal() as db:
         connection_ids = (
-            await db.execute(
-                select(Connection.id).where(
-                    Connection.is_active.is_(True),
-                    Connection.provider_type.in_(providers),
+            (
+                await db.execute(
+                    select(Connection.id).where(
+                        Connection.is_active.is_(True),
+                        Connection.provider_type.in_(providers),
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     for connection_id in connection_ids:
         async with AsyncSessionLocal() as db:
             connection = await db.get(Connection, connection_id)
@@ -113,21 +125,45 @@ async def job_storage_cleanup():
         await purge_expired_media(db, retention_days=int(settings["retention_days"]))
 
 
+def user_media_cleanup_due(prefs, now: datetime, tz=None) -> bool:
+    """True when today's scheduled (hour, minute) has passed and was not served yet.
+
+    The old rule ran only at minute 0 of the chosen hour and skipped when
+    ``now.minute < cleanup_minute`` - so any minute other than 0 meant the
+    cleanup never ran. Now the job polls every 15 minutes and this decides.
+
+    ``now`` and ``prefs.last_cleanup_at`` are naive UTC (what the job and the
+    column store). The user's (hour, minute) is a wall-clock time in the
+    server's timezone - the same zone the other cron jobs use - so the slot
+    is built there and converted back to UTC before comparing.
+    """
+    tz = tz or get_server_timezone()
+    hour = int(prefs.cleanup_hour or 0)
+    minute = int(prefs.cleanup_minute or 0)
+    now_local = now.replace(tzinfo=UTC).astimezone(tz)
+    scheduled_local = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if now_local < scheduled_local:
+        return False
+    scheduled_utc = scheduled_local.astimezone(UTC).replace(tzinfo=None)
+    last = prefs.last_cleanup_at
+    return last is None or last < scheduled_utc
+
+
 async def job_user_media_cleanup():
     """Run per-user scheduled media cleanup (each user's own retention only)."""
     now = datetime.utcnow()
     async with AsyncSessionLocal() as db:
         prefs_rows = (
-            await db.execute(
-                select(UserMediaPreferences).where(UserMediaPreferences.cleanup_enabled == True)  # noqa: E712
+            (
+                await db.execute(
+                    select(UserMediaPreferences).where(UserMediaPreferences.cleanup_enabled == True)  # noqa: E712
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         for prefs in prefs_rows:
-            if now.hour != int(prefs.cleanup_hour or 0):
-                continue
-            if now.minute < int(prefs.cleanup_minute or 0):
-                continue
-            if prefs.last_cleanup_at and prefs.last_cleanup_at.date() == now.date():
+            if not user_media_cleanup_due(prefs, now):
                 continue
             await purge_user_media_older_than(db, prefs.user_id, int(prefs.cleanup_retention_days or 30))
             prefs.last_cleanup_at = now
@@ -211,6 +247,26 @@ async def job_chat_retention_cleanup():
             logger.exception("Chat retention cleanup failed")
 
 
+async def job_raw_payload_retention():
+    """Clear provider payloads past the window set on the API Logs page."""
+    async with AsyncSessionLocal() as db:
+        from app.services.log_detail_retention_service import purge_expired_raw_payloads
+
+        try:
+            result = await purge_expired_raw_payloads(db)
+            await db.commit()
+            if result["usage_events_cleared"] or result["video_jobs_cleared"]:
+                logger.info(
+                    "Raw provider payloads cleared: %s usage events, %s video jobs (older than %s days)",
+                    result["usage_events_cleared"],
+                    result["video_jobs_cleared"],
+                    result["retention_days"],
+                )
+        except Exception:
+            await db.rollback()
+            logger.exception("Raw provider payload retention run failed")
+
+
 async def job_tls_expiry_notice():
     async with AsyncSessionLocal() as db:
         from app.services.tls_expiry_service import notify_expiring_certificates
@@ -289,11 +345,15 @@ async def job_reclaim_stale_video_jobs():
 
 
 def start_scheduler():
+    global _shutdown_requested
     if scheduler.running:
         return
+    _shutdown_requested = False
     # Check every 30 minutes which connections are due for their own sync_interval_hours
     scheduler.add_job(job_sync_all_models, "interval", minutes=30, id="model_sync")
-    scheduler.add_job(job_reset_budgets, "cron", day=1, hour=0, minute=5, id="budget_reset")
+    # Budget periods are month-of-UTC everywhere else (ensure_budget_period,
+    # get_month_usage), so the reset fires at 00:05 UTC on the 1st, not local.
+    scheduler.add_job(job_reset_budgets, "cron", day=1, hour=0, minute=5, id="budget_reset", timezone=UTC)
     scheduler.add_job(
         job_expire_budget_reservations,
         "interval",
@@ -336,6 +396,14 @@ def start_scheduler():
         id="chat_retention_cleanup",
     )
     scheduler.add_job(
+        job_raw_payload_retention,
+        "cron",
+        hour=4,
+        minute=10,
+        timezone=get_server_timezone(),
+        id="api_logs_raw_payload_retention",
+    )
+    scheduler.add_job(
         job_user_memory_maintenance,
         "cron",
         hour=3,
@@ -354,7 +422,9 @@ def start_scheduler():
         id="project_deletion_purge",
     )
     scheduler.add_job(job_chat_stats_reconcile, "cron", hour=3, minute=30, id="chat_stats_reconcile")
-    scheduler.add_job(job_user_media_cleanup, "cron", hour="*", minute=0, id="user_media_cleanup")
+    # Every 15 minutes: the job itself decides per user whether their
+    # (hour, minute) has passed today and has not been served yet.
+    scheduler.add_job(job_user_media_cleanup, "cron", minute="*/15", id="user_media_cleanup")
     scheduler.add_job(job_system_metrics_snapshot, "interval", hours=1, id="system_metrics_snapshot")
     scheduler.add_job(
         job_tls_expiry_notice,
@@ -375,9 +445,45 @@ def start_scheduler():
         max_instances=1,
         coalesce=True,
     )
+    # Admin-controlled schedules (storage cleanup, chat retention, directory
+    # sync) are edited through whichever uvicorn worker serves the request,
+    # which is usually not the leader. The leader re-reads them from the
+    # database every minute so a change applies without a restart.
+    scheduler.add_job(
+        job_refresh_dynamic_schedules,
+        "interval",
+        minutes=1,
+        id="refresh_dynamic_schedules",
+        max_instances=1,
+        coalesce=True,
+    )
     scheduler.start()
 
 
+async def job_refresh_dynamic_schedules() -> None:
+    from app.services.auth_sync_scheduler import refresh_auth_sync_schedules
+
+    for refresh in (
+        refresh_storage_cleanup_schedule,
+        refresh_chat_retention_cleanup_schedule,
+        refresh_auth_sync_schedules,
+    ):
+        try:
+            await refresh()
+        except Exception:
+            logger.exception("Failed to refresh %s", getattr(refresh, "__name__", refresh))
+
+
+_shutdown_requested = False
+
+
 def stop_scheduler():
-    if scheduler.running:
+    """Idempotent: AsyncIOScheduler.shutdown() is deferred to the loop, so
+    ``scheduler.running`` stays True until that callback runs and a second
+    call in the same tick scheduled a second shutdown that raised
+    SchedulerNotRunningError (seen on every worker exit: the leader's
+    on_release and the lifespan both called this)."""
+    global _shutdown_requested
+    if scheduler.running and not _shutdown_requested:
+        _shutdown_requested = True
         scheduler.shutdown(wait=False)

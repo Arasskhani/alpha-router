@@ -1,7 +1,5 @@
 """Per-message feedback ownership, idempotency, and Bayesian aggregation."""
 
-import asyncio
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -100,5 +98,5 @@ async def _run_feedback_roundtrip() -> None:
     await engine.dispose()
 
 
-def test_chat_feedback_roundtrip() -> None:
-    asyncio.run(_run_feedback_roundtrip())
+async def test_chat_feedback_roundtrip() -> None:
+    await _run_feedback_roundtrip()

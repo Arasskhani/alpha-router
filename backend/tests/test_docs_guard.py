@@ -1,6 +1,5 @@
 """Phase 9: OpenAPI docs/redoc/openapi.json locked to Super Admin in production."""
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -13,7 +12,6 @@ from starlette.testclient import TestClient
 from app.core.security import create_access_token
 from app.database import Base
 from app.models.user import User, UserRoleAssignment
-from app.services import docs_guard
 from app.services.docs_guard import (
     OpenApiDocsGuardMiddleware,
     is_docs_path,
@@ -64,8 +62,10 @@ def _build_app() -> FastAPI:
 
 def test_dispatch_blocks_anonymous_in_production():
     app = _build_app()
-    with patch("app.services.docs_guard.get_settings", lambda: _settings()), \
-         patch("app.services.docs_guard.request_has_super_admin", lambda req: _false()):
+    with (
+        patch("app.services.docs_guard.get_settings", lambda: _settings()),
+        patch("app.services.docs_guard.request_has_super_admin", lambda req: _false()),
+    ):
         client = TestClient(app)
         r = client.get("/docs")
     assert r.status_code == 404
@@ -74,8 +74,10 @@ def test_dispatch_blocks_anonymous_in_production():
 
 def test_dispatch_allows_super_admin_in_production():
     app = _build_app()
-    with patch("app.services.docs_guard.get_settings", lambda: _settings()), \
-         patch("app.services.docs_guard.request_has_super_admin", lambda req: _true()):
+    with (
+        patch("app.services.docs_guard.get_settings", lambda: _settings()),
+        patch("app.services.docs_guard.request_has_super_admin", lambda req: _true()),
+    ):
         client = TestClient(app)
         r = client.get("/docs")
         r2 = client.get("/openapi.json")
@@ -86,8 +88,10 @@ def test_dispatch_allows_super_admin_in_production():
 
 def test_dispatch_noop_when_openapi_not_admin_only():
     app = _build_app()
-    with patch("app.services.docs_guard.get_settings", lambda: _settings(openapi_admin_only=False)), \
-         patch("app.services.docs_guard.request_has_super_admin", lambda req: _false()):
+    with (
+        patch("app.services.docs_guard.get_settings", lambda: _settings(openapi_admin_only=False)),
+        patch("app.services.docs_guard.request_has_super_admin", lambda req: _false()),
+    ):
         client = TestClient(app)
         r = client.get("/docs")
     assert r.status_code == 200
@@ -98,8 +102,13 @@ def test_dispatch_locks_in_development_when_flag_explicitly_set():
     # dev/single-box deployment that sets the flag still locks docs (and keeps
     # cookie auth working over HTTP for localhost testing).
     app = _build_app()
-    with patch("app.services.docs_guard.get_settings", lambda: _settings(environment="development", openapi_admin_only=True)), \
-         patch("app.services.docs_guard.request_has_super_admin", lambda req: _false()):
+    with (
+        patch(
+            "app.services.docs_guard.get_settings",
+            lambda: _settings(environment="development", openapi_admin_only=True),
+        ),
+        patch("app.services.docs_guard.request_has_super_admin", lambda req: _false()),
+    ):
         client = TestClient(app)
         r = client.get("/docs")
     assert r.status_code == 404
@@ -107,8 +116,10 @@ def test_dispatch_locks_in_development_when_flag_explicitly_set():
 
 def test_dispatch_does_not_guard_non_docs_paths():
     app = _build_app()
-    with patch("app.services.docs_guard.get_settings", lambda: _settings()), \
-         patch("app.services.docs_guard.request_has_super_admin", lambda req: _false()):
+    with (
+        patch("app.services.docs_guard.get_settings", lambda: _settings()),
+        patch("app.services.docs_guard.request_has_super_admin", lambda req: _false()),
+    ):
         client = TestClient(app)
         r = client.get("/health")
     # /health is not a route on the minimal app -> 404 from the app itself, not the guard.
@@ -158,48 +169,39 @@ async def _build_users(factory):
         return super_user.username, regular.username
 
 
-def test_request_has_super_admin_accepts_super_admin_cookie():
-    async def run():
-        engine, factory = _setup_db()
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        super_username, _ = await _build_users(factory)
-        token = create_access_token(super_username, "super_admin")
-        request = _cookie_request(token)
-        with patch("app.services.docs_guard.AsyncSessionLocal", factory):
-            assert await request_has_super_admin(request) is True
-        await engine.dispose()
-
-    asyncio.run(run())
+async def test_request_has_super_admin_accepts_super_admin_cookie():
+    engine, factory = _setup_db()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    super_username, _ = await _build_users(factory)
+    token = create_access_token(super_username, "super_admin")
+    request = _cookie_request(token)
+    with patch("app.services.docs_guard.AsyncSessionLocal", factory):
+        assert await request_has_super_admin(request) is True
+    await engine.dispose()
 
 
-def test_request_has_super_admin_rejects_regular_user_cookie():
-    async def run():
-        engine, factory = _setup_db()
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        _, regular_username = await _build_users(factory)
-        token = create_access_token(regular_username, "user")
-        request = _cookie_request(token)
-        with patch("app.services.docs_guard.AsyncSessionLocal", factory):
-            assert await request_has_super_admin(request) is False
-        await engine.dispose()
-
-    asyncio.run(run())
+async def test_request_has_super_admin_rejects_regular_user_cookie():
+    engine, factory = _setup_db()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    _, regular_username = await _build_users(factory)
+    token = create_access_token(regular_username, "user")
+    request = _cookie_request(token)
+    with patch("app.services.docs_guard.AsyncSessionLocal", factory):
+        assert await request_has_super_admin(request) is False
+    await engine.dispose()
 
 
-def test_request_has_super_admin_rejects_missing_cookie():
-    async def run():
-        engine, factory = _setup_db()
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        await _build_users(factory)
-        request = _cookie_request(None)
-        with patch("app.services.docs_guard.AsyncSessionLocal", factory):
-            assert await request_has_super_admin(request) is False
-        await engine.dispose()
-
-    asyncio.run(run())
+async def test_request_has_super_admin_rejects_missing_cookie():
+    engine, factory = _setup_db()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    await _build_users(factory)
+    request = _cookie_request(None)
+    with patch("app.services.docs_guard.AsyncSessionLocal", factory):
+        assert await request_has_super_admin(request) is False
+    await engine.dispose()
 
 
 class _FakeRequest:

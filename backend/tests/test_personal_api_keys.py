@@ -1,7 +1,5 @@
 """Personal API keys — self-service, one per user, budget debited."""
 
-import asyncio
-
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -126,13 +124,13 @@ async def _test_request_log_stores_user_api_key_id():
         assert row.user_api_key_id == key.id
 
 
-def test_one_key_limit():
-    asyncio.run(_test_one_key_limit())
+async def test_one_key_limit():
+    await _test_one_key_limit()
 
 
-def test_get_user_by_api_key_returns_user_key():
-    asyncio.run(_test_get_user_by_api_key_returns_user_key())
+async def test_get_user_by_api_key_returns_user_key():
+    await _test_get_user_by_api_key_returns_user_key()
 
 
-def test_request_log_stores_user_api_key_id():
-    asyncio.run(_test_request_log_stores_user_api_key_id())
+async def test_request_log_stores_user_api_key_id():
+    await _test_request_log_stores_user_api_key_id()

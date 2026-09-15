@@ -48,9 +48,7 @@ DEFAULT_CSP_REPORT_ONLY = (
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = PRODUCT_NAME
     debug: bool = False
@@ -58,6 +56,19 @@ class Settings(BaseSettings):
     # deployments boot unchanged. "production" enables the startup guard that
     # refuses to boot while insecure defaults are still configured.
     environment: str = "development"
+    # Level for the application's own loggers (alpha_router.* and app.*); the
+    # root logger and third-party libraries stay at WARNING.
+    app_log_level: str = "INFO"  # env: APP_LOG_LEVEL
+    # Phase 4.3: `python -m app.migrate` runs the legacy create_all/column
+    # patches after Alembic for installations that predate the versioned
+    # baseline. Set false once an install has run the new migrate once; the
+    # default flips to false in the next release.
+    legacy_schema_bootstrap: bool = True  # env: LEGACY_SCHEMA_BOOTSTRAP
+    # Phase 4.5: the Specialist Agent platform (agents, knowledge bases, tool
+    # registry, evaluations, governance) is a preview. Off by default: its
+    # routers are not mounted, chat requests carrying agent fields are refused
+    # and the admin navigation hides the section.
+    agents_platform_enabled: bool = False  # env: AGENTS_PLATFORM_ENABLED
     secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     # Token lifetime. Default 8h (480 min) — balances UX against stolen-token
@@ -81,26 +92,16 @@ class Settings(BaseSettings):
     service_admin_password: str = "changeme"
 
     database_url: str = "postgresql+asyncpg://alpha_router:changeme@postgres:5432/alpha_router"  # env: DATABASE_URL
-    database_read_url: str = (
-        ""  # env: DATABASE_READ_URL — optional read replica for GET chat routes
-    )
-    db_pool_size: int = (
-        12  # env: DB_POOL_SIZE — per worker behind PgBouncer (5k concurrent profile)
-    )
+    database_read_url: str = ""  # env: DATABASE_READ_URL — optional read replica for GET chat routes
+    db_pool_size: int = 12  # env: DB_POOL_SIZE — per worker behind PgBouncer (5k concurrent profile)
     db_max_overflow: int = 20  # env: DB_MAX_OVERFLOW
     db_pool_timeout: int = 45  # env: DB_POOL_TIMEOUT
     chat_empty_session_hide_days: int = 30  # env: CHAT_EMPTY_SESSION_HIDE_DAYS
     chat_list_rate_limit_per_min: int = 200  # env: CHAT_LIST_RATE_LIMIT_PER_MIN
-    chat_list_since_rate_limit_per_min: int = (
-        600  # env: CHAT_LIST_SINCE_RATE_LIMIT_PER_MIN
-    )
+    chat_list_since_rate_limit_per_min: int = 600  # env: CHAT_LIST_SINCE_RATE_LIMIT_PER_MIN
     chat_search_rate_limit_per_min: int = 45  # env: CHAT_SEARCH_RATE_LIMIT_PER_MIN
-    chat_message_search_rate_limit_per_min: int = (
-        45  # env: CHAT_MESSAGE_SEARCH_RATE_LIMIT_PER_MIN
-    )
-    uvicorn_workers: int = (
-        4  # env: UVICORN_WORKERS — process count in Docker/production
-    )
+    chat_message_search_rate_limit_per_min: int = 45  # env: CHAT_MESSAGE_SEARCH_RATE_LIMIT_PER_MIN
+    uvicorn_workers: int = 4  # env: UVICORN_WORKERS — process count in Docker/production
     redis_url: str = "redis://redis:6379/0"  # env: REDIS_URL
     # Phase 9: Redis auth. When set, the connection URL is rebuilt with this
     # password so rate-limit and OIDC state caches authenticate to Redis.
@@ -145,6 +146,10 @@ class Settings(BaseSettings):
     clamav_port: int = 3310
     clamav_scan_timeout_seconds: int = 120
     clamav_required: bool = True
+    # Wall-clock ceiling for extracting text from one chat attachment. The
+    # parsers are CPU-bound and run in a worker thread; this bounds how long a
+    # hostile PDF/XLSX can keep that thread busy.
+    attachment_extract_timeout_seconds: int = 30  # env: ATTACHMENT_EXTRACT_TIMEOUT_SECONDS
     knowledge_ocr_required: bool = True
     knowledge_ocr_languages: str = "fas+eng"
     knowledge_ocr_dpi: int = 200
@@ -215,31 +220,26 @@ class Settings(BaseSettings):
     # Explicit development-only escape hatch. Production always fails closed.
     allow_insecure_code_subprocess: bool = False
     # Retained only to detect and reject a legacy image-only configuration.
-    code_sandbox_image: str = (
-        ""  # env: CODE_SANDBOX_IMAGE (e.g. alpha-router-sandbox:latest)
-    )
+    code_sandbox_image: str = ""  # env: CODE_SANDBOX_IMAGE (e.g. alpha-router-sandbox:latest)
     code_sandbox_timeout_seconds: int = 20  # env: CODE_SANDBOX_TIMEOUT_SECONDS
     # Cross-worker Code Interpreter turn admission (Redis leased semaphore).
     # Global hard ceiling for concurrent CI turns; request over capacity is
     # rejected immediately (no queue) with HTTP 429 + Retry-After.
-    code_interpreter_capacity_global_max: int = (
-        200  # env: CODE_INTERPRETER_CAPACITY_GLOBAL_MAX
-    )
-    code_interpreter_capacity_per_subject_max: int = (
-        2  # env: CODE_INTERPRETER_CAPACITY_PER_SUBJECT_MAX
-    )
-    code_interpreter_capacity_lease_ttl_seconds: int = (
-        900  # env: CODE_INTERPRETER_CAPACITY_LEASE_TTL_SECONDS
-    )
-    code_interpreter_capacity_heartbeat_seconds: int = (
-        30  # env: CODE_INTERPRETER_CAPACITY_HEARTBEAT_SECONDS
-    )
-    code_interpreter_capacity_retry_after_seconds: int = (
-        30  # env: CODE_INTERPRETER_CAPACITY_RETRY_AFTER_SECONDS
-    )
+    code_interpreter_capacity_global_max: int = 200  # env: CODE_INTERPRETER_CAPACITY_GLOBAL_MAX
+    code_interpreter_capacity_per_subject_max: int = 2  # env: CODE_INTERPRETER_CAPACITY_PER_SUBJECT_MAX
+    code_interpreter_capacity_lease_ttl_seconds: int = 900  # env: CODE_INTERPRETER_CAPACITY_LEASE_TTL_SECONDS
+    code_interpreter_capacity_heartbeat_seconds: int = 30  # env: CODE_INTERPRETER_CAPACITY_HEARTBEAT_SECONDS
+    code_interpreter_capacity_retry_after_seconds: int = 30  # env: CODE_INTERPRETER_CAPACITY_RETRY_AFTER_SECONDS
 
     # Bounded I/O defaults. Callers clamp overrides to hard safety ceilings.
+    # Upload ceiling (multipart file routes and the chat/gateway JSON bodies
+    # that can legitimately carry inline images). Normally overridden by the
+    # Storage transfer limits published to the TLS state volume.
     max_request_body_bytes: int = 1024 * 1024 * 1024
+    # Ceiling for every other JSON request (auth, admin CRUD, settings...).
+    # FastAPI buffers and parses these bodies in full, so a large value here
+    # is a memory-exhaustion vector for anyone who can reach /api/auth/login.
+    max_json_body_bytes: int = 8 * 1024 * 1024  # env: MAX_JSON_BODY_BYTES
     max_attachment_bytes: int = 12 * 1024 * 1024
     max_attachments_total_bytes: int = 36 * 1024 * 1024
     max_voice_upload_bytes: int = 25 * 1024 * 1024
@@ -254,12 +254,6 @@ class Settings(BaseSettings):
     # Conservative in-flight billing holds (USD) and stale recovery.
     budget_hold_buffer: float = 1.10
     budget_unpriced_hold_usd: float = 0.05
-    budget_chat_fallback_hold_usd: float = 0.05
-    budget_embedding_fallback_hold_usd: float = 0.01
-    budget_image_fallback_hold_usd: float = 0.25
-    budget_video_fallback_hold_usd: float = 1.50
-    budget_audio_fallback_hold_usd: float = 0.10
-    budget_tool_fallback_hold_usd: float = 0.05
     budget_max_hold_usd: float = 5.0
     budget_reservation_ttl_seconds: int = 7200
     # Chat is the one operation whose cost cannot be known before the call: the
@@ -277,12 +271,37 @@ class Settings(BaseSettings):
     # the generation is still running here -- the image is produced, persisted
     # and billed, but the response never reaches the user.
     image_request_timeout_seconds: float = 180.0  # env: IMAGE_REQUEST_TIMEOUT_SECONDS
+    # Shared OpenRouter HTTP client pool (image + transcription calls per worker).
+    openrouter_max_connections: int = 32  # env: OPENROUTER_MAX_CONNECTIONS
+    # Ceiling for one chat completion (connect + full stream). LiteLLM's default
+    # is 10 minutes; make it explicit so a stalled provider cannot pin a stream,
+    # its capacity permit and its budget hold for longer than this.
+    chat_provider_timeout_seconds: float = 600.0  # env: CHAT_PROVIDER_TIMEOUT_SECONDS
+    # Outbound HTTP ceilings that used to be literals scattered over the
+    # services (Phase 3.5). Connect timeouts stay at 10s everywhere.
+    #   provider_http:   model catalog sync, video create/poll, Replicate calls
+    #   provider_lookup: short metadata GETs (generation lookup, reconciliation,
+    #                    SSRF-guarded fetches, web tool pages)
+    #   identity_http:   SAML metadata / OIDC discovery, token and userinfo
+    #   speech_http:     text-to-speech synthesis (large audio bodies)
+    provider_http_timeout_seconds: float = 60.0  # env: PROVIDER_HTTP_TIMEOUT_SECONDS
+    # How long one TCP+TLS handshake to a provider may take, and how many extra
+    # attempts httpcore may make. A healthy handshake costs tens of
+    # milliseconds, so the old 15s budget only delayed failures; retrying the
+    # *connect* is what actually survives a network that drops some new SYNs,
+    # and httpcore never re-sends a request that already reached the wire, so a
+    # video POST cannot be submitted (or billed) twice.
+    provider_connect_timeout_seconds: float = 5.0  # env: PROVIDER_CONNECT_TIMEOUT_SECONDS
+    provider_connect_retries: int = 3  # env: PROVIDER_CONNECT_RETRIES
+    provider_lookup_timeout_seconds: float = 20.0  # env: PROVIDER_LOOKUP_TIMEOUT_SECONDS
+    identity_http_timeout_seconds: float = 20.0  # env: IDENTITY_HTTP_TIMEOUT_SECONDS
+    speech_http_timeout_seconds: float = 120.0  # env: SPEECH_HTTP_TIMEOUT_SECONDS
 
     # Video generation (OpenRouter /videos async jobs).
     # Clip length is the user's selected duration from the model's
-    # supported_durations. This env value is not applied as a generation cap;
-    # it is kept optional so existing .env files still parse.
-    video_max_duration_seconds: int | None = None
+    # supported_durations; when set, this is an absolute ceiling on top of
+    # that (a model may advertise 60s clips the operator does not want to pay for).
+    video_max_duration_seconds: int | None = None  # env: VIDEO_MAX_DURATION_SECONDS
     video_max_resolution: str = "1080p"
     video_max_output_bytes: int = 200 * 1024 * 1024
     video_max_concurrent_jobs_per_user: int = 1
@@ -311,10 +330,23 @@ class Settings(BaseSettings):
     ldap_connect_timeout_seconds: int = 4
     ldap_receive_timeout_seconds: int = 5
     ldap_login_timeout_seconds: int = 10
+    # Directory sync may take over a *local* row that still has a password only
+    # when this is true. Off by default: linking such a row lets the directory
+    # identity inherit its roles and used to switch off its TOTP.
+    ldap_link_local_password_accounts: bool = False  # env: LDAP_LINK_LOCAL_PASSWORD_ACCOUNTS
+    # Prune is refused when the directory answer is empty or would remove more
+    # than this share of the known LDAP users in one run (0.5 = half).
+    ldap_prune_max_ratio: float = 0.5  # env: LDAP_PRUNE_MAX_RATIO
     # SAML 2.0 SP (env fallback when no DB row)
     saml_enabled: bool = False
     saml_idp_metadata_url: str = ""
     saml_entity_id: str = ""
+    # Lab-only escape hatch: lets an admin switch off strict validation and the
+    # signed-assertion requirement from the UI. Never set this in production;
+    # an unsigned assertion is a forged login.
+    allow_insecure_saml: bool = False  # env: ALLOW_INSECURE_SAML
+    # How long an outstanding AuthnRequest id stays valid for its ACS response.
+    saml_request_ttl_seconds: int = 600  # env: SAML_REQUEST_TTL_SECONDS
     # OIDC (env fallback when no DB row)
     oidc_enabled: bool = False
     oidc_issuer: str = ""
@@ -409,9 +441,7 @@ def build_redis_url(redis_url: str, redis_password: str) -> str:
     netloc = f"{userinfo}{host}"
     if parsed.port:
         netloc += f":{parsed.port}"
-    return urlunsplit(
-        (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
-    )
+    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
 
 
 def effective_redis_url() -> str:

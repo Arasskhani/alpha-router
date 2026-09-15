@@ -45,7 +45,7 @@ class _FakeProc:
         return -9
 
 
-def test_submit_runs_job_and_reports_success() -> None:
+async def test_submit_runs_job_and_reports_success() -> None:
     async def run():
         result = {"stdout": "hi", "stderr": "", "exit_code": 0, "artifacts": []}
         with patch.object(broker, "_run_container", AsyncMock(return_value=result)):
@@ -64,10 +64,10 @@ def test_submit_runs_job_and_reports_success() -> None:
             assert broker._semaphore._value == 4
 
     with _isolated():
-        asyncio.run(run())
+        await run()
 
 
-def test_nonzero_exit_still_succeeds_with_result_code() -> None:
+async def test_nonzero_exit_still_succeeds_with_result_code() -> None:
     async def run():
         result = {"stdout": "", "stderr": "boom", "exit_code": 3, "artifacts": []}
         with patch.object(broker, "_run_container", AsyncMock(return_value=result)):
@@ -80,10 +80,10 @@ def test_nonzero_exit_still_succeeds_with_result_code() -> None:
             assert payload["result"]["exit_code"] == 3
 
     with _isolated():
-        asyncio.run(run())
+        await run()
 
 
-def test_timeout_maps_to_terminal_timeout_state() -> None:
+async def test_timeout_maps_to_terminal_timeout_state() -> None:
     async def run():
         exc = broker.HTTPException(status_code=504, detail="Sandbox execution timed out")
         with patch.object(broker, "_run_container", AsyncMock(side_effect=exc)):
@@ -97,15 +97,13 @@ def test_timeout_maps_to_terminal_timeout_state() -> None:
             assert broker._semaphore._value == 4
 
     with _isolated():
-        asyncio.run(run())
+        await run()
 
 
-def test_submit_rejects_oversized_workspace_file_with_invalid_request() -> None:
+async def test_submit_rejects_oversized_workspace_file_with_invalid_request() -> None:
     async def run():
         big = "x" * (broker.MAX_FILE_BYTES + 1)
-        resp = await broker.submit_job(
-            JobSubmitRequest(code="print(1)", files={"large.txt": big})
-        )
+        resp = await broker.submit_job(JobSubmitRequest(code="print(1)", files={"large.txt": big}))
         assert resp.status_code == 422
         assert _body(resp)["error_code"] == "invalid_request"
         assert broker._jobs == {}
@@ -113,10 +111,10 @@ def test_submit_rejects_oversized_workspace_file_with_invalid_request() -> None:
         assert broker._semaphore._value == 4
 
     with _isolated():
-        asyncio.run(run())
+        await run()
 
 
-def test_no_capacity_returns_429_with_retry_after_and_error_code() -> None:
+async def test_no_capacity_returns_429_with_retry_after_and_error_code() -> None:
     async def run():
         resp = await broker.submit_job(JobSubmitRequest(code="print(1)"))
         assert resp.status_code == 429
@@ -125,10 +123,10 @@ def test_no_capacity_returns_429_with_retry_after_and_error_code() -> None:
         assert broker._jobs == {}
 
     with _isolated(concurrency=0):
-        asyncio.run(run())
+        await run()
 
 
-def test_duplicate_job_id_conflicts() -> None:
+async def test_duplicate_job_id_conflicts() -> None:
     async def run():
         gate = asyncio.Event()
         started = asyncio.Event()
@@ -156,10 +154,10 @@ def test_duplicate_job_id_conflicts() -> None:
                 await asyncio.wait_for(broker._jobs["dup"].task, 1)
 
     with _isolated():
-        asyncio.run(run())
+        await run()
 
 
-def test_cancel_kills_container_releases_once_and_is_idempotent() -> None:
+async def test_cancel_kills_container_releases_once_and_is_idempotent() -> None:
     async def run():
         gate = asyncio.Event()
         started = asyncio.Event()
@@ -208,10 +206,10 @@ def test_cancel_kills_container_releases_once_and_is_idempotent() -> None:
             assert broker._semaphore._value == 4
 
     with _isolated():
-        asyncio.run(run())
+        await run()
 
 
-def test_unknown_job_returns_404_for_status_and_cancel() -> None:
+async def test_unknown_job_returns_404_for_status_and_cancel() -> None:
     async def run():
         status = await broker.get_job("missing")
         assert status.status_code == 404
@@ -222,10 +220,10 @@ def test_unknown_job_returns_404_for_status_and_cancel() -> None:
         assert _body(cancel)["error_code"] == "job_not_found"
 
     with _isolated():
-        asyncio.run(run())
+        await run()
 
 
-def test_capacity_endpoint_reports_slots() -> None:
+async def test_capacity_endpoint_reports_slots() -> None:
     async def run():
         with patch.object(broker, "MAX_CONCURRENT_SANDBOXES", 4):
             await broker._semaphore.acquire()  # simulate one in-flight execution
@@ -237,22 +235,19 @@ def test_capacity_endpoint_reports_slots() -> None:
         assert report["tracked_jobs"] == 0
 
     with _isolated():
-        asyncio.run(run())
+        await run()
 
 
-def test_liveness_always_ok_and_readiness_gates_on_runtime() -> None:
-    async def run():
-        assert await broker.livez() == {"status": "alive"}
-        with (
-            patch.dict(os.environ, {"SANDBOX_BROKER_TOKEN": TOKEN}),
-            patch.object(broker, "_runtime_ready", False),
-            pytest.raises(broker.HTTPException) as exc,
-        ):
-            await broker.readyz()
-        assert exc.value.status_code == 503
-        assert "not ready" in str(exc.value.detail)
-
-    asyncio.run(run())
+async def test_liveness_always_ok_and_readiness_gates_on_runtime() -> None:
+    assert await broker.livez() == {"status": "alive"}
+    with (
+        patch.dict(os.environ, {"SANDBOX_BROKER_TOKEN": TOKEN}),
+        patch.object(broker, "_runtime_ready", False),
+        pytest.raises(broker.HTTPException) as exc,
+    ):
+        await broker.readyz()
+    assert exc.value.status_code == 503
+    assert "not ready" in str(exc.value.detail)
 
 
 def test_job_endpoints_require_authentication() -> None:

@@ -1,0 +1,69 @@
+# Local commit gate mirroring the CI verify stage (Phase 3.6).
+#
+#   pip install pre-commit && pre-commit install --install-hooks -t pre-commit -t commit-msg
+#
+# Every hook below runs the same tool at the same version CI runs, so a green
+# commit here is a green pipeline there. Hooks are local `system` hooks on
+# purpose: the tools are already pinned in backend/requirements-dev.txt and
+# frontend/package.json, and one more copy of each version would drift.
+minimum_pre_commit_version: "3.5.0"
+default_install_hook_types: [pre-commit, commit-msg]
+
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check (backend)
+        entry: bash -c 'cd backend && ruff check --fix "${@#backend/}"' --
+        language: system
+        types: [python]
+        files: ^backend/
+
+      - id: ruff-format
+        name: ruff format (backend)
+        entry: bash -c 'cd backend && ruff format "${@#backend/}"' --
+        language: system
+        types: [python]
+        files: ^backend/
+
+      - id: mypy-baseline
+        name: mypy against baseline (backend)
+        entry: bash scripts/mypy-check.sh
+        language: system
+        pass_filenames: false
+        files: ^backend/(app/.*\.py|mypy\.ini|mypy-baseline\.txt)$
+
+      - id: vulture
+        name: vulture (backend dead code >= 80%)
+        entry: bash -c 'cd backend && vulture app vulture_whitelist.py --min-confidence 80'
+        language: system
+        pass_filenames: false
+        files: ^backend/app/.*\.py$
+
+      - id: eslint
+        # Errors only here; the warning budget is enforced by `npm run lint` in CI
+        # so touching a legacy file does not block the commit.
+        name: eslint (frontend, errors)
+        entry: bash -c 'cd frontend && ./node_modules/.bin/eslint --quiet "${@#frontend/}"' --
+        language: system
+        files: ^frontend/src/.*\.(ts|tsx)$
+
+      - id: tsc
+        name: tsc -b (frontend)
+        entry: bash -c 'cd frontend && npx tsc -b'
+        language: system
+        pass_filenames: false
+        files: ^frontend/(src/.*\.(ts|tsx)|tsconfig\.json)$
+
+      - id: frontend-sources
+        name: no compiled .js twins under frontend/src
+        entry: bash scripts/check-frontend-sources.sh
+        language: system
+        pass_filenames: false
+        files: ^frontend/src/
+
+      - id: commit-message
+        name: Conventional Commits message
+        entry: python3 scripts/check-commit-message.py
+        language: system
+        stages: [commit-msg]

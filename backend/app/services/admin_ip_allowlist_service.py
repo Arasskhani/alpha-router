@@ -27,7 +27,7 @@ WILDCARD_NETWORKS = frozenset(
     }
 )
 
-_cache: tuple[float, "RestrictionState"] | None = None
+_cache: tuple[float, RestrictionState] | None = None
 
 
 class AllowlistError(ValueError):
@@ -127,9 +127,7 @@ async def _set_setting(db: AsyncSession, key: str, value: str) -> None:
 
 
 async def list_entries(db: AsyncSession) -> list[dict[str, Any]]:
-    rows = (
-        await db.execute(select(AdminIpAllowlistEntry).order_by(AdminIpAllowlistEntry.id.asc()))
-    ).scalars().all()
+    rows = (await db.execute(select(AdminIpAllowlistEntry).order_by(AdminIpAllowlistEntry.id.asc()))).scalars().all()
     return [_serialize_entry(row) for row in rows]
 
 
@@ -184,9 +182,7 @@ async def _reject_if_would_lock_out(
     if ip_matches_allowlist(client_ip, remaining_entries, allow_loopback=state.allow_loopback):
         return
     shown = client_ip or "unknown"
-    raise AllowlistError(
-        f"Cannot change the allowlist because it would lock out your current IP ({shown})."
-    )
+    raise AllowlistError(f"Cannot change the allowlist because it would lock out your current IP ({shown}).")
 
 
 async def update_entry(
@@ -202,10 +198,7 @@ async def update_entry(
         raise AllowlistError("Allowlist entry not found.")
     if enabled is False:
         state = await get_restriction_state(db)
-        remaining = [
-            {**item, "enabled": False} if item["id"] == entry_id else item
-            for item in state.entries
-        ]
+        remaining = [{**item, "enabled": False} if item["id"] == entry_id else item for item in state.entries]
         await _reject_if_would_lock_out(db, client_ip=client_ip, remaining_entries=remaining)
     if label is not None:
         row.label = label.strip()[:128] or None
@@ -252,9 +245,7 @@ async def set_restriction_mode(
         allow_loopback=state.allow_loopback,
     ):
         shown = client_ip or "unknown"
-        raise AllowlistError(
-            f"Cannot enforce the allowlist because your current IP ({shown}) is not listed."
-        )
+        raise AllowlistError(f"Cannot enforce the allowlist because your current IP ({shown}) is not listed.")
     await _set_setting(db, KEY_MODE, mode)
     invalidate_restriction_cache()
     return await get_restriction_state(db)

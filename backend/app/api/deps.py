@@ -30,11 +30,7 @@ async def get_current_user(
 ) -> User:
     """Resolve user from JWT. Inactive users remain authenticated (read-only chat/media/logs)."""
     settings = get_settings()
-    token = (
-        request.cookies.get(settings.session_cookie_name)
-        if settings.enable_cookie_auth
-        else None
-    )
+    token = request.cookies.get(settings.session_cookie_name) if settings.enable_cookie_auth else None
     if not token and settings.allow_legacy_bearer_auth and creds:
         token = creds.credentials
     if not token:
@@ -127,13 +123,6 @@ async def require_super_admin(user: User = Depends(get_current_user), db: AsyncS
     return user
 
 
-async def require_admin_write(user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)) -> User:
-    slugs = await get_user_role_slugs(db, user.id)
-    if not user_can_write_menu(slugs):
-        raise _forbidden("Read-only role: changes not allowed")
-    return user
-
-
 def _menu_requires(menu: MenuKey) -> tuple[Callable, Callable]:
     return require_rbac_menu(menu), require_rbac_menu(menu, write=True)
 
@@ -216,11 +205,7 @@ async def get_bearer_token(
     creds: HTTPAuthorizationCredentials | None = Depends(bearer),
 ) -> str:
     settings = get_settings()
-    token = (
-        request.cookies.get(settings.session_cookie_name)
-        if settings.enable_cookie_auth
-        else None
-    )
+    token = request.cookies.get(settings.session_cookie_name) if settings.enable_cookie_auth else None
     if not token and settings.allow_legacy_bearer_auth and creds:
         token = creds.credentials
     if not token:

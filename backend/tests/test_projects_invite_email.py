@@ -1,7 +1,5 @@
 """Invitation email is best-effort: SMTP success, SMTP absence, and no secrets in the body."""
 
-import asyncio
-
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import app.models  # noqa: F401
@@ -33,7 +31,7 @@ async def _user(db, username, *, email=None):
     return user
 
 
-def test_invite_sends_when_smtp_configured(monkeypatch):
+async def test_invite_sends_when_smtp_configured(monkeypatch):
     async def fake_send(db, *, to_address, subject, body_text, cc=None):
         SENT.append(
             {
@@ -44,90 +42,78 @@ def test_invite_sends_when_smtp_configured(monkeypatch):
         )
 
     monkeypatch.setattr("app.services.smtp_service.send_email", fake_send)
-
-    async def run():
-        SENT.clear()
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                owner = await _user(db, "owner")
-                invitee = await _user(db, "invitee", email="invitee@example.com")
-                proj = await create_project(db, user=owner, name="Mail Me")
-                result = await create_invitation(
-                    db,
-                    project_id=proj["id"],
-                    user=owner,
-                    role="viewer",
-                    notify_user_id=invitee.id,
-                )
-                assert result["token"]
-                assert result["emailSent"] is True
-                assert result["emailWarning"] is None
-                assert len(SENT) == 1
-                assert SENT[0]["to_address"] == "invitee@example.com"
-                assert result["token"] in SENT[0]["body_text"]
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+    SENT.clear()
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            owner = await _user(db, "owner")
+            invitee = await _user(db, "invitee", email="invitee@example.com")
+            proj = await create_project(db, user=owner, name="Mail Me")
+            result = await create_invitation(
+                db,
+                project_id=proj["id"],
+                user=owner,
+                role="viewer",
+                notify_user_id=invitee.id,
+            )
+            assert result["token"]
+            assert result["emailSent"] is True
+            assert result["emailWarning"] is None
+            assert len(SENT) == 1
+            assert SENT[0]["to_address"] == "invitee@example.com"
+            assert result["token"] in SENT[0]["body_text"]
+    finally:
+        await engine.dispose()
 
 
-def test_invite_succeeds_without_smtp(monkeypatch):
+async def test_invite_succeeds_without_smtp(monkeypatch):
     async def fake_send(db, *, to_address, subject, body_text, cc=None):
         raise SmtpNotConfiguredError("SMTP is not configured")
 
     monkeypatch.setattr("app.services.smtp_service.send_email", fake_send)
-
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                owner = await _user(db, "owner")
-                invitee = await _user(db, "invitee")
-                proj = await create_project(db, user=owner, name="No Mail")
-                result = await create_invitation(
-                    db,
-                    project_id=proj["id"],
-                    user=owner,
-                    role="contributor",
-                    notify_user_id=invitee.id,
-                )
-                assert result["token"]
-                assert result["emailSent"] is False
-                assert "Copy the invitation link" in (result["emailWarning"] or "")
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            owner = await _user(db, "owner")
+            invitee = await _user(db, "invitee")
+            proj = await create_project(db, user=owner, name="No Mail")
+            result = await create_invitation(
+                db,
+                project_id=proj["id"],
+                user=owner,
+                role="contributor",
+                notify_user_id=invitee.id,
+            )
+            assert result["token"]
+            assert result["emailSent"] is False
+            assert "Copy the invitation link" in (result["emailWarning"] or "")
+    finally:
+        await engine.dispose()
 
 
-def test_invite_email_never_includes_raw_password(monkeypatch):
+async def test_invite_email_never_includes_raw_password(monkeypatch):
     captured: list[str] = []
 
     async def fake_send(db, *, to_address, subject, body_text, cc=None):
         captured.append(body_text)
 
     monkeypatch.setattr("app.services.smtp_service.send_email", fake_send)
-
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                owner = await _user(db, "owner")
-                invitee = await _user(db, "invitee")
-                proj = await create_project(db, user=owner, name="Secret")
-                await create_invitation(
-                    db,
-                    project_id=proj["id"],
-                    user=owner,
-                    role="viewer",
-                    notify_user_id=invitee.id,
-                )
-                assert captured
-                blob = captured[0].lower()
-                assert "super-secret-password-hash" not in blob
-                assert "password" not in blob
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            owner = await _user(db, "owner")
+            invitee = await _user(db, "invitee")
+            proj = await create_project(db, user=owner, name="Secret")
+            await create_invitation(
+                db,
+                project_id=proj["id"],
+                user=owner,
+                role="viewer",
+                notify_user_id=invitee.id,
+            )
+            assert captured
+            blob = captured[0].lower()
+            assert "super-secret-password-hash" not in blob
+            assert "password" not in blob
+    finally:
+        await engine.dispose()

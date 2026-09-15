@@ -5,9 +5,8 @@ from __future__ import annotations
 import datetime
 import uuid
 
-import litellm
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -15,6 +14,7 @@ from app.models.api_key import AlphaRouterApiKey
 from app.models.budget_reservation import BudgetReservation
 from app.models.model_catalog import AIModel
 from app.models.user import User
+from app.services.observability import increment, observe_budget_reserved_drift
 from app.services.budget_service import (
     BUDGET_EXCEEDED_DETAIL,
     NO_PLAN_BUDGET_DETAIL,
@@ -24,6 +24,9 @@ from app.services.alpha_router_api_key_service import ensure_key_usable
 
 SUBJECT_USER = "user"
 SUBJECT_ALPHA_ROUTER_KEY = "alpha_router_key"
+# Sibling of the DDL (56023113), admin-bootstrap (56023114) and scheduler
+# leader (56023115) locks.
+RECONCILE_LOCK_ID = 56023116
 STATUS_HELD = "held"
 STATUS_SETTLED = "settled"
 STATUS_RELEASED = "released"
@@ -40,12 +43,6 @@ def _positive_float(value: float | int | None, fallback: float) -> float:
     except (TypeError, ValueError):
         amount = 0.0
     return amount if amount > 0 else fallback
-
-
-def _clamp_hold(amount: float, fallback: float) -> float:
-    settings = get_settings()
-    maximum = max(0.01, min(100.0, float(settings.budget_max_hold_usd or 5.0)))
-    return round(max(0.0001, min(maximum, _positive_float(amount, fallback))), 8)
 
 
 #: Flat per-image prompt-token estimate for multimodal turns. Providers tokenize
@@ -141,12 +138,7 @@ def _locked_user_stmt(user_id: int):
     resurrects an already-released hold — which is how ``budget_reserved_usd``
     drifted to $5.05 with zero ``held`` rows and locked the account out.
     """
-    return (
-        select(User)
-        .where(User.id == int(user_id))
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
+    return select(User).where(User.id == int(user_id)).with_for_update().execution_options(populate_existing=True)
 
 
 def _locked_key_stmt(key_id: int):
@@ -295,16 +287,8 @@ async def _admit_hold(
 
     def evaluate(current_held: float) -> float | None:
         if cost_is_estimated:
-            return _soft_hold_allowance(
-                amount=amount, limit=limit, used=used, held=current_held
-            )
-        return (
-            amount
-            if _hold_fits_balance(
-                amount=amount, limit=limit, used=used, held=current_held
-            )
-            else None
-        )
+            return _soft_hold_allowance(amount=amount, limit=limit, used=used, held=current_held)
+        return amount if _hold_fits_balance(amount=amount, limit=limit, used=used, held=current_held) else None
 
     allowed = evaluate(held)
     if allowed is None and held > 0:
@@ -389,119 +373,8 @@ async def reservation_hold_usd(
     return round(total, 8)
 
 
-def estimate_chat_hold(ai_model: AIModel, body: dict) -> float:
-    """Estimate a hold without blocking stream start on model tokenization."""
-    settings = get_settings()
-    fallback = float(settings.budget_chat_fallback_hold_usd or 0.05)
-    messages = body.get("messages")
-    if isinstance(messages, list):
-        # UTF-8 bytes / 3 is deliberately conservative for both Latin and
-        # multi-byte scripts while remaining O(input size) and provider-free.
-        prompt_bytes = sum(
-            len(str(message.get("content") or "").encode("utf-8"))
-            for message in messages
-            if isinstance(message, dict)
-        )
-    else:
-        prompt_bytes = 0
-    prompt_tokens = max(1, (prompt_bytes + 2) // 3)
-    try:
-        output_tokens = max(1, min(8192, int(body.get("max_tokens") or 4096)))
-    except (TypeError, ValueError):
-        output_tokens = 4096
-    in_rate = _positive_float(ai_model.input_cost_per_1k, 0.0)
-    out_rate = _positive_float(ai_model.output_cost_per_1k, 0.0)
-    priced_estimate = (prompt_tokens / 1000) * in_rate + (output_tokens / 1000) * out_rate
-    estimate = max(fallback, priced_estimate * 1.25)
-    tools = body.get("tools") or {}
-    if isinstance(tools, dict) and tools.get("code_interpreter"):
-        estimate *= 4
-    return _clamp_hold(estimate, fallback)
-
-
-def estimate_embedding_hold(ai_model: AIModel, body: dict) -> float:
-    settings = get_settings()
-    fallback = float(settings.budget_embedding_fallback_hold_usd or 0.01)
-    try:
-        prompt_tokens = int(
-            litellm.token_counter(model=ai_model.external_id, text=str(body.get("input") or ""))
-            or 0
-        )
-    except Exception:
-        prompt_tokens = 0
-    in_rate = _positive_float(ai_model.input_cost_per_1k, 0.0)
-    return _clamp_hold((prompt_tokens / 1000) * in_rate * 1.25, fallback)
-
-
-def estimate_image_hold(ai_model: AIModel | None, *, quantity: int = 1) -> float:
-    del ai_model
-    settings = get_settings()
-    return _clamp_hold(
-        float(settings.budget_image_fallback_hold_usd or 0.25)
-        * max(1, int(quantity or 1)),
-        0.25,
-    )
-
-
-_VIDEO_RESOLUTION_HOLD_FACTOR = {
-    "480p": 0.75,
-    "720p": 1.0,
-    "1080p": 1.5,
-    "1k": 1.5,
-    "2k": 2.0,
-    "4k": 3.0,
-}
-
-
-def estimate_video_hold(
-    ai_model: AIModel | None,
-    *,
-    duration_seconds: int = 4,
-    resolution: str | None = "720p",
-) -> float:
-    """Conservative hold for async video generation (duration × resolution tier)."""
-    del ai_model
-    settings = get_settings()
-    base = float(settings.budget_video_fallback_hold_usd or 1.50)
-    try:
-        duration = max(1, int(duration_seconds or 0))
-    except (TypeError, ValueError):
-        duration = 1
-    res_key = (resolution or "720p").strip().lower()
-    factor = float(_VIDEO_RESOLUTION_HOLD_FACTOR.get(res_key, 1.0))
-    # Scale from a 4-second baseline clip.
-    amount = base * (duration / 4.0) * factor
-    return _clamp_hold(amount, base)
-
-
-def estimate_metered_service_hold(service_type: str) -> float:
-    """Conservative hold for non-token services without a quoted maximum."""
-
-    settings = get_settings()
-    service = (service_type or "").strip().lower()
-    if service in {"audio", "transcription", "speech"}:
-        fallback = float(settings.budget_audio_fallback_hold_usd or 0.10)
-    else:
-        fallback = float(settings.budget_tool_fallback_hold_usd or 0.05)
-    return _clamp_hold(fallback, fallback)
-
-
-def estimate_speech_hold(ai_model: AIModel | None, *, characters: int = 1) -> float:
-    """Conservative hold for synchronous text-to-speech generation."""
-    del ai_model
-    settings = get_settings()
-    base = float(settings.budget_audio_fallback_hold_usd or 0.10)
-    # Scale linearly with character count; 1000 chars ~= one base unit.
-    factor = max(1.0, (max(1, int(characters or 1)) / 1000.0))
-    return _clamp_hold(base * factor, base)
-
-
 def reservation_key(body: dict, *, operation: str) -> str:
-    explicit = (
-        body.get("_idempotency_key")
-        or body.get("assistant_client_message_id")
-        or ""
-    )
+    explicit = body.get("_idempotency_key") or body.get("assistant_client_message_id") or ""
     if explicit:
         return f"{operation}:{str(explicit).strip()[:128]}"
     return f"{operation}:{uuid.uuid4()}"
@@ -512,9 +385,7 @@ async def _existing_reservation(
     key: str,
 ) -> BudgetReservation | None:
     return (
-        await db.execute(
-            select(BudgetReservation).where(BudgetReservation.idempotency_key == key)
-        )
+        await db.execute(select(BudgetReservation).where(BudgetReservation.idempotency_key == key))
     ).scalar_one_or_none()
 
 
@@ -538,14 +409,8 @@ async def reserve(
     """
     if user_id is None and alpha_router_api_key_id is None:
         return None
-    subject_type = (
-        SUBJECT_ALPHA_ROUTER_KEY
-        if alpha_router_api_key_id is not None
-        else SUBJECT_USER
-    )
-    subject_id = int(
-        alpha_router_api_key_id if alpha_router_api_key_id is not None else user_id
-    )
+    subject_type = SUBJECT_ALPHA_ROUTER_KEY if alpha_router_api_key_id is not None else SUBJECT_USER
+    subject_id = int(alpha_router_api_key_id if alpha_router_api_key_id is not None else user_id)
     scoped_key = f"{subject_type}:{subject_id}:{idempotency_key}"[:160]
     # No upper cap here. Every caller derives ``amount_usd`` from
     # ``reservation_hold_usd`` -> ``quote_hold``, which already bounds an
@@ -557,11 +422,7 @@ async def reserve(
     # $5.00, so it could overshoot the budget even when admission was strict.
     amount = round(max(0.0001, float(amount_usd or 0)), 8)
     if alpha_router_api_key_id is not None:
-        key = (
-            await db.execute(
-                _locked_key_stmt(alpha_router_api_key_id)
-            )
-        ).scalar_one_or_none()
+        key = (await db.execute(_locked_key_stmt(alpha_router_api_key_id))).scalar_one_or_none()
         if key is None:
             raise HTTPException(status_code=401, detail="Invalid API key")
         await ensure_key_usable(db, key)
@@ -570,6 +431,8 @@ async def reserve(
         limit = float(key.credit_limit_usd or 0)
         used = float(key.period_used_usd or 0)
         held = float(key.period_reserved_usd or 0)
+        # ensure_key_usable has already refused limit <= 0 unless the key is
+        # explicitly unlimited, so "limit > 0" here means "a cap applies".
         if limit > 0:
             held, amount = await _admit_hold(
                 db,
@@ -585,11 +448,7 @@ async def reserve(
             )
         key.period_reserved_usd = round(held + amount, 8)
     else:
-        user = (
-            await db.execute(
-                _locked_user_stmt(user_id)
-            )
-        ).scalar_one_or_none()
+        user = (await db.execute(_locked_user_stmt(user_id))).scalar_one_or_none()
         if user is None or not user.is_active:
             raise HTTPException(status_code=403, detail="Account disabled")
         await ensure_budget_period(db, user)
@@ -653,17 +512,9 @@ async def _lock_subject(
     subject_id: int,
 ) -> bool:
     if subject_type == SUBJECT_USER:
-        return (
-            await db.execute(
-                _locked_user_stmt(subject_id)
-            )
-        ).scalar_one_or_none() is not None
+        return (await db.execute(_locked_user_stmt(subject_id))).scalar_one_or_none() is not None
     if subject_type == SUBJECT_ALPHA_ROUTER_KEY:
-        return (
-            await db.execute(
-                _locked_key_stmt(subject_id)
-            )
-        ).scalar_one_or_none() is not None
+        return (await db.execute(_locked_key_stmt(subject_id))).scalar_one_or_none() is not None
     return False
 
 
@@ -688,11 +539,7 @@ async def _apply_release_to_subject(
     reserved = max(0.0, float(row.reserved_usd or 0))
     actual = max(0.0, float(actual_usd or 0))
     if row.subject_type == SUBJECT_USER:
-        user = (
-            await db.execute(
-                _locked_user_stmt(row.subject_id)
-            )
-        ).scalar_one_or_none()
+        user = (await db.execute(_locked_user_stmt(row.subject_id))).scalar_one_or_none()
         if user:
             user.budget_reserved_usd = round(
                 max(0.0, float(user.budget_reserved_usd or 0) - reserved),
@@ -704,11 +551,7 @@ async def _apply_release_to_subject(
                     8,
                 )
     elif row.subject_type == SUBJECT_ALPHA_ROUTER_KEY:
-        key = (
-            await db.execute(
-                _locked_key_stmt(row.subject_id)
-            )
-        ).scalar_one_or_none()
+        key = (await db.execute(_locked_key_stmt(row.subject_id))).scalar_one_or_none()
         if key:
             key.period_reserved_usd = round(
                 max(0.0, float(key.period_reserved_usd or 0) - reserved),
@@ -764,14 +607,17 @@ async def release(
 
 async def expire_stale_reservations(db: AsyncSession) -> int:
     reservation_ids = (
-        await db.execute(
-            select(BudgetReservation.id)
-            .where(
-                BudgetReservation.status == STATUS_HELD,
-                BudgetReservation.expires_at < _now(),
+        (
+            await db.execute(
+                select(BudgetReservation.id).where(
+                    BudgetReservation.status == STATUS_HELD,
+                    BudgetReservation.expires_at < _now(),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     expired = 0
     for reservation_id in reservation_ids:
         if await release(db, reservation_id, expired=True):
@@ -784,7 +630,21 @@ async def reconcile_subject_reserved(
     subject_type: str,
     subject_id: int,
 ) -> float:
-    """Set the subject reserved counter to the sum of open HELD rows."""
+    """Set the subject reserved counter to the sum of open HELD rows.
+
+    Lock *first*, sum *second*. ``reserve`` holds the subject row FOR UPDATE
+    while it inserts the reservation and bumps the counter in one
+    transaction. Summing before taking that lock reads a snapshot without the
+    in-flight row, then waits for the lock, then writes the stale sum over
+    the counter the reservation just increased - the hold exists but is no
+    longer counted, so the subject can overspend by exactly that amount.
+    """
+    if subject_type == SUBJECT_USER:
+        subject = (await db.execute(_locked_user_stmt(subject_id))).scalar_one_or_none()
+    elif subject_type == SUBJECT_ALPHA_ROUTER_KEY:
+        subject = (await db.execute(_locked_key_stmt(subject_id))).scalar_one_or_none()
+    else:
+        subject = None
     held = float(
         (
             await db.execute(
@@ -797,22 +657,11 @@ async def reconcile_subject_reserved(
         ).scalar_one()
     )
     held = round(max(0.0, held), 8)
-    if subject_type == SUBJECT_USER:
-        user = (
-            await db.execute(
-                _locked_user_stmt(subject_id)
-            )
-        ).scalar_one_or_none()
-        if user:
-            user.budget_reserved_usd = held
-    elif subject_type == SUBJECT_ALPHA_ROUTER_KEY:
-        key = (
-            await db.execute(
-                _locked_key_stmt(subject_id)
-            )
-        ).scalar_one_or_none()
-        if key:
-            key.period_reserved_usd = held
+    if subject is not None:
+        if subject_type == SUBJECT_USER:
+            subject.budget_reserved_usd = held
+        else:
+            subject.period_reserved_usd = held
     await db.flush()
     return held
 
@@ -824,8 +673,8 @@ async def _drifted_subject_ids(
     counter_column,
     id_column,
     tolerance: float = 1e-6,
-) -> list[int]:
-    """Subject ids whose reserved counter sits above their open ``held`` rows."""
+) -> list[tuple[int, float]]:
+    """(subject id, drift USD) for counters that sit above their open ``held`` rows."""
     held_totals = (
         select(
             BudgetReservation.subject_id.label("sid"),
@@ -850,7 +699,7 @@ async def _drifted_subject_ids(
         )
     ).all()
     return [
-        int(subject_id)
+        (int(subject_id), float(counter or 0) - float(held_sum or 0))
         for subject_id, counter, held_sum in rows
         if float(counter or 0) - float(held_sum or 0) > tolerance
     ]
@@ -866,8 +715,23 @@ async def reconcile_drifted_reserved_counters(db: AsyncSession) -> int:
     consuming budget) until period rollover.
 
     Returns the number of subjects repaired.
+
+    Only one instance may run this at a time: the scheduler leader election
+    already guarantees that, and the transaction-scoped advisory lock below
+    is the defence in depth for a manual run or a second deployment sharing
+    the database. When the lock is taken elsewhere this call returns 0.
     """
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        got = (
+            await db.execute(
+                text("SELECT pg_try_advisory_xact_lock(:lock_id)"),
+                {"lock_id": RECONCILE_LOCK_ID},
+            )
+        ).scalar()
+        if not got:
+            return 0
     repaired = 0
+    drift_total = 0.0
     for subject_type, id_column, counter_column in (
         (SUBJECT_USER, User.id, User.budget_reserved_usd),
         (
@@ -876,15 +740,19 @@ async def reconcile_drifted_reserved_counters(db: AsyncSession) -> int:
             AlphaRouterApiKey.period_reserved_usd,
         ),
     ):
-        subject_ids = await _drifted_subject_ids(
+        drifted = await _drifted_subject_ids(
             db,
             subject_type=subject_type,
             counter_column=counter_column,
             id_column=id_column,
         )
-        for subject_id in subject_ids:
+        for subject_id, drift_usd in drifted:
             await reconcile_subject_reserved(db, subject_type, subject_id)
             repaired += 1
+            drift_total += drift_usd
+            increment("budget_reserved_drift_repaired")
+    # Reported even when zero so the dashboard shows "checked, exact".
+    observe_budget_reserved_drift(drift_total)
     return repaired
 
 
@@ -902,16 +770,20 @@ async def release_open_holds_for_subject(
     """
     await _lock_subject(db, subject_type, int(subject_id))
     rows = (
-        await db.execute(
-            select(BudgetReservation)
-            .where(
-                BudgetReservation.subject_type == subject_type,
-                BudgetReservation.subject_id == int(subject_id),
-                BudgetReservation.status == STATUS_HELD,
+        (
+            await db.execute(
+                select(BudgetReservation)
+                .where(
+                    BudgetReservation.subject_type == subject_type,
+                    BudgetReservation.subject_id == int(subject_id),
+                    BudgetReservation.status == STATUS_HELD,
+                )
+                .with_for_update()
             )
-            .with_for_update()
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     released = 0
     for row in rows:
         if await release(db, row.id, expired=True):

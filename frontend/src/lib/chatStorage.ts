@@ -40,7 +40,6 @@ export type UserPrefs = {
   default_model: string | null;
   theme: UserTheme;
   timezone: string;
-  language: string;
   /** "auto" sends no language hint to speech-to-text; "en"/"fa" force one. */
   voice_recording_language: VoiceLang;
   /** Catalog ref for speech-to-text; empty = the admin-selected default. */
@@ -136,9 +135,6 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
   const timezone = typeof raw?.timezone === "string" && raw.timezone.trim()
     ? raw.timezone.trim()
     : "UTC";
-  const language = typeof raw?.language === "string" && raw.language.trim()
-    ? raw.language.trim().toLowerCase()
-    : "en";
   const voiceRecordingLang = normalizeVoiceLang(
     typeof raw?.voice_recording_language === "string" ? raw.voice_recording_language : null,
   );
@@ -157,7 +153,6 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
     default_model: model,
     theme,
     timezone,
-    language: language === "en" ? "en" : "en",
     voice_recording_language: voiceRecordingLang,
     transcription_model: transcriptionModel,
     persian_font: persianFont,
@@ -296,6 +291,11 @@ export function sessionActivityAt(s: ChatSession): number {
   return s.createdAt;
 }
 
+/** Newest known change to a session — metadata edits included (unlike sessionActivityAt). */
+function sessionVersionAt(s: ChatSession): number {
+  return Math.max(s.updatedAt ?? 0, sessionActivityAt(s));
+}
+
 export function sortSessionsByActivity(sessions: ChatSession[]): ChatSession[] {
   return [...sessions].sort((a, b) => sessionActivityAt(b) - sessionActivityAt(a));
 }
@@ -431,14 +431,6 @@ export function setCachedSessionMessages(
   data: CachedMessages,
 ): void {
   messageCache.set(cacheKey(sessionId), data);
-  try {
-    sessionStorage.setItem(
-      `${STORAGE_KEYS.privateChats}:msgcache:${sessionId}`,
-      JSON.stringify({ revision: data.revision, oldestSequence: data.oldestSequence }),
-    );
-  } catch {
-    /* optional */
-  }
 }
 
 function markSessionDirty(sessionId: string, metadataOnly = false) {
@@ -562,19 +554,33 @@ export function mergeSessionAfterMessageLoad(
   };
 }
 
-function pickMergedMessages(local: ChatSession, remote: ChatSession): ChatMessage[] {
+/**
+ * Choose which message list survives a merge.
+ *
+ * A side that has no messages loaded (the list endpoint returns sessions
+ * without messages) never wins. When both sides carry messages the newer
+ * `updatedAt` wins — so a deletion made on another device does replace the
+ * longer, stale list here. Only a timestamp tie falls back to "more messages".
+ */
+export function pickMergedMessages(
+  local: ChatSession,
+  remote: ChatSession,
+  localUpdated: number = sessionVersionAt(local),
+  remoteUpdated: number = sessionVersionAt(remote),
+): ChatMessage[] {
   const lm = local.messages.length;
   const rm = remote.messages.length;
-  if (lm > 0 && rm === 0) return local.messages;
-  if (rm > 0 && lm === 0) return remote.messages;
-  if (lm > rm) return local.messages;
-  if (rm > lm) return remote.messages;
-  return lm > 0 ? local.messages : remote.messages;
+  if (rm === 0) return local.messages;
+  if (lm === 0) return remote.messages;
+  if (remoteUpdated > localUpdated) return remote.messages;
+  if (localUpdated > remoteUpdated) return local.messages;
+  return lm >= rm ? local.messages : remote.messages;
 }
 
 /**
  * Merge remote sessions with local state. Protected ids (streaming / image jobs) always keep local messages.
- * Otherwise prefer the copy with the newer updatedAt, or more messages when timestamps tie.
+ * Otherwise the copy with the newer updatedAt wins for every field (title and
+ * messages have their own rules above; Agent selection is server-owned).
  */
 export function mergeRemoteChatSessions(
   local: ChatSession[],
@@ -617,8 +623,8 @@ export function mergeRemoteChatSessions(
     }
     if (!l || !r) continue;
 
-    const localUpdated = sessionActivityAt(l);
-    const remoteUpdated = sessionActivityAt(r);
+    const localUpdated = sessionVersionAt(l);
+    const remoteUpdated = sessionVersionAt(r);
 
     const title = pickMergedTitle(l, r);
 
@@ -640,39 +646,22 @@ export function mergeRemoteChatSessions(
       continue;
     }
 
-    const messages = pickMergedMessages(l, r);
-
-    if (localUpdated > remoteUpdated) {
-      merged.push({
-        ...r,
-        ...l,
-        title,
-        messages,
-        currentAgentId: r.currentAgentId,
-        currentAgentVersionId: r.currentAgentVersionId,
-        agentSelectedAt: r.agentSelectedAt,
-      });
-    } else if (remoteUpdated > localUpdated) {
-      merged.push({
-        ...r,
-        ...l,
-        title,
-        messages,
-        currentAgentId: r.currentAgentId,
-        currentAgentVersionId: r.currentAgentVersionId,
-        agentSelectedAt: r.agentSelectedAt,
-      });
-    } else {
-      merged.push({
-        ...r,
-        ...l,
-        title,
-        messages,
-        currentAgentId: r.currentAgentId,
-        currentAgentVersionId: r.currentAgentVersionId,
-        agentSelectedAt: r.agentSelectedAt,
-      });
-    }
+    // Newer copy wins; a tie, or a local change still waiting to be pushed,
+    // keeps the local fields.
+    const remoteWins = remoteUpdated > localUpdated && !hasUnsyncedLocalWrites(id);
+    const messages = remoteWins
+      ? pickMergedMessages(l, r, localUpdated, remoteUpdated)
+      : pickMergedMessages(l, r, 1, 0);
+    const base = remoteWins ? { ...l, ...r } : { ...r, ...l };
+    merged.push({
+      ...base,
+      title,
+      messages,
+      currentAgentId: r.currentAgentId,
+      currentAgentVersionId: r.currentAgentVersionId,
+      agentSelectedAt: r.agentSelectedAt,
+      updatedAt: Math.max(l.updatedAt ?? 0, r.updatedAt ?? 0),
+    });
   }
 
   return normalizeChatSessions(merged);
@@ -682,8 +671,6 @@ let saveUserChatsChain: Promise<unknown> = Promise.resolve();
 const serverSessionIds = new Set<string>();
 const createSessionInflight = new Map<string, Promise<void>>();
 const pendingDeleteIds = new Set<string>();
-let serverFolderIds = new Set<string>();
-
 export function markPendingDelete(id: string): void {
   pendingDeleteIds.add(id);
 }
@@ -694,6 +681,23 @@ export function clearPendingDelete(id: string): void {
 
 export function isPendingDelete(id: string): boolean {
   return pendingDeleteIds.has(id);
+}
+
+/**
+ * This tab holds changes to the session that the server has not accepted yet
+ * (queued message appends, or a metadata PATCH still to go out).
+ *
+ * Such a session must keep its local fields through a merge even when the
+ * server copy looks newer: the server row is newer precisely because it does
+ * not have our change yet, and the flush that follows would otherwise push
+ * back whatever the merge just overwrote.
+ */
+function hasUnsyncedLocalWrites(sessionId: string): boolean {
+  return (
+    dirtySessionIds.has(sessionId) ||
+    dirtyMetadataIds.has(sessionId) ||
+    (pendingAppendBySession.get(sessionId)?.length ?? 0) > 0
+  );
 }
 
 function mapApiMessage(raw: Record<string, unknown>): ChatMessage {
@@ -805,6 +809,52 @@ export async function fetchSessionMessagesFromServer(
     hasMore: !!(data.has_more ?? data.hasMore),
     revision: typeof data.revision === "number" ? data.revision : undefined,
   };
+}
+
+/** Hard stop for the full-history walk: beyond this a chat is not synced by diff. */
+const FULL_HISTORY_MAX_MESSAGES = 5000;
+
+/**
+ * Walk `before` pages of one session's history, newest page first, and return
+ * the rows oldest-first. Sync-by-diff needs more than the single 200-row page
+ * the old code read, which made every older message of a long chat look
+ * "missing".
+ *
+ * `minMessages` stops the walk as soon as that many rows are in hand: the
+ * append diff only has to cover the local message list, so an ordinary turn
+ * still costs exactly one request. Callers that must see the *whole* history
+ * (the full-replace PUT) omit it and check `truncated`.
+ */
+export async function fetchAllSessionMessagesFromServer(
+  sessionId: string,
+  opts?: { pageSize?: number; minMessages?: number; signal?: AbortSignal },
+): Promise<{ messages: ChatMessage[]; revision?: number; truncated: boolean }> {
+  const pageSize = Math.min(500, Math.max(1, opts?.pageSize ?? 200));
+  const pages: ChatMessage[][] = [];
+  let total = 0;
+  let before: number | undefined;
+  let revision: number | undefined;
+  for (;;) {
+    const page = await fetchSessionMessagesFromServer(sessionId, {
+      limit: pageSize,
+      before,
+      signal: opts?.signal,
+    });
+    if (revision === undefined) revision = page.revision;
+    pages.push(page.messages);
+    total += page.messages.length;
+    const oldest = page.messages[0];
+    if (!page.hasMore || !page.messages.length || oldest?.sequence == null) {
+      return { messages: pages.reverse().flat(), revision, truncated: false };
+    }
+    if (opts?.minMessages != null && total >= opts.minMessages) {
+      return { messages: pages.reverse().flat(), revision, truncated: true };
+    }
+    if (total >= FULL_HISTORY_MAX_MESSAGES) {
+      return { messages: pages.reverse().flat(), revision, truncated: true };
+    }
+    before = oldest.sequence;
+  }
 }
 
 /** Fetch latest messages for polling; always hits the server and refreshes the local cache. */
@@ -1264,7 +1314,6 @@ async function syncFoldersToServer(folders: ChatFolder[]): Promise<void> {
       await api(`/api/user/chats/folders/${encodeURIComponent(id)}`, { method: "DELETE" });
     }
   }
-  serverFolderIds = localIds;
 }
 
 export async function deleteChatSessionOnServer(sessionId: string): Promise<void> {
@@ -1463,7 +1512,6 @@ export async function fetchUserChatsFromServer(
         const id = String(s.id);
         if (!isPendingDelete(id)) serverSessionIds.add(id);
       }
-      serverFolderIds = new Set();
     }
     const serverSessions = (data.sessions || [])
       .map((s) => mapApiSession(s))
@@ -1507,7 +1555,6 @@ export async function fetchUserChatsFromServer(
     const retain = !!opts?.retainKnownSessionIds;
     if (!retain) {
       serverSessionIds.clear();
-      serverFolderIds = new Set((data.folders || []).map((f) => String(f.id)));
     }
     for (const s of data.sessions || []) {
       const id = String(s.id);
@@ -1741,13 +1788,21 @@ async function replaceChatSessionMessagesOnServerInner(
   let lastErr: unknown;
 
   for (let attempt = 0; attempt < REPLACE_MESSAGES_MAX_RETRIES; attempt++) {
-    const fresh = await pollSessionMessagesFromServer(sessionId, { limit: 200 });
+    // PUT replaces the WHOLE history, so the base must be the complete server
+    // list — never the locally loaded window (often only the last 50 rows) and
+    // never a single 200-row page. With a reconcile function the change is
+    // applied to that full list on every attempt, including the first.
+    const fresh = await fetchAllSessionMessagesFromServer(sessionId);
+    if (fresh.truncated) {
+      throw new Error("This chat is too long to edit here — refresh and try again.");
+    }
+    const freshRevision = fresh.revision ?? live.revision ?? 1;
     applyServerSessionToLocal(sessionId, {
-      revision: fresh.revision,
+      revision: freshRevision,
       messageCount: fresh.messages.length,
     });
 
-    if (attempt > 0 && opts?.reconcile) {
+    if (opts?.reconcile) {
       const reconciled = opts.reconcile(fresh.messages);
       if (reconciled == null) {
         throw lastErr ?? new Error("Could not apply change — refresh and try again.");
@@ -1756,18 +1811,13 @@ async function replaceChatSessionMessagesOnServerInner(
     }
 
     try {
-      await replaceSessionMessagesOnServer(sessionId, payload, fresh.revision);
+      await replaceSessionMessagesOnServer(sessionId, payload, freshRevision);
       lastErr = undefined;
       break;
     } catch (err) {
       lastErr = err;
       if (!isRevisionConflict(err) || attempt === REPLACE_MESSAGES_MAX_RETRIES - 1) {
         throw err;
-      }
-      if (opts?.reconcile) {
-        const reconciled = opts.reconcile(fresh.messages);
-        if (reconciled == null) throw err;
-        payload = reconciled;
       }
     }
   }
@@ -1780,7 +1830,8 @@ async function replaceChatSessionMessagesOnServerInner(
   setCachedSessionMessages(sessionId, {
     revision: polled.revision,
     messages: polled.messages,
-    hasMoreOlder: false,
+    hasMoreOlder: polled.hasMore,
+    oldestSequence: polled.messages[0]?.sequence,
   });
   broadcastChatRefresh({ at: Date.now(), sessionId });
   return polled;
@@ -1850,11 +1901,13 @@ export async function syncSessionMessages(
   if (!live) return;
 
   await createSessionOnServerIfMissing(live, opts?.signal);
-  const { messages: serverMsgs } = await fetchSessionMessagesFromServer(sessionId, {
-    limit: 200,
+  // Enough history to cover the local list: the diff only ever appends a tail,
+  // so rows older than that cannot change the outcome (see messagesMissingOnServer).
+  const { messages: serverMsgs } = await fetchAllSessionMessagesFromServer(sessionId, {
+    minMessages: messages.length + 1,
     signal: opts?.signal,
   });
-  const serverCount = serverMsgs.length;
+  const missing = messagesMissingOnServer(messages, serverMsgs);
   const lastLocal = messages[messages.length - 1];
   const lastServer = serverMsgs[serverMsgs.length - 1];
 
@@ -1882,8 +1935,8 @@ export async function syncSessionMessages(
     return;
   }
 
-  if (messages.length > serverCount) {
-    const firstToAppend = messages[serverCount];
+  if (missing.length) {
+    const firstToAppend = missing[0];
     if (
       lastServer?.role === "assistant" &&
       lastServer.content === _IMAGE_PENDING &&
@@ -1891,8 +1944,8 @@ export async function syncSessionMessages(
       firstToAppend.content !== _IMAGE_PENDING
     ) {
       await patchTrailingAssistant(firstToAppend.content, firstToAppend.receivedAt);
-      if (messages.length > serverCount + 1) {
-        const rest = messages.slice(serverCount + 1).map((m) => ({
+      if (missing.length > 1) {
+        const rest = missing.slice(1).map((m) => ({
           ...m,
           clientMessageId: m.clientMessageId || newClientMessageId(),
         }));
@@ -1908,7 +1961,7 @@ export async function syncSessionMessages(
       }
       return;
     }
-    const toAppend = messages.slice(serverCount).map((m) => ({
+    const toAppend = missing.map((m) => ({
       ...m,
       clientMessageId: m.clientMessageId || newClientMessageId(),
       receivedAt: m.content === _IMAGE_PENDING ? undefined : m.receivedAt,
@@ -1928,11 +1981,74 @@ export async function syncSessionMessages(
   if (
     lastLocal?.role === "assistant" &&
     lastServer?.role === "assistant" &&
+    sameMessageIdentity(lastLocal, lastServer) &&
     lastLocal.content !== lastServer.content
   ) {
     await patchTrailingAssistant(lastLocal.content, lastLocal.receivedAt);
     applySessionMessagesLocally(sessionId, messages);
   }
+}
+
+/**
+ * Whether the last local row and the last server row are the same message.
+ *
+ * Only two ids that both exist and differ prove otherwise — that is another
+ * device's reply sitting where ours should be, and patching it would overwrite
+ * someone else's message. A missing id does not: a row replaced in place (a
+ * speech or image placeholder becoming an error notice) has no id while the
+ * server copy it replaced has one, and that row still has to be patched.
+ */
+export function sameMessageIdentity(a: ChatMessage, b: ChatMessage): boolean {
+  return !(a.clientMessageId && b.clientMessageId && a.clientMessageId !== b.clientMessageId);
+}
+
+/**
+ * Local messages the server does not have yet — always a contiguous tail.
+ *
+ * The diff is keyed on `clientMessageId` (unique per `(session, client_message_id)`
+ * in the database), so a message another device appended in the meantime no
+ * longer shifts a positional cut and makes us re-send the wrong rows.
+ *
+ * Rows the id cannot match are paired with the next server row of the same
+ * role instead. Two kinds need that: messages written before the field
+ * existed, and a local row that *lost* its id because it was replaced in
+ * place — an image/speech placeholder turning into an error notice. Without
+ * the role pairing that replacement looks new and gets appended a second
+ * time, instead of patching the row the server already has.
+ *
+ * Only rows after the last one confirmed present are returned. The server API
+ * appends at the tail, so re-sending a row from the middle would move it to
+ * the end and scramble the order; leaving such a row alone is the safer
+ * failure. It is also what makes a partial (newest-N) server window safe to
+ * diff against: everything older simply falls outside the tail.
+ */
+export function messagesMissingOnServer(local: ChatMessage[], server: ChatMessage[]): ChatMessage[] {
+  const serverIds = new Set<string>();
+  const localIds = new Set<string>();
+  for (const m of server) if (m.clientMessageId) serverIds.add(m.clientMessageId);
+  for (const m of local) if (m.clientMessageId) localIds.add(m.clientMessageId);
+  // Server rows no local id claims: legacy rows, and rows whose local copy was replaced.
+  const unclaimed = server.filter((m) => !m.clientMessageId || !localIds.has(m.clientMessageId));
+
+  const candidates: { index: number; message: ChatMessage }[] = [];
+  let cursor = 0;
+  let lastPresent = -1;
+  local.forEach((message, index) => {
+    if (message.clientMessageId) {
+      // An id the server does not have was never sent: genuinely missing.
+      if (serverIds.has(message.clientMessageId)) lastPresent = index;
+      else candidates.push({ index, message });
+      return;
+    }
+    const paired = unclaimed.findIndex((s, i) => i >= cursor && s.role === message.role);
+    if (paired >= 0) {
+      cursor = paired + 1;
+      lastPresent = index;
+      return;
+    }
+    candidates.push({ index, message });
+  });
+  return candidates.filter((c) => c.index > lastPresent).map((c) => c.message);
 }
 
 /** Sync full local message list to server: append missing rows, patch last assistant if updated. */
@@ -2347,4 +2463,23 @@ export async function enhanceImagePrompt(
   mode: PromptAssistMode,
 ): Promise<string | null> {
   return enhancePrompt(model, prompt, mode, "image");
+}
+
+/**
+ * React keys for a message list. Prefers the message's own identity
+ * (`clientMessageId`, then `id`) so inserting or removing a row does not
+ * re-mount every row below it; a user prompt and the assistant replies it
+ * produced can share a `clientMessageId`, so role and model are part of the
+ * key, and any remaining collision falls back to the index rather than
+ * handing React duplicate keys.
+ */
+export function stableMessageKeys(messages: ChatMessage[], scope: string): string[] {
+  const seen = new Set<string>();
+  return messages.map((m, i) => {
+    const identity = m.clientMessageId ?? m.id;
+    let key = identity ? `${scope}-${m.role}-${m.modelId ?? ""}-${identity}` : `${scope}-${i}`;
+    if (seen.has(key)) key = `${key}-${i}`;
+    seen.add(key);
+    return key;
+  });
 }

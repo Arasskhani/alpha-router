@@ -29,7 +29,7 @@ const ALIASES: Record<string, string> = {
  * Resolve the brand slug used for logos.
  * Prefer model-id specifics (e.g. Gemini sparkle) over a coarse provider label.
  */
-export function providerFromModelId(modelId: string | null | undefined): string {
+function providerFromModelId(modelId: string | null | undefined): string {
   const raw = (modelId || "").trim().toLowerCase();
   if (!raw) return "unknown";
 

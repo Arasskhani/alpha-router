@@ -51,12 +51,6 @@ const META: Record<OpsRangeKey, { label: string; badge: string }> = {
   this_week: { label: "This Week", badge: "TW" },
   prev_week: { label: "Prev Week", badge: "PW" },
 };
-
-export function parseOpsRangeKey(raw: string | null): OpsRangeKey {
-  if (raw && raw in META) return raw as OpsRangeKey;
-  return DEFAULT_OPS_RANGE;
-}
-
 type Props = {
   value: OpsRangeKey;
   onChange: (key: OpsRangeKey) => void;

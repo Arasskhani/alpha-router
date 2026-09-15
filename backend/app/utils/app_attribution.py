@@ -49,7 +49,7 @@ def detect_client_app(request: Request) -> str | None:
             parsed = urlparse(referer if "://" in referer else f"https://{referer}")
             if parsed.netloc:
                 return parsed.netloc[:128]
-        except Exception:
+        except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
             pass
         return referer[:128]
 

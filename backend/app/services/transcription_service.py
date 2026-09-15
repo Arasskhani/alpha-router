@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
 import os
 import struct
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path
 
 from litellm import atranscription
 from sqlalchemy import or_, select
@@ -17,23 +17,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.branding import CHAT_CLIENT_APP
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
+from app.services.failure_details import failure_message
 from app.services.budget_reservation_service import (
     reservation_hold_usd,
     reservation_key,
     reserve,
 )
-from app.services.global_default_transcription_model import (
-    get_transcription_default_model,
-    model_supports_transcription,
-)
+from app.services.system_default_models import get_default_model, model_supports_transcription
 from app.services.llm_providers import litellm_transcription_model
 from app.services.openrouter_transcription_service import (
     OpenRouterTranscriptionError,
     transcribe_with_openrouter,
 )
 from app.services.model_access_service import resolve_access_subject, user_can_access_model
-from app.services.proxy_service import settle_auxiliary_usage
+from app.services.usage_logging_service import settle_auxiliary_usage
 from app.services.secret_crypto import decrypt_secret
+import contextlib
 
 logger = logging.getLogger("app.services.transcription")
 
@@ -106,6 +105,10 @@ def wav_duration_seconds(audio_bytes: bytes) -> float | None:
             pos = body + chunk_size + (chunk_size & 1)
         if not sample_rate or not channels or not bits or not data_size:
             return None
+        # Header sanity: a crafted fmt chunk (1 Hz, 1 channel, 8 bit) would make
+        # a few kilobytes "hours" of billable audio, or the reverse.
+        if not (8000 <= sample_rate <= 192_000) or not (1 <= channels <= 8) or bits not in (8, 16, 24, 32, 64):
+            return None
         bytes_per_frame = channels * (bits // 8)
         if bytes_per_frame <= 0:
             return None
@@ -113,6 +116,18 @@ def wav_duration_seconds(audio_bytes: bytes) -> float | None:
         return seconds if seconds > 0 else None
     except (struct.error, ZeroDivisionError, ValueError):
         return None
+
+
+def _write_temp_audio(audio_bytes: bytes, suffix: str) -> str:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(audio_bytes)
+        tmp.flush()
+        return tmp.name
+
+
+def _unlink_quietly(path: str) -> None:
+    with contextlib.suppress(OSError):
+        os.unlink(path)
 
 
 def resolve_billable_seconds(
@@ -163,11 +178,20 @@ def _provider_duration_seconds(result) -> float | None:
     return None
 
 
+_ALLOWED_AUDIO_SUFFIXES = frozenset(_EXT_BY_MIME.values()) | frozenset({".m4a", ".mp4", ".oga", ".opus"})
+
+
 def _suffix_for_file(filename: str, mime_type: str) -> str:
+    """Temp-file suffix for the LiteLLM upload, from a fixed audio whitelist.
+
+    The suffix came straight from the client filename (``voice.php``,
+    ``x.exe``...). It only names a temp file, but the whitelist keeps the
+    file we hand to a third-party library an audio file by name too.
+    """
     name = (filename or "").lower()
     if "." in name:
         ext = "." + name.rsplit(".", 1)[-1]
-        if ext != ".":
+        if ext in _ALLOWED_AUDIO_SUFFIXES:
             return ext
     mime = (mime_type or "").split(";")[0].strip().lower()
     return _EXT_BY_MIME.get(mime, ".webm")
@@ -270,7 +294,7 @@ async def resolve_transcription_target(
             user_id,
         )
 
-    admin_model = await get_transcription_default_model(db)
+    admin_model = await get_default_model(db, "voice")
     resolved = await _resolve_catalog_row(db, admin_model, source="admin")
     if resolved is not None:
         return resolved
@@ -292,7 +316,9 @@ async def resolve_transcription_target(
                 )
                 .order_by(AIModel.id.desc())
             )
-        ).scalars().first()
+        )
+        .scalars()
+        .first()
         if connection_id is not None
         else None
     )
@@ -313,10 +339,14 @@ async def _resolve_transcription_provider(
     """Return provider credentials and connection id for speech-to-text."""
     preferred = ("openai", "azure", "openrouter")
     rows = (
-        await db.execute(
-            select(Connection).where(Connection.is_active == True).order_by(Connection.id)  # noqa: E712
+        (
+            await db.execute(
+                select(Connection).where(Connection.is_active == True).order_by(Connection.id)  # noqa: E712
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     by_type: dict[str, Connection] = {}
     for conn in rows:
         p = (conn.provider_type or "").lower()
@@ -450,10 +480,8 @@ async def transcribe_audio_bytes(
                 raise ValueError(str(exc)) from exc
         else:
             # Only the LiteLLM path needs the audio on disk as a file handle.
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(audio_bytes)
-                tmp.flush()
-                tmp_path = tmp.name
+            # Writing up to MAX_VOICE_UPLOAD_BYTES is disk I/O: off the loop.
+            tmp_path = await asyncio.to_thread(_write_temp_audio, audio_bytes, suffix)
 
             kwargs: dict = {
                 # A catalog id is not a LiteLLM route. See
@@ -494,14 +522,11 @@ async def transcribe_audio_bytes(
         success = True
         return transcript
     except Exception as exc:
-        error_message = str(exc)[:500]
+        error_message = failure_message(exc)[:500]
         raise
     finally:
         if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+            await asyncio.to_thread(_unlink_quietly, tmp_path)
         if user_id is not None and username is not None:
             logger.info(
                 "Transcription billed %.2fs (source=%s) model=%s via %s",

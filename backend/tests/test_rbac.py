@@ -21,8 +21,8 @@ from app.services.rbac import (
     SUPER_ADMIN_SLUG,
     TOOL_ADMIN_SLUG,
     USER_SLUG,
-    agent_permissions_for_slugs,
     actor_may_assign_roles,
+    agent_permissions_for_slugs,
     bootstrap_super_admin_role_slugs,
     can_access_menu,
     can_write_menu,
@@ -250,9 +250,7 @@ def test_agent_roles_use_action_level_permissions():
 
 
 def test_agent_permission_union_is_composable():
-    permissions = agent_permissions_for_slugs(
-        [AGENT_DESIGNER_SLUG, KNOWLEDGE_PUBLISHER_SLUG]
-    )
+    permissions = agent_permissions_for_slugs([AGENT_DESIGNER_SLUG, KNOWLEDGE_PUBLISHER_SLUG])
     assert "agent.edit" in permissions
     assert "knowledge.publish" in permissions
     assert "tool.manage" not in permissions

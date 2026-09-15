@@ -46,9 +46,7 @@ async def get_user_memories(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_read_db),
 ) -> dict[str, Any]:
-    items, total = await list_memories(
-        db, user.id, include_disabled=True, limit=limit, offset=offset
-    )
+    items, total = await list_memories(db, user.id, include_disabled=True, limit=limit, offset=offset)
     fresh = await db.get(User, user.id)
     prefs = await load_user_prefs(db, user.id)
     settings = await get_memory_settings(db)
@@ -73,9 +71,7 @@ async def export_user_memories(
     items = await export_memories(db, user.id)
     return JSONResponse(
         content={"memories": items, "total": len(items)},
-        headers={
-            "Content-Disposition": 'attachment; filename="alpharouter-memories.json"'
-        },
+        headers={"Content-Disposition": 'attachment; filename="alpharouter-memories.json"'},
     )
 
 

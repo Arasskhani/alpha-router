@@ -167,21 +167,25 @@ async def get_transfer_limits(db: AsyncSession) -> dict[str, int]:
     from sqlalchemy import select
 
     rows = (
-        await db.execute(
-            select(SystemSetting).where(
-                SystemSetting.key.in_(
-                    [
-                        _KEY_UPLOAD_MB,
-                        _KEY_CHAT_TOTAL_MB,
-                        _KEY_ZIP_MB,
-                        _KEY_CHAT_COUNT,
-                        _KEY_CI_WORKSPACE_FILES,
-                        _KEY_CI_WORKSPACE_TOTAL_MB,
-                    ]
+        (
+            await db.execute(
+                select(SystemSetting).where(
+                    SystemSetting.key.in_(
+                        [
+                            _KEY_UPLOAD_MB,
+                            _KEY_CHAT_TOTAL_MB,
+                            _KEY_ZIP_MB,
+                            _KEY_CHAT_COUNT,
+                            _KEY_CI_WORKSPACE_FILES,
+                            _KEY_CI_WORKSPACE_TOTAL_MB,
+                        ]
+                    )
                 )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     kv = {r.key: (r.value or "").strip() for r in rows}
     defaults = _defaults_from_env()
 
@@ -227,23 +231,17 @@ async def set_transfer_limits(
     max_code_interpreter_workspace_total_mb: int | None = None,
 ) -> dict[str, int]:
     current = await get_transfer_limits(db)
-    upload_mb = (
-        current["max_upload_file_mb"] if max_upload_file_mb is None else int(max_upload_file_mb)
-    )
+    upload_mb = current["max_upload_file_mb"] if max_upload_file_mb is None else int(max_upload_file_mb)
     chat_mb = (
         current["max_chat_attachments_total_mb"]
         if max_chat_attachments_total_mb is None
         else int(max_chat_attachments_total_mb)
     )
     zip_mb = (
-        current["max_media_zip_download_mb"]
-        if max_media_zip_download_mb is None
-        else int(max_media_zip_download_mb)
+        current["max_media_zip_download_mb"] if max_media_zip_download_mb is None else int(max_media_zip_download_mb)
     )
     attachments_count = (
-        current["max_chat_attachments_count"]
-        if max_chat_attachments_count is None
-        else int(max_chat_attachments_count)
+        current["max_chat_attachments_count"] if max_chat_attachments_count is None else int(max_chat_attachments_count)
     )
 
     if max_upload_file_mb is not None:
@@ -265,9 +263,7 @@ async def set_transfer_limits(
 
     existing_workspace_files = await db.get(SystemSetting, _KEY_CI_WORKSPACE_FILES)
     existing_workspace_total = await db.get(SystemSetting, _KEY_CI_WORKSPACE_TOTAL_MB)
-    workspace_explicitly_stored = bool(
-        existing_workspace_files and (existing_workspace_files.value or "").strip()
-    )
+    workspace_explicitly_stored = bool(existing_workspace_files and (existing_workspace_files.value or "").strip())
 
     if max_code_interpreter_workspace_files is not None:
         workspace_files: int | None = _clamp_int(

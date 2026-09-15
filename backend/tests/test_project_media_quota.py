@@ -1,13 +1,10 @@
 """Tests for configurable per-project media quota."""
 
-import asyncio
-
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import app.models  # noqa: F401
 from app.database import Base
 from app.models.project import (
-    PROJECT_ROLE_OWNER,
     PROJECT_ROLE_PRIMARY_OWNER,
     Project,
     ProjectMediaAsset,
@@ -97,5 +94,5 @@ async def _run_quota_roundtrip() -> None:
     invalidate_project_media_quota_cache()
 
 
-def test_project_media_quota_settings():
-    asyncio.run(_run_quota_roundtrip())
+async def test_project_media_quota_settings():
+    await _run_quota_roundtrip()

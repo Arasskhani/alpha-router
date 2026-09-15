@@ -2,10 +2,9 @@ export type Period = "15m" | "30m" | "1h" | "3h" | "day" | "2d" | "week" | "mont
 export type PromptsPeriod = "day" | "week" | "month";
 export type GroupBy = "model" | "app" | "user";
 export type TimezoneMode = "local" | "utc";
-export type MetricKind = "spend" | "requests" | "tokens";
 export type HeatmapMetric = "requests" | "tokens" | "spend";
 
-export type SegmentMeta = {
+type SegmentMeta = {
   key: string;
   label: string;
   color: string;
@@ -38,7 +37,7 @@ export type UsageMetricStats = {
   total: number;
 };
 
-export type PromptsCardData = {
+type PromptsCardData = {
   period: PromptsPeriod;
   chart: Record<string, string | number>[];
   models: SegmentMeta[];
@@ -119,13 +118,13 @@ export type ExploreTopMode = "top" | "bottom";
 export type ExploreRankBy = "metric" | "requests";
 export type ExploreChartType = "bar" | "line" | "area";
 
-export type ExploreSegment = {
+type ExploreSegment = {
   key: string;
   label: string;
   color: string;
 };
 
-export type ExploreTableRow = {
+type ExploreTableRow = {
   key: string;
   label: string;
   color: string;
@@ -181,7 +180,7 @@ export type OverviewListItem = {
   tokens: number;
 };
 
-export type OverviewChartSeries = {
+type OverviewChartSeries = {
   key: string;
   label: string;
   color: string;

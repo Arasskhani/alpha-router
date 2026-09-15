@@ -2273,7 +2273,7 @@ export const docSections: DocSection[] = [
         <h3>What counts</h3>
         <ul>
           <li>Every chat/embedding/image provider attempt, including retry, fallback, tool loop, and code loop iterations</li>
-          <li>Automatic title generation, prompt enhancement/translation, voice refinement, and transcription</li>
+          <li>Automatic title generation, prompt enhancement/translation, and transcription</li>
           <li>
             Web search/fetch requests; metered units such as request, credit, second, character, or image are supported
           </li>

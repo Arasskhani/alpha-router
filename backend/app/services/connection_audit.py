@@ -100,6 +100,33 @@ async def log_connection_updated(
     await log_connection_audit(db, conn=conn, actor=actor, action="updated", changes=changes)
 
 
+async def log_connection_deleted(
+    db: AsyncSession,
+    *,
+    conn: Connection,
+    actor: User,
+    actor_ip: str | None = None,
+    model_count: int = 0,
+) -> None:
+    """Record a deletion where it will still exist afterwards.
+
+    ConnectionAuditLog rows cascade away with the connection, so the deletion
+    itself goes to the security audit table (no FK to the resource) with a
+    snapshot of what was removed. The API key is never part of the snapshot.
+    """
+    from app.services.security_audit import log_security_event
+
+    await log_security_event(
+        db,
+        actor=actor,
+        actor_ip=actor_ip,
+        action="connection_deleted",
+        resource_type="connection",
+        resource_id=str(conn.id),
+        detail={**connection_snapshot(conn), "model_count": int(model_count)},
+    )
+
+
 async def log_connection_status(db: AsyncSession, *, conn: Connection, actor: User, enabled: bool) -> None:
     action = "enabled" if enabled else "disabled"
     changes = [

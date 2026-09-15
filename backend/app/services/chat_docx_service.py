@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import io
 import re
-from typing import Iterable
 
 from docx import Document
 from docx.document import Document as DocxDocument
@@ -289,10 +288,17 @@ def _render_markdown_to_docx(doc: DocxDocument, content: str) -> None:
         # paragraph (gather consecutive non-empty, non-special lines)
         buf3: list[str] = [line]
         i += 1
-        while i < n and lines[i].strip() and not _FENCE_RE.match(lines[i]) and not _HEADING_RE.match(lines[i]) \
-                and not _HR_RE.match(lines[i]) and not _ULIST_RE.match(lines[i]) \
-                and not _OLIST_RE.match(lines[i]) and not _QUOTE_RE.match(lines[i]) \
-                and not (_is_table_row(lines[i]) and i + 1 < n and _TABLE_SEP_RE.match(lines[i + 1])):
+        while (
+            i < n
+            and lines[i].strip()
+            and not _FENCE_RE.match(lines[i])
+            and not _HEADING_RE.match(lines[i])
+            and not _HR_RE.match(lines[i])
+            and not _ULIST_RE.match(lines[i])
+            and not _OLIST_RE.match(lines[i])
+            and not _QUOTE_RE.match(lines[i])
+            and not (_is_table_row(lines[i]) and i + 1 < n and _TABLE_SEP_RE.match(lines[i + 1]))
+        ):
             buf3.append(lines[i])
             i += 1
         _add_paragraph(doc, " ".join(s.strip() for s in buf3))

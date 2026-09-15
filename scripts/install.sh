@@ -13,7 +13,9 @@ set -euo pipefail
 
 LOG_PREFIX="${LOG_PREFIX:-install}"
 ALPHAROUTER_GIT_URL="${ALPHAROUTER_GIT_URL:-https://github.com/Arasskhani/alpha-router.git}"
-ALPHAROUTER_GIT_REF="${ALPHAROUTER_GIT_REF:-main}"
+# Empty = resolve the newest release tag (vX.Y.Z) at run time. Set to a branch
+# or tag to override; `main` gives the old unpinned behaviour.
+ALPHAROUTER_GIT_REF="${ALPHAROUTER_GIT_REF:-}"
 ALPHAROUTER_HOME="${ALPHAROUTER_HOME:-/opt/alpha-router}"
 
 bootstrap_die() {
@@ -60,10 +62,37 @@ bootstrap_refuse_existing() {
   fi
 }
 
+# Newest semver release tag on the remote, or empty when there is none.
+# `curl | bash` used to clone `main` unpinned: every push to main became root
+# code on the next fresh host. Releases are what was actually tested.
+bootstrap_latest_release_tag() {
+  git ls-remote --tags --refs "$ALPHAROUTER_GIT_URL" 'v[0-9]*' 2>/dev/null \
+    | awk -F/ '{print $NF}' \
+    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+    | sort -t. -k1,1V -k2,2n -k3,3n \
+    | tail -n 1
+}
+
+bootstrap_resolve_git_ref() {
+  if [ -n "$ALPHAROUTER_GIT_REF" ]; then
+    return 0
+  fi
+  local tag
+  tag="$(bootstrap_latest_release_tag || true)"
+  if [ -n "$tag" ]; then
+    ALPHAROUTER_GIT_REF="$tag"
+    bootstrap_log "Installing latest release $tag (set ALPHAROUTER_GIT_REF to override)."
+  else
+    ALPHAROUTER_GIT_REF="main"
+    bootstrap_log "WARNING: no release tag found on $ALPHAROUTER_GIT_URL; falling back to main."
+  fi
+}
+
 reexec_from_clone() {
   local dest="$ALPHAROUTER_HOME"
   bootstrap_refuse_existing
   bootstrap_minimal_git
+  bootstrap_resolve_git_ref
   if [ ! -f "$dest/scripts/install.sh" ]; then
     if [ -e "$dest" ] && [ -n "$(ls -A "$dest" 2>/dev/null || true)" ]; then
       bootstrap_die "$dest exists and is not an Alpharouter checkout. Set ALPHAROUTER_HOME."

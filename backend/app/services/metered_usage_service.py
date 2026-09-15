@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+
+import anyio
 import datetime
 import logging
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.services.observability import increment
+from app.services.usage_logging_service import log_usage
 from app.database import AsyncSessionLocal
 from app.models.user import User
 from app.services.budget_reservation_service import (
@@ -67,11 +71,7 @@ async def start_metered_usage(
     async with AsyncSessionLocal() as db:
         if not resolved_username and user_id is not None:
             user = await db.get(User, int(user_id))
-            resolved_username = (
-                str(getattr(user, "username", "") or "").strip()
-                if user is not None
-                else ""
-            )
+            resolved_username = str(getattr(user, "username", "") or "").strip() if user is not None else ""
         if reserve_budget:
             hold_amount = await reservation_hold_usd(
                 db,
@@ -99,11 +99,8 @@ async def start_metered_usage(
         user_id=int(user_id) if user_id is not None else None,
         alpha_router_api_key_id=alpha_router_api_key_id,
         connection_id=connection_id,
-        username=resolved_username or (
-            f"user-{user_id}"
-            if user_id is not None
-            else f"api-key-{alpha_router_api_key_id}"
-        ),
+        username=resolved_username
+        or (f"user-{user_id}" if user_id is not None else f"api-key-{alpha_router_api_key_id}"),
         provider_type=(provider_type or "unknown").strip().lower() or "unknown",
         service_type=(service_type or "tool").strip().lower() or "tool",
         operation_name=(operation_name or "tool_call").strip()[:64] or "tool_call",
@@ -146,9 +143,6 @@ async def finish_metered_usage(
     event.connection_id = call.connection_id
 
     async def _persist() -> bool:
-        # Imported lazily because proxy_service imports the chat tool module.
-        from app.services.proxy_service import log_usage
-
         for attempt in range(3):
             try:
                 async with AsyncSessionLocal() as db:
@@ -183,17 +177,16 @@ async def finish_metered_usage(
                 if attempt < 2:
                     await asyncio.sleep(0.1 * (attempt + 1))
                     continue
+                increment("budget_hold_leak")
                 logger.exception(
-                    "Metered usage settlement failed after retries "
-                    "provider=%s operation=%s; reservation remains held",
+                    "Metered usage settlement failed after retries provider=%s operation=%s; reservation remains held",
                     call.provider_type,
                     call.operation_name,
                 )
         return False
 
-    task = asyncio.create_task(_persist())
-    try:
-        await asyncio.shield(task)
-    except asyncio.CancelledError:
-        await task
-        raise
+    # Shield the frame, not just the coroutine: under Starlette's anyio cancel
+    # scope a plain 'await task' in the except branch is re-cancelled before the
+    # settlement finishes (see proxy_service.stream_chat finalizer).
+    with anyio.CancelScope(shield=True):
+        await _persist()

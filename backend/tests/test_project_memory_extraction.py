@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
 import json
 import uuid
@@ -75,16 +74,8 @@ async def _seed(db: AsyncSession) -> tuple[User, User, ChatSession]:
             acl_version=1,
         )
     )
-    db.add(
-        ProjectMember(
-            project_id=PROJ_ID, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER
-        )
-    )
-    db.add(
-        ProjectMember(
-            project_id=PROJ_ID, user_id=member.id, role=PROJECT_ROLE_CONTRIBUTOR
-        )
-    )
+    db.add(ProjectMember(project_id=PROJ_ID, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))
+    db.add(ProjectMember(project_id=PROJ_ID, user_id=member.id, role=PROJECT_ROLE_CONTRIBUTOR))
     session = ChatSession(
         id="sess-extract",
         user_id=owner.id,
@@ -121,9 +112,7 @@ def test_personal_categories_are_hard_dropped() -> None:
         ]
     }
     operations, dropped = parse_project_operations(payload)
-    assert [op.content for op in operations] == [
-        "The team writes commit messages in English"
-    ]
+    assert [op.content for op in operations] == ["The team writes commit messages in English"]
     assert dropped == 2
     # The deny list is not something the admin allow-list can widen.
     assert {"health", "financial", "personal"} <= set(PROJECT_DENIED_CATEGORIES)
@@ -250,13 +239,17 @@ async def _apply_records_provenance_and_respects_manual() -> None:
         assert result.skipped == 1
         assert result.dropped_personal == 1
         learned = (
-            await db.execute(
-                select(ProjectMemory).where(
-                    ProjectMemory.project_id == PROJ_ID,
-                    ProjectMemory.source_type == "auto_chat",
+            (
+                await db.execute(
+                    select(ProjectMemory).where(
+                        ProjectMemory.project_id == PROJ_ID,
+                        ProjectMemory.source_type == "auto_chat",
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(learned) == 1
         assert learned[0].content == "The ledger runs on Postgres"
         assert learned[0].category == "stack"
@@ -285,17 +278,13 @@ async def _suppressed_fact_is_not_relearned() -> None:
             db,
             project_id=PROJ_ID,
             session_id=session.id,
-            operations=[
-                ProjectMemoryOperation(op="add", content=content, category="convention")
-            ],
+            operations=[ProjectMemoryOperation(op="add", content=content, category="convention")],
         )
         await db.commit()
         assert result.added == 0
         assert result.skipped == 1
         assert (
-            await db.execute(
-                select(ProjectMemory).where(ProjectMemory.project_id == PROJ_ID)
-            )
+            await db.execute(select(ProjectMemory).where(ProjectMemory.project_id == PROJ_ID))
         ).scalars().all() == []
     await engine.dispose()
 
@@ -371,11 +360,7 @@ async def _handle_extraction_end_to_end() -> None:
         await handle_project_memory_extraction(db, job, completer=stub)
         await db.commit()
         assert "member Sara" in seen["prompt"]
-        rows = (
-            await db.execute(
-                select(ProjectMemory).where(ProjectMemory.project_id == PROJ_ID)
-            )
-        ).scalars().all()
+        rows = (await db.execute(select(ProjectMemory).where(ProjectMemory.project_id == PROJ_ID))).scalars().all()
         assert [row.content for row in rows] == ["Scope is frozen from Sept 1"]
         assert rows[0].category == "decision"
         assert job.extracted_sequence == 4
@@ -428,28 +413,26 @@ async def _handle_extraction_skips_when_auto_capture_off() -> None:
         await handle_project_memory_extraction(db, job, completer=never_called)
         await db.commit()
         assert (
-            await db.execute(
-                select(ProjectMemory).where(ProjectMemory.project_id == PROJ_ID)
-            )
+            await db.execute(select(ProjectMemory).where(ProjectMemory.project_id == PROJ_ID))
         ).scalars().all() == []
     await engine.dispose()
 
 
-def test_multi_author_window_attributes_members() -> None:
-    asyncio.run(_window_attributes_each_member())
+async def test_multi_author_window_attributes_members() -> None:
+    await _window_attributes_each_member()
 
 
-def test_apply_records_provenance_and_leaves_manual_facts_alone() -> None:
-    asyncio.run(_apply_records_provenance_and_respects_manual())
+async def test_apply_records_provenance_and_leaves_manual_facts_alone() -> None:
+    await _apply_records_provenance_and_respects_manual()
 
 
-def test_deleted_fact_is_not_relearned() -> None:
-    asyncio.run(_suppressed_fact_is_not_relearned())
+async def test_deleted_fact_is_not_relearned() -> None:
+    await _suppressed_fact_is_not_relearned()
 
 
-def test_handle_project_extraction_drops_personal_fact() -> None:
-    asyncio.run(_handle_extraction_end_to_end())
+async def test_handle_project_extraction_drops_personal_fact() -> None:
+    await _handle_extraction_end_to_end()
 
 
-def test_handle_project_extraction_respects_auto_capture_flag() -> None:
-    asyncio.run(_handle_extraction_skips_when_auto_capture_off())
+async def test_handle_project_extraction_respects_auto_capture_flag() -> None:
+    await _handle_extraction_skips_when_auto_capture_off()

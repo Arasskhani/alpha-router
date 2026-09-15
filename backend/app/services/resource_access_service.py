@@ -94,9 +94,7 @@ async def resolve_resource_access_subject(
 
     if alpha_router_api_key_id is not None:
         key = await db.get(AlphaRouterApiKey, alpha_router_api_key_id)
-        user_id = (
-            int(key.owner_user_id) if key and key.owner_user_id is not None else None
-        )
+        user_id = int(key.owner_user_id) if key and key.owner_user_id is not None else None
         if user_id is None:
             return ResourceAccessSubject(public_only=True)
 
@@ -110,19 +108,13 @@ async def resolve_resource_access_subject(
     group_ids = frozenset(
         int(value)
         for value in (
-            await db.execute(
-                select(user_group_members.c.group_id).where(
-                    user_group_members.c.user_id == user_id
-                )
-            )
+            await db.execute(select(user_group_members.c.group_id).where(user_group_members.c.user_id == user_id))
         )
         .scalars()
         .all()
     )
     role_slugs = frozenset(
-        _normalize_text(slug) or ""
-        for slug in await get_user_role_slugs(db, user_id)
-        if _normalize_text(slug)
+        _normalize_text(slug) or "" for slug in await get_user_role_slugs(db, user_id) if _normalize_text(slug)
     )
     may_break_glass = break_glass and user_has_super_admin_access(list(role_slugs))
     return ResourceAccessSubject(
@@ -171,15 +163,8 @@ def evaluate_access(
     if subject.break_glass:
         return True
 
-    matched = [
-        assignment
-        for assignment in assignments
-        if assignment_matches(assignment, subject)
-    ]
-    if any(
-        (assignment.effect or EFFECT_ALLOW).lower() == EFFECT_DENY
-        for assignment in matched
-    ):
+    matched = [assignment for assignment in assignments if assignment_matches(assignment, subject)]
+    if any((assignment.effect or EFFECT_ALLOW).lower() == EFFECT_DENY for assignment in matched):
         return False
 
     normalized_access = (access_type or ACCESS_PRIVATE).strip().lower()
@@ -187,10 +172,7 @@ def evaluate_access(
         return True
     if subject.public_only or subject.user_id is None:
         return False
-    return any(
-        (assignment.effect or EFFECT_ALLOW).lower() == EFFECT_ALLOW
-        for assignment in matched
-    )
+    return any((assignment.effect or EFFECT_ALLOW).lower() == EFFECT_ALLOW for assignment in matched)
 
 
 def compile_acl_payload(
@@ -220,13 +202,7 @@ async def user_can_access_agent(
     subject: ResourceAccessSubject,
 ) -> bool:
     assignments = (
-        (
-            await db.execute(
-                select(AgentAccessAssignment).where(
-                    AgentAccessAssignment.agent_id == agent.id
-                )
-            )
-        )
+        (await db.execute(select(AgentAccessAssignment).where(AgentAccessAssignment.agent_id == agent.id)))
         .scalars()
         .all()
     )
@@ -246,19 +222,11 @@ async def filter_agents_for_subject(
         return []
     agent_ids = [agent.id for agent in agents]
     assignments = (
-        (
-            await db.execute(
-                select(AgentAccessAssignment).where(
-                    AgentAccessAssignment.agent_id.in_(agent_ids)
-                )
-            )
-        )
+        (await db.execute(select(AgentAccessAssignment).where(AgentAccessAssignment.agent_id.in_(agent_ids))))
         .scalars()
         .all()
     )
-    by_agent: dict[str, list[AgentAccessAssignment]] = {
-        agent_id: [] for agent_id in agent_ids
-    }
+    by_agent: dict[str, list[AgentAccessAssignment]] = {agent_id: [] for agent_id in agent_ids}
     for assignment in assignments:
         by_agent.setdefault(str(assignment.agent_id), []).append(assignment)
     return [
@@ -309,9 +277,7 @@ async def filter_knowledge_bases_for_subject(
         (
             await db.execute(
                 select(KnowledgeBaseAccessAssignment).where(
-                    KnowledgeBaseAccessAssignment.knowledge_base_id.in_(
-                        knowledge_base_ids
-                    )
+                    KnowledgeBaseAccessAssignment.knowledge_base_id.in_(knowledge_base_ids)
                 )
             )
         )
@@ -368,26 +334,13 @@ async def user_can_access_document(
     if not assignments:
         return True
 
-    matched = [
-        assignment
-        for assignment in assignments
-        if assignment_matches(assignment, subject)
-    ]
-    if any(
-        (assignment.effect or EFFECT_ALLOW).lower() == EFFECT_DENY
-        for assignment in matched
-    ):
+    matched = [assignment for assignment in assignments if assignment_matches(assignment, subject)]
+    if any((assignment.effect or EFFECT_ALLOW).lower() == EFFECT_DENY for assignment in matched):
         return False
-    allow_rules_exist = any(
-        (assignment.effect or EFFECT_ALLOW).lower() == EFFECT_ALLOW
-        for assignment in assignments
-    )
+    allow_rules_exist = any((assignment.effect or EFFECT_ALLOW).lower() == EFFECT_ALLOW for assignment in assignments)
     if not allow_rules_exist:
         return True
-    return any(
-        (assignment.effect or EFFECT_ALLOW).lower() == EFFECT_ALLOW
-        for assignment in matched
-    )
+    return any((assignment.effect or EFFECT_ALLOW).lower() == EFFECT_ALLOW for assignment in matched)
 
 
 async def filter_documents_for_subject(
@@ -401,13 +354,7 @@ async def filter_documents_for_subject(
         return []
     knowledge_base_ids = sorted({document.knowledge_base_id for document in documents})
     knowledge_bases = (
-        (
-            await db.execute(
-                select(KnowledgeBase).where(KnowledgeBase.id.in_(knowledge_base_ids))
-            )
-        )
-        .scalars()
-        .all()
+        (await db.execute(select(KnowledgeBase).where(KnowledgeBase.id.in_(knowledge_base_ids)))).scalars().all()
     )
     allowed_knowledge_base_ids = {
         knowledge_base.id
@@ -420,11 +367,7 @@ async def filter_documents_for_subject(
     if not allowed_knowledge_base_ids:
         return []
     if subject.break_glass:
-        return [
-            document
-            for document in documents
-            if document.knowledge_base_id in allowed_knowledge_base_ids
-        ]
+        return [document for document in documents if document.knowledge_base_id in allowed_knowledge_base_ids]
 
     document_ids = [document.id for document in documents]
     assignments = (
@@ -438,9 +381,7 @@ async def filter_documents_for_subject(
         .scalars()
         .all()
     )
-    by_document: dict[str, list[KnowledgeDocumentAccessAssignment]] = {
-        document_id: [] for document_id in document_ids
-    }
+    by_document: dict[str, list[KnowledgeDocumentAccessAssignment]] = {document_id: [] for document_id in document_ids}
     for assignment in assignments:
         by_document.setdefault(str(assignment.document_id), []).append(assignment)
 
@@ -452,23 +393,14 @@ async def filter_documents_for_subject(
         if not document_rules:
             allowed.append(document)
             continue
-        matched = [
-            assignment
-            for assignment in document_rules
-            if assignment_matches(assignment, subject)
-        ]
-        if any(
-            (assignment.effect or EFFECT_ALLOW).lower() == EFFECT_DENY
-            for assignment in matched
-        ):
+        matched = [assignment for assignment in document_rules if assignment_matches(assignment, subject)]
+        if any((assignment.effect or EFFECT_ALLOW).lower() == EFFECT_DENY for assignment in matched):
             continue
         allow_rules_exist = any(
-            (assignment.effect or EFFECT_ALLOW).lower() == EFFECT_ALLOW
-            for assignment in document_rules
+            (assignment.effect or EFFECT_ALLOW).lower() == EFFECT_ALLOW for assignment in document_rules
         )
         if not allow_rules_exist or any(
-            (assignment.effect or EFFECT_ALLOW).lower() == EFFECT_ALLOW
-            for assignment in matched
+            (assignment.effect or EFFECT_ALLOW).lower() == EFFECT_ALLOW for assignment in matched
         ):
             allowed.append(document)
     return allowed
@@ -537,9 +469,7 @@ async def set_agent_access(
     if access not in VALID_ACCESS_TYPES:
         raise ValueError("access_type must be 'public' or 'private'")
     rows = await _validated_grants(db, grants)
-    await db.execute(
-        delete(AgentAccessAssignment).where(AgentAccessAssignment.agent_id == agent.id)
-    )
+    await db.execute(delete(AgentAccessAssignment).where(AgentAccessAssignment.agent_id == agent.id))
     agent.access_type = access
     agent.acl_version = int(agent.acl_version or 0) + 1
     for row in rows:
@@ -592,9 +522,7 @@ async def set_document_access(
 ) -> None:
     rows = await _validated_grants(db, grants)
     await db.execute(
-        delete(KnowledgeDocumentAccessAssignment).where(
-            KnowledgeDocumentAccessAssignment.document_id == document.id
-        )
+        delete(KnowledgeDocumentAccessAssignment).where(KnowledgeDocumentAccessAssignment.document_id == document.id)
     )
     document.acl_version = int(document.acl_version or 0) + 1
     for row in rows:

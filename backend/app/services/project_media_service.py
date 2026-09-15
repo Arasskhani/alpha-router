@@ -200,9 +200,7 @@ async def count_projects_over_media_quota(db: AsyncSession) -> int:
     return sum(1 for _pid, used in rows if int(used or 0) > quota)
 
 
-async def _resolved_project_quota_bytes(
-    db: AsyncSession, quota_bytes: int | None
-) -> int:
+async def _resolved_project_quota_bytes(db: AsyncSession, quota_bytes: int | None) -> int:
     if quota_bytes is not None:
         return int(quota_bytes)
     return await get_project_media_quota_bytes(db)
@@ -234,9 +232,7 @@ def _object_key(project_id: str, content_hash: str, mime: str) -> str:
     return project_media_object_key(project_id, content_hash, _ext_from_mime(mime))
 
 
-async def _find_by_hash(
-    db: AsyncSession, project_id: str, content_hash: str
-) -> ProjectMediaAsset | None:
+async def _find_by_hash(db: AsyncSession, project_id: str, content_hash: str) -> ProjectMediaAsset | None:
     return (
         await db.execute(
             select(ProjectMediaAsset).where(
@@ -283,8 +279,8 @@ async def list_project_media(
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[dict], int]:
-    """List project media. Requires ``project.view``."""
-    await require_capability(db, project_id=project_id, user=user, capability="project.view")
+    """List project media. Requires ``media.read`` (members only)."""
+    await require_capability(db, project_id=project_id, user=user, capability="media.read")
 
     limit = min(max(1, limit), _MAX_LIST_LIMIT)
     offset = max(0, offset)
@@ -303,23 +299,20 @@ async def list_project_media(
             )
         )
 
-    total = int(
+    total = int((await db.execute(select(func.count()).select_from(ProjectMediaAsset).where(*filters))).scalar() or 0)
+    rows = (
         (
             await db.execute(
-                select(func.count()).select_from(ProjectMediaAsset).where(*filters)
+                select(ProjectMediaAsset)
+                .where(*filters)
+                .order_by(ProjectMediaAsset.created_at.desc(), ProjectMediaAsset.id.desc())
+                .limit(limit)
+                .offset(offset)
             )
-        ).scalar()
-        or 0
-    )
-    rows = (
-        await db.execute(
-            select(ProjectMediaAsset)
-            .where(*filters)
-            .order_by(ProjectMediaAsset.created_at.desc(), ProjectMediaAsset.id.desc())
-            .limit(limit)
-            .offset(offset)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [_to_client(row) for row in rows], total
 
 
@@ -331,7 +324,7 @@ async def get_project_media(
     user: object,
 ) -> dict | None:
     """Return one media item, or None if it does not belong to this project."""
-    await require_capability(db, project_id=project_id, user=user, capability="project.view")
+    await require_capability(db, project_id=project_id, user=user, capability="media.read")
     row = await db.get(ProjectMediaAsset, media_id)
     if row is None or row.project_id != project_id:
         return None
@@ -359,18 +352,14 @@ async def upload_project_media(
     Requires ``media.upload``.  Duplicate content (same SHA-256 within the
     project) returns the existing asset without consuming extra quota.
     """
-    access = await require_capability(
-        db, project_id=project_id, user=user, capability="media.upload"
-    )
+    access = await require_capability(db, project_id=project_id, user=user, capability="media.upload")
 
     blob = content_bytes or b""
     if not blob:
         raise ProjectMediaValidationError("Empty file is not allowed")
     max_bytes = media_input_limit()
     if len(blob) > max_bytes:
-        raise ProjectMediaValidationError(
-            f"File exceeds the {max_bytes} byte upload limit"
-        )
+        raise ProjectMediaValidationError(f"File exceeds the {max_bytes} byte upload limit")
 
     mime = (mime_type or "application/octet-stream").strip()[:128] or "application/octet-stream"
     resolved_kind = _infer_kind(mime, kind)
@@ -440,9 +429,7 @@ async def delete_project_media(
     Owner can delete any file. Contributor can delete only their own.
     Returns None if the asset is hidden / not in this project.
     """
-    access = await require_capability(
-        db, project_id=project_id, user=user, capability="media.delete"
-    )
+    access = await require_capability(db, project_id=project_id, user=user, capability="media.delete")
     row = await db.get(ProjectMediaAsset, media_id)
     if row is None or row.project_id != project_id:
         return None
@@ -464,9 +451,7 @@ async def delete_project_media(
     remaining = int(
         (
             await db.execute(
-                select(func.count(ProjectMediaAsset.id)).where(
-                    ProjectMediaAsset.storage_path == storage_path
-                )
+                select(func.count(ProjectMediaAsset.id)).where(ProjectMediaAsset.storage_path == storage_path)
             )
         ).scalar()
         or 0
@@ -493,8 +478,8 @@ async def read_project_media_bytes(
     user: object,
     object_store: ProjectMediaObjectStore | None = None,
 ) -> tuple[ProjectMediaAsset, bytes] | None:
-    """Read binary content for download. Requires ``project.view``."""
-    await require_capability(db, project_id=project_id, user=user, capability="project.view")
+    """Read binary content for download. Requires ``media.read`` (members only)."""
+    await require_capability(db, project_id=project_id, user=user, capability="media.read")
     row = await db.get(ProjectMediaAsset, media_id)
     if row is None or row.project_id != project_id:
         return None
@@ -515,10 +500,8 @@ async def cleanup_project_media_storage(
     to cascade via the ``project_id`` FK.
     """
     rows = (
-        await db.execute(
-            select(ProjectMediaAsset).where(ProjectMediaAsset.project_id == project_id)
-        )
-    ).scalars().all()
+        (await db.execute(select(ProjectMediaAsset).where(ProjectMediaAsset.project_id == project_id))).scalars().all()
+    )
     store = object_store or default_project_media_store()
     paths = {row.storage_path for row in rows if row.storage_path}
     for path in paths:
@@ -626,9 +609,7 @@ async def persist_scoped_chat_media(
         store_media_from_blob,
     )
 
-    hashed_blob, hashed_mime, digest = await asyncio.to_thread(
-        media_content_hash, blob, mime, kind
-    )
+    hashed_blob, hashed_mime, digest = await asyncio.to_thread(media_content_hash, blob, mime, kind)
     pid = (project_id or "").strip()
     if pid:
         try:
@@ -729,18 +710,8 @@ async def rewrite_personal_media_urls_in_messages(
             ids.update(collect_personal_media_ids(content))
     if not ids:
         return messages
-    assets = (
-        (
-            await db.execute(select(MediaAsset).where(MediaAsset.id.in_(list(ids))))
-        )
-        .scalars()
-        .all()
-    )
-    hash_by_id = {
-        int(row.id): (row.content_hash or "").strip().lower()
-        for row in assets
-        if row.content_hash
-    }
+    assets = (await db.execute(select(MediaAsset).where(MediaAsset.id.in_(list(ids))))).scalars().all()
+    hash_by_id = {int(row.id): (row.content_hash or "").strip().lower() for row in assets if row.content_hash}
     hashes = {digest for digest in hash_by_id.values() if digest}
     if not hashes:
         return messages
@@ -761,11 +732,7 @@ async def rewrite_personal_media_urls_in_messages(
         for row in project_rows
         if row.content_hash
     }
-    mapping = {
-        asset_id: url_by_hash[digest]
-        for asset_id, digest in hash_by_id.items()
-        if digest in url_by_hash
-    }
+    mapping = {asset_id: url_by_hash[digest] for asset_id, digest in hash_by_id.items() if digest in url_by_hash}
     if not mapping:
         return messages
     for payload in messages:
@@ -773,4 +740,3 @@ async def rewrite_personal_media_urls_in_messages(
         if isinstance(content, str):
             payload["content"] = apply_personal_media_url_map(content, mapping)
     return messages
-

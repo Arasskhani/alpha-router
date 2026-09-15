@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 
 from app.services.attachment_policy import (
@@ -115,7 +114,7 @@ def test_speech_adapter_registry():
     assert "mp3" in adapter.supported_formats()
 
 
-def test_openrouter_speech_adapter_rejects_empty_response(monkeypatch):
+async def test_openrouter_speech_adapter_rejects_empty_response(monkeypatch):
     adapter = OpenRouterSpeechAdapter()
 
     class FakeResponse:
@@ -132,26 +131,22 @@ def test_openrouter_speech_adapter_rejects_empty_response(monkeypatch):
         "app.services.speech_providers.openrouter.get_openrouter_http_client",
         lambda: FakeClient(),
     )
-
-    async def run():
-        try:
-            await adapter.generate(
-                api_key="sk-test",
-                base_url="https://openrouter.ai/api/v1",
-                request=NormalizedSpeechRequest(
-                    model_id="openai/tts-1",
-                    text="hello",
-                    voice="alloy",
-                    response_format="mp3",
-                ),
-            )
-        except SpeechProviderError as exc:
-            assert "empty audio" in str(exc)
-            assert exc.status_code == 502
-            return
-        raise AssertionError("expected SpeechProviderError for empty audio")
-
-    asyncio.run(run())
+    try:
+        await adapter.generate(
+            api_key="sk-test",
+            base_url="https://openrouter.ai/api/v1",
+            request=NormalizedSpeechRequest(
+                model_id="openai/tts-1",
+                text="hello",
+                voice="alloy",
+                response_format="mp3",
+            ),
+        )
+    except SpeechProviderError as exc:
+        assert "empty audio" in str(exc)
+        assert exc.status_code == 502
+        return
+    raise AssertionError("expected SpeechProviderError for empty audio")
 
 
 def test_normalize_openrouter_base_forces_api_root():
@@ -159,7 +154,7 @@ def test_normalize_openrouter_base_forces_api_root():
     assert normalize_openrouter_base("https://openrouter.ai/api/v1/") == "https://openrouter.ai/api/v1"
 
 
-def test_openrouter_speech_adapter_maps_provider_400(monkeypatch):
+async def test_openrouter_speech_adapter_maps_provider_400(monkeypatch):
     adapter = OpenRouterSpeechAdapter()
 
     class FakeResponse:
@@ -179,29 +174,25 @@ def test_openrouter_speech_adapter_maps_provider_400(monkeypatch):
         "app.services.speech_providers.openrouter.get_openrouter_http_client",
         lambda: FakeClient(),
     )
-
-    async def run():
-        try:
-            await adapter.generate(
-                api_key="sk-test",
-                base_url="https://openrouter.ai",
-                request=NormalizedSpeechRequest(
-                    model_id="openai/tts-1",
-                    text="hello",
-                    voice="alloy",
-                    response_format="wav",
-                ),
-            )
-        except SpeechProviderError as exc:
-            assert exc.status_code == 400
-            assert "Provider returned 400" in exc.message
-            return
-        raise AssertionError("expected SpeechProviderError for upstream 400")
-
-    asyncio.run(run())
+    try:
+        await adapter.generate(
+            api_key="sk-test",
+            base_url="https://openrouter.ai",
+            request=NormalizedSpeechRequest(
+                model_id="openai/tts-1",
+                text="hello",
+                voice="alloy",
+                response_format="wav",
+            ),
+        )
+    except SpeechProviderError as exc:
+        assert exc.status_code == 400
+        assert "Provider returned 400" in exc.message
+        return
+    raise AssertionError("expected SpeechProviderError for upstream 400")
 
 
-def test_openrouter_speech_adapter_success(monkeypatch):
+async def test_openrouter_speech_adapter_success(monkeypatch):
     adapter = OpenRouterSpeechAdapter()
     audio = b"ID3fake-mp3-bytes"
 
@@ -236,7 +227,7 @@ def test_openrouter_speech_adapter_success(monkeypatch):
             ),
         )
 
-    result = asyncio.run(run())
+    result = await run()
     assert result.audio_blob == audio
     assert result.mime == "audio/mpeg"
     assert result.characters == len("hello world")

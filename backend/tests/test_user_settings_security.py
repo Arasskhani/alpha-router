@@ -1,7 +1,5 @@
 """Security-focused unit tests for profile settings (prefs, import, TOTP)."""
 
-import asyncio
-
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
@@ -9,15 +7,15 @@ from app.models.user import User
 from app.services.chat_import_export import (
     ChatImportError,
     detect_import_format,
-    finalize_imported_messages,
-    parse_import_sessions,
-    import_user_chats,
     export_user_chats,
+    finalize_imported_messages,
+    import_user_chats,
+    parse_import_sessions,
 )
 from app.services.totp_service import (
     consume_backup_code,
-    encrypt_totp_secret,
     decrypt_totp_secret,
+    encrypt_totp_secret,
     generate_backup_codes,
     generate_totp_secret,
     hash_backup_codes,
@@ -32,54 +30,46 @@ from app.services.user_chat_storage_service import (
 )
 
 
-def test_prefs_timezone_and_language_normalization():
-    async def _run() -> None:
-        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        Session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with Session() as db:
-            db.add(
-                User(
-                    username="prefs-user",
-                    email="prefs@alpha-router.local",
-                    hashed_password="x",
-                    auth_provider="local",
-                )
+async def test_prefs_timezone_and_language_normalization():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    Session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with Session() as db:
+        db.add(
+            User(
+                username="prefs-user",
+                email="prefs@alpha-router.local",
+                hashed_password="x",
+                auth_provider="local",
             )
-            await db.commit()
-            from sqlalchemy import select
+        )
+        await db.commit()
+        from sqlalchemy import select
 
-            user = (await db.execute(select(User))).scalar_one()
-            prefs = await save_user_prefs(
-                db,
-                user.id,
-                {"timezone": "Asia/Tehran", "language": "fr", "theme": "dark"},
-            )
-            assert prefs["timezone"] == "Asia/Tehran"
-            assert prefs["language"] == "en"  # only English accepted
-            assert prefs["theme"] == "dark"
+        user = (await db.execute(select(User))).scalar_one()
+        prefs = await save_user_prefs(
+            db,
+            user.id,
+            {"timezone": "Asia/Tehran", "language": "fr", "theme": "dark"},
+        )
+        assert prefs["timezone"] == "Asia/Tehran"
+        assert prefs["language"] == "en"  # only English accepted
+        assert prefs["theme"] == "dark"
 
-            system_prefs = await save_user_prefs(db, user.id, {"theme": "system"})
-            assert system_prefs["theme"] == "system"
+        system_prefs = await save_user_prefs(db, user.id, {"theme": "system"})
+        assert system_prefs["theme"] == "system"
 
-            bad = await save_user_prefs(db, user.id, {"timezone": "../../../etc/passwd"})
-            assert bad["timezone"] == "UTC"
+        bad = await save_user_prefs(db, user.id, {"timezone": "../../../etc/passwd"})
+        assert bad["timezone"] == "UTC"
 
-            loaded = await load_user_prefs(db, user.id)
-            assert loaded["timezone"] == "UTC"
-            assert loaded["language"] == "en"
-
-    asyncio.run(_run())
+        loaded = await load_user_prefs(db, user.id)
+        assert loaded["timezone"] == "UTC"
+        assert loaded["language"] == "en"
 
 
 def test_import_format_detection_and_reject_garbage():
-    assert (
-        detect_import_format(
-            {"format": "alpha-router-chats", "version": 1, "sessions": []}
-        )
-        == "alpha-router-chats"
-    )
+    assert detect_import_format({"format": "alpha-router-chats", "version": 1, "sessions": []}) == "alpha-router-chats"
     assert detect_import_format([{"mapping": {}, "title": "t"}]) == "chatgpt"
     assert detect_import_format({"chats": []}) == "openwebui"
     for invalid in ({"format": "unknown", "version": 1, "sessions": []}, {"foo": 1}):
@@ -138,101 +128,93 @@ def test_finalize_imported_messages_sets_received_at():
     assert finalized[1]["streaming"] is False
 
 
-def test_import_assistant_messages_have_received_at():
-    async def _run() -> None:
-        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        Session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with Session() as db:
-            from sqlalchemy import select
+async def test_import_assistant_messages_have_received_at():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    Session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with Session() as db:
+        from sqlalchemy import select
 
-            from app.services.user_chat_storage_service import list_session_messages
+        from app.services.user_chat_storage_service import list_session_messages
 
-            db.add(
-                User(
-                    username="imp",
-                    email="imp@alpha-router.local",
-                    hashed_password="x",
-                    auth_provider="local",
-                )
+        db.add(
+            User(
+                username="imp",
+                email="imp@alpha-router.local",
+                hashed_password="x",
+                auth_provider="local",
             )
-            await db.commit()
-            user = (await db.execute(select(User))).scalar_one()
-            result = await import_user_chats(
-                db,
-                user.id,
-                {
-                    "chats": [
-                        {
-                            "title": "OWUI",
-                            "chat": {
-                                "messages": [
-                                    {"role": "user", "content": "Q", "timestamp": 1700000000},
-                                    {"role": "assistant", "content": "A", "timestamp": 1700000001},
-                                ]
-                            },
-                        }
-                    ]
-                },
+        )
+        await db.commit()
+        user = (await db.execute(select(User))).scalar_one()
+        result = await import_user_chats(
+            db,
+            user.id,
+            {
+                "chats": [
+                    {
+                        "title": "OWUI",
+                        "chat": {
+                            "messages": [
+                                {"role": "user", "content": "Q", "timestamp": 1700000000},
+                                {"role": "assistant", "content": "A", "timestamp": 1700000001},
+                            ]
+                        },
+                    }
+                ]
+            },
+        )
+        assert result["imported"] == 1
+        from app.models.chat import ChatSession
+
+        session = (await db.execute(select(ChatSession).where(ChatSession.user_id == user.id))).scalar_one()
+        msgs, _ = await list_session_messages(db, user.id, session.id)
+        assert msgs[-1]["role"] == "assistant"
+        assert msgs[-1].get("receivedAt") is not None
+        assert msgs[-1].get("streaming") is not True
+
+
+async def test_export_import_roundtrip_new_ids():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    Session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with Session() as db:
+        from sqlalchemy import select
+
+        db.add(
+            User(
+                username="exp",
+                email="exp@alpha-router.local",
+                hashed_password="x",
+                auth_provider="local",
             )
-            assert result["imported"] == 1
-            from app.models.chat import ChatSession
+        )
+        await db.commit()
+        user = (await db.execute(select(User))).scalar_one()
+        await create_chat_session(db, user.id, {"id": "orig-1", "title": "T", "model": "m"})
+        await append_session_messages(
+            db,
+            user.id,
+            "orig-1",
+            [{"role": "user", "content": "secret note", "clientMessageId": "c1"}],
+        )
+        exported = await export_user_chats(db, user.id)
+        assert exported["format"] == "alpha-router-chats"
+        assert "hashed_password" not in str(exported)
+        assert exported["sessions"][0]["messages"][0]["content"] == "secret note"
 
-            session = (
-                await db.execute(select(ChatSession).where(ChatSession.user_id == user.id))
-            ).scalar_one()
-            msgs, _ = await list_session_messages(db, user.id, session.id)
-            assert msgs[-1]["role"] == "assistant"
-            assert msgs[-1].get("receivedAt") is not None
-            assert msgs[-1].get("streaming") is not True
+        result = await import_user_chats(db, user.id, exported)
+        assert result["imported"] == 1
+        # New session id — not overwriting orig-1 by foreign id reuse as same row
+        from app.models.chat import ChatSession
 
-    asyncio.run(_run())
-
-
-def test_export_import_roundtrip_new_ids():
-    async def _run() -> None:
-        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        Session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with Session() as db:
-            from sqlalchemy import select
-
-            db.add(
-                User(
-                    username="exp",
-                    email="exp@alpha-router.local",
-                    hashed_password="x",
-                    auth_provider="local",
-                )
-            )
-            await db.commit()
-            user = (await db.execute(select(User))).scalar_one()
-            await create_chat_session(db, user.id, {"id": "orig-1", "title": "T", "model": "m"})
-            await append_session_messages(
-                db,
-                user.id,
-                "orig-1",
-                [{"role": "user", "content": "secret note", "clientMessageId": "c1"}],
-            )
-            exported = await export_user_chats(db, user.id)
-            assert exported["format"] == "alpha-router-chats"
-            assert "hashed_password" not in str(exported)
-            assert exported["sessions"][0]["messages"][0]["content"] == "secret note"
-
-            result = await import_user_chats(db, user.id, exported)
-            assert result["imported"] == 1
-            # New session id — not overwriting orig-1 by foreign id reuse as same row
-            from app.models.chat import ChatSession
-
-            rows = (await db.execute(select(ChatSession).where(ChatSession.user_id == user.id))).scalars().all()
-            ids = {r.id for r in rows}
-            assert len(rows) == 2
-            assert "orig-1" in ids
-            assert any(i != "orig-1" for i in ids)
-
-    asyncio.run(_run())
+        rows = (await db.execute(select(ChatSession).where(ChatSession.user_id == user.id))).scalars().all()
+        ids = {r.id for r in rows}
+        assert len(rows) == 2
+        assert "orig-1" in ids
+        assert any(i != "orig-1" for i in ids)
 
 
 def test_totp_secret_encrypted_and_backup_codes_one_time():

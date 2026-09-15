@@ -272,9 +272,7 @@ async def get_dataset(
     cases = (
         (
             await db.execute(
-                select(EvaluationCase)
-                .where(EvaluationCase.dataset_id == dataset.id)
-                .order_by(EvaluationCase.case_key)
+                select(EvaluationCase).where(EvaluationCase.dataset_id == dataset.id).order_by(EvaluationCase.case_key)
             )
         )
         .scalars()
@@ -340,9 +338,7 @@ async def list_evaluation_runs(
     if dataset_id:
         statement = statement.where(EvaluationRun.dataset_id == dataset_id)
     if agent_version_id:
-        statement = statement.where(
-            EvaluationRun.agent_version_id == agent_version_id
-        )
+        statement = statement.where(EvaluationRun.agent_version_id == agent_version_id)
     if status:
         statement = statement.where(EvaluationRun.status == status)
     rows = (await db.execute(statement.limit(limit))).scalars().all()
@@ -367,9 +363,7 @@ async def create_evaluation_run(
             observations=[
                 {
                     "case_key": item.case_key,
-                    "observation": item.observation.model_dump(
-                        exclude_none=True
-                    ),
+                    "observation": item.observation.model_dump(exclude_none=True),
                 }
                 for item in body.observations
             ],

@@ -22,12 +22,8 @@ def _client() -> TestClient:
 
 def test_compose_prepares_sandbox_before_starting_broker() -> None:
     compose = (Path(__file__).parents[2] / "docker-compose.yml").read_text(encoding="utf-8")
-    sandbox_section = compose.split("  alpha-router-sandbox:", 1)[1].split(
-        "  alpha-router-sandbox-broker:", 1
-    )[0]
-    broker_section = compose.split("  alpha-router-sandbox-broker:", 1)[1].split(
-        "  alpha-router:", 1
-    )[0]
+    sandbox_section = compose.split("  alpha-router-sandbox:", 1)[1].split("  alpha-router-sandbox-broker:", 1)[0]
+    broker_section = compose.split("  alpha-router-sandbox-broker:", 1)[1].split("  alpha-router:", 1)[0]
     assert 'entrypoint: ["/bin/true"]' in sandbox_section
     assert 'network_mode: "none"' in sandbox_section
     assert "profiles:" not in sandbox_section
@@ -85,9 +81,7 @@ def _artifact_payload(name: str, content: bytes, mime_type: str) -> dict:
 
 def test_broker_returns_artifacts_with_non_english_names() -> None:
     pdf = b"%PDF-1.4\n%%EOF"
-    artifacts = broker._validated_artifacts(
-        [_artifact_payload("گزارش-مدیریتی.pdf", pdf, "application/pdf")]
-    )
+    artifacts = broker._validated_artifacts([_artifact_payload("گزارش-مدیریتی.pdf", pdf, "application/pdf")])
     assert [item["name"] for item in artifacts] == ["گزارش-مدیریتی.pdf"]
 
 
@@ -105,47 +99,38 @@ def test_broker_validates_artifacts_before_returning_them() -> None:
         broker._validated_artifacts([unsafe])
 
 
-def test_broker_lifespan_smoke_tests_runtime() -> None:
-    async def run():
-        with patch.object(
-            broker,
-            "_run_container",
-            AsyncMock(return_value={"stdout": "ready", "stderr": "", "exit_code": 0}),
-        ) as execute:
-            async with broker._lifespan(broker.app):
-                assert broker._runtime_ready
-            assert not broker._runtime_ready
-            execute.assert_awaited_once()
-
-    asyncio.run(run())
+async def test_broker_lifespan_smoke_tests_runtime() -> None:
+    with patch.object(
+        broker,
+        "_run_container",
+        AsyncMock(return_value={"stdout": "ready", "stderr": "", "exit_code": 0}),
+    ) as execute:
+        async with broker._lifespan(broker.app):
+            assert broker._runtime_ready
+        assert not broker._runtime_ready
+        execute.assert_awaited_once()
 
 
-def test_health_rejects_before_runtime_smoke_test() -> None:
-    async def run():
-        with (
-            patch.dict(os.environ, {"SANDBOX_BROKER_TOKEN": TOKEN}),
-            patch.object(broker, "_runtime_ready", False),
-            pytest.raises(broker.HTTPException) as exc,
-        ):
-            await broker.health()
-        assert exc.value.status_code == 503
-        assert "not ready" in str(exc.value.detail)
-
-    asyncio.run(run())
+async def test_health_rejects_before_runtime_smoke_test() -> None:
+    with (
+        patch.dict(os.environ, {"SANDBOX_BROKER_TOKEN": TOKEN}),
+        patch.object(broker, "_runtime_ready", False),
+        pytest.raises(broker.HTTPException) as exc,
+    ):
+        await broker.health()
+    assert exc.value.status_code == 503
+    assert "not ready" in str(exc.value.detail)
 
 
-def test_broker_rejects_saturated_queue_with_bounded_wait() -> None:
-    async def run():
-        saturated = asyncio.Semaphore(0)
-        with (
-            patch.object(broker, "_semaphore", saturated),
-            patch.object(broker, "QUEUE_TIMEOUT_SECONDS", 0.01),
-            pytest.raises(broker.HTTPException) as exc,
-        ):
-            await broker.execute(broker.ExecuteRequest(code="print(1)"))
-        assert exc.value.status_code == 429
-
-    asyncio.run(run())
+async def test_broker_rejects_saturated_queue_with_bounded_wait() -> None:
+    saturated = asyncio.Semaphore(0)
+    with (
+        patch.object(broker, "_semaphore", saturated),
+        patch.object(broker, "QUEUE_TIMEOUT_SECONDS", 0.01),
+        pytest.raises(broker.HTTPException) as exc,
+    ):
+        await broker.execute(broker.ExecuteRequest(code="print(1)"))
+    assert exc.value.status_code == 429
 
 
 @pytest.mark.parametrize("field", ["image", "privileged", "mounts", "network", "command"])
@@ -223,7 +208,7 @@ def test_broker_accepts_one_hundred_small_workspace_files() -> None:
     assert len(request.files) == 100
 
 
-def test_broker_authenticates_before_reading_request_body() -> None:
+async def test_broker_authenticates_before_reading_request_body() -> None:
     received = False
     sent = []
 
@@ -249,12 +234,12 @@ def test_broker_authenticates_before_reading_request_body() -> None:
         "server": ("broker", 8081),
     }
     with patch.dict(os.environ, {"SANDBOX_BROKER_TOKEN": TOKEN}):
-        asyncio.run(broker.app(scope, receive, send))
+        await broker.app(scope, receive, send)
     assert not received
     assert sent[0]["status"] == 401
 
 
-def test_broker_caps_streamed_body_without_content_length() -> None:
+async def test_broker_caps_streamed_body_without_content_length() -> None:
     sent = []
     test_limit = 1024
     chunks = [
@@ -296,7 +281,7 @@ def test_broker_caps_streamed_body_without_content_length() -> None:
         patch.object(broker, "MAX_REQUEST_BYTES", test_limit),
     ):
         middleware = broker.BrokerSecurityMiddleware(drain_app)
-        asyncio.run(middleware(scope, receive, send))
+        await middleware(scope, receive, send)
     assert any(message.get("status") == 413 for message in sent)
 
 
@@ -333,7 +318,7 @@ class _Process:
         self.killed = True
 
 
-def test_broker_hardcodes_container_security_policy() -> None:
+async def test_broker_hardcodes_container_security_policy() -> None:
     envelope = json.dumps({"stdout": "ok", "stderr": "", "exit_code": 0}).encode()
     captured: tuple[str, ...] = ()
     process = None
@@ -347,13 +332,11 @@ def test_broker_hardcodes_container_security_policy() -> None:
 
     async def run():
         with patch.object(asyncio, "create_subprocess_exec", fake_spawn):
-            return await broker._run_container(
-                broker.ExecuteRequest(code="print(1)", files={"data.txt": "ok"})
-            )
+            return await broker._run_container(broker.ExecuteRequest(code="print(1)", files={"data.txt": "ok"}))
 
-    result = asyncio.run(run())
+    result = await run()
     assert result["stdout"] == "ok"
-    assert broker.SANDBOX_IMAGE == captured[-1]
+    assert captured[-1] == broker.SANDBOX_IMAGE
     assert broker.SANDBOX_IMAGE == "alpha-router-sandbox:latest"
     assert captured[captured.index("--name") + 1].startswith("alpha-router-sandbox-")
     assert captured[captured.index("--label") + 1] == "com.alpha-router.sandbox=true"
@@ -371,7 +354,7 @@ def test_broker_hardcodes_container_security_policy() -> None:
     assert set(payload) == {"code", "files"}
 
 
-def test_broker_force_removes_container_after_unexpected_io_failure() -> None:
+async def test_broker_force_removes_container_after_unexpected_io_failure() -> None:
     process = None
 
     async def fake_spawn(*args, **kwargs):
@@ -390,6 +373,6 @@ def test_broker_force_removes_container_after_unexpected_io_failure() -> None:
                 await broker._run_container(broker.ExecuteRequest(code="print(1)"))
             force_remove.assert_awaited_once()
 
-    asyncio.run(run())
+    await run()
     assert process is not None
     assert process.killed

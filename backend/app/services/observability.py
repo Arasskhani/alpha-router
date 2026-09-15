@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import datetime
 import json
@@ -29,6 +30,8 @@ from prometheus_client import (
     multiprocess,
 )
 from prometheus_client import Counter as PrometheusCounter
+
+from app.branding import LOGGER_NAMESPACE
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 _KNOWN_EVENTS = frozenset(
@@ -39,6 +42,7 @@ _KNOWN_EVENTS = frozenset(
         "csrf_failure",
         "repeated_401",
         "budget_hold_leak",
+        "budget_reserved_drift_repaired",
         "code_interpreter_capacity_rejected",
         "code_interpreter_lease_expired",
         "code_interpreter_cancelled",
@@ -47,6 +51,15 @@ _KNOWN_EVENTS = frozenset(
         "sandbox_orphan_removed",
         "video_job_started",
         "video_provider_submit",
+        # Could not reach the provider at all (handshake refused, black-holed
+        # or timed out). Watch the rate: it is normally zero, and a sustained
+        # non-zero value means this host's egress is losing new connections --
+        # the condition that used to surface only as unexplained video
+        # failures, and that no amount of application retrying truly fixes.
+        "upstream_connect_failure",
+        # A video status GET failed and was retried. One is noise; a steady
+        # stream is the same egress problem seen from the job side.
+        "video_poll_retry",
         "video_job_completed",
         "video_job_failed",
         "agent_run_failed",
@@ -69,9 +82,7 @@ _correlation_id: contextvars.ContextVar[str] = contextvars.ContextVar(
     default="",
 )
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
-_HTTP_METHODS = frozenset(
-    {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
-)
+_HTTP_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"})
 _AGENT_STATUSES = frozenset(
     {
         "route_required",
@@ -105,12 +116,8 @@ _RETRIEVAL_OUTCOMES = frozenset(
         "unavailable",
     }
 )
-_EVALUATION_STATUSES = frozenset(
-    {"awaiting_review", "passed", "failed", "error", "cancelled"}
-)
-_DEPENDENCIES = frozenset(
-    {"postgres", "redis", "qdrant", "seaweedfs", "clamav", "provider"}
-)
+_EVALUATION_STATUSES = frozenset({"awaiting_review", "passed", "failed", "error", "cancelled"})
+_DEPENDENCIES = frozenset({"postgres", "redis", "qdrant", "seaweedfs", "clamav", "provider"})
 _MULTIPROCESS = bool(os.getenv("PROMETHEUS_MULTIPROC_DIR"))
 _registry = None if _MULTIPROCESS else CollectorRegistry(auto_describe=True)
 _metric_kwargs = {} if _registry is None else {"registry": _registry}
@@ -207,6 +214,12 @@ _MEMORY_INJECTED = Histogram(
 _MEMORY_EMBEDDING_BACKLOG = Gauge(
     "alpharouter_memory_embedding_backlog",
     "Pending or failed memory embeddings awaiting index.",
+    multiprocess_mode="livemostrecent",
+    **_metric_kwargs,
+)
+_BUDGET_RESERVED_DRIFT = Gauge(
+    "alpharouter_budget_reserved_drift_usd",
+    "USD by which reserved counters exceeded their open holds at the last reconciliation run.",
     multiprocess_mode="livemostrecent",
     **_metric_kwargs,
 )
@@ -309,26 +322,18 @@ def record_evaluation_run(*, status: str, trigger: str) -> None:
         increment("evaluation_gate_failed")
 
 
-_MEMORY_EXTRACT_OUTCOMES = frozenset(
-    {"succeeded", "failed", "skipped", "dead", "retry", "duplicate"}
-)
-_MEMORY_ITEM_OPS = frozenset(
-    {"add", "update", "supersede", "evict", "suppress-hit", "reject"}
-)
+_MEMORY_EXTRACT_OUTCOMES = frozenset({"succeeded", "failed", "skipped", "dead", "retry", "duplicate"})
+_MEMORY_ITEM_OPS = frozenset({"add", "update", "supersede", "evict", "suppress-hit", "reject"})
 _MEMORY_FALLBACK_REASONS = frozenset({"timeout_or_error", "unavailable", "unconfigured"})
 _MEMORY_SCOPES = frozenset({"user", "project"})
 
 
-def observe_memory_extract_job(
-    *, outcome: str, duration_seconds: float | None = None, scope: str = "user"
-) -> None:
+def observe_memory_extract_job(*, outcome: str, duration_seconds: float | None = None, scope: str = "user") -> None:
     label = _bounded_label(outcome, _MEMORY_EXTRACT_OUTCOMES)
     scope_label = _bounded_label(scope, _MEMORY_SCOPES)
     _MEMORY_EXTRACT_JOBS.labels(outcome=label, scope=scope_label).inc()
     if duration_seconds is not None:
-        _MEMORY_EXTRACT_DURATION.labels(scope=scope_label).observe(
-            max(0.0, float(duration_seconds))
-        )
+        _MEMORY_EXTRACT_DURATION.labels(scope=scope_label).observe(max(0.0, float(duration_seconds)))
     if label == "failed":
         increment("memory_extract_failed")
 
@@ -340,13 +345,9 @@ def observe_memory_item(op: str, *, scope: str = "user") -> None:
     ).inc()
 
 
-def observe_memory_retrieval(
-    *, duration_seconds: float, injected: int, scope: str = "user"
-) -> None:
+def observe_memory_retrieval(*, duration_seconds: float, injected: int, scope: str = "user") -> None:
     scope_label = _bounded_label(scope, _MEMORY_SCOPES)
-    _MEMORY_RETRIEVAL_DURATION.labels(scope=scope_label).observe(
-        max(0.0, float(duration_seconds))
-    )
+    _MEMORY_RETRIEVAL_DURATION.labels(scope=scope_label).observe(max(0.0, float(duration_seconds)))
     _MEMORY_INJECTED.labels(scope=scope_label).observe(max(0, int(injected)))
 
 
@@ -360,6 +361,15 @@ def observe_memory_retrieval_fallback(reason: str, *, scope: str = "user") -> No
 
 def set_memory_embedding_backlog(count: int) -> None:
     _MEMORY_EMBEDDING_BACKLOG.set(max(0, int(count)))
+
+
+def observe_budget_reserved_drift(total_usd: float) -> None:
+    """Record the drift the reconciliation job found (0 when counters were exact).
+
+    Phase 4.2 moved the counters to NUMERIC; once this stays at zero for a
+    month the repair job can be retired (plan step 4.2).
+    """
+    _BUDGET_RESERVED_DRIFT.set(max(0.0, float(total_usd or 0.0)))
 
 
 def set_dependency_ready(component: str, ready: bool) -> None:
@@ -382,6 +392,21 @@ def correlation_id() -> str:
     return _correlation_id.get()
 
 
+@contextlib.contextmanager
+def correlation_scope(value: str):
+    """Stamp background work with an id, the way the HTTP middleware does.
+
+    A worker runs outside any request, so its log lines carried no correlation
+    id and nothing tied them to the row it wrote. Using the job's own id makes
+    `grep <id>` in the container log and the API Logs row the same thing.
+    """
+    token = _correlation_id.set(value)
+    try:
+        yield value
+    finally:
+        _correlation_id.reset(token)
+
+
 class JsonLogFormatter(logging.Formatter):
     """Stable JSON formatter that excludes arbitrary record attributes."""
 
@@ -402,6 +427,23 @@ class JsonLogFormatter(logging.Formatter):
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)[:8_000]
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def configure_app_log_level(level_name: str) -> None:
+    """Make the application's own INFO lines visible.
+
+    The root logger stays at WARNING (third-party noise), but every logger the
+    app writes to - the ``alpha_router`` namespace and the ``app.*`` module
+    loggers - gets APP_LOG_LEVEL (INFO by default). Under uvicorn nothing set
+    these before, so operational lines such as "This worker is now the
+    scheduler leader" or "LDAP sync: prune suppressed" were silently dropped.
+    """
+    level = getattr(logging, str(level_name or "INFO").upper(), logging.INFO)
+    root = logging.getLogger()
+    if not root.handlers:
+        root.addHandler(logging.StreamHandler())
+    for name in (LOGGER_NAMESPACE, "app"):
+        logging.getLogger(name).setLevel(level)
 
 
 def configure_json_logging(enabled: bool) -> None:
@@ -477,15 +519,10 @@ class ObservabilityMiddleware:
         method = str(scope.get("method") or "").upper()
         method_label = method if method in _HTTP_METHODS else "OTHER"
         request_headers = {
-            key.decode("latin-1").lower(): value.decode("latin-1")
-            for key, value in scope.get("headers", [])
+            key.decode("latin-1").lower(): value.decode("latin-1") for key, value in scope.get("headers", [])
         }
         supplied_id = request_headers.get("x-request-id", "")
-        request_id = (
-            supplied_id
-            if _REQUEST_ID_RE.fullmatch(supplied_id)
-            else str(uuid.uuid4())
-        )
+        request_id = supplied_id if _REQUEST_ID_RE.fullmatch(supplied_id) else str(uuid.uuid4())
         token = _correlation_id.set(request_id)
         status_code = 500
         started = time.perf_counter()

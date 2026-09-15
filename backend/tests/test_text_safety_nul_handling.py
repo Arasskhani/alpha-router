@@ -1,10 +1,10 @@
 """NUL bytes from extracted documents must never reach a PostgreSQL text column."""
 
-import asyncio
 from unittest.mock import AsyncMock, patch
 
 from app.core.text_safety import clean_extracted_text, strip_nul
-from app.services import attachment_extract, storage_service as storage
+from app.services import attachment_extract
+from app.services import storage_service as storage
 
 
 class _Nested:
@@ -47,7 +47,7 @@ def test_extracted_document_text_has_no_nul() -> None:
     assert "Invoice" in text and "Total: 120" in text
 
 
-def test_media_prompt_with_nul_is_scrubbed_before_insert() -> None:
+async def test_media_prompt_with_nul_is_scrubbed_before_insert() -> None:
     db = _CapturingDb()
 
     async def run():
@@ -73,7 +73,7 @@ def test_media_prompt_with_nul_is_scrubbed_before_insert() -> None:
                 username="tester",
             )
 
-    asyncio.run(run())
+    await run()
     assert db.row is not None
     assert db.row.source_prompt == "Summarize the invoices"
     assert db.row.source_model == "openrouter/auto"

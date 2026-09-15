@@ -83,9 +83,7 @@ def build_handoff_context(
             digest=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
             truncated=False,
         )
-    allow_assistant = (
-        source_policy.allow_assistant_context and target_policy.allow_assistant_context
-    )
+    allow_assistant = source_policy.allow_assistant_context and target_policy.allow_assistant_context
     allowed_roles = {"user", "assistant"} if allow_assistant else {"user"}
     selected: list[dict[str, str]] = []
     for message in reversed(messages):
@@ -163,9 +161,7 @@ async def _locked_session(
     subject: ResourceAccessSubject,
 ) -> ChatSession:
     session = (
-        await db.execute(
-            select(ChatSession).where(ChatSession.id == session_id).with_for_update()
-        )
+        await db.execute(select(ChatSession).where(ChatSession.id == session_id).with_for_update())
     ).scalar_one_or_none()
     if session is None:
         raise AgentHandoffError("Chat session does not exist")
@@ -194,9 +190,7 @@ async def propose_agent_handoff(
         raise AgentHandoffError("turn_id is invalid")
     clean_reason = " ".join((reason or "").split())
     if not clean_reason or len(clean_reason) > 2_000:
-        raise AgentHandoffError(
-            "Handoff reason is required and limited to 2000 characters"
-        )
+        raise AgentHandoffError("Handoff reason is required and limited to 2000 characters")
     await _locked_session(
         db,
         session_id=session_id,
@@ -239,9 +233,7 @@ async def propose_agent_handoff(
         raise AgentHandoffError(str(exc)) from exc
     if target.agent.id == source.agent.id:
         raise AgentHandoffError("Source and target Agent must be different")
-    if initiated_by == "runtime" and target.agent.slug not in set(
-        source_policies.routing.allowed_handoff_targets
-    ):
+    if initiated_by == "runtime" and target.agent.slug not in set(source_policies.routing.allowed_handoff_targets):
         raise AgentHandoffError("Target Agent is not allowed by routing policy")
 
     target_policies = resolve_agent_policies(target.version)
@@ -251,8 +243,7 @@ async def propose_agent_handoff(
         target_policy=target_policies.routing,
     )
     consent_required = bool(
-        source_policies.routing.require_handoff_consent
-        or target_policies.routing.require_handoff_consent
+        source_policies.routing.require_handoff_consent or target_policies.routing.require_handoff_consent
     )
     event = AgentHandoffEvent(
         id=str(uuid.uuid4()),
@@ -296,11 +287,7 @@ async def _locked_event(
     event_id: str,
 ) -> AgentHandoffEvent:
     event = (
-        await db.execute(
-            select(AgentHandoffEvent)
-            .where(AgentHandoffEvent.id == event_id)
-            .with_for_update()
-        )
+        await db.execute(select(AgentHandoffEvent).where(AgentHandoffEvent.id == event_id).with_for_update())
     ).scalar_one_or_none()
     if event is None:
         raise AgentHandoffError("Handoff event does not exist")

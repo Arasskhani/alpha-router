@@ -2,7 +2,7 @@
 
 import { isAutoRouterModel, type ChatModelRef } from "./chatModels";
 
-export type CodeInterpreterCompatibilityStatus =
+type CodeInterpreterCompatibilityStatus =
   | "compatible"
   | "unknown"
   | "probing"

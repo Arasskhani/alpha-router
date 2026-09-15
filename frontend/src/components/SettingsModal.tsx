@@ -1,4 +1,5 @@
 import { FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { localDateKey } from "./activity/formatters";
 import { api, authFetch, formatApiError } from "../api";
 import { fetchUserPrefsFromServer, saveUserPrefs, type UserTheme } from "../lib/chatStorage";
 import {
@@ -862,7 +863,7 @@ function DataControlPanel() {
         throw new Error(text || `Export failed (${res.status})`);
       }
       const blob = await res.blob();
-      const stamp = new Date().toISOString().slice(0, 10);
+      const stamp = localDateKey(new Date()); // the user's own calendar day, not UTC
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;

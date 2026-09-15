@@ -32,9 +32,7 @@ def _production_config(**overrides):
 @pytest.mark.parametrize("cookie_name", LEGACY_SESSION_COOKIE_NAMES)
 def test_stale_session_cookie_config_is_rejected(cookie_name):
     with pytest.raises(RuntimeError, match="SESSION_COOKIE_NAME"):
-        _check_production_safe(
-            **_production_config(session_cookie_name=cookie_name)
-        )
+        _check_production_safe(**_production_config(session_cookie_name=cookie_name))
 
 
 @pytest.mark.parametrize("cookie_name", LEGACY_CSRF_COOKIE_NAMES)

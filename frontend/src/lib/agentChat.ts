@@ -177,7 +177,7 @@ export async function fetchAgentCitation(
 }
 
 /** Matches backend knowledge_citation_service markers embedded in agent answers. */
-export const AGENT_CITATION_MARKER_RE = /\[\[cite:([A-Za-z0-9._:-]{1,128})\]\]/g;
+const AGENT_CITATION_MARKER_RE = /\[\[cite:([A-Za-z0-9._:-]{1,128})\]\]/g;
 
 /**
  * Stable [1]/[2] numbering for Verified sources and inline markers.
@@ -233,6 +233,7 @@ export function citationDisplayMarker(
 
 function safeCitationFileName(value: string | null | undefined): string {
   const cleaned = (value || "citation-source")
+    // eslint-disable-next-line no-control-regex -- control characters are exactly what is being stripped
     .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
     .trim();
   return cleaned || "citation-source";

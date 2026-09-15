@@ -1,12 +1,9 @@
 import {
   type ChatMessage,
   cancelStreamingReplyOnServer,
-  fetchSessionMessagesFromServer,
-  fetchSessionWithMessages,
-  isPrivateChat,
   syncSessionMessages,
 } from "./chatStorage";
-import { referenceImageFromUserContent, resolveReferenceImageFromUserContent } from "./chatAttachments";
+import { resolveReferenceImageFromUserContent } from "./chatAttachments";
 import { isPrivateBlobRef, resolvePrivateMediaUrlForApi } from "./privateMediaStore";
 import { authFetch } from "../api";
 import { humanizeGatewayError } from "./gatewayErrors";
@@ -55,10 +52,10 @@ type ImageResponse = {
 };
 
 /** Must exceed the backend OpenRouter read timeout (180s) so server errors win. */
-export const IMAGE_GENERATION_TIMEOUT_MS = 240_000;
-export const IMAGE_PREPARATION_TIMEOUT_MS = 15_000;
-export const IMAGE_TIMEOUT_MESSAGE = "Image generation timed out.";
-export const IMAGE_PREPARATION_TIMEOUT_MESSAGE =
+const IMAGE_GENERATION_TIMEOUT_MS = 240_000;
+const IMAGE_PREPARATION_TIMEOUT_MS = 15_000;
+const IMAGE_TIMEOUT_MESSAGE = "Image generation timed out.";
+const IMAGE_PREPARATION_TIMEOUT_MESSAGE =
   "Preparing the image request timed out. Please retry.";
 
 const activeJobs = new Map<string, AbortController>();
@@ -178,21 +175,6 @@ export function lastAssistantImageUrl(messages: ChatMessage[]): string | undefin
   }
   return undefined;
 }
-
-/**
- * Image-to-image reference: explicit attachment, or prior assistant image when editing.
- */
-export function resolveImageGenerationReference(
-  userContent: string,
-  history: ChatMessage[],
-  usePriorAssistantImage = false,
-): string | undefined {
-  const fromUser = referenceImageFromUserContent(userContent);
-  if (fromUser) return fromUser;
-  if (usePriorAssistantImage) return lastAssistantImageUrl(history);
-  return undefined;
-}
-
 /** Async variant — resolves private blob refs for img2img API calls. */
 export async function resolveImageGenerationReferenceAsync(
   userContent: string,
@@ -216,7 +198,7 @@ export function sessionHasPendingImage(messages: ChatMessage[]): boolean {
 }
 
 /** Drop stale pending placeholders superseded by a later assistant message. */
-export function stripOrphanImagePending(messages: ChatMessage[]): ChatMessage[] {
+function stripOrphanImagePending(messages: ChatMessage[]): ChatMessage[] {
   const last = messages.at(-1);
   if (last?.content === IMAGE_PENDING_MARKER) return messages;
   return messages.filter((m) => m.content !== IMAGE_PENDING_MARKER);
@@ -638,9 +620,4 @@ export async function runBackgroundImageGeneration(opts: {
     }
     notify(sessionId);
   }
-}
-
-export async function sessionIsPrivate(sessionId: string): Promise<boolean> {
-  const session = await fetchSessionWithMessages(sessionId);
-  return isPrivateChat(session);
 }

@@ -283,9 +283,7 @@ def test_count_limit_uses_unique_ids():
                     assert "up to 2" in str(exc.value.detail)
                     # duplicates collapse before the limit
                     first = rows[0].id
-                    out = await attachments_from_existing_media(
-                        db, owner, [first, first, first]
-                    )
+                    out = await attachments_from_existing_media(db, owner, [first, first, first])
                     assert len(out) == 1
         finally:
             await engine.dispose()
@@ -407,18 +405,12 @@ def test_project_id_must_match_chat_scope():
                 session = await _session(db, owner, id="here", project_id=PROJ)
                 await db.flush()
                 with pytest.raises(HTTPException) as exc:
-                    await resolve_attach_scope(
-                        db, project_id=OTHER, chat_session_id=session.id
-                    )
+                    await resolve_attach_scope(db, project_id=OTHER, chat_session_id=session.id)
                 assert exc.value.status_code == 400
                 with pytest.raises(HTTPException) as exc:
-                    await resolve_attach_scope(
-                        db, project_id=PROJ, chat_session_id=None
-                    )
+                    await resolve_attach_scope(db, project_id=PROJ, chat_session_id=None)
                 assert exc.value.status_code == 400
-                assert await resolve_attach_scope(
-                    db, project_id=None, chat_session_id=session.id
-                ) == PROJ
+                assert await resolve_attach_scope(db, project_id=None, chat_session_id=session.id) == PROJ
         finally:
             await engine.dispose()
 

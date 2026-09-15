@@ -79,9 +79,7 @@ async def resolve_explicit_agent(
         agent = await db.get(Agent, agent_id)
     else:
         normalized_slug = (agent_slug or "").strip().lower()
-        agent = (
-            await db.execute(select(Agent).where(Agent.slug == normalized_slug))
-        ).scalar_one_or_none()
+        agent = (await db.execute(select(Agent).where(Agent.slug == normalized_slug))).scalar_one_or_none()
     if agent is None or agent.status != "active":
         raise AgentNotFound("The selected Agent is unavailable")
     if not await user_can_access_agent(db, agent, subject):
@@ -95,9 +93,7 @@ async def resolve_explicit_agent(
             or version.status not in {"published", "archived"}
             or version.published_at is None
         ):
-            raise AgentNotFound(
-                "The pinned Agent version was never published or is unavailable"
-            )
+            raise AgentNotFound("The pinned Agent version was never published or is unavailable")
         return AgentExecutionTarget(agent=agent, version=version, pinned_version=True)
 
     version = await get_active_agent_version(db, agent.id)
@@ -129,14 +125,8 @@ def _route_score(
     query_tokens = set(lexical_tokens(query_normalized))
     if not query_tokens:
         return 0.0
-    keyword_scores = [
-        _phrase_score(query_normalized, query_tokens, value)
-        for value in policy.keywords
-    ]
-    example_scores = [
-        _phrase_score(query_normalized, query_tokens, value)
-        for value in policy.examples
-    ]
+    keyword_scores = [_phrase_score(query_normalized, query_tokens, value) for value in policy.keywords]
+    example_scores = [_phrase_score(query_normalized, query_tokens, value) for value in policy.examples]
     identity = " ".join(
         value
         for value in (
@@ -148,9 +138,7 @@ def _route_score(
         if value
     )
     identity_tokens = set(lexical_tokens(identity))
-    identity_score = (
-        min(1.0, len(query_tokens & identity_tokens) / max(1, len(query_tokens))) * 0.15
-    )
+    identity_score = min(1.0, len(query_tokens & identity_tokens) / max(1, len(query_tokens))) * 0.15
     keyword_score = max(keyword_scores, default=0.0) * 0.75
     example_score = max(example_scores, default=0.0) * 0.35
     return min(1.0, keyword_score + example_score + identity_score)
@@ -176,9 +164,7 @@ async def _route_candidates(
         )
     ).all()
     if len(rows) > maximum:
-        raise AgentRoutingError(
-            "Active Agent count exceeds the configured router limit"
-        )
+        raise AgentRoutingError("Active Agent count exceeds the configured router limit")
     allowed = {
         agent.id
         for agent in await filter_agents_for_subject(

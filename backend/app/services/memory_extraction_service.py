@@ -28,6 +28,7 @@ from app.services.user_memory_service import (
     record_memory_event,
     update_memory,
 )
+
 logger = logging.getLogger(__name__)
 
 MAX_MESSAGE_CHARS = 4_000
@@ -131,10 +132,7 @@ class ExtractionParseError(ValueError):
 
 def contains_secret(text: str) -> bool:
     blob = text or ""
-    for _rule, pattern in _SECRET_PATTERNS:
-        if pattern.search(blob):
-            return True
-    return False
+    return any(pattern.search(blob) for _rule, pattern in _SECRET_PATTERNS)
 
 
 def looks_like_injection(text: str) -> bool:
@@ -283,7 +281,7 @@ def parse_operations(payload: dict[str, Any] | str) -> list[MemoryOperation]:
             continue
         try:
             content = normalize_memory_content(str(item.get("content") or ""))
-        except Exception:
+        except Exception:  # noqa: BLE001 -- one bad item must not abort the batch
             continue
         if looks_like_injection(content) or contains_secret(content):
             continue
@@ -325,9 +323,7 @@ def parse_operations(payload: dict[str, Any] | str) -> list[MemoryOperation]:
     return out
 
 
-async def _semantic_near_dupe(
-    db: AsyncSession, user_id: int, content: str
-) -> UserMemory | None:
+async def _semantic_near_dupe(db: AsyncSession, user_id: int, content: str) -> UserMemory | None:
     try:
         from app.services.memory_embedding_service import (
             MemoryEmbeddingUnavailable,
@@ -348,11 +344,7 @@ async def _semantic_near_dupe(
         )
         for hit in hits:
             row = await db.get(UserMemory, hit.point_id)
-            if (
-                row is not None
-                and row.user_id == user_id
-                and row.deleted_at is None
-            ):
+            if row is not None and row.user_id == user_id and row.deleted_at is None:
                 return row
     except MemoryEmbeddingUnavailable:
         return None
@@ -391,7 +383,7 @@ async def _suppressed_semantically(db: AsyncSession, user_id: int, content: str)
         return False
 
 
-async def apply_memory_operations(
+async def apply_memory_operations(  # noqa: C901 -- Phase 4 split; complexity must not grow
     db: AsyncSession,
     *,
     user_id: int,
@@ -400,15 +392,13 @@ async def apply_memory_operations(
     source_message_id: str | None = None,
 ) -> MemoryApplyResult:
     settings = await get_memory_settings(db)
-    allowed_sensitive = {
-        str(item).lower() for item in settings.get("allowed_sensitive_categories") or []
-    }
+    allowed_sensitive = {str(item).lower() for item in settings.get("allowed_sensitive_categories") or []}
     result = MemoryApplyResult()
     now = dt.datetime.utcnow()
     for operation in operations[:MAX_OPS]:
         try:
             digest = memory_content_hash(operation.content)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- boundary with an external dependency; degraded result is returned
             result.skipped += 1
             continue
         if await is_hash_suppressed(db, user_id, digest):
@@ -425,7 +415,7 @@ async def apply_memory_operations(
                 from app.services.observability import observe_memory_item
 
                 observe_memory_item("suppress-hit")
-            except Exception:
+            except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
                 pass
             continue
         if await _suppressed_semantically(db, user_id, operation.content):
@@ -439,10 +429,7 @@ async def apply_memory_operations(
                 detail={"reason": "suppressed_semantic"},
             )
             continue
-        if (
-            operation.sensitivity == "sensitive"
-            and operation.category not in allowed_sensitive
-        ):
+        if operation.sensitivity == "sensitive" and operation.category not in allowed_sensitive:
             result.skipped += 1
             await record_memory_event(
                 db,
@@ -456,7 +443,7 @@ async def apply_memory_operations(
                 from app.services.observability import observe_memory_item
 
                 observe_memory_item("reject")
-            except Exception:
+            except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
                 pass
             continue
 
@@ -503,13 +490,13 @@ async def apply_memory_operations(
                     from app.services.user_memory_service import _index_memory_vector
 
                     await _index_memory_vector(db, target)
-                except Exception:
+                except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
                     pass
                 try:
                     from app.services.observability import observe_memory_item
 
                     observe_memory_item("update")
-                except Exception:
+                except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
                     pass
                 continue
 
@@ -555,7 +542,7 @@ async def apply_memory_operations(
                     from app.services.observability import observe_memory_item
 
                     observe_memory_item("supersede")
-                except Exception:
+                except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
                     pass
                 continue
 
@@ -597,7 +584,7 @@ async def apply_memory_operations(
                 from app.services.observability import observe_memory_item
 
                 observe_memory_item("add")
-            except Exception:
+            except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
                 pass
         else:
             result.skipped += 1
@@ -610,7 +597,7 @@ async def apply_memory_operations(
             from app.services.observability import observe_memory_item
 
             observe_memory_item("evict")
-        except Exception:
+        except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
             pass
     return result
 
@@ -639,10 +626,9 @@ async def extract_memory_operations(
     settings = await get_memory_settings(db)
     model_id = settings.get("extraction_model_id")
     user_content = _window_prompt(window)
-    repair_nudge = (
-        "Your previous reply was not valid JSON. Reply with a JSON object only."
-    )
+    repair_nudge = "Your previous reply was not valid JSON. Reply with a JSON object only."
     if completer is not None:
+
         async def _completer_once(*, repair: bool) -> str:
             messages = [{"role": "user", "content": user_content}]
             if repair:
@@ -665,15 +651,13 @@ async def extract_memory_operations(
         litellm_model_for_provider,
         resolve_litellm_provider,
     )
-    from app.services.proxy_service import resolve_model_and_key
+    from app.services.model_resolution_service import resolve_model_and_key
     from app.services.usage_accounting_service import (
         capture_usage_event,
         persist_usage_operation,
     )
 
-    ai_model, api_key, base_url, provider_type = await resolve_model_and_key(
-        db, f"model::{int(model_id)}"
-    )
+    ai_model, api_key, base_url, provider_type = await resolve_model_and_key(db, f"model::{int(model_id)}")
     if not ai_model or not api_key:
         raise RuntimeError("Memory extraction model is unavailable")
 
@@ -682,9 +666,7 @@ async def extract_memory_operations(
         {"role": "user", "content": user_content},
     ]
     kwargs: dict[str, Any] = {
-        "model": litellm_model_for_provider(
-            ai_model.external_id, provider_type or ai_model.provider_type
-        ),
+        "model": litellm_model_for_provider(ai_model.external_id, provider_type or ai_model.provider_type),
         "messages": messages,
         "max_tokens": EXTRACT_MAX_TOKENS,
         "temperature": 0,
@@ -743,9 +725,7 @@ async def extract_memory_operations(
             raise ExtractionParseError(str(exc)) from exc
 
 
-async def handle_memory_extraction(
-    db: AsyncSession, job, *, completer: Any | None = None
-) -> None:
+async def handle_memory_extraction(db: AsyncSession, job, *, completer: Any | None = None) -> None:
     from app.models.chat import UserMemoryJob
     from app.services.memory_settings_service import get_memory_settings
     from app.config import get_settings
@@ -780,9 +760,7 @@ async def handle_memory_extraction(
         (turn.message_id for turn in reversed(window.turns) if turn.role == "user"),
         None,
     )
-    operations = await extract_memory_operations(
-        db, window=window, completer=completer
-    )
+    operations = await extract_memory_operations(db, window=window, completer=completer)
     result = await apply_memory_operations(
         db,
         user_id=job.user_id,

@@ -20,7 +20,7 @@ export function modelSupportsTextChat(m?: ChatModelRef | null): boolean {
   return kinds.includes("text");
 }
 
-export const AUTO_ROUTER_EXTERNAL_ID = "openrouter/auto";
+const AUTO_ROUTER_EXTERNAL_ID = "openrouter/auto";
 
 /** True for openrouter/auto, openrouter/auto-beta, and display name "Auto Router*". */
 export function isAutoRouterExternalId(externalId?: string | null): boolean {
@@ -40,11 +40,6 @@ export function isAutoRouterModel(m?: ChatModelRef | null): boolean {
   const name = (m.name || "").trim().toLowerCase();
   return name === "auto router" || name.startsWith("auto router ");
 }
-
-export function findAutoRouterModel(models: ChatModelRef[]): ChatModelRef | undefined {
-  return models.find(isAutoRouterModel);
-}
-
 /** Prefer Auto Router, otherwise the first text-capable catalog model. */
 export function findTextChatFallbackModel<T extends ChatModelRef>(models: T[]): T | undefined {
   const autoRouter = models.find((m) => isAutoRouterModel(m) && modelSupportsTextChat(m));

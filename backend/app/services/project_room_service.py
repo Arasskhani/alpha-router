@@ -48,6 +48,7 @@ def _room_message_to_client(row: ChatMessage, user: object | None = None) -> dic
         out["edited"] = True
     return out
 
+
 _MAX_ROOM_SESSIONS_PAGE = 100
 _MAX_ROOM_MESSAGES_PAGE = 200
 _MAX_SYNC_SESSION_IDS = 200
@@ -108,15 +109,7 @@ async def list_project_rooms(
         count_q = count_q.where(ChatSession.title.ilike(f"%{search}%"))
 
     total = int((await db.execute(count_q)).scalar_one() or 0)
-    rows = (
-        (
-            await db.execute(
-                base.order_by(ChatSession.updated_at.desc()).limit(limit).offset(offset)
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = (await db.execute(base.order_by(ChatSession.updated_at.desc()).limit(limit).offset(offset))).scalars().all()
     return [_room_session_to_client(row) for row in rows], total
 
 
@@ -140,24 +133,10 @@ async def sync_project_rooms(
         ChatSession.archived_at.is_(None),
         ChatSession.channel_kind == CHANNEL_KIND_MEMBER,
     )
-    total = int(
-        (
-            await db.execute(
-                select(func.count()).select_from(ChatSession).where(*room_filter)
-            )
-        ).scalar_one()
-        or 0
-    )
+    total = int((await db.execute(select(func.count()).select_from(ChatSession).where(*room_filter))).scalar_one() or 0)
     order = [ChatSession.updated_at.desc()]
     session_ids = list(
-        (
-            await db.execute(
-                select(ChatSession.id)
-                .where(*room_filter)
-                .order_by(*order)
-                .limit(_MAX_SYNC_SESSION_IDS)
-            )
-        )
+        (await db.execute(select(ChatSession.id).where(*room_filter).order_by(*order).limit(_MAX_SYNC_SESSION_IDS)))
         .scalars()
         .all()
     )
@@ -168,18 +147,10 @@ async def sync_project_rooms(
 
     session_stmt = select(ChatSession).where(*room_filter)
     if since_dt is None:
-        session_rows = list(
-            (await db.execute(session_stmt.order_by(*order).limit(50))).scalars().all()
-        )
+        session_rows = list((await db.execute(session_stmt.order_by(*order).limit(50))).scalars().all())
     else:
         changed = session_stmt.where(ChatSession.updated_at >= since_dt)
-        session_rows = list(
-            (
-                await db.execute(changed.order_by(*order).limit(_MAX_SYNC_SESSION_ROWS))
-            )
-            .scalars()
-            .all()
-        )
+        session_rows = list((await db.execute(changed.order_by(*order).limit(_MAX_SYNC_SESSION_ROWS))).scalars().all())
         wanted = (session_id or "").strip()
         if wanted and wanted not in {row.id for row in session_rows}:
             extra = await db.get(ChatSession, wanted)
@@ -203,10 +174,7 @@ async def sync_project_rooms(
                 .order_by(ChatMessage.sequence.asc())
                 .limit(_MAX_ROOM_MESSAGES_PAGE)
             )
-            messages = [
-                _room_message_to_client(m, user)
-                for m in (await db.execute(msg_stmt)).scalars().all()
-            ]
+            messages = [_room_message_to_client(m, user) for m in (await db.execute(msg_stmt)).scalars().all()]
         else:
             msg_stmt = (
                 select(ChatMessage)
@@ -556,11 +524,7 @@ async def _reply_meta(
 
 
 def _is_project_room(row: ChatSession | None, project_id: str) -> bool:
-    return (
-        row is not None
-        and row.project_id == project_id
-        and is_member_channel(row)
-    )
+    return row is not None and row.project_id == project_id and is_member_channel(row)
 
 
 def _room_session_to_client(row: ChatSession) -> dict[str, Any]:

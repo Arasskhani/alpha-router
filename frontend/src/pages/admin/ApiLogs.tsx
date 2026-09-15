@@ -11,8 +11,10 @@ import { useAdminWriteLock } from "../../lib/adminWriteLock";
 import { formatLocalDateTime } from "../../lib/dateTime";
 import {
   confidenceLabel,
+  errorCodeLabel,
   fetchAdminRequestLogCostDetails,
   isPersonalApiKeyLog,
+  operationTypeLabel,
   type CostDetails,
   type RequestLogSummary,
 } from "../../lib/requestLogCostDetails";
@@ -22,6 +24,8 @@ type Log = RequestLogSummary;
 type FilterOptions = {
   usernames: string[];
   models: string[];
+  operation_types?: string[];
+  error_codes?: string[];
 };
 
 type ApiKeyMeta = {
@@ -60,7 +64,7 @@ async function downloadCsvExport(path: string): Promise<void> {
 }
 
 export default function ApiLogs({ apiKeyId }: Props) {
-  const { confirm } = useConfirm();
+  const { confirm, prompt } = useConfirm();
   const writeLock = useAdminWriteLock();
   const [searchParams] = useSearchParams();
   const fromKeyRoute = Number.isFinite(apiKeyId) && (apiKeyId as number) > 0;
@@ -72,10 +76,17 @@ export default function ApiLogs({ apiKeyId }: Props) {
   const [model, setModel] = useState(searchParams.get("model_id") || searchParams.get("model") || "");
   const [responseStatus, setResponseStatus] = useState<"" | "success" | "fail">("");
   const [promptCache, setPromptCache] = useState<"" | "yes" | "no">("");
+  const [operationType, setOperationType] = useState("");
+  const [errorCode, setErrorCode] = useState("");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [loading, setLoading] = useState(false);
-  const [filterOptions, setFilterOptions] = useState<FilterOptions>({ usernames: [], models: [] });
+  const [filterOptions, setFilterOptions] = useState<FilterOptions>({
+    usernames: [],
+    models: [],
+    operation_types: [],
+    error_codes: [],
+  });
   const [optionsLoading, setOptionsLoading] = useState(false);
   const [selectedLog, setSelectedLog] = useState<Log | null>(null);
   const [costDetails, setCostDetails] = useState<CostDetails | null>(null);
@@ -93,12 +104,14 @@ export default function ApiLogs({ apiKeyId }: Props) {
       if (model.trim()) q.set("model_id", model.trim());
       if (responseStatus) q.set("response_status", responseStatus);
       if (promptCache) q.set("prompt_cache", promptCache);
+      if (operationType) q.set("operation_type", operationType);
+      if (errorCode) q.set("error_code", errorCode);
       if (start) q.set("start_date", start);
       if (end) q.set("end_date", end);
       if (!fromKeyRoute && scopedKeyId) q.set("api_key_id", String(scopedKeyId));
       return q;
     },
-    [username, model, responseStatus, promptCache, start, end, fromKeyRoute, scopedKeyId],
+    [username, model, responseStatus, promptCache, operationType, errorCode, start, end, fromKeyRoute, scopedKeyId],
   );
 
   const logsPath = fromKeyRoute ? `/api/admin/api-keys/${apiKeyId}/logs` : "/api/admin/logs";
@@ -109,7 +122,7 @@ export default function ApiLogs({ apiKeyId }: Props) {
       const d = await api<FilterOptions>("/api/admin/logs/filter-options");
       setFilterOptions(d);
     } catch {
-      setFilterOptions({ usernames: [], models: [] });
+      setFilterOptions({ usernames: [], models: [], operation_types: [], error_codes: [] });
     } finally {
       setOptionsLoading(false);
     }
@@ -220,18 +233,25 @@ export default function ApiLogs({ apiKeyId }: Props) {
     });
     if (!step2) return;
 
-    const step3 = await confirm({
+    // The server verifies this phrase too (and requires Super Admin): the
+    // dialog is a courtesy, the typed phrase is the control.
+    const typed = await prompt({
       title: "Final confirmation",
       message:
         "You are about to purge ALL API logs from Alpharouter. Only continue if you intentionally want an empty log table.",
+      promptLabel: 'Type "DELETE ALL LOGS" to confirm',
+      promptExactMatch: "DELETE ALL LOGS",
       confirmLabel: "Clear all logs now",
       danger: true,
     });
-    if (!step3) return;
+    if (typed !== "DELETE ALL LOGS") return;
 
     setLoading(true);
     try {
-      await api("/api/admin/logs", { method: "DELETE" });
+      await api("/api/admin/logs", {
+        method: "DELETE",
+        body: JSON.stringify({ confirm: typed }),
+      });
       setItems([]);
       await load();
     } finally {
@@ -311,6 +331,32 @@ export default function ApiLogs({ apiKeyId }: Props) {
             <option value="yes">Cache hit</option>
             <option value="no">No cache</option>
           </select>
+          <select
+            value={operationType}
+            onChange={(e) => setOperationType(e.target.value)}
+            aria-label="Request type"
+            disabled={loading}
+          >
+            <option value="">All types</option>
+            {(filterOptions.operation_types || []).map((t) => (
+              <option key={t} value={t}>
+                {operationTypeLabel(t)}
+              </option>
+            ))}
+          </select>
+          <select
+            value={errorCode}
+            onChange={(e) => setErrorCode(e.target.value)}
+            aria-label="Failure reason"
+            disabled={loading}
+          >
+            <option value="">All failures</option>
+            {(filterOptions.error_codes || []).map((c) => (
+              <option key={c} value={c}>
+                {errorCodeLabel(c)}
+              </option>
+            ))}
+          </select>
           <input
             className="api-logs-toolbar__date"
             type="date"
@@ -389,6 +435,7 @@ export default function ApiLogs({ apiKeyId }: Props) {
             <tr>
               <th className="api-log-col--time">Time</th>
               <th className="api-log-col--user">User</th>
+              <th className="api-log-col--secondary">Type</th>
               <th className="api-log-col--model">Model</th>
               <th className="api-log-col--secondary">Provider</th>
               <th className="api-log-col--secondary">App</th>
@@ -496,6 +543,7 @@ export default function ApiLogs({ apiKeyId }: Props) {
                       </span>
                     )}
                   </td>
+                  <td className="api-log-col--secondary">{operationTypeLabel(r.operation_type)}</td>
                   <td className="api-log-col--model" title={r.model_id}>
                     <ModelName modelId={r.model_id} label={r.model_id} size={14} />
                   </td>
@@ -545,7 +593,23 @@ export default function ApiLogs({ apiKeyId }: Props) {
                   >
                     {Math.round(r.response_time_ms)}
                   </td>
-                  <td className="api-log-col--status">{r.success ? "Success" : "Fail"}</td>
+                  <td className="api-log-col--status">
+                    {r.success ? (
+                      "Success"
+                    ) : (
+                      <span
+                        className="api-log-failure"
+                        title={r.error_message || errorCodeLabel(r.error_code) || "Failed"}
+                      >
+                        <span className="api-log-failure__code">
+                          {r.error_code ? errorCodeLabel(r.error_code) : "Fail"}
+                        </span>
+                        {r.error_message ? (
+                          <span className="api-log-failure__message">{r.error_message}</span>
+                        ) : null}
+                      </span>
+                    )}
+                  </td>
                 </tr>
               );
             })}

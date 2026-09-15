@@ -6,7 +6,7 @@ import ipaddress
 import socket
 import struct
 from pathlib import Path
-from typing import Iterable
+from collections.abc import Iterable
 
 from fastapi import Request
 

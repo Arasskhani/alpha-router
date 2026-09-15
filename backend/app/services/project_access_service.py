@@ -24,7 +24,6 @@ from app.models.project import (
     PROJECT_ROLE_VIEWER,
     PROJECT_ROLES,
     PROJECT_STATUS_ACTIVE,
-    PROJECT_VISIBILITY_PRIVATE,
     PROJECT_VISIBILITY_PUBLIC,
     Project,
     ProjectAuditEvent,
@@ -33,6 +32,17 @@ from app.models.project import (
 
 Capability = Literal[
     "project.view",
+    # Read capabilities. Every *member* role has all of them; the implicit
+    # viewer a public project grants to any active user gets only the ones in
+    # PUBLIC_VIEWER_CAPABILITIES. Making a project public is meant to share its
+    # chats and knowledge, not its memory, media library, member list or
+    # custom prompt.
+    "chat.read",
+    "resource.read",
+    "memory.read",
+    "media.read",
+    "members.read",
+    "config.read",
     "project.edit",
     "project.delete",
     "member.manage",
@@ -57,10 +67,28 @@ def is_primary_owner_role(role: str | None) -> bool:
     return role == PROJECT_ROLE_PRIMARY_OWNER
 
 
-# Capabilities granted per role. Primary Owner is a strict superset of Owner.
-_OWNER_CAPABILITIES: frozenset[Capability] = frozenset(
+MEMBER_READ_CAPABILITIES: frozenset[Capability] = frozenset(
     {
         "project.view",
+        "chat.read",
+        "resource.read",
+        "memory.read",
+        "media.read",
+        "members.read",
+        "config.read",
+    }
+)
+PUBLIC_VIEWER_CAPABILITIES: frozenset[Capability] = frozenset(
+    {
+        "project.view",
+        "chat.read",
+        "resource.read",
+    }
+)
+
+# Capabilities granted per role. Primary Owner is a strict superset of Owner.
+_OWNER_CAPABILITIES: frozenset[Capability] = MEMBER_READ_CAPABILITIES | frozenset(
+    {
         "project.edit",
         "member.manage",
         "resource.upload",
@@ -74,12 +102,11 @@ _OWNER_CAPABILITIES: frozenset[Capability] = frozenset(
     }
 )
 _CAPABILITIES: dict[str, frozenset[Capability]] = {
-    PROJECT_ROLE_PRIMARY_OWNER: _OWNER_CAPABILITIES
-    | frozenset({"project.delete", "member.manage_owners"}),
+    PROJECT_ROLE_PRIMARY_OWNER: _OWNER_CAPABILITIES | frozenset({"project.delete", "member.manage_owners"}),
     PROJECT_ROLE_OWNER: _OWNER_CAPABILITIES,
-    PROJECT_ROLE_CONTRIBUTOR: frozenset(
+    PROJECT_ROLE_CONTRIBUTOR: MEMBER_READ_CAPABILITIES
+    | frozenset(
         {
-            "project.view",
             "resource.upload",
             "chat.write",
             "chat.pin",
@@ -87,11 +114,7 @@ _CAPABILITIES: dict[str, frozenset[Capability]] = {
             "media.delete",
         }
     ),
-    PROJECT_ROLE_VIEWER: frozenset(
-        {
-            "project.view",
-        }
-    ),
+    PROJECT_ROLE_VIEWER: MEMBER_READ_CAPABILITIES,
 }
 
 
@@ -107,6 +130,8 @@ class ProjectAccess:
 
     @property
     def capabilities(self) -> frozenset[Capability]:
+        if self.is_public_viewer:
+            return PUBLIC_VIEWER_CAPABILITIES
         role = self.role
         if role is None:
             return frozenset()
@@ -197,7 +222,9 @@ async def require_capability(
 async def count_owners(db: AsyncSession, project_id: str) -> int:
     """Count Primary Owner and Owner members (management roles)."""
     result = await db.execute(
-        select(func.count()).select_from(ProjectMember).where(
+        select(func.count())
+        .select_from(ProjectMember)
+        .where(
             ProjectMember.project_id == project_id,
             ProjectMember.role.in_(PROJECT_OWNER_ROLES),
         )
@@ -207,7 +234,9 @@ async def count_owners(db: AsyncSession, project_id: str) -> int:
 
 async def count_primary_owners(db: AsyncSession, project_id: str) -> int:
     result = await db.execute(
-        select(func.count()).select_from(ProjectMember).where(
+        select(func.count())
+        .select_from(ProjectMember)
+        .where(
             ProjectMember.project_id == project_id,
             ProjectMember.role == PROJECT_ROLE_PRIMARY_OWNER,
         )

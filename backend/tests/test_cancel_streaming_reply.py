@@ -1,6 +1,5 @@
 """Tests for server-side streaming cancellation."""
 
-import asyncio
 import datetime as dt
 from unittest.mock import patch
 
@@ -94,12 +93,14 @@ async def _run_cancel_roundtrip() -> None:
             await session.commit()
 
             row = (
-                await session.execute(
-                    select(ChatMessage)
-                    .where(ChatMessage.session_id == "s1")
-                    .order_by(ChatMessage.sequence.desc())
+                (
+                    await session.execute(
+                        select(ChatMessage).where(ChatMessage.session_id == "s1").order_by(ChatMessage.sequence.desc())
+                    )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             assert row is not None
             assert not (row.meta or {}).get("cancelRequested")
     await engine.dispose()
@@ -199,16 +200,16 @@ async def _run_stale_pending_reconcile() -> None:
 
         # Age the pending row past the stale threshold: reads now reconcile it.
         row = (
-            await session.execute(
-                select(ChatMessage)
-                .where(ChatMessage.session_id == "img2")
-                .order_by(ChatMessage.sequence.desc())
+            (
+                await session.execute(
+                    select(ChatMessage).where(ChatMessage.session_id == "img2").order_by(ChatMessage.sequence.desc())
+                )
             )
-        ).scalars().first()
-        assert row is not None
-        row.created_at = dt.datetime.utcnow() - dt.timedelta(
-            seconds=_STALE_IMAGE_PENDING_SEC + 5
+            .scalars()
+            .first()
         )
+        assert row is not None
+        row.created_at = dt.datetime.utcnow() - dt.timedelta(seconds=_STALE_IMAGE_PENDING_SEC + 5)
         await session.commit()
 
         msgs, _ = await list_session_messages(session, user.id, "img2")
@@ -267,16 +268,16 @@ async def _run_cancel_orphan_pending_with_received_at() -> None:
     await engine.dispose()
 
 
-def test_cancel_streaming_reply_roundtrip() -> None:
-    asyncio.run(_run_cancel_roundtrip())
+async def test_cancel_streaming_reply_roundtrip() -> None:
+    await _run_cancel_roundtrip()
 
 
-def test_cancel_image_pending_finalizes() -> None:
-    asyncio.run(_run_cancel_image_pending())
+async def test_cancel_image_pending_finalizes() -> None:
+    await _run_cancel_image_pending()
 
 
-def test_stale_image_pending_reconciled_only_after_threshold() -> None:
-    asyncio.run(_run_stale_pending_reconcile())
+async def test_stale_image_pending_reconciled_only_after_threshold() -> None:
+    await _run_stale_pending_reconcile()
 
 
 async def _run_reconcile_orphan_pending_with_received_at() -> None:
@@ -324,9 +325,9 @@ async def _run_reconcile_orphan_pending_with_received_at() -> None:
     await engine.dispose()
 
 
-def test_cancel_orphan_image_pending_with_received_at() -> None:
-    asyncio.run(_run_cancel_orphan_pending_with_received_at())
+async def test_cancel_orphan_image_pending_with_received_at() -> None:
+    await _run_cancel_orphan_pending_with_received_at()
 
 
-def test_reconcile_orphan_image_pending_with_received_at() -> None:
-    asyncio.run(_run_reconcile_orphan_pending_with_received_at())
+async def test_reconcile_orphan_image_pending_with_received_at() -> None:
+    await _run_reconcile_orphan_pending_with_received_at()

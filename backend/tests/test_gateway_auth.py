@@ -8,7 +8,6 @@ Covers:
 - /v1/models read gate (_require_valid_gateway_key) rejects missing/unknown, accepts valid.
 """
 
-import asyncio
 import datetime
 import types
 from types import SimpleNamespace
@@ -92,6 +91,7 @@ async def _seed_alpha_router_key(
     raw_key="alpha_router_gatewaykey_test456",
     credit_limit_usd=0.0,
     period_used_usd=0.0,
+    unlimited_budget=None,
 ):
     async with session_factory() as db:
         key = AlphaRouterApiKey(
@@ -100,6 +100,8 @@ async def _seed_alpha_router_key(
             key_hash=hash_api_key(raw_key),
             is_active=True,
             credit_limit_usd=credit_limit_usd,
+            # A key without a positive limit is blocked unless explicitly unlimited.
+            unlimited_budget=(credit_limit_usd <= 0) if unlimited_budget is None else unlimited_budget,
             reset_period="monthly",
             period_used_usd=period_used_usd,
             period_started_at=datetime.datetime.utcnow(),
@@ -110,6 +112,7 @@ async def _seed_alpha_router_key(
 
 
 # ---- _resolve_gateway_auth ----
+
 
 async def _test_missing_authorization_raises_401():
     _, sf = await _setup_db()
@@ -141,9 +144,7 @@ async def _test_master_key_ignores_body_user_and_uses_service_account():
     _, sf = await _setup_db()
     async with sf() as db:
         # Attacker tries to impersonate "admin@evil" via body.user — must be ignored.
-        auth = await gateway._resolve_gateway_auth(
-            _FakeRequest(f"Bearer {MASTER_KEY}"), db
-        )
+        auth = await gateway._resolve_gateway_auth(_FakeRequest(f"Bearer {MASTER_KEY}"), db)
         assert auth.source == "master"
         assert auth.username == GATEWAY_SERVICE_USERNAME
         assert auth.skip_budget is False
@@ -151,24 +152,20 @@ async def _test_master_key_ignores_body_user_and_uses_service_account():
 
         # No impersonation: the attacker identity must NOT exist in the DB.
         evil = (
-            await db.execute(
-                select(User).where((User.email == "admin@evil") | (User.username == "admin@evil"))
-            )
-        ).scalars().first()
+            (await db.execute(select(User).where((User.email == "admin@evil") | (User.username == "admin@evil"))))
+            .scalars()
+            .first()
+        )
         assert evil is None
 
         # Idempotent: a second call returns the same service user.
         async with sf() as db2:
-            auth2 = await gateway._resolve_gateway_auth(
-                _FakeRequest(f"Bearer {MASTER_KEY}"), db2
-            )
+            auth2 = await gateway._resolve_gateway_auth(_FakeRequest(f"Bearer {MASTER_KEY}"), db2)
             assert auth2.user_id == auth.user_id
             # And there is exactly one gateway-service user.
             svc_count = (
-                await db2.execute(
-                    select(User).where(User.username == GATEWAY_SERVICE_USERNAME)
-                )
-            ).scalars().all()
+                (await db2.execute(select(User).where(User.username == GATEWAY_SERVICE_USERNAME))).scalars().all()
+            )
             assert len(svc_count) == 1
 
 
@@ -210,6 +207,7 @@ async def _test_alpha_router_api_key_over_credit_limit_raises_402():
 
 
 # ---- _require_valid_gateway_key (read gate) ----
+
 
 async def _test_read_gate_rejects_missing():
     _, sf = await _setup_db()
@@ -314,53 +312,54 @@ async def _test_chat_completions_personal_key_preflight_and_stream():
 
 # ---- sync wrappers ----
 
-def test_missing_authorization_raises_401():
-    asyncio.run(_test_missing_authorization_raises_401())
+
+async def test_missing_authorization_raises_401():
+    await _test_missing_authorization_raises_401()
 
 
-def test_empty_bearer_raises_401():
-    asyncio.run(_test_empty_bearer_raises_401())
+async def test_empty_bearer_raises_401():
+    await _test_empty_bearer_raises_401()
 
 
-def test_unknown_key_raises_401():
-    asyncio.run(_test_unknown_key_raises_401())
+async def test_unknown_key_raises_401():
+    await _test_unknown_key_raises_401()
 
 
-def test_master_key_ignores_body_user_and_uses_service_account():
-    asyncio.run(_test_master_key_ignores_body_user_and_uses_service_account())
+async def test_master_key_ignores_body_user_and_uses_service_account():
+    await _test_master_key_ignores_body_user_and_uses_service_account()
 
 
-def test_user_api_key_resolves_owner_with_budget():
-    asyncio.run(_test_user_api_key_resolves_owner_with_budget())
+async def test_user_api_key_resolves_owner_with_budget():
+    await _test_user_api_key_resolves_owner_with_budget()
 
 
-def test_alpha_router_api_key_skips_user_budget():
-    asyncio.run(_test_alpha_router_api_key_skips_user_budget())
+async def test_alpha_router_api_key_skips_user_budget():
+    await _test_alpha_router_api_key_skips_user_budget()
 
 
-def test_alpha_router_api_key_over_credit_limit_raises_402():
-    asyncio.run(_test_alpha_router_api_key_over_credit_limit_raises_402())
+async def test_alpha_router_api_key_over_credit_limit_raises_402():
+    await _test_alpha_router_api_key_over_credit_limit_raises_402()
 
 
-def test_read_gate_rejects_missing():
-    asyncio.run(_test_read_gate_rejects_missing())
+async def test_read_gate_rejects_missing():
+    await _test_read_gate_rejects_missing()
 
 
-def test_read_gate_accepts_master():
-    asyncio.run(_test_read_gate_accepts_master())
+async def test_read_gate_accepts_master():
+    await _test_read_gate_accepts_master()
 
 
-def test_read_gate_rejects_unknown():
-    asyncio.run(_test_read_gate_rejects_unknown())
+async def test_read_gate_rejects_unknown():
+    await _test_read_gate_rejects_unknown()
 
 
-def test_read_gate_accepts_user_key():
-    asyncio.run(_test_read_gate_accepts_user_key())
+async def test_read_gate_accepts_user_key():
+    await _test_read_gate_accepts_user_key()
 
 
-def test_chat_completions_no_key_short_circuits_before_body_parse():
-    asyncio.run(_test_chat_completions_no_key_short_circuits_before_body_parse())
+async def test_chat_completions_no_key_short_circuits_before_body_parse():
+    await _test_chat_completions_no_key_short_circuits_before_body_parse()
 
 
-def test_chat_completions_personal_key_preflight_and_stream():
-    asyncio.run(_test_chat_completions_personal_key_preflight_and_stream())
+async def test_chat_completions_personal_key_preflight_and_stream():
+    await _test_chat_completions_personal_key_preflight_and_stream()

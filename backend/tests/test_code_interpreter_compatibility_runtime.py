@@ -6,7 +6,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services import proxy_service
+from app.services import chat_turn_context, proxy_service, turn_settlement
 from app.services.usage_accounting_service import NormalizedUsage
 
 
@@ -69,9 +69,7 @@ async def _run_empty_completion_records_failure() -> tuple[list[dict], list[dict
     )
 
     fake_db = AsyncMock()
-    fake_db.execute = AsyncMock(
-        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
-    )
+    fake_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
     fake_ctx = MagicMock()
     fake_ctx.__aenter__ = AsyncMock(return_value=fake_db)
     fake_ctx.__aexit__ = AsyncMock(return_value=None)
@@ -91,18 +89,21 @@ async def _run_empty_completion_records_failure() -> tuple[list[dict], list[dict
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(chat_turn_context, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(turn_settlement, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(proxy_service, "parse_tools_config", return_value=tools),
+        patch.object(chat_turn_context, "parse_tools_config", return_value=tools),
         patch.object(
-            proxy_service,
-            "augment_messages_with_tools",
-            AsyncMock(side_effect=lambda db, m, t, **_kwargs: m),
+            chat_turn_context, "augment_messages_with_tools", AsyncMock(side_effect=lambda db, m, t, **_kwargs: m)
         ),
         patch.object(proxy_service, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
+        patch.object(chat_turn_context, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
         patch.object(proxy_service, "acompletion", side_effect=fake_acompletion),
         patch.object(proxy_service, "_usage_from_stream_wrapper", return_value=(10, 0, 0)),
         patch.object(proxy_service, "_compute_token_cost_usd", return_value=0.0),
         patch.object(proxy_service, "log_usage", side_effect=AsyncMock()),
-        patch.object(proxy_service, "openrouter_auto_plugin", side_effect=fake_plugin),
+        patch.object(turn_settlement, "log_usage", side_effect=AsyncMock()),
+        patch.object(chat_turn_context, "openrouter_auto_plugin", side_effect=fake_plugin),
         patch.object(proxy_service, "record_compatibility_result", side_effect=fake_record),
         patch.object(
             proxy_service,
@@ -133,8 +134,8 @@ async def _run_empty_completion_records_failure() -> tuple[list[dict], list[dict
     return recorded, seen_kwargs
 
 
-def test_empty_code_interpreter_turn_records_selected_model_failure():
-    recorded, seen_kwargs = asyncio.run(_run_empty_completion_records_failure())
+async def test_empty_code_interpreter_turn_records_selected_model_failure():
+    recorded, seen_kwargs = await _run_empty_completion_records_failure()
 
     assert recorded, "runtime failures must be recorded for the registry"
     first = recorded[0]
@@ -165,8 +166,8 @@ async def _run_missing_connection_is_noop() -> dict | None:
     return await proxy_service._adaptive_openrouter_extra_body(ai_model)
 
 
-def test_models_without_connection_skip_adaptive_routing():
-    assert asyncio.run(_run_missing_connection_is_noop()) is None
+async def test_models_without_connection_skip_adaptive_routing():
+    assert await _run_missing_connection_is_noop() is None
 
 
 async def _run_alias_evidence_is_dropped() -> list[dict]:
@@ -177,9 +178,7 @@ async def _run_alias_evidence_is_dropped() -> list[dict]:
         recorded.append(kwargs)
 
     fake_db = AsyncMock()
-    fake_db.execute = AsyncMock(
-        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
-    )
+    fake_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
     fake_ctx = MagicMock()
     fake_ctx.__aenter__ = AsyncMock(return_value=fake_db)
     fake_ctx.__aexit__ = AsyncMock(return_value=None)
@@ -187,6 +186,8 @@ async def _run_alias_evidence_is_dropped() -> list[dict]:
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(chat_turn_context, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(turn_settlement, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(proxy_service, "record_compatibility_result", side_effect=fake_record),
     ):
         for alias in ("openrouter/auto", "auto", "~openrouter/auto-beta"):
@@ -204,8 +205,8 @@ async def _run_alias_evidence_is_dropped() -> list[dict]:
     return recorded
 
 
-def test_router_alias_evidence_is_not_recorded():
-    recorded = asyncio.run(_run_alias_evidence_is_dropped())
+async def test_router_alias_evidence_is_not_recorded():
+    recorded = await _run_alias_evidence_is_dropped()
     assert [r["external_model_id"] for r in recorded] == ["vendor/real"]
 
 
@@ -220,9 +221,7 @@ async def _run_success_resolves_concrete_model() -> list[dict]:
     event = _pending_event({"model": "openrouter/auto"}, upstream_id="gen-1")
 
     with (
-        patch.object(
-            proxy_service, "_record_runtime_compatibility", side_effect=fake_record
-        ),
+        patch.object(proxy_service, "_record_runtime_compatibility", side_effect=fake_record),
         patch.object(
             proxy_service,
             "_openrouter_generation_outcome",
@@ -240,8 +239,8 @@ async def _run_success_resolves_concrete_model() -> list[dict]:
     return recorded
 
 
-def test_router_success_is_credited_to_selected_model():
-    recorded = asyncio.run(_run_success_resolves_concrete_model())
+async def test_router_success_is_credited_to_selected_model():
+    recorded = await _run_success_resolves_concrete_model()
     assert len(recorded) == 1
     assert recorded[0]["external_model_id"] == "vendor/picked"
     assert recorded[0]["success"] is True
@@ -292,9 +291,7 @@ async def _run_final_answer_after_execution() -> tuple[list[dict], int]:
     )
 
     fake_db = AsyncMock()
-    fake_db.execute = AsyncMock(
-        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
-    )
+    fake_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
     fake_ctx = MagicMock()
     fake_ctx.__aenter__ = AsyncMock(return_value=fake_db)
     fake_ctx.__aexit__ = AsyncMock(return_value=None)
@@ -305,28 +302,27 @@ async def _run_final_answer_after_execution() -> tuple[list[dict], int]:
 
     with (
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(chat_turn_context, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(turn_settlement, "AsyncSessionLocal", return_value=fake_ctx),
+        patch.object(proxy_service, "parse_tools_config", return_value=SimpleNamespace(code_interpreter=True)),
+        patch.object(chat_turn_context, "parse_tools_config", return_value=SimpleNamespace(code_interpreter=True)),
         patch.object(
-            proxy_service, "parse_tools_config", return_value=SimpleNamespace(code_interpreter=True)
-        ),
-        patch.object(
-            proxy_service,
-            "augment_messages_with_tools",
-            AsyncMock(side_effect=lambda db, m, t, **_kwargs: m),
+            chat_turn_context, "augment_messages_with_tools", AsyncMock(side_effect=lambda db, m, t, **_kwargs: m)
         ),
         patch.object(proxy_service, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
+        patch.object(chat_turn_context, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
         patch.object(proxy_service, "acompletion", side_effect=fake_acompletion),
         patch.object(proxy_service, "_usage_from_stream_wrapper", return_value=(10, 5, 0)),
         patch.object(proxy_service, "_compute_token_cost_usd", return_value=0.0),
         patch.object(proxy_service, "log_usage", side_effect=AsyncMock()),
+        patch.object(turn_settlement, "log_usage", side_effect=AsyncMock()),
         patch.object(proxy_service, "record_compatibility_result", side_effect=fake_record),
         patch.object(
             proxy_service,
             "run_python_sandbox",
-            AsyncMock(
-                return_value=proxy_service.SandboxExecutionResult(output="4", exit_code=0)
-            ),
+            AsyncMock(return_value=proxy_service.SandboxExecutionResult(output="4", exit_code=0)),
         ),
-        patch.object(proxy_service, "openrouter_auto_plugin", AsyncMock(return_value=None)),
+        patch.object(chat_turn_context, "openrouter_auto_plugin", AsyncMock(return_value=None)),
     ):
         async for _chunk_out in proxy_service.stream_chat(
             request,
@@ -350,13 +346,11 @@ async def _run_final_answer_after_execution() -> tuple[list[dict], int]:
     return recorded, calls
 
 
-def test_final_answer_after_code_execution_is_not_a_failure():
-    recorded, calls = asyncio.run(_run_final_answer_after_execution())
+async def test_final_answer_after_code_execution_is_not_a_failure():
+    recorded, calls = await _run_final_answer_after_execution()
 
     # No third call: a completed flow must not be nudged for more Python.
     assert calls == 2
     assert recorded, "the successful execution must be recorded"
-    assert all(entry["success"] for entry in recorded), (
-        f"a completed flow must not record failures: {recorded}"
-    )
+    assert all(entry["success"] for entry in recorded), f"a completed flow must not record failures: {recorded}"
     assert {entry["external_model_id"] for entry in recorded} == {"vendor/good"}

@@ -16,7 +16,7 @@ from app.database import Base
 from app.models.api_key import AlphaRouterApiKey
 from app.models.user import User
 from app.services.alpha_router_api_key_service import record_key_usage
-from app.services.proxy_service import _apply_cost_to_user
+from app.services.usage_logging_service import _apply_cost_to_user
 
 
 def _make_engine():
@@ -59,6 +59,7 @@ async def _bootstrap():
 
 async def _test_atomic_user_increment_sums_correctly() -> None:
     engine, factory, uid, _ = await _bootstrap()
+
     # 10 concurrent sessions each add 1.0 — must total exactly 10.0, not less.
     async def add_one():
         async with factory() as db:
@@ -91,6 +92,7 @@ async def _test_atomic_user_increment_handles_null() -> None:
 
 async def _test_atomic_key_increment_sums_correctly() -> None:
     engine, factory, _, kid = await _bootstrap()
+
     async def add_cost():
         async with factory() as db:
             key = await db.get(AlphaRouterApiKey, kid)
@@ -112,9 +114,7 @@ async def _test_atomic_key_increment_handles_null() -> None:
     async with factory() as db:
         await db.execute(
             __import__("sqlalchemy").text(
-                "UPDATE alpha_router_api_keys "
-                "SET period_used_usd = NULL, total_used_usd = NULL "
-                "WHERE id = :kid"
+                "UPDATE alpha_router_api_keys SET period_used_usd = NULL, total_used_usd = NULL WHERE id = :kid"
             ),
             {"kid": kid},
         )
@@ -154,25 +154,25 @@ async def _test_atomic_key_increment_zero_is_noop() -> None:
     await engine.dispose()
 
 
-def test_atomic_user_increment_sums_correctly():
-    asyncio.run(_test_atomic_user_increment_sums_correctly())
+async def test_atomic_user_increment_sums_correctly():
+    await _test_atomic_user_increment_sums_correctly()
 
 
-def test_atomic_user_increment_handles_null():
-    asyncio.run(_test_atomic_user_increment_handles_null())
+async def test_atomic_user_increment_handles_null():
+    await _test_atomic_user_increment_handles_null()
 
 
-def test_atomic_key_increment_sums_correctly():
-    asyncio.run(_test_atomic_key_increment_sums_correctly())
+async def test_atomic_key_increment_sums_correctly():
+    await _test_atomic_key_increment_sums_correctly()
 
 
-def test_atomic_key_increment_handles_null():
-    asyncio.run(_test_atomic_key_increment_handles_null())
+async def test_atomic_key_increment_handles_null():
+    await _test_atomic_key_increment_handles_null()
 
 
-def test_atomic_user_increment_zero_is_noop():
-    asyncio.run(_test_atomic_user_increment_zero_is_noop())
+async def test_atomic_user_increment_zero_is_noop():
+    await _test_atomic_user_increment_zero_is_noop()
 
 
-def test_atomic_key_increment_zero_is_noop():
-    asyncio.run(_test_atomic_key_increment_zero_is_noop())
+async def test_atomic_key_increment_zero_is_noop():
+    await _test_atomic_key_increment_zero_is_noop()

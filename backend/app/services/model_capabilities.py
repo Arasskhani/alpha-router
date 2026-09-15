@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from typing import Any
 
 MODEL_KINDS = (
@@ -89,7 +89,7 @@ def model_catalog_meta(
     released_at: str | None = None
     if created is not None:
         try:
-            released_at = datetime.fromtimestamp(int(created), tz=timezone.utc).date().isoformat()
+            released_at = datetime.fromtimestamp(int(created), tz=UTC).date().isoformat()
         except (TypeError, ValueError, OSError):
             released_at = None
     title = (display_name or raw.get("name") or external_id or "").strip()
@@ -303,28 +303,30 @@ def model_kinds(
             kinds.add("speech")
 
     # --- Image: output modality or authoritative flag ---
-    if auth_image or (has_metadata and "image" in outputs):
-        kinds.add("image")
-    elif not has_metadata and any(
-        x in ext for x in ("dall-e", "dalle", "stable-diffusion", "flux", "midjourney", "/image")
+    if (
+        auth_image
+        or (has_metadata and "image" in outputs)
+        or not has_metadata
+        and any(x in ext for x in ("dall-e", "dalle", "stable-diffusion", "flux", "midjourney", "/image"))
     ):
         kinds.add("image")
 
     # --- Video: output modality or authoritative flag ---
-    if auth_video or (has_metadata and "video" in outputs):
-        kinds.add("video")
-    elif not has_metadata and _video_id_heuristic(external_id, is_video_model):
+    if (
+        auth_video
+        or (has_metadata and "video" in outputs)
+        or not has_metadata
+        and _video_id_heuristic(external_id, is_video_model)
+    ):
         kinds.add("video")
 
     # --- Audio: output modality only (not input) ---
     if has_metadata:
-        if "audio" in outputs and "transcription" not in kinds:
-            if "whisper" not in ext:
-                kinds.add("audio")
+        if "audio" in outputs and "transcription" not in kinds and "whisper" not in ext:
+            kinds.add("audio")
     else:
-        if "audio" in ext and "transcription" not in kinds:
-            if "whisper" not in ext:
-                kinds.add("audio")
+        if "audio" in ext and "transcription" not in kinds and "whisper" not in ext:
+            kinds.add("audio")
 
     # --- Text: output modality only ---
     if has_metadata:
@@ -413,9 +415,7 @@ def speech_generation_capabilities(
     if has_metadata:
         supports_tts = "speech" in outputs
     else:
-        supports_tts = is_speech_model or any(
-            x in ext for x in ("tts", "/speech", "text-to-speech")
-        )
+        supports_tts = is_speech_model or any(x in ext for x in ("tts", "/speech", "text-to-speech"))
 
     # OpenRouter stores voices on the model root as ``supported_voices``.
     voices = (
@@ -424,22 +424,15 @@ def speech_generation_capabilities(
         or _coerce_str_list(raw.get("supported_voices"))
     )
     # Product UI only exposes mp3; keep catalog formats if present, else mp3.
-    formats = _coerce_str_list(speech_meta.get("formats")) or (
-        ["mp3"] if supports_tts else None
-    )
+    formats = _coerce_str_list(speech_meta.get("formats")) or (["mp3"] if supports_tts else None)
     if formats:
         formats = [f for f in formats if f == "mp3"] or ["mp3"]
-    speeds = _coerce_float_pair(speech_meta.get("speeds")) or (
-        (0.5, 4.0) if supports_tts else None
-    )
+    speeds = _coerce_float_pair(speech_meta.get("speeds")) or ((0.5, 4.0) if supports_tts else None)
     sample_rates = _coerce_str_list(speech_meta.get("sample_rates"))
     max_text = speech_meta.get("max_text_length")
     if not isinstance(max_text, int) or max_text <= 0:
         ctx = raw.get("context_length")
-        if isinstance(ctx, int) and ctx > 0:
-            max_text = ctx
-        else:
-            max_text = 5000 if supports_tts else None
+        max_text = ctx if isinstance(ctx, int) and ctx > 0 else 5000 if supports_tts else None
 
     return {
         "supports_text_to_speech": supports_tts,
@@ -479,8 +472,10 @@ def model_media_flags(
     )
     arch = _architecture_from_raw(pricing_raw)
     _, outputs = _modalities(arch)
-    is_speech = "speech" in outputs if outputs else any(
-        x in (external_id or "").lower() for x in ("tts", "/speech", "text-to-speech")
+    is_speech = (
+        "speech" in outputs
+        if outputs
+        else any(x in (external_id or "").lower() for x in ("tts", "/speech", "text-to-speech"))
     )
     return {
         "is_image_model": auth_image,

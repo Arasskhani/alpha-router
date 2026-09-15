@@ -90,13 +90,9 @@ class MemoryVectorService:
         else:
             info = await self.client.get_collection(name)
             vectors = info.config.params.vectors
-            dense_config = (
-                vectors.get(DENSE_VECTOR_NAME) if isinstance(vectors, dict) else None
-            )
+            dense_config = vectors.get(DENSE_VECTOR_NAME) if isinstance(vectors, dict) else None
             if dense_config is None or int(dense_config.size) != dimensions:
-                raise ValueError(
-                    f"Qdrant memory collection {name} has an incompatible dense vector schema"
-                )
+                raise ValueError(f"Qdrant memory collection {name} has an incompatible dense vector schema")
 
         await self._ensure_payload_indexes(name)
         return created
@@ -108,11 +104,9 @@ class MemoryVectorService:
                 type=models.KeywordIndexType.KEYWORD,
                 is_tenant=True,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 -- falls back to a safe default value
             tenant_schema = models.PayloadSchemaType.KEYWORD
-        await self.client.create_payload_index(
-            name, "user_id", field_schema=tenant_schema, wait=True
-        )
+        await self.client.create_payload_index(name, "user_id", field_schema=tenant_schema, wait=True)
         for field, schema in (
             ("project_id", models.PayloadSchemaType.KEYWORD),
             ("scope", models.PayloadSchemaType.KEYWORD),
@@ -121,9 +115,7 @@ class MemoryVectorService:
             ("sensitivity", models.PayloadSchemaType.KEYWORD),
             ("enabled", models.PayloadSchemaType.BOOL),
         ):
-            await self.client.create_payload_index(
-                name, field, field_schema=schema, wait=True
-            )
+            await self.client.create_payload_index(name, field, field_schema=schema, wait=True)
 
     async def upsert(
         self,
@@ -248,9 +240,7 @@ class MemoryVectorService:
             owner_value=value,
         )
 
-    async def _delete_by_owner(
-        self, *, collection_name: str, owner_key: str, owner_value: str
-    ) -> None:
+    async def _delete_by_owner(self, *, collection_name: str, owner_key: str, owner_value: str) -> None:
         await self.client.delete(
             validate_collection_name(collection_name),
             models.FilterSelector(
@@ -275,11 +265,7 @@ class MemoryVectorService:
         exists = any(item.alias_name == alias for item in aliases.aliases)
         actions: list[models.CreateAliasOperation | models.DeleteAliasOperation] = []
         if exists:
-            actions.append(
-                models.DeleteAliasOperation(
-                    delete_alias=models.DeleteAlias(alias_name=alias)
-                )
-            )
+            actions.append(models.DeleteAliasOperation(delete_alias=models.DeleteAlias(alias_name=alias)))
         actions.append(
             models.CreateAliasOperation(
                 create_alias=models.CreateAlias(
@@ -307,6 +293,6 @@ class MemoryVectorService:
             for item in aliases.aliases:
                 if item.alias_name == alias:
                     return item.collection_name
-        except Exception:
+        except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
             pass
         return alias

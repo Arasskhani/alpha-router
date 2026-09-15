@@ -1,7 +1,5 @@
 """Tests for configurable per-user media quota."""
 
-import asyncio
-
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
@@ -78,5 +76,5 @@ async def _run_quota_roundtrip() -> None:
     await engine.dispose()
 
 
-def test_user_media_quota_settings():
-    asyncio.run(_run_quota_roundtrip())
+async def test_user_media_quota_settings():
+    await _run_quota_roundtrip()

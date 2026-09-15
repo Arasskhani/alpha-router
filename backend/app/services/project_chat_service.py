@@ -81,11 +81,7 @@ async def list_project_chat_sessions(
             0,
             case((ChatSession.id.in_(list(pinned_ids)), 0), else_=1),
         )
-    rows = (
-        (await db.execute(base.order_by(*order).limit(limit).offset(offset)))
-        .scalars()
-        .all()
-    )
+    rows = (await db.execute(base.order_by(*order).limit(limit).offset(offset))).scalars().all()
 
     sessions = [_project_session_to_client(r, pinned=r.id in pinned_ids) for r in rows]
     return sessions, total
@@ -215,37 +211,18 @@ async def sync_project_chats(
         ai_channel_filter(),
     )
     if since_dt is None:
-        session_rows = (
-            (
-                await db.execute(
-                    session_stmt.order_by(*order).limit(50)
-                )
-            )
-            .scalars()
-            .all()
-        )
+        session_rows = (await db.execute(session_stmt.order_by(*order).limit(50))).scalars().all()
     else:
         changed = session_stmt.where(ChatSession.updated_at >= since_dt)
-        session_rows = (
-            (await db.execute(changed.order_by(*order).limit(_MAX_SYNC_SESSION_ROWS)))
-            .scalars()
-            .all()
-        )
+        session_rows = (await db.execute(changed.order_by(*order).limit(_MAX_SYNC_SESSION_ROWS))).scalars().all()
         # Always include the open thread so deep-linked / last-opened chats stay current.
         wanted = (session_id or "").strip()
         if wanted and wanted not in {r.id for r in session_rows}:
             extra = await db.get(ChatSession, wanted)
-            if (
-                extra is not None
-                and extra.project_id == project_id
-                and not is_member_channel(extra)
-            ):
+            if extra is not None and extra.project_id == project_id and not is_member_channel(extra):
                 session_rows = [*session_rows, extra]
 
-    sessions = [
-        _project_session_to_client(row, pinned=row.id in pinned_set)
-        for row in session_rows
-    ]
+    sessions = [_project_session_to_client(row, pinned=row.id in pinned_set) for row in session_rows]
 
     messages: list[dict[str, Any]] = []
     gone_session_id: str | None = None
@@ -283,13 +260,9 @@ async def sync_project_chats(
     if messages:
         from app.services.project_media_service import rewrite_personal_media_urls_in_messages
 
-        messages = await rewrite_personal_media_urls_in_messages(
-            db, project_id=project_id, messages=messages
-        )
+        messages = await rewrite_personal_media_urls_in_messages(db, project_id=project_id, messages=messages)
 
-    last_opened = await get_last_opened_session_id(
-        db, project_id=project_id, user=user
-    )
+    last_opened = await get_last_opened_session_id(db, project_id=project_id, user=user)
     now = dt.datetime.utcnow()
     return {
         "serverTimeMs": _dt_to_ms(now) or 0,
@@ -316,9 +289,7 @@ async def create_project_chat_session(
     session_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Create a new chat thread in a project. Requires chat.write capability."""
-    await require_capability(
-        db, project_id=project_id, user=user, capability="chat.write"
-    )
+    await require_capability(db, project_id=project_id, user=user, capability="chat.write")
     user_id = getattr(user, "id", None)
     sid = str(session_id or "").strip() or str(uuid.uuid4())
     existing = await db.get(ChatSession, sid)
@@ -421,9 +392,7 @@ async def list_project_chat_messages(
     messages = [_project_message_to_client(r) for r in rows]
     from app.services.project_media_service import rewrite_personal_media_urls_in_messages
 
-    messages = await rewrite_personal_media_urls_in_messages(
-        db, project_id=project_id, messages=messages
-    )
+    messages = await rewrite_personal_media_urls_in_messages(db, project_id=project_id, messages=messages)
     return messages, has_more
 
 
@@ -444,9 +413,7 @@ async def append_project_chat_message(
     allocation via ``_next_project_sequence`` to avoid race conditions
     between concurrent writers.
     """
-    access = await require_capability(
-        db, project_id=project_id, user=user, capability="chat.write"
-    )
+    await require_capability(db, project_id=project_id, user=user, capability="chat.write")
     user_id = getattr(user, "id", None)
     display_name = getattr(user, "display_name", None) or getattr(user, "username", None)
 
@@ -478,18 +445,12 @@ async def append_project_chat_message(
     # constraint ux_chat_messages_session_sequence) or when SQLite
     # reports the database is locked.  This makes the append robust
     # under concurrent writes on both SQLite and PostgreSQL.
-    last_error: Exception | None = None
-    for attempt in range(12):
+    for _attempt in range(12):
         try:
             # Re-fetch the session row each iteration (it may have been
             # expired/refreshed after a rollback).
             row = await db.get(ChatSession, session_id)
-            if (
-                row is None
-                or row.project_id != project_id
-                or row.private_mode
-                or is_member_channel(row)
-            ):
+            if row is None or row.project_id != project_id or row.private_mode or is_member_channel(row):
                 return None
 
             # Re-check idempotency (a concurrent writer may have inserted
@@ -520,11 +481,15 @@ async def append_project_chat_message(
                 created_at=dt.datetime.utcnow(),
             )
             db.add(msg)
-            row.message_count = int(row.message_count or 0) + 1
+            # SQL-side increments: two concurrent appends each read the same
+            # stale Python value, so ``count + 1`` in Python loses one update
+            # (unique sequences, wrong message_count). Let the database add.
+            row.message_count = func.coalesce(ChatSession.message_count, 0) + 1
             row.last_message_at = dt.datetime.utcnow()
-            row.revision = int(row.revision or 1) + 1
+            row.revision = func.coalesce(ChatSession.revision, 1) + 1
             row.updated_at = dt.datetime.utcnow()
             await db.flush()
+            await db.refresh(row, attribute_names=["message_count", "revision"])
             if msg.role == "assistant":
                 # Only a completed exchange is worth mining, and the check stays
                 # ahead of the import so member turns pay nothing on this path.
@@ -539,8 +504,7 @@ async def append_project_chat_message(
                     watermark_sequence=seq,
                 )
             return _project_message_to_client(msg)
-        except (IntegrityError, OperationalError) as exc:
-            last_error = exc
+        except (IntegrityError, OperationalError):
             await db.rollback()
             continue
     return None
@@ -554,9 +518,7 @@ async def delete_project_chat_session(
     user: object,
 ) -> bool | None:
     """Delete a project chat session. Requires chat.write. Returns None if hidden."""
-    access = await require_capability(
-        db, project_id=project_id, user=user, capability="chat.write"
-    )
+    await require_capability(db, project_id=project_id, user=user, capability="chat.write")
     row = await db.get(ChatSession, session_id)
     if row is None or row.project_id != project_id or is_member_channel(row):
         return None
@@ -573,9 +535,7 @@ async def pin_project_chat(
     user: object,
 ) -> dict[str, Any] | None:
     """Pin a chat thread for all project members. Requires chat.pin capability."""
-    access = await require_capability(
-        db, project_id=project_id, user=user, capability="chat.pin"
-    )
+    await require_capability(db, project_id=project_id, user=user, capability="chat.pin")
     user_id = getattr(user, "id", None)
     # Verify the session belongs to this project.
     row = await db.get(ChatSession, session_id)
@@ -591,7 +551,11 @@ async def pin_project_chat(
         )
     ).scalar_one_or_none()
     if existing:
-        return {"sessionId": session_id, "pinned": True, "pinnedAt": existing.pinned_at.isoformat() if existing.pinned_at else None}
+        return {
+            "sessionId": session_id,
+            "pinned": True,
+            "pinnedAt": existing.pinned_at.isoformat() if existing.pinned_at else None,
+        }
     pin = ProjectChatPin(
         id=str(uuid.uuid4()),
         project_id=project_id,
@@ -612,9 +576,7 @@ async def unpin_project_chat(
     user: object,
 ) -> dict[str, Any] | None:
     """Unpin a chat thread. Requires chat.pin capability."""
-    access = await require_capability(
-        db, project_id=project_id, user=user, capability="chat.pin"
-    )
+    await require_capability(db, project_id=project_id, user=user, capability="chat.pin")
     row = await db.get(ChatSession, session_id)
     if row is None or row.project_id != project_id or is_member_channel(row):
         return None
@@ -673,11 +635,7 @@ async def _next_project_sequence(db: AsyncSession, session_id: str) -> int:
     last-resort guard against concurrent inserts.
     """
     current = (
-        await db.execute(
-            select(func.max(ChatMessage.sequence)).where(
-                ChatMessage.session_id == session_id
-            )
-        )
+        await db.execute(select(func.max(ChatMessage.sequence)).where(ChatMessage.session_id == session_id))
     ).scalar_one()
     return int(current or 0) + 1
 

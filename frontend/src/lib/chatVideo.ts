@@ -39,7 +39,7 @@ type VideoJobResponse = {
   request_log_id?: number;
 };
 
-export const VIDEO_POLL_INTERVAL_MS = 2500;
+const VIDEO_POLL_INTERVAL_MS = 2500;
 /**
  * Client-side polling budget.
  *
@@ -55,13 +55,13 @@ export const VIDEO_POLL_INTERVAL_MS = 2500;
  * normally, leaving "Video generation timed out." in the chat while the video
  * landed in the media library.
  */
-export const VIDEO_GENERATION_TIMEOUT_MS = 1_200_000;
-export const VIDEO_TIMEOUT_MESSAGE = "Video generation timed out.";
-export const VIDEO_STILL_PROCESSING_MESSAGE =
+const VIDEO_GENERATION_TIMEOUT_MS = 1_200_000;
+const VIDEO_TIMEOUT_MESSAGE = "Video generation timed out.";
+const VIDEO_STILL_PROCESSING_MESSAGE =
   "This video is taking longer than usual. It is still generating on the server and will appear here, and in your media library, once it finishes.";
 
 /** Raised when the client budget runs out while the server job is still alive. */
-export class VideoStillProcessingError extends Error {
+class VideoStillProcessingError extends Error {
   readonly jobId: string;
   readonly status: string;
 
@@ -119,7 +119,7 @@ export function parseVideoMessage(content: string): VideoPayload | null {
   }
 }
 
-export function lastAssistantImageUrlForVideo(messages: ChatMessage[]): string | undefined {
+function lastAssistantImageUrlForVideo(messages: ChatMessage[]): string | undefined {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const msg = messages[i];
     if (msg.role !== "assistant") continue;
@@ -139,7 +139,7 @@ export function lastAssistantImageUrlForVideo(messages: ChatMessage[]): string |
   return undefined;
 }
 
-export async function resolveVideoGenerationReferenceAsync(
+async function resolveVideoGenerationReferenceAsync(
   userContent: string,
   history: ChatMessage[],
   usePriorAssistantImage = false,

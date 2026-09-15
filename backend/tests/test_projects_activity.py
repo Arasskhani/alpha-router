@@ -1,12 +1,11 @@
 """Access control for project Activity."""
 
-import asyncio
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import app.models  # noqa: F401
 from app.database import Base
 from app.models.project import (
     PROJECT_ROLE_CONTRIBUTOR,
-    PROJECT_ROLE_OWNER,
     PROJECT_ROLE_PRIMARY_OWNER,
     PROJECT_ROLE_VIEWER,
     Project,
@@ -15,7 +14,6 @@ from app.models.project import (
 from app.models.user import User, UserRoleAssignment
 from app.services.project_access_service import can_view_project_activity
 from app.services.rbac import REPORTS_ACCESS_SLUG, USER_SLUG
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 PROJ_ID = "proj-activity-1"
 
@@ -60,94 +58,79 @@ async def _project(db, owner):
     return project
 
 
-def test_owner_can_view_activity():
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                owner = await _user(db, "owner")
-                await _project(db, owner)
-                assert await can_view_project_activity(db, project_id=PROJ_ID, user=owner) is True
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+async def test_owner_can_view_activity():
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            owner = await _user(db, "owner")
+            await _project(db, owner)
+            assert await can_view_project_activity(db, project_id=PROJ_ID, user=owner) is True
+    finally:
+        await engine.dispose()
 
 
-def test_contributor_cannot_view_activity():
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                owner = await _user(db, "owner")
-                contrib = await _user(db, "contrib")
-                await _project(db, owner)
-                db.add(
-                    ProjectMember(
-                        project_id=PROJ_ID,
-                        user_id=contrib.id,
-                        role=PROJECT_ROLE_CONTRIBUTOR,
-                    )
+async def test_contributor_cannot_view_activity():
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            owner = await _user(db, "owner")
+            contrib = await _user(db, "contrib")
+            await _project(db, owner)
+            db.add(
+                ProjectMember(
+                    project_id=PROJ_ID,
+                    user_id=contrib.id,
+                    role=PROJECT_ROLE_CONTRIBUTOR,
                 )
-                await db.flush()
-                assert await can_view_project_activity(db, project_id=PROJ_ID, user=contrib) is False
-        finally:
-            await engine.dispose()
+            )
+            await db.flush()
+            assert await can_view_project_activity(db, project_id=PROJ_ID, user=contrib) is False
+    finally:
+        await engine.dispose()
 
-    asyncio.run(run())
 
-
-def test_viewer_cannot_view_activity():
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                owner = await _user(db, "owner")
-                viewer = await _user(db, "viewer")
-                await _project(db, owner)
-                db.add(
-                    ProjectMember(
-                        project_id=PROJ_ID,
-                        user_id=viewer.id,
-                        role=PROJECT_ROLE_VIEWER,
-                    )
+async def test_viewer_cannot_view_activity():
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            owner = await _user(db, "owner")
+            viewer = await _user(db, "viewer")
+            await _project(db, owner)
+            db.add(
+                ProjectMember(
+                    project_id=PROJ_ID,
+                    user_id=viewer.id,
+                    role=PROJECT_ROLE_VIEWER,
                 )
-                await db.flush()
-                assert await can_view_project_activity(db, project_id=PROJ_ID, user=viewer) is False
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
-
-
-def test_reports_admin_can_view_activity_without_membership():
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                owner = await _user(db, "owner")
-                admin = await _user(db, "reports-admin", REPORTS_ACCESS_SLUG)
-                await _project(db, owner)
-                assert await can_view_project_activity(db, project_id=PROJ_ID, user=admin) is True
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+            )
+            await db.flush()
+            assert await can_view_project_activity(db, project_id=PROJ_ID, user=viewer) is False
+    finally:
+        await engine.dispose()
 
 
-def test_outsider_cannot_view_activity():
-    async def run():
-        factory, engine = await _factory()
-        try:
-            async with factory() as db:
-                owner = await _user(db, "owner")
-                stranger = await _user(db, "stranger")
-                await _project(db, owner)
-                assert await can_view_project_activity(db, project_id=PROJ_ID, user=stranger) is False
-        finally:
-            await engine.dispose()
+async def test_reports_admin_can_view_activity_without_membership():
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            owner = await _user(db, "owner")
+            admin = await _user(db, "reports-admin", REPORTS_ACCESS_SLUG)
+            await _project(db, owner)
+            assert await can_view_project_activity(db, project_id=PROJ_ID, user=admin) is True
+    finally:
+        await engine.dispose()
 
-    asyncio.run(run())
+
+async def test_outsider_cannot_view_activity():
+    factory, engine = await _factory()
+    try:
+        async with factory() as db:
+            owner = await _user(db, "owner")
+            stranger = await _user(db, "stranger")
+            await _project(db, owner)
+            assert await can_view_project_activity(db, project_id=PROJ_ID, user=stranger) is False
+    finally:
+        await engine.dispose()
 
 
 def test_project_activity_routes_import():

@@ -1,5 +1,3 @@
-import { STORAGE_KEYS } from "./brand";
-
 import {
   DEFAULT_CUSTOM_ASPECT_RATIO,
   DEFAULT_IMAGE_ASPECT_PRESET,
@@ -9,9 +7,9 @@ import {
   type ImageAspectPresetId,
 } from "./imageSize";
 
-export type WebSearchDepth = "low" | "medium" | "high";
-export type VideoResolution = "480p" | "720p" | "1080p";
-export type SpeechFormat = "mp3";
+type WebSearchDepth = "low" | "medium" | "high";
+type VideoResolution = "480p" | "720p" | "1080p";
+type SpeechFormat = "mp3";
 
 export type ChatToolsState = {
   webSearch: boolean;
@@ -37,7 +35,7 @@ export type ChatToolsState = {
 };
 
 /** All tools off — used for new chats and reset. */
-export const FRESH_CHAT_TOOLS: ChatToolsState = {
+const FRESH_CHAT_TOOLS: ChatToolsState = {
   webSearch: false,
   webSearchDepth: "medium",
   webFetch: false,
@@ -147,7 +145,7 @@ export function normalizeChatTools(raw?: Partial<ChatToolsState> | null): ChatTo
 
   let imageGeneration = raw.imageGeneration ?? FRESH_CHAT_TOOLS.imageGeneration;
   let videoGeneration = raw.videoGeneration ?? FRESH_CHAT_TOOLS.videoGeneration;
-  let speechGeneration = raw.speechGeneration ?? FRESH_CHAT_TOOLS.speechGeneration;
+  const speechGeneration = raw.speechGeneration ?? FRESH_CHAT_TOOLS.speechGeneration;
   // Mutual exclusion: only one media generation tool can be on at a time.
   // Priority: speech > video > image when multiple are explicitly set.
   if (speechGeneration) {
@@ -178,18 +176,6 @@ export function normalizeChatTools(raw?: Partial<ChatToolsState> | null): ChatTo
     codeInterpreter: raw.codeInterpreter ?? FRESH_CHAT_TOOLS.codeInterpreter,
   };
 }
-
-/** @deprecated Global tools prefs; sessions store their own tools now. */
-export function loadChatTools(): ChatToolsState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.chatTools);
-    if (!raw) return { ...FRESH_CHAT_TOOLS };
-    return normalizeChatTools(JSON.parse(raw) as Partial<ChatToolsState>);
-  } catch {
-    return { ...FRESH_CHAT_TOOLS };
-  }
-}
-
 export function toolsToApiPayload(state: ChatToolsState) {
   return {
     web_search: state.webSearch,
@@ -203,10 +189,4 @@ export function toolsToApiPayload(state: ChatToolsState) {
       code_interpreter: state.codeInterpreter,
     },
   };
-}
-
-export function webSearchDepthLabel(depth: WebSearchDepth) {
-  if (depth === "low") return "Low";
-  if (depth === "high") return "High";
-  return "Medium";
 }

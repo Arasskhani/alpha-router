@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -130,5 +129,5 @@ async def _exercise_private_mode_invariants() -> None:
         await engine.dispose()
 
 
-def test_private_mode_is_enforced_by_server_storage() -> None:
-    asyncio.run(_exercise_private_mode_invariants())
+async def test_private_mode_is_enforced_by_server_storage() -> None:
+    await _exercise_private_mode_invariants()

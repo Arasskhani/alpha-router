@@ -3,7 +3,6 @@
 import asyncio
 import base64
 import io
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
@@ -21,12 +20,12 @@ from app.services.bounded_io import (
 from app.services.ssrf_guard import SSRFBlockedError
 
 
-def test_upload_reader_accepts_exact_limit_and_rejects_one_byte_over() -> None:
+async def test_upload_reader_accepts_exact_limit_and_rejects_one_byte_over() -> None:
     exact = UploadFile(filename="exact.bin", file=io.BytesIO(b"x" * 8))
     over = UploadFile(filename="over.bin", file=io.BytesIO(b"x" * 9))
-    assert asyncio.run(read_upload_bounded(exact, max_bytes=8)) == b"x" * 8
+    assert await read_upload_bounded(exact, max_bytes=8) == b"x" * 8
     with pytest.raises(BoundedIOError):
-        asyncio.run(read_upload_bounded(over, max_bytes=8))
+        await read_upload_bounded(over, max_bytes=8)
 
 
 def test_data_url_checks_encoded_and_decoded_boundaries() -> None:
@@ -53,27 +52,27 @@ class ChunkStream(httpx.AsyncByteStream):
         self.closed = True
 
 
-def test_http_reader_caps_chunked_body_without_content_length() -> None:
+async def test_http_reader_caps_chunked_body_without_content_length() -> None:
     stream = ChunkStream([b"1234", b"56789"])
     response = httpx.Response(200, stream=stream)
     with pytest.raises(BoundedIOError):
-        asyncio.run(read_http_response_bounded(response, max_bytes=8))
+        await read_http_response_bounded(response, max_bytes=8)
     assert stream.closed
 
 
-def test_http_reader_accepts_exact_limit_and_rejects_declared_oversize() -> None:
+async def test_http_reader_accepts_exact_limit_and_rejects_declared_oversize() -> None:
     exact = httpx.Response(200, content=b"12345678")
-    assert asyncio.run(read_http_response_bounded(exact, max_bytes=8)) == b"12345678"
+    assert await read_http_response_bounded(exact, max_bytes=8) == b"12345678"
     declared = httpx.Response(
         200,
         headers={"content-length": "9"},
         stream=ChunkStream([b"1"]),
     )
     with pytest.raises(BoundedIOError):
-        asyncio.run(read_http_response_bounded(declared, max_bytes=8))
+        await read_http_response_bounded(declared, max_bytes=8)
 
 
-def test_request_middleware_caps_chunked_body_without_content_length() -> None:
+async def test_request_middleware_caps_chunked_body_without_content_length() -> None:
     sent = []
     chunks = [b"x" * (512 * 1024), b"x" * (512 * 1024 + 1)]
 
@@ -100,11 +99,11 @@ def test_request_middleware_caps_chunked_body_without_content_length() -> None:
         "app.services.request_body_limit_service.effective_request_body_limit_bytes",
         return_value=1024 * 1024,
     ):
-        asyncio.run(middleware(scope, receive, send))
+        await middleware(scope, receive, send)
     assert any(message.get("status") == 413 for message in sent)
 
 
-def test_bounded_get_revalidates_each_manual_redirect_hop() -> None:
+async def test_bounded_get_revalidates_each_manual_redirect_hop() -> None:
     requested = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -133,11 +132,11 @@ def test_bounded_get_revalidates_each_manual_redirect_hop() -> None:
                 ]
                 return body, mime
 
-    assert asyncio.run(run()) == (b"safe", "image/png")
+    assert await run() == (b"safe", "image/png")
     assert requested == ["https://public.example/start", "https://cdn.example/image"]
 
 
-def test_bounded_get_blocks_redirect_before_second_request() -> None:
+async def test_bounded_get_blocks_redirect_before_second_request() -> None:
     requests = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -158,5 +157,134 @@ def test_bounded_get_blocks_redirect_before_second_request() -> None:
         patch("app.services.ssrf_guard._private_ranges_allowed", return_value=False),
         pytest.raises(SSRFBlockedError),
     ):
-        asyncio.run(run())
+        await run()
     assert requests == 1
+
+
+def _run_middleware(path: str, body: bytes, *, content_type: str):
+    """Drive RequestBodyLimitMiddleware with one chunked (no Content-Length) body."""
+    sent: list[dict] = []
+
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    async def app(scope, receive, send):
+        del scope
+        await receive()
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    scope = {
+        "type": "http",
+        "path": path,
+        "headers": [(b"content-type", content_type.encode())],
+    }
+    asyncio.run(RequestBodyLimitMiddleware(app)(scope, receive, send))
+    return sent
+
+
+def test_json_routes_get_the_small_ceiling_and_upload_routes_the_large_one() -> None:
+    five_mib = b"{" + b" " * (5 * 1024 * 1024) + b"}"
+    with (
+        patch(
+            "app.services.request_body_limit_service.effective_request_body_limit_bytes",
+            return_value=1024 * 1024 * 1024,
+        ),
+        patch(
+            "app.services.request_body_limit_service.get_settings",
+            return_value=type("S", (), {"max_json_body_bytes": 4 * 1024 * 1024})(),
+        ),
+    ):
+        # Pre-auth JSON route: 5 MiB must be refused although the upload ceiling is 1 GiB.
+        sent = _run_middleware("/api/auth/login", five_mib, content_type="application/json")
+        assert [m.get("status") for m in sent if m["type"] == "http.response.start"] == [413]
+
+        # Chat completions may carry inline images: same 5 MiB passes.
+        sent = _run_middleware("/api/chat/completions", five_mib, content_type="application/json")
+        assert [m.get("status") for m in sent if m["type"] == "http.response.start"] == [200]
+
+        # Multipart upload route: passes too.
+        sent = _run_middleware(
+            "/api/admin/knowledge/bases/1/documents", five_mib, content_type="multipart/form-data; boundary=x"
+        )
+        assert [m.get("status") for m in sent if m["type"] == "http.response.start"] == [200]
+
+
+async def test_no_second_response_start_when_handler_already_answered() -> None:
+    sent: list[dict] = []
+    chunks = [b"x" * 1024, b"x" * (200 * 1024)]
+
+    async def receive():
+        body = chunks.pop(0)
+        return {"type": "http.request", "body": body, "more_body": bool(chunks)}
+
+    async def send(message):
+        sent.append(message)
+
+    async def app(scope, receive, send):
+        del scope
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        while (await receive()).get("more_body"):
+            pass
+
+    scope = {"type": "http", "path": "/api/auth/login", "headers": []}
+    with patch(
+        "app.services.request_body_limit_service.request_body_limit_for",
+        return_value=64 * 1024,
+    ):
+        await RequestBodyLimitMiddleware(app)(scope, receive, send)
+    starts = [m for m in sent if m["type"] == "http.response.start"]
+    assert len(starts) == 1 and starts[0]["status"] == 200
+
+
+def test_published_limit_is_cached_by_mtime(tmp_path, monkeypatch) -> None:
+    from app.services import request_body_limit_service as svc
+
+    monkeypatch.setattr(svc, "request_body_limit_path", lambda: tmp_path / "request-body-limit.json")
+    svc.invalidate_published_cache()
+    reads = {"n": 0}
+    real = svc.read_published_request_body_limit_mb
+
+    def counting():
+        reads["n"] += 1
+        return real()
+
+    monkeypatch.setattr(svc, "read_published_request_body_limit_mb", counting)
+    (tmp_path / "request-body-limit.json").write_text('{"request_body_mb": 64}', encoding="utf-8")
+
+    assert svc.effective_request_body_limit_bytes() == 64 * 1024 * 1024
+    for _ in range(50):
+        svc.effective_request_body_limit_bytes()
+    assert reads["n"] == 1, "one parse per TTL window, not one per request"
+
+
+def test_publish_invalidates_cache_in_same_process(tmp_path, monkeypatch) -> None:
+    """The worker that publishes a new ceiling must not keep serving the old one."""
+    from types import SimpleNamespace
+
+    from app.services import request_body_limit_service as svc
+
+    monkeypatch.setattr(svc, "get_settings", lambda: SimpleNamespace(tls_state_dir=str(tmp_path)))
+    svc.invalidate_published_cache()
+    svc.publish_request_body_limit_mb(32)
+    assert svc.effective_request_body_limit_bytes() == 32 * 1024 * 1024
+    svc.publish_request_body_limit_mb(96)
+    assert svc.effective_request_body_limit_bytes() == 96 * 1024 * 1024
+
+
+def test_cache_is_keyed_by_path(tmp_path, monkeypatch) -> None:
+    from app.services import request_body_limit_service as svc
+
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    (a / "request-body-limit.json").write_text('{"request_body_mb": 10}', encoding="utf-8")
+    (b / "request-body-limit.json").write_text('{"request_body_mb": 20}', encoding="utf-8")
+    svc.invalidate_published_cache()
+    monkeypatch.setattr(svc, "request_body_limit_path", lambda: a / "request-body-limit.json")
+    assert svc.effective_request_body_limit_bytes() == 10 * 1024 * 1024
+    monkeypatch.setattr(svc, "request_body_limit_path", lambda: b / "request-body-limit.json")
+    assert svc.effective_request_body_limit_bytes() == 20 * 1024 * 1024

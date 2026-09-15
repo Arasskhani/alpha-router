@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
-import app.models  # Register every ORM table before schema startup.
+import app.models as _orm_models  # noqa: F401 -- registers every ORM table before schema startup
 from app.api import (
     admin,
     admin_agent_evaluations,
@@ -55,9 +55,8 @@ from app.branding import (
 )
 from app.config import INSECURE_DEFAULTS, get_settings
 from app.core.security import hash_password
-from app.database import AsyncSessionLocal, Base, engine
+from app.database import AsyncSessionLocal, engine
 from app.db_migrate import (
-    apply_schema_column_patches,
     validate_accounting_schema,
     validate_agent_platform_schema,
 )
@@ -67,7 +66,6 @@ from app.legacy_brand_denylist import (
     LEGACY_SESSION_COOKIE_NAMES,
 )
 from app.models.user import User
-from app.schema_registry import legacy_metadata_tables
 from app.services import object_storage_service as oss
 from app.services.auth_sync_scheduler import refresh_auth_sync_schedules
 from app.services.admin_ip_guard import AdminIpGuardMiddleware
@@ -76,6 +74,7 @@ from app.services.csrf_protection import CsrfProtectionMiddleware
 from app.services.docs_guard import OpenApiDocsGuardMiddleware
 from app.services.observability import (
     ObservabilityMiddleware,
+    configure_app_log_level,
     configure_json_logging,
     configure_telemetry,
     increment,
@@ -83,6 +82,7 @@ from app.services.observability import (
     shutdown_telemetry,
 )
 from app.services.openrouter_image_service import close_openrouter_http_client
+from app.services.provider_http import close_provider_rest_client
 from app.services.proxy_service import configure_litellm_cache
 from app.services.scheduler import (
     refresh_chat_retention_cleanup_schedule,
@@ -90,6 +90,8 @@ from app.services.scheduler import (
     start_scheduler,
     stop_scheduler,
 )
+from app.services.csrf_protection import development_origins as _development_origins
+from app.services.scheduler_leader import SchedulerLeader, install_leader
 from app.services.security_headers import SecurityHeadersMiddleware
 from app.services.user_chat_storage_service import ensure_user_chat_store
 from app.services.video_job_service import start_video_worker, stop_video_worker
@@ -161,20 +163,15 @@ def _assert_production_safe() -> None:
         http_bind=settings.alpharouter_http_bind,
         trusted_proxy_cidrs=settings.trusted_proxy_cidrs,
         trust_local_gateway_proxy=settings.trust_local_gateway_proxy,
+        allow_insecure_saml=bool(getattr(settings, "allow_insecure_saml", False)),
         guard_mode=settings.production_guard_mode,
     )
     if (
         settings.environment == "production"
         and settings.metrics_enabled
-        and (
-            not settings.metrics_bearer_token.strip()
-            or settings.metrics_bearer_token in INSECURE_DEFAULTS
-        )
+        and (not settings.metrics_bearer_token.strip() or settings.metrics_bearer_token in INSECURE_DEFAULTS)
     ):
-        message = (
-            "METRICS_BEARER_TOKEN must be a non-placeholder secret when "
-            "METRICS_ENABLED=true in production"
-        )
+        message = "METRICS_BEARER_TOKEN must be a non-placeholder secret when METRICS_ENABLED=true in production"
         if settings.production_guard_mode == "warning":
             increment("production_guard_warning")
             _PRODUCTION_GUARD_LOG.warning(message)
@@ -256,11 +253,7 @@ def _redis_url_has_password(redis_url: str, *, redis_password: str = "") -> bool
         parsed = urlsplit(url)
     except ValueError:
         return False
-    return (
-        parsed.scheme in {"redis", "rediss"}
-        and bool(parsed.password)
-        and parsed.password not in INSECURE_DEFAULTS
-    )
+    return parsed.scheme in {"redis", "rediss"} and bool(parsed.password) and parsed.password not in INSECURE_DEFAULTS
 
 
 def _url_uses_tls(url: str) -> bool:
@@ -315,7 +308,7 @@ def _url_has_secure_password(url: str) -> bool:
     return bool(parsed.password and parsed.password not in INSECURE_DEFAULTS)
 
 
-def _collect_production_insecurities(
+def _collect_production_insecurities(  # noqa: C901 -- Phase 4 split; complexity must not grow
     *,
     environment: str,
     secret_key: str,
@@ -351,6 +344,7 @@ def _collect_production_insecurities(
     http_bind: str = "0.0.0.0",
     trusted_proxy_cidrs: str = "127.0.0.1/32,::1/128",
     trust_local_gateway_proxy: bool = True,
+    allow_insecure_saml: bool = False,
 ) -> list[str]:
     """Pure collector used by the startup guard and by tests.
 
@@ -387,9 +381,7 @@ def _collect_production_insecurities(
     if database_url in {
         "postgresql+asyncpg://alpha_router:changeme@postgres:5432/alpha_router",
         "postgresql+asyncpg://alpha_router:changeme@pgbouncer:6432/alpha_router",
-    } | LEGACY_DATABASE_URLS or (
-        database_url.strip() and not _url_has_secure_password(database_url)
-    ):
+    } | LEGACY_DATABASE_URLS or (database_url.strip() and not _url_has_secure_password(database_url)):
         insecure.append("DATABASE_URL")
     # SAML ACS/metadata are derived from api_public_url; require HTTPS when enabled.
     if (
@@ -400,39 +392,23 @@ def _collect_production_insecurities(
         insecure.append("SAML_TLS")
     if oidc_enabled and (
         (oidc_issuer.strip() and not _url_uses_tls(oidc_issuer))
-        or (
-            api_public_url.strip()
-            and not _url_uses_tls(api_public_url)
-            and not _url_is_loopback(api_public_url)
-        )
+        or (api_public_url.strip() and not _url_uses_tls(api_public_url) and not _url_is_loopback(api_public_url))
     ):
         insecure.append("OIDC_TLS")
     if smtp_host.strip() and not smtp_tls:
         insecure.append("SMTP_TLS")
-    if (
-        s3_endpoint_url.strip()
-        and not s3_use_ssl
-        and not _url_host_is_internal(s3_endpoint_url)
-    ):
+    if allow_insecure_saml:
+        # Lets admins switch off signed assertions: a forged login in production.
+        insecure.append("ALLOW_INSECURE_SAML")
+    if s3_endpoint_url.strip() and not s3_use_ssl and not _url_host_is_internal(s3_endpoint_url):
         insecure.append("S3_TLS")
     if s3_access_key in INSECURE_DEFAULTS or s3_secret_key in INSECURE_DEFAULTS:
         insecure.append("S3_CREDENTIALS")
-    if (
-        frontend_url.strip()
-        and not _url_uses_tls(frontend_url)
-        and not _url_is_loopback(frontend_url)
-    ):
+    if frontend_url.strip() and not _url_uses_tls(frontend_url) and not _url_is_loopback(frontend_url):
         insecure.append("FRONTEND_TLS")
-    if (
-        api_public_url.strip()
-        and not _url_uses_tls(api_public_url)
-        and not _url_is_loopback(api_public_url)
-    ):
+    if api_public_url.strip() and not _url_uses_tls(api_public_url) and not _url_is_loopback(api_public_url):
         insecure.append("API_PUBLIC_TLS")
-    public_surface = any(
-        url.strip() and not _url_is_loopback(url)
-        for url in (frontend_url, api_public_url)
-    )
+    public_surface = any(url.strip() and not _url_is_loopback(url) for url in (frontend_url, api_public_url))
     if public_surface and not enable_hsts:
         insecure.append("HSTS")
     if allow_insecure_code_subprocess:
@@ -493,6 +469,7 @@ def _check_production_safe(
     http_bind: str = "0.0.0.0",
     trusted_proxy_cidrs: str = "127.0.0.1/32,::1/128",
     trust_local_gateway_proxy: bool = True,
+    allow_insecure_saml: bool = False,
     guard_mode: str = "hard-fail",
 ) -> None:
     """Pure check used by the startup guard and by tests.
@@ -537,6 +514,7 @@ def _check_production_safe(
         http_bind=http_bind,
         trusted_proxy_cidrs=trusted_proxy_cidrs,
         trust_local_gateway_proxy=trust_local_gateway_proxy,
+        allow_insecure_saml=allow_insecure_saml,
     )
     if not insecure:
         return
@@ -547,9 +525,7 @@ def _check_production_safe(
     )
     if guard_mode == "warning":
         increment("production_guard_warning")
-        _PRODUCTION_GUARD_LOG.warning(
-            "Production guard warning (non-blocking): %s", message
-        )
+        _PRODUCTION_GUARD_LOG.warning("Production guard warning (non-blocking): %s", message)
         return
     raise RuntimeError(message)
 
@@ -560,6 +536,7 @@ _PRODUCTION_GUARD_LOG = logging.getLogger(f"{LOGGER_NAMESPACE}.production_guard"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_json_logging(settings.json_logging_enabled)
+    configure_app_log_level(getattr(settings, "app_log_level", "INFO"))
     configure_telemetry(
         enabled=settings.otel_enabled,
         service_name=settings.otel_service_name,
@@ -568,17 +545,9 @@ async def lifespan(app: FastAPI):
     )
     _assert_production_safe()
     _warn_dangerous_opt_in_flags()
-    async with engine.begin() as conn:
-        # Multiple uvicorn workers enter lifespan concurrently. Serialize DDL
-        # discovery/creation so a newly introduced table cannot race in
-        # PostgreSQL's type catalog and abort worker startup.
-        if conn.dialect.name == "postgresql":
-            await conn.execute(text("SELECT pg_advisory_xact_lock(56023113)"))
-        await conn.run_sync(
-            Base.metadata.create_all,
-            tables=legacy_metadata_tables(Base.metadata),
-        )
-    await apply_schema_column_patches()
+    # Phase 4.3: workers run no DDL. `python -m app.migrate` (the db-init
+    # service) owns the schema; a worker only refuses to start when the
+    # database does not match what this build expects.
     await validate_agent_platform_schema()
     await validate_accounting_schema()
 
@@ -593,40 +562,21 @@ async def lifespan(app: FastAPI):
         # race on the unique username/email indexes.
         if db.get_bind().dialect.name == "postgresql":
             await db.execute(text("SELECT pg_advisory_xact_lock(56023114)"))
-        admin_username = (
-            normalize_username(settings.admin_username)
-            or settings.admin_username.strip()
-        )
+        admin_username = normalize_username(settings.admin_username) or settings.admin_username.strip()
         admin_user = await find_user_by_username_ci(db, admin_username)
         bootstrap_admin_created = False
         if not admin_user:
             # A seed admin may already exist under a previous ADMIN_USERNAME.
             # Reuse it by current or legacy bootstrap email instead of creating
             # a duplicate administrator.
-            admin_user = (
-                (
-                    await db.execute(
-                        select(User).where(User.email == DEFAULT_ADMIN_EMAIL)
-                    )
-                )
-                .scalars()
-                .first()
-            )
+            admin_user = (await db.execute(select(User).where(User.email == DEFAULT_ADMIN_EMAIL))).scalars().first()
         if not admin_user:
             legacy_admin_emails = (
                 "alpharouter@alpharouter.ent",
                 f"admin@{INTERNAL_DOMAIN}",
             )
             for legacy_admin_email in legacy_admin_emails:
-                admin_user = (
-                    (
-                        await db.execute(
-                            select(User).where(User.email == legacy_admin_email)
-                        )
-                    )
-                    .scalars()
-                    .first()
-                )
+                admin_user = (await db.execute(select(User).where(User.email == legacy_admin_email))).scalars().first()
                 if admin_user:
                     admin_user.email = DEFAULT_ADMIN_EMAIL
                     break
@@ -667,9 +617,7 @@ async def lifespan(app: FastAPI):
         from app.services.user_role_service import ensure_super_admin_roles
 
         for row in (await db.execute(select(User))).scalars().all():
-            await ensure_super_admin_roles(
-                db, row, admin_username=settings.admin_username
-            )
+            await ensure_super_admin_roles(db, row, admin_username=settings.admin_username)
             await ensure_user_chat_store(db, row.id)  # ensures user_chat_prefs row
         await db.commit()
 
@@ -698,16 +646,46 @@ async def lifespan(app: FastAPI):
         await ensure_all_model_compatibility_rows(db)
         await db.commit()
 
-    start_scheduler()
+    # One scheduler per deployment, not per uvicorn worker: the leader holds a
+    # PostgreSQL advisory lock (see scheduler_leader.py). Losing the lock stops
+    # the scheduler on this worker; another worker picks it up on its next retry.
+    async def _become_scheduler_leader() -> None:
+        start_scheduler()
+        await refresh_storage_cleanup_schedule()
+        await refresh_chat_retention_cleanup_schedule()
+        await refresh_auth_sync_schedules()
+
+    leader = SchedulerLeader(
+        engine,
+        on_acquire=_become_scheduler_leader,
+        on_release=stop_scheduler,
+    )
+    install_leader(leader)
+    # Try synchronously once so a single-worker deployment (and every test)
+    # has its scheduler running before the first request; the background loop
+    # then keeps heartbeating / retrying.
+    try:
+        if await leader.try_acquire():
+            logging.getLogger(LOGGER_NAMESPACE).info("This worker is now the scheduler leader")
+            await _become_scheduler_leader()
+    except Exception:
+        logging.getLogger(LOGGER_NAMESPACE).exception(
+            "Scheduler leader election failed at startup; will retry in background"
+        )
+    leader.start()
+    # The video worker claims jobs with FOR UPDATE SKIP LOCKED and is safe to
+    # run on every worker; it stays outside the election on purpose.
     start_video_worker()
-    await refresh_storage_cleanup_schedule()
-    await refresh_chat_retention_cleanup_schedule()
-    await refresh_auth_sync_schedules()
     configure_litellm_cache()
     yield
     await stop_video_worker()
+    await leader.stop()
     stop_scheduler()
     await close_openrouter_http_client()
+    await close_provider_rest_client()
+    from app.core.redis_client import close_redis
+
+    await close_redis()
     await engine.dispose()
     shutdown_telemetry()
 
@@ -757,11 +735,8 @@ app.add_middleware(OpenApiDocsGuardMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        settings.frontend_url,
-        "http://127.0.0.1:8080",
-        "http://localhost:8080",
-    ],
+    # Loopback origins are a development convenience; production gets FRONTEND_URL only.
+    allow_origins=[settings.frontend_url, *sorted(_development_origins())],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=[
@@ -779,12 +754,15 @@ app.add_middleware(AdminIpGuardMiddleware)
 app.include_router(auth.router)
 app.include_router(gateway.router)
 app.include_router(admin.router)
-app.include_router(admin_agent_evaluations.router)
-app.include_router(admin_agent_governance.router)
-app.include_router(admin_agents.router)
-app.include_router(admin_knowledge.router)
+if settings.agents_platform_enabled:
+    # Preview feature (Phase 4.5): mounted only when explicitly enabled.
+    app.include_router(admin_agent_evaluations.router)
+    app.include_router(admin_agent_governance.router)
+    app.include_router(admin_agents.router)
+    app.include_router(admin_knowledge.router)
 app.include_router(admin_memory.router)
-app.include_router(agents.router)
+if settings.agents_platform_enabled:
+    app.include_router(agents.router)
 app.include_router(user_routes.router)
 app.include_router(user_media.router)
 app.include_router(user_chats.router)
@@ -822,6 +800,25 @@ async def health():
     return health_payload()
 
 
+@app.get("/ready", include_in_schema=False)
+async def ready():
+    """Readiness probe: 200 when database and redis answer, else 503.
+
+    Qdrant and object storage are reported but do not fail the probe (see
+    app/services/readiness_service.py). Used by the compose healthcheck.
+    """
+    from fastapi.responses import JSONResponse
+
+    from app.services.readiness_service import readiness_report
+
+    report = await readiness_report()
+    return JSONResponse(
+        status_code=200 if report.ready else 503,
+        content=report.payload(),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 if settings.metrics_enabled:
 
     @app.get("/metrics", include_in_schema=False)
@@ -829,11 +826,7 @@ if settings.metrics_enabled:
         configured_token = settings.metrics_bearer_token.strip()
         if configured_token:
             authorization = request.headers.get("authorization", "")
-            supplied_token = (
-                authorization[7:].strip()
-                if authorization.lower().startswith("bearer ")
-                else ""
-            )
+            supplied_token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
             if not secrets.compare_digest(supplied_token, configured_token):
                 raise HTTPException(401, "Metrics authentication required")
         body, content_type = prometheus_payload()
@@ -893,18 +886,14 @@ async def root():
 
 # Static assets (JS/CSS) - must be after explicit routes like /health
 if _FRONTEND_DIST.is_dir():
-    app.mount(
-        "/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="assets"
-    )
+    app.mount("/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="assets")
 
     @app.get("/{full_path:path}")
     async def spa_fallback(full_path: str):
         """React Router: serve index.html for client-side routes (never shadow /api - those are separate routes)."""
         # Never let the SPA mask unmatched API/gateway paths - return JSON 404
         # so API clients get a predictable error instead of the HTML shell.
-        if full_path.startswith(
-            ("api/", "v1/", "health", "docs", "openapi.json", "redoc")
-        ):
+        if full_path.startswith(("api/", "v1/", "health", "docs", "openapi.json", "redoc")):
             return JSONResponse(
                 status_code=404,
                 content={"detail": "Not Found", "path": f"/{full_path}"},

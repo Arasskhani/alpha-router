@@ -238,9 +238,7 @@ class CostLineItem(Base):
     """A normalized quantity × unit-price component of a usage event."""
 
     __tablename__ = "cost_line_items"
-    __table_args__ = (
-        Index("ix_cost_line_items_event_category", "usage_event_id", "category"),
-    )
+    __table_args__ = (Index("ix_cost_line_items_event_category", "usage_event_id", "category"),)
 
     id = Column(Integer, primary_key=True)
     usage_event_id = Column(

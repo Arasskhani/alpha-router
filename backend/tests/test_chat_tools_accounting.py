@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, patch
 
 from app.services import chat_tools_service as tools
 
 
-def test_web_search_emits_one_metered_request():
-    asyncio.run(_test_web_search_emits_one_metered_request())
+async def test_web_search_emits_one_metered_request():
+    await _test_web_search_emits_one_metered_request()
 
 
 async def _test_web_search_emits_one_metered_request() -> None:
@@ -42,8 +41,8 @@ async def _test_web_search_emits_one_metered_request() -> None:
     )
 
 
-def test_gateway_key_is_propagated_to_web_search_metering():
-    asyncio.run(_test_gateway_key_is_propagated_to_web_search_metering())
+async def test_gateway_key_is_propagated_to_web_search_metering():
+    await _test_gateway_key_is_propagated_to_web_search_metering()
 
 
 async def _test_gateway_key_is_propagated_to_web_search_metering() -> None:

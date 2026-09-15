@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import ssl
 import uuid
@@ -63,13 +62,13 @@ def _schema_attribute_names(conn: Any) -> set[str] | None:
         return None
     try:
         types = schema.attribute_types
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return None)
         return None
     if not types:
         return None
     try:
         names = {str(name).lower() for name in types}
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return None)
         return None
     return names or None
 
@@ -119,9 +118,8 @@ def search_with_identity_attrs(conn: Any, base: str, search_filter: str, attribu
         )
         return conn.search(base, search_filter, attributes=reduced, **kwargs)
 
-LDAP_UNAVAILABLE_MESSAGE = (
-    "LDAP directory is not available right now. Please try again later or use a local account."
-)
+
+LDAP_UNAVAILABLE_MESSAGE = "LDAP directory is not available right now. Please try again later or use a local account."
 
 
 class LdapUnavailableError(RuntimeError):
@@ -205,21 +203,21 @@ def _attr_raw(entry: Any, name: str) -> Any | None:
             val = entry[name]
             if val is not None:
                 return val
-        except Exception:
+        except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
             pass
     try:
         if hasattr(entry, name):
             val = getattr(entry, name)
             if val is not None:
                 return val
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
         pass
     target = name.lower()
     for attr in getattr(entry, "entry_attributes", ()) or ():
         if str(attr).lower() == target:
             try:
                 return entry[attr] if hasattr(entry, "__getitem__") else getattr(entry, attr)
-            except Exception:
+            except Exception:  # noqa: BLE001 -- one bad item must not abort the batch
                 continue
     for key, val in getattr(entry, "__dict__", {}).items():
         if key.startswith("_"):
@@ -257,14 +255,14 @@ def _normalize_guid(value: Any) -> str | None:
             return None
         try:
             return str(uuid.UUID(bytes_le=raw))
-        except Exception:
+        except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return None)
             return None
     text = str(value).strip().strip("{}").strip()
     if not text:
         return None
     try:
         return str(uuid.UUID(text))
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return None)
         return None
 
 
@@ -470,14 +468,14 @@ def _try_bind_ad(
     errors: list[Exception] = []
     try:
         return _connect(ldap3.SIMPLE, user), _encryption_label(use_ssl, use_starttls)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
         errors.append(exc)
 
     ntlm_bind = _ntlm_user()
     if ntlm_bind and _ntlm_md4_available():
         try:
             return _connect(NTLM, ntlm_bind), _encryption_label(use_ssl, use_starttls)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
             errors.append(exc)
 
     _raise_bind_errors(errors)
@@ -522,9 +520,7 @@ def _open_connection_ldap3(cfg: dict, *, user: str | None = None, password: str 
         p = urlparse(cfg["server"])
         host = p.hostname or ""
     bind_pw = _clean_bind_password(password if password is not None else cfg.get("bind_password") or "")
-    domain = (cfg.get("domain") or "").strip() or infer_domain(
-        cfg.get("bind_username", ""), cfg.get("base_dn")
-    )
+    domain = (cfg.get("domain") or "").strip() or infer_domain(cfg.get("bind_username", ""), cfg.get("base_dn"))
     candidates = [user] if user else bind_candidates(cfg)
     bind_errors: list[str] = []
     unreachable_modes: list[str] = []
@@ -551,7 +547,7 @@ def _open_connection_ldap3(cfg: dict, *, user: str | None = None, password: str 
             except LdapUnavailableError:
                 mode_unreachable = True
                 break
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
                 if _is_ldap_unreachable(exc):
                     mode_unreachable = True
                     break
@@ -577,7 +573,7 @@ def _open_connection_winldap(cfg: dict, *, user: str | None = None, password: st
     for candidate in candidates:
         try:
             return WinLdapConnection(cfg, user=candidate, password=bind_pw)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
             msg = str(exc).strip() or exc.__class__.__name__
             errors.append(f"{candidate}: {msg}")
     if errors:
@@ -716,7 +712,7 @@ def _bind_login_connection(cfg: dict, login_bind: str, password: str) -> Any | N
         return _open_connection(cfg, user=login_bind, password=password)
     except LdapUnavailableError:
         raise
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return None)
         return None
 
 
@@ -770,10 +766,7 @@ def authenticate_ldap_sync(username: str, password: str, config: dict | None = N
 
     esc_sam = _escape_filter(sam)
     esc_upn = _escape_filter(upn)
-    filt = (
-        f"(&(objectCategory=person)(objectClass=user)"
-        f"(|(sAMAccountName={esc_sam})(userPrincipalName={esc_upn})))"
-    )
+    filt = f"(&(objectCategory=person)(objectClass=user)(|(sAMAccountName={esc_sam})(userPrincipalName={esc_upn})))"
     search_with_identity_attrs(conn, base, filt, user_attrs_for(conn), size_limit=1)
     if conn.entries:
         profile = _entry_to_profile(conn.entries[0], sam)
@@ -795,10 +788,6 @@ def authenticate_ldap_sync(username: str, password: str, config: dict | None = N
         "dn": None,
         "identity_source": "none",
     }
-
-
-async def authenticate_ldap(username: str, password: str, config: dict | None = None) -> dict | None:
-    return await asyncio.to_thread(authenticate_ldap_sync, username, password, config)
 
 
 def _sync_search_bases(cfg: dict) -> list[str]:
@@ -895,13 +884,13 @@ def test_ldap_connection(config: dict) -> dict[str, Any]:
         try:
             conn.search(user_bases[0], cfg.get("user_list_filter", ""), attributes=["cn"], size_limit=3)
             sample_users = len(conn.entries)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
             warnings.append(f"User search: {exc}")
     if group_bases:
         try:
             conn.search(group_bases[0], cfg.get("group_filter", ""), attributes=["cn"], size_limit=3)
             sample_groups = len(conn.entries)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
             warnings.append(f"Group search: {exc}")
 
     conn.unbind()

@@ -8,7 +8,7 @@ import json
 import math
 import uuid
 from dataclasses import dataclass, field
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any
 
 import litellm
@@ -190,7 +190,7 @@ def _dictish(value: Any) -> dict[str, Any]:
         if callable(method):
             try:
                 dumped = method()
-            except Exception:
+            except Exception:  # noqa: BLE001 -- one bad item must not abort the batch
                 continue
             if isinstance(dumped, dict):
                 return dumped
@@ -287,12 +287,8 @@ def extract_normalized_usage(
     prompt_details_dict = _dictish(prompt_details)
     completion_details_dict = _dictish(completion_details)
 
-    extracted_prompt = _nonnegative_int(
-        _first_present(usage, ("prompt_tokens", "input_tokens"))
-    )
-    extracted_completion = _nonnegative_int(
-        _first_present(usage, ("completion_tokens", "output_tokens"))
-    )
+    extracted_prompt = _nonnegative_int(_first_present(usage, ("prompt_tokens", "input_tokens")))
+    extracted_completion = _nonnegative_int(_first_present(usage, ("completion_tokens", "output_tokens")))
     extracted_cached = _nonnegative_int(
         _first_present(
             prompt_details,
@@ -409,31 +405,15 @@ def extract_normalized_usage(
         raw_usage["litellm_response_cost"] = litellm_cost
 
     return NormalizedUsage(
-        prompt_tokens=(
-            _nonnegative_int(prompt_tokens)
-            if prompt_tokens is not None
-            else extracted_prompt
-        ),
+        prompt_tokens=(_nonnegative_int(prompt_tokens) if prompt_tokens is not None else extracted_prompt),
         completion_tokens=(
-            _nonnegative_int(completion_tokens)
-            if completion_tokens is not None
-            else extracted_completion
+            _nonnegative_int(completion_tokens) if completion_tokens is not None else extracted_completion
         ),
-        cached_tokens=(
-            _nonnegative_int(cached_tokens)
-            if cached_tokens is not None
-            else extracted_cached
-        ),
+        cached_tokens=(_nonnegative_int(cached_tokens) if cached_tokens is not None else extracted_cached),
         cache_write_tokens=(
-            _nonnegative_int(cache_write_tokens)
-            if cache_write_tokens is not None
-            else extracted_cache_write
+            _nonnegative_int(cache_write_tokens) if cache_write_tokens is not None else extracted_cache_write
         ),
-        reasoning_tokens=(
-            _nonnegative_int(reasoning_tokens)
-            if reasoning_tokens is not None
-            else extracted_reasoning
-        ),
+        reasoning_tokens=(_nonnegative_int(reasoning_tokens) if reasoning_tokens is not None else extracted_reasoning),
         web_search_requests=extracted_searches,
         metered_quantity=metered_quantity,
         metered_unit=metered_unit,
@@ -555,7 +535,7 @@ def _line_item(
     )
 
 
-def _catalog_quote(
+def _catalog_quote(  # noqa: C901 -- Phase 4 split; complexity must not grow
     ai_model: AIModel | None,
     usage: NormalizedUsage,
     *,
@@ -618,9 +598,7 @@ def _catalog_quote(
             "web_search",
             "search",
         )
-        audio_present, audio_rate = (
-            _audio_second_rate_usd(pricing) if service_type == "audio" else (False, None)
-        )
+        audio_present, audio_rate = _audio_second_rate_usd(pricing) if service_type == "audio" else (False, None)
         if service_type == "speech":
             speech_present, speech_rate = _speech_character_rate_usd(pricing)
         else:
@@ -645,23 +623,11 @@ def _catalog_quote(
             and not request_present
         ):
             pricing_complete = False
-        if (
-            service_type == "speech"
-            and quantity
-            and not speech_present
-        ):
+        if service_type == "speech" and quantity and not speech_present:
             pricing_complete = False
-        if (
-            service_type == "video"
-            and quantity
-            and not video_present
-        ):
+        if service_type == "video" and quantity and not video_present:
             pricing_complete = False
-        if (
-            service_type == "audio"
-            and quantity
-            and not audio_present
-        ):
+        if service_type == "audio" and quantity and not audio_present:
             pricing_complete = False
 
         if (
@@ -688,17 +654,14 @@ def _catalog_quote(
         # For speech, OpenRouter's pricing.prompt is USD/character (consumed by
         # the speech line item above) — never reinterpret it as a token rate.
         if service_type != "speech" and prompt_present and prompt_rate is not None:
-            separately_priced_cache = (
-                (cache_read_present and cache_read_rate is not None)
-                or (cache_write_present and cache_write_rate is not None)
+            separately_priced_cache = (cache_read_present and cache_read_rate is not None) or (
+                cache_write_present and cache_write_rate is not None
             )
             standard_prompt_tokens = usage.prompt_tokens
             if separately_priced_cache:
                 standard_prompt_tokens = max(
                     0,
-                    standard_prompt_tokens
-                    - usage.cached_tokens
-                    - usage.cache_write_tokens,
+                    standard_prompt_tokens - usage.cached_tokens - usage.cache_write_tokens,
                 )
             if standard_prompt_tokens:
                 items.append(
@@ -717,9 +680,7 @@ def _catalog_quote(
                         quantity=usage.cached_tokens,
                         unit="token",
                         unit_price_usd=(
-                            cache_read_rate
-                            if cache_read_present and cache_read_rate is not None
-                            else prompt_rate
+                            cache_read_rate if cache_read_present and cache_read_rate is not None else prompt_rate
                         ),
                         pricing_source=source,
                         metadata={"fallback_to_prompt_rate": not cache_read_present},
@@ -732,9 +693,7 @@ def _catalog_quote(
                         quantity=usage.cache_write_tokens,
                         unit="token",
                         unit_price_usd=(
-                            cache_write_rate
-                            if cache_write_present and cache_write_rate is not None
-                            else prompt_rate
+                            cache_write_rate if cache_write_present and cache_write_rate is not None else prompt_rate
                         ),
                         pricing_source=source,
                         metadata={"fallback_to_prompt_rate": not cache_write_present},
@@ -758,11 +717,7 @@ def _catalog_quote(
                         pricing_source=source,
                     )
                 )
-            if (
-                reasoning_present
-                and reasoning_rate is not None
-                and usage.reasoning_tokens
-            ):
+            if reasoning_present and reasoning_rate is not None and usage.reasoning_tokens:
                 items.append(
                     _line_item(
                         category="reasoning_tokens",
@@ -873,12 +828,7 @@ def _catalog_quote(
                 )
             )
         # Zero-priced models still need an explicit calculated zero.
-        if (
-            not items
-            and input_rate == 0
-            and output_rate == 0
-            and (usage.prompt_tokens or usage.completion_tokens)
-        ):
+        if not items and input_rate == 0 and output_rate == 0 and (usage.prompt_tokens or usage.completion_tokens):
             items.extend(
                 [
                     _line_item(
@@ -946,7 +896,7 @@ def _litellm_estimate(
         if custom_provider:
             kwargs["custom_llm_provider"] = custom_provider
         return _finite_float(litellm.completion_cost(**kwargs))
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return None)
         return None
 
 
@@ -1068,39 +1018,22 @@ def capture_usage_event(
         )
         usage = NormalizedUsage(
             prompt_tokens=usage.prompt_tokens or fallback_usage.prompt_tokens,
-            completion_tokens=(
-                usage.completion_tokens or fallback_usage.completion_tokens
-            ),
+            completion_tokens=(usage.completion_tokens or fallback_usage.completion_tokens),
             cached_tokens=usage.cached_tokens or fallback_usage.cached_tokens,
-            cache_write_tokens=(
-                usage.cache_write_tokens or fallback_usage.cache_write_tokens
-            ),
-            reasoning_tokens=(
-                usage.reasoning_tokens or fallback_usage.reasoning_tokens
-            ),
-            web_search_requests=(
-                usage.web_search_requests or fallback_usage.web_search_requests
-            ),
+            cache_write_tokens=(usage.cache_write_tokens or fallback_usage.cache_write_tokens),
+            reasoning_tokens=(usage.reasoning_tokens or fallback_usage.reasoning_tokens),
+            web_search_requests=(usage.web_search_requests or fallback_usage.web_search_requests),
             metered_quantity=(
-                usage.metered_quantity
-                if usage.metered_quantity is not None
-                else fallback_usage.metered_quantity
+                usage.metered_quantity if usage.metered_quantity is not None else fallback_usage.metered_quantity
             ),
             metered_unit=usage.metered_unit or fallback_usage.metered_unit,
             provider_cost_usd=(
-                usage.provider_cost_usd
-                if usage.provider_cost_usd is not None
-                else fallback_usage.provider_cost_usd
+                usage.provider_cost_usd if usage.provider_cost_usd is not None else fallback_usage.provider_cost_usd
             ),
             litellm_cost_usd=(
-                usage.litellm_cost_usd
-                if usage.litellm_cost_usd is not None
-                else fallback_usage.litellm_cost_usd
+                usage.litellm_cost_usd if usage.litellm_cost_usd is not None else fallback_usage.litellm_cost_usd
             ),
-            upstream_request_id=(
-                usage.upstream_request_id
-                or fallback_usage.upstream_request_id
-            ),
+            upstream_request_id=(usage.upstream_request_id or fallback_usage.upstream_request_id),
             raw_usage={
                 "primary": usage.raw_usage,
                 "fallback": fallback_usage.raw_usage,
@@ -1116,11 +1049,7 @@ def capture_usage_event(
         usage.cache_write_tokens = _nonnegative_int(cache_write_tokens)
     if reasoning_tokens is not None:
         usage.reasoning_tokens = _nonnegative_int(reasoning_tokens)
-    effective_quantity = (
-        usage.metered_quantity
-        if usage.metered_quantity is not None
-        else quantity
-    )
+    effective_quantity = usage.metered_quantity if usage.metered_quantity is not None else quantity
     effective_unit = usage.metered_unit or unit
     observed_billing = bool(
         usage.prompt_tokens
@@ -1165,11 +1094,7 @@ def capture_usage_event(
         quote=quote,
         started_at=started_at or _now(),
         completed_at=completed_at or _now(),
-        idempotency_key=(
-            str(idempotency_key)[:220]
-            if idempotency_key
-            else f"usage-event:{uuid.uuid4()}"
-        ),
+        idempotency_key=(str(idempotency_key)[:220] if idempotency_key else f"usage-event:{uuid.uuid4()}"),
         quantity=effective_quantity,
         unit=effective_unit,
         error_message=(error_message or "")[:2000] or None,
@@ -1226,20 +1151,12 @@ def legacy_usage_event(
 
 
 def summarize_pending_events(events: list[PendingUsageEvent]) -> AccountingSummary:
-    total = sum(
-        float(event.quote.final_cost_usd)
-        for event in events
-        if event.quote.final_cost_usd is not None
-    )
+    total = sum(float(event.quote.final_cost_usd) for event in events if event.quote.final_cost_usd is not None)
     provider_values = [
-        float(event.quote.provider_cost_usd)
-        for event in events
-        if event.quote.provider_cost_usd is not None
+        float(event.quote.provider_cost_usd) for event in events if event.quote.provider_cost_usd is not None
     ]
     calculated_values = [
-        float(event.quote.calculated_cost_usd)
-        for event in events
-        if event.quote.calculated_cost_usd is not None
+        float(event.quote.calculated_cost_usd) for event in events if event.quote.calculated_cost_usd is not None
     ]
     unpriced = sum(1 for event in events if event.quote.final_cost_usd is None)
     confidences = {event.quote.cost_confidence for event in events}
@@ -1260,9 +1177,7 @@ def summarize_pending_events(events: list[PendingUsageEvent]) -> AccountingSumma
         operation_id="",
         total_cost_usd=max(0.0, total),
         provider_cost_usd=sum(provider_values) if provider_values else None,
-        calculated_cost_usd=(
-            sum(calculated_values) if calculated_values else None
-        ),
+        calculated_cost_usd=(sum(calculated_values) if calculated_values else None),
         cost_source=source,
         cost_confidence=confidence,
         unpriced_event_count=unpriced,
@@ -1323,37 +1238,29 @@ async def _apply_configured_pricing(
     }:
         return
     candidates = (
-        await db.execute(
-            select(PricingSnapshot)
-            .where(
-                PricingSnapshot.provider_type == event.provider_type,
-                PricingSnapshot.service_type == event.service_type,
-                PricingSnapshot.source.in_(("admin", "contract")),
-                PricingSnapshot.effective_at <= event.started_at,
-                (
-                    PricingSnapshot.connection_id.is_(None)
-                    | (PricingSnapshot.connection_id == event.connection_id)
-                ),
-                (
-                    PricingSnapshot.expires_at.is_(None)
-                    | (PricingSnapshot.expires_at > event.started_at)
-                ),
-            )
-            .order_by(
-                PricingSnapshot.effective_at.desc(),
-                PricingSnapshot.id.desc(),
+        (
+            await db.execute(
+                select(PricingSnapshot)
+                .where(
+                    PricingSnapshot.provider_type == event.provider_type,
+                    PricingSnapshot.service_type == event.service_type,
+                    PricingSnapshot.source.in_(("admin", "contract")),
+                    PricingSnapshot.effective_at <= event.started_at,
+                    (PricingSnapshot.connection_id.is_(None) | (PricingSnapshot.connection_id == event.connection_id)),
+                    (PricingSnapshot.expires_at.is_(None) | (PricingSnapshot.expires_at > event.started_at)),
+                )
+                .order_by(
+                    PricingSnapshot.effective_at.desc(),
+                    PricingSnapshot.id.desc(),
+                )
             )
         )
-    ).scalars().all()
-    event_unit = _normalize_unit(event.unit or event.usage.metered_unit)
-    event_quantity = (
-        event.quantity
-        if event.quantity is not None
-        else event.usage.metered_quantity
+        .scalars()
+        .all()
     )
-    matching: list[
-        tuple[PricingSnapshot, str, float, float]
-    ] = []
+    event_unit = _normalize_unit(event.unit or event.usage.metered_unit)
+    event_quantity = event.quantity if event.quantity is not None else event.usage.metered_quantity
+    matching: list[tuple[PricingSnapshot, str, float, float]] = []
     for candidate in candidates:
         if candidate.model_id and candidate.model_id != event.model_id:
             continue
@@ -1372,8 +1279,7 @@ async def _apply_configured_pricing(
         if (
             candidate_quantity is None
             and candidate_unit == "request"
-            and event.status.lower()
-            not in {"failed", "cancelled", "timeout"}
+            and event.status.lower() not in {"failed", "cancelled", "timeout"}
         ):
             candidate_quantity = 1.0
             candidate_event_unit = "request"
@@ -1537,9 +1443,9 @@ async def quote_hold(
     service = (service_type or "unknown").strip().lower() or "unknown"
     if service in {"chat", "completion"}:
         service = "llm"
-    provider = (provider_type or getattr(ai_model, "provider_type", None) or "unknown")
+    provider = provider_type or getattr(ai_model, "provider_type", None) or "unknown"
     provider = str(provider).strip().lower() or "unknown"
-    resolved_model = (model_id or getattr(ai_model, "external_id", None) or None)
+    resolved_model = model_id or getattr(ai_model, "external_id", None) or None
     resolved_model = str(resolved_model).strip() if resolved_model else None
     configured: float | None = None
     lookup_quantity = quantity
@@ -1599,11 +1505,7 @@ async def _pricing_snapshot(
     payload_text = _json_text(payload)
     fingerprint = hashlib.sha256(payload_text.encode("utf-8")).hexdigest()
     existing = (
-        await db.execute(
-            select(PricingSnapshot).where(
-                PricingSnapshot.fingerprint == fingerprint
-            )
-        )
+        await db.execute(select(PricingSnapshot).where(PricingSnapshot.fingerprint == fingerprint))
     ).scalar_one_or_none()
     if existing:
         return existing
@@ -1625,11 +1527,7 @@ async def _pricing_snapshot(
             await db.flush()
     except IntegrityError:
         return (
-            await db.execute(
-                select(PricingSnapshot).where(
-                    PricingSnapshot.fingerprint == fingerprint
-                )
-            )
+            await db.execute(select(PricingSnapshot).where(PricingSnapshot.fingerprint == fingerprint))
         ).scalar_one()
     return row
 
@@ -1676,25 +1574,15 @@ async def persist_usage_operation(
         )
     )
     existing = (
-        await db.execute(
-            select(UsageOperation).where(
-                UsageOperation.idempotency_key == operation_key
-            )
-        )
+        await db.execute(select(UsageOperation).where(UsageOperation.idempotency_key == operation_key))
     ).scalar_one_or_none()
     if existing:
         return AccountingSummary(
             operation_id=existing.id,
             total_cost_usd=float(existing.total_cost_usd or 0),
-            provider_cost_usd=(
-                float(existing.provider_cost_usd)
-                if existing.provider_cost_usd is not None
-                else None
-            ),
+            provider_cost_usd=(float(existing.provider_cost_usd) if existing.provider_cost_usd is not None else None),
             calculated_cost_usd=(
-                float(existing.calculated_cost_usd)
-                if existing.calculated_cost_usd is not None
-                else None
+                float(existing.calculated_cost_usd) if existing.calculated_cost_usd is not None else None
             ),
             cost_source="existing",
             cost_confidence=CONFIDENCE_UNKNOWN,
@@ -1723,15 +1611,9 @@ async def persist_usage_operation(
         ),
         idempotency_key=operation_key,
         total_cost_usd=Decimal(str(summary.total_cost_usd)),
-        provider_cost_usd=(
-            Decimal(str(summary.provider_cost_usd))
-            if summary.provider_cost_usd is not None
-            else None
-        ),
+        provider_cost_usd=(Decimal(str(summary.provider_cost_usd)) if summary.provider_cost_usd is not None else None),
         calculated_cost_usd=(
-            Decimal(str(summary.calculated_cost_usd))
-            if summary.calculated_cost_usd is not None
-            else None
+            Decimal(str(summary.calculated_cost_usd)) if summary.calculated_cost_usd is not None else None
         ),
         unpriced_event_count=summary.unpriced_event_count,
         metadata_json=_json_text(metadata) if metadata else None,
@@ -1744,24 +1626,14 @@ async def persist_usage_operation(
             await db.flush()
     except IntegrityError:
         existing = (
-            await db.execute(
-                select(UsageOperation).where(
-                    UsageOperation.idempotency_key == operation_key
-                )
-            )
+            await db.execute(select(UsageOperation).where(UsageOperation.idempotency_key == operation_key))
         ).scalar_one()
         return AccountingSummary(
             operation_id=existing.id,
             total_cost_usd=float(existing.total_cost_usd or 0),
-            provider_cost_usd=(
-                float(existing.provider_cost_usd)
-                if existing.provider_cost_usd is not None
-                else None
-            ),
+            provider_cost_usd=(float(existing.provider_cost_usd) if existing.provider_cost_usd is not None else None),
             calculated_cost_usd=(
-                float(existing.calculated_cost_usd)
-                if existing.calculated_cost_usd is not None
-                else None
+                float(existing.calculated_cost_usd) if existing.calculated_cost_usd is not None else None
             ),
             cost_source="existing",
             cost_confidence=CONFIDENCE_UNKNOWN,
@@ -1799,9 +1671,7 @@ async def persist_usage_operation(
             quantity=pending.quantity,
             unit=(pending.unit or "")[:32] or None,
             provider_cost_usd=(
-                Decimal(str(pending.quote.provider_cost_usd))
-                if pending.quote.provider_cost_usd is not None
-                else None
+                Decimal(str(pending.quote.provider_cost_usd)) if pending.quote.provider_cost_usd is not None else None
             ),
             calculated_cost_usd=(
                 Decimal(str(pending.quote.calculated_cost_usd))
@@ -1809,9 +1679,7 @@ async def persist_usage_operation(
                 else None
             ),
             final_cost_usd=(
-                Decimal(str(pending.quote.final_cost_usd))
-                if pending.quote.final_cost_usd is not None
-                else None
+                Decimal(str(pending.quote.final_cost_usd)) if pending.quote.final_cost_usd is not None else None
             ),
             cost_source=pending.quote.cost_source,
             cost_confidence=pending.quote.cost_confidence,
@@ -1830,20 +1698,10 @@ async def persist_usage_operation(
                     category=item.category[:64],
                     quantity=item.quantity,
                     unit=item.unit[:32],
-                    unit_price_usd=(
-                        Decimal(str(item.unit_price_usd))
-                        if item.unit_price_usd is not None
-                        else None
-                    ),
-                    cost_usd=(
-                        Decimal(str(item.cost_usd))
-                        if item.cost_usd is not None
-                        else None
-                    ),
+                    unit_price_usd=(Decimal(str(item.unit_price_usd)) if item.unit_price_usd is not None else None),
+                    cost_usd=(Decimal(str(item.cost_usd)) if item.cost_usd is not None else None),
                     pricing_source=item.pricing_source[:32],
-                    metadata_json=(
-                        _json_text(item.metadata) if item.metadata else None
-                    ),
+                    metadata_json=(_json_text(item.metadata) if item.metadata else None),
                 )
             )
 
@@ -1861,9 +1719,7 @@ async def persist_usage_operation(
                     cost_source=pending.quote.cost_source,
                     cost_confidence=pending.quote.cost_confidence,
                     idempotency_key=f"ledger:{pending.idempotency_key}:debit"[:240],
-                    description=(
-                        f"{pending.service_type}:{pending.operation_name}"
-                    )[:255],
+                    description=(f"{pending.service_type}:{pending.operation_name}")[:255],
                     effective_at=pending.completed_at,
                 )
             )
@@ -1910,9 +1766,7 @@ async def create_configured_pricing_snapshot(
     )
     active_scope_key = hashlib.sha256(scope_text.encode("utf-8")).hexdigest()
 
-    active_query = select(PricingSnapshot).where(
-        PricingSnapshot.active_scope_key == active_scope_key
-    )
+    active_query = select(PricingSnapshot).where(PricingSnapshot.active_scope_key == active_scope_key)
     active_rows = (await db.execute(active_query.with_for_update())).scalars().all()
 
     payload = {
@@ -1949,9 +1803,7 @@ async def create_configured_pricing_snapshot(
             db.add(row)
             await db.flush()
     except IntegrityError as exc:
-        raise ValueError(
-            "A configured rate for this provider scope was updated concurrently; retry"
-        ) from exc
+        raise ValueError("A configured rate for this provider scope was updated concurrently; retry") from exc
     return row
 
 
@@ -1998,23 +1850,17 @@ async def _apply_subject_delta(
     if subject_type == SUBJECT_USER:
         statement = update(User).where(User.id == subject_id)
         if occurred_at is not None:
-            statement = statement.where(
-                User.budget_period_start.is_(None)
-                | (User.budget_period_start <= occurred_at)
-            )
+            statement = statement.where(User.budget_period_start.is_(None) | (User.budget_period_start <= occurred_at))
         await db.execute(
-            statement.values(
-                budget_used_usd=clamped(User.budget_used_usd)
-            ).execution_options(synchronize_session="fetch")
+            statement.values(budget_used_usd=clamped(User.budget_used_usd)).execution_options(
+                synchronize_session="fetch"
+            )
         )
     elif subject_type == SUBJECT_ALPHA_ROUTER_KEY:
         period_is_current = (
             True
             if occurred_at is None
-            else (
-                AlphaRouterApiKey.period_started_at.is_(None)
-                | (AlphaRouterApiKey.period_started_at <= occurred_at)
-            )
+            else (AlphaRouterApiKey.period_started_at.is_(None) | (AlphaRouterApiKey.period_started_at <= occurred_at))
         )
         period_value = (
             clamped(AlphaRouterApiKey.period_used_usd)
@@ -2057,9 +1903,7 @@ async def reconcile_usage_event(
     ).scalar_one()
     run = (
         await db.execute(
-            select(ReconciliationRun)
-            .where(ReconciliationRun.id == reconciliation_run_id)
-            .with_for_update()
+            select(ReconciliationRun).where(ReconciliationRun.id == reconciliation_run_id).with_for_update()
         )
     ).scalar_one()
     operation = (
@@ -2073,21 +1917,13 @@ async def reconcile_usage_event(
 
     idempotency_key = f"ledger:reconcile:{run.id}:{event.id}"[:240]
     existing = (
-        await db.execute(
-            select(LedgerEntry).where(
-                LedgerEntry.idempotency_key == idempotency_key
-            )
-        )
+        await db.execute(select(LedgerEntry).where(LedgerEntry.idempotency_key == idempotency_key))
     ).scalar_one_or_none()
     if existing:
         return float(existing.amount_usd or 0)
 
     actual = max(0.0, _signed_float(actual_cost_usd))
-    previous = (
-        float(event.final_cost_usd)
-        if event.final_cost_usd is not None
-        else 0.0
-    )
+    previous = float(event.final_cost_usd) if event.final_cost_usd is not None else 0.0
     delta = actual - previous
     now = _now()
 
@@ -2099,11 +1935,7 @@ async def reconcile_usage_event(
     event.reconciled_at = now
 
     log_row = (
-        await db.execute(
-            select(RequestLog).where(
-                RequestLog.usage_operation_id == operation.id
-            )
-        )
+        await db.execute(select(RequestLog).where(RequestLog.usage_operation_id == operation.id))
     ).scalar_one_or_none()
     db.add(
         LedgerEntry(
@@ -2151,13 +1983,8 @@ async def reconcile_usage_event(
     ).all()
     unpriced_count = sum(1 for _, _, final in cost_states if final is None)
     sources = {source or COST_SOURCE_UNKNOWN for source, _, _ in cost_states}
-    confidences = {
-        confidence or CONFIDENCE_UNKNOWN
-        for _, confidence, _ in cost_states
-    }
-    aggregate_source = (
-        next(iter(sources)) if len(sources) == 1 else "mixed"
-    )
+    confidences = {confidence or CONFIDENCE_UNKNOWN for _, confidence, _ in cost_states}
+    aggregate_source = next(iter(sources)) if len(sources) == 1 else "mixed"
     if unpriced_count:
         aggregate_confidence = CONFIDENCE_UNKNOWN
     elif len(confidences) == 1:
@@ -2178,29 +2005,19 @@ async def reconcile_usage_event(
     if log_row:
         log_row.total_cost_usd = float(operation.total_cost_usd or 0)
         log_row.provider_cost_usd = (
-            float(operation.provider_cost_usd)
-            if operation.provider_cost_usd is not None
-            else None
+            float(operation.provider_cost_usd) if operation.provider_cost_usd is not None else None
         )
         log_row.calculated_cost_usd = (
-            float(operation.calculated_cost_usd)
-            if operation.calculated_cost_usd is not None
-            else None
+            float(operation.calculated_cost_usd) if operation.calculated_cost_usd is not None else None
         )
         log_row.cost_source = aggregate_source
         log_row.cost_confidence = aggregate_confidence
         log_row.has_unpriced_usage = bool(operation.unpriced_event_count)
         log_row.reconciled_at = now
 
-    run.expected_cost_usd = Decimal(
-        str(float(run.expected_cost_usd or 0) + previous)
-    )
-    run.reported_cost_usd = Decimal(
-        str(float(run.reported_cost_usd or 0) + actual)
-    )
-    run.adjustment_usd = Decimal(
-        str(float(run.adjustment_usd or 0) + delta)
-    )
+    run.expected_cost_usd = Decimal(str(float(run.expected_cost_usd or 0) + previous))
+    run.reported_cost_usd = Decimal(str(float(run.reported_cost_usd or 0) + actual))
+    run.adjustment_usd = Decimal(str(float(run.adjustment_usd or 0) + delta))
     run.matched_event_count = int(run.matched_event_count or 0) + 1
     await db.flush()
     return delta

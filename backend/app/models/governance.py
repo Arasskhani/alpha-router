@@ -12,6 +12,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    UniqueConstraint,
     event,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -32,6 +33,10 @@ class GovernanceAuditEvent(Base):
             "outcome IN ('success', 'denied', 'failed', 'scheduled')",
             name="chk_governance_audit_outcome",
         ),
+        # Shape as the Alembic revision created it: a named unique constraint
+        # plus a plain lookup index (not one unique index).
+        UniqueConstraint("event_hash", name="uq_governance_audit_events_event_hash"),
+        Index("ix_governance_audit_events_event_hash", "event_hash"),
         Index(
             "ix_governance_audit_resource_time",
             "resource_type",
@@ -54,7 +59,7 @@ class GovernanceAuditEvent(Base):
     outcome = Column(String(16), nullable=False, default="success", index=True)
     payload_json = Column(JsonDocument, nullable=False, default=dict)
     previous_event_hash = Column(String(64), nullable=True)
-    event_hash = Column(String(64), nullable=False, unique=True, index=True)
+    event_hash = Column(String(64), nullable=False)
     created_at = Column(
         DateTime,
         nullable=False,

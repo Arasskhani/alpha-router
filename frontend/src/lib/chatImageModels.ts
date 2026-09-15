@@ -1,7 +1,6 @@
 /** Image-capable chat model detection and preferred model selection for Image Generation tool. */
 
 import {
-  AUTO_ROUTER_EXTERNAL_ID,
   isAutoRouterModel,
   type ChatModelRef,
 } from "./chatModels";
@@ -15,7 +14,7 @@ export type ImageCapableModelRef = ChatModelRef & {
 };
 
 /** The admin-chosen default for a capability, when it is still usable. */
-export function findSystemDefaultModel<T extends { default_kinds?: string[] }>(
+function findSystemDefaultModel<T extends { default_kinds?: string[] }>(
   models: T[],
   kind: string,
   usable: (m: T) => boolean,
@@ -97,7 +96,7 @@ export function findImageGenerationFallbackModel<T extends ImageCapableModelRef>
 }
 
 /** First enabled image model excluding Auto Router (for upstream image API calls). */
-export function findConcreteImageGenerationModel<T extends ImageCapableModelRef>(
+function findConcreteImageGenerationModel<T extends ImageCapableModelRef>(
   models: T[],
 ): T | undefined {
   // Admin's pick wins over catalog order, which is otherwise arbitrary.
@@ -167,4 +166,4 @@ export function resolveSessionModelForTools<T extends ImageCapableModelRef>(
   return fallbackToDefault(undefined);
 }
 
-export { AUTO_ROUTER_EXTERNAL_ID, isAutoRouterModel };
+;

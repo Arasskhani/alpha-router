@@ -1,5 +1,5 @@
 import type { ChatMessage, ChatSession } from "./chatStorage";
-import { isPendingDelete, mergeRemoteChatSessions } from "./chatStorage";
+import { mergeRemoteChatSessions } from "./chatStorage";
 
 export type ProjectChatSyncPayload = {
   serverTimeMs: number;

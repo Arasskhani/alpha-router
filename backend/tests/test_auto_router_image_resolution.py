@@ -1,6 +1,5 @@
 """Tests for Auto Router → concrete image model resolution."""
 
-import asyncio
 from datetime import datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -14,7 +13,6 @@ from app.services.image_model_resolver import (
     is_image_model_failover_error,
     list_auto_router_image_candidates,
     resolve_auto_router_image_model,
-    resolve_openrouter_auto_image_model,
     score_image_model_candidate,
 )
 
@@ -329,23 +327,21 @@ async def _run_runtime_signals_prefer_reliable_model() -> None:
             )
         await session.commit()
 
-        candidates = await list_auto_router_image_candidates(
-            session, connection_id=conn.id, limit=3
-        )
+        candidates = await list_auto_router_image_candidates(session, connection_id=conn.id, limit=3)
         assert len(candidates) == 1
         assert candidates[0].external_id == "google/gemini-2.5-flash-image"
     await engine.dispose()
 
 
-def test_resolve_auto_router_image_model():
-    asyncio.run(_run_auto_resolve())
+async def test_resolve_auto_router_image_model():
+    await _run_auto_resolve()
 
 
-def test_resolve_openrouter_auto_image_model_alias():
-    asyncio.run(_run_auto_resolve())
-    asyncio.run(_run_text_only_returns_none())
-    asyncio.run(_run_prefers_lite_gemini())
+async def test_resolve_openrouter_auto_image_model_alias():
+    await _run_auto_resolve()
+    await _run_text_only_returns_none()
+    await _run_prefers_lite_gemini()
 
 
-def test_list_candidates_orders_by_recent_reliability():
-    asyncio.run(_run_runtime_signals_prefer_reliable_model())
+async def test_list_candidates_orders_by_recent_reliability():
+    await _run_runtime_signals_prefer_reliable_model()

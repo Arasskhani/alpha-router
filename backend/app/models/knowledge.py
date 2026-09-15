@@ -25,7 +25,7 @@ from app.database import Base
 JsonDocument = JSON().with_variant(JSONB(), "postgresql")
 
 
-def _one_acl_target_constraint(name: str) -> CheckConstraint:
+def one_acl_target_constraint(name: str) -> CheckConstraint:
     return CheckConstraint(
         "("
         "(CASE WHEN user_id IS NOT NULL THEN 1 ELSE 0 END) + "
@@ -51,10 +51,7 @@ class KnowledgeBase(Base):
             name="chk_knowledge_bases_access_type",
         ),
         CheckConstraint(
-            "sensitivity IN ("
-            "'internal', 'confidential', 'hr_confidential', "
-            "'legal_privileged', 'finance_restricted'"
-            ")",
+            "sensitivity IN ('internal', 'confidential', 'hr_confidential', 'legal_privileged', 'finance_restricted')",
             name="chk_knowledge_bases_sensitivity",
         ),
         Index("ix_knowledge_bases_status_name", "status", "name"),
@@ -116,7 +113,7 @@ class KnowledgeBaseAccessAssignment(Base):
 
     __tablename__ = "knowledge_base_access_assignments"
     __table_args__ = (
-        _one_acl_target_constraint("chk_kb_access_one_target"),
+        one_acl_target_constraint("chk_kb_access_one_target"),
         CheckConstraint("effect IN ('allow', 'deny')", name="chk_kb_access_effect"),
         UniqueConstraint(
             "knowledge_base_id",
@@ -238,7 +235,7 @@ class KnowledgeDocumentAccessAssignment(Base):
 
     __tablename__ = "knowledge_document_access_assignments"
     __table_args__ = (
-        _one_acl_target_constraint("chk_knowledge_document_access_one_target"),
+        one_acl_target_constraint("chk_knowledge_document_access_one_target"),
         CheckConstraint(
             "effect IN ('allow', 'deny')",
             name="chk_knowledge_document_access_effect",
@@ -661,10 +658,7 @@ class IngestionJob(Base):
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_ingestion_jobs_idempotency"),
         CheckConstraint(
-            "status IN ("
-            "'pending', 'leased', 'processing', 'retry', "
-            "'succeeded', 'dead', 'cancelled'"
-            ")",
+            "status IN ('pending', 'leased', 'processing', 'retry', 'succeeded', 'dead', 'cancelled')",
             name="chk_ingestion_jobs_status",
         ),
         Index("ix_ingestion_jobs_due", "status", "next_attempt_at", "created_at"),

@@ -22,7 +22,8 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.config import effective_redis_url, get_settings
+from app.core.redis_client import get_redis
+from app.config import get_settings
 from app.services.observability import increment
 
 CAPACITY_BUSY_CODE = "code_interpreter_capacity_busy"
@@ -198,11 +199,7 @@ def _normalize_policy(
         operational_global,
         max(
             1,
-            int(
-                per_subject_max
-                if per_subject_max is not None
-                else base["per_subject_max"]
-            ),
+            int(per_subject_max if per_subject_max is not None else base["per_subject_max"]),
         ),
     )
     return {
@@ -213,11 +210,7 @@ def _normalize_policy(
             1,
             min(
                 300,
-                int(
-                    retry_after
-                    if retry_after is not None
-                    else base["retry_after"]
-                ),
+                int(retry_after if retry_after is not None else base["retry_after"]),
             ),
         ),
         "hard_global_max": hard_global,
@@ -280,25 +273,14 @@ def _unavailable_exception(retry_after: int) -> HTTPException:
 
 
 def _redis_client():
-    """Build a Redis asyncio client from effective_redis_url (may raise)."""
-    import redis.asyncio as redis_async
-
-    return redis_async.from_url(effective_redis_url(), decode_responses=True)
+    """Shared per-process client (may raise; never closed here)."""
+    return get_redis()
 
 
 def _normalize_permit(permit: CapacityPermit | str) -> str:
     if isinstance(permit, CapacityPermit):
         return permit.lease_id
     return str(permit)
-
-
-async def _aclose(client: Any) -> None:
-    if client is None:
-        return
-    try:
-        await client.aclose()
-    except Exception:
-        pass
 
 
 async def acquire_code_interpreter_turn(
@@ -334,11 +316,7 @@ async def acquire_code_interpreter_turn(
         )
         s_max = max(
             1,
-            int(
-                subject_limit
-                if subject_limit is not None
-                else cfg["per_subject_max"]
-            ),
+            int(subject_limit if subject_limit is not None else cfg["per_subject_max"]),
         )
         retry_after = cfg["retry_after"]
         result = await client.eval(
@@ -357,8 +335,6 @@ async def acquire_code_interpreter_turn(
         )
     except Exception as exc:
         raise _unavailable_exception(retry_after) from exc
-    finally:
-        await _aclose(client)
 
     status = int(result[0]) if result else 0
     if status == 1:
@@ -391,10 +367,8 @@ async def release_code_interpreter_turn(permit: CapacityPermit | str) -> bool:
             _SUBJECT_ZSET_PREFIX,
         )
         return bool(int(result or 0))
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return False)
         return False
-    finally:
-        await _aclose(client)
 
 
 async def heartbeat_code_interpreter_turn(permit: CapacityPermit | str) -> bool:
@@ -428,8 +402,6 @@ async def heartbeat_code_interpreter_turn(permit: CapacityPermit | str) -> bool:
         return bool(int(result or 0))
     except Exception as exc:
         raise _unavailable_exception(cfg["retry_after"]) from exc
-    finally:
-        await _aclose(client)
 
 
 async def code_interpreter_capacity_stats() -> dict[str, Any]:
@@ -451,8 +423,6 @@ async def code_interpreter_capacity_stats() -> dict[str, Any]:
         )
     except Exception as exc:
         raise _unavailable_exception(base_cfg["retry_after"]) from exc
-    finally:
-        await _aclose(client)
 
     limit = cfg["global_max"]
     return {
@@ -514,8 +484,6 @@ async def sync_code_interpreter_capacity_policy(db: Any) -> dict[str, int]:
         )
     except Exception as exc:
         raise _unavailable_exception(policy["retry_after_seconds"]) from exc
-    finally:
-        await _aclose(client)
     return policy
 
 

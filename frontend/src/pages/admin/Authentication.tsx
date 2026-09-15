@@ -34,6 +34,8 @@ type SamlCfg = {
   attr_display_name: string;
   strict: boolean;
   want_assertions_signed: boolean;
+  /** Server-enforced: both flags are locked to true unless ALLOW_INSECURE_SAML. */
+  security_locked?: boolean;
 };
 
 type OidcCfg = {
@@ -662,6 +664,7 @@ export default function Authentication() {
             <input
               type="checkbox"
               checked={saml.want_assertions_signed}
+              disabled={saml.security_locked !== false}
               onChange={(e) => setSaml({ ...saml, want_assertions_signed: e.target.checked })}
             />
             <span className="muted-text">Require signed assertions</span>
@@ -670,10 +673,17 @@ export default function Authentication() {
             <input
               type="checkbox"
               checked={saml.strict}
+              disabled={saml.security_locked !== false}
               onChange={(e) => setSaml({ ...saml, strict: e.target.checked })}
             />
             <span className="muted-text">Strict SAML validation</span>
           </label>
+          {saml.security_locked !== false && (
+            <p className="muted-text" style={{ marginTop: 6, fontSize: "0.85em" }}>
+              Signed assertions and strict validation are always on. Only a lab deployment with
+              ALLOW_INSECURE_SAML=true can change them.
+            </p>
+          )}
 
           <div className="dialog-actions" style={{ marginTop: 12 }}>
             <button className="btn" type="submit" disabled={saving}>

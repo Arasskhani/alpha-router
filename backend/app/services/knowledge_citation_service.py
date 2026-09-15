@@ -67,9 +67,7 @@ def verify_answer_citations(
     missing_required = bool(citations_required and available and not cited_ids)
     # Any citation opener that was not consumed by the strict grammar is
     # malformed and must never be turned into a clickable source.
-    malformed = (answer or "").count("[[cite:") != len(
-        _CITATION_RE.findall(answer or "")
-    )
+    malformed = (answer or "").count("[[cite:") != len(_CITATION_RE.findall(answer or ""))
     return CitationVerification(
         valid=not unknown and not missing_required and not malformed,
         cited_ids=cited_ids,

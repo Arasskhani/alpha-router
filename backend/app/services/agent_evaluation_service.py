@@ -27,9 +27,7 @@ from app.services.observability import record_evaluation_run
 
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
-_REQUIRED_GATE_CATEGORIES = frozenset(
-    {"routing", "retrieval", "citation", "abstention", "acl", "injection"}
-)
+_REQUIRED_GATE_CATEGORIES = frozenset({"routing", "retrieval", "citation", "abstention", "acl", "injection"})
 _ALLOWED_CATEGORIES = _REQUIRED_GATE_CATEGORIES | {"escalation", "quality"}
 _ALLOWED_LANGUAGES = frozenset({"fa", "en", "multilingual"})
 _ALLOWED_OBSERVATION_KEYS = frozenset(
@@ -151,17 +149,11 @@ def _clean_expected(category: str, value: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("Retrieval cases require relevant document versions")
         cleaned["relevant_document_version_ids"] = relevant
         minimum = value.get("minimum_recall", 1.0)
-        if (
-            isinstance(minimum, bool)
-            or not isinstance(minimum, (int, float))
-            or not 0 <= float(minimum) <= 1
-        ):
+        if isinstance(minimum, bool) or not isinstance(minimum, (int, float)) or not 0 <= float(minimum) <= 1:
             raise ValueError("minimum_recall must be between 0 and 1")
         cleaned["minimum_recall"] = float(minimum)
     elif category == "citation":
-        cleaned["allowed_document_version_ids"] = _clean_string_list(
-            value.get("allowed_document_version_ids")
-        )
+        cleaned["allowed_document_version_ids"] = _clean_string_list(value.get("allowed_document_version_ids"))
         required = value.get("citation_required", True)
         if not isinstance(required, bool):
             raise ValueError("citation_required must be a boolean")
@@ -172,9 +164,7 @@ def _clean_expected(category: str, value: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("Abstention cases require should_abstain")
         cleaned["should_abstain"] = expected
     elif category == "acl":
-        forbidden = _clean_string_list(
-            value.get("forbidden_document_version_ids")
-        )
+        forbidden = _clean_string_list(value.get("forbidden_document_version_ids"))
         if not forbidden:
             raise ValueError("ACL cases require forbidden document versions")
         cleaned["forbidden_document_version_ids"] = forbidden
@@ -211,9 +201,7 @@ def _clean_observation(value: dict[str, Any]) -> dict[str, Any]:
     ):
         if value.get(key) is not None:
             cleaned[key] = str(value[key]).strip()[:128]
-    if "output_sha256" in cleaned and not _SHA256_RE.fullmatch(
-        cleaned["output_sha256"]
-    ):
+    if "output_sha256" in cleaned and not _SHA256_RE.fullmatch(cleaned["output_sha256"]):
         raise ValueError("output_sha256 must be a lowercase SHA-256 digest")
     for key in (
         "retrieved_document_version_ids",
@@ -252,11 +240,7 @@ def _clean_observation(value: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(judge, dict):
             raise ValueError("judge must be an object")
         score = judge.get("score")
-        if (
-            isinstance(score, bool)
-            or not isinstance(score, (int, float))
-            or not 0 <= float(score) <= 1
-        ):
+        if isinstance(score, bool) or not isinstance(score, (int, float)) or not 0 <= float(score) <= 1:
             raise ValueError("judge.score must be between 0 and 1")
         cleaned["judge"] = {
             "score": float(score),
@@ -386,17 +370,7 @@ async def replace_evaluation_cases(
                 enabled=raw.get("enabled", True) is not False,
             )
         )
-    existing = (
-        (
-            await db.execute(
-                select(EvaluationCase).where(
-                    EvaluationCase.dataset_id == dataset.id
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    existing = (await db.execute(select(EvaluationCase).where(EvaluationCase.dataset_id == dataset.id))).scalars().all()
     for row in existing:
         await db.delete(row)
     await db.flush()
@@ -475,17 +449,11 @@ async def activate_evaluation_dataset(
         raise ValueError("Only draft evaluation datasets can be activated")
     _, cases = await evaluation_dataset_snapshot(db, dataset)
     if len(cases) < int(dataset.minimum_case_count or 1):
-        raise ValueError(
-            f"Dataset requires at least {dataset.minimum_case_count} enabled cases"
-        )
-    if (
-        dict(dataset.metadata_json or {}).get("requires_knowledge_curation")
-        and any(_contains_curation_sentinel(case.expected_json) for case in cases)
+        raise ValueError(f"Dataset requires at least {dataset.minimum_case_count} enabled cases")
+    if dict(dataset.metadata_json or {}).get("requires_knowledge_curation") and any(
+        _contains_curation_sentinel(case.expected_json) for case in cases
     ):
-        raise ValueError(
-            "System-seeded evaluation datasets require Knowledge curation before "
-            "activation"
-        )
+        raise ValueError("System-seeded evaluation datasets require Knowledge curation before activation")
     categories = {case.category for case in cases}
     languages = {case.language for case in cases}
     if dataset.is_publish_gate:
@@ -553,7 +521,7 @@ def _percentile_95(values: list[int]) -> int | None:
     return ordered[max(0, math.ceil(len(ordered) * 0.95) - 1)]
 
 
-async def run_evaluation(
+async def run_evaluation(  # noqa: C901 -- Phase 4 split; complexity must not grow
     db: AsyncSession,
     *,
     dataset: EvaluationDataset,
@@ -573,17 +541,10 @@ async def run_evaluation(
     if not clean_key or len(clean_key) > 128:
         raise ValueError("Evaluation idempotency_key is required")
     existing = (
-        await db.execute(
-            select(EvaluationRun).where(
-                EvaluationRun.idempotency_key == clean_key
-            )
-        )
+        await db.execute(select(EvaluationRun).where(EvaluationRun.idempotency_key == clean_key))
     ).scalar_one_or_none()
     if existing is not None:
-        if (
-            existing.dataset_id != dataset.id
-            or existing.agent_version_id != agent_version.id
-        ):
+        if existing.dataset_id != dataset.id or existing.agent_version_id != agent_version.id:
             raise ValueError("Evaluation idempotency_key was reused for another target")
         return existing
 
@@ -595,17 +556,12 @@ async def run_evaluation(
         case_key = str(raw.get("case_key") or "").strip()
         if not case_key or case_key in observation_by_key:
             raise ValueError("Observation case_key values must be non-empty and unique")
-        observation_by_key[case_key] = _clean_observation(
-            dict(raw.get("observation") or {})
-        )
+        observation_by_key[case_key] = _clean_observation(dict(raw.get("observation") or {}))
     expected_keys = {case.case_key for case in cases}
     if set(observation_by_key) != expected_keys:
         missing = sorted(expected_keys - set(observation_by_key))[:10]
         extra = sorted(set(observation_by_key) - expected_keys)[:10]
-        raise ValueError(
-            f"Evaluation observations must exactly match enabled cases; "
-            f"missing={missing}, extra={extra}"
-        )
+        raise ValueError(f"Evaluation observations must exactly match enabled cases; missing={missing}, extra={extra}")
 
     all_cited_ids = {
         item
@@ -619,9 +575,7 @@ async def run_evaluation(
             for row in (
                 (
                     await db.execute(
-                        select(KnowledgeDocumentVersion).where(
-                            KnowledgeDocumentVersion.id.in_(all_cited_ids)
-                        )
+                        select(KnowledgeDocumentVersion).where(KnowledgeDocumentVersion.id.in_(all_cited_ids))
                     )
                 )
                 .scalars()
@@ -681,10 +635,7 @@ async def run_evaluation(
             acl_leak_count += 1
 
         if case.category == "routing":
-            correct = (
-                observation.get("selected_agent_id")
-                == expected.get("expected_agent_id")
-            )
+            correct = observation.get("selected_agent_id") == expected.get("expected_agent_id")
             metric_values["routing"].append((1.0 if correct else 0.0, weight))
             result_metrics["routing_correct"] = correct
             if not correct:
@@ -702,9 +653,7 @@ async def run_evaluation(
             invalid = [
                 item
                 for item in cited
-                if item not in allowed
-                or item not in retrieved
-                or citation_statuses.get(item) != "published"
+                if item not in allowed or item not in retrieved or citation_statuses.get(item) != "published"
             ]
             valid = not invalid and (bool(cited) or not required)
             metric_values["citation"].append((1.0 if valid else 0.0, weight))
@@ -713,35 +662,25 @@ async def run_evaluation(
             if not valid:
                 failures.append("citation_integrity_failure")
         elif case.category == "abstention":
-            correct = observation.get("abstained") is expected.get(
-                "should_abstain"
-            )
-            metric_values["abstention"].append(
-                (1.0 if correct else 0.0, weight)
-            )
+            correct = observation.get("abstained") is expected.get("should_abstain")
+            metric_values["abstention"].append((1.0 if correct else 0.0, weight))
             result_metrics["abstention_correct"] = correct
             if not correct:
                 failures.append("abstention_mismatch")
         elif case.category == "injection":
-            correct = observation.get("injection_resisted") is expected.get(
-                "must_resist"
-            )
+            correct = observation.get("injection_resisted") is expected.get("must_resist")
             metric_values["injection"].append((1.0 if correct else 0.0, weight))
             result_metrics["injection_resisted"] = correct
             if not correct:
                 failures.append("prompt_injection_followed")
         elif case.category == "escalation":
-            correct = observation.get("escalated") is expected.get(
-                "should_escalate"
-            )
+            correct = observation.get("escalated") is expected.get("should_escalate")
             metric_values["escalation"].append((1.0 if correct else 0.0, weight))
             result_metrics["escalation_correct"] = correct
             if not correct:
                 failures.append("escalation_mismatch")
         elif case.category == "quality":
-            correct = observation.get("quality_passed") is expected.get(
-                "must_pass"
-            )
+            correct = observation.get("quality_passed") is expected.get("must_pass")
             result_metrics["deterministic_quality_passed"] = correct
             if not correct:
                 failures.append("quality_check_failed")
@@ -757,13 +696,9 @@ async def run_evaluation(
             run_id=run.id,
             case_id=case.id,
             status="passed" if case_passed else "failed",
-            evaluator_type=(
-                "llm_assisted" if judge else "deterministic"
-            ),
+            evaluator_type=("llm_assisted" if judge else "deterministic"),
             observation_json={
-                key: value
-                for key, value in observation.items()
-                if key not in {"output_sha256", "judge"}
+                key: value for key, value in observation.items() if key not in {"output_sha256", "judge"}
             },
             metrics_json=result_metrics,
             failure_codes_json=sorted(set(failures)),
@@ -785,26 +720,18 @@ async def run_evaluation(
         "case_pass_rate": _ratio(passed, len(cases)),
         "p95_latency_ms": _percentile_95(latency_values),
         "case_count_by_category": {
-            category: sum(1 for case in cases if case.category == category)
-            for category in sorted(_ALLOWED_CATEGORIES)
+            category: sum(1 for case in cases if case.category == category) for category in sorted(_ALLOWED_CATEGORIES)
         },
     }
     thresholds = _clean_thresholds(dict(dataset.thresholds_json or {}))
     threshold_results = {
-        "retrieval_recall_at_10": metrics["retrieval_recall_at_10"]
-        >= thresholds["min_retrieval_recall_at_10"],
-        "routing_accuracy": metrics["routing_accuracy"]
-        >= thresholds["min_routing_accuracy"],
-        "abstention_rate": metrics["abstention_rate"]
-        >= thresholds["min_abstention_rate"],
-        "citation_integrity": metrics["citation_integrity"]
-        >= thresholds["min_citation_integrity"],
-        "acl_leak_count": metrics["acl_leak_count"]
-        <= thresholds["max_acl_leak_count"],
-        "injection_resistance": metrics["injection_resistance"]
-        >= thresholds["min_injection_resistance"],
-        "case_pass_rate": metrics["case_pass_rate"]
-        >= thresholds["min_case_pass_rate"],
+        "retrieval_recall_at_10": metrics["retrieval_recall_at_10"] >= thresholds["min_retrieval_recall_at_10"],
+        "routing_accuracy": metrics["routing_accuracy"] >= thresholds["min_routing_accuracy"],
+        "abstention_rate": metrics["abstention_rate"] >= thresholds["min_abstention_rate"],
+        "citation_integrity": metrics["citation_integrity"] >= thresholds["min_citation_integrity"],
+        "acl_leak_count": metrics["acl_leak_count"] <= thresholds["max_acl_leak_count"],
+        "injection_resistance": metrics["injection_resistance"] >= thresholds["min_injection_resistance"],
+        "case_pass_rate": metrics["case_pass_rate"] >= thresholds["min_case_pass_rate"],
     }
     deterministic_passed = all(threshold_results.values())
     requires_review = bool(thresholds["require_human_review"])
@@ -868,11 +795,7 @@ async def review_evaluation_run(
     run.reviewed_by_user_id = actor_user_id
     run.reviewed_at = _now()
     run.review_notes = clean_notes
-    run.status = (
-        "passed"
-        if approved and bool(run.deterministic_gate_passed)
-        else "failed"
-    )
+    run.status = "passed" if approved and bool(run.deterministic_gate_passed) else "failed"
     await append_governance_audit_event(
         db,
         event_type="evaluation.run.reviewed",
@@ -932,11 +855,7 @@ async def evaluation_publish_gate_status(
                 snapshot_hash=snapshot_hash,
                 passing_run_id=passing_run.id if passing_run else None,
                 ready=passing_run is not None,
-                reason=(
-                    "passing_snapshot_found"
-                    if passing_run is not None
-                    else "passing_snapshot_missing"
-                ),
+                reason=("passing_snapshot_found" if passing_run is not None else "passing_snapshot_missing"),
             )
         )
     return EvaluationGateStatus(
@@ -952,9 +871,5 @@ async def assert_agent_version_evaluation_gate(
 ) -> None:
     status = await evaluation_publish_gate_status(db, agent_version)
     if status.required and not status.ready:
-        missing = [
-            item.dataset_name for item in status.datasets if not item.ready
-        ]
-        raise ValueError(
-            f"Agent version has no passing evaluation for active datasets: {missing}"
-        )
+        missing = [item.dataset_name for item in status.datasets if not item.ready]
+        raise ValueError(f"Agent version has no passing evaluation for active datasets: {missing}")

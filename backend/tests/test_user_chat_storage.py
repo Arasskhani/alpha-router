@@ -1,6 +1,6 @@
 """Tests for DB-backed chat storage."""
 
-import asyncio
+import pytest
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -188,7 +188,7 @@ async def _run_roundtrip() -> None:
                 {"title": "Conflict"},
                 expected_revision=1,
             )
-            assert False, "expected RevisionConflictError"
+            pytest.fail("expected RevisionConflictError")
         except RevisionConflictError as exc:
             assert exc.current_revision >= 2
 
@@ -211,8 +211,8 @@ async def _run_roundtrip() -> None:
     await engine.dispose()
 
 
-def test_chat_store_roundtrip():
-    asyncio.run(_run_roundtrip())
+async def test_chat_store_roundtrip():
+    await _run_roundtrip()
 
 
 def test_dt_to_ms_interprets_naive_as_utc():
@@ -221,7 +221,7 @@ def test_dt_to_ms_interprets_naive_as_utc():
     from app.services.user_chat_storage_service import _dt_to_ms
 
     naive = dt.datetime(2026, 1, 15, 12, 0, 0)
-    expected = int(dt.datetime(2026, 1, 15, 12, 0, 0, tzinfo=dt.timezone.utc).timestamp() * 1000)
+    expected = int(dt.datetime(2026, 1, 15, 12, 0, 0, tzinfo=dt.UTC).timestamp() * 1000)
     assert _dt_to_ms(naive) == expected
 
 
@@ -270,14 +270,18 @@ async def _run_activity_filters() -> None:
 
         cutoff_ms = _dt_to_ms(dt.datetime.utcnow() - dt.timedelta(days=7))
         recent, recent_total, older_total = await list_chat_sessions(
-            session, user.id, min_activity_ms=cutoff_ms,
+            session,
+            user.id,
+            min_activity_ms=cutoff_ms,
         )
         assert recent_total >= 1
         assert any(s["id"] == "new" for s in recent)
         assert older_total >= 1
 
         older, older_count, _ = await list_chat_sessions(
-            session, user.id, max_activity_ms=cutoff_ms,
+            session,
+            user.id,
+            max_activity_ms=cutoff_ms,
         )
         assert older_count >= 1
         assert any(s["id"] == "old" for s in older)
@@ -288,8 +292,8 @@ def sessions_have_last_message_at(rows):
     return all("lastMessageAt" in r for r in rows)
 
 
-def test_activity_filters():
-    asyncio.run(_run_activity_filters())
+async def test_activity_filters():
+    await _run_activity_filters()
 
 
 def test_compact_attachment_strips_data_url_for_storage():
@@ -356,5 +360,5 @@ async def _run_attachment_append():
     await engine.dispose()
 
 
-def test_append_attachment_message_without_storage_limit_error():
-    asyncio.run(_run_attachment_append())
+async def test_append_attachment_message_without_storage_limit_error():
+    await _run_attachment_append()

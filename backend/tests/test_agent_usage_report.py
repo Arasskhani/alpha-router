@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime
 import uuid
 
@@ -110,5 +109,5 @@ async def _agent_usage_groups_and_filters() -> None:
     await engine.dispose()
 
 
-def test_agent_usage_report_groups_and_filters() -> None:
-    asyncio.run(_agent_usage_groups_and_filters())
+async def test_agent_usage_report_groups_and_filters() -> None:
+    await _agent_usage_groups_and_filters()

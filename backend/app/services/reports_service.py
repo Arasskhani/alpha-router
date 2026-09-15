@@ -39,9 +39,7 @@ async def _provider_map(db: AsyncSession) -> dict[str, str]:
 
 
 async def users_for_plan(db: AsyncSession, plan_id: int) -> list[int]:
-    assigns = (
-        await db.execute(select(PlanAssignment).where(PlanAssignment.plan_id == plan_id))
-    ).scalars().all()
+    assigns = (await db.execute(select(PlanAssignment).where(PlanAssignment.plan_id == plan_id))).scalars().all()
     user_ids: set[int] = set()
     group_ids: set[int] = set()
     departments: set[str] = set()
@@ -54,9 +52,7 @@ async def users_for_plan(db: AsyncSession, plan_id: int) -> list[int]:
             departments.add(str(a.department))
     if group_ids:
         rows = (
-            await db.execute(
-                select(user_group_members.c.user_id).where(user_group_members.c.group_id.in_(group_ids))
-            )
+            await db.execute(select(user_group_members.c.user_id).where(user_group_members.c.group_id.in_(group_ids)))
         ).all()
         user_ids.update(int(r[0]) for r in rows if r[0] is not None)
     if departments:
@@ -78,10 +74,7 @@ def _apply_log_filters(q, *, start: datetime | None, end: datetime | None, user_
     if end is not None:
         q = q.where(RequestLog.request_time <= end)
     if user_ids is not None:
-        if not user_ids:
-            q = q.where(RequestLog.user_id == -1)
-        else:
-            q = q.where(RequestLog.user_id.in_(user_ids))
+        q = q.where(RequestLog.user_id == -1) if not user_ids else q.where(RequestLog.user_id.in_(user_ids))
     return q
 
 
@@ -194,13 +187,17 @@ async def report_org_cost_summary(db: AsyncSession, start: datetime, end: dateti
 
 async def report_users_near_budget_limit(db: AsyncSession, threshold_pct: float) -> pd.DataFrame:
     users = (
-        await db.execute(
-            select(User).where(
-                User.deleted_at.is_(None),
-                User.monthly_budget_usd > 0,
+        (
+            await db.execute(
+                select(User).where(
+                    User.deleted_at.is_(None),
+                    User.monthly_budget_usd > 0,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     rows = []
     for u in users:
         budget = float(u.monthly_budget_usd or 0)
@@ -223,9 +220,7 @@ async def report_users_near_budget_limit(db: AsyncSession, threshold_pct: float)
 
 
 async def report_users_without_budget(db: AsyncSession) -> pd.DataFrame:
-    users = (
-        await db.execute(select(User).where(User.deleted_at.is_(None)))
-    ).scalars().all()
+    users = (await db.execute(select(User).where(User.deleted_at.is_(None)))).scalars().all()
     rows = []
     for u in users:
         direct = await get_user_direct_assignment(db, u.id)
@@ -250,9 +245,7 @@ async def report_department_top_models(
     user_ids = [
         int(r[0])
         for r in (
-            await db.execute(
-                select(User.id).where(User.deleted_at.is_(None), User.department == department)
-            )
+            await db.execute(select(User.id).where(User.deleted_at.is_(None), User.department == department))
         ).all()
         if r[0] is not None
     ]
@@ -465,9 +458,7 @@ async def report_agent_usage(
     )
 
 
-async def report_usage_by_app(
-    db: AsyncSession, start: datetime, end: datetime, app: str | None
-) -> pd.DataFrame:
+async def report_usage_by_app(db: AsyncSession, start: datetime, end: datetime, app: str | None) -> pd.DataFrame:
     q = (
         select(
             RequestLog.client_app,
@@ -733,9 +724,7 @@ async def report_slow_requests(
     )
 
 
-async def report_activity_summary(
-    db: AsyncSession, start: datetime, end: datetime, group_by: str
-) -> pd.DataFrame:
+async def report_activity_summary(db: AsyncSession, start: datetime, end: datetime, group_by: str) -> pd.DataFrame:
     if group_by == "user":
         col = RequestLog.username
         label = "username"
@@ -773,10 +762,14 @@ async def report_activity_summary(
 
 async def report_deactivated_users(db: AsyncSession) -> pd.DataFrame:
     users = (
-        await db.execute(
-            select(User).where(User.deleted_at.is_(None), User.is_active == False)  # noqa: E712
+        (
+            await db.execute(
+                select(User).where(User.deleted_at.is_(None), User.is_active == False)  # noqa: E712
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return pd.DataFrame(
         [
             {
@@ -791,19 +784,21 @@ async def report_deactivated_users(db: AsyncSession) -> pd.DataFrame:
     )
 
 
-async def report_users_no_recent_login(
-    db: AsyncSession, end: datetime, inactive_days: int
-) -> pd.DataFrame:
+async def report_users_no_recent_login(db: AsyncSession, end: datetime, inactive_days: int) -> pd.DataFrame:
     cutoff = end - timedelta(days=inactive_days)
     users = (
-        await db.execute(
-            select(User).where(
-                User.deleted_at.is_(None),
-                User.is_active == True,  # noqa: E712
-                or_(User.last_login_at.is_(None), User.last_login_at < cutoff),
+        (
+            await db.execute(
+                select(User).where(
+                    User.deleted_at.is_(None),
+                    User.is_active == True,  # noqa: E712
+                    or_(User.last_login_at.is_(None), User.last_login_at < cutoff),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return pd.DataFrame(
         [
             {
@@ -819,13 +814,17 @@ async def report_users_no_recent_login(
 
 async def report_new_users(db: AsyncSession, start: datetime, end: datetime) -> pd.DataFrame:
     users = (
-        await db.execute(
-            select(User).where(
-                User.created_at >= start,
-                User.created_at <= end,
+        (
+            await db.execute(
+                select(User).where(
+                    User.created_at >= start,
+                    User.created_at <= end,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return pd.DataFrame(
         [
             {
@@ -842,14 +841,18 @@ async def report_new_users(db: AsyncSession, start: datetime, end: datetime) -> 
 
 async def report_deleted_users(db: AsyncSession, start: datetime, end: datetime) -> pd.DataFrame:
     users = (
-        await db.execute(
-            select(User).where(
-                User.deleted_at.isnot(None),
-                User.deleted_at >= start,
-                User.deleted_at <= end,
+        (
+            await db.execute(
+                select(User).where(
+                    User.deleted_at.isnot(None),
+                    User.deleted_at >= start,
+                    User.deleted_at <= end,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return pd.DataFrame(
         [
             {
@@ -872,17 +875,12 @@ async def report_auth_provider_distribution(db: AsyncSession) -> pd.DataFrame:
             .order_by(func.count().desc())
         )
     ).all()
-    return pd.DataFrame(
-        [{"auth_provider": r[0] or "—", "user_count": int(r[1] or 0)} for r in rows]
-    )
+    return pd.DataFrame([{"auth_provider": r[0] or "—", "user_count": int(r[1] or 0)} for r in rows])
 
 
 async def report_users_without_group(db: AsyncSession, auth_provider: str | None) -> pd.DataFrame:
     member_exists = (
-        select(user_group_members.c.user_id)
-        .where(user_group_members.c.user_id == User.id)
-        .correlate(User)
-        .exists()
+        select(user_group_members.c.user_id).where(user_group_members.c.user_id == User.id).correlate(User).exists()
     )
     q = select(User).where(
         User.deleted_at.is_(None),
@@ -905,18 +903,14 @@ async def report_users_without_group(db: AsyncSession, auth_provider: str | None
     )
 
 
-async def report_group_members_usage(
-    db: AsyncSession, group_id: int, start: datetime, end: datetime
-) -> pd.DataFrame:
+async def report_group_members_usage(db: AsyncSession, group_id: int, start: datetime, end: datetime) -> pd.DataFrame:
     group = await db.get(UserGroup, group_id)
     if not group:
         raise HTTPException(404, "Group not found")
     member_ids = [
         int(r[0])
         for r in (
-            await db.execute(
-                select(user_group_members.c.user_id).where(user_group_members.c.group_id == group_id)
-            )
+            await db.execute(select(user_group_members.c.user_id).where(user_group_members.c.group_id == group_id))
         ).all()
         if r[0] is not None
     ]
@@ -1016,9 +1010,7 @@ async def report_alpha_router_api_key_usage(
         .order_by(func.sum(RequestLog.total_cost_usd).desc())
     )
     if alpha_router_api_key_id:
-        q = q.where(
-            RequestLog.alpha_router_api_key_id == alpha_router_api_key_id
-        )
+        q = q.where(RequestLog.alpha_router_api_key_id == alpha_router_api_key_id)
     rows = (await db.execute(q)).all()
     data = []
     for key_id, cost, count in rows:
@@ -1039,10 +1031,14 @@ async def report_alpha_router_api_keys_near_credit_limit(
     threshold_pct: float,
 ) -> pd.DataFrame:
     keys = (
-        await db.execute(
-            select(AlphaRouterApiKey).where(AlphaRouterApiKey.is_active == True)  # noqa: E712
+        (
+            await db.execute(
+                select(AlphaRouterApiKey).where(AlphaRouterApiKey.is_active == True)  # noqa: E712
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     rows = []
     for k in keys:
         limit = float(k.credit_limit_usd or 0)
@@ -1064,7 +1060,7 @@ async def report_alpha_router_api_keys_near_credit_limit(
     return pd.DataFrame(rows)
 
 
-async def build_report(db: AsyncSession, report_type: str, params: dict[str, Any]) -> pd.DataFrame:
+async def build_report(db: AsyncSession, report_type: str, params: dict[str, Any]) -> pd.DataFrame:  # noqa: C901 -- Phase 4 split; complexity must not grow
     from app.services.reports_catalog import REPORT_IDS
 
     if report_type not in REPORT_IDS:
@@ -1112,9 +1108,7 @@ async def build_report(db: AsyncSession, report_type: str, params: dict[str, Any
     if report_type == "model_error_rates":
         return await report_model_error_rates(db, start, end, params.get("model_id"))
     if report_type == "failed_requests":
-        return await report_failed_requests(
-            db, start, end, params.get("user_id"), params.get("model_id")
-        )
+        return await report_failed_requests(db, start, end, params.get("user_id"), params.get("model_id"))
     if report_type == "slow_models_latency":
         return await report_slow_models_latency(db, start, end, float(params.get("latency_ms") or 10000))
     if report_type == "slow_requests":
@@ -1178,6 +1172,7 @@ async def build_report(db: AsyncSession, report_type: str, params: dict[str, Any
 
 
 # --- export helpers (unchanged surface) ---
+
 
 def _table_style_header() -> list[tuple]:
     from reportlab.lib import colors
@@ -1256,169 +1251,6 @@ def _filter_lines(filters: dict | None) -> list[str]:
     if filters.get("response_status"):
         lines.append(f"Response status: {filters['response_status']}")
     return lines
-
-
-def export_activity_dashboard_pdf(payload: dict, meta: dict) -> tuple[bytes, str, str]:
-    """Render Activity dashboard content (matches on-screen summary)."""
-    from reportlab.lib import colors
-    from reportlab.lib.pagesizes import letter
-    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-    from reportlab.lib.units import inch
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=letter, topMargin=0.5 * inch, bottomMargin=0.5 * inch)
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle("ActivityTitle", parent=styles["Heading1"], fontSize=16, spaceAfter=6)
-    sub_style = ParagraphStyle("ActivitySub", parent=styles["Normal"], textColor=colors.grey, spaceAfter=10)
-    h2 = ParagraphStyle("ActivityH2", parent=styles["Heading2"], fontSize=12, spaceBefore=12, spaceAfter=6)
-    story: list = []
-
-    title = meta.get("title") or "Activity"
-    story.append(Paragraph(title, title_style))
-    subtitle_parts = [
-        _period_label(payload.get("period") or "day"),
-        _group_by_label(payload.get("group_by") or "model"),
-        "UTC" if payload.get("timezone") == "utc" else "Local time",
-    ]
-    if meta.get("subtitle"):
-        subtitle_parts.insert(0, str(meta["subtitle"]))
-    story.append(Paragraph(" · ".join(subtitle_parts), sub_style))
-    filter_lines = _filter_lines(meta.get("filters"))
-    if filter_lines:
-        story.append(Paragraph("Filters: " + "; ".join(filter_lines), sub_style))
-
-    totals = payload.get("totals") or {}
-    story.append(Paragraph("Summary", h2))
-    summary_table = Table(
-        [
-            ["Metric", "Total"],
-            ["Spend (USD)", _fmt_num(float(totals.get("spend") or 0), decimals=4)],
-            ["Requests", _fmt_num(int(totals.get("requests") or 0), decimals=0)],
-            ["Tokens", _fmt_num(int(totals.get("tokens") or 0), decimals=0)],
-        ],
-        colWidths=[2.5 * inch, 2.5 * inch],
-    )
-    summary_table.setStyle(TableStyle(_table_style_header()))
-    story.append(summary_table)
-
-    segments = payload.get("models") or []
-    if segments:
-        story.append(Paragraph("Breakdown", h2))
-        seg_rows = [["Segment", "Spend (USD)", "Requests", "Tokens"]]
-        for s in segments:
-            seg_rows.append(
-                [
-                    str(s.get("label") or s.get("key") or ""),
-                    _fmt_num(float(s.get("spend") or 0), decimals=4),
-                    _fmt_num(int(s.get("requests") or 0), decimals=0),
-                    _fmt_num(int(s.get("tokens") or 0), decimals=0),
-                ]
-            )
-        seg_table = Table(seg_rows, repeatRows=1)
-        seg_table.setStyle(TableStyle(_table_style_header()))
-        story.append(seg_table)
-
-    prompts = meta.get("prompts") or payload.get("prompts") or {}
-    if prompts:
-        story.append(Paragraph("Prompts", h2))
-        prompts_rows = [
-            ["Metric", "Value"],
-            ["Total prompts", _fmt_num(int(prompts.get("total") or 0), decimals=0)],
-            ["Longest streak (days)", str(prompts.get("streak_days") or 0)],
-            [
-                str(prompts.get("period_footer_label") or "Period"),
-                _fmt_num(int(prompts.get("period_prompts") or 0), decimals=0) + " prompts",
-            ],
-        ]
-        change = prompts.get("change_pct")
-        if change is not None:
-            prompts_rows.append(["Change vs previous period", f"{change}%"])
-        prompts_table = Table(prompts_rows, colWidths=[2.5 * inch, 2.5 * inch])
-        prompts_table.setStyle(TableStyle(_table_style_header()))
-        story.append(prompts_table)
-
-    top_models = payload.get("top_models") or []
-    if top_models:
-        story.append(Paragraph("Top models", h2))
-        top_rows = [["Model", "Spend (USD)", "Requests", "Tokens"]]
-        for m in top_models[:10]:
-            top_rows.append(
-                [
-                    str(m.get("label") or m.get("key") or ""),
-                    _fmt_num(float(m.get("spend") or 0), decimals=4),
-                    _fmt_num(int(m.get("requests") or 0), decimals=0),
-                    _fmt_num(int(m.get("tokens") or 0), decimals=0),
-                ]
-            )
-        top_table = Table(top_rows, repeatRows=1)
-        top_table.setStyle(TableStyle(_table_style_header()))
-        story.append(top_table)
-
-    insights = payload.get("insights") or {}
-    usage_stats = insights.get("usage_stats") or {}
-    if usage_stats:
-        story.append(Paragraph("Usage insights (365-day window)", h2))
-        ins_rows = [["Metric", "Streak (days)", "Avg/day", "Avg/week", "Total"]]
-        for metric_key, label in (("spend", "Spend"), ("requests", "Requests"), ("tokens", "Tokens")):
-            stats = usage_stats.get(metric_key) or {}
-            avg_day = stats.get("avg_day", 0)
-            avg_week = stats.get("avg_week", 0)
-            total = stats.get("total", 0)
-            if metric_key == "spend":
-                ins_rows.append(
-                    [
-                        label,
-                        str(stats.get("streak_days") or 0),
-                        _fmt_num(float(avg_day), decimals=2),
-                        _fmt_num(float(avg_week), decimals=2),
-                        _fmt_num(float(total), decimals=2),
-                    ]
-                )
-            else:
-                ins_rows.append(
-                    [
-                        label,
-                        str(stats.get("streak_days") or 0),
-                        _fmt_num(int(avg_day), decimals=0),
-                        _fmt_num(int(avg_week), decimals=0),
-                        _fmt_num(int(total), decimals=0),
-                    ]
-                )
-        ins_table = Table(ins_rows, repeatRows=1)
-        ins_table.setStyle(TableStyle(_table_style_header()))
-        story.append(ins_table)
-
-    chart = payload.get("chart") or []
-    if chart and segments:
-        seg_keys = [s.get("key") for s in segments if s.get("key")]
-        seg_labels = [str(s.get("label") or s.get("key")) for s in segments]
-
-        def _chart_table(metric: str, title: str) -> None:
-            header = ["Bucket", *seg_labels]
-            rows = [header]
-            for row in chart:
-                line = [str(row.get("label") or row.get("bucket") or "")]
-                for seg in seg_keys:
-                    val = row.get(f"{metric}_{seg}")
-                    if metric == "spend":
-                        line.append(_fmt_num(float(val or 0), decimals=4))
-                    else:
-                        line.append(_fmt_num(int(val or 0), decimals=0))
-                rows.append(line)
-            if len(rows) <= 1:
-                return
-            story.append(Paragraph(title, h2))
-            tbl = Table(rows, repeatRows=1)
-            tbl.setStyle(TableStyle(_table_style_header()))
-            story.append(tbl)
-
-        _chart_table("spend", "Spend over time")
-        _chart_table("requests", "Requests over time")
-        _chart_table("tokens", "Tokens over time")
-
-    doc.build(story)
-    return buf.getvalue(), "application/pdf", "activity-dashboard.pdf"
 
 
 def export_dataframe(df: pd.DataFrame, fmt: str, report_type: str = "report") -> tuple[bytes, str, str]:

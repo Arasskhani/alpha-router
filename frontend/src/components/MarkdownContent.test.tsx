@@ -56,3 +56,13 @@ describe("authenticated Markdown media downloads", () => {
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:report");
   });
 });
+
+describe("MarkdownContent render stability", () => {
+  it("is memoised and uses module-level plugin/component tables", async () => {
+    const mod = await import("./MarkdownContent");
+    const Comp = mod.default as unknown as { $$typeof?: symbol; type?: unknown };
+    // React.memo wraps the function: the export is a memo element type, not the bare function.
+    expect(String(Comp.$$typeof)).toBe("Symbol(react.memo)");
+    expect(typeof Comp.type).toBe("function");
+  });
+});

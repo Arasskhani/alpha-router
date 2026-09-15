@@ -1,7 +1,5 @@
 """Model allowlist for gateway API keys."""
 
-import asyncio
-
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -128,9 +126,7 @@ async def _test_owner_private_model_denied_for_other_owner() -> None:
             await set_model_access(db, private, access_type=ACCESS_PRIVATE, user_ids=[owner.id])
             key = await _key(db, owner_id=other.id)
             try:
-                await replace_key_allowed_models(
-                    db, key, restrict=True, model_ids=[private.id]
-                )
+                await replace_key_allowed_models(db, key, restrict=True, model_ids=[private.id])
             except ValueError as exc:
                 assert "Owner cannot access model" in str(exc)
             else:
@@ -148,13 +144,9 @@ async def _test_model_must_be_on_allowed_connection() -> None:
             anthropic = await _conn(db, "Anthropic")
             model = await _model(db, anthropic, "claude-3")
             key = await _key(db, owner_id=owner.id)
-            await replace_key_allowed_connections(
-                db, key, restrict=True, connection_ids=[openai.id]
-            )
+            await replace_key_allowed_connections(db, key, restrict=True, connection_ids=[openai.id])
             try:
-                await replace_key_allowed_models(
-                    db, key, restrict=True, model_ids=[model.id]
-                )
+                await replace_key_allowed_models(db, key, restrict=True, model_ids=[model.id])
             except ValueError as exc:
                 assert "allowed connection" in str(exc)
             else:
@@ -172,18 +164,12 @@ async def _test_resolve_respects_model_allowlist() -> None:
             allowed = await _model(db, conn, "gpt-4o")
             await _model(db, conn, "gpt-4o-mini")
             key = await _key(db, owner_id=owner.id)
-            await replace_key_allowed_models(
-                db, key, restrict=True, model_ids=[allowed.id]
-            )
+            await replace_key_allowed_models(db, key, restrict=True, model_ids=[allowed.id])
             allowlist = await allowed_model_ids_for_key(db, key.id)
-            row, _, _, _ = await resolve_model_and_key(
-                db, "gpt-4o", allowed_model_ids=allowlist
-            )
+            row, _, _, _ = await resolve_model_and_key(db, "gpt-4o", allowed_model_ids=allowlist)
             assert row is not None
             assert row.id == allowed.id
-            missing, _, _, _ = await resolve_model_and_key(
-                db, "gpt-4o-mini", allowed_model_ids=allowlist
-            )
+            missing, _, _, _ = await resolve_model_and_key(db, "gpt-4o-mini", allowed_model_ids=allowlist)
             assert missing is None
     finally:
         await engine.dispose()
@@ -206,12 +192,11 @@ async def _test_gateway_models_list_respects_model_allowlist() -> None:
                 key_hash=hash_api_key(raw),
                 is_active=True,
                 owner_user_id=owner.id,
+                unlimited_budget=True,  # no cap must now be explicit
             )
             db.add(key)
             await db.flush()
-            await replace_key_allowed_models(
-                db, key, restrict=True, model_ids=[m1.id]
-            )
+            await replace_key_allowed_models(db, key, restrict=True, model_ids=[m1.id])
             await db.commit()
 
             class _Headers:
@@ -233,28 +218,28 @@ async def _test_gateway_models_list_respects_model_allowlist() -> None:
         await engine.dispose()
 
 
-def test_unrestricted_key_returns_none_allowlist():
-    asyncio.run(_test_unrestricted_key_returns_none_allowlist())
+async def test_unrestricted_key_returns_none_allowlist():
+    await _test_unrestricted_key_returns_none_allowlist()
 
 
-def test_restricted_empty_allowlist_is_deny_all():
-    asyncio.run(_test_restricted_empty_allowlist_is_deny_all())
+async def test_restricted_empty_allowlist_is_deny_all():
+    await _test_restricted_empty_allowlist_is_deny_all()
 
 
-def test_owner_private_model_denied_for_other_owner():
-    asyncio.run(_test_owner_private_model_denied_for_other_owner())
+async def test_owner_private_model_denied_for_other_owner():
+    await _test_owner_private_model_denied_for_other_owner()
 
 
-def test_model_must_be_on_allowed_connection():
-    asyncio.run(_test_model_must_be_on_allowed_connection())
+async def test_model_must_be_on_allowed_connection():
+    await _test_model_must_be_on_allowed_connection()
 
 
-def test_resolve_respects_model_allowlist():
-    asyncio.run(_test_resolve_respects_model_allowlist())
+async def test_resolve_respects_model_allowlist():
+    await _test_resolve_respects_model_allowlist()
 
 
-def test_gateway_models_list_respects_model_allowlist():
-    asyncio.run(_test_gateway_models_list_respects_model_allowlist())
+async def test_gateway_models_list_respects_model_allowlist():
+    await _test_gateway_models_list_respects_model_allowlist()
 
 
 def test_model_policy_label():

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.branding import CHAT_CLIENT_APP
 from app.models.user import User
+from app.services.failure_details import failure_message
 from app.services.budget_service import budget_request_blocked, get_user_budget_state
 from app.services.chat_markers import (
     ATTACHMENT_MESSAGE_PREFIX,
@@ -18,13 +19,10 @@ from app.services.chat_markers import (
     VIDEO_MESSAGE_PREFIX,
     VIDEO_PENDING_MARKER,
 )
-from app.services.proxy_service import (
-    _apply_litellm_provider_kwargs,
-    _litellm_model_for_provider,
-    reserve_auxiliary_llm_usage,
-    resolve_model_and_key,
-    settle_auxiliary_usage,
-)
+from app.services.llm_providers import litellm_model_for_provider as _litellm_model_for_provider
+from app.services.provider_utils import _apply_litellm_provider_kwargs
+from app.services.model_resolution_service import resolve_model_and_key
+from app.services.usage_logging_service import reserve_auxiliary_llm_usage, settle_auxiliary_usage
 
 _TITLE_SYSTEM = (
     "You create short chat titles for a sidebar. Given the start of a conversation, "
@@ -67,14 +65,14 @@ def _parse_json_prompt(raw: str, prefix: str, fallback: str) -> str:
             user_text = str(payload.get("userText") or "").strip()
             if user_text:
                 return user_text
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
         pass
     return fallback
 
 
 def _normalize_content_for_title(content: str) -> str:
     t = (content or "").strip()
-    if not t or t == _IMAGE_PENDING or t == _VIDEO_PENDING:
+    if t in (_IMAGE_PENDING, _VIDEO_PENDING) or not t:
         return ""
     if t.startswith(_IMAGE_PREFIX):
         return _parse_json_prompt(t, _IMAGE_PREFIX, "Generated image")
@@ -134,11 +132,7 @@ async def generate_chat_title(
             {"role": "system", "content": _TITLE_SYSTEM},
             {
                 "role": "user",
-                "content": (
-                    "Conversation excerpt:\n\n"
-                    f"{_format_turns(messages)}\n\n"
-                    "Title:"
-                ),
+                "content": (f"Conversation excerpt:\n\n{_format_turns(messages)}\n\nTitle:"),
             },
         ],
         "api_key": api_key,
@@ -159,7 +153,7 @@ async def generate_chat_title(
             messages=kwargs["messages"],
             max_tokens=32,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return _sanitize_title(_fallback_title(m)
         return _sanitize_title(_fallback_title(messages))
 
     response = None
@@ -178,8 +172,8 @@ async def generate_chat_title(
         if title == "New chat":
             return _sanitize_title(_fallback_title(messages))
         return title
-    except Exception as exc:
-        error_message = str(exc)[:500]
+    except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
+        error_message = failure_message(exc)[:500]
         return _sanitize_title(_fallback_title(messages))
     finally:
         await settle_auxiliary_usage(

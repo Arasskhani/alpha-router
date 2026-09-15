@@ -16,6 +16,7 @@ FIELD_LABELS: dict[str, str] = {
     "name": "Name",
     "owner_user_id": "Owner",
     "credit_limit_usd": "Credit limit (USD)",
+    "unlimited_budget": "Unlimited budget",
     "reset_period": "Reset period",
     "expires_at": "Expiration",
     "is_active": "Active",
@@ -172,6 +173,36 @@ async def log_api_key_updated(
     )
 
 
+async def log_api_key_deleted(
+    db: AsyncSession,
+    *,
+    key: AlphaRouterApiKey,
+    actor: User,
+    actor_ip: str | None = None,
+) -> None:
+    """Deletion goes to the security audit table: the per-key changelog
+    cascades away with the key. Only the key prefix is recorded, never the
+    secret."""
+    from app.services.security_audit import log_security_event
+
+    await log_security_event(
+        db,
+        actor=actor,
+        actor_ip=actor_ip,
+        action="api_key_deleted",
+        resource_type="alpha_router_api_key",
+        resource_id=str(key.id),
+        detail={
+            "name": key.name,
+            "key_prefix": (getattr(key, "key_prefix", None) or "")[:12],
+            "owner_user_id": key.owner_user_id,
+            "credit_limit_usd": key.credit_limit_usd,
+            "unlimited_budget": bool(getattr(key, "unlimited_budget", False)),
+            "is_active": bool(key.is_active),
+        },
+    )
+
+
 async def log_api_key_status(
     db: AsyncSession,
     *,
@@ -216,9 +247,7 @@ async def fetch_api_key_changelog(
     actor_ids = {row.actor_user_id for row in rows if row.actor_user_id}
     actors: dict[int, User] = {}
     if actor_ids:
-        actor_rows = (
-            await db.execute(select(User).where(User.id.in_(actor_ids)))
-        ).scalars().all()
+        actor_rows = (await db.execute(select(User).where(User.id.in_(actor_ids)))).scalars().all()
         actors = {user.id: user for user in actor_rows}
 
     out: list[dict[str, Any]] = []

@@ -1,53 +1,59 @@
 import { Navigate, Route, Routes } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
+import RouteErrorBoundary from "./components/RouteErrorBoundary";
 import Login from "./pages/Login";
 import AdminLayout from "./pages/admin/AdminLayout";
 import UserLayout from "./pages/user/UserLayout";
-import AdminDashboard from "./pages/admin/Dashboard";
-import Connections from "./pages/admin/Connections";
-import ConnectionActivity from "./pages/admin/ConnectionActivity";
-import Models from "./pages/admin/Models";
-import AdminApiKeys from "./pages/admin/ApiKeys";
-import ApiKeyActivity from "./pages/admin/ApiKeyActivity";
-import ApiKeyLogs from "./pages/admin/ApiKeyLogs";
-import Plans from "./pages/admin/Plans";
-import Users from "./pages/admin/Users";
-import DeletedUsers from "./pages/admin/DeletedUsers";
-import UserActivity from "./pages/admin/UserActivity";
-import AdminUserMedia from "./pages/admin/AdminUserMedia";
-import Reports from "./pages/admin/Reports";
-import ApiLogs from "./pages/admin/ApiLogs";
-import Operations from "./pages/admin/Operations";
-import DatabaseMonitor from "./pages/admin/DatabaseMonitor";
-import ChatPanel from "./components/ChatPanel";
-import Authentication from "./pages/admin/Authentication";
-import SmtpServer from "./pages/admin/SmtpServer";
-import Groups from "./pages/admin/Groups";
-import GroupActivity from "./pages/admin/GroupActivity";
-import Docs from "./pages/admin/Docs";
-import RetentionPolicy from "./pages/admin/RetentionPolicy";
-import MemoryAdmin from "./pages/admin/Memory";
-import StorageManagement from "./pages/admin/StorageManagement";
-import MyActivity from "./pages/MyActivity";
-import MediaLibrary from "./pages/MediaLibrary";
-import UserManual from "./pages/user/UserManual";
-import Roles from "./pages/admin/Roles";
-import ProjectsPage from "./pages/Projects";
-import ProjectWorkspacePage from "./pages/ProjectWorkspace";
-import ProjectInviteClaimPage from "./pages/ProjectInviteClaim";
-import ProjectActivity, { AdminProjectActivityRedirect } from "./pages/ProjectActivity";
-import ProjectUsage from "./pages/admin/ProjectUsage";
-import AgentsOverview from "./pages/admin/AgentsOverview";
-import AgentStudio from "./pages/admin/AgentStudio";
-import KnowledgeBases from "./pages/admin/KnowledgeBases";
-import ToolRegistry from "./pages/admin/ToolRegistry";
-import AgentEvaluations from "./pages/admin/AgentEvaluations";
-import AgentApprovals from "./pages/admin/AgentApprovals";
-import AgentActivity from "./pages/admin/AgentActivity";
-import AgentUsageActivity from "./pages/admin/AgentUsageActivity";
-import SecuritySettings from "./pages/admin/SecuritySettings";
 import { isAdminPanelRole } from "./lib/rbac";
 import { bootstrapSession, type SessionInfo } from "./api";
+
+// Every page is its own chunk (Phase 4.6): the shell, the login page and the
+// layouts load first; a route downloads only when it is visited.
+const AdminDashboard = lazy(() => import("./pages/admin/Dashboard"));
+const Connections = lazy(() => import("./pages/admin/Connections"));
+const ConnectionActivity = lazy(() => import("./pages/admin/ConnectionActivity"));
+const Models = lazy(() => import("./pages/admin/Models"));
+const AdminApiKeys = lazy(() => import("./pages/admin/ApiKeys"));
+const ApiKeyActivity = lazy(() => import("./pages/admin/ApiKeyActivity"));
+const ApiKeyLogs = lazy(() => import("./pages/admin/ApiKeyLogs"));
+const Plans = lazy(() => import("./pages/admin/Plans"));
+const Users = lazy(() => import("./pages/admin/Users"));
+const DeletedUsers = lazy(() => import("./pages/admin/DeletedUsers"));
+const UserActivity = lazy(() => import("./pages/admin/UserActivity"));
+const AdminUserMedia = lazy(() => import("./pages/admin/AdminUserMedia"));
+const Reports = lazy(() => import("./pages/admin/Reports"));
+const ApiLogs = lazy(() => import("./pages/admin/ApiLogs"));
+const Operations = lazy(() => import("./pages/admin/Operations"));
+const DatabaseMonitor = lazy(() => import("./pages/admin/DatabaseMonitor"));
+const ChatPanel = lazy(() => import("./components/ChatPanel"));
+const Authentication = lazy(() => import("./pages/admin/Authentication"));
+const SmtpServer = lazy(() => import("./pages/admin/SmtpServer"));
+const Groups = lazy(() => import("./pages/admin/Groups"));
+const GroupActivity = lazy(() => import("./pages/admin/GroupActivity"));
+const Docs = lazy(() => import("./pages/admin/Docs"));
+const RetentionPolicy = lazy(() => import("./pages/admin/RetentionPolicy"));
+const MemoryAdmin = lazy(() => import("./pages/admin/Memory"));
+const StorageManagement = lazy(() => import("./pages/admin/StorageManagement"));
+const MyActivity = lazy(() => import("./pages/MyActivity"));
+const MediaLibrary = lazy(() => import("./pages/MediaLibrary"));
+const UserManual = lazy(() => import("./pages/user/UserManual"));
+const Roles = lazy(() => import("./pages/admin/Roles"));
+const ProjectsPage = lazy(() => import("./pages/Projects"));
+const ProjectWorkspacePage = lazy(() => import("./pages/ProjectWorkspace"));
+const ProjectInviteClaimPage = lazy(() => import("./pages/ProjectInviteClaim"));
+const ProjectActivity = lazy(() => import("./pages/ProjectActivity"));
+const AdminProjectActivityRedirect = lazy(() => import("./pages/ProjectActivity").then((m) => ({ default: m.AdminProjectActivityRedirect })));
+const ProjectUsage = lazy(() => import("./pages/admin/ProjectUsage"));
+const AgentsOverview = lazy(() => import("./pages/admin/AgentsOverview"));
+const AgentStudio = lazy(() => import("./pages/admin/AgentStudio"));
+const KnowledgeBases = lazy(() => import("./pages/admin/KnowledgeBases"));
+const ToolRegistry = lazy(() => import("./pages/admin/ToolRegistry"));
+const AgentEvaluations = lazy(() => import("./pages/admin/AgentEvaluations"));
+const AgentApprovals = lazy(() => import("./pages/admin/AgentApprovals"));
+const AgentActivity = lazy(() => import("./pages/admin/AgentActivity"));
+const AgentUsageActivity = lazy(() => import("./pages/admin/AgentUsageActivity"));
+const SecuritySettings = lazy(() => import("./pages/admin/SecuritySettings"));
+
 
 function useSessionGate() {
   const [session, setSession] = useState<SessionInfo | null>(null);
@@ -88,7 +94,9 @@ function PrivateAdmin({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
-    <Routes>
+    <RouteErrorBoundary title="Alpharouter could not start">
+      <Suspense fallback={<div className="app-loading">Loading…</div>}>
+        <Routes>
       <Route path="/login" element={<Login />} />
       <Route
         path="/admin"
@@ -161,7 +169,9 @@ export default function App() {
         <Route path="my-activity" element={<MyActivity />} />
         <Route path="manual" element={<UserManual />} />
       </Route>
-      <Route path="*" element={<Navigate to="/login" replace />} />
-    </Routes>
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        </Routes>
+      </Suspense>
+    </RouteErrorBoundary>
   );
 }

@@ -11,7 +11,8 @@ import time
 import uuid
 from calendar import timegm
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
@@ -32,6 +33,7 @@ from app.services.memory_settings_service import (
 )
 from app.services.user_chat_storage_service import load_user_prefs
 from app.utils.text_normalize import normalize_memory_text
+from app.core.constants import RRF_K
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +41,6 @@ MAX_MEMORY_CHARS = 500
 MAX_MEMORIES_PER_USER = 200
 MAX_INJECT_ITEMS = 30
 MAX_INJECT_CHARS = 4000
-RRF_K = 60
 NEAR_DUPE_THRESHOLD = 0.93
 
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -148,14 +149,7 @@ async def list_memories(
     filters = [UserMemory.user_id == user_id, _alive_filter()]
     if not include_disabled:
         filters.append(UserMemory.enabled.is_(True))
-    total = int(
-        (
-            await db.execute(
-                select(func.count()).select_from(UserMemory).where(*filters)
-            )
-        ).scalar_one()
-        or 0
-    )
+    total = int((await db.execute(select(func.count()).select_from(UserMemory).where(*filters))).scalar_one() or 0)
     stmt = (
         select(UserMemory, ChatSession.title)
         .outerjoin(ChatSession, ChatSession.id == UserMemory.source_session_id)
@@ -165,17 +159,12 @@ async def list_memories(
         .offset(max(0, int(offset)))
     )
     rows = (await db.execute(stmt)).all()
-    return [
-        memory_to_client(row, source_session_title=title)
-        for row, title in rows
-    ], total
+    return [memory_to_client(row, source_session_title=title) for row, title in rows], total
 
 
 async def _count_alive(db: AsyncSession, user_id: int) -> int:
     result = await db.execute(
-        select(func.count())
-        .select_from(UserMemory)
-        .where(UserMemory.user_id == user_id, _alive_filter())
+        select(func.count()).select_from(UserMemory).where(UserMemory.user_id == user_id, _alive_filter())
     )
     return int(result.scalar_one() or 0)
 
@@ -210,17 +199,21 @@ async def evict_lowest_memories(
     if overflow <= 0:
         return 0
     rows = (
-        await db.execute(
-            select(UserMemory)
-            .where(UserMemory.user_id == user_id, _alive_filter())
-            .order_by(
-                UserMemory.salience.asc(),
-                UserMemory.last_used_at.asc().nullsfirst(),
-                UserMemory.created_at.asc(),
+        (
+            await db.execute(
+                select(UserMemory)
+                .where(UserMemory.user_id == user_id, _alive_filter())
+                .order_by(
+                    UserMemory.salience.asc(),
+                    UserMemory.last_used_at.asc().nullsfirst(),
+                    UserMemory.created_at.asc(),
+                )
+                .limit(overflow)
             )
-            .limit(overflow)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     now = dt.datetime.utcnow()
     for row in rows:
         row.enabled = False
@@ -411,7 +404,7 @@ async def _sync_vector_enabled(db: AsyncSession, row: UserMemory, *, enabled: bo
                 points=[row.id],
                 wait=True,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 -- boundary with an external dependency; degraded result is returned
             await vectors.delete_ids(collection_name=collection, point_ids=[row.id])
             row.embedding_status = "pending"
     except Exception:
@@ -467,9 +460,7 @@ async def _index_memory_vector(
         settings = await get_memory_settings(db)
         version = int(settings.get("qdrant_collection_version") or 1)
         service = MemoryVectorService()
-        target = collection or await _resolve_memory_collection(
-            service, version=version, dims=dims
-        )
+        target = collection or await _resolve_memory_collection(service, version=version, dims=dims)
         await service.upsert(
             collection_name=target,
             points=[
@@ -533,12 +524,8 @@ async def delete_memory(
 
 
 async def delete_all_memories(db: AsyncSession, user_id: int, *, actor: str = "user") -> int:
-    result = await db.execute(
-        delete(UserMemory).where(UserMemory.user_id == user_id)
-    )
-    await db.execute(
-        delete(UserMemorySuppression).where(UserMemorySuppression.user_id == user_id)
-    )
+    result = await db.execute(delete(UserMemory).where(UserMemory.user_id == user_id))
+    await db.execute(delete(UserMemorySuppression).where(UserMemorySuppression.user_id == user_id))
     removed = int(result.rowcount or 0)
     await record_memory_event(
         db,
@@ -618,9 +605,7 @@ async def _add_suppression(
         settings = await get_memory_settings(db)
         version = int(settings.get("qdrant_collection_version") or 1)
         service = MemoryVectorService()
-        target = await _resolve_memory_collection(
-            service, version=version, dims=dims
-        )
+        target = await _resolve_memory_collection(service, version=version, dims=dims)
         await service.upsert(
             collection_name=target,
             points=[
@@ -730,9 +715,7 @@ async def _recency_rows(
     )
 
 
-async def _core_rows(
-    db: AsyncSession, user_id: int, *, limit: int
-) -> list[UserMemory]:
+async def _core_rows(db: AsyncSession, user_id: int, *, limit: int) -> list[UserMemory]:
     if limit <= 0:
         return []
     now = dt.datetime.utcnow()
@@ -759,16 +742,10 @@ async def _core_rows(
     )
 
 
-async def _lexical_rows(
-    db: AsyncSession, user_id: int, query: str, *, limit: int
-) -> list[UserMemory]:
+async def _lexical_rows(db: AsyncSession, user_id: int, query: str, *, limit: int) -> list[UserMemory]:
     if limit <= 0 or not query.strip():
         return []
-    tokens = [
-        token
-        for token in re.findall(r"[\w\u0600-\u06FF]{3,}", normalize_memory_text(query))
-        if token
-    ][:8]
+    tokens = [token for token in re.findall(r"[\w\u0600-\u06FF]{3,}", normalize_memory_text(query)) if token][:8]
     if not tokens:
         return []
     now = dt.datetime.utcnow()
@@ -843,9 +820,7 @@ async def _semantic_rows(
     return [by_id[item] for item in ids if item in by_id]
 
 
-def _rrf_fuse(
-    semantic: Sequence[UserMemory], lexical: Sequence[UserMemory]
-) -> list[UserMemory]:
+def _rrf_fuse(semantic: Sequence[UserMemory], lexical: Sequence[UserMemory]) -> list[UserMemory]:
     scores: dict[str, float] = {}
     order: dict[str, UserMemory] = {}
     for rank, row in enumerate(semantic, start=1):
@@ -887,9 +862,9 @@ async def retrieve_memories(
             return []
         item_limit = min(
             int(settings.get("inject_max_items") or MAX_INJECT_ITEMS),
-            max(0, int(max_items)) if max_items is not None else int(
-                settings.get("inject_max_items") or MAX_INJECT_ITEMS
-            ),
+            max(0, int(max_items))
+            if max_items is not None
+            else int(settings.get("inject_max_items") or MAX_INJECT_ITEMS),
         )
         if item_limit == 0:
             return []
@@ -925,13 +900,13 @@ async def retrieve_memories(
                 fused = _rrf_fuse(semantic, lexical)
                 if not fused:
                     fused = await _recency_rows(db, user_id, limit=item_limit)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- logged; expected failure of an external dependency
             logger.warning("Memory retrieval hybrid path failed user_id=%s", user_id)
             try:
                 from app.services.observability import observe_memory_retrieval_fallback
 
                 observe_memory_retrieval_fallback("timeout_or_error")
-            except Exception:
+            except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
                 pass
             fused = await _recency_rows(db, user_id, limit=item_limit)
 
@@ -962,7 +937,7 @@ async def retrieve_memories(
                 duration_seconds=time.perf_counter() - started,
                 injected=len(facts),
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
             pass
         return facts
     except Exception:
@@ -1015,9 +990,7 @@ async def augment_messages_with_memory(
     if user_id is None or private_mode:
         return messages
     resolved_query = query if query is not None else extract_query_text(messages)
-    facts = await retrieve_memories(
-        db, user_id, query=resolved_query, max_items=max_items
-    )
+    facts = await retrieve_memories(db, user_id, query=resolved_query, max_items=max_items)
     if not facts:
         return messages
     if injected_ids is not None:
@@ -1033,9 +1006,7 @@ async def augment_messages_with_memory(
     return [{"role": "system", "content": block}, *out]
 
 
-async def record_memory_usage(
-    db: AsyncSession, user_id: int, memory_ids: Sequence[str]
-) -> None:
+async def record_memory_usage(db: AsyncSession, user_id: int, memory_ids: Sequence[str]) -> None:
     ids = [str(item) for item in memory_ids if item]
     if not ids:
         return
@@ -1064,9 +1035,7 @@ async def export_memories(db: AsyncSession, user_id: int) -> list[dict[str, Any]
     items: list[dict[str, Any]] = []
     offset = 0
     while True:
-        chunk, total = await list_memories(
-            db, user_id, include_disabled=True, limit=page, offset=offset
-        )
+        chunk, total = await list_memories(db, user_id, include_disabled=True, limit=page, offset=offset)
         items.extend(chunk)
         offset += len(chunk)
         if not chunk or offset >= total:

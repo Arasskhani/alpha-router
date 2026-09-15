@@ -1,6 +1,6 @@
 import Modal from "./Modal";
 
-export const FOLDER_COLOR_PRESETS: Array<{ id: string; value: string | null; label: string }> = [
+const FOLDER_COLOR_PRESETS: Array<{ id: string; value: string | null; label: string }> = [
   { id: "default", value: null, label: "Default" },
   { id: "indigo", value: "#6366f1", label: "Indigo" },
   { id: "violet", value: "#8b5cf6", label: "Violet" },

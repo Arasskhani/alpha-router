@@ -87,11 +87,7 @@ async def set_message_feedback(
         raise ValueError("Feedback is only accepted for assistant messages")
     content = str(message.content or "")
     meta = message.meta if isinstance(message.meta, dict) else {}
-    if (
-        not content.strip()
-        or content == IMAGE_PENDING_MARKER
-        or meta.get("streaming") is True
-    ):
+    if not content.strip() or content == IMAGE_PENDING_MARKER or meta.get("streaming") is True:
         raise ValueError("Feedback is only accepted for completed responses")
 
     existing = (

@@ -43,8 +43,15 @@ from app.services.oidc_client import (
 from app.services.saml_sp import (
     login_redirect_url,
     logout_redirect_url,
+    peek_in_response_to,
     process_acs,
     sp_metadata_xml,
+)
+from app.services.saml_state import (
+    SamlStateUnavailable,
+    consume_authn_request,
+    register_assertion,
+    remember_authn_request,
 )
 from app.services.user_chat_storage_service import ensure_user_chat_store
 from app.services.username_norm import find_user_by_username_ci, normalize_username
@@ -89,6 +96,8 @@ async def auth_session(user: User = Depends(get_current_user), db: AsyncSession 
         "is_active": bool(user.is_active),
         "auth_provider": user.auth_provider or "local",
         **session_payload_for_slugs(slugs),
+        # Feature flags the UI needs to hide preview sections (Phase 4.5).
+        "features": {"agents_platform": bool(settings.agents_platform_enabled)},
     }
 
 
@@ -164,22 +173,11 @@ async def login_local(
     if user and user.hashed_password:
         if verify_password(body.password, user.hashed_password):
             await ensure_user_chat_store(db, user.id)
-            if bool(user.totp_enabled) and (user.auth_provider or "local") == "local":
-                from app.services.twofa_pending import generate_pending_token, store_pending
-
-                pending = generate_pending_token()
-                await store_pending(
-                    pending,
-                    {"user_id": user.id, "username": user.username, "purpose": "login_2fa"},
-                )
-                return TokenResponse(
-                    access_token="",
-                    token_type="2fa_pending",
-                    role="",
-                    is_active=bool(user.is_active),
-                    requires_2fa=True,
-                    pending_token=pending,
-                )
+            # TOTP is a property of the account, not of the credential that
+            # authenticated it: an LDAP-linked row with 2FA enrolled must still
+            # be challenged (a directory re-link used to switch 2FA off here).
+            if bool(user.totp_enabled):
+                return await _two_factor_challenge(user)
             return await _token_response(db, user, response, request)
         if (user.auth_provider or "local") == "local":
             raise HTTPException(status_code=401, detail="Invalid username or password")
@@ -192,15 +190,36 @@ async def login_local(
                 asyncio.to_thread(authenticate_ldap_sync, username, body.password, ldap_cfg),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             raise HTTPException(status_code=503, detail=LDAP_UNAVAILABLE_MESSAGE) from exc
         except LdapUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc) or LDAP_UNAVAILABLE_MESSAGE) from exc
         if profile:
             user = await _upsert_directory_user(db, profile, "ldap")
+            if bool(user.totp_enabled):
+                return await _two_factor_challenge(user)
             return await _token_response(db, user, response, request)
 
     raise HTTPException(status_code=401, detail="Invalid username or password")
+
+
+async def _two_factor_challenge(user: User) -> TokenResponse:
+    """Issue the short-lived pending token that /login/2fa exchanges for a session."""
+    from app.services.twofa_pending import generate_pending_token, store_pending
+
+    pending = generate_pending_token()
+    await store_pending(
+        pending,
+        {"user_id": user.id, "username": user.username, "purpose": "login_2fa"},
+    )
+    return TokenResponse(
+        access_token="",
+        token_type="2fa_pending",
+        role="",
+        is_active=bool(user.is_active),
+        requires_2fa=True,
+        pending_token=pending,
+    )
 
 
 @router.post("/login/2fa", response_model=TokenResponse)
@@ -271,11 +290,15 @@ async def saml_login(request: Request, db: AsyncSession = Depends(get_db)):
     if not cfg.get("enabled"):
         raise HTTPException(status_code=400, detail="SAML is disabled")
     try:
-        url = await asyncio.to_thread(login_redirect_url, cfg, _request_public_url(request))
+        url, request_id = await asyncio.to_thread(login_redirect_url, cfg, _request_public_url(request))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"SAML login failed: {exc}") from exc
+    try:
+        await remember_authn_request(request_id)
+    except SamlStateUnavailable as exc:
+        raise HTTPException(status_code=503, detail="SAML login is temporarily unavailable") from exc
     return RedirectResponse(url)
 
 
@@ -291,20 +314,49 @@ async def saml_acs(
     if not cfg.get("enabled"):
         raise HTTPException(status_code=400, detail="SAML is disabled")
     form = {"SAMLResponse": SAMLResponse}
+
+    # 1. The Response must answer an AuthnRequest this SP issued and not yet
+    #    consumed. The id is read untrusted here; python3-saml re-checks it
+    #    against the signed assertion inside process_acs.
+    in_response_to = peek_in_response_to(SAMLResponse)
     try:
-        profile = await asyncio.to_thread(process_acs, cfg, _request_public_url(request), form)
+        solicited = await consume_authn_request(in_response_to)
+    except SamlStateUnavailable as exc:
+        raise HTTPException(status_code=503, detail="SAML login is temporarily unavailable") from exc
+    if not solicited:
+        await _audit_saml_rejection(db, request, "unsolicited_or_replayed_response", in_response_to)
+        raise HTTPException(
+            status_code=401,
+            detail="SAML response does not match an outstanding login request",
+        )
+
+    try:
+        profile = await asyncio.to_thread(
+            process_acs, cfg, _request_public_url(request), form, request_id=in_response_to
+        )
     except ValueError as exc:
+        await _audit_saml_rejection(db, request, "assertion_invalid", in_response_to)
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except Exception as exc:
+        await _audit_saml_rejection(db, request, "assertion_invalid", in_response_to)
         raise HTTPException(status_code=401, detail=f"SAML ACS failed: {exc}") from exc
+
+    # 2. Defense in depth: the same assertion must never log in twice.
+    assertion_id = str(profile.pop("assertion_id", "") or "")
+    not_on_or_after = profile.pop("assertion_not_on_or_after", None)
+    try:
+        fresh = await register_assertion(assertion_id, not_on_or_after)
+    except SamlStateUnavailable as exc:
+        raise HTTPException(status_code=503, detail="SAML login is temporarily unavailable") from exc
+    if not fresh:
+        await _audit_saml_rejection(db, request, "assertion_replayed", assertion_id)
+        raise HTTPException(status_code=401, detail="SAML assertion was already used")
 
     user = await _upsert_directory_user(db, profile, "saml")
     slugs = await get_user_role_slugs(db, user.id)
     await record_user_login(db, user)
     await db.commit()
-    jwt_token = create_access_token(
-        user.username, primary_role_slug(slugs), token_version=user.token_version
-    )
+    jwt_token = create_access_token(user.username, primary_role_slug(slugs), token_version=user.token_version)
     xchg_code = generate_code()
     await store_token(
         xchg_code,
@@ -320,6 +372,26 @@ async def saml_acs(
     except ValueError as exc:
         raise HTTPException(status_code=500, detail="Invalid frontend redirect configuration") from exc
     return RedirectResponse(f"{frontend_url}/login?code={xchg_code}")
+
+
+async def _audit_saml_rejection(db: AsyncSession, request: Request, reason: str, ref: str | None) -> None:
+    """Record a refused SAML Response; never let bookkeeping mask the 401."""
+    try:
+        from app.services.client_ip import resolve_client_ip
+        from app.services.security_audit import log_security_event
+
+        await log_security_event(
+            db,
+            actor=None,
+            actor_ip=resolve_client_ip(request),
+            action="saml_response_rejected",
+            resource_type="saml",
+            resource_id=(ref or "")[:64] or None,
+            detail={"reason": reason},
+        )
+        await db.commit()
+    except Exception:
+        logger.warning("could not record SAML rejection audit event", exc_info=True)
 
 
 async def _sso_exchange(
@@ -388,9 +460,7 @@ async def oidc_callback(
     if flow is None or not code:
         raise HTTPException(status_code=400, detail="Invalid or expired OIDC state")
     try:
-        tokens = await asyncio.to_thread(
-            exchange_code_for_tokens, cfg, code=code, code_verifier=flow.code_verifier
-        )
+        tokens = await asyncio.to_thread(exchange_code_for_tokens, cfg, code=code, code_verifier=flow.code_verifier)
         claims = await asyncio.to_thread(
             validate_id_token,
             tokens["id_token"],
@@ -412,9 +482,7 @@ async def oidc_callback(
     slugs = await get_user_role_slugs(db, user.id)
     await record_user_login(db, user)
     await db.commit()
-    jwt_token = create_access_token(
-        user.username, primary_role_slug(slugs), token_version=user.token_version
-    )
+    jwt_token = create_access_token(user.username, primary_role_slug(slugs), token_version=user.token_version)
     xchg_code = generate_code()
     await store_token(
         xchg_code,
@@ -443,9 +511,7 @@ async def oidc_logout(request: Request, db: AsyncSession = Depends(get_db)):
         payload = decode_access_token(token)
         username = payload.get("sub") if payload else None
         if username:
-            user = (
-                await db.execute(select(User).where(User.username == username))
-            ).scalars().first()
+            user = (await db.execute(select(User).where(User.username == username))).scalars().first()
             if user:
                 user.token_version = int(user.token_version or 0) + 1
                 await db.commit()
@@ -458,7 +524,7 @@ async def oidc_logout(request: Request, db: AsyncSession = Depends(get_db)):
     if cfg.get("enabled"):
         try:
             slo = await asyncio.to_thread(end_session_url, cfg)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- falls back to a safe default value
             slo = None
     response = RedirectResponse(slo or f"{frontend_url}/login")
     clear_session_cookies(response, request=request)
@@ -478,7 +544,7 @@ async def saml_metadata(db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Not Found")
     try:
         xml = await asyncio.to_thread(sp_metadata_xml, cfg)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- public endpoint must not leak configuration details
         # Avoid leaking configuration details on a public endpoint.
         raise HTTPException(status_code=404, detail="Not Found") from None
     return RawResponse(content=xml, media_type="application/samlmetadata+xml")
@@ -495,9 +561,7 @@ async def saml_logout(request: Request, db: AsyncSession = Depends(get_db)):
         payload = decode_access_token(token)
         username = payload.get("sub") if payload else None
         if username:
-            user = (
-                await db.execute(select(User).where(User.username == username))
-            ).scalars().first()
+            user = (await db.execute(select(User).where(User.username == username))).scalars().first()
             if user:
                 name_id = user.external_id
                 user.token_version = int(user.token_version or 0) + 1
@@ -512,10 +576,8 @@ async def saml_logout(request: Request, db: AsyncSession = Depends(get_db)):
     slo_url = None
     if cfg.get("enabled"):
         try:
-            slo_url = await asyncio.to_thread(
-                logout_redirect_url, cfg, _request_public_url(request), name_id
-            )
-        except Exception:
+            slo_url = await asyncio.to_thread(logout_redirect_url, cfg, _request_public_url(request), name_id)
+        except Exception:  # noqa: BLE001 -- falls back to a safe default value
             slo_url = None
 
     response = RedirectResponse(slo_url or f"{frontend_url}/login")
@@ -567,18 +629,22 @@ async def _upsert_directory_user(db: AsyncSession, profile: dict, provider: str)
     # still recognised at login instead of colliding with their own row.
     if provider in {"saml", "oidc", "ldap"} and external_id:
         user = (
-            await db.execute(
-                select(User).where(
-                    User.auth_provider == provider,
-                    User.external_id == external_id,
+            (
+                await db.execute(
+                    select(User).where(
+                        User.auth_provider == provider,
+                        User.external_id == external_id,
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
 
     if user is None:
         by_username = await find_user_by_username_ci(db, username)
         if by_username is not None:
-            existing_provider = (by_username.auth_provider or "local")
+            existing_provider = by_username.auth_provider or "local"
             if existing_provider != provider:
                 raise HTTPException(
                     status_code=409,

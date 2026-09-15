@@ -90,7 +90,7 @@ export function formatMediaDate(iso?: string): string {
 }
 
 /** Collapse duplicate media rows (same image persisted twice) for Media UI display. */
-export function mediaDedupeKey(m: MediaItem): string {
+function mediaDedupeKey(m: MediaItem): string {
   const hash = (m.content_hash || "").trim().toLowerCase();
   if (hash) return `hash:${hash}`;
   const prompt = (m.source_prompt || "").trim().toLowerCase();

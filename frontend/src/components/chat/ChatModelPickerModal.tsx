@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ModelName from "../ModelName";
 import { catalogMonthLabel } from "../../lib/chatModelPresets";
 
-export type PickerModel = {
+type PickerModel = {
   id: string;
   name?: string;
   external_id?: string;

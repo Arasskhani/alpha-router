@@ -1,6 +1,6 @@
 """End-user panel API."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,12 +42,14 @@ async def list_user_keys(user: User = Depends(get_current_user), db: AsyncSessio
     from app.config import get_settings
 
     rows = (
-        await db.execute(
-            select(UserApiKey)
-            .where(UserApiKey.user_id == user.id)
-            .order_by(UserApiKey.created_at.desc())
+        (
+            await db.execute(
+                select(UserApiKey).where(UserApiKey.user_id == user.id).order_by(UserApiKey.created_at.desc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     base = get_settings().api_public_url
     return [_serialize_user_key(k, base_url=base) for k in rows]
 
@@ -122,12 +124,25 @@ async def create_user_key(
 @router.delete("/api-keys/{key_id}")
 async def delete_user_key(
     key_id: int,
+    request: Request,
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ):
     key = await db.get(UserApiKey, key_id)
     if not key or key.user_id != user.id:
         raise HTTPException(status_code=404, detail="API key not found")
+    from app.services.client_ip import resolve_client_ip
+    from app.services.security_audit import log_security_event
+
+    await log_security_event(
+        db,
+        actor=user,
+        actor_ip=resolve_client_ip(request),
+        action="user_api_key_deleted",
+        resource_type="user_api_key",
+        resource_id=str(key.id),
+        detail={"user_id": key.user_id, "name": getattr(key, "name", None), "self_service": True},
+    )
     await db.delete(key)
     await db.commit()
     return {"ok": True}
@@ -150,9 +165,7 @@ async def my_activity(
     user_api_key_id = None
     if personal_api_key_only:
         personal_key = (
-            await db.execute(
-                select(UserApiKey.id).where(UserApiKey.user_id == user.id).limit(1)
-            )
+            await db.execute(select(UserApiKey.id).where(UserApiKey.user_id == user.id).limit(1))
         ).scalar_one_or_none()
         user_api_key_id = int(personal_key) if personal_key else -1
     filters = _activity_query_filters(
@@ -200,9 +213,7 @@ async def my_activity_export(
     user_api_key_id = None
     if personal_api_key_only:
         personal_key = (
-            await db.execute(
-                select(UserApiKey.id).where(UserApiKey.user_id == user.id).limit(1)
-            )
+            await db.execute(select(UserApiKey.id).where(UserApiKey.user_id == user.id).limit(1))
         ).scalar_one_or_none()
         user_api_key_id = int(personal_key) if personal_key else -1
     filters = _activity_query_filters(

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import uuid
 
+import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import app.models  # noqa: F401
@@ -15,10 +16,10 @@ from app.models.system import SystemSetting
 from app.models.user import User
 from app.services.chat_markers import ATTACHMENT_MESSAGE_PREFIX
 from app.services.memory_extraction_service import (
-    ExtractionParseError,
-    ExtractionWindow,
     MAX_OPS,
     MAX_WINDOW_CHARS,
+    ExtractionParseError,
+    ExtractionWindow,
     MemoryOperation,
     apply_memory_operations,
     build_extraction_window,
@@ -28,7 +29,6 @@ from app.services.memory_extraction_service import (
     parse_operations,
 )
 from app.services.user_memory_service import retrieve_memories
-from sqlalchemy import select
 
 
 async def _session_factory():
@@ -79,12 +79,7 @@ def test_denylist_and_injection_patterns() -> None:
 
 
 def test_parse_caps_at_five_operations() -> None:
-    payload = {
-        "operations": [
-            {"op": "add", "content": f"Fact number {i} about the user"}
-            for i in range(12)
-        ]
-    }
+    payload = {"operations": [{"op": "add", "content": f"Fact number {i} about the user"} for i in range(12)]}
     ops = parse_operations(payload)
     assert len(ops) == MAX_OPS
 
@@ -92,7 +87,7 @@ def test_parse_caps_at_five_operations() -> None:
 def test_malformed_json_object_extraction() -> None:
     try:
         parse_operations("definitely not json")
-        assert False, "expected parse error"
+        pytest.fail("expected parse error")
     except ExtractionParseError:
         pass
     ops = parse_operations('prefix {"operations":[]} trailing')
@@ -237,7 +232,7 @@ async def _repair_then_dead_letter() -> None:
 
         try:
             await extract_memory_operations(db, window=window, completer=always_bad)
-            assert False, "expected dead-letter parse error"
+            pytest.fail("expected dead-letter parse error")
         except ExtractionParseError:
             pass
     await engine.dispose()
@@ -310,10 +305,7 @@ async def _lab_then_pizza() -> None:
                                     "operations": [
                                         {
                                             "op": "add",
-                                            "content": (
-                                                "Fasting blood sugar is elevated "
-                                                "(per Aug 2026 lab report)."
-                                            ),
+                                            "content": ("Fasting blood sugar is elevated (per Aug 2026 lab report)."),
                                             "category": "health",
                                             "sensitivity": "sensitive",
                                             "confidence": 0.9,
@@ -337,30 +329,21 @@ async def _lab_then_pizza() -> None:
         )
         await db.commit()
         assert result.added == 1
-        rows = (
-            await db.execute(
-                select(UserMemory).where(UserMemory.user_id == user.id)
-            )
-        ).scalars().all()
+        rows = (await db.execute(select(UserMemory).where(UserMemory.user_id == user.id))).scalars().all()
         assert rows[0].category == "health"
 
-        retrieved = await retrieve_memories(
-            db, user.id, query="I want pizza and soda for lunch"
-        )
-        assert any(
-            "blood sugar" in item.content.lower() and item.category == "health"
-            for item in retrieved
-        )
+        retrieved = await retrieve_memories(db, user.id, query="I want pizza and soda for lunch")
+        assert any("blood sugar" in item.content.lower() and item.category == "health" for item in retrieved)
     await engine.dispose()
 
 
-def test_window_attachment_truncation_and_sensitivity_gate() -> None:
-    asyncio.run(_window_and_gates())
+async def test_window_attachment_truncation_and_sensitivity_gate() -> None:
+    await _window_and_gates()
 
 
-def test_malformed_llm_json_repairs_then_dead_letters() -> None:
-    asyncio.run(_repair_then_dead_letter())
+async def test_malformed_llm_json_repairs_then_dead_letters() -> None:
+    await _repair_then_dead_letter()
 
 
-def test_lab_result_then_pizza_query_retrieves_health_memory() -> None:
-    asyncio.run(_lab_then_pizza())
+async def test_lab_result_then_pizza_query_retrieves_health_memory() -> None:
+    await _lab_then_pizza()

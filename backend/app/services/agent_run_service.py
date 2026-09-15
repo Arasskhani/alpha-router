@@ -74,16 +74,8 @@ def _retrieval_results(plan: AgentTurnPlan) -> list[dict[str, Any]]:
             "release_id": evidence.citation.release_id,
             "rerank_score": float(evidence.rerank_score),
             "rrf_score": float(evidence.rrf_score),
-            "dense_score": (
-                float(evidence.dense_score)
-                if evidence.dense_score is not None
-                else None
-            ),
-            "sparse_score": (
-                float(evidence.sparse_score)
-                if evidence.sparse_score is not None
-                else None
-            ),
+            "dense_score": (float(evidence.dense_score) if evidence.dense_score is not None else None),
+            "sparse_score": (float(evidence.sparse_score) if evidence.sparse_score is not None else None),
             "content_hash": evidence.citation.content_hash,
             "classification": evidence.citation.classification,
         }
@@ -118,9 +110,7 @@ async def persist_agent_plan(
             )
         ).scalar_one_or_none()
         if owned_session is None:
-            raise AgentRunPersistenceError(
-                "Chat session is unavailable for Agent persistence"
-            )
+            raise AgentRunPersistenceError("Chat session is unavailable for Agent persistence")
 
     retrieval = plan.retrieval
     release_ids = list(retrieval.knowledge_release_ids) if retrieval else []
@@ -134,11 +124,7 @@ async def persist_agent_plan(
     }.get(plan.status)
     if status is None:
         raise AgentRunPersistenceError(f"Unsupported Agent plan status: {plan.status}")
-    query_digest = (
-        hashlib.sha256(f"private:{plan.plan_id}".encode("utf-8")).hexdigest()
-        if private_mode
-        else plan.query_sha256
-    )
+    query_digest = hashlib.sha256(f"private:{plan.plan_id}".encode()).hexdigest() if private_mode else plan.query_sha256
 
     row = AgentRun(
         id=plan.plan_id,
@@ -157,12 +143,8 @@ async def persist_agent_plan(
         routing_outcome=plan.routing_outcome[:32],
         routing_reason=_bounded_text(plan.routing_reason, 255),
         routing_confidence=float(plan.routing.confidence),
-        provider_type=(
-            _bounded_text(plan.model.provider_type, 64) if plan.model else None
-        ),
-        model_external_id=(
-            _bounded_text(plan.model.external_id, 512) if plan.model else None
-        ),
+        provider_type=(_bounded_text(plan.model.provider_type, 64) if plan.model else None),
+        model_external_id=(_bounded_text(plan.model.external_id, 512) if plan.model else None),
         query_sha256=query_digest,
         private_mode=private_mode,
         retrieval_outcome=plan.retrieval_outcome[:32],
@@ -172,9 +154,7 @@ async def persist_agent_plan(
         retrieval_error_codes=component_errors,
         tool_execution_ids=list(plan.tool_execution_ids),
         handoff_event_ids=list(plan.handoff_event_ids),
-        guardrail_events=[
-            _guardrail_event(decision) for decision in plan.guardrail_decisions
-        ],
+        guardrail_events=[_guardrail_event(decision) for decision in plan.guardrail_decisions],
         egress_manifest=manifest,
         planning_latency_ms=plan.total_planning_latency_ms,
         retrieval_latency_ms=getattr(plan, "retrieval_latency_ms", None),
@@ -192,15 +172,11 @@ async def persist_agent_plan(
             query_sha256=query_digest,
             outcome=plan.retrieval_outcome[:32],
             answerable=retrieval.answerable if retrieval else None,
-            abstention_reason=(
-                _bounded_text(retrieval.abstention_reason, 64) if retrieval else None
-            ),
+            abstention_reason=(_bounded_text(retrieval.abstention_reason, 64) if retrieval else None),
             candidate_count=retrieval.candidate_count if retrieval else 0,
             post_authorized_count=(retrieval.post_authorized_count if retrieval else 0),
             result_count=len(retrieval.evidence) if retrieval else 0,
-            estimated_context_tokens=(
-                retrieval.context.estimated_tokens if retrieval else 0
-            ),
+            estimated_context_tokens=(retrieval.context.estimated_tokens if retrieval else 0),
             context_truncated=bool(retrieval.context.truncated if retrieval else False),
             knowledge_release_ids=release_ids,
             index_version_ids=index_ids,
@@ -225,9 +201,7 @@ async def persist_agent_plan(
                     file_name=citation.file_name[:512],
                     mime_type=citation.mime_type[:255],
                     page_number=citation.page_number,
-                    section=(
-                        citation.section[:512] if citation.section is not None else None
-                    ),
+                    section=(citation.section[:512] if citation.section is not None else None),
                     authority=citation.authority[:64],
                     classification=citation.classification[:64],
                     effective_from=citation.effective_from,
@@ -244,11 +218,7 @@ async def persist_agent_plan(
 
 
 async def mark_agent_run_started(db: AsyncSession, run_id: str) -> None:
-    row = (
-        await db.execute(
-            select(AgentRun).where(AgentRun.id == run_id).with_for_update()
-        )
-    ).scalar_one_or_none()
+    row = (await db.execute(select(AgentRun).where(AgentRun.id == run_id).with_for_update())).scalar_one_or_none()
     if row is None:
         raise AgentRunPersistenceError("Agent run does not exist")
     if row.status == "planned":
@@ -283,11 +253,7 @@ async def finalize_agent_run(
         "cancelled",
     }:
         raise AgentRunPersistenceError(f"Invalid terminal Agent run status: {status}")
-    row = (
-        await db.execute(
-            select(AgentRun).where(AgentRun.id == run_id).with_for_update()
-        )
-    ).scalar_one_or_none()
+    row = (await db.execute(select(AgentRun).where(AgentRun.id == run_id).with_for_update())).scalar_one_or_none()
     if row is None:
         raise AgentRunPersistenceError("Agent run does not exist")
 
@@ -297,21 +263,15 @@ async def finalize_agent_run(
     row.completion_tokens = max(0, int(completion_tokens))
     row.cached_tokens = max(0, int(cached_tokens))
     row.total_cost_usd = Decimal(str(max(0.0, float(total_cost_usd or 0.0))))
-    row.provider_latency_ms = (
-        max(0, int(provider_latency_ms)) if provider_latency_ms is not None else None
-    )
-    row.total_latency_ms = (
-        max(0, int(total_latency_ms)) if total_latency_ms is not None else None
-    )
+    row.provider_latency_ms = max(0, int(provider_latency_ms)) if provider_latency_ms is not None else None
+    row.total_latency_ms = max(0, int(total_latency_ms)) if total_latency_ms is not None else None
     row.output_displayed = bool(output_displayed)
     row.error_code = _bounded_text(error_code, 64)
     row.error_message = _bounded_text(error_message, 500)
     row.completed_at = _now()
     if request_log_id is not None:
         request_log = await db.get(RequestLog, request_log_id)
-        row.usage_operation_id = (
-            request_log.usage_operation_id if request_log is not None else None
-        )
+        row.usage_operation_id = request_log.usage_operation_id if request_log is not None else None
     if review is not None:
         row.completion_reason_code = review.reason_code[:64]
         events = list(row.guardrail_events or [])
@@ -319,9 +279,7 @@ async def finalize_agent_run(
             events.append(
                 _guardrail_event(
                     decision,
-                    stage=str(
-                        (decision.metadata or {}).get("hook") or "post_generation"
-                    ),
+                    stage=str((decision.metadata or {}).get("hook") or "post_generation"),
                 )
             )
         row.guardrail_events = events
@@ -368,14 +326,10 @@ async def persist_agent_tool_result(
         user_id=context.user_id,
         status="cached" if result.cached else "succeeded",
         effect_type=spec.version.effect_type,
-        arguments_sha256=hashlib.sha256(
-            canonical_arguments.encode("utf-8")
-        ).hexdigest(),
+        arguments_sha256=hashlib.sha256(canonical_arguments.encode("utf-8")).hexdigest(),
         output_sha256=hashlib.sha256(canonical_output.encode("utf-8")).hexdigest(),
         idempotency_key_sha256=(
-            hashlib.sha256(context.idempotency_key.encode("utf-8")).hexdigest()
-            if context.idempotency_key
-            else None
+            hashlib.sha256(context.idempotency_key.encode("utf-8")).hexdigest() if context.idempotency_key else None
         ),
         approval_recorded=bool(context.user_approved),
         attempts=result.attempts,

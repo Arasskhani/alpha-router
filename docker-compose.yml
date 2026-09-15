@@ -1,8 +1,19 @@
 name: alpha-router
 
+# Bounded container logs: without these, json-file logs grow until the disk
+# is full (nginx access log + uvicorn + clamav freshclam alone can do GBs a
+# week). 50 MB x 5 files per container; `docker compose logs` still works.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 services:
   postgres:
+    logging: *default-logging
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-alpha_router}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
@@ -30,7 +41,9 @@ services:
       retries: 5
 
   pgbouncer:
+    logging: *default-logging
     image: edoburu/pgbouncer:1.22.1-p0
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-alpha_router}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-alpha_router}
       # edoburu image defaults to 5432; set 6432 so app/host use standard PgBouncer port
@@ -58,7 +71,9 @@ services:
       - alpha_router_app
 
   redis:
+    logging: *default-logging
     image: redis:7-alpine
+    restart: unless-stopped
     # Require authentication when REDIS_PASSWORD is set; empty (default) keeps
     # legacy no-auth behavior for existing single-box deployments. When set,
     # wire REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0 in the Alpharouter service.
@@ -78,6 +93,7 @@ services:
       retries: 10
 
   clamav:
+    logging: *default-logging
     image: clamav/clamav:1.5.4-debian13-slim
     restart: unless-stopped
     volumes:
@@ -86,6 +102,7 @@ services:
       - alpha_router_app
 
   qdrant:
+    logging: *default-logging
     image: qdrant/qdrant:v1.19.0
     restart: unless-stopped
     environment:
@@ -107,7 +124,9 @@ services:
   # Primary object storage (SeaweedFS weed mini). S3 API :8333, Admin UI :23646.
   # Pin version via deploy/seaweedfs/VERSION (currently 4.40).
   seaweedfs:
+    logging: *default-logging
     image: chrislusf/seaweedfs:4.40
+    restart: unless-stopped
     entrypoint: ["/bin/sh", "/entrypoint.sh"]
     environment:
       # weed mini enables S3 auth when AWS_* credentials are present (never Allow All).
@@ -135,6 +154,7 @@ services:
   # spawned on demand as a disposable, network-less container by Alpharouter.
   # Build explicitly with: docker compose build alpha-router-sandbox
   alpha-router-sandbox:
+    logging: *default-logging
     build:
       context: ./sandbox
       dockerfile: Dockerfile
@@ -149,6 +169,7 @@ services:
       - no-new-privileges:true
 
   alpha-router-sandbox-broker:
+    logging: *default-logging
     build:
       context: .
       dockerfile: sandbox-broker/Dockerfile
@@ -208,6 +229,7 @@ services:
 
   # One-shot schema bootstrap + Alembic upgrade. App/workers wait on success.
   db-init:
+    logging: *default-logging
     build:
       context: .
       dockerfile: Dockerfile
@@ -231,6 +253,7 @@ services:
       - alpha_router_app
 
   alpha-router-knowledge-scheduler:
+    logging: *default-logging
     image: alpha-router:latest
     env_file:
       - .env
@@ -253,6 +276,7 @@ services:
       - alpha_router_app
 
   alpha-router-knowledge-worker:
+    logging: *default-logging
     image: alpha-router:latest
     env_file:
       - .env
@@ -289,10 +313,23 @@ services:
       - alpha_router_app
 
   alpha-router:
+    logging: *default-logging
     build:
       context: .
       dockerfile: Dockerfile
     image: alpha-router:latest
+    restart: unless-stopped
+    # Chat completions stream for minutes. Give in-flight turns time to finish
+    # and settle (see --timeout-graceful-shutdown below) before SIGKILL.
+    stop_grace_period: 120s
+    healthcheck:
+      # /ready: 200 only when database and redis answer (qdrant/object storage
+      # are reported as degraded, never fatal). /health stays a constant.
+      test: ["CMD", "python", "-c", "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/ready', timeout=4).status == 200 else 1)"]
+      interval: 15s
+      timeout: 6s
+      retries: 3
+      start_period: 90s
     env_file:
       - .env
     ports:
@@ -320,8 +357,10 @@ services:
     volumes:
       - alpha_router_tls:/app/tls
     tmpfs:
-      # ZIP download packs under /tmp; keep headroom above max ZIP download setting.
-      - /tmp:rw,nosuid,nodev,size=10g
+      # ZIP download packs are assembled under /tmp. tmpfs is RAM: size it for
+      # MAX_ZIP_AGGREGATE_BYTES (256 MiB default) x UVICORN_WORKERS with headroom,
+      # not for the whole host. Raise it together with those settings.
+      - /tmp:rw,nosuid,nodev,size=2g
       - /home/alpha_router:rw,nosuid,nodev,size=64m,uid=10001,gid=10001,mode=700
       - /app/app/storage:rw,nosuid,nodev,size=256m,uid=10001,gid=10001,mode=700
     command:
@@ -332,6 +371,7 @@ services:
         mkdir -p /tmp/prometheus &&
         exec uvicorn app.main:app --host 0.0.0.0 --port 8080
         --workers ${UVICORN_WORKERS:-4}
+        --timeout-graceful-shutdown 110
         --proxy-headers
         --forwarded-allow-ips=${TRUSTED_PROXY_CIDRS:-127.0.0.1/32,::1/128}
     depends_on:
@@ -352,6 +392,7 @@ services:
       - alpha_router_sandbox_control
 
   alpha-router-edge:
+    logging: *default-logging
     build:
       context: .
       dockerfile: deploy/edge/Dockerfile
@@ -378,7 +419,7 @@ services:
     read_only: true
     tmpfs:
       - /var/cache/nginx:rw,nosuid,nodev
-      - /var/log/nginx:rw,nosuid,nodev
+      - /var/log/nginx:rw,nosuid,nodev,size=64m
       - /run:rw,nosuid,nodev
       - /tmp:rw,nosuid,nodev
     healthcheck:
@@ -388,7 +429,10 @@ services:
       retries: 3
       start_period: 20s
     depends_on:
-      - alpha-router
+      # The edge only proxies; start it once the app answers /ready so a
+      # fresh deploy does not serve 502s while workers boot.
+      alpha-router:
+        condition: service_healthy
 
 volumes:
   alpha_router_pg:

@@ -405,11 +405,6 @@ export default function Users() {
     }
   }
 
-  async function clearUserPlan(userId: number) {
-    await api(`/api/admin/users/${userId}/plan`, { method: "PATCH", body: JSON.stringify({ no_plan: true }) });
-    load();
-  }
-
   async function budgetReset(userId: number) {
     await api(`/api/admin/users/${userId}/budget-reset`, { method: "POST" });
     const target = users.find((u) => u.id === userId);

@@ -27,8 +27,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import get_settings
 from app.models.budget import PlanAssignment
-from app.models.user import User, UserGroup, user_group_members
+from app.models.user import User, UserGroup, UserRoleAssignment, user_group_members
+from app.services.rbac import user_has_super_admin_access
 from app.services.ldap_auth import fetch_ldap_groups, fetch_ldap_users
 from app.services.user_lifecycle_service import prune_sync_user, restore_directory_user
 from app.services.username_norm import find_user_by_username_ci, normalize_username, username_taken_ci
@@ -49,13 +51,58 @@ class ForeignProviderAccount(Exception):
     def __init__(self, user: User, matched_by: str):
         self.user = user
         self.matched_by = matched_by
-        super().__init__(
-            f"'{user.username}' belongs to {user.auth_provider}; matched by {matched_by}"
-        )
+        super().__init__(f"'{user.username}' belongs to {user.auth_provider}; matched by {matched_by}")
+
+
+class LocalPasswordAccount(Exception):
+    """A password-bearing local row matched a directory entry; not linked.
+
+    Flipping such a row to ``ldap`` would (a) let the directory identity log in
+    with the row's roles and (b) switch off its TOTP, which the login path only
+    enforced for ``local`` rows. The row is left exactly as it is and the entry
+    is reported in ``conflicts``; an administrator resolves it deliberately
+    (rename one side, or opt in via LDAP_LINK_LOCAL_PASSWORD_ACCOUNTS).
+    """
+
+    def __init__(self, user: User, matched_by: str, reason: str):
+        self.user = user
+        self.matched_by = matched_by
+        self.reason = reason
+        super().__init__(f"'{user.username}' is a {reason}; matched by {matched_by}; not linked")
+
+
+async def _is_full_administrator(db: AsyncSession, user: User) -> bool:
+    if user.id is None:
+        return False
+    slugs = (
+        (await db.execute(select(UserRoleAssignment.role_slug).where(UserRoleAssignment.user_id == user.id)))
+        .scalars()
+        .all()
+    )
+    return user_has_super_admin_access([str(s) for s in slugs])
+
+
+async def _local_row_may_link(db: AsyncSession, user: User, matched_by: str) -> None:
+    """Raise LocalPasswordAccount when a local row must not become an LDAP row.
+
+    Rules (evaluated only for ``auth_provider == "local"``):
+    - a row matched by its stable directory identity (GUID or historical DN)
+      was created by the directory path and may always be re-linked;
+    - a Full Administrator row is never linked, whatever the flag says;
+    - a row that still has a local password is linked only when
+      ``LDAP_LINK_LOCAL_PASSWORD_ACCOUNTS=true`` (default false);
+    - a passwordless local row (provisioned ahead of the directory) links.
+    """
+    if matched_by in {"external_id", "dn"}:
+        return
+    if await _is_full_administrator(db, user):
+        raise LocalPasswordAccount(user, matched_by, "Full Administrator account")
+    if user.hashed_password and not get_settings().ldap_link_local_password_accounts:
+        raise LocalPasswordAccount(user, matched_by, "local account with a password")
 
 
 def _clean(value: Any) -> str | None:
-    text = (str(value).strip() if value is not None else "")
+    text = str(value).strip() if value is not None else ""
     return text or None
 
 
@@ -97,9 +144,7 @@ async def _match_directory_user(
     email = _clean(item.get("email"))
 
     if external_id:
-        found = (
-            await db.execute(select(User).where(User.external_id == external_id))
-        ).scalars().first()
+        found = (await db.execute(select(User).where(User.external_id == external_id))).scalars().first()
         if found:
             return found, "external_id"
 
@@ -136,9 +181,9 @@ async def _apply_directory_profile(
         new_username
         and new_username != normalize_username(user.username)
         and not user.hashed_password
+        and not await username_taken_ci(db, new_username, exclude_user_id=user.id)
     ):
-        if not await username_taken_ci(db, new_username, exclude_user_id=user.id):
-            user.username = new_username
+        user.username = new_username
 
     email = _clean(item.get("email"))
     if email and (user.email or "").strip().lower() != email.lower():
@@ -192,13 +237,18 @@ async def _sync_one_user(
             # external_id -- the row is owned by another provider's login flow.
             raise ForeignProviderAccount(existing, matched_by)
         was_local = provider == "local"
+        if was_local:
+            # Decide before touching anything: a refused row must come out of
+            # the sync byte-for-byte unchanged (no restore, no profile rewrite,
+            # no external_id backfill).
+            await _local_row_may_link(db, existing, matched_by)
         if existing.deleted_at is not None:
             await restore_directory_user(db, existing)
         await _apply_directory_profile(db, existing, item, conflicts)
-        # Unconditional link for local accounts: a matched row becomes the
-        # directory account. ``hashed_password`` is deliberately left in place
-        # -- clearing it would remove the only way back in if this row is the
-        # last administrator and the directory is unreachable.
+        # A local row that passed _local_row_may_link becomes the directory
+        # account. ``hashed_password`` is deliberately left in place -- clearing
+        # it would remove the only way back in if this row is the last
+        # administrator and the directory is unreachable.
         existing.auth_provider = "ldap"
         if matched_by in {"dn", "username", "email"}:
             logger.info(
@@ -214,9 +264,7 @@ async def _sync_one_user(
     if email and await _user_with_email(db, email):
         # Unreachable via the stepped match above; kept as a guard so a future
         # change to the match order can never turn into an IntegrityError.
-        conflicts.append(
-            {"username": username, "reason": "email_in_use", "detail": f"{email} already in use"}
-        )
+        conflicts.append({"username": username, "reason": "email_in_use", "detail": f"{email} already in use"})
         email = None
 
     user = User(
@@ -247,22 +295,30 @@ async def _sync_one_group(
     dn = _clean(item.get("dn"))
 
     existing = (
-        await db.execute(
-            select(UserGroup).where(
-                UserGroup.source == "ldap",
-                UserGroup.external_id == external_id,
-            )
-        )
-    ).scalars().first()
-    if existing is None and dn and dn != external_id:
-        existing = (
+        (
             await db.execute(
                 select(UserGroup).where(
                     UserGroup.source == "ldap",
-                    UserGroup.external_id == dn,
+                    UserGroup.external_id == external_id,
                 )
             )
-        ).scalars().first()
+        )
+        .scalars()
+        .first()
+    )
+    if existing is None and dn and dn != external_id:
+        existing = (
+            (
+                await db.execute(
+                    select(UserGroup).where(
+                        UserGroup.source == "ldap",
+                        UserGroup.external_id == dn,
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
 
     if existing:
         existing.name = item["name"]
@@ -282,7 +338,7 @@ async def _sync_one_group(
     return group, True
 
 
-async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:
+async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:  # noqa: C901 -- Phase 4 split; complexity must not grow
     if not cfg.get("enabled"):
         raise ValueError("LDAP is not enabled")
     if not (cfg.get("server") or "").strip():
@@ -298,6 +354,7 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:
     users_updated = 0
     users_skipped = 0
     foreign_provider_skipped = 0
+    local_password_skipped = 0
     local_accounts_linked = 0
     groups_new = 0
     groups_updated = 0
@@ -327,9 +384,7 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:
                 synced_user_keys.add(key)
         try:
             async with db.begin_nested():
-                user, created, relinked_local = await _sync_one_user(
-                    db, item, conflicts, claimed_ids
-                )
+                user, created, relinked_local = await _sync_one_user(db, item, conflicts, claimed_ids)
         except ForeignProviderAccount as exc:
             # Deliberate, not a failure: the directory entry is understood, its
             # keys are already in synced_user_keys, and the row it collided with
@@ -339,6 +394,19 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:
                 {
                     "username": username,
                     "reason": "foreign_provider",
+                    "detail": str(exc)[:300],
+                }
+            )
+            logger.warning("LDAP sync: not linking '%s': %s", username, exc)
+            continue
+        except LocalPasswordAccount as exc:
+            # Same contract as ForeignProviderAccount: deliberate skip, keys are
+            # already recorded, the untouched row is 'local' so prune ignores it.
+            local_password_skipped += 1
+            conflicts.append(
+                {
+                    "username": username,
+                    "reason": "local_password_account",
                     "detail": str(exc)[:300],
                 }
             )
@@ -386,9 +454,7 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:
                 group, created = await _sync_one_group(db, item)
         except Exception as exc:  # noqa: BLE001
             groups_skipped += 1
-            conflicts.append(
-                {"username": item.get("name") or "", "reason": "group_error", "detail": str(exc)[:300]}
-            )
+            conflicts.append({"username": item.get("name") or "", "reason": "group_error", "detail": str(exc)[:300]})
             logger.exception("LDAP sync: unexpected failure for group '%s'", item.get("name"))
             continue
         if created:
@@ -406,9 +472,7 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:
         rows = (
             (
                 await db.execute(
-                    select(User)
-                    .where(User.id.in_(list(dn_by_user_id.values())))
-                    .options(selectinload(User.groups))
+                    select(User).where(User.id.in_(list(dn_by_user_id.values()))).options(selectinload(User.groups))
                 )
             )
             .scalars()
@@ -427,16 +491,10 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:
             continue
         if prune:
             ldap_member_ids = {
-                dn_to_user[member_dn].id
-                for member_dn in (item.get("members") or [])
-                if member_dn in dn_to_user
+                dn_to_user[member_dn].id for member_dn in (item.get("members") or []) if member_dn in dn_to_user
             }
             rows = (
-                await db.execute(
-                    select(user_group_members.c.user_id).where(
-                        user_group_members.c.group_id == group.id
-                    )
-                )
+                await db.execute(select(user_group_members.c.user_id).where(user_group_members.c.group_id == group.id))
             ).all()
             current_member_ids = [int(r[0]) for r in rows if r[0] is not None]
             stale_ids = [uid for uid in current_member_ids if uid not in ldap_member_ids]
@@ -459,19 +517,42 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:
     # directory snapshot is incomplete and pruning from it would delete real
     # users. Never prune from a partial run.
     prune_skipped = prune and bool(users_skipped or groups_skipped)
+    prune_reason = "skipped_records" if prune_skipped else None
+    ldap_directory_users: list[User] = []
+    if prune and not prune_skipped:
+        ldap_directory_users = (
+            (await db.execute(select(User).where(User.auth_provider == "ldap", User.deleted_at.is_(None))))
+            .scalars()
+            .all()
+        )
+        # An empty directory answer, or one that would remove most of the
+        # known users, is far more likely a search-base typo, a moved OU or a
+        # half-failed paged search than a real mass departure. Refuse to prune
+        # from it; the admin sees prune_reason in the sync result.
+        if not users_data:
+            prune_skipped, prune_reason = True, "empty_directory"
+        elif ldap_directory_users:
+            to_remove = sum(
+                1
+                for u in ldap_directory_users
+                if not (
+                    (u.external_id and u.external_id in synced_user_keys)
+                    or (not u.external_id and normalize_username(u.username) in synced_usernames)
+                )
+            )
+            ratio = to_remove / max(1, len(ldap_directory_users))
+            max_ratio = float(getattr(get_settings(), "ldap_prune_max_ratio", 0.5) or 0.5)
+            if to_remove >= 2 and ratio > max_ratio:
+                prune_skipped, prune_reason = True, f"ratio_{ratio:.2f}_exceeds_{max_ratio:.2f}"
     if prune_skipped:
         logger.warning(
-            "LDAP sync: prune suppressed, %d user(s) and %d group(s) were skipped",
+            "LDAP sync: prune suppressed (%s); %d user(s) and %d group(s) were skipped",
+            prune_reason,
             users_skipped,
             groups_skipped,
         )
 
     if prune and not prune_skipped:
-        ldap_directory_users = (
-            await db.execute(
-                select(User).where(User.auth_provider == "ldap", User.deleted_at.is_(None))
-            )
-        ).scalars().all()
         for user in ldap_directory_users:
             if user.external_id and user.external_id in synced_user_keys:
                 continue
@@ -484,9 +565,7 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:
             elif action == "permanently_deleted":
                 users_pruned += 1
 
-        ldap_groups = (
-            await db.execute(select(UserGroup).where(UserGroup.source == "ldap"))
-        ).scalars().all()
+        ldap_groups = (await db.execute(select(UserGroup).where(UserGroup.source == "ldap"))).scalars().all()
         for group in ldap_groups:
             if group.external_id and group.external_id in synced_group_keys:
                 continue
@@ -506,25 +585,21 @@ async def sync_ldap_directory(db: AsyncSession, cfg: dict) -> dict[str, Any]:
         "groups_skipped": groups_skipped,
         "local_accounts_linked": local_accounts_linked,
         "foreign_provider_skipped": foreign_provider_skipped,
+        "local_password_skipped": local_password_skipped,
         "prune_skipped": prune_skipped,
+        "prune_reason": prune_reason,
         "conflicts": conflicts,
     }
 
 
 async def _should_prune_ldap_group(db: AsyncSession, group: UserGroup) -> bool:
-    plan = (
-        await db.execute(select(PlanAssignment).where(PlanAssignment.group_id == group.id))
-    ).scalars().first()
+    plan = (await db.execute(select(PlanAssignment).where(PlanAssignment.group_id == group.id))).scalars().first()
     if plan:
         return False
     member_count = (
-        await db.execute(
-            select(user_group_members.c.user_id).where(user_group_members.c.group_id == group.id)
-        )
+        await db.execute(select(user_group_members.c.user_id).where(user_group_members.c.group_id == group.id))
     ).all()
-    if member_count:
-        return False
-    return True
+    return not member_count
 
 
 async def _delete_ldap_group_row(db: AsyncSession, group: UserGroup) -> None:

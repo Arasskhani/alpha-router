@@ -1,7 +1,5 @@
 """Connection allowlist for gateway API keys."""
 
-import asyncio
-
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -107,9 +105,7 @@ async def _test_restricted_allowlist_filters_models() -> None:
             openai = await _conn(db, "OpenAI")
             other = await _conn(db, "Anthropic")
             key = await _key(db)
-            names = await replace_key_allowed_connections(
-                db, key, restrict=True, connection_ids=[openai.id]
-            )
+            names = await replace_key_allowed_connections(db, key, restrict=True, connection_ids=[openai.id])
             assert names == ["OpenAI"]
             allowed = await allowed_connection_ids_for_key(db, key.id)
             assert allowed == {openai.id}
@@ -127,12 +123,8 @@ async def _test_clearing_restriction_does_not_keep_join_rows() -> None:
         async with factory() as db:
             openai = await _conn(db, "OpenAI")
             key = await _key(db)
-            await replace_key_allowed_connections(
-                db, key, restrict=True, connection_ids=[openai.id]
-            )
-            await replace_key_allowed_connections(
-                db, key, restrict=False, connection_ids=[openai.id]
-            )
+            await replace_key_allowed_connections(db, key, restrict=True, connection_ids=[openai.id])
+            await replace_key_allowed_connections(db, key, restrict=False, connection_ids=[openai.id])
             assert key.restrict_connections is False
             assert await allowed_connection_ids_for_key(db, key.id) is None
     finally:
@@ -145,9 +137,7 @@ async def _test_deleted_connection_keeps_key_restricted() -> None:
         async with factory() as db:
             openai = await _conn(db, "OpenAI")
             key = await _key(db)
-            await replace_key_allowed_connections(
-                db, key, restrict=True, connection_ids=[openai.id]
-            )
+            await replace_key_allowed_connections(db, key, restrict=True, connection_ids=[openai.id])
             await db.delete(openai)
             await db.flush()
             allowed = await allowed_connection_ids_for_key(db, key.id)
@@ -164,9 +154,7 @@ async def _test_unknown_connection_id_raises() -> None:
         async with factory() as db:
             key = await _key(db)
             try:
-                await replace_key_allowed_connections(
-                    db, key, restrict=True, connection_ids=[999]
-                )
+                await replace_key_allowed_connections(db, key, restrict=True, connection_ids=[999])
             except ValueError as exc:
                 assert "999" in str(exc)
             else:
@@ -183,18 +171,12 @@ async def _test_resolve_uses_allowed_connection_for_duplicate_ids() -> None:
             second = await _conn(db, "Second")
             await _model(db, first, "gpt-4o")
             wanted = await _model(db, second, "gpt-4o")
-            row, _, _, _ = await resolve_model_and_key(
-                db, "gpt-4o", allowed_connection_ids={second.id}
-            )
+            row, _, _, _ = await resolve_model_and_key(db, "gpt-4o", allowed_connection_ids={second.id})
             assert row is not None
             assert row.id == wanted.id
-            missing, _, _, _ = await resolve_model_and_key(
-                db, "gpt-4o", allowed_connection_ids={999}
-            )
+            missing, _, _, _ = await resolve_model_and_key(db, "gpt-4o", allowed_connection_ids={999})
             assert missing is None
-            none, _, _, _ = await resolve_model_and_key(
-                db, "gpt-4o", allowed_connection_ids=set()
-            )
+            none, _, _, _ = await resolve_model_and_key(db, "gpt-4o", allowed_connection_ids=set())
             assert none is None
     finally:
         await engine.dispose()
@@ -216,12 +198,11 @@ async def _test_gateway_models_list_respects_allowlist() -> None:
                 key_prefix=raw[:16],
                 key_hash=hash_api_key(raw),
                 is_active=True,
+                unlimited_budget=True,  # no cap must now be explicit
             )
             db.add(key)
             await db.flush()
-            await replace_key_allowed_connections(
-                db, key, restrict=True, connection_ids=[openai.id]
-            )
+            await replace_key_allowed_connections(db, key, restrict=True, connection_ids=[openai.id])
             await db.commit()
 
             class _Headers:
@@ -243,33 +224,33 @@ async def _test_gateway_models_list_respects_allowlist() -> None:
         await engine.dispose()
 
 
-def test_unrestricted_key_returns_none_allowlist():
-    asyncio.run(_test_unrestricted_key_returns_none_allowlist())
+async def test_unrestricted_key_returns_none_allowlist():
+    await _test_unrestricted_key_returns_none_allowlist()
 
 
-def test_restricted_empty_allowlist_is_deny_all():
-    asyncio.run(_test_restricted_empty_allowlist_is_deny_all())
+async def test_restricted_empty_allowlist_is_deny_all():
+    await _test_restricted_empty_allowlist_is_deny_all()
 
 
-def test_restricted_allowlist_filters_models():
-    asyncio.run(_test_restricted_allowlist_filters_models())
+async def test_restricted_allowlist_filters_models():
+    await _test_restricted_allowlist_filters_models()
 
 
-def test_clearing_restriction_does_not_keep_join_rows():
-    asyncio.run(_test_clearing_restriction_does_not_keep_join_rows())
+async def test_clearing_restriction_does_not_keep_join_rows():
+    await _test_clearing_restriction_does_not_keep_join_rows()
 
 
-def test_deleted_connection_keeps_key_restricted():
-    asyncio.run(_test_deleted_connection_keeps_key_restricted())
+async def test_deleted_connection_keeps_key_restricted():
+    await _test_deleted_connection_keeps_key_restricted()
 
 
-def test_unknown_connection_id_raises():
-    asyncio.run(_test_unknown_connection_id_raises())
+async def test_unknown_connection_id_raises():
+    await _test_unknown_connection_id_raises()
 
 
-def test_resolve_uses_allowed_connection_for_duplicate_ids():
-    asyncio.run(_test_resolve_uses_allowed_connection_for_duplicate_ids())
+async def test_resolve_uses_allowed_connection_for_duplicate_ids():
+    await _test_resolve_uses_allowed_connection_for_duplicate_ids()
 
 
-def test_gateway_models_list_respects_allowlist():
-    asyncio.run(_test_gateway_models_list_respects_allowlist())
+async def test_gateway_models_list_respects_allowlist():
+    await _test_gateway_models_list_respects_allowlist()

@@ -24,6 +24,7 @@ settings = get_settings()
 config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 target_metadata = Base.metadata
 
+
 # Used only to generate the first Agent Platform revision against an empty
 # database. Normal migration generation compares every ORM table.
 def _include_object(obj, name: str | None, type_: str, reflected: bool, compare_to) -> bool:

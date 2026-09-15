@@ -66,9 +66,7 @@ AGENT_OPERATIONS_ADMIN_SLUG = "agent_operations_administrator"
 AGENT_AUDITOR_SLUG = "agent_auditor"
 
 # Explicitly re-enabled scoped roles (must stay assignable; not section-bundle generated).
-REENABLED_SCOPED_ROLE_SLUGS: frozenset[str] = frozenset(
-    {DASHBOARD_VIEW_SLUG, REPORTS_ACCESS_SLUG}
-)
+REENABLED_SCOPED_ROLE_SLUGS: frozenset[str] = frozenset({DASHBOARD_VIEW_SLUG, REPORTS_ACCESS_SLUG})
 
 MENU_DEFINITIONS: tuple[tuple[MenuKey, str, CategoryKey], ...] = (
     ("dashboard", "Dashboard", "overview"),
@@ -112,6 +110,7 @@ USER_APP_MENUS: frozenset[MenuKey] = frozenset(
     }
 )
 
+
 def _all_historical_menu_role_slugs() -> frozenset[str]:
     slugs: set[str] = set()
     for menu, _, _ in MENU_DEFINITIONS:
@@ -129,20 +128,14 @@ REMOVED_ASSIGNABLE_ROLE_SLUGS: frozenset[str] = frozenset(
         "recommendations_full_administrator",
         "recommendations_read_only_administrator",
     }
-    | (
-        _all_historical_menu_role_slugs()
-        - {API_KEY_ADMIN_SLUG}
-        - REENABLED_SCOPED_ROLE_SLUGS
-    )
+    | (_all_historical_menu_role_slugs() - {API_KEY_ADMIN_SLUG} - REENABLED_SCOPED_ROLE_SLUGS)
 )
 
 LEGACY_SUPER_ADMIN_SLUGS: frozenset[str] = frozenset(
     {FULL_ADMIN_SLUG, READ_ONLY_FULL_ADMIN_SLUG, LEGACY_READ_ONLY_ADMIN_SLUG, LEGACY_ADMIN_SLUG}
 )
 
-GLOBAL_FULL_ADMIN_SLUGS: frozenset[str] = frozenset(
-    {SUPER_ADMIN_SLUG, FULL_ADMIN_SLUG, LEGACY_ADMIN_SLUG}
-)
+GLOBAL_FULL_ADMIN_SLUGS: frozenset[str] = frozenset({SUPER_ADMIN_SLUG, FULL_ADMIN_SLUG, LEGACY_ADMIN_SLUG})
 
 MENU_LABELS: dict[MenuKey, str] = {m[0]: m[1] for m in MENU_DEFINITIONS}
 MENU_GROUP_KEYS: dict[MenuKey, CategoryKey] = {m[0]: m[2] for m in MENU_DEFINITIONS}
@@ -219,9 +212,7 @@ def user_has_super_admin_access(slugs: list[str]) -> bool:
     normalized = {normalize_role_slug(s) for s in slugs if s}
     if SUPER_ADMIN_SLUG in normalized:
         return True
-    if FULL_ADMIN_SLUG in normalized or LEGACY_ADMIN_SLUG in normalized:
-        return True
-    return False
+    return bool(FULL_ADMIN_SLUG in normalized or LEGACY_ADMIN_SLUG in normalized)
 
 
 def actor_may_assign_roles(
@@ -239,16 +230,12 @@ def actor_may_assign_roles(
     actor_is_super = user_has_super_admin_access(actor_slugs)
     if user_has_super_admin_access(new_slugs) and not actor_is_super:
         return False
-    if previous_slugs is not None and user_has_super_admin_access(previous_slugs) and not actor_is_super:
-        return False
-    return True
+    return not (previous_slugs is not None and user_has_super_admin_access(previous_slugs) and not actor_is_super)
 
 
 def user_has_super_read_only_access(slugs: list[str]) -> bool:
     normalized = {normalize_role_slug(s) for s in slugs if s}
-    if READ_ONLY_FULL_ADMIN_SLUG in normalized or LEGACY_READ_ONLY_ADMIN_SLUG in normalized:
-        return True
-    return False
+    return bool(READ_ONLY_FULL_ADMIN_SLUG in normalized or LEGACY_READ_ONLY_ADMIN_SLUG in normalized)
 
 
 def _build_role_catalog() -> tuple[RoleDefinition, ...]:
@@ -609,9 +596,8 @@ def agent_permissions_for_slugs(slugs: list[str]) -> frozenset[str]:
 
 def user_has_agent_permission(slugs: list[str], permission: str) -> bool:
     normalized_permission = (permission or "").strip().lower()
-    return (
-        normalized_permission in AGENT_DOMAIN_PERMISSIONS
-        and normalized_permission in agent_permissions_for_slugs(slugs)
+    return normalized_permission in AGENT_DOMAIN_PERMISSIONS and normalized_permission in agent_permissions_for_slugs(
+        slugs
     )
 
 
@@ -627,13 +613,6 @@ def is_admin_panel_role(role: str | None) -> bool:
 
 def is_full_administrator(role: str | None) -> bool:
     return normalize_role_slug(role) in GLOBAL_FULL_ADMIN_SLUGS
-
-
-def is_global_platform_role(role: str | None) -> bool:
-    slug = normalize_role_slug(role)
-    if slug == SUPER_ADMIN_SLUG:
-        return True
-    return is_legacy_super_admin_slug(role)
 
 
 def is_read_only_role(role: str | None) -> bool:
@@ -675,32 +654,10 @@ def can_write_menu(role: str | None, menu: MenuKey | None = None) -> bool:
             return False
     if slug in (READ_ONLY_FULL_ADMIN_SLUG, LEGACY_READ_ONLY_ADMIN_SLUG):
         return False
-    if slug.endswith("_read_only_administrator"):
-        return False
-    return True
+    return not slug.endswith("_read_only_administrator")
 
 
 # Category helpers (any menu in the group).
-def can_access_category(role: str | None, category: CategoryKey) -> bool:
-    return any(can_access_menu(role, menu) for menu in MENUS_BY_CATEGORY.get(category, ()))
-
-
-def can_write(role: str | None, category: CategoryKey | None = None) -> bool:
-    if category is None:
-        return can_write_menu(role)
-    return any(can_write_menu(role, menu) for menu in MENUS_BY_CATEGORY.get(category, ()))
-
-
-def accessible_category_keys(role: str | None) -> frozenset[CategoryKey] | None:
-    allowed_menus = accessible_menu_keys(role)
-    if allowed_menus is None:
-        return None
-    groups: set[CategoryKey] = set()
-    for menu in allowed_menus:
-        groups.add(MENU_GROUP_KEYS[menu])
-    return frozenset(groups)
-
-
 def path_to_menu(path: str) -> MenuKey | None:
     normalized = path.rstrip("/") or "/"
     best: MenuKey | None = None
@@ -708,18 +665,12 @@ def path_to_menu(path: str) -> MenuKey | None:
     for menu, prefixes in MENU_PATH_PREFIXES.items():
         for prefix in prefixes:
             if prefix == "/admin":
-                if normalized == "/admin":
-                    if len(prefix) > best_len:
-                        best, best_len = menu, len(prefix)
-                continue
-            if normalized == prefix or normalized.startswith(f"{prefix}/"):
-                if len(prefix) > best_len:
+                if normalized == "/admin" and len(prefix) > best_len:
                     best, best_len = menu, len(prefix)
+                continue
+            if (normalized == prefix or normalized.startswith(f"{prefix}/")) and len(prefix) > best_len:
+                best, best_len = menu, len(prefix)
     return best
-
-
-def session_payload(role: str | None) -> dict:
-    return session_payload_for_slugs([normalize_role_slug(role)])
 
 
 def _role_privilege_rank(slug: str) -> int:
@@ -795,19 +746,6 @@ def user_can_write_menu(slugs: list[str], menu: MenuKey | None = None) -> bool:
         return all(can_write_menu(s, menu) for s in contributors)
     admin_menus = [m for m in MENU_LABELS if m not in USER_APP_MENUS]
     return any(user_can_write_menu(slugs, m) for m in admin_menus)
-
-
-def user_can_access_category(slugs: list[str], category: CategoryKey) -> bool:
-    return any(user_can_access_menu(slugs, menu) for menu in MENUS_BY_CATEGORY.get(category, ()))
-
-
-def user_can_write(slugs: list[str], category: CategoryKey | None = None) -> bool:
-    if category is not None:
-        menus = MENUS_BY_CATEGORY.get(category, ())
-        if not menus:
-            return False
-        return any(user_can_write_menu(slugs, menu) for menu in menus)
-    return user_can_write_menu(slugs)
 
 
 def user_is_read_only_admin(slugs: list[str]) -> bool:

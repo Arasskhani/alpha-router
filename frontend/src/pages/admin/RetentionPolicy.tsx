@@ -30,6 +30,18 @@ type RetentionOverview = {
     stats: { total_sessions: number; total_messages: number; expired_messages: number };
     settings: ChatSettings;
   };
+  api_logs?: ApiLogRetention;
+};
+
+type ApiLogRetention = {
+  retention_days: number;
+  min_days: number;
+  max_days: number;
+  default_days: number;
+  stored_events: number;
+  expired_events: number;
+  stored_video_jobs: number;
+  expired_video_jobs: number;
 };
 
 function humanSize(bytes: number) {
@@ -68,6 +80,8 @@ export default function RetentionPolicy() {
   const [chatScheduleEnabled, setChatScheduleEnabled] = useState(false);
   const [chatScheduleHour, setChatScheduleHour] = useState(4);
   const [chatScheduleMinute, setChatScheduleMinute] = useState(0);
+  const [savingApiLogs, setSavingApiLogs] = useState(false);
+  const [apiLogRetentionDays, setApiLogRetentionDays] = useState(30);
 
   async function load() {
     setError("");
@@ -78,6 +92,7 @@ export default function RetentionPolicy() {
       setScheduleEnabled(data.settings.clear_schedule_enabled);
       setScheduleHour(data.settings.clear_schedule_hour);
       setScheduleMinute(data.settings.clear_schedule_minute);
+      if (data.api_logs) setApiLogRetentionDays(data.api_logs.retention_days);
       const chat = data.chat?.settings;
       if (chat) {
         setChatRetentionEnabled(chat.retention_enabled);
@@ -116,6 +131,33 @@ export default function RetentionPolicy() {
       setError(String(e));
     } finally {
       setSavingMedia(false);
+    }
+  }
+
+  async function saveApiLogSettings(e: FormEvent) {
+    e.preventDefault();
+    setSavingApiLogs(true);
+    setError("");
+    setFlash("");
+    try {
+      const result = await api<{ purged?: { usage_events_cleared: number; video_jobs_cleared: number } }>(
+        "/api/admin/storage/api-log-settings",
+        {
+          method: "PATCH",
+          body: JSON.stringify({ retention_days: apiLogRetentionDays }),
+        },
+      );
+      const cleared = (result.purged?.usage_events_cleared ?? 0) + (result.purged?.video_jobs_cleared ?? 0);
+      setFlash(
+        cleared > 0
+          ? `Provider response retention updated. ${cleared.toLocaleString()} stored response(s) outside the new window were cleared.`
+          : "Provider response retention updated.",
+      );
+      await load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSavingApiLogs(false);
     }
   }
 
@@ -390,6 +432,56 @@ export default function RetentionPolicy() {
             disabled={!chatRetentionEnabled}
           >
             Purge expired messages now
+          </button>
+        </div>
+      </form>
+
+      <div className="card">
+        <h3>API logs — overview</h3>
+        <p className="muted-text">
+          {stats?.api_logs
+            ? `${stats.api_logs.stored_events.toLocaleString()} upstream attempts and ${stats.api_logs.stored_video_jobs.toLocaleString()} media jobs hold a stored provider response`
+            : "Loading API log statistics…"}
+        </p>
+        {stats?.api_logs && stats.api_logs.expired_events + stats.api_logs.expired_video_jobs > 0 ? (
+          <p className="muted-text">
+            Responses older than {stats.api_logs.retention_days} days pending cleanup:{" "}
+            {(stats.api_logs.expired_events + stats.api_logs.expired_video_jobs).toLocaleString()}
+          </p>
+        ) : null}
+      </div>
+
+      <form className="card" onSubmit={saveApiLogSettings}>
+        <h3>API logs — raw provider responses</h3>
+        <p className="muted-text" style={{ marginTop: 0 }}>
+          Every upstream attempt behind{" "}
+          <Link to="/admin/logs">API Logs</Link> stores the provider&apos;s own response, which is what explains a
+          failed request. It is also the bulkiest part of the log and can contain prompt text the provider echoed back,
+          so it is kept only for the window you set here. The requests themselves — cost, tokens, status and the failure
+          reason — are unaffected.
+        </p>
+        <label htmlFor="api-log-retention-days">Keep raw provider responses for (days)</label>
+        <input
+          id="api-log-retention-days"
+          type="number"
+          min={stats?.api_logs?.min_days ?? 1}
+          max={stats?.api_logs?.max_days ?? 365}
+          className="input-block"
+          value={apiLogRetentionDays}
+          onChange={(e) => setApiLogRetentionDays(Number(e.target.value || 1))}
+        />
+        {stats?.api_logs && apiLogRetentionDays < stats.api_logs.retention_days ? (
+          <p className="muted-text" style={{ marginTop: "0.75rem" }}>
+            Saving a shorter window clears what falls outside it straight away.
+          </p>
+        ) : (
+          <p className="muted-text" style={{ marginTop: "0.75rem" }}>
+            A daily job clears responses past this window; saving also applies it immediately.
+          </p>
+        )}
+        <div className="dialog-actions">
+          <button type="submit" className="btn" disabled={savingApiLogs}>
+            {savingApiLogs ? "Saving…" : "Save API log policy"}
           </button>
         </div>
       </form>

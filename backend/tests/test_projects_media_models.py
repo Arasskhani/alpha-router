@@ -5,12 +5,13 @@ import sqlite3
 import uuid
 from pathlib import Path
 
-import app.models  # noqa: F401
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+import app.models  # noqa: F401
 from app.database import Base
 from app.models.project import ProjectMediaAsset
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 
 def _alembic_head() -> str:
@@ -101,28 +102,17 @@ def test_migration_idempotent_and_creates_table():
 
         conn = sqlite3.connect(database_path)
         try:
-            tables = {
-                row[0]
-                for row in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'table'"
-                )
-            }
-            revision = conn.execute(
-                "SELECT version_num FROM alembic_version"
-            ).fetchone()
+            tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+            revision = conn.execute("SELECT version_num FROM alembic_version").fetchone()
 
             assert revision == (_alembic_head(),)
             assert "project_media_assets" in tables
 
             # Verify project_id columns exist on image/video tables
-            img_cols = {
-                row[1] for row in conn.execute("PRAGMA table_info(image_generation_attempts)")
-            }
+            img_cols = {row[1] for row in conn.execute("PRAGMA table_info(image_generation_attempts)")}
             assert "project_id" in img_cols
 
-            vid_cols = {
-                row[1] for row in conn.execute("PRAGMA table_info(video_generation_jobs)")
-            }
+            vid_cols = {row[1] for row in conn.execute("PRAGMA table_info(video_generation_jobs)")}
             assert "project_id" in vid_cols
 
             # Verify project_media_assets has a unique constraint on (project_id, content_hash)
@@ -140,32 +130,27 @@ def test_migration_idempotent_and_creates_table():
         database_path.unlink(missing_ok=True)
 
 
-def test_project_media_asset_can_be_created():
-    import asyncio
-
-    async def run():
-        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        try:
-            async with factory() as db:
-                asset = ProjectMediaAsset(
-                    project_id="proj-test-1",
-                    uploaded_by_user_id=None,
-                    kind="image",
-                    mime_type="image/png",
-                    file_name="test.png",
-                    storage_path="cdn/p/proj-test-1/test.png",
-                    content_hash="abc123",
-                    size_bytes=1024,
-                    created_at=datetime.datetime.utcnow(),
-                )
-                db.add(asset)
-                await db.flush()
-                assert asset.id is not None
-                assert asset.project_id == "proj-test-1"
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+async def test_project_media_asset_can_be_created():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        async with factory() as db:
+            asset = ProjectMediaAsset(
+                project_id="proj-test-1",
+                uploaded_by_user_id=None,
+                kind="image",
+                mime_type="image/png",
+                file_name="test.png",
+                storage_path="cdn/p/proj-test-1/test.png",
+                content_hash="abc123",
+                size_bytes=1024,
+                created_at=datetime.datetime.utcnow(),
+            )
+            db.add(asset)
+            await db.flush()
+            assert asset.id is not None
+            assert asset.project_id == "proj-test-1"
+    finally:
+        await engine.dispose()

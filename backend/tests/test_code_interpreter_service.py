@@ -1,10 +1,8 @@
 """Tests for sandboxed code interpreter helpers."""
 
-import asyncio
 import base64
 import hashlib
 import json
-import re
 
 import pytest
 
@@ -12,6 +10,7 @@ import app.services.code_interpreter_service as cis
 from app.config import get_settings
 from app.sandbox.filenames import is_safe_filename
 from app.services.code_interpreter_service import (
+    SandboxExecutionResult,
     WorkspaceLimitError,
     build_workspace_manifest,
     code_interpreter_error_hint,
@@ -21,7 +20,6 @@ from app.services.code_interpreter_service import (
     extract_last_python_block,
     format_code_output_for_chat,
     run_python_sandbox,
-    SandboxExecutionResult,
     sanitize_workspace_filename,
     validate_python_code,
     workspace_files_from_messages,
@@ -60,7 +58,7 @@ def test_workspace_manifest_accepts_one_hundred_small_files():
         }
         for index in range(100)
     ]
-    payload = f'__ALPHA_ROUTER_ATTACH_JSON__:{json.dumps({"userText": "analyze", "attachments": attachments})}'
+    payload = f"__ALPHA_ROUTER_ATTACH_JSON__:{json.dumps({'userText': 'analyze', 'attachments': attachments})}"
 
     manifest = build_workspace_manifest(
         [{"role": "user", "content": payload}],
@@ -84,7 +82,7 @@ def test_workspace_manifest_rejects_file_count_without_silent_drop():
         }
         for index in range(101)
     ]
-    payload = f'__ALPHA_ROUTER_ATTACH_JSON__:{json.dumps({"userText": "analyze", "attachments": attachments})}'
+    payload = f"__ALPHA_ROUTER_ATTACH_JSON__:{json.dumps({'userText': 'analyze', 'attachments': attachments})}"
 
     with pytest.raises(WorkspaceLimitError) as exc:
         build_workspace_manifest(
@@ -164,9 +162,7 @@ def test_code_interpreter_nudge_lists_workspace_files():
 
 
 def test_format_code_output_uses_text_fence():
-    out = format_code_output_for_chat(
-        SandboxExecutionResult(output="hello\nworld", exit_code=0)
-    )
+    out = format_code_output_for_chat(SandboxExecutionResult(output="hello\nworld", exit_code=0))
     assert "```text\nhello\nworld\n```" in out
 
 
@@ -208,10 +204,7 @@ def test_workspace_keeps_non_english_filenames():
     messages = [
         {
             "role": "user",
-            "content": (
-                "Analyze\n\n--- داده (1).csv ---\nname,value\na,1\nb,2\n\n"
-                "--- report (2).csv ---\nx,y\n3,4"
-            ),
+            "content": ("Analyze\n\n--- داده (1).csv ---\nname,value\na,1\nb,2\n\n--- report (2).csv ---\nx,y\n3,4"),
         }
     ]
     files = workspace_files_from_messages(messages)
@@ -268,9 +261,7 @@ def test_decode_broker_artifacts_accepts_valid_pdf_and_csv():
 
 def test_decode_broker_artifacts_accepts_persian_filenames():
     pdf = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF"
-    artifacts = cis._decode_broker_artifacts(
-        [_artifact_payload("گزارش-مدیریتی.pdf", pdf, "application/pdf")]
-    )
+    artifacts = cis._decode_broker_artifacts([_artifact_payload("گزارش-مدیریتی.pdf", pdf, "application/pdf")])
     assert [item.name for item in artifacts] == ["گزارش-مدیریتی.pdf"]
 
 
@@ -295,11 +286,12 @@ def test_decode_broker_artifacts_rejects_tampering(mutate):
 
 # ---- broker routing (no real Docker needed) ----
 
+
 def _clear_settings_cache():
     get_settings.cache_clear()
 
 
-def test_run_sandbox_uses_subprocess_when_no_broker(monkeypatch):
+async def test_run_sandbox_uses_subprocess_when_no_broker(monkeypatch):
     """A subprocess requires an explicit development-only opt-in."""
     monkeypatch.delenv("CODE_SANDBOX_BROKER_URL", raising=False)
     monkeypatch.delenv("CODE_SANDBOX_IMAGE", raising=False)
@@ -320,7 +312,7 @@ def test_run_sandbox_uses_subprocess_when_no_broker(monkeypatch):
     monkeypatch.setattr(cis, "_run_in_subprocess", fake_sub)
     monkeypatch.setattr(cis, "_run_via_broker", fake_broker)
 
-    out = asyncio.run(run_python_sandbox("print(1)"))
+    out = await run_python_sandbox("print(1)")
     assert out.output == "sub-ok"
     assert calls == {"subprocess": 1, "broker": 0}
     _clear_settings_cache()
@@ -334,7 +326,7 @@ def test_run_sandbox_uses_subprocess_when_no_broker(monkeypatch):
         ("development", "false"),
     ],
 )
-def test_run_sandbox_fails_closed_without_broker(
+async def test_run_sandbox_fails_closed_without_broker(
     monkeypatch,
     environment: str,
     allow_subprocess: str,
@@ -349,12 +341,12 @@ def test_run_sandbox_fails_closed_without_broker(
         raise AssertionError("subprocess must not run")
 
     monkeypatch.setattr(cis, "_run_in_subprocess", forbidden_subprocess)
-    out = asyncio.run(run_python_sandbox("print(1)"))
+    out = await run_python_sandbox("print(1)")
     assert "sandbox broker is required" in out.output
     _clear_settings_cache()
 
 
-def test_legacy_image_only_configuration_cannot_downgrade(monkeypatch):
+async def test_legacy_image_only_configuration_cannot_downgrade(monkeypatch):
     monkeypatch.delenv("CODE_SANDBOX_BROKER_URL", raising=False)
     monkeypatch.setenv("CODE_SANDBOX_IMAGE", "alpha-router-sandbox:latest")
     monkeypatch.setenv("ENVIRONMENT", "development")
@@ -365,12 +357,12 @@ def test_legacy_image_only_configuration_cannot_downgrade(monkeypatch):
         raise AssertionError("legacy image config must not downgrade")
 
     monkeypatch.setattr(cis, "_run_in_subprocess", forbidden_subprocess)
-    out = asyncio.run(run_python_sandbox("print(1)"))
+    out = await run_python_sandbox("print(1)")
     assert "legacy sandbox image configuration" in out.output
     _clear_settings_cache()
 
 
-def test_run_sandbox_uses_broker_when_configured(monkeypatch):
+async def test_run_sandbox_uses_broker_when_configured(monkeypatch):
     monkeypatch.setenv("CODE_SANDBOX_BROKER_URL", "http://sandbox-broker:8081")
     monkeypatch.setenv("CODE_SANDBOX_BROKER_TOKEN", "t" * 48)
     _clear_settings_cache()
@@ -384,7 +376,7 @@ def test_run_sandbox_uses_broker_when_configured(monkeypatch):
 
     monkeypatch.setattr(cis, "_run_via_broker", fake_broker)
 
-    out = asyncio.run(run_python_sandbox("print(2)", {"a.txt": "hi"}))
+    out = await run_python_sandbox("print(2)", {"a.txt": "hi"})
     assert out.output == "broker-ok"
     assert captured["broker_url"] == "http://sandbox-broker:8081"
     assert "print(2)" in captured["code"]
@@ -392,7 +384,7 @@ def test_run_sandbox_uses_broker_when_configured(monkeypatch):
     _clear_settings_cache()
 
 
-def test_run_sandbox_rejects_broker_without_strong_token(monkeypatch):
+async def test_run_sandbox_rejects_broker_without_strong_token(monkeypatch):
     monkeypatch.setenv("CODE_SANDBOX_BROKER_URL", "http://sandbox-broker:8081")
     monkeypatch.setenv("CODE_SANDBOX_BROKER_TOKEN", "short")
     _clear_settings_cache()
@@ -401,12 +393,12 @@ def test_run_sandbox_rejects_broker_without_strong_token(monkeypatch):
         raise AssertionError("unauthenticated broker request must not be sent")
 
     monkeypatch.setattr(cis, "_run_via_broker", forbidden_broker)
-    out = asyncio.run(run_python_sandbox("print(1)"))
+    out = await run_python_sandbox("print(1)")
     assert "broker authentication is not configured" in out.output
     _clear_settings_cache()
 
 
-def test_run_sandbox_broker_still_blocks_disallowed_imports(monkeypatch):
+async def test_run_sandbox_broker_still_blocks_disallowed_imports(monkeypatch):
     """AST validation runs before a broker request (defense in depth)."""
     monkeypatch.setenv("CODE_SANDBOX_BROKER_URL", "http://sandbox-broker:8081")
     monkeypatch.setenv("CODE_SANDBOX_BROKER_TOKEN", "t" * 48)
@@ -417,7 +409,7 @@ def test_run_sandbox_broker_still_blocks_disallowed_imports(monkeypatch):
 
     monkeypatch.setattr(cis, "_run_via_broker", fake_broker)
     with pytest.raises(ValueError, match="Import not allowed"):
-        asyncio.run(run_python_sandbox("import os"))
+        await run_python_sandbox("import os")
     monkeypatch.delenv("CODE_SANDBOX_BROKER_URL", raising=False)
     _clear_settings_cache()
 
@@ -428,7 +420,7 @@ def test_dynamic_import_is_blocked_before_execution():
         validate_python_code("socket = __import__('socket')")
 
 
-def test_development_subprocess_receives_scrubbed_environment(monkeypatch):
+async def test_development_subprocess_receives_scrubbed_environment(monkeypatch):
     captured = {}
 
     class FakeProcess:
@@ -444,7 +436,7 @@ def test_development_subprocess_receives_scrubbed_environment(monkeypatch):
 
     monkeypatch.setattr(cis.asyncio, "create_subprocess_exec", fake_spawn)
     monkeypatch.setenv("SECRET_KEY", "must-not-propagate")
-    out = asyncio.run(cis._run_in_subprocess("print('ok')", {}))
+    out = await cis._run_in_subprocess("print('ok')", {})
     assert "ok" in out.output
     assert "SECRET_KEY" not in captured["env"]
     assert set(captured["env"]) == {"PATH", "PYTHONIOENCODING", "PYTHONUNBUFFERED"}
@@ -494,7 +486,7 @@ async def _broker_status_maps_to_distinct_message(status: int, detail: str, need
         assert detail in out.output
 
 
-def test_broker_http_errors_are_distinct(monkeypatch):
+async def test_broker_http_errors_are_distinct(monkeypatch):
     del monkeypatch
     cases = [
         (401, "Unauthorized", "authentication failed"),
@@ -505,4 +497,4 @@ def test_broker_http_errors_are_distinct(monkeypatch):
         (418, "teapot", "HTTP 418"),
     ]
     for status, detail, needle in cases:
-        asyncio.run(_broker_status_maps_to_distinct_message(status, detail, needle))
+        await _broker_status_maps_to_distinct_message(status, detail, needle)

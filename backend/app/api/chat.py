@@ -1,6 +1,7 @@
 """In-app chat using enabled models (admin + user)."""
 
 import asyncio
+import re
 
 from fastapi import (
     APIRouter,
@@ -14,7 +15,7 @@ from fastapi import (
 )
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
@@ -22,11 +23,12 @@ from app.api.deps import get_current_user, require_active_user
 from app.branding import CHAT_CLIENT_APP
 from app.config import get_settings
 from app.database import AsyncSessionLocal, get_db
-from app.models.chat import ChatSession
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
-from app.services.attachment_extract import processed_attachment_payload
+from app.services.chat_session_access import resolve_owned_chat_session
+from app.services.attachment_extract import processed_attachment_payload_async
+from app.services.upload_screening import UploadRejected, screen_upload
 from app.services.attachment_from_media_service import attachments_from_existing_media
 from app.services.attachment_policy import (
     AttachmentPolicyError,
@@ -92,6 +94,7 @@ from app.services.storage_service import (
     media_public_url,
     purge_expired_media,
     read_media_bytes,
+    read_media_range,
     store_generated_blob,
     store_generated_media,
     unlink_storage_if_unreferenced,
@@ -107,15 +110,12 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
 @router.get("/models")
-async def chat_models(
-    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
-):
-    conn_count = (
-        await db.execute(select(func.count()).select_from(Connection))
-    ).scalar() or 0
+async def chat_models(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    conn_count = (await db.execute(select(func.count()).select_from(Connection))).scalar() or 0
     if conn_count == 0:
-        await db.execute(delete(AIModel))
-        await db.commit()
+        # No connections -> no usable models. Orphan catalog rows (FK cascade
+        # off) are removed by DELETE /api/admin/connections/{id}; a GET must
+        # never write.
         return []
 
     rows = (
@@ -143,9 +143,7 @@ async def chat_models(
             # Admin-chosen defaults per capability, so the client stops falling
             # back to "first capable model in catalog order".
             "default_kinds": [
-                key
-                for key, value in system_defaults.items()
-                if value is not None and int(value) == int(m.id)
+                key for key, value in system_defaults.items() if value is not None and int(value) == int(m.id)
             ],
             "code_interpreter": compatibility_payload(
                 compatibility.get((int(m.connection_id), m.external_id)),
@@ -282,9 +280,7 @@ async def enhance_prompt(
     if body.context not in ENHANCE_CONTEXTS:
         raise HTTPException(status_code=400, detail="Invalid enhancement context")
     try:
-        text = await enhance_user_prompt(
-            db, user, body.model, body.prompt, body.mode, context=body.context
-        )
+        text = await enhance_user_prompt(db, user, body.model, body.prompt, body.mode, context=body.context)
     except PromptEnhanceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"prompt": text}
@@ -300,9 +296,7 @@ async def enhance_image_prompt(
     if body.mode not in ENHANCE_MODES:
         raise HTTPException(status_code=400, detail="Invalid enhancement mode")
     try:
-        text = await enhance_image_generation_prompt(
-            db, user, body.model, body.prompt, body.mode
-        )
+        text = await enhance_image_generation_prompt(db, user, body.model, body.prompt, body.mode)
     except PromptEnhanceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"prompt": text}
@@ -384,9 +378,7 @@ async def chat_completions(
         gen,
         media_type="text/event-stream",
         headers=STREAM_SSE_HEADERS,
-        background=BackgroundTask(release_capacity_fallback)
-        if permit is not None
-        else None,
+        background=BackgroundTask(release_capacity_fallback) if permit is not None else None,
     )
 
 
@@ -447,6 +439,7 @@ async def voice_message(
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a voice note, store it, and return transcript for chat."""
+    await resolve_owned_chat_session(db, user=user, chat_session_id=chat_session_id)
     budget, usage = await get_user_budget_state(db, user)
     if blocked := budget_request_blocked(budget, usage):
         raise HTTPException(status_code=402, detail=blocked)
@@ -462,6 +455,10 @@ async def voice_message(
         raise HTTPException(status_code=413, detail=str(exc)) from exc
     mime = (file.content_type or "audio/webm").split(";")[0].strip() or "audio/webm"
     filename = file.filename or "voice.webm"
+    try:
+        await screen_upload(raw, filename)
+    except UploadRejected as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
     # The user's own pick, when they made one. It is re-validated downstream
     # against their ACL, so an unusable value falls through to the system default.
@@ -488,9 +485,7 @@ async def voice_message(
         # A "clean" failure (provider rejected the model, no speech, bad audio)
         # used to return 400 with no server-side trace at all, which made these
         # invisible in the logs while the client only saw a generic notice.
-        logging.getLogger("app.api.chat").warning(
-            "Transcription rejected: %s", exc, exc_info=True
-        )
+        logging.getLogger("app.api.chat").warning("Transcription rejected: %s", exc, exc_info=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         # Log the full provider error server-side; return a generic message so
@@ -498,22 +493,37 @@ async def voice_message(
         import logging
 
         logging.getLogger("app.api.chat").exception("Transcription failed")
-        raise HTTPException(
-            status_code=502, detail="Transcription failed. Please try again."
-        ) from exc
+        raise HTTPException(status_code=502, detail="Transcription failed. Please try again.") from exc
 
-    # Identity primitives are captured now: the ORM user expires with the
-    # request session, and the storage task outlives it.
-    background_tasks.add_task(
-        _store_voice_note,
-        user_id=int(user.id),
-        username=str(user.username or ""),
-        raw=raw,
-        mime=mime,
-        filename=filename,
-        transcript=transcript,
-        chat_session_id=chat_session_id,
-    )
+    # The quota check is one cheap SUM; do it now so the caller learns *in
+    # the response* when the recording will not be kept, instead of getting
+    # media_pending=true for an upload that then fails silently in the
+    # background (B-36). The object-store write itself stays deferred.
+    from app.services.user_media_service import MediaQuotaExceededError, ensure_user_media_quota
+
+    media_pending = True
+    media_error: str | None = None
+    try:
+        await ensure_user_media_quota(db, int(user.id), len(raw))
+    except MediaQuotaExceededError as exc:
+        media_pending = False
+        media_error = (
+            f"Media storage quota exceeded ({exc.used_bytes + exc.incoming_bytes} of {exc.quota_bytes} bytes); "
+            "the recording was transcribed but not saved."
+        )
+    if media_pending:
+        # Identity primitives are captured now: the ORM user expires with the
+        # request session, and the storage task outlives it.
+        background_tasks.add_task(
+            _store_voice_note,
+            user_id=int(user.id),
+            username=str(user.username or ""),
+            raw=raw,
+            mime=mime,
+            filename=filename,
+            transcript=transcript,
+            chat_session_id=chat_session_id,
+        )
     return {
         # The asset is written after this response, so its id and url are not
         # known yet. They stay in the payload as nulls so the response shape is
@@ -522,7 +532,8 @@ async def voice_message(
         "url": None,
         "transcript": transcript,
         "mime_type": mime,
-        "media_pending": True,
+        "media_pending": media_pending,
+        "media_error": media_error,
     }
 
 
@@ -554,10 +565,10 @@ async def process_attachments(
         raise HTTPException(status_code=400, detail="No files uploaded.")
 
     scoped_project_id = (project_id or "").strip() or None
-    if not scoped_project_id and chat_session_id:
-        session = await db.get(ChatSession, chat_session_id)
-        if session is not None and session.project_id:
-            scoped_project_id = session.project_id
+    # 404 unless the caller owns the session or can write in its project.
+    session = await resolve_owned_chat_session(db, user=user, chat_session_id=chat_session_id)
+    if not scoped_project_id and session is not None and session.project_id:
+        scoped_project_id = session.project_id
 
     out: list[dict] = []
     total_bytes = 0
@@ -587,8 +598,7 @@ async def process_attachments(
             remaining = total_limit - total_bytes
             if remaining <= 0:
                 raise BoundedIOError(
-                    f"Attachments exceed the total per-message limit "
-                    f"({max(1, total_limit // (1024 * 1024))} MB)."
+                    f"Attachments exceed the total per-message limit ({max(1, total_limit // (1024 * 1024))} MB)."
                 )
             raw = await read_upload_bounded(
                 upload,
@@ -600,6 +610,12 @@ async def process_attachments(
             raise HTTPException(status_code=413, detail=str(exc)) from exc
         except AttachmentPolicyError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # Archive-bomb structure check and ClamAV before the bytes are stored
+        # or handed to a parser (same gate Knowledge uploads pass through).
+        try:
+            await screen_upload(raw, filename)
+        except UploadRejected as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
         mime = resolve_attachment_mime(
             filename=filename,
@@ -622,14 +638,10 @@ async def process_attachments(
         except ProjectMediaValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except ValueError as exc:
-            status_code = (
-                413
-                if "limit" in str(exc).lower() or "quota" in str(exc).lower()
-                else 400
-            )
+            status_code = 413 if "limit" in str(exc).lower() or "quota" in str(exc).lower() else 400
             raise HTTPException(status_code=status_code, detail=str(exc)) from exc
         out.append(
-            processed_attachment_payload(
+            await processed_attachment_payload_async(
                 filename=filename,
                 kind=kind,
                 mime_type=mime,
@@ -681,11 +693,7 @@ async def store_media(
         )
     except ValueError as exc:
         detail = str(exc)
-        if (
-            "quota" in detail.lower()
-            or "limit" in detail.lower()
-            or "too large" in detail.lower()
-        ):
+        if "quota" in detail.lower() or "limit" in detail.lower() or "too large" in detail.lower():
             raise HTTPException(status_code=413, detail=str(exc)) from exc
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
@@ -739,10 +747,6 @@ async def media_file(
         asset_id,
         action=MediaAccessAction.READ,
     )
-    try:
-        data = await read_media_bytes(row)
-    except FileNotFoundError:
-        raise HTTPException(404, detail="File not found") from None
     media_type, content_disposition = media_response_type_and_disposition(
         file_name=row.file_name or "download",
         kind=getattr(row, "kind", None),
@@ -755,40 +759,37 @@ async def media_file(
     range_header = (request.headers.get("range") or "").strip()
     kind = (getattr(row, "kind", None) or "").strip().lower()
     if range_header.lower().startswith("bytes=") and kind in {"video", "audio"}:
-        # Single-range support for HTML5 media seekers.
+        # Single-range support for HTML5 media seekers. Only the requested
+        # window is fetched from object storage; reading the whole file to
+        # slice it in Python made every seek in a long video a full download.
         spec = range_header.split("=", 1)[1].strip()
-        if "," not in spec:
-            start_s, _, end_s = spec.partition("-")
-            try:
-                total = len(data)
-                if start_s == "":
-                    # suffix bytes: bytes=-N
-                    suffix = int(end_s)
-                    start = max(0, total - suffix)
-                    end = total - 1
-                else:
-                    start = int(start_s)
-                    end = int(end_s) if end_s else total - 1
-                if start < 0 or end < start or start >= total:
-                    raise ValueError("invalid range")
-                end = min(end, total - 1)
-                chunk = data[start : end + 1]
-                headers.update(
-                    {
-                        "Content-Range": f"bytes {start}-{end}/{total}",
-                        "Content-Length": str(len(chunk)),
-                    }
-                )
-                return Response(
-                    content=chunk,
-                    status_code=206,
-                    media_type=media_type,
-                    headers=headers,
-                )
-            except ValueError:
-                headers["Content-Range"] = f"bytes */{len(data)}"
-                return Response(status_code=416, headers=headers)
+        if "," not in spec and re.fullmatch(r"\d*-\d*", spec) and spec != "-":
+            from app.services.object_storage_service import InvalidRangeError
 
+            try:
+                chunk, start, end, total = await read_media_range(row, spec)
+            except FileNotFoundError:
+                raise HTTPException(404, detail="File not found") from None
+            except InvalidRangeError:
+                headers["Content-Range"] = f"bytes */{int(getattr(row, 'size_bytes', 0) or 0)}"
+                return Response(status_code=416, headers=headers)
+            headers.update(
+                {
+                    "Content-Range": f"bytes {start}-{end}/{total}",
+                    "Content-Length": str(len(chunk)),
+                }
+            )
+            return Response(
+                content=chunk,
+                status_code=206,
+                media_type=media_type,
+                headers=headers,
+            )
+
+    try:
+        data = await read_media_bytes(row)
+    except FileNotFoundError:
+        raise HTTPException(404, detail="File not found") from None
     headers["Content-Length"] = str(len(data))
     return Response(
         content=data,
@@ -869,18 +870,14 @@ async def export_chat_docx(
     if not payload.content or not payload.content.strip():
         raise HTTPException(status_code=400, detail="content must not be empty")
     try:
-        docx_bytes = await asyncio.to_thread(
-            render_chat_docx, content=payload.content, title=payload.title
-        )
+        docx_bytes = await asyncio.to_thread(render_chat_docx, content=payload.content, title=payload.title)
     except DocxExportError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={
-            "Content-Disposition": build_download_content_disposition(
-                payload.title, "docx"
-            ),
+            "Content-Disposition": build_download_content_disposition(payload.title, "docx"),
             "Cache-Control": "no-store",
         },
     )
@@ -904,18 +901,14 @@ async def export_chat_xlsx(
     if not payload.content or not payload.content.strip():
         raise HTTPException(status_code=400, detail="content must not be empty")
     try:
-        xlsx_bytes = await asyncio.to_thread(
-            render_chat_xlsx, content=payload.content, title=payload.title
-        )
+        xlsx_bytes = await asyncio.to_thread(render_chat_xlsx, content=payload.content, title=payload.title)
     except XlsxExportError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return Response(
         content=xlsx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
-            "Content-Disposition": build_download_content_disposition(
-                payload.title, "xlsx"
-            ),
+            "Content-Disposition": build_download_content_disposition(payload.title, "xlsx"),
             "Cache-Control": "no-store",
         },
     )

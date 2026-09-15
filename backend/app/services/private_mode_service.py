@@ -45,11 +45,7 @@ async def resolve_private_mode(
 
     requested = private_mode_requested(body)
     raw_session_id = body.get("chat_session_id")
-    session_id = (
-        str(raw_session_id).strip()
-        if isinstance(raw_session_id, str) and raw_session_id.strip()
-        else None
-    )
+    session_id = str(raw_session_id).strip() if isinstance(raw_session_id, str) and raw_session_id.strip() else None
     session_private = False
     if source == "alpha_router_chat" and user_id is not None and session_id:
         session_private = bool(
@@ -66,9 +62,7 @@ async def resolve_private_mode(
     effective = requested or session_private
     body["_effective_private_mode"] = effective
     if effective and body.get("persist_chat") is True:
-        raise PrivateModePersistenceError(
-            "Private Mode conversations cannot be persisted on the server"
-        )
+        raise PrivateModePersistenceError("Private Mode conversations cannot be persisted on the server")
     return PrivateModeContext(
         requested=requested,
         session_private=session_private,
@@ -90,6 +84,4 @@ def assert_session_persistence_allowed(session: ChatSession) -> None:
     """Fail closed before any message mutation on a private session."""
 
     if bool(session.private_mode):
-        raise PrivateModePersistenceError(
-            "Private Mode session messages cannot be stored on the server"
-        )
+        raise PrivateModePersistenceError("Private Mode session messages cannot be stored on the server")

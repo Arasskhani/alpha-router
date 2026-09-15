@@ -3,7 +3,6 @@
 Uses a fake async Redis client to avoid a live Redis dependency in unit tests.
 """
 
-import asyncio
 from unittest.mock import patch
 
 from app.services import auth_exchange
@@ -124,25 +123,25 @@ async def _test_memory_fallback_single_use() -> None:
         assert second is None
 
 
-def test_store_and_consume_once():
-    asyncio.run(_test_store_and_consume_once())
+async def test_store_and_consume_once():
+    await _test_store_and_consume_once()
 
 
-def test_consume_is_single_use():
-    asyncio.run(_test_consume_is_single_use())
+async def test_consume_is_single_use():
+    await _test_consume_is_single_use()
 
 
-def test_missing_code():
-    asyncio.run(_test_missing_code())
+async def test_missing_code():
+    await _test_missing_code()
 
 
-def test_memory_fallback_when_redis_down():
-    asyncio.run(_test_memory_fallback_when_redis_down())
+async def test_memory_fallback_when_redis_down():
+    await _test_memory_fallback_when_redis_down()
 
 
-def test_memory_fallback_expired():
-    asyncio.run(_test_memory_fallback_expired())
+async def test_memory_fallback_expired():
+    await _test_memory_fallback_expired()
 
 
-def test_memory_fallback_single_use():
-    asyncio.run(_test_memory_fallback_single_use())
+async def test_memory_fallback_single_use():
+    await _test_memory_fallback_single_use()

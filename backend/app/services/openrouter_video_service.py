@@ -4,23 +4,21 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import httpx
 
+from app.services.openrouter_image_service import build_openrouter_headers
+from app.services.provider_http import get_provider_rest_client, provider_connect_timeout
+from app.core.constants import OPENROUTER_HOST, normalize_openrouter_base_url
 from app.config import get_settings
-from app.services.openrouter_image_service import (
-    OPENROUTER_CONNECT_TIMEOUT,
-    build_openrouter_headers,
-    get_openrouter_http_client,
-)
-from app.services.storage_service import video_output_limit
+import contextlib
 
 
 ALLOWED_VIDEO_RESOLUTIONS = frozenset({"480p", "720p", "1080p", "1K", "2K", "4K"})
 ALLOWED_VIDEO_ASPECT_RATIOS = frozenset({"16:9", "9:16", "1:1", "3:2", "2:3", "4:3", "3:4", "21:9"})
 ALLOWED_VIDEO_MIME_TYPES = frozenset({"video/mp4", "video/webm"})
-_OPENROUTER_HOST_SUFFIX = "openrouter.ai"
+_OPENROUTER_HOST_SUFFIX = OPENROUTER_HOST
 
 
 def normalize_video_resolution(value: str | None) -> str:
@@ -75,8 +73,7 @@ def catalog_video_durations(raw: object | None) -> list[int]:
 
 
 def openrouter_videos_base(base_url: str | None) -> str:
-    root = (base_url or "https://openrouter.ai/api/v1").rstrip("/")
-    return f"{root}/videos"
+    return f"{normalize_openrouter_base_url(base_url)}/videos"
 
 
 def build_video_generation_payload(
@@ -107,10 +104,8 @@ def build_video_generation_payload(
     if frame_images:
         payload["frame_images"] = frame_images
     if seed is not None:
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             payload["seed"] = int(seed)
-        except (TypeError, ValueError):
-            pass
     return payload
 
 
@@ -125,7 +120,7 @@ def frame_image_from_data_url(data_url: str, *, frame_type: str = "first_frame")
 def _is_allowed_openrouter_url(url: str, *, base_url: str | None) -> bool:
     try:
         parsed = urlparse(url)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return False)
         return False
     if parsed.scheme not in ("https", "http"):
         return False
@@ -135,7 +130,7 @@ def _is_allowed_openrouter_url(url: str, *, base_url: str | None) -> bool:
     if base_url:
         try:
             base_host = (urlparse(base_url).hostname or "").lower()
-        except Exception:
+        except Exception:  # noqa: BLE001 -- falls back to a safe default value
             base_host = ""
         if base_host and host == base_host:
             return True
@@ -151,9 +146,8 @@ async def submit_video_job(
 ) -> dict[str, Any]:
     url = openrouter_videos_base(base_url)
     headers = build_openrouter_headers(api_key, referer=referer)
-    headers.setdefault("Connection", "close")
-    client = get_openrouter_http_client()
-    timeout = httpx.Timeout(60.0, connect=OPENROUTER_CONNECT_TIMEOUT)
+    client = get_provider_rest_client()
+    timeout = httpx.Timeout(get_settings().provider_http_timeout_seconds, connect=provider_connect_timeout())
     response = await client.post(url, headers=headers, json=payload, timeout=timeout)
     if response.status_code >= 400:
         detail = (response.text or "")[:2000]
@@ -177,9 +171,8 @@ async def poll_video_job(
     referer: str | None = None,
 ) -> dict[str, Any]:
     headers = build_openrouter_headers(api_key, referer=referer)
-    headers.setdefault("Connection", "close")
-    client = get_openrouter_http_client()
-    timeout = httpx.Timeout(30.0, connect=OPENROUTER_CONNECT_TIMEOUT)
+    client = get_provider_rest_client()
+    timeout = httpx.Timeout(30.0, connect=provider_connect_timeout())
 
     url = (polling_url or "").strip()
     if url:
@@ -271,75 +264,8 @@ def extract_video_download_url(payload: dict[str, Any], *, base_url: str | None 
         # Some providers return CDN URLs; allow https only and rely on SSRF guard at fetch time.
         try:
             parsed = urlparse(url)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- one bad item must not abort the batch
             continue
         if parsed.scheme == "https" and parsed.hostname:
             return url
     return None
-
-
-async def download_video_bytes(
-    *,
-    api_key: str,
-    url: str,
-    base_url: str | None = None,
-    max_bytes: int | None = None,
-    referer: str | None = None,
-) -> tuple[bytes, str]:
-    """Download generated video with a hard size cap. Returns (blob, mime)."""
-    settings = get_settings()
-    limit = int(max_bytes or video_output_limit())
-    headers = build_openrouter_headers(api_key, referer=referer)
-    # Content endpoints may need auth; public CDNs ignore the header.
-    client = get_openrouter_http_client()
-    timeout = httpx.Timeout(120.0, connect=OPENROUTER_CONNECT_TIMEOUT)
-
-    if url.startswith("data:"):
-        from app.services.bounded_io import decode_data_url_bounded
-
-        blob, mime = decode_data_url_bounded(url, max_decoded_bytes=limit)
-        return blob, mime or "video/mp4"
-
-    # Absolute-ize relative OpenRouter paths.
-    if url.startswith("/"):
-        root = (base_url or "https://openrouter.ai/api/v1").rstrip("/")
-        # url may be /api/v1/videos/... — prefer joining against origin.
-        parsed_base = urlparse(root)
-        origin = f"{parsed_base.scheme}://{parsed_base.netloc}"
-        url = urljoin(origin, url)
-
-    from app.services.ssrf_guard import safe_client
-
-    async with safe_client() as ssrf_client:
-        # Prefer SSRF-safe client for non-OpenRouter CDN URLs.
-        use_client: httpx.AsyncClient = client
-        if not _is_allowed_openrouter_url(url, base_url=base_url):
-            use_client = ssrf_client
-        async with use_client.stream("GET", url, headers=headers, timeout=timeout) as response:
-            if response.status_code >= 400:
-                body = (await response.aread())[:500]
-                raise httpx.HTTPStatusError(
-                    f"Video download failed: {response.status_code} {body!r}",
-                    request=response.request,
-                    response=response,
-                )
-            mime = (response.headers.get("content-type") or "video/mp4").split(";")[0].strip().lower()
-            chunks: list[bytes] = []
-            total = 0
-            async for chunk in response.aiter_bytes():
-                if not chunk:
-                    continue
-                total += len(chunk)
-                if total > limit:
-                    raise ValueError(f"Video exceeds max size of {limit} bytes")
-                chunks.append(chunk)
-            blob = b"".join(chunks)
-    if mime not in ALLOWED_VIDEO_MIME_TYPES:
-        # Trust mp4/webm by magic when CDN omits content-type.
-        if blob[4:8] == b"ftyp":
-            mime = "video/mp4"
-        elif blob[:4] == b"\x1aE\xdf\xa3":
-            mime = "video/webm"
-        else:
-            mime = "video/mp4"
-    return blob, mime

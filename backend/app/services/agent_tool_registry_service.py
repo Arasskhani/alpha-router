@@ -77,9 +77,7 @@ def normalize_tool_slug(value: str) -> str:
     slug = (value or "").strip().lower().replace("_", "-").replace(" ", "-")
     slug = re.sub(r"-+", "-", slug).strip("-")
     if not slug or len(slug) > 128 or not _SLUG_RE.fullmatch(slug):
-        raise ToolRegistryError(
-            "Tool slug must contain lowercase letters, numbers, and single hyphens"
-        )
+        raise ToolRegistryError("Tool slug must contain lowercase letters, numbers, and single hyphens")
     return slug
 
 
@@ -122,13 +120,10 @@ def _walk_schema(value: Any, *, input_schema: bool) -> None:
             raise ToolRegistryError("Remote JSON Schema references are not allowed")
         properties = value.get("properties")
         if input_schema and isinstance(properties, dict):
-            sensitive = sorted(
-                str(name) for name in properties if _SENSITIVE_KEY_RE.search(str(name))
-            )
+            sensitive = sorted(str(name) for name in properties if _SENSITIVE_KEY_RE.search(str(name)))
             if sensitive:
                 raise ToolRegistryError(
-                    "Credentials must use secret_ref and cannot be model-supplied "
-                    f"tool arguments: {sensitive}"
+                    f"Credentials must use secret_ref and cannot be model-supplied tool arguments: {sensitive}"
                 )
         for child in value.values():
             _walk_schema(child, input_schema=input_schema)
@@ -154,9 +149,7 @@ def validate_tool_json_schema(
     if schema.get("type") != "object":
         raise ToolRegistryError("Tool input and output schemas must have type=object")
     if schema.get("additionalProperties") is not False:
-        raise ToolRegistryError(
-            "Tool schemas must explicitly set additionalProperties=false"
-        )
+        raise ToolRegistryError("Tool schemas must explicitly set additionalProperties=false")
     property_count, _ = _schema_stats(schema)
     if property_count > _MAX_SCHEMA_PROPERTIES:
         raise ToolRegistryError("Tool JSON Schema contains too many properties")
@@ -187,9 +180,7 @@ def _normalize_cost_policy(value: dict | None) -> dict:
     for key, item in raw.items():
         amount = float(item)
         if not math.isfinite(amount) or amount < 0.0 or amount > 100.0:
-            raise ToolRegistryError(
-                "Tool cost bounds must be finite values from 0 to 100"
-            )
+            raise ToolRegistryError("Tool cost bounds must be finite values from 0 to 100")
         normalized[key] = amount
     estimated = normalized.get("estimated_cost_usd", 0.0)
     maximum = normalized.get("maximum_cost_usd", estimated)
@@ -209,33 +200,19 @@ def _normalize_model_compatibility(value: dict | None) -> dict:
         "requires_native_tool_calling",
     }
     if unknown:
-        raise ToolRegistryError(
-            f"Unknown model compatibility fields: {sorted(unknown)}"
-        )
+        raise ToolRegistryError(f"Unknown model compatibility fields: {sorted(unknown)}")
     models = tuple(
-        dict.fromkeys(
-            " ".join(str(item).split())
-            for item in raw.get("allowed_model_ids", [])
-            if str(item).strip()
-        )
+        dict.fromkeys(" ".join(str(item).split()) for item in raw.get("allowed_model_ids", []) if str(item).strip())
     )
     providers = tuple(
-        dict.fromkeys(
-            str(item).strip().lower()
-            for item in raw.get("allowed_provider_types", [])
-            if str(item).strip()
-        )
+        dict.fromkeys(str(item).strip().lower() for item in raw.get("allowed_provider_types", []) if str(item).strip())
     )
     if len(models) > 128 or len(providers) > 32:
-        raise ToolRegistryError(
-            "Tool model compatibility allowlists exceed safe limits"
-        )
+        raise ToolRegistryError("Tool model compatibility allowlists exceed safe limits")
     return {
         "allowed_model_ids": list(models),
         "allowed_provider_types": list(providers),
-        "requires_native_tool_calling": bool(
-            raw.get("requires_native_tool_calling", False)
-        ),
+        "requires_native_tool_calling": bool(raw.get("requires_native_tool_calling", False)),
     }
 
 
@@ -277,11 +254,7 @@ async def _audit(
 
 
 async def _lock_tool(db: AsyncSession, tool_id: str) -> AgentTool:
-    tool = (
-        await db.execute(
-            select(AgentTool).where(AgentTool.id == tool_id).with_for_update()
-        )
-    ).scalar_one_or_none()
+    tool = (await db.execute(select(AgentTool).where(AgentTool.id == tool_id).with_for_update())).scalar_one_or_none()
     if tool is None:
         raise ToolRegistryError("Tool no longer exists")
     return tool
@@ -316,9 +289,7 @@ async def create_agent_tool(
     if not clean_name or len(clean_name) > 255:
         raise ToolRegistryError("Tool name is required and limited to 255 characters")
     clean_slug = normalize_tool_slug(slug)
-    existing = (
-        await db.execute(select(AgentTool.id).where(AgentTool.slug == clean_slug))
-    ).scalar_one_or_none()
+    existing = (await db.execute(select(AgentTool.id).where(AgentTool.slug == clean_slug))).scalar_one_or_none()
     if existing is not None:
         raise ToolRegistryError(f"Tool slug already exists: {clean_slug}")
     tool = AgentTool(
@@ -384,9 +355,7 @@ def _normalized_version_payload(
         raise ToolRegistryError("required_permission is invalid")
     clean_secret_ref = (secret_ref or "").strip() or None
     if clean_secret_ref and not _SECRET_REF_RE.fullmatch(clean_secret_ref):
-        raise ToolRegistryError(
-            "secret_ref must be an opaque secret://, vault://, or kms:// reference"
-        )
+        raise ToolRegistryError("secret_ref must be an opaque secret://, vault://, or kms:// reference")
     return {
         "input_schema": validate_tool_json_schema(
             input_schema,
@@ -450,9 +419,7 @@ async def create_agent_tool_version(
         int(
             (
                 await db.execute(
-                    select(func.max(AgentToolVersion.version_number)).where(
-                        AgentToolVersion.tool_id == tool.id
-                    )
+                    select(func.max(AgentToolVersion.version_number)).where(AgentToolVersion.tool_id == tool.id)
                 )
             ).scalar_one_or_none()
             or 0
@@ -631,9 +598,7 @@ async def publish_agent_tool_version(
         payload=reviewed_payload,
     )
     if reviewed_fingerprint != version.fingerprint:
-        raise ToolRegistryError(
-            "Reviewed Tool version changed after submission; create a new review"
-        )
+        raise ToolRegistryError("Reviewed Tool version changed after submission; create a new review")
     maker_actor_ids = {
         int(candidate)
         for candidate in (
@@ -644,10 +609,7 @@ async def publish_agent_tool_version(
         if candidate is not None
     }
     if not allow_same_actor and int(actor_user_id) in maker_actor_ids:
-        raise ToolRegistryError(
-            "Maker-checker violation: a Tool version author or submitter "
-            "cannot publish it"
-        )
+        raise ToolRegistryError("Maker-checker violation: a Tool version author or submitter cannot publish it")
     current = await get_active_agent_tool_version(db, tool.id)
     now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
     if current is not None and current.id != version.id:
@@ -688,9 +650,7 @@ async def rollback_agent_tool_version(
     await _lock_tool(db, target.tool_id)
     target = await _lock_tool_version(db, target.id)
     if target.status not in {"published", "archived"} or target.published_at is None:
-        raise ToolRegistryError(
-            "Only a previously published Tool version can be restored"
-        )
+        raise ToolRegistryError("Only a previously published Tool version can be restored")
     current = await get_active_agent_tool_version(db, target.tool_id)
     now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
     if current is not None and current.id != target.id:
@@ -712,9 +672,7 @@ async def rollback_agent_tool_version(
         reason=clean_reason,
         payload={
             "restored_version_number": target.version_number,
-            "replaced_version_id": (
-                current.id if current is not None and current.id != target.id else None
-            ),
+            "replaced_version_id": (current.id if current is not None and current.id != target.id else None),
         },
     )
     return target
@@ -746,14 +704,10 @@ async def resolve_agent_tools(
     for grant in policy.tools:
         if grant.slug in denied:
             raise ToolPolicyDenied(f"Tool is explicitly denied: {grant.slug}")
-        tool = (
-            await db.execute(select(AgentTool).where(AgentTool.slug == grant.slug))
-        ).scalar_one_or_none()
+        tool = (await db.execute(select(AgentTool).where(AgentTool.slug == grant.slug))).scalar_one_or_none()
         if tool is None or tool.status != "active":
             if grant.required:
-                raise ToolRegistryError(
-                    f"Required Agent tool is unavailable: {grant.slug}"
-                )
+                raise ToolRegistryError(f"Required Agent tool is unavailable: {grant.slug}")
             continue
         if grant.version_id:
             version = await db.get(AgentToolVersion, grant.version_id)
@@ -765,21 +719,15 @@ async def resolve_agent_tools(
             )
             if not valid:
                 if grant.required:
-                    raise ToolRegistryError(
-                        f"Pinned Agent tool version is unavailable: {grant.slug}"
-                    )
+                    raise ToolRegistryError(f"Pinned Agent tool version is unavailable: {grant.slug}")
                 continue
         else:
             version = await get_active_agent_tool_version(db, tool.id)
             if version is None:
                 if grant.required:
-                    raise ToolRegistryError(
-                        f"Required Agent tool has no active version: {grant.slug}"
-                    )
+                    raise ToolRegistryError(f"Required Agent tool has no active version: {grant.slug}")
                 continue
-        resolved.append(
-            ResolvedAgentTool(tool=tool, version=version, required=grant.required)
-        )
+        resolved.append(ResolvedAgentTool(tool=tool, version=version, required=grant.required))
     return tuple(resolved)
 
 
@@ -793,26 +741,15 @@ async def validate_agent_tool_bindings(
 
 def assert_tool_model_compatible(spec: ResolvedAgentTool, model: AIModel) -> None:
     policy = dict(spec.version.model_compatibility or {})
-    allowed_models = {
-        str(value) for value in policy.get("allowed_model_ids", []) if str(value)
-    }
+    allowed_models = {str(value) for value in policy.get("allowed_model_ids", []) if str(value)}
     allowed_providers = {
-        str(value).strip().lower()
-        for value in policy.get("allowed_provider_types", [])
-        if str(value).strip()
+        str(value).strip().lower() for value in policy.get("allowed_provider_types", []) if str(value).strip()
     }
     references = {str(model.id), f"model::{model.id}", model.external_id}
     if allowed_models and references.isdisjoint(allowed_models):
-        raise ToolPolicyDenied(
-            f"Model {model.external_id} is not compatible with tool {spec.tool.slug}"
-        )
-    if (
-        allowed_providers
-        and (model.provider_type or "").strip().lower() not in allowed_providers
-    ):
-        raise ToolPolicyDenied(
-            f"Provider {model.provider_type} is not compatible with tool {spec.tool.slug}"
-        )
+        raise ToolPolicyDenied(f"Model {model.external_id} is not compatible with tool {spec.tool.slug}")
+    if allowed_providers and (model.provider_type or "").strip().lower() not in allowed_providers:
+        raise ToolPolicyDenied(f"Provider {model.provider_type} is not compatible with tool {spec.tool.slug}")
 
 
 @dataclass(frozen=True)
@@ -995,9 +932,7 @@ def _sanitize_payload(value: Any, *, path: str = "$") -> tuple[Any, list[str]]:
             output_list.append(sanitized)
             redacted.extend(child_redacted)
         return output_list, redacted
-    if isinstance(value, str) and any(
-        pattern.search(value) for pattern in _SENSITIVE_VALUE_PATTERNS
-    ):
+    if isinstance(value, str) and any(pattern.search(value) for pattern in _SENSITIVE_VALUE_PATTERNS):
         return "[REDACTED]", [path]
     return value, redacted
 
@@ -1025,22 +960,15 @@ async def _evaluate_tool_guardrail(
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        raise ToolPolicyDenied(
-            f"Tool guardrail unavailable at {request.stage}"
-        ) from exc
+        raise ToolPolicyDenied(f"Tool guardrail unavailable at {request.stage}") from exc
     if not isinstance(decision, ToolGuardrailDecision):
-        raise ToolPolicyDenied(
-            f"Tool guardrail returned an invalid decision at {request.stage}"
-        )
+        raise ToolPolicyDenied(f"Tool guardrail returned an invalid decision at {request.stage}")
     if not decision.allowed:
-        raise ToolPolicyDenied(
-            f"Tool guardrail denied execution at {request.stage}: "
-            f"{decision.reason_code}"
-        )
+        raise ToolPolicyDenied(f"Tool guardrail denied execution at {request.stage}: {decision.reason_code}")
     return decision
 
 
-async def execute_agent_tool(
+async def execute_agent_tool(  # noqa: C901 -- Phase 4 split; complexity must not grow
     *,
     spec: ResolvedAgentTool,
     model: AIModel,
@@ -1060,20 +988,12 @@ async def execute_agent_tool(
     guardrails = guardrails or AllowAuditToolExecutionGuardrails()
     guardrail_reason_codes: list[str] = []
     assert_tool_model_compatible(spec, model)
-    if (
-        version.required_permission
-        and version.required_permission not in context.permissions
-    ):
-        raise ToolPolicyDenied(
-            f"Missing required permission for tool {spec.tool.slug}: "
-            f"{version.required_permission}"
-        )
+    if version.required_permission and version.required_permission not in context.permissions:
+        raise ToolPolicyDenied(f"Missing required permission for tool {spec.tool.slug}: {version.required_permission}")
     rate_policy = dict(version.rate_limit_policy or {})
     if rate_policy:
         if rate_limiter is None:
-            raise ToolPolicyDenied(
-                f"Tool {spec.tool.slug} requires a configured rate limiter"
-            )
+            raise ToolPolicyDenied(f"Tool {spec.tool.slug} requires a configured rate limiter")
         allowed = await rate_limiter.consume(
             tool_version_id=version.id,
             user_id=context.user_id,
@@ -1084,21 +1004,15 @@ async def execute_agent_tool(
             raise ToolLimitExceeded(f"Tool {spec.tool.slug} rate limit exceeded")
     if version.effect_type == EFFECT_SIDE_EFFECTING:
         if version.approval_mode != APPROVAL_REQUIRED or not context.user_approved:
-            raise ToolApprovalRequired(
-                f"Tool {spec.tool.slug} requires explicit user approval"
-            )
+            raise ToolApprovalRequired(f"Tool {spec.tool.slug} requires explicit user approval")
         if not context.idempotency_key:
             raise ToolPolicyDenied(f"Tool {spec.tool.slug} requires an idempotency key")
         if ledger is None:
-            raise ToolPolicyDenied(
-                "Side-effecting tools require a durable invocation ledger"
-            )
+            raise ToolPolicyDenied("Side-effecting tools require a durable invocation ledger")
     _validate_instance(version.input_schema, arguments, label="tool input")
     _, sensitive_input_paths = _sanitize_payload(arguments)
     if sensitive_input_paths:
-        raise ToolPolicyDenied(
-            "Credential-like values cannot be supplied through model tool arguments"
-        )
+        raise ToolPolicyDenied("Credential-like values cannot be supplied through model tool arguments")
     pre_decision = await _evaluate_tool_guardrail(
         guardrails,
         ToolGuardrailRequest(
@@ -1126,9 +1040,7 @@ async def execute_agent_tool(
             tool_version_id=version.id,
         )
         if cached is not None:
-            _validate_instance(
-                version.output_schema, cached, label="cached tool output"
-            )
+            _validate_instance(version.output_schema, cached, label="cached tool output")
             sanitized, redacted = _sanitize_payload(cached)
             post_decision = await _evaluate_tool_guardrail(
                 guardrails,
@@ -1161,9 +1073,7 @@ async def execute_agent_tool(
             correlation_id=context.correlation_id,
         )
         if not claimed:
-            raise ToolExecutionFailed(
-                "An invocation with this idempotency key is already in progress"
-            )
+            raise ToolExecutionFailed("An invocation with this idempotency key is already in progress")
 
     attempts = 0
     try:
@@ -1183,16 +1093,10 @@ async def execute_agent_tool(
         else:
             payload = raw_result
             actual_cost = 0.0
-        if (
-            not isinstance(payload, dict)
-            or not math.isfinite(actual_cost)
-            or actual_cost < 0.0
-        ):
+        if not isinstance(payload, dict) or not math.isfinite(actual_cost) or actual_cost < 0.0:
             raise ToolExecutionFailed("Tool handler returned an invalid result")
         if actual_cost > maximum_cost:
-            raise ToolExecutionFailed(
-                "Tool handler exceeded its registered cost ceiling"
-            )
+            raise ToolExecutionFailed("Tool handler exceeded its registered cost ceiling")
         _validate_instance(version.output_schema, payload, label="tool output")
         sanitized, redacted = _sanitize_payload(payload)
         encoded = _canonical_json(sanitized).encode("utf-8")

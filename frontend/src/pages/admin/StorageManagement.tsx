@@ -38,7 +38,7 @@ function humanSize(bytes: number) {
 }
 
 export default function StorageManagement() {
-  const { confirm } = useConfirm();
+  const { confirm, prompt } = useConfirm();
   const [stats, setStats] = useState<StorageOverview | null>(null);
   const [quotaGb, setQuotaGb] = useState(1);
   const [projectQuotaGb, setProjectQuotaGb] = useState(1);
@@ -240,22 +240,28 @@ export default function StorageManagement() {
     });
     if (!step2) return;
 
-    const step3 = await confirm({
+    // Verified server-side as well (Super Admin + exact phrase).
+    const typed = await prompt({
       title: "Clear all media — final confirmation",
       message:
         `Final step: delete all ${fileCount.toLocaleString()} files (${sizeLabel}) from storage now. ` +
         "There is no backup step inside Alpharouter. Confirm only if you are certain.",
+      promptLabel: 'Type "DELETE ALL MEDIA" to confirm',
+      promptExactMatch: "DELETE ALL MEDIA",
       confirmLabel: "Delete all media now",
       cancelLabel: "Cancel",
       danger: true,
     });
-    if (!step3) return;
+    if (typed !== "DELETE ALL MEDIA") return;
 
     setClearing(true);
     setError("");
     setFlash("");
     try {
-      const res = await api<{ removed_files: number }>("/api/admin/storage/clear-cache", { method: "POST" });
+      const res = await api<{ removed_files: number }>("/api/admin/storage/clear-cache", {
+        method: "POST",
+        body: JSON.stringify({ confirm: typed }),
+      });
       setFlash(`All media deleted. Removed ${res.removed_files} files.`);
       await load();
     } catch (e) {

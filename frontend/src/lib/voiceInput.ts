@@ -31,7 +31,7 @@ type SpeechRecognitionInstance = {
 
 type SpeechRecognitionCtor = new () => SpeechRecognitionInstance;
 
-export function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
+function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
   const w = window as Window & {
     SpeechRecognition?: SpeechRecognitionCtor;
     webkitSpeechRecognition?: SpeechRecognitionCtor;
@@ -57,7 +57,7 @@ export function normalizeVoiceLang(lang?: string | null): VoiceLang {
 }
 
 /** Map a voice-recording language code to a BCP-47 locale for the browser recognizer. */
-export function voiceLangToLocale(lang?: string | null): string {
+function voiceLangToLocale(lang?: string | null): string {
   const norm = normalizeVoiceLang(lang);
   if (norm === "fa") return "fa-IR";
   if (norm === "en") return "en-US";
@@ -90,7 +90,9 @@ export class BrowserSpeechCapture {
   private failedSessions = 0;
 
   private get text(): string {
-    return (this.committed + this.sessionText).trim();
+    if (!this.committed) return this.sessionText.trim();
+    if (!this.sessionText) return this.committed.trim();
+    return `${this.committed.trimEnd()} ${this.sessionText.trimStart()}`.trim();
   }
 
   /**
@@ -140,7 +142,11 @@ export class BrowserSpeechCapture {
     rec.onend = () => {
       const wasFast = Date.now() - this.sessionStartedAt < _FAILED_SESSION_MS;
       if (wasFast && !this.sessionText) this.failedSessions += 1;
-      this.committed += this.sessionText;
+      // Sessions end at pauses; without a separator the last word of one and
+      // the first of the next ran together ("...doneNow...").
+      if (this.sessionText) {
+        this.committed = this.committed ? `${this.committed.trimEnd()} ${this.sessionText.trimStart()}` : this.sessionText;
+      }
       this.sessionText = "";
       this.recognition = null;
       // Bail out instead of spinning when the recognizer service is unreachable.

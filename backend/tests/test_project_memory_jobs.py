@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
 import uuid
 
@@ -74,16 +73,8 @@ async def _seed_project(db: AsyncSession) -> tuple[User, User, ChatSession]:
             acl_version=1,
         )
     )
-    db.add(
-        ProjectMember(
-            project_id=PROJ_ID, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER
-        )
-    )
-    db.add(
-        ProjectMember(
-            project_id=PROJ_ID, user_id=member.id, role=PROJECT_ROLE_CONTRIBUTOR
-        )
-    )
+    db.add(ProjectMember(project_id=PROJ_ID, user_id=owner.id, role=PROJECT_ROLE_PRIMARY_OWNER))
+    db.add(ProjectMember(project_id=PROJ_ID, user_id=member.id, role=PROJECT_ROLE_CONTRIBUTOR))
     session = ChatSession(
         id="sess-proj-ai",
         user_id=owner.id,
@@ -104,27 +95,27 @@ async def _two_members_coalesce_into_one_job() -> None:
     factory, engine = await _session_factory()
     async with factory() as db:
         owner, member, session = await _seed_project(db)
-        first = await schedule_extraction(
-            db, project_id=PROJ_ID, session_id=session.id, watermark_sequence=2
-        )
+        first = await schedule_extraction(db, project_id=PROJ_ID, session_id=session.id, watermark_sequence=2)
         assert first is not None
         # The second member posts into the same thread moments later.
-        second = await schedule_extraction(
-            db, project_id=PROJ_ID, session_id=session.id, watermark_sequence=6
-        )
+        second = await schedule_extraction(db, project_id=PROJ_ID, session_id=session.id, watermark_sequence=6)
         await db.commit()
         assert second is not None
         assert second.id == first.id
         assert second.watermark_sequence == 6
 
         open_jobs = (
-            await db.execute(
-                select(ProjectMemoryJob).where(
-                    ProjectMemoryJob.project_id == PROJ_ID,
-                    ProjectMemoryJob.status.in_(("pending", "retry")),
+            (
+                await db.execute(
+                    select(ProjectMemoryJob).where(
+                        ProjectMemoryJob.project_id == PROJ_ID,
+                        ProjectMemoryJob.status.in_(("pending", "retry")),
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(open_jobs) == 1
         events = (await db.execute(select(OutboxEvent))).scalars().all()
         ready = [e for e in events if e.event_type == "project_memory.job.ready"]
@@ -142,9 +133,7 @@ async def _project_chat_never_schedules_personal_job() -> None:
     factory, engine = await _session_factory()
     async with factory() as db:
         owner, _member, session = await _seed_project(db)
-        leaked = await schedule_user_extraction(
-            db, user_id=owner.id, session_id=session.id, watermark_sequence=2
-        )
+        leaked = await schedule_user_extraction(db, user_id=owner.id, session_id=session.id, watermark_sequence=2)
         await db.commit()
         assert leaked is None
         assert (await db.execute(select(UserMemoryJob))).scalars().all() == []
@@ -229,9 +218,7 @@ async def _lease_recovery_and_completion() -> None:
     factory, engine = await _session_factory()
     async with factory() as db:
         _owner, _member, session = await _seed_project(db)
-        job = await schedule_extraction(
-            db, project_id=PROJ_ID, session_id=session.id, watermark_sequence=4
-        )
+        job = await schedule_extraction(db, project_id=PROJ_ID, session_id=session.id, watermark_sequence=4)
         assert job is not None
         job.run_after = dt.datetime.utcnow() - dt.timedelta(seconds=1)
         await db.flush()
@@ -271,9 +258,7 @@ async def _delete_all_auto_resets_watermarks_and_keeps_manual() -> None:
                     sequence=seq,
                 )
             )
-        await create_project_memory(
-            db, project_id=PROJ_ID, user=owner, content="Owner-authored fact"
-        )
+        await create_project_memory(db, project_id=PROJ_ID, user=owner, content="Owner-authored fact")
         learned, created = await create_auto_project_memory(
             db,
             project_id=PROJ_ID,
@@ -284,23 +269,15 @@ async def _delete_all_auto_resets_watermarks_and_keeps_manual() -> None:
             category="convention",
         )
         assert created is True
-        job = await schedule_extraction(
-            db, project_id=PROJ_ID, session_id=session.id, watermark_sequence=3
-        )
+        job = await schedule_extraction(db, project_id=PROJ_ID, session_id=session.id, watermark_sequence=3)
         assert job is not None
         await db.commit()
 
-        deleted = await delete_all_auto_project_memories(
-            db, project_id=PROJ_ID, user=owner
-        )
+        deleted = await delete_all_auto_project_memories(db, project_id=PROJ_ID, user=owner)
         await db.commit()
         assert deleted == 1
         assert await db.get(ProjectMemory, learned.id) is None
-        remaining = (
-            await db.execute(
-                select(ProjectMemory).where(ProjectMemory.project_id == PROJ_ID)
-            )
-        ).scalars().all()
+        remaining = (await db.execute(select(ProjectMemory).where(ProjectMemory.project_id == PROJ_ID))).scalars().all()
         assert [row.content for row in remaining] == ["Owner-authored fact"]
         # The old thread must not be mined again into the same facts.
         refreshed = await db.get(ProjectMemoryJob, job.id)
@@ -309,25 +286,25 @@ async def _delete_all_auto_resets_watermarks_and_keeps_manual() -> None:
     await engine.dispose()
 
 
-def test_two_members_coalesce_into_one_project_job() -> None:
-    asyncio.run(_two_members_coalesce_into_one_job())
+async def test_two_members_coalesce_into_one_project_job() -> None:
+    await _two_members_coalesce_into_one_job()
 
 
-def test_project_chat_never_schedules_a_personal_memory_job() -> None:
-    asyncio.run(_project_chat_never_schedules_personal_job())
+async def test_project_chat_never_schedules_a_personal_memory_job() -> None:
+    await _project_chat_never_schedules_personal_job()
 
 
-def test_rooms_private_and_personal_sessions_are_not_mined() -> None:
-    asyncio.run(_ineligible_sessions_are_skipped())
+async def test_rooms_private_and_personal_sessions_are_not_mined() -> None:
+    await _ineligible_sessions_are_skipped()
 
 
-def test_auto_capture_disabled_stops_project_scheduling() -> None:
-    asyncio.run(_auto_capture_off_stops_scheduling())
+async def test_auto_capture_disabled_stops_project_scheduling() -> None:
+    await _auto_capture_off_stops_scheduling()
 
 
-def test_project_job_lease_recovery_and_completion() -> None:
-    asyncio.run(_lease_recovery_and_completion())
+async def test_project_job_lease_recovery_and_completion() -> None:
+    await _lease_recovery_and_completion()
 
 
-def test_delete_all_learned_facts_resets_watermarks() -> None:
-    asyncio.run(_delete_all_auto_resets_watermarks_and_keeps_manual())
+async def test_delete_all_learned_facts_resets_watermarks() -> None:
+    await _delete_all_auto_resets_watermarks_and_keeps_manual()

@@ -12,12 +12,12 @@ from app.branding import CHAT_CLIENT_APP
 from app.core.language_detect import detect_prompt_language
 from app.models.model_catalog import AIModel
 from app.models.user import User
-from app.services.proxy_service import (
+from app.services.provider_utils import (
     _compute_token_cost_usd,
     _usage_from_response,
     _usage_from_usage_obj,
-    log_usage,
 )
+from app.services.usage_logging_service import log_usage
 from app.services.usage_accounting_service import (
     PendingUsageEvent,
     capture_usage_event,
@@ -81,9 +81,7 @@ class ImageBillingCapture:
                 if isinstance(existing.payload, dict)
                 else getattr(existing.payload, "id", None)
             )
-            if payload is existing.payload or (
-                payload_id is not None and existing_id == payload_id
-            ):
+            if payload is existing.payload or (payload_id is not None and existing_id == payload_id):
                 existing.success = existing.success or success
                 if quantity is not None:
                     existing.quantity = quantity
@@ -160,6 +158,8 @@ async def log_image_usage(
     response_time_ms: float,
     success: bool,
     error_message: str | None = None,
+    error_code: str | None = None,
+    http_status: int | None = None,
     source_ip: str | None = None,
     operation: str = "generation",
     budget_reservation_id: str | None = None,
@@ -231,9 +231,7 @@ async def log_image_usage(
     completion_tokens = sum(event.usage.completion_tokens for event in usage_events)
     cached_tokens = sum(event.usage.cached_tokens for event in usage_events)
     total_cost = sum(
-        float(event.quote.final_cost_usd)
-        for event in usage_events
-        if event.quote.final_cost_usd is not None
+        float(event.quote.final_cost_usd) for event in usage_events if event.quote.final_cost_usd is not None
     )
     client_app = f"{CHAT_CLIENT_APP} (image:{op})"
     return await log_usage(
@@ -251,6 +249,8 @@ async def log_image_usage(
         source="alpha_router_chat",
         success=success,
         error_message=error_message,
+        error_code=error_code,
+        http_status=http_status,
         client_app=client_app,
         budget_reservation_id=budget_reservation_id,
         usage_events=usage_events,

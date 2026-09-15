@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from types import SimpleNamespace
 
@@ -124,5 +123,5 @@ async def _flow() -> None:
     await engine.dispose()
 
 
-def test_hold_quotes_use_catalog_then_shared_unpriced_fallback() -> None:
-    asyncio.run(_flow())
+async def test_hold_quotes_use_catalog_then_shared_unpriced_fallback() -> None:
+    await _flow()

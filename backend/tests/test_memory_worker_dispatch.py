@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
 import uuid
 from unittest.mock import patch
 
+from qdrant_client import AsyncQdrantClient
 from redis.exceptions import ResponseError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from qdrant_client import AsyncQdrantClient
 
 import app.models  # noqa: F401
 from app.database import Base
@@ -53,11 +52,7 @@ class FakeRedis:
 
     async def xreadgroup(self, group, consumer, streams, count, block):
         del group, consumer, count, block
-        pending = [
-            item
-            for item in self.messages
-            if item[0] not in self.delivered and item[0] not in self.acked
-        ]
+        pending = [item for item in self.messages if item[0] not in self.delivered and item[0] not in self.acked]
         for stream_id, _fields in pending:
             self.delivered.add(stream_id)
         if not pending:
@@ -116,16 +111,12 @@ async def _dispatch() -> None:
                     sequence=seq,
                 )
             )
-        memory_job = await schedule_extraction(
-            db, user_id=user.id, session_id=session.id, watermark_sequence=2
-        )
+        memory_job = await schedule_extraction(db, user_id=user.id, session_id=session.id, watermark_sequence=2)
         assert memory_job is not None
         past = dt.datetime.utcnow() - dt.timedelta(seconds=1)
         memory_job.run_after = past
         outbox = (
-            await db.execute(
-                select(OutboxEvent).where(OutboxEvent.event_type == "memory.job.ready")
-            )
+            await db.execute(select(OutboxEvent).where(OutboxEvent.event_type == "memory.job.ready"))
         ).scalar_one()
         outbox.available_at = past
 
@@ -192,9 +183,7 @@ async def _dispatch() -> None:
     async with factory() as db:
         persisted = await db.get(UserMemoryJob, memory_job_id)
         knowledge = await db.get(IngestionJob, knowledge_job_id)
-        memories = (
-            await db.execute(select(UserMemory).where(UserMemory.user_id == user_id))
-        ).scalars().all()
+        memories = (await db.execute(select(UserMemory).where(UserMemory.user_id == user_id))).scalars().all()
         assert persisted.status == "succeeded"
         assert persisted.extracted_sequence == 2
         assert knowledge.status == "succeeded"
@@ -204,5 +193,5 @@ async def _dispatch() -> None:
     await engine.dispose()
 
 
-def test_memory_and_knowledge_jobs_dispatch_on_shared_worker() -> None:
-    asyncio.run(_dispatch())
+async def test_memory_and_knowledge_jobs_dispatch_on_shared_worker() -> None:
+    await _dispatch()

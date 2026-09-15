@@ -64,7 +64,7 @@ export type ResourceAccessRecord = {
   >;
 };
 
-export type KnowledgeVersionRecord = {
+type KnowledgeVersionRecord = {
   id: string;
   document_id: string;
   version_number: number;

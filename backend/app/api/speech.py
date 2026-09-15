@@ -27,6 +27,7 @@ from app.services.budget_reservation_service import (
 from app.services.llm_providers import external_id_lookup_candidates, normalize_model_id
 from app.services.model_capabilities import speech_generation_capabilities
 from app.services.secret_crypto import decrypt_secret
+from app.services.failure_details import CODE_CANCELLED, CODE_TIMEOUT, describe_failure
 from app.services.speech_billing_service import SpeechBillingCapture, log_speech_usage
 from app.services.speech_providers import NormalizedSpeechRequest, get_speech_adapter
 from app.services.speech_providers.contracts import SpeechProviderError
@@ -93,7 +94,7 @@ async def _await_speech_work(
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
-                raise asyncio.TimeoutError()
+                raise TimeoutError()
             await asyncio.wait({task}, timeout=min(0.5, remaining))
         return await task
     except BaseException:
@@ -111,48 +112,53 @@ async def _resolve_speech_model(
     access_user_id: int | None = None,
 ) -> tuple[str, str | None, str | None, str | None, AIModel | None]:
     model_id = _normalize_model_id(raw_model)
-    subject = (
-        await resolve_access_subject(db, user_id=access_user_id) if access_user_id is not None else None
-    )
+    subject = await resolve_access_subject(db, user_id=access_user_id) if access_user_id is not None else None
     row: AIModel | None = None
     if model_id.startswith("model::"):
         try:
             model_pk = int(model_id.split("::", 1)[1])
-        except Exception:
+        except Exception:  # noqa: BLE001 -- falls back to a safe default value
             model_pk = None
         if model_pk is not None:
             row = (
-                await db.execute(
-                    select(AIModel).where(AIModel.id == model_pk, AIModel.is_enabled == True)  # noqa: E712
+                (
+                    await db.execute(
+                        select(AIModel).where(AIModel.id == model_pk, AIModel.is_enabled == True)  # noqa: E712
+                    )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
         if row:
             conn = await db.get(Connection, row.connection_id)
-            if conn and conn.is_active:
-                if subject is None or await user_can_access_model(db, row, subject):
-                    return (
-                        row.external_id,
-                        decrypt_secret(conn.api_key_encrypted),
-                        conn.base_url,
-                        conn.provider_type,
-                        row,
-                    )
+            if conn and conn.is_active and (subject is None or await user_can_access_model(db, row, subject)):
+                return (
+                    row.external_id,
+                    decrypt_secret(conn.api_key_encrypted),
+                    conn.base_url,
+                    conn.provider_type,
+                    row,
+                )
             row = None
 
     if not row:
         id_candidates = external_id_lookup_candidates(model_id)
         candidates = (
-            await db.execute(
-                select(AIModel, Connection)
-                .join(Connection, Connection.id == AIModel.connection_id)
-                .where(
-                    AIModel.external_id.in_(id_candidates),
-                    AIModel.is_enabled == True,  # noqa: E712
-                    Connection.is_active == True,  # noqa: E712
+            (
+                await db.execute(
+                    select(AIModel, Connection)
+                    .join(Connection, Connection.id == AIModel.connection_id)
+                    .where(
+                        AIModel.external_id.in_(id_candidates),
+                        AIModel.is_enabled == True,  # noqa: E712
+                        Connection.is_active == True,  # noqa: E712
+                    )
+                    .order_by(AIModel.id.desc())
                 )
-                .order_by(AIModel.id.desc())
-            )
-        ).all() if id_candidates else []
+            ).all()
+            if id_candidates
+            else []
+        )
         for cand_row, conn in candidates:
             if subject is None or await user_can_access_model(db, cand_row, subject):
                 return (
@@ -223,7 +229,7 @@ def _validate_capabilities(
 
 
 @router.post("/generate")
-async def generate_speech(
+async def generate_speech(  # noqa: C901 -- Phase 4 split; complexity must not grow
     request: Request,
     body: SpeechRequest,
     user: User = Depends(require_active_user),
@@ -239,6 +245,10 @@ async def generate_speech(
     budget_reservation_id: str | None = None
     success = True
     error_message: str | None = None
+    # Speech already recorded a readable message; the code is what lets API
+    # Logs filter these alongside chat, image and video failures.
+    error_code: str | None = None
+    http_status: int | None = None
     response_out: dict | None = None
 
     text = _normalize_text(body.text)
@@ -381,19 +391,24 @@ async def generate_speech(
     except SpeechClientDisconnected as exc:
         success = False
         error_message = "Speech generation stopped because the client disconnected."
+        error_code, http_status = CODE_CANCELLED, 499
         raise HTTPException(status_code=499, detail=error_message) from exc
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         success = False
         error_message = "Speech generation timed out."
+        error_code, http_status = CODE_TIMEOUT, 504
         raise HTTPException(status_code=504, detail=error_message) from exc
     except SpeechProviderError as exc:
         success = False
         error_message = exc.message
+        error_code, http_status = describe_failure(exc).code, exc.status_code
         raise HTTPException(status_code=exc.status_code, detail=error_message) from exc
     except HTTPException as exc:
         success = False
         detail = exc.detail
         error_message = detail if isinstance(detail, str) else str(detail)
+        failure = describe_failure(exc)
+        error_code, http_status = failure.code, failure.http_status
         raise
     except Exception as exc:
         success = False
@@ -401,6 +416,7 @@ async def generate_speech(
 
         logging.getLogger("app.api.speech").exception("Unhandled error during speech generation")
         error_message = "Speech generation failed due to an internal error"
+        error_code, http_status = describe_failure(exc).code, 500
         raise HTTPException(status_code=500, detail=error_message) from exc
     finally:
         elapsed_ms = (time.perf_counter() - generation_start) * 1000
@@ -413,13 +429,9 @@ async def generate_speech(
         except Exception as exc:
             import logging
 
-            logging.getLogger("app.api.speech").exception(
-                "Failed to close speech request transaction before billing"
-            )
-            try:
+            logging.getLogger("app.api.speech").exception("Failed to close speech request transaction before billing")
+            with contextlib.suppress(Exception):
                 await db.rollback()
-            except Exception:
-                pass
             if success:
                 success = False
                 error_message = "Speech persistence failed"
@@ -438,6 +450,8 @@ async def generate_speech(
                             response_time_ms=elapsed_ms,
                             success=success,
                             error_message=error_message,
+                            error_code=error_code,
+                            http_status=http_status,
                             source_ip=request.client.host if request.client else None,
                             budget_reservation_id=budget_reservation_id,
                         )
@@ -461,9 +475,11 @@ async def generate_speech(
                         continue
                     import logging
 
+                    from app.services.observability import increment
+
+                    increment("budget_hold_leak")
                     logging.getLogger("app.api.speech").exception(
-                        "Speech usage settlement failed after retries; "
-                        "reservation remains held for recovery"
+                        "Speech usage settlement failed after retries; reservation remains held for recovery"
                     )
             return None
 
@@ -475,4 +491,3 @@ async def generate_speech(
                 status_code=500,
                 detail="Speech persistence failed due to an internal error",
             ) from commit_error
-

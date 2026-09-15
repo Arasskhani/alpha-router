@@ -29,7 +29,7 @@ import asyncio
 import ipaddress
 import logging
 import socket
-from typing import Iterable
+from collections.abc import Iterable
 from urllib.parse import urlparse
 
 import httpcore
@@ -38,6 +38,7 @@ from httpcore._backends.auto import AutoBackend
 
 from app.config import get_settings
 from app.services.observability import increment
+from app.services.provider_http import provider_connect_retries, provider_connect_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -56,12 +57,11 @@ def _private_ranges_allowed() -> bool:
 
 def _is_forbidden_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """Return True for loopback / private / link-local / multicast / reserved / unspecified IPs."""
-    if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
-        return True
-    # Cloud metadata endpoints (AWS/Azure/GCP) live in 169.254.0.0/16 (link-local)
-    # which is already caught by is_link_local, but be explicit for clarity:
-    # 169.254.169.254 is the canonical metadata IP.
-    return False
+    # Cloud metadata endpoints (AWS/Azure/GCP) live in 169.254.0.0/16, which
+    # is_link_local already covers (169.254.169.254 is the canonical one).
+    return bool(
+        ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified
+    )
 
 
 def _resolve_hosts(hostname: str) -> list[str]:
@@ -84,11 +84,11 @@ def _check_resolved_ips(ips: Iterable[str]) -> None:
     for ip_str in ips:
         try:
             ip = ipaddress.ip_address(ip_str)
-        except ValueError:
+        except ValueError as exc:
             # If it's not a parseable IP, treat it as suspicious and block.
             logger.warning("Blocked SSRF target with unparseable resolved IP")
             increment("ssrf_block")
-            raise SSRFBlockedError(f"Unparseable resolved IP: {ip_str}")
+            raise SSRFBlockedError(f"Unparseable resolved IP: {ip_str}") from exc
         if _is_forbidden_ip(ip):
             logger.warning("Blocked SSRF connection to forbidden IP %s", ip_str)
             increment("ssrf_block")
@@ -209,9 +209,26 @@ def safe_client(**kwargs) -> httpx.AsyncClient:
 
     Redirects are followed (callers must call ``assert_response_target_safe``
     on the response) with a bounded redirect limit and default timeouts.
+
+    The connect budget is short and retried. These are one-shot fetches with
+    no pool to fall back on -- downloading a finished video is the clearest
+    case, one handshake at the moment the clip has already been generated and
+    billed -- and on a host that loses a share of new connections a single
+    attempt is a coin toss. httpcore's ``retries`` re-runs only the connect,
+    never a request that reached the wire, and each re-dial goes back through
+    ``PinnedNetworkBackend`` -- so every attempt re-resolves and re-validates
+    the target, and neither the SSRF guarantee nor idempotency is weakened.
+
+    ``trust_env`` stays off on purpose: routing these through a proxy would
+    hand the destination back to the proxy and defeat the IP pinning that
+    makes this client safe. An operator whose egress needs a proxy has to
+    allow these hosts directly.
     """
     kwargs.setdefault("follow_redirects", False)
-    kwargs.setdefault("timeout", httpx.Timeout(20.0, connect=10.0))
+    kwargs.setdefault(
+        "timeout",
+        httpx.Timeout(get_settings().provider_lookup_timeout_seconds, connect=provider_connect_timeout()),
+    )
     kwargs.setdefault("trust_env", False)
-    kwargs.setdefault("transport", PinnedAsyncHTTPTransport())
+    kwargs.setdefault("transport", PinnedAsyncHTTPTransport(retries=provider_connect_retries()))
     return httpx.AsyncClient(**kwargs)

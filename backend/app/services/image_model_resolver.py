@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,7 +57,7 @@ def _newness_ratio(external_id: str, pricing_raw: str | None) -> float:
     created = raw.get("created")
     if created is not None:
         try:
-            year = datetime.fromtimestamp(int(created), tz=timezone.utc).year
+            year = datetime.fromtimestamp(int(created), tz=UTC).year
             return max(0.1, min(1.0, (year - 2021) / 6))
         except (TypeError, ValueError, OSError):
             pass
@@ -154,8 +154,7 @@ def image_model_score_details(
     }
     total = int(sum(components.values()))
     below_floor = (
-        int(stability_count) >= _MIN_SAMPLES_FOR_HARD_THRESHOLD
-        and float(stability_score) < _HARD_SUCCESS_FLOOR
+        int(stability_count) >= _MIN_SAMPLES_FOR_HARD_THRESHOLD and float(stability_score) < _HARD_SUCCESS_FLOOR
     )
     if below_floor:
         # Keep eligible for failover chains, but demote hard as a primary pick.
@@ -263,9 +262,9 @@ async def _model_runtime_signals(
         for model_id, total, successes, avg_ms, latency_n in rows:
             count = int(total or 0)
             success_count = int(successes or 0)
-            bayes = (
-                success_count + _STABILITY_PRIOR_MEAN * _STABILITY_PRIOR_WEIGHT
-            ) / (count + _STABILITY_PRIOR_WEIGHT)
+            bayes = (success_count + _STABILITY_PRIOR_MEAN * _STABILITY_PRIOR_WEIGHT) / (
+                count + _STABILITY_PRIOR_WEIGHT
+            )
             out[str(model_id)] = {
                 "count": count,
                 "score": bayes,
@@ -353,12 +352,7 @@ async def list_auto_router_image_candidates(
     rows = (await db.execute(statement)).all()
     if access_user_id is not None:
         subject = await resolve_access_subject(db, user_id=access_user_id)
-        allowed = {
-            m.id
-            for m in await filter_models_for_subject(
-                db, [model for model, _ in rows], subject
-            )
-        }
+        allowed = {m.id for m in await filter_models_for_subject(db, [model for model, _ in rows], subject)}
         rows = [(model, conn) for model, conn in rows if model.id in allowed]
     feedback = await feedback_quality_signals(
         db,
@@ -383,11 +377,7 @@ async def list_auto_router_image_candidates(
         runtime_signal = runtime.get(str(model.external_id), {})
         avg_ms = runtime_signal.get("avg_success_ms")
         latency_count = int(runtime_signal.get("latency_count", 0) or 0)
-        if (
-            latency_count > 0
-            and avg_ms is not None
-            and float(avg_ms) > _AUTO_ROUTER_MAX_AVG_SUCCESS_MS
-        ):
+        if latency_count > 0 and avg_ms is not None and float(avg_ms) > _AUTO_ROUTER_MAX_AVG_SUCCESS_MS:
             continue
         details = image_model_score_details(
             model.external_id or "",
@@ -478,10 +468,7 @@ def is_image_model_failover_error(exc: BaseException) -> bool:
         if exc.status_code in {408, 429, 500, 502, 503, 504, 422}:
             return True
         if exc.status_code == 400:
-            return any(
-                token in low
-                for token in ("invalid model", "no image data", "model not found")
-            )
+            return any(token in low for token in ("invalid model", "no image data", "model not found"))
         return False
     # Transport failures before HTTPException wrapping
     from app.services.openrouter_image_service import is_retryable_openrouter_transport_error

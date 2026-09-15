@@ -4,7 +4,6 @@ import json
 import logging
 from datetime import datetime
 
-import httpx
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +11,8 @@ from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.services.model_tool_compatibility_service import ensure_model_compatibility_rows
 from app.services.video_catalog_service import normalize_video_capabilities
+from app.services.provider_http import get_provider_rest_client
+from app.core.constants import normalize_openrouter_base_url
 
 logger = logging.getLogger("app.services.model_sync")
 
@@ -69,38 +70,38 @@ def _guess_is_video_model(ext_id: str, item: dict | None = None) -> bool:
 
 
 async def fetch_openrouter_models(api_key: str, base_url: str | None) -> list[dict]:
-    url = (base_url or "https://openrouter.ai/api/v1").rstrip("/") + "/models"
+    url = normalize_openrouter_base_url(base_url) + "/models"
     headers = _fresh_request_headers(api_key)
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        # OpenRouter defaults this endpoint to text-output models. Request the
-        # complete catalog so image/audio/video-only models are not omitted.
-        resp = await client.get(
-            url,
-            headers=headers,
-            params={"output_modalities": "all"},
-        )
-        resp.raise_for_status()
-        payload = resp.json()
-        data = payload.get("data", []) if isinstance(payload, dict) else []
-        return data if isinstance(data, list) else []
+    client = get_provider_rest_client()
+    # OpenRouter defaults this endpoint to text-output models. Request the
+    # complete catalog so image/audio/video-only models are not omitted.
+    resp = await client.get(
+        url,
+        headers=headers,
+        params={"output_modalities": "all"},
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    data = payload.get("data", []) if isinstance(payload, dict) else []
+    return data if isinstance(data, list) else []
 
 
 async def fetch_openrouter_video_models(api_key: str, base_url: str | None) -> dict[str, dict]:
     """Map model id → OpenRouter /videos/models capability snapshot."""
-    url = (base_url or "https://openrouter.ai/api/v1").rstrip("/") + "/videos/models"
+    url = normalize_openrouter_base_url(base_url) + "/videos/models"
     headers = _fresh_request_headers(api_key)
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code >= 400:
-                logger.warning(
-                    "OpenRouter video catalog returned HTTP %s for %s",
-                    resp.status_code,
-                    url,
-                )
-                return {}
-            payload = resp.json()
-            data = payload.get("data", []) if isinstance(payload, dict) else []
+        client = get_provider_rest_client()
+        resp = await client.get(url, headers=headers)
+        if resp.status_code >= 400:
+            logger.warning(
+                "OpenRouter video catalog returned HTTP %s for %s",
+                resp.status_code,
+                url,
+            )
+            return {}
+        payload = resp.json()
+        data = payload.get("data", []) if isinstance(payload, dict) else []
     except Exception:
         logger.warning("OpenRouter video catalog sync failed for %s", url, exc_info=True)
         return {}
@@ -123,20 +124,20 @@ async def fetch_openrouter_video_models(api_key: str, base_url: str | None) -> d
 
 async def fetch_openrouter_image_models(api_key: str, base_url: str | None) -> dict[str, dict]:
     """Map model identifiers to OpenRouter /images/models snapshots."""
-    url = (base_url or "https://openrouter.ai/api/v1").rstrip("/") + "/images/models"
+    url = normalize_openrouter_base_url(base_url) + "/images/models"
     headers = _fresh_request_headers(api_key)
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code >= 400:
-                logger.warning(
-                    "OpenRouter image catalog returned HTTP %s for %s",
-                    resp.status_code,
-                    url,
-                )
-                return {}
-            payload = resp.json()
-            data = payload.get("data", []) if isinstance(payload, dict) else []
+        client = get_provider_rest_client()
+        resp = await client.get(url, headers=headers)
+        if resp.status_code >= 400:
+            logger.warning(
+                "OpenRouter image catalog returned HTTP %s for %s",
+                resp.status_code,
+                url,
+            )
+            return {}
+        payload = resp.json()
+        data = payload.get("data", []) if isinstance(payload, dict) else []
     except Exception:
         logger.warning("OpenRouter image catalog sync failed for %s", url, exc_info=True)
         return {}
@@ -189,10 +190,10 @@ async def fetch_provider_models(
             "Pragma": "no-cache",
         }
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.get(f"{base}/models", headers=headers, params=params)
-        resp.raise_for_status()
-        payload = resp.json()
+    client = get_provider_rest_client()
+    resp = await client.get(f"{base}/models", headers=headers, params=params)
+    resp.raise_for_status()
+    payload = resp.json()
 
     if not isinstance(payload, dict):
         return []
@@ -254,22 +255,14 @@ def _openrouter_snapshot(
     if isinstance(architecture, dict):
         outputs = architecture.get("output_modalities")
         if isinstance(outputs, list):
-            allowed_outputs = {
-                str(value).lower()
-                for value in outputs
-                if str(value).lower() not in {"video", "image"}
-            }
+            allowed_outputs = {str(value).lower() for value in outputs if str(value).lower() not in {"video", "image"}}
             if video_meta:
                 allowed_outputs.add("video")
             if image_meta:
                 allowed_outputs.add("image")
             snapshot["architecture"] = {
                 **architecture,
-                "output_modalities": [
-                                    value
-                                    for value in outputs
-                    if str(value).lower() in allowed_outputs
-                ],
+                "output_modalities": [value for value in outputs if str(value).lower() in allowed_outputs],
             }
     return snapshot
 
@@ -339,13 +332,17 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
             pricing = m.get("pricing") or {}
             in_1k, out_1k = _per_1k_from_openrouter_pricing(pricing)
             existing = (
-                await db.execute(
-                    select(AIModel).where(
-                        AIModel.connection_id == conn.id,
-                        AIModel.external_id == ext_id,
+                (
+                    await db.execute(
+                        select(AIModel).where(
+                            AIModel.connection_id == conn.id,
+                            AIModel.external_id == ext_id,
+                        )
                     )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             video_meta = video_models.get(str(ext_id))
             image_meta = image_models.get(str(ext_id))
             snapshot = _openrouter_snapshot(m, video_meta, image_meta)
@@ -370,11 +367,7 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
         # Upsert video-only catalog entries that appear on /videos/models but not /models.
         video_only_seen: set[str] = set()
         for lookup_id, video_meta in video_models.items():
-            canonical_id = str(
-                video_meta.get("id")
-                or video_meta.get("canonical_slug")
-                or lookup_id
-            )
+            canonical_id = str(video_meta.get("id") or video_meta.get("canonical_slug") or lookup_id)
             aliases = {
                 str(value)
                 for value in (
@@ -389,20 +382,22 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
             video_only_seen.update(aliases)
             ext_id = canonical_id
             existing = (
-                await db.execute(
-                    select(AIModel).where(
-                        AIModel.connection_id == conn.id,
-                        AIModel.external_id == ext_id,
+                (
+                    await db.execute(
+                        select(AIModel).where(
+                            AIModel.connection_id == conn.id,
+                            AIModel.external_id == ext_id,
+                        )
                     )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             snapshot = {
                 "id": ext_id,
                 "name": video_meta.get("name") or ext_id,
                 "architecture": {
-                    "input_modalities": ["text", "image"]
-                    if video_meta.get("supported_frame_images")
-                    else ["text"],
+                    "input_modalities": ["text", "image"] if video_meta.get("supported_frame_images") else ["text"],
                     "output_modalities": ["video"],
                 },
                 "video_generation": video_meta,
@@ -450,13 +445,17 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
             if not ext_id:
                 continue
             existing = (
-                await db.execute(
-                    select(AIModel).where(
-                        AIModel.connection_id == conn.id,
-                        AIModel.external_id == ext_id,
+                (
+                    await db.execute(
+                        select(AIModel).where(
+                            AIModel.connection_id == conn.id,
+                            AIModel.external_id == ext_id,
+                        )
                     )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             payload = {
                 "connection_id": conn.id,
                 "external_id": ext_id,
@@ -472,16 +471,12 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
 
     conn.last_sync_at = datetime.utcnow()
     await db.flush()
-    synced_models = (
-        await db.execute(select(AIModel).where(AIModel.connection_id == conn.id))
-    ).scalars().all()
+    synced_models = (await db.execute(select(AIModel).where(AIModel.connection_id == conn.id))).scalars().all()
     await ensure_model_compatibility_rows(db, synced_models)
     return synced
 
 
-async def sync_connection_with_flash(
-    db: AsyncSession, conn: Connection, api_key: str
-) -> dict[str, int]:
+async def sync_connection_with_flash(db: AsyncSession, conn: Connection, api_key: str) -> dict[str, int]:
     """Sync one connection's catalog without flipping enable state on any models.
 
     Historically this briefly disabled then re-enabled the entire catalog (all
@@ -494,9 +489,7 @@ async def sync_connection_with_flash(
 
 async def disable_models_for_connection(db: AsyncSession, connection_id: int) -> int:
     """Turn off all catalog models tied to a connection (e.g. when connection is disabled)."""
-    result = await db.execute(
-        update(AIModel).where(AIModel.connection_id == connection_id).values(is_enabled=False)
-    )
+    result = await db.execute(update(AIModel).where(AIModel.connection_id == connection_id).values(is_enabled=False))
     return result.rowcount or 0
 
 

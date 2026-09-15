@@ -1,6 +1,5 @@
 """Provider-agnostic usage ledger and reconciliation tests."""
 
-import asyncio
 import json
 from types import SimpleNamespace
 
@@ -13,19 +12,19 @@ from app.database import Base
 from app.models.cost_accounting import LedgerEntry, UsageEvent, UsageOperation
 from app.models.logging import RequestLog
 from app.models.user import User
-from app.services.proxy_service import log_usage
 from app.services.provider_reconciliation_service import (
     OpenAIReconciliationAdapter,
     OpenRouterReconciliationAdapter,
     automatic_reconciliation_providers,
 )
+from app.services.proxy_service import log_usage
 from app.services.usage_accounting_service import (
     CONFIDENCE_CALCULATED,
     CONFIDENCE_EXACT,
     COST_SOURCE_CATALOG,
     COST_SOURCE_CONFIGURED,
     COST_SOURCE_PROVIDER,
-    COST_SOURCE_UNKNOWN,
+    NormalizedUsage,
     capture_usage_event,
     create_configured_pricing_snapshot,
     create_reconciliation_run,
@@ -34,7 +33,6 @@ from app.services.usage_accounting_service import (
     persist_usage_operation,
     quote_usage,
     reconcile_usage_event,
-    NormalizedUsage,
 )
 
 
@@ -115,22 +113,18 @@ async def _openrouter_adapter_reads_generation_total_cost() -> None:
             json={"data": {"id": "gen-test", "total_cost": 0.1234}},
         )
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         cost = await OpenRouterReconciliationAdapter().fetch_actual_cost(
             client,
-            connection=SimpleNamespace(
-                base_url="https://openrouter.ai/api/v1"
-            ),
+            connection=SimpleNamespace(base_url="https://openrouter.ai/api/v1"),
             api_key="secret",
             upstream_request_id="gen-test",
         )
     assert cost == pytest.approx(0.1234)
 
 
-def test_openrouter_adapter_reads_generation_total_cost():
-    asyncio.run(_openrouter_adapter_reads_generation_total_cost())
+async def test_openrouter_adapter_reads_generation_total_cost():
+    await _openrouter_adapter_reads_generation_total_cost()
 
 
 def test_automatic_reconciliation_providers_include_openai():
@@ -154,9 +148,7 @@ async def _openai_adapter_reads_direct_cost_from_responses() -> None:
             },
         )
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         cost = await OpenAIReconciliationAdapter().fetch_actual_cost(
             client,
             connection=SimpleNamespace(base_url="https://api.openai.com/v1"),
@@ -166,8 +158,8 @@ async def _openai_adapter_reads_direct_cost_from_responses() -> None:
     assert cost == pytest.approx(0.0456)
 
 
-def test_openai_adapter_reads_direct_cost_from_responses():
-    asyncio.run(_openai_adapter_reads_direct_cost_from_responses())
+async def test_openai_adapter_reads_direct_cost_from_responses():
+    await _openai_adapter_reads_direct_cost_from_responses()
 
 
 async def _openai_adapter_quotes_catalog_from_responses_usage() -> None:
@@ -211,9 +203,7 @@ async def _openai_adapter_quotes_catalog_from_responses_usage() -> None:
         async def execute(self, _stmt):
             return _FakeResult(ai_model)
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         cost = await OpenAIReconciliationAdapter().fetch_actual_cost(
             client,
             connection=SimpleNamespace(base_url="https://api.openai.com/v1"),
@@ -226,8 +216,8 @@ async def _openai_adapter_quotes_catalog_from_responses_usage() -> None:
     assert cost == pytest.approx(0.002)
 
 
-def test_openai_adapter_quotes_catalog_from_responses_usage():
-    asyncio.run(_openai_adapter_quotes_catalog_from_responses_usage())
+async def test_openai_adapter_quotes_catalog_from_responses_usage():
+    await _openai_adapter_quotes_catalog_from_responses_usage()
 
 
 async def _openai_adapter_skips_chat_completion_ids() -> None:
@@ -238,9 +228,7 @@ async def _openai_adapter_skips_chat_completion_ids() -> None:
         called = True
         return httpx.Response(500)
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         cost = await OpenAIReconciliationAdapter().fetch_actual_cost(
             client,
             connection=SimpleNamespace(base_url="https://api.openai.com/v1"),
@@ -251,8 +239,8 @@ async def _openai_adapter_skips_chat_completion_ids() -> None:
     assert called is False
 
 
-def test_openai_adapter_skips_chat_completion_ids():
-    asyncio.run(_openai_adapter_skips_chat_completion_ids())
+async def test_openai_adapter_skips_chat_completion_ids():
+    await _openai_adapter_skips_chat_completion_ids()
 
 
 async def _configured_credit_pricing_is_applied() -> None:
@@ -301,8 +289,8 @@ async def _configured_credit_pricing_is_applied() -> None:
     await engine.dispose()
 
 
-def test_configured_credit_pricing_is_applied():
-    asyncio.run(_configured_credit_pricing_is_applied())
+async def test_configured_credit_pricing_is_applied():
+    await _configured_credit_pricing_is_applied()
 
 
 async def _ledger_accumulates_and_reconciliation_adjusts_budget() -> None:
@@ -378,11 +366,7 @@ async def _ledger_accumulates_and_reconciliation_adjusts_budget() -> None:
         await db.refresh(user)
         await db.refresh(log_row)
 
-        ledger_total = (
-            await db.execute(
-                select(func.coalesce(func.sum(LedgerEntry.amount_usd), 0))
-            )
-        ).scalar_one()
+        ledger_total = (await db.execute(select(func.coalesce(func.sum(LedgerEntry.amount_usd), 0)))).scalar_one()
         assert delta == pytest.approx(0.15)
         assert float(ledger_total) == pytest.approx(0.25)
         assert user.budget_used_usd == pytest.approx(0.25)
@@ -392,8 +376,8 @@ async def _ledger_accumulates_and_reconciliation_adjusts_budget() -> None:
     await engine.dispose()
 
 
-def test_ledger_accumulates_and_reconciliation_adjusts_budget():
-    asyncio.run(_ledger_accumulates_and_reconciliation_adjusts_budget())
+async def test_ledger_accumulates_and_reconciliation_adjusts_budget():
+    await _ledger_accumulates_and_reconciliation_adjusts_budget()
 
 
 async def _idempotent_log_replay_does_not_charge_twice() -> None:
@@ -449,21 +433,15 @@ async def _idempotent_log_replay_does_not_charge_twice() -> None:
         await db.refresh(user)
 
         assert user.budget_used_usd == pytest.approx(0.1)
-        assert (
-            await db.execute(select(func.count()).select_from(UsageOperation))
-        ).scalar_one() == 1
-        assert (
-            await db.execute(select(func.count()).select_from(RequestLog))
-        ).scalar_one() == 1
-        assert (
-            await db.execute(select(func.count()).select_from(LedgerEntry))
-        ).scalar_one() == 1
+        assert (await db.execute(select(func.count()).select_from(UsageOperation))).scalar_one() == 1
+        assert (await db.execute(select(func.count()).select_from(RequestLog))).scalar_one() == 1
+        assert (await db.execute(select(func.count()).select_from(LedgerEntry))).scalar_one() == 1
 
     await engine.dispose()
 
 
-def test_idempotent_log_replay_does_not_charge_twice():
-    asyncio.run(_idempotent_log_replay_does_not_charge_twice())
+async def test_idempotent_log_replay_does_not_charge_twice():
+    await _idempotent_log_replay_does_not_charge_twice()
 
 
 def test_openrouter_speech_quotes_prompt_as_usd_per_character():

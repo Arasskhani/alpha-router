@@ -1,6 +1,5 @@
 """first_seen_at is set on first catalog insert and survives later syncs."""
 
-import asyncio
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -16,12 +15,15 @@ from app.services.model_sync import sync_connection_models
 
 @pytest.fixture(autouse=True)
 def isolate_specialized_openrouter_catalog():
-    with patch(
-        "app.services.model_sync.fetch_openrouter_video_models",
-        new=AsyncMock(return_value={}),
-    ), patch(
-        "app.services.model_sync.fetch_openrouter_image_models",
-        new=AsyncMock(return_value={}),
+    with (
+        patch(
+            "app.services.model_sync.fetch_openrouter_video_models",
+            new=AsyncMock(return_value={}),
+        ),
+        patch(
+            "app.services.model_sync.fetch_openrouter_image_models",
+            new=AsyncMock(return_value={}),
+        ),
     ):
         yield
 
@@ -61,9 +63,7 @@ async def _test_new_model_records_first_seen_and_keeps_it() -> None:
             await sync_connection_models(db, conn, "sk-test")
             await db.commit()
 
-        created = (
-            await db.execute(select(AIModel).where(AIModel.external_id == "openai/gpt-4o"))
-        ).scalars().first()
+        created = (await db.execute(select(AIModel).where(AIModel.external_id == "openai/gpt-4o"))).scalars().first()
         assert created is not None
         assert created.first_seen_at is not None
         first_seen = created.first_seen_at
@@ -121,9 +121,9 @@ async def _test_existing_null_first_seen_stays_null() -> None:
     await engine.dispose()
 
 
-def test_new_model_records_first_seen_and_keeps_it():
-    asyncio.run(_test_new_model_records_first_seen_and_keeps_it())
+async def test_new_model_records_first_seen_and_keeps_it():
+    await _test_new_model_records_first_seen_and_keeps_it()
 
 
-def test_existing_null_first_seen_stays_null():
-    asyncio.run(_test_existing_null_first_seen_stays_null())
+async def test_existing_null_first_seen_stays_null():
+    await _test_existing_null_first_seen_stays_null()

@@ -1,7 +1,6 @@
 /** Video-capable chat model detection for Video Generation tool. */
 
 import {
-  AUTO_ROUTER_EXTERNAL_ID,
   isAutoRouterModel,
   type ChatModelRef,
 } from "./chatModels";
@@ -34,16 +33,6 @@ export function modelSupportsTextToVideo(
   if (isAutoRouterModel(m)) return autoRouterCanGenerateVideos(catalog);
   return dedicatedTextToVideo(m);
 }
-
-export function modelSupportsImageToVideo(
-  m?: VideoCapableModelRef,
-  catalog?: VideoCapableModelRef[],
-): boolean {
-  if (!m) return false;
-  if (isAutoRouterModel(m)) return autoRouterCanGenerateVideos(catalog);
-  return dedicatedImageToVideo(m);
-}
-
 export function modelSupportsVideos(
   m?: VideoCapableModelRef,
   catalog?: VideoCapableModelRef[],
@@ -53,7 +42,7 @@ export function modelSupportsVideos(
   return dedicatedTextToVideo(m) || dedicatedImageToVideo(m);
 }
 
-export function findConcreteVideoGenerationModel<T extends VideoCapableModelRef>(
+function findConcreteVideoGenerationModel<T extends VideoCapableModelRef>(
   models: T[],
 ): T | undefined {
   // Admin's pick wins over catalog order, which is otherwise arbitrary.
@@ -120,4 +109,4 @@ export function resolveSessionModelForVideoTools<T extends VideoCapableModelRef>
   return fallbackToDefault(undefined);
 }
 
-export { AUTO_ROUTER_EXTERNAL_ID, isAutoRouterModel };
+;

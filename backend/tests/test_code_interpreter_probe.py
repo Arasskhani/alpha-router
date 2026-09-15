@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -122,16 +121,14 @@ async def _run_probe(
         await engine.dispose()
 
 
-def test_probe_marks_model_compatible_after_full_flow():
-    result, row, calls = asyncio.run(
-        _run_probe(
-            "vendor/model",
-            [
-                _completion("```python\nprint('x')\n```"),
-                _completion(probe_service.PROBE_FINISH_SENTINEL),
-            ],
-            _passing_execution(),
-        )
+async def test_probe_marks_model_compatible_after_full_flow():
+    result, row, calls = await _run_probe(
+        "vendor/model",
+        [
+            _completion("```python\nprint('x')\n```"),
+            _completion(probe_service.PROBE_FINISH_SENTINEL),
+        ],
+        _passing_execution(),
     )
     assert result.success is True
     assert row is not None and row.status == STATUS_COMPATIBLE
@@ -141,13 +138,11 @@ def test_probe_marks_model_compatible_after_full_flow():
     assert all(call["stream"] is False for call in calls)
 
 
-def test_probe_marks_model_incompatible_when_no_python_block():
-    result, row, calls = asyncio.run(
-        _run_probe(
-            "vendor/prose-only",
-            [_completion("I cannot run code, but the total is 3.")],
-            _passing_execution(),
-        )
+async def test_probe_marks_model_incompatible_when_no_python_block():
+    result, row, calls = await _run_probe(
+        "vendor/prose-only",
+        [_completion("I cannot run code, but the total is 3.")],
+        _passing_execution(),
     )
     assert result.success is False
     assert result.reason_code == "no_python_block"
@@ -156,21 +151,19 @@ def test_probe_marks_model_incompatible_when_no_python_block():
     assert len(calls) == 1
 
 
-def test_probe_fails_when_sandbox_contract_is_not_met():
-    result, row, _calls = asyncio.run(
-        _run_probe(
-            "vendor/bad-artifacts",
-            [_completion("```python\nprint('nothing')\n```")],
-            SandboxExecutionResult(output="done", exit_code=0, artifacts=()),
-        )
+async def test_probe_fails_when_sandbox_contract_is_not_met():
+    result, row, _calls = await _run_probe(
+        "vendor/bad-artifacts",
+        [_completion("```python\nprint('nothing')\n```")],
+        SandboxExecutionResult(output="done", exit_code=0, artifacts=()),
     )
     assert result.success is False
     assert result.reason_code == "sandbox_protocol_error"
     assert row is not None and row.status == STATUS_INCOMPATIBLE
 
 
-def test_probe_records_router_selected_model_separately():
-    factory_result = asyncio.run(_run_auto_router_probe())
+async def test_probe_records_router_selected_model_separately():
+    factory_result = await _run_auto_router_probe()
     result, rows = factory_result
     assert result.success is True
     assert rows["openrouter/auto"] == STATUS_COMPATIBLE
@@ -227,8 +220,8 @@ async def _run_auto_router_probe():
         await engine.dispose()
 
 
-def test_due_probe_batch_is_claimed_once():
-    asyncio.run(_run_claim_batch())
+async def test_due_probe_batch_is_claimed_once():
+    await _run_claim_batch()
 
 
 async def _run_claim_batch():

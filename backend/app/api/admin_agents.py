@@ -8,7 +8,6 @@ from collections.abc import Iterable
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -83,9 +82,7 @@ _POLICY_FIELDS = frozenset(
         "locale_policy",
     }
 )
-_SENSITIVE_KB_LEVELS = frozenset(
-    {"hr_confidential", "legal_privileged", "finance_restricted"}
-)
+_SENSITIVE_KB_LEVELS = frozenset({"hr_confidential", "legal_privileged", "finance_restricted"})
 
 
 class AgentCreateBody(BaseModel):
@@ -210,9 +207,7 @@ def _version_payload(version: AgentVersion, *, include_prompt: bool = True) -> d
         "submitted_at": version.submitted_at,
         "published_at": version.published_at,
         "archived_at": version.archived_at,
-        "policies": {
-            field: getattr(version, field) or {} for field in sorted(_POLICY_FIELDS)
-        },
+        "policies": {field: getattr(version, field) or {} for field in sorted(_POLICY_FIELDS)},
     }
     if include_prompt:
         payload["system_prompt"] = version.system_prompt
@@ -230,8 +225,7 @@ def _agent_payload(
         (
             version
             for version in version_rows
-            if version.status == "published"
-            and version.active_scope_key == f"agent:{agent.id}"
+            if version.status == "published" and version.active_scope_key == f"agent:{agent.id}"
         ),
         None,
     )
@@ -252,10 +246,7 @@ def _agent_payload(
         "updated_at": agent.updated_at,
         "active_version_id": active.id if active else None,
         "active_version_number": active.version_number if active else None,
-        "versions": [
-            _version_payload(version, include_prompt=include_prompt)
-            for version in version_rows
-        ],
+        "versions": [_version_payload(version, include_prompt=include_prompt) for version in version_rows],
     }
 
 
@@ -287,9 +278,7 @@ def _binding_payload(
         "agent_version_id": binding.agent_version_id,
         "knowledge_base_id": binding.knowledge_base_id,
         "knowledge_base_name": knowledge_base.name if knowledge_base else None,
-        "knowledge_base_sensitivity": (
-            knowledge_base.sensitivity if knowledge_base else None
-        ),
+        "knowledge_base_sensitivity": (knowledge_base.sensitivity if knowledge_base else None),
         "release_mode": binding.release_mode,
         "pinned_release_id": binding.pinned_release_id,
         "status": binding.status,
@@ -340,8 +329,7 @@ def _tool_payload(tool: AgentTool, versions: Iterable[AgentToolVersion]) -> dict
         (
             version
             for version in rows
-            if version.status == "published"
-            and version.active_scope_key == f"tool:{tool.id}"
+            if version.status == "published" and version.active_scope_key == f"tool:{tool.id}"
         ),
         None,
     )
@@ -366,9 +354,7 @@ async def _scalar_count(db: AsyncSession, model, *conditions) -> int:
     return int((await db.execute(query)).scalar_one() or 0)
 
 
-async def _overview_spend_24h(
-    db: AsyncSession, since: datetime.datetime
-) -> dict[str, Any]:
+async def _overview_spend_24h(db: AsyncSession, since: datetime.datetime) -> dict[str, Any]:
     """Chat-turn spend for Agent runs in the same 24h window as runtime health."""
     window = AgentRun.created_at >= since
     cost_usd, tokens, turns, billed_turns = (
@@ -452,17 +438,13 @@ async def get_agents_overview(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(require_agents),
 ):
-    since = datetime.datetime.now(datetime.UTC).replace(
-        tzinfo=None
-    ) - datetime.timedelta(hours=24)
+    since = datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - datetime.timedelta(hours=24)
     return {
         "agents": {
             "total": await _scalar_count(db, Agent),
             "active": await _scalar_count(db, Agent, Agent.status == "active"),
             "draft": await _scalar_count(db, Agent, Agent.status == "draft"),
-            "in_review": await _scalar_count(
-                db, AgentVersion, AgentVersion.status == "review"
-            ),
+            "in_review": await _scalar_count(db, AgentVersion, AgentVersion.status == "review"),
         },
         "knowledge": {
             "bases": await _scalar_count(db, KnowledgeBase),
@@ -476,16 +458,12 @@ async def get_agents_overview(
                 KnowledgeDocumentVersion,
                 KnowledgeDocumentVersion.status == "review",
             ),
-            "failed_jobs": await _scalar_count(
-                db, IngestionJob, IngestionJob.status == "dead"
-            ),
+            "failed_jobs": await _scalar_count(db, IngestionJob, IngestionJob.status == "dead"),
         },
         "tools": {
             "total": await _scalar_count(db, AgentTool),
             "active": await _scalar_count(db, AgentTool, AgentTool.status == "active"),
-            "in_review": await _scalar_count(
-                db, AgentToolVersion, AgentToolVersion.status == "review"
-            ),
+            "in_review": await _scalar_count(db, AgentToolVersion, AgentToolVersion.status == "review"),
         },
         "runs_24h": {
             "total": await _scalar_count(db, AgentRun, AgentRun.created_at >= since),
@@ -511,15 +489,11 @@ async def get_agents_overview(
         "spend_24h": await _overview_spend_24h(db, since),
         "pending_approvals": (
             await _scalar_count(db, AgentVersion, AgentVersion.status == "review")
-            + await _scalar_count(
-                db, AgentToolVersion, AgentToolVersion.status == "review"
-            )
+            + await _scalar_count(db, AgentToolVersion, AgentToolVersion.status == "review")
             + await _scalar_count(
                 db,
                 AgentKnowledgeBinding,
-                AgentKnowledgeBinding.status.in_(
-                    {"pending_kb_approval", "pending_domain_approval"}
-                ),
+                AgentKnowledgeBinding.status.in_({"pending_kb_approval", "pending_domain_approval"}),
             )
             + await _scalar_count(
                 db,
@@ -539,11 +513,7 @@ async def list_agents(
     query = select(Agent).order_by(Agent.sort_order, Agent.name)
     if status:
         query = query.where(Agent.status == status)
-    agents = [
-        agent
-        for agent in (await db.execute(query)).scalars().all()
-        if not is_purged_agent(agent)
-    ]
+    agents = [agent for agent in (await db.execute(query)).scalars().all() if not is_purged_agent(agent)]
     if not agents:
         return []
     versions = (
@@ -560,9 +530,7 @@ async def list_agents(
     by_agent: dict[str, list[AgentVersion]] = {}
     for version in versions:
         by_agent.setdefault(version.agent_id, []).append(version)
-    return [
-        _agent_payload(agent, versions=by_agent.get(agent.id, ())) for agent in agents
-    ]
+    return [_agent_payload(agent, versions=by_agent.get(agent.id, ())) for agent in agents]
 
 
 @router.post("", status_code=201)
@@ -603,9 +571,7 @@ async def list_tools(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(require_agent_permission("tool.read")),
 ):
-    tools = (
-        (await db.execute(select(AgentTool).order_by(AgentTool.name))).scalars().all()
-    )
+    tools = (await db.execute(select(AgentTool).order_by(AgentTool.name))).scalars().all()
     if not tools:
         return []
     versions = (
@@ -787,11 +753,7 @@ async def _submitter_labels(
     ids = sorted({int(uid) for uid in user_ids if uid is not None})
     if not ids:
         return {}
-    rows = (
-        await db.execute(
-            select(User.id, User.username, User.display_name).where(User.id.in_(ids))
-        )
-    ).all()
+    rows = (await db.execute(select(User.id, User.username, User.display_name).where(User.id.in_(ids)))).all()
     return {
         int(row.id): {
             "submitted_by_username": row.username,
@@ -859,11 +821,7 @@ async def list_approvals(
                 KnowledgeBase,
                 KnowledgeBase.id == AgentKnowledgeBinding.knowledge_base_id,
             )
-            .where(
-                AgentKnowledgeBinding.status.in_(
-                    {"pending_kb_approval", "pending_domain_approval"}
-                )
-            )
+            .where(AgentKnowledgeBinding.status.in_({"pending_kb_approval", "pending_domain_approval"}))
             .order_by(AgentKnowledgeBinding.created_at.desc())
             .limit(limit)
         )
@@ -909,12 +867,8 @@ async def list_approvals(
                 "knowledge_base_id": document.knowledge_base_id,
             }
         )
-    items.sort(
-        key=lambda item: item["created_at"] or datetime.datetime.min, reverse=True
-    )
-    labels = await _submitter_labels(
-        db, (item.get("submitted_by_user_id") for item in items)
-    )
+    items.sort(key=lambda item: item["created_at"] or datetime.datetime.min, reverse=True)
+    labels = await _submitter_labels(db, (item.get("submitted_by_user_id") for item in items))
     for item in items:
         uid = item.get("submitted_by_user_id")
         extra = labels.get(int(uid)) if uid is not None else None
@@ -923,17 +877,13 @@ async def list_approvals(
     return {"items": items[:limit], "total": len(items)}
 
 
-_ACTIVITY_SOURCES = frozenset(
-    {"agent", "tool", "knowledge", "governance", "runtime"}
-)
+_ACTIVITY_SOURCES = frozenset({"agent", "tool", "knowledge", "governance", "runtime"})
 
 
 def _activity_since(since_hours: int | None) -> datetime.datetime | None:
     if not since_hours:
         return None
-    return datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - datetime.timedelta(
-        hours=since_hours
-    )
+    return datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - datetime.timedelta(hours=since_hours)
 
 
 @router.get("/activity")
@@ -957,7 +907,7 @@ async def list_activity(
         query = select(AgentAuditEvent).order_by(AgentAuditEvent.created_at.desc())
         if since is not None:
             query = query.where(AgentAuditEvent.created_at >= since)
-        agent_events = ((await db.execute(query.limit(limit)))).scalars().all()
+        agent_events = (await db.execute(query.limit(limit))).scalars().all()
         events.extend(
             {
                 "id": event.id,
@@ -973,12 +923,10 @@ async def list_activity(
             for event in agent_events
         )
     if not wanted or wanted == "tool":
-        query = select(AgentToolAuditEvent).order_by(
-            AgentToolAuditEvent.created_at.desc()
-        )
+        query = select(AgentToolAuditEvent).order_by(AgentToolAuditEvent.created_at.desc())
         if since is not None:
             query = query.where(AgentToolAuditEvent.created_at >= since)
-        tool_events = ((await db.execute(query.limit(limit)))).scalars().all()
+        tool_events = (await db.execute(query.limit(limit))).scalars().all()
         events.extend(
             {
                 "id": event.id,
@@ -994,12 +942,10 @@ async def list_activity(
             for event in tool_events
         )
     if not wanted or wanted == "knowledge":
-        query = select(KnowledgeAuditEvent).order_by(
-            KnowledgeAuditEvent.created_at.desc()
-        )
+        query = select(KnowledgeAuditEvent).order_by(KnowledgeAuditEvent.created_at.desc())
         if since is not None:
             query = query.where(KnowledgeAuditEvent.created_at >= since)
-        knowledge_events = ((await db.execute(query.limit(limit)))).scalars().all()
+        knowledge_events = (await db.execute(query.limit(limit))).scalars().all()
         events.extend(
             {
                 "id": event.id,
@@ -1015,12 +961,10 @@ async def list_activity(
             for event in knowledge_events
         )
     if not wanted or wanted == "governance":
-        query = select(GovernanceAuditEvent).order_by(
-            GovernanceAuditEvent.created_at.desc()
-        )
+        query = select(GovernanceAuditEvent).order_by(GovernanceAuditEvent.created_at.desc())
         if since is not None:
             query = query.where(GovernanceAuditEvent.created_at >= since)
-        governance_events = ((await db.execute(query.limit(limit)))).scalars().all()
+        governance_events = (await db.execute(query.limit(limit))).scalars().all()
         events.extend(
             {
                 "id": event.id,
@@ -1077,9 +1021,7 @@ async def list_activity(
             }
             for run, agent_name in runs
         )
-    events.sort(
-        key=lambda item: item["created_at"] or datetime.datetime.min, reverse=True
-    )
+    events.sort(key=lambda item: item["created_at"] or datetime.datetime.min, reverse=True)
     return {"items": events[:limit]}
 
 
@@ -1103,9 +1045,7 @@ async def list_evaluation_readiness(
                 func.count(AgentRun.id),
                 func.sum(
                     func.coalesce(
-                        (AgentRun.status == "succeeded").cast(
-                            type_=AgentRun.prompt_tokens.type
-                        ),
+                        (AgentRun.status == "succeeded").cast(type_=AgentRun.prompt_tokens.type),
                         0,
                     )
                 ),
@@ -1137,11 +1077,7 @@ async def list_evaluation_readiness(
                 "ready": not errors,
                 "validation_errors": errors,
                 "run_count": run_count,
-                "success_rate": (
-                    round((stat["succeeded"] / run_count) * 100, 2)
-                    if run_count
-                    else None
-                ),
+                "success_rate": (round((stat["succeeded"] / run_count) * 100, 2) if run_count else None),
             }
         )
     return {"items": items}
@@ -1374,17 +1310,9 @@ async def create_agent_version_endpoint(
         source = await _version_or_404(db, body.clone_version_id)
         if source.agent_id != agent.id:
             raise HTTPException(400, "Clone source belongs to another Agent")
-    policies = (
-        {field: getattr(source, field) or {} for field in _POLICY_FIELDS}
-        if source
-        else {}
-    )
+    policies = {field: getattr(source, field) or {} for field in _POLICY_FIELDS} if source else {}
     policies.update(_clean_policies(body.policies))
-    prompt = (
-        body.system_prompt
-        if body.system_prompt is not None
-        else (source.system_prompt if source else None)
-    )
+    prompt = body.system_prompt if body.system_prompt is not None else (source.system_prompt if source else None)
     if not prompt:
         raise HTTPException(400, "system_prompt is required")
     try:
@@ -1402,9 +1330,7 @@ async def create_agent_version_endpoint(
                     await db.execute(
                         select(AgentKnowledgeBinding).where(
                             AgentKnowledgeBinding.agent_version_id == source.id,
-                            AgentKnowledgeBinding.status.not_in(
-                                {"revoked", "suspended"}
-                            ),
+                            AgentKnowledgeBinding.status.not_in({"revoked", "suspended"}),
                         )
                     )
                 )
@@ -1507,21 +1433,11 @@ async def publish_agent_version_endpoint(
 ):
     version = await _version_or_404(db, version_id)
     bindings = (
-        (
-            await db.execute(
-                select(AgentKnowledgeBinding).where(
-                    AgentKnowledgeBinding.agent_version_id == version.id
-                )
-            )
-        )
+        (await db.execute(select(AgentKnowledgeBinding).where(AgentKnowledgeBinding.agent_version_id == version.id)))
         .scalars()
         .all()
     )
-    pending = [
-        binding
-        for binding in bindings
-        if binding.status not in {"approved", "published", "revoked"}
-    ]
+    pending = [binding for binding in bindings if binding.status not in {"approved", "published", "revoked"}]
     if pending:
         raise HTTPException(
             409,
@@ -1660,16 +1576,8 @@ async def create_knowledge_binding(
     if existing is not None and existing.status != "revoked":
         raise HTTPException(409, "Knowledge Base is already bound to this version")
     if body.release_mode == "pinned":
-        release = (
-            await db.get(KnowledgeRelease, body.pinned_release_id)
-            if body.pinned_release_id
-            else None
-        )
-        if (
-            release is None
-            or release.knowledge_base_id != knowledge_base.id
-            or release.status != "published"
-        ):
+        release = await db.get(KnowledgeRelease, body.pinned_release_id) if body.pinned_release_id else None
+        if release is None or release.knowledge_base_id != knowledge_base.id or release.status != "published":
             raise HTTPException(400, "Pinned mode requires a published release")
     elif body.pinned_release_id is not None:
         raise HTTPException(400, "pinned_release_id requires release_mode=pinned")
@@ -1711,11 +1619,7 @@ async def create_knowledge_binding(
             agent_id=version.agent_id,
             agent_version_id=version.id,
             actor_user_id=user.id,
-            event_type=(
-                "agent.knowledge_binding.auto_approved"
-                if bypass
-                else "agent.knowledge_binding.requested"
-            ),
+            event_type=("agent.knowledge_binding.auto_approved" if bypass else "agent.knowledge_binding.requested"),
             payload={
                 "binding_id": binding.id,
                 "knowledge_base_id": knowledge_base.id,
@@ -1741,10 +1645,7 @@ async def approve_knowledge_binding(
         raise HTTPException(404, "Knowledge binding not found")
     if binding.status != "pending_kb_approval":
         raise HTTPException(409, "Binding is not awaiting Knowledge approval")
-    if (
-        binding.requested_by_user_id == user.id
-        and not await user_bypasses_maker_checker(db, user.id)
-    ):
+    if binding.requested_by_user_id == user.id and not await user_bypasses_maker_checker(db, user.id):
         raise HTTPException(
             409,
             "Maker-checker policy requires a different Knowledge approver",
@@ -1790,14 +1691,10 @@ async def approve_domain_binding(
         raise HTTPException(404, "Knowledge binding not found")
     if binding.status != "pending_domain_approval":
         raise HTTPException(409, "Binding is not awaiting domain approval")
-    if (
-        user.id
-        in {
-            binding.requested_by_user_id,
-            binding.kb_approved_by_user_id,
-        }
-        and not await user_bypasses_maker_checker(db, user.id)
-    ):
+    if user.id in {
+        binding.requested_by_user_id,
+        binding.kb_approved_by_user_id,
+    } and not await user_bypasses_maker_checker(db, user.id):
         raise HTTPException(
             409,
             "Maker-checker policy requires an independent domain approver",

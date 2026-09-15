@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.budget import PlanAssignment
@@ -31,9 +31,8 @@ async def restore_directory_user(db: AsyncSession, user: User) -> None:
 
 
 async def permanently_delete_user(db: AsyncSession, user: User) -> None:
-    if await user_has_full_administrator(db, user.id):
-        if await count_full_administrators(db) <= 1:
-            raise ValueError("Cannot delete the last Full Administrator account")
+    if await user_has_full_administrator(db, user.id) and await count_full_administrators(db) <= 1:
+        raise ValueError("Cannot delete the last Full Administrator account")
     from app.models.api_key import UserApiKey
 
     user_id = user.id

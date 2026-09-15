@@ -81,7 +81,33 @@ def render_nginx_config(
     has_chain: bool,
     upstream: str = "127.0.0.1:8080",
     max_body_mb: int = DEFAULT_MAX_BODY_MB,
+    json_body_mb: int | None = None,
 ) -> str:
+    """Render the edge config.
+
+    ``max_body_mb`` is the upload ceiling and stays on the http block (the
+    value read_nginx_client_max_body_mb() reads back). Ordinary JSON routes get
+    ``json_body_mb`` (defaults to MAX_JSON_BODY_BYTES) in ``location /``; the
+    large-body routes listed in request_body_limit_service inherit the upload
+    ceiling through a regex location, mirroring the app middleware tiers.
+    """
+    from app.services.request_body_limit_service import LARGE_BODY_PATH_PREFIXES
+
+    if json_body_mb is None:
+        json_body_mb = default_json_body_mb()
+    json_body_mb = max(1, min(int(json_body_mb), max(1, int(max_body_mb))))
+    large_paths = "|".join(re.escape(prefix.lstrip("/")) for prefix in LARGE_BODY_PATH_PREFIXES)
+    proxy_directives = f"""            proxy_pass http://{upstream};
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_buffering off;
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 3600s;"""
     hsts = ""
     if hsts_enabled:
         hsts = '    add_header Strict-Transport-Security "max-age=31536000" always;\n'
@@ -113,6 +139,11 @@ http {{
     include /etc/nginx/mime.types;
     default_type application/octet-stream;
     sendfile on;
+    # No version banner; the access log is off (it would record every chat
+    # URL incl. session ids and query strings on the tmpfs; the app has its
+    # own structured request log with the right redactions).
+    server_tokens off;
+    access_log off;
     client_max_body_size {max(1, int(max_body_mb))}m;
     map $http_upgrade $connection_upgrade {{
         default upgrade;
@@ -127,22 +158,23 @@ http {{
         ssl_certificate /etc/alpha-router/tls/fullchain.pem;
         ssl_certificate_key /etc/alpha-router/tls/key.pem;
         ssl_protocols TLSv1.2 TLSv1.3;
+        # Mozilla "intermediate" TLS 1.2 suites (TLS 1.3 suites are fixed).
+        ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
         ssl_prefer_server_ciphers off;
         ssl_session_timeout 1d;
         ssl_session_cache shared:SSL:10m;
+        # Session tickets would need a rotated key to keep forward secrecy;
+        # the shared cache above is enough for a single edge.
+        ssl_session_tickets off;
 {stapling}{hsts}
+        # Ordinary JSON: small ceiling (mirrors MAX_JSON_BODY_BYTES).
         location / {{
-            proxy_pass http://{upstream};
-            proxy_http_version 1.1;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto https;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection $connection_upgrade;
-            proxy_buffering off;
-            proxy_read_timeout 3600s;
-            proxy_send_timeout 3600s;
+            client_max_body_size {json_body_mb}m;
+{proxy_directives}
+        }}
+        # Uploads and inline-image chat bodies: inherit the http-level ceiling.
+        location ~ ^/({large_paths}) {{
+{proxy_directives}
         }}
     }}
 }}
@@ -223,6 +255,26 @@ async def _set_setting(db: AsyncSession, key: str, value: str) -> None:
         db.add(SystemSetting(key=key, value=value))
 
 
+def default_json_body_mb() -> int:
+    """MAX_JSON_BODY_BYTES rounded up to whole megabytes (nginx granularity)."""
+    return max(1, -(-int(get_settings().max_json_body_bytes) // (1024 * 1024)))
+
+
+def nginx_conf_matches(text: str, *, max_body_mb: int, json_body_mb: int | None = None) -> bool:
+    """True when a rendered nginx.conf already carries both body ceilings.
+
+    The reconcile used to compare only the http-level (upload) ceiling, so a
+    change of MAX_JSON_BODY_BYTES alone never reached the edge until the
+    upload ceiling happened to move too.
+    """
+    match = _NGINX_BODY_RE.search(text)
+    if not match or int(match.group(1)) != int(max_body_mb):
+        return False
+    json_mb = default_json_body_mb() if json_body_mb is None else int(json_body_mb)
+    json_mb = max(1, min(json_mb, max(1, int(max_body_mb))))
+    return f"client_max_body_size {json_mb}m;" in text
+
+
 def read_nginx_client_max_body_mb(conf_path: Path | None = None) -> int | None:
     path = conf_path or (tls_state_dir() / "nginx.conf")
     if not path.is_file():
@@ -256,11 +308,11 @@ async def sync_edge_body_limit(db: AsyncSession) -> dict[str, Any]:
     Never waits for nginx apply (edge polls desired-state asynchronously).
     Safe to call after Storage transfer-limit saves and on startup reconcile.
     """
-    from app.services.request_body_limit_service import publish_request_body_limit_mb
+    from app.services.request_body_limit_service import publish_request_body_limit_mb_async
 
     body_mb = await _resolve_edge_body_mb(db)
     try:
-        publish_request_body_limit_mb(body_mb)
+        await publish_request_body_limit_mb_async(body_mb)
     except OSError as exc:
         LOGGER.warning("Failed to publish shared request body limit: %s", exc)
         return {
@@ -282,8 +334,14 @@ async def sync_edge_body_limit(db: AsyncSession) -> dict[str, Any]:
             "reason": "https_disabled",
         }
 
-    current_mb = read_nginx_client_max_body_mb()
-    if current_mb == body_mb and (tls_state_dir() / "nginx.conf").is_file():
+    conf_path = tls_state_dir() / "nginx.conf"
+    current_text = ""
+    if conf_path.is_file():
+        try:
+            current_text = conf_path.read_text(encoding="utf-8")
+        except OSError:
+            current_text = ""
+    if current_text and nginx_conf_matches(current_text, max_body_mb=body_mb):
         return {
             "attempted": True,
             "queued": False,
@@ -295,9 +353,7 @@ async def sync_edge_body_limit(db: AsyncSession) -> dict[str, Any]:
 
     https_port = int(desired.get("https_port") or 0)
     http_mode_raw = str(desired.get("http_mode") or "loopback_only")
-    http_mode: HttpMode = (
-        "redirect" if http_mode_raw == "redirect" else "loopback_only"
-    )
+    http_mode: HttpMode = "redirect" if http_mode_raw == "redirect" else "loopback_only"
     hsts_enabled = bool(desired.get("hsts"))
     certificate_id = desired.get("certificate_id")
     if not https_port or not certificate_id:
@@ -311,7 +367,7 @@ async def sync_edge_body_limit(db: AsyncSession) -> dict[str, Any]:
 
     try:
         cert = await get_certificate(db, int(certificate_id))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
         LOGGER.warning("Edge body sync could not load certificate: %s", exc)
         return {
             "attempted": True,
@@ -369,7 +425,7 @@ async def reconcile_edge_body_limit(db: AsyncSession) -> dict[str, Any]:
     """Startup/admin reconcile: publish limits and refresh edge conf if needed."""
     try:
         return await sync_edge_body_limit(db)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
         LOGGER.warning("Edge body-limit reconcile failed: %s", exc)
         return {
             "attempted": True,
@@ -388,7 +444,7 @@ async def activate_https(
     http_mode: HttpMode,
     hsts_enabled: bool,
 ) -> dict[str, Any]:
-    from app.services.request_body_limit_service import publish_request_body_limit_mb
+    from app.services.request_body_limit_service import publish_request_body_limit_mb_async
 
     port = validate_https_port(https_port)
     if http_mode not in {"redirect", "loopback_only"}:
@@ -399,7 +455,7 @@ async def activate_https(
         raise TlsCertificateError("The stored private key could not be decrypted.")
     max_body_mb = await _resolve_edge_body_mb(db)
     try:
-        publish_request_body_limit_mb(max_body_mb)
+        await publish_request_body_limit_mb_async(max_body_mb)
     except OSError as exc:
         LOGGER.warning("Failed to publish request body limit during HTTPS activate: %s", exc)
     nginx = render_nginx_config(
@@ -478,9 +534,7 @@ def tls_status_payload(
 
 
 async def current_tls_status(db: AsyncSession) -> dict[str, Any]:
-    row = (
-        await db.execute(select(TlsCertificate).where(TlsCertificate.is_active.is_(True)))
-    ).scalars().first()
+    row = (await db.execute(select(TlsCertificate).where(TlsCertificate.is_active.is_(True)))).scalars().first()
     desired = read_desired_state()
     return tls_status_payload(
         active_certificate=row,

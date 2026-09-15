@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime
 import uuid
 from unittest.mock import patch
@@ -16,17 +15,17 @@ from app.models.agent import Agent, AgentVersion
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
+from app.services import agent_runtime_service
 from app.services.agent_policy_service import (
     AgentPolicyValidationError,
     resolve_agent_policies,
 )
+from app.services.agent_prompt_service import citation_validation_safe_response
 from app.services.agent_routing_service import (
     AgentAccessDenied,
     resolve_explicit_agent,
     route_agent,
 )
-from app.services.agent_prompt_service import citation_validation_safe_response
-from app.services import agent_runtime_service
 from app.services.agent_runtime_service import (
     AgentRuntimeUnavailable,
     finalize_agent_completion,
@@ -364,9 +363,7 @@ async def _test_runtime_prompt_egress_and_fail_closed_abstention() -> None:
             assert plan.egress_manifest.knowledge_base_ids == ("kb-1",)
             assert plan.egress_manifest.classifications == ("internal",)
             assert len(plan.guardrail_decisions) == 2
-            prompt_text = "\n".join(
-                str(message["content"]) for message in plan.prompt.messages
-            )
+            prompt_text = "\n".join(str(message["content"]) for message in plan.prompt.messages)
             assert "BEGIN_APPROVED_AGENT_BEHAVIOR" in prompt_text
             assert "BEGIN_UNTRUSTED_KNOWLEDGE_EVIDENCE" in prompt_text
             assert "BEGIN_UNTRUSTED_CLIENT_CONTEXT" in prompt_text
@@ -389,9 +386,7 @@ async def _test_runtime_prompt_egress_and_fail_closed_abstention() -> None:
             assert blocked.status == "blocked"
             assert blocked.display_text is None
             assert blocked.reason_code == "citation_validation_failed"
-            assert blocked.safe_response == (
-                "The generated response could not be verified against its sources."
-            )
+            assert blocked.safe_response == ("The generated response could not be verified against its sources.")
 
             unpublished = await finalize_agent_completion(
                 plan=plan,
@@ -515,9 +510,7 @@ async def _test_project_agent_turn_gets_no_personal_memory() -> None:
                 calls.append(user_id)
                 return ("Prefers black coffee with no sugar",)
 
-            with patch.object(
-                agent_runtime_service, "retrieve_memories", tracked_retrieve
-            ):
+            with patch.object(agent_runtime_service, "retrieve_memories", tracked_retrieve):
                 shared = await plan_agent_turn(
                     db,
                     messages=messages,
@@ -529,9 +522,7 @@ async def _test_project_agent_turn_gets_no_personal_memory() -> None:
                 )
                 assert shared.status == "ready"
                 assert calls == []
-                shared_prompt = "\n".join(
-                    str(message["content"]) for message in shared.prompt.messages
-                )
+                shared_prompt = "\n".join(str(message["content"]) for message in shared.prompt.messages)
                 assert "black coffee" not in shared_prompt
 
                 personal = await plan_agent_turn(
@@ -544,34 +535,30 @@ async def _test_project_agent_turn_gets_no_personal_memory() -> None:
                 )
                 assert personal.status == "ready"
                 assert calls == [user.id]
-                personal_prompt = "\n".join(
-                    str(message["content"]) for message in personal.prompt.messages
-                )
+                personal_prompt = "\n".join(str(message["content"]) for message in personal.prompt.messages)
                 assert "black coffee" in personal_prompt
     finally:
         await engine.dispose()
 
 
-def test_router_prefers_explicit_and_handles_ambiguity():
-    asyncio.run(_test_router_prefers_explicit_and_handles_ambiguity())
+async def test_router_prefers_explicit_and_handles_ambiguity():
+    await _test_router_prefers_explicit_and_handles_ambiguity()
 
 
-def test_project_agent_turn_gets_no_personal_memory():
-    asyncio.run(_test_project_agent_turn_gets_no_personal_memory())
+async def test_project_agent_turn_gets_no_personal_memory():
+    await _test_project_agent_turn_gets_no_personal_memory()
 
 
-def test_pinned_previously_published_version_is_resolved():
-    asyncio.run(_test_pinned_previously_published_version_is_resolved())
+async def test_pinned_previously_published_version_is_resolved():
+    await _test_pinned_previously_published_version_is_resolved()
 
 
-def test_runtime_prompt_egress_and_fail_closed_abstention():
-    asyncio.run(_test_runtime_prompt_egress_and_fail_closed_abstention())
+async def test_runtime_prompt_egress_and_fail_closed_abstention():
+    await _test_runtime_prompt_egress_and_fail_closed_abstention()
 
 
-def test_private_mode_disables_agent_rag_unless_policy_allows_it():
-    asyncio.run(
-        _test_private_mode_disables_agent_rag_unless_published_policy_allows_it()
-    )
+async def test_private_mode_disables_agent_rag_unless_policy_allows_it():
+    await _test_private_mode_disables_agent_rag_unless_published_policy_allows_it()
 
 
 def test_citation_validation_messages_separate_missing_markers_from_bad_markers():
@@ -597,10 +584,13 @@ def test_citation_validation_messages_separate_missing_markers_from_bad_markers(
         query="پورت های فایروال برای اکتیو دایرکتوری چیست؟",
         verification=missing,
     )
-    assert citation_validation_safe_response(
-        query="what are the AD firewall ports?",
-        verification=invented,
-    ) == "The generated response could not be verified against its sources."
+    assert (
+        citation_validation_safe_response(
+            query="what are the AD firewall ports?",
+            verification=invented,
+        )
+        == "The generated response could not be verified against its sources."
+    )
     assert "تأیید کنم" in citation_validation_safe_response(
         query="پورت های فایروال برای اکتیو دایرکتوری چیست؟",
         verification=invented,

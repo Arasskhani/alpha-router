@@ -71,25 +71,23 @@ def test_build_html_document_is_rtl_and_escapes_title():
     assert "<p>hello</p>" in doc
 
 
-def test_render_chat_pdf_rejects_none():
-    import asyncio
+async def test_render_chat_pdf_rejects_none():
 
     from app.services.chat_export_service import render_chat_pdf
 
     try:
-        asyncio.run(render_chat_pdf(content=None))  # type: ignore[arg-type]
+        await render_chat_pdf(content=None)  # type: ignore[arg-type]
         raise AssertionError("expected ChatExportError")
     except ChatExportError:
         pass
 
 
-def test_render_chat_pdf_empty_string_rejected():
-    import asyncio
+async def test_render_chat_pdf_empty_string_rejected():
 
     from app.services.chat_export_service import render_chat_pdf
 
     try:
-        asyncio.run(render_chat_pdf(content="   "))
+        await render_chat_pdf(content="   ")
         raise AssertionError("expected ChatExportError")
     except ChatExportError:
         pass

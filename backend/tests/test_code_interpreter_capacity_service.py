@@ -11,8 +11,8 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
-from app.services import code_interpreter_capacity_service as caps
 from app.models.system import SystemSetting
+from app.services import code_interpreter_capacity_service as caps
 
 
 class _FakeRedis:

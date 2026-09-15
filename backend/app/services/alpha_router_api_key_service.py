@@ -73,8 +73,20 @@ async def ensure_key_usable(db: AsyncSession, key: AlphaRouterApiKey) -> None:
         raise HTTPException(status_code=403, detail="API key is disabled")
     await maybe_reset_key_period(db, key)
     limit = float(key.credit_limit_usd or 0)
+    if limit <= 0 and not key_is_unlimited(key):
+        # Formerly "0 means no cap": a forgotten field silently made the key a
+        # blank cheque. Unlimited is now an explicit admin decision.
+        raise HTTPException(
+            status_code=402,
+            detail="API key has no credit limit configured; ask an administrator to set one",
+        )
     if limit > 0 and float(key.period_used_usd or 0) >= limit:
         raise HTTPException(status_code=402, detail="API key credit limit exceeded for this period")
+
+
+def key_is_unlimited(key: AlphaRouterApiKey) -> bool:
+    """True only when an admin explicitly marked the key as unlimited."""
+    return bool(getattr(key, "unlimited_budget", False))
 
 
 async def record_key_usage(db: AsyncSession, key: AlphaRouterApiKey, cost_usd: float) -> None:
@@ -114,9 +126,7 @@ def key_to_dict(
         "is_active": bool(key.is_active),
         "created_at": key.created_at.isoformat() + "Z" if key.created_at else None,
         "updated_at": (
-            (key.updated_at or key.created_at).isoformat() + "Z"
-            if (key.updated_at or key.created_at)
-            else None
+            (key.updated_at or key.created_at).isoformat() + "Z" if (key.updated_at or key.created_at) else None
         ),
         "last_used_at": key.last_used_at.isoformat() + "Z" if key.last_used_at else None,
         "owner_user_id": key.owner_user_id,
@@ -124,6 +134,7 @@ def key_to_dict(
         "owner_username": owner.get("username") if owner else None,
         "owner_display_name": owner.get("display_name") if owner else None,
         "credit_limit_usd": float(key.credit_limit_usd or 0),
+        "unlimited_budget": key_is_unlimited(key),
         "reset_period": key.reset_period or "monthly",
         "expires_at": expires.isoformat() if expires else None,
         "expiration_never": expires is None,

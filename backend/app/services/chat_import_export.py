@@ -121,9 +121,7 @@ async def export_user_chats(db: AsyncSession, user_id: int) -> dict[str, Any]:
         # Walk pages newest→oldest then reverse for chronological export
         page_stack: list[list[dict[str, Any]]] = []
         for _ in range(20):
-            batch, has_more = await chat_store.list_session_messages(
-                db, user_id, sid, limit=200, before=before
-            )
+            batch, has_more = await chat_store.list_session_messages(db, user_id, sid, limit=200, before=before)
             if not batch:
                 break
             page_stack.append(batch)
@@ -334,10 +332,7 @@ def _parse_openwebui(payload: Any) -> list[dict[str, Any]]:
         model = ""
         if isinstance(chat_obj, dict):
             models = chat_obj.get("models")
-            if isinstance(models, list) and models:
-                model = str(models[0] or "")
-            else:
-                model = str(chat_obj.get("model") or "")
+            model = str(models[0] or "") if isinstance(models, list) and models else str(chat_obj.get("model") or "")
         out.append({"title": title, "messages": messages, "model": model[:512]})
     return out
 
@@ -434,9 +429,7 @@ async def import_user_chats(db: AsyncSession, user_id: int, payload: Any) -> dic
             # append in chunks
             chunk = 50
             for i in range(0, len(clean_msgs), chunk):
-                await chat_store.append_session_messages(
-                    db, user_id, new_id, clean_msgs[i : i + chunk]
-                )
+                await chat_store.append_session_messages(db, user_id, new_id, clean_msgs[i : i + chunk])
             imported += 1
         except Exception:
             logger.exception("Failed importing chat for user_id=%s", user_id)

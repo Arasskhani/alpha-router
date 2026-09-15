@@ -10,9 +10,7 @@ from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 
 
-async def allowed_connection_ids_for_key(
-    db: AsyncSession, alpha_router_api_key_id: int | None
-) -> set[int] | None:
+async def allowed_connection_ids_for_key(db: AsyncSession, alpha_router_api_key_id: int | None) -> set[int] | None:
     """None = unrestricted. Empty set = restricted to no connections."""
     if alpha_router_api_key_id is None:
         return None
@@ -23,8 +21,7 @@ async def allowed_connection_ids_for_key(
         (
             await db.execute(
                 select(alpha_router_api_key_connections.c.connection_id).where(
-                    alpha_router_api_key_connections.c.alpha_router_api_key_id
-                    == int(alpha_router_api_key_id)
+                    alpha_router_api_key_connections.c.alpha_router_api_key_id == int(alpha_router_api_key_id)
                 )
             )
         )
@@ -34,9 +31,7 @@ async def allowed_connection_ids_for_key(
     return {int(cid) for cid in rows}
 
 
-def filter_models_for_connections(
-    models: list[AIModel], allowed_connection_ids: set[int] | None
-) -> list[AIModel]:
+def filter_models_for_connections(models: list[AIModel], allowed_connection_ids: set[int] | None) -> list[AIModel]:
     if allowed_connection_ids is None:
         return models
     allowed = allowed_connection_ids
@@ -61,9 +56,7 @@ def connection_brief(conn: Connection) -> dict:
     }
 
 
-async def map_allowed_connections(
-    db: AsyncSession, key_ids: list[int]
-) -> dict[int, list[dict]]:
+async def map_allowed_connections(db: AsyncSession, key_ids: list[int]) -> dict[int, list[dict]]:
     out: dict[int, list[dict]] = {int(kid): [] for kid in key_ids}
     if not key_ids:
         return out
@@ -77,11 +70,7 @@ async def map_allowed_connections(
                 Connection,
                 Connection.id == alpha_router_api_key_connections.c.connection_id,
             )
-            .where(
-                alpha_router_api_key_connections.c.alpha_router_api_key_id.in_(
-                    [int(kid) for kid in key_ids]
-                )
-            )
+            .where(alpha_router_api_key_connections.c.alpha_router_api_key_id.in_([int(kid) for kid in key_ids]))
             .order_by(Connection.name.asc(), Connection.id.asc())
         )
     ).all()
@@ -119,9 +108,6 @@ async def replace_key_allowed_connections(
 
     await db.execute(
         insert(alpha_router_api_key_connections),
-        [
-            {"alpha_router_api_key_id": int(key.id), "connection_id": cid}
-            for cid in clean
-        ],
+        [{"alpha_router_api_key_id": int(key.id), "connection_id": cid} for cid in clean],
     )
     return [found[cid].name for cid in sorted(clean, key=lambda i: found[i].name.lower())]

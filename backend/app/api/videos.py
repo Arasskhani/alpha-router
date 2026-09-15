@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,6 +37,7 @@ from app.services.openrouter_video_service import (
 )
 from app.services.secret_crypto import decrypt_secret
 from app.services.video_job_service import (
+    VideoJobAlreadyCompleted,
     cancel_video_job,
     create_video_job,
     kick_video_job,
@@ -78,32 +79,33 @@ async def _resolve_video_model(
     access_user_id: int | None = None,
 ) -> tuple[str, str | None, str | None, str | None, AIModel | None]:
     model_id = _normalize_model_id(raw_model)
-    subject = (
-        await resolve_access_subject(db, user_id=access_user_id) if access_user_id is not None else None
-    )
+    subject = await resolve_access_subject(db, user_id=access_user_id) if access_user_id is not None else None
     row: AIModel | None = None
     if model_id.startswith("model::"):
         try:
             model_pk = int(model_id.split("::", 1)[1])
-        except Exception:
+        except Exception:  # noqa: BLE001 -- falls back to a safe default value
             model_pk = None
         if model_pk is not None:
             row = (
-                await db.execute(
-                    select(AIModel).where(AIModel.id == model_pk, AIModel.is_enabled == True)  # noqa: E712
+                (
+                    await db.execute(
+                        select(AIModel).where(AIModel.id == model_pk, AIModel.is_enabled == True)  # noqa: E712
+                    )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
         if row:
             conn = await db.get(Connection, row.connection_id)
-            if conn and conn.is_active:
-                if subject is None or await user_can_access_model(db, row, subject):
-                    return (
-                        row.external_id,
-                        decrypt_secret(conn.api_key_encrypted),
-                        conn.base_url,
-                        conn.provider_type,
-                        row,
-                    )
+            if conn and conn.is_active and (subject is None or await user_can_access_model(db, row, subject)):
+                return (
+                    row.external_id,
+                    decrypt_secret(conn.api_key_encrypted),
+                    conn.base_url,
+                    conn.provider_type,
+                    row,
+                )
             row = None
 
     if not row:
@@ -179,10 +181,13 @@ async def generate_video(
             raise HTTPException(status_code=400, detail="reference_image is required for image-to-video")
     else:
         operation = "generation"
-        if not caps.get("supports_text_to_video") and not caps.get("supports_image_to_video"):
-            # Allow if catalog marks is_video_model even without modality metadata.
-            if not getattr(ai_model, "is_video_model", False):
-                raise HTTPException(status_code=400, detail="Selected model does not support video generation")
+        # Allow if catalog marks is_video_model even without modality metadata.
+        if (
+            not caps.get("supports_text_to_video")
+            and not caps.get("supports_image_to_video")
+            and not getattr(ai_model, "is_video_model", False)
+        ):
+            raise HTTPException(status_code=400, detail="Selected model does not support video generation")
 
     duration = parse_video_duration(body.duration)
     if duration is None:
@@ -200,12 +205,20 @@ async def generate_video(
     supported_durations = catalog_video_durations(caps.get("supported_durations"))
     if supported_durations and duration not in set(supported_durations):
         raise HTTPException(status_code=400, detail="Requested duration is not supported by the selected video model")
+    max_duration = int(settings.video_max_duration_seconds or 0)
+    if max_duration > 0 and duration > max_duration:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Requested duration exceeds the deployment limit of {max_duration}s",
+        )
     supported_resolutions = {str(value).lower() for value in (caps.get("supported_resolutions") or [])}
     if supported_resolutions and resolution.lower() not in supported_resolutions:
         raise HTTPException(status_code=400, detail="Requested resolution is not supported by the selected video model")
     supported_aspects = {str(value) for value in (caps.get("supported_aspect_ratios") or [])}
     if supported_aspects and aspect_ratio not in supported_aspects:
-        raise HTTPException(status_code=400, detail="Requested aspect ratio is not supported by the selected video model")
+        raise HTTPException(
+            status_code=400, detail="Requested aspect ratio is not supported by the selected video model"
+        )
 
     hold_body = body.model_dump()
     if request.headers.get("Idempotency-Key"):
@@ -252,8 +265,7 @@ async def generate_video(
                 "aspect_ratio": aspect_ratio,
                 "generate_audio": bool(body.generate_audio),
                 "seed": body.seed,
-                "assistant_client_message_id": (body.assistant_client_message_id or "").strip()
-                or None,
+                "assistant_client_message_id": (body.assistant_client_message_id or "").strip() or None,
             },
             chat_session_id=body.chat_session_id,
             persist=bool(body.persist),
@@ -335,6 +347,13 @@ async def cancel_video_job_endpoint(
     job = await db.get(VideoGenerationJob, job_id)
     if job is None or job.user_id != user.id:
         raise HTTPException(status_code=404, detail="Job not found")
-    job = await cancel_video_job(db, job)
+    try:
+        job = await cancel_video_job(db, job)
+    except VideoJobAlreadyCompleted as exc:
+        await db.commit()
+        raise HTTPException(
+            status_code=409,
+            detail="The provider already finished this video; it will be delivered and billed.",
+        ) from exc
     await db.commit()
     return serialize_job(job)

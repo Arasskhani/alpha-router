@@ -4,7 +4,7 @@ import {
   shouldShowPromptQueueBar,
 } from "../../lib/promptQueue";
 
-export type PromptQueueViewItem = {
+type PromptQueueViewItem = {
   id: string;
   preview: string;
 };

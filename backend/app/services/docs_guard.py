@@ -79,8 +79,11 @@ async def request_has_super_admin(request: Request) -> bool:
 class OpenApiDocsGuardMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         settings = get_settings()
-        if settings.openapi_admin_only and is_docs_path(request.url.path):
-            if not await request_has_super_admin(request):
-                increment("docs_denied")
-                return JSONResponse(status_code=404, content={"detail": "Not Found"})
+        if (
+            settings.openapi_admin_only
+            and is_docs_path(request.url.path)
+            and not await request_has_super_admin(request)
+        ):
+            increment("docs_denied")
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
         return await call_next(request)

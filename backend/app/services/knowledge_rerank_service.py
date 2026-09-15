@@ -59,9 +59,7 @@ def _lexical_score(query: str, text: str) -> float:
     coverage = len(query_set & text_set) / len(query_set)
     normalized_query = " ".join(query_tokens)
     normalized_text = " ".join(lexical_tokens(text))
-    phrase_bonus = (
-        0.15 if normalized_query and normalized_query in normalized_text else 0.0
-    )
+    phrase_bonus = 0.15 if normalized_query and normalized_query in normalized_text else 0.0
     return min(1.0, coverage + phrase_bonus)
 
 

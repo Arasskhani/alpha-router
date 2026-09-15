@@ -127,19 +127,23 @@ async def get_retention_days_cached(db: AsyncSession) -> int:
 
 async def get_storage_settings(db: AsyncSession) -> dict[str, Any]:
     rows = (
-        await db.execute(
-            select(SystemSetting).where(
-                SystemSetting.key.in_(
-                    [
-                        _KEY_RETENTION_DAYS,
-                        _KEY_CLEAR_SCHEDULE_ENABLED,
-                        _KEY_CLEAR_SCHEDULE_HOUR,
-                        _KEY_CLEAR_SCHEDULE_MINUTE,
-                    ]
+        (
+            await db.execute(
+                select(SystemSetting).where(
+                    SystemSetting.key.in_(
+                        [
+                            _KEY_RETENTION_DAYS,
+                            _KEY_CLEAR_SCHEDULE_ENABLED,
+                            _KEY_CLEAR_SCHEDULE_HOUR,
+                            _KEY_CLEAR_SCHEDULE_MINUTE,
+                        ]
+                    )
                 )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     kv = {r.key: (r.value or "") for r in rows}
     retention_days = int(kv.get(_KEY_RETENTION_DAYS, "30") or 30)
     schedule_enabled = (kv.get(_KEY_CLEAR_SCHEDULE_ENABLED, "true") or "true").lower() in ("1", "true", "yes", "on")
@@ -260,11 +264,7 @@ async def _put_object_once(key: str, blob: bytes, mime: str) -> bool:
 
 async def _count_storage_path_refs(db: AsyncSession, storage_path: str) -> int:
     return int(
-        (
-            await db.execute(
-                select(func.count(MediaAsset.id)).where(MediaAsset.storage_path == storage_path)
-            )
-        ).scalar()
+        (await db.execute(select(func.count(MediaAsset.id)).where(MediaAsset.storage_path == storage_path))).scalar()
         or 0
     )
 
@@ -276,22 +276,22 @@ async def unlink_storage_if_unreferenced(db: AsyncSession, storage_path: str) ->
         await asyncio.to_thread(oss.delete_object, storage_path)
 
 
-async def _find_user_asset_by_hash(
-    db: AsyncSession, user_id: int, content_hash: str
-) -> MediaAsset | None:
+async def _find_user_asset_by_hash(db: AsyncSession, user_id: int, content_hash: str) -> MediaAsset | None:
     return (
-        await db.execute(
-            select(MediaAsset)
-            .where(MediaAsset.user_id == user_id, MediaAsset.content_hash == content_hash)
-            .order_by(MediaAsset.created_at.desc())
-            .limit(1)
+        (
+            await db.execute(
+                select(MediaAsset)
+                .where(MediaAsset.user_id == user_id, MediaAsset.content_hash == content_hash)
+                .order_by(MediaAsset.created_at.desc())
+                .limit(1)
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
 
 
-async def _resolve_username_raw(
-    db: AsyncSession, user_id: int, username: str | None
-) -> str:
+async def _resolve_username_raw(db: AsyncSession, user_id: int, username: str | None) -> str:
     if username and username.strip():
         return username.strip()
     row = await db.get(User, user_id)
@@ -494,12 +494,34 @@ async def read_media_bytes(asset: MediaAsset) -> bytes:
     return await asyncio.to_thread(read_media_bytes_sync, asset)
 
 
+def read_media_range_sync(asset: MediaAsset, range_spec: str) -> tuple[bytes, int, int, int]:
+    path = (asset.storage_path or "").replace("\\", "/")
+    if not oss.is_cdn_object_key(path):
+        raise FileNotFoundError(path)
+    try:
+        return oss.get_object_range(path, range_spec)
+    except oss.ObjectNotFoundError:
+        raise FileNotFoundError(path) from None
+
+
+async def read_media_range(asset: MediaAsset, range_spec: str) -> tuple[bytes, int, int, int]:
+    """One partial GET against object storage (HTML5 seeking)."""
+    return await asyncio.to_thread(read_media_range_sync, asset, range_spec)
+
+
 async def list_user_media(db: AsyncSession, user_id: int, limit: int = 200) -> list[MediaAsset]:
     return (
-        await db.execute(
-            select(MediaAsset).where(MediaAsset.user_id == user_id).order_by(MediaAsset.created_at.desc()).limit(limit)
+        (
+            await db.execute(
+                select(MediaAsset)
+                .where(MediaAsset.user_id == user_id)
+                .order_by(MediaAsset.created_at.desc())
+                .limit(limit)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
 
 async def storage_stats(db: AsyncSession) -> dict[str, Any]:
@@ -512,9 +534,7 @@ async def storage_stats(db: AsyncSession) -> dict[str, Any]:
             )
         )
     ).one()
-    total_logical_bytes = (
-        await db.execute(select(func.coalesce(func.sum(MediaAsset.size_bytes), 0)))
-    ).scalar() or 0
+    total_logical_bytes = (await db.execute(select(func.coalesce(func.sum(MediaAsset.size_bytes), 0)))).scalar() or 0
     settings = await get_storage_settings(db)
     cutoff = dt.datetime.utcnow() - dt.timedelta(days=int(settings["retention_days"]))
     expired_count = (

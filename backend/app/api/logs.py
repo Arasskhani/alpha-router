@@ -2,14 +2,16 @@
 
 import json
 from datetime import datetime
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
+    require_super_admin,
     get_current_user,
     require_active_user,
     require_api_keys,
@@ -30,8 +32,10 @@ from app.models.cost_accounting import (
 from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel
 from app.models.user import User
+from app.services.log_detail_retention_service import get_raw_payload_retention_days
 from app.services.log_export_service import (
     dataframe_to_csv_bytes,
+    resolve_operation_types,
     detail_rows_to_csv_bytes,
     request_log_detail_to_export_rows,
     request_logs_to_export_dataframe,
@@ -88,6 +92,7 @@ def _log_row(
     *,
     router_key: AlphaRouterApiKey | None = None,
     user_key: UserApiKey | None = None,
+    operation_type: str | None = None,
 ) -> dict:
     source_code = (r.source or "").strip().lower()
     if source_code == "alpha_router_chat":
@@ -130,6 +135,14 @@ def _log_row(
         "client_app": r.client_app,
         "success": r.success,
         "error_message": r.error_message,
+        # getattr: this helper is also handed lightweight row stand-ins (tests,
+        # partially loaded selects), the same reason user_api_key_id is read
+        # that way below.
+        "error_code": getattr(r, "error_code", None),
+        "http_status": getattr(r, "http_status", None),
+        "correlation_id": getattr(r, "correlation_id", None),
+        "provider_job_id": getattr(r, "provider_job_id", None),
+        "operation_type": operation_type,
     }
     if router_key:
         row["api_key_name"] = router_key.name
@@ -161,6 +174,8 @@ def _apply_log_filters(
     end_date: str | None,
     api_key_id: int | None = None,
     user_api_key_id: int | None = None,
+    operation_type: str | None = None,
+    error_code: str | None = None,
 ):
     if api_key_id is not None:
         q = q.where(RequestLog.alpha_router_api_key_id == api_key_id)
@@ -168,12 +183,8 @@ def _apply_log_filters(
         q = q.where(RequestLog.user_api_key_id == user_api_key_id)
     if username:
         term = username.strip()
-        key_match = select(AlphaRouterApiKey.id).where(
-            AlphaRouterApiKey.name.contains(term)
-        )
-        personal_key_match = select(UserApiKey.id).where(
-            UserApiKey.name.contains(term)
-        )
+        key_match = select(AlphaRouterApiKey.id).where(AlphaRouterApiKey.name.contains(term))
+        personal_key_match = select(UserApiKey.id).where(UserApiKey.name.contains(term))
         q = q.where(
             or_(
                 RequestLog.username.contains(term),
@@ -187,6 +198,16 @@ def _apply_log_filters(
         q = q.where(RequestLog.success.is_(True))
     elif response_status == "fail":
         q = q.where(RequestLog.success.is_(False))
+    if operation_type:
+        # The kind of request (chat / video / image / speech / embedding) lives
+        # on the usage operation, so filtering by it is a subquery on that table.
+        q = q.where(
+            RequestLog.usage_operation_id.in_(
+                select(UsageOperation.id).where(UsageOperation.operation_type == operation_type.strip())
+            )
+        )
+    if error_code:
+        q = q.where(RequestLog.error_code == error_code.strip())
     if prompt_cache == "yes":
         q = q.where(RequestLog.cached_tokens > 0)
     elif prompt_cache == "no":
@@ -241,6 +262,8 @@ async def _filtered_log_rows(
     end_date: str | None = None,
     api_key_id: int | None = None,
     user_api_key_id: int | None = None,
+    operation_type: str | None = None,
+    error_code: str | None = None,
 ):
     q = select(RequestLog).order_by(RequestLog.request_time.desc())
     q = _apply_log_filters(
@@ -253,6 +276,8 @@ async def _filtered_log_rows(
         end_date=end_date,
         api_key_id=api_key_id,
         user_api_key_id=user_api_key_id,
+        operation_type=operation_type,
+        error_code=error_code,
     )
     if offset:
         q = q.offset(offset)
@@ -262,7 +287,14 @@ async def _filtered_log_rows(
 async def _serialize_log_rows(db: AsyncSession, rows: list[RequestLog]) -> list[dict]:
     operation_ids = {r.usage_operation_id for r in rows if r.usage_operation_id}
     operation_providers: dict[str, set[str]] = {}
+    operation_types: dict[str, str] = {}
     if operation_ids:
+        type_rows = (
+            await db.execute(
+                select(UsageOperation.id, UsageOperation.operation_type).where(UsageOperation.id.in_(operation_ids))
+            )
+        ).all()
+        operation_types = {str(op_id): str(op_type or "") for op_id, op_type in type_rows}
         provider_rows = (
             await db.execute(
                 select(UsageEvent.operation_id, UsageEvent.provider_type)
@@ -290,17 +322,13 @@ async def _serialize_log_rows(db: AsyncSession, rows: list[RequestLog]) -> list[
     key_ids = {r.alpha_router_api_key_id for r in rows if r.alpha_router_api_key_id}
     key_map: dict[int, AlphaRouterApiKey] = {}
     if key_ids:
-        keys = (
-            await db.execute(select(AlphaRouterApiKey).where(AlphaRouterApiKey.id.in_(key_ids)))
-        ).scalars().all()
+        keys = (await db.execute(select(AlphaRouterApiKey).where(AlphaRouterApiKey.id.in_(key_ids)))).scalars().all()
         key_map = {k.id: k for k in keys}
 
     user_key_ids = {r.user_api_key_id for r in rows if r.user_api_key_id}
     user_key_map: dict[int, UserApiKey] = {}
     if user_key_ids:
-        user_keys = (
-            await db.execute(select(UserApiKey).where(UserApiKey.id.in_(user_key_ids)))
-        ).scalars().all()
+        user_keys = (await db.execute(select(UserApiKey).where(UserApiKey.id.in_(user_key_ids)))).scalars().all()
         user_key_map = {k.id: k for k in user_keys}
 
     items = []
@@ -317,6 +345,7 @@ async def _serialize_log_rows(db: AsyncSession, rows: list[RequestLog]) -> list[
                 provider,
                 router_key=key_map.get(r.alpha_router_api_key_id),
                 user_key=user_key_map.get(r.user_api_key_id),
+                operation_type=operation_types.get(r.usage_operation_id or "") or None,
             )
         )
     return items
@@ -335,6 +364,8 @@ async def _logs_list_payload(
     end_date: str | None = None,
     api_key_id: int | None = None,
     user_api_key_id: int | None = None,
+    operation_type: str | None = None,
+    error_code: str | None = None,
     api_key: AlphaRouterApiKey | None = None,
 ) -> dict:
     rows = await _filtered_log_rows(
@@ -349,6 +380,8 @@ async def _logs_list_payload(
         end_date=end_date,
         api_key_id=api_key_id,
         user_api_key_id=user_api_key_id,
+        operation_type=operation_type,
+        error_code=error_code,
     )
     payload: dict = {
         "items": await _serialize_log_rows(db, rows),
@@ -374,6 +407,8 @@ async def _logs_export_response(
     end_date: str | None = None,
     api_key_id: int | None = None,
     user_api_key_id: int | None = None,
+    operation_type: str | None = None,
+    error_code: str | None = None,
 ) -> Response:
     rows = await _filtered_log_rows(
         db,
@@ -386,6 +421,8 @@ async def _logs_export_response(
         end_date=end_date,
         api_key_id=api_key_id,
         user_api_key_id=user_api_key_id,
+        operation_type=operation_type,
+        error_code=error_code,
     )
     provider_map, key_map, user_key_map = await resolve_log_export_maps(db, rows)
     df = request_logs_to_export_dataframe(
@@ -394,6 +431,7 @@ async def _logs_export_response(
         provider_map=provider_map,
         key_map=key_map,
         user_key_map=user_key_map,
+        operation_types=await resolve_operation_types(db, rows),
     )
     content = dataframe_to_csv_bytes(df)
     stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
@@ -412,36 +450,72 @@ async def admin_logs_filter_options(
 ):
     """Distinct usernames, API key names, and models present in request logs (for filter comboboxes)."""
     usernames = (
-        await db.execute(
-            select(RequestLog.username)
-            .where(RequestLog.username.isnot(None), RequestLog.username != "")
-            .distinct()
-            .order_by(RequestLog.username)
+        (
+            await db.execute(
+                select(RequestLog.username)
+                .where(RequestLog.username.isnot(None), RequestLog.username != "")
+                .distinct()
+                .order_by(RequestLog.username)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     models = (
-        await db.execute(
-            select(RequestLog.model_id)
-            .where(RequestLog.model_id.isnot(None), RequestLog.model_id != "")
-            .distinct()
-            .order_by(RequestLog.model_id)
+        (
+            await db.execute(
+                select(RequestLog.model_id)
+                .where(RequestLog.model_id.isnot(None), RequestLog.model_id != "")
+                .distinct()
+                .order_by(RequestLog.model_id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
+    operation_types = (
+        (
+            await db.execute(
+                select(UsageOperation.operation_type)
+                .where(UsageOperation.operation_type.isnot(None), UsageOperation.operation_type != "")
+                .distinct()
+                .order_by(UsageOperation.operation_type)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    error_codes = (
+        (
+            await db.execute(
+                select(RequestLog.error_code)
+                .where(RequestLog.error_code.isnot(None), RequestLog.error_code != "")
+                .distinct()
+                .order_by(RequestLog.error_code)
+            )
+        )
+        .scalars()
+        .all()
+    )
     api_keys = (
-        await db.execute(
-            select(AlphaRouterApiKey.name)
-            .join(
-                RequestLog,
-                RequestLog.alpha_router_api_key_id == AlphaRouterApiKey.id,
+        (
+            await db.execute(
+                select(AlphaRouterApiKey.name)
+                .join(
+                    RequestLog,
+                    RequestLog.alpha_router_api_key_id == AlphaRouterApiKey.id,
+                )
+                .where(
+                    AlphaRouterApiKey.name.isnot(None),
+                    AlphaRouterApiKey.name != "",
+                )
+                .distinct()
+                .order_by(AlphaRouterApiKey.name)
             )
-            .where(
-                AlphaRouterApiKey.name.isnot(None),
-                AlphaRouterApiKey.name != "",
-            )
-            .distinct()
-            .order_by(AlphaRouterApiKey.name)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     identity_options: list[str] = []
     seen: set[str] = set()
@@ -455,6 +529,8 @@ async def admin_logs_filter_options(
     return {
         "usernames": identity_options,
         "models": [m for m in models if (m or "").strip()],
+        "operation_types": [t for t in operation_types if (t or "").strip()],
+        "error_codes": [c for c in error_codes if (c or "").strip()],
     }
 
 
@@ -471,6 +547,8 @@ async def admin_logs_export(
     end_date: str | None = None,
     api_key_id: int | None = Query(default=None, ge=1),
     user_api_key_id: int | None = Query(default=None, ge=1),
+    operation_type: str | None = Query(default=None, max_length=32),
+    error_code: str | None = Query(default=None, max_length=64),
     timezone: str = Query("local", pattern="^(local|utc)$"),
 ):
     return await _logs_export_response(
@@ -485,6 +563,8 @@ async def admin_logs_export(
         end_date=end_date,
         api_key_id=api_key_id,
         user_api_key_id=user_api_key_id,
+        operation_type=operation_type,
+        error_code=error_code,
     )
 
 
@@ -502,6 +582,8 @@ async def admin_logs(
     end_date: str | None = None,
     api_key_id: int | None = Query(default=None, ge=1),
     user_api_key_id: int | None = Query(default=None, ge=1),
+    operation_type: str | None = Query(default=None, max_length=32),
+    error_code: str | None = Query(default=None, max_length=64),
 ):
     key = await db.get(AlphaRouterApiKey, api_key_id) if api_key_id else None
     return await _logs_list_payload(
@@ -516,6 +598,8 @@ async def admin_logs(
         end_date=end_date,
         api_key_id=api_key_id,
         user_api_key_id=user_api_key_id,
+        operation_type=operation_type,
+        error_code=error_code,
         api_key=key,
     )
 
@@ -532,12 +616,16 @@ async def api_key_logs_export(
     prompt_cache: str | None = Query(default=None, pattern="^(yes|no)$"),
     start_date: str | None = None,
     end_date: str | None = None,
+    operation_type: str | None = Query(default=None, max_length=32),
+    error_code: str | None = Query(default=None, max_length=64),
     timezone: str = Query("local", pattern="^(local|utc)$"),
 ):
     await _require_gateway_key(db, key_id)
     return await _logs_export_response(
         db,
         limit=limit,
+        operation_type=operation_type,
+        error_code=error_code,
         timezone=timezone,
         username=username,
         model_id=model_id,
@@ -562,12 +650,16 @@ async def api_key_logs(
     prompt_cache: str | None = Query(default=None, pattern="^(yes|no)$"),
     start_date: str | None = None,
     end_date: str | None = None,
+    operation_type: str | None = Query(default=None, max_length=32),
+    error_code: str | None = Query(default=None, max_length=64),
 ):
     key = await _require_gateway_key(db, key_id)
     return await _logs_list_payload(
         db,
         limit=limit,
         offset=offset,
+        operation_type=operation_type,
+        error_code=error_code,
         username=username,
         model_id=model_id,
         response_status=response_status,
@@ -585,13 +677,17 @@ async def configured_cost_pricing(
     _: User = Depends(require_api_logs),
 ):
     rows = (
-        await db.execute(
-            select(PricingSnapshot)
-            .where(PricingSnapshot.source.in_(("admin", "contract")))
-            .order_by(PricingSnapshot.effective_at.desc(), PricingSnapshot.id.desc())
-            .limit(500)
+        (
+            await db.execute(
+                select(PricingSnapshot)
+                .where(PricingSnapshot.source.in_(("admin", "contract")))
+                .order_by(PricingSnapshot.effective_at.desc(), PricingSnapshot.id.desc())
+                .limit(500)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return {
         "items": [
             {
@@ -603,9 +699,7 @@ async def configured_cost_pricing(
                 "currency": row.currency,
                 "source": row.source,
                 "pricing": json.loads(row.pricing_json),
-                "effective_at": (
-                    row.effective_at.isoformat() if row.effective_at else None
-                ),
+                "effective_at": (row.effective_at.isoformat() if row.effective_at else None),
                 "expires_at": row.expires_at.isoformat() if row.expires_at else None,
             }
             for row in rows
@@ -623,10 +717,7 @@ async def create_cost_pricing(
         connection = await db.get(Connection, body.connection_id)
         if connection is None:
             raise HTTPException(status_code=404, detail="Connection not found")
-        if (
-            (connection.provider_type or "").strip().lower()
-            != body.provider_type.strip().lower()
-        ):
+        if (connection.provider_type or "").strip().lower() != body.provider_type.strip().lower():
             raise HTTPException(
                 status_code=400,
                 detail="connection_id does not belong to provider_type",
@@ -678,42 +769,25 @@ async def cost_accounting_summary(
         )
     ).all()
     unpriced = (
-        await db.execute(
-            select(func.count(UsageEvent.id)).where(
-                UsageEvent.final_cost_usd.is_(None)
-            )
-        )
+        await db.execute(select(func.count(UsageEvent.id)).where(UsageEvent.final_cost_usd.is_(None)))
     ).scalar_one()
-    ledger_total = (
-        await db.execute(
-            select(func.coalesce(func.sum(LedgerEntry.amount_usd), 0))
-        )
-    ).scalar_one()
+    ledger_total = (await db.execute(select(func.coalesce(func.sum(LedgerEntry.amount_usd), 0)))).scalar_one()
     legacy_total = (
         await db.execute(
-            select(func.coalesce(func.sum(RequestLog.total_cost_usd), 0)).where(
-                RequestLog.usage_operation_id.is_(None)
-            )
+            select(func.coalesce(func.sum(RequestLog.total_cost_usd), 0)).where(RequestLog.usage_operation_id.is_(None))
         )
     ).scalar_one()
-    ledger_started_at = (
-        await db.execute(select(func.min(UsageOperation.started_at)))
-    ).scalar_one()
+    ledger_started_at = (await db.execute(select(func.min(UsageOperation.started_at)))).scalar_one()
     recent_runs = (
-        await db.execute(
-            select(ReconciliationRun)
-            .order_by(ReconciliationRun.started_at.desc())
-            .limit(10)
-        )
-    ).scalars().all()
+        (await db.execute(select(ReconciliationRun).order_by(ReconciliationRun.started_at.desc()).limit(10)))
+        .scalars()
+        .all()
+    )
     return {
         "ledger_total_usd": float(ledger_total or 0),
         "legacy_total_usd": float(legacy_total or 0),
-        "combined_total_usd": float(ledger_total or 0)
-        + float(legacy_total or 0),
-        "ledger_started_at": (
-            ledger_started_at.isoformat() if ledger_started_at else None
-        ),
+        "combined_total_usd": float(ledger_total or 0) + float(legacy_total or 0),
+        "ledger_started_at": (ledger_started_at.isoformat() if ledger_started_at else None),
         "unpriced_event_count": int(unpriced or 0),
         "by_source": [
             {
@@ -757,16 +831,7 @@ async def admin_log_export(
 
     provider_map, key_map, user_key_map = await resolve_log_export_maps(db, [log_row])
     provider = provider_map.get((log_row.model_id or "").strip())
-    router_key = (
-        key_map.get(log_row.alpha_router_api_key_id)
-        if log_row.alpha_router_api_key_id
-        else None
-    )
-    user_key = (
-        user_key_map.get(log_row.user_api_key_id)
-        if log_row.user_api_key_id
-        else None
-    )
+    router_key = key_map.get(log_row.alpha_router_api_key_id) if log_row.alpha_router_api_key_id else None
 
     operation = None
     events: list[UsageEvent] = []
@@ -774,17 +839,17 @@ async def admin_log_export(
     if log_row.usage_operation_id:
         operation = await db.get(UsageOperation, log_row.usage_operation_id)
         events = (
-            await db.execute(
-                select(UsageEvent)
-                .where(UsageEvent.operation_id == log_row.usage_operation_id)
-                .order_by(UsageEvent.attempt_index, UsageEvent.started_at)
+            (
+                await db.execute(
+                    select(UsageEvent)
+                    .where(UsageEvent.operation_id == log_row.usage_operation_id)
+                    .order_by(UsageEvent.attempt_index, UsageEvent.started_at)
+                )
             )
-        ).scalars().all()
-        providers = {
-            (event.provider_type or "").strip()
-            for event in events
-            if (event.provider_type or "").strip()
-        }
+            .scalars()
+            .all()
+        )
+        providers = {(event.provider_type or "").strip() for event in events if (event.provider_type or "").strip()}
         if len(providers) == 1:
             provider = next(iter(providers))
         elif len(providers) > 1:
@@ -792,12 +857,14 @@ async def admin_log_export(
         event_ids = [event.id for event in events]
         if event_ids:
             line_rows = (
-                await db.execute(
-                    select(CostLineItem)
-                    .where(CostLineItem.usage_event_id.in_(event_ids))
-                    .order_by(CostLineItem.id)
+                (
+                    await db.execute(
+                        select(CostLineItem).where(CostLineItem.usage_event_id.in_(event_ids)).order_by(CostLineItem.id)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             for line in line_rows:
                 lines_by_event.setdefault(line.usage_event_id, []).append(line)
 
@@ -819,33 +886,81 @@ async def admin_log_export(
     )
 
 
-async def _cost_details_payload(db: AsyncSession, log_row: RequestLog) -> dict:
+def _json_or_none(raw: str | None) -> dict | None:
+    """Parse a stored JSON blob for display; never fail a detail view over it."""
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else {"value": parsed}
+
+
+async def _cost_details_payload(
+    db: AsyncSession,
+    log_row: RequestLog,
+    *,
+    operator_detail: bool = True,
+) -> dict:
+    """The cost ledger for one request log.
+
+    ``operator_detail`` is the difference between the two callers. The admin
+    API Logs page gets everything, including the provider's verbatim response
+    and the ids an operator needs to trace a request through the stack. The
+    end user looking at the cost of their own chat turn gets what the cost is
+    and why it failed, and none of the operating internals: the raw provider
+    payload (which exposes upstream routing), the connection row behind the
+    call, the correlation id, the provider job id and the recorded source IP.
+    Those answer an operator's questions, not the account holder's.
+    """
+    request_block: dict[str, Any] = {
+        "id": log_row.id,
+        "success": bool(log_row.success),
+        "error_code": log_row.error_code,
+        "error_message": log_row.error_message,
+        "http_status": log_row.http_status,
+        "response_time_ms": float(log_row.response_time_ms or 0),
+        "source": log_row.source,
+        "client_app": log_row.client_app,
+        "model_id": log_row.model_id,
+        "project_id": log_row.project_id,
+    }
+    if operator_detail:
+        request_block["correlation_id"] = log_row.correlation_id
+        request_block["provider_job_id"] = log_row.provider_job_id
+        request_block["source_ip"] = log_row.source_ip
     if not log_row.usage_operation_id:
         return {
             "operation": None,
             "events": [],
             "legacy": True,
+            "request": request_block,
             "total_cost_usd": float(log_row.total_cost_usd or 0),
         }
     operation = await db.get(UsageOperation, log_row.usage_operation_id)
     if operation is None:
         raise HTTPException(status_code=404, detail="Usage operation not found")
     events = (
-        await db.execute(
-            select(UsageEvent)
-            .where(UsageEvent.operation_id == operation.id)
-            .order_by(UsageEvent.attempt_index, UsageEvent.started_at)
+        (
+            await db.execute(
+                select(UsageEvent)
+                .where(UsageEvent.operation_id == operation.id)
+                .order_by(UsageEvent.attempt_index, UsageEvent.started_at)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     event_ids = [event.id for event in events]
     line_rows = (
         (
             await db.execute(
-                select(CostLineItem)
-                .where(CostLineItem.usage_event_id.in_(event_ids))
-                .order_by(CostLineItem.id)
+                select(CostLineItem).where(CostLineItem.usage_event_id.in_(event_ids)).order_by(CostLineItem.id)
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
         if event_ids
         else []
     )
@@ -859,21 +974,17 @@ async def _cost_details_payload(db: AsyncSession, log_row: RequestLog) -> dict:
             "status": operation.status,
             "total_cost_usd": float(operation.total_cost_usd or 0),
             "provider_cost_usd": (
-                float(operation.provider_cost_usd)
-                if operation.provider_cost_usd is not None
-                else None
+                float(operation.provider_cost_usd) if operation.provider_cost_usd is not None else None
             ),
             "calculated_cost_usd": (
-                float(operation.calculated_cost_usd)
-                if operation.calculated_cost_usd is not None
-                else None
+                float(operation.calculated_cost_usd) if operation.calculated_cost_usd is not None else None
             ),
             "unpriced_event_count": int(operation.unpriced_event_count or 0),
-            "reconciled_at": (
-                operation.reconciled_at.isoformat()
-                if operation.reconciled_at
-                else None
-            ),
+            "accounting_status": operation.accounting_status,
+            "metadata": _json_or_none(operation.metadata_json),
+            "started_at": (operation.started_at.isoformat() if operation.started_at else None),
+            "completed_at": (operation.completed_at.isoformat() if operation.completed_at else None),
+            "reconciled_at": (operation.reconciled_at.isoformat() if operation.reconciled_at else None),
         },
         "events": [
             {
@@ -885,52 +996,46 @@ async def _cost_details_payload(db: AsyncSession, log_row: RequestLog) -> dict:
                 "attempt_index": event.attempt_index,
                 "upstream_request_id": event.upstream_request_id,
                 "status": event.status,
+                "quantity": event.quantity,
+                "unit": event.unit,
+                "started_at": (event.started_at.isoformat() if event.started_at else None),
+                "completed_at": (event.completed_at.isoformat() if event.completed_at else None),
                 "prompt_tokens": event.prompt_tokens,
                 "completion_tokens": event.completion_tokens,
                 "cached_tokens": event.cached_tokens,
                 "cache_write_tokens": event.cache_write_tokens,
                 "reasoning_tokens": event.reasoning_tokens,
-                "provider_cost_usd": (
-                    float(event.provider_cost_usd)
-                    if event.provider_cost_usd is not None
-                    else None
-                ),
+                "provider_cost_usd": (float(event.provider_cost_usd) if event.provider_cost_usd is not None else None),
                 "calculated_cost_usd": (
-                    float(event.calculated_cost_usd)
-                    if event.calculated_cost_usd is not None
-                    else None
+                    float(event.calculated_cost_usd) if event.calculated_cost_usd is not None else None
                 ),
-                "final_cost_usd": (
-                    float(event.final_cost_usd)
-                    if event.final_cost_usd is not None
-                    else None
-                ),
+                "final_cost_usd": (float(event.final_cost_usd) if event.final_cost_usd is not None else None),
                 "cost_source": event.cost_source,
                 "cost_confidence": event.cost_confidence,
-                "reconciliation_attempts": int(
-                    event.reconciliation_attempts or 0
-                ),
+                "reconciliation_attempts": int(event.reconciliation_attempts or 0),
                 "last_reconciliation_attempt_at": (
-                    event.last_reconciliation_attempt_at.isoformat()
-                    if event.last_reconciliation_attempt_at
-                    else None
+                    event.last_reconciliation_attempt_at.isoformat() if event.last_reconciliation_attempt_at else None
                 ),
                 "error_message": event.error_message,
+                # Operator-only (see the docstring): the provider's own response
+                # for this attempt, kept until the retention window configured on
+                # the Retention Policy page expires, and the connection row the
+                # call went out on.
+                **(
+                    {
+                        "raw_usage": _json_or_none(event.raw_usage_json),
+                        "connection_id": event.connection_id,
+                    }
+                    if operator_detail
+                    else {}
+                ),
                 "line_items": [
                     {
                         "category": line.category,
                         "quantity": line.quantity,
                         "unit": line.unit,
-                        "unit_price_usd": (
-                            float(line.unit_price_usd)
-                            if line.unit_price_usd is not None
-                            else None
-                        ),
-                        "cost_usd": (
-                            float(line.cost_usd)
-                            if line.cost_usd is not None
-                            else None
-                        ),
+                        "unit_price_usd": (float(line.unit_price_usd) if line.unit_price_usd is not None else None),
+                        "cost_usd": (float(line.cost_usd) if line.cost_usd is not None else None),
                         "pricing_source": line.pricing_source,
                     }
                     for line in lines_by_event.get(event.id, [])
@@ -939,6 +1044,7 @@ async def _cost_details_payload(db: AsyncSession, log_row: RequestLog) -> dict:
             for event in events
         ],
         "legacy": False,
+        "request": request_block,
     }
 
 
@@ -952,7 +1058,12 @@ async def admin_log_cost_details(
     if log_row is None:
         raise HTTPException(status_code=404, detail="Request log not found")
     await _require_request_log_read(db, user, log_row)
-    return await _cost_details_payload(db, log_row)
+    payload = await _cost_details_payload(db, log_row)
+    # Admin view only: the modal tells the operator how long the provider
+    # responses below are kept, and links to where that is set. An end user
+    # looking at their own request has no business with that policy.
+    payload["raw_payload_retention_days"] = await get_raw_payload_retention_days(db)
+    return payload
 
 
 @router.post("/admin/cost-accounting/reconcile/provider")
@@ -1024,10 +1135,7 @@ async def reconcile_costs(
         if (
             event is None
             or (event.provider_type or "").lower() != provider
-            or (
-                body.connection_id is not None
-                and event.connection_id != body.connection_id
-            )
+            or (body.connection_id is not None and event.connection_id != body.connection_id)
         ):
             unmatched += 1
             continue
@@ -1053,12 +1161,44 @@ async def reconcile_costs(
     }
 
 
+CLEAR_ALL_LOGS_PHRASE = "DELETE ALL LOGS"
+
+
+class ClearLogsIn(BaseModel):
+    confirm: str = ""
+
+
 @router.delete("/admin/logs")
 async def clear_admin_logs(
+    body: ClearLogsIn,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_api_logs_write),
+    admin: User = Depends(require_api_logs_write),
+    _: User = Depends(require_super_admin),
 ):
-    """Permanently delete all API request log rows."""
+    """Permanently delete all API request log rows.
+
+    Irreversible and platform-wide, so: Super Admin only, the phrase must be
+    typed and verified here (the three-step UI dialog is not a control), and
+    the row count goes to the security audit table *before* the delete.
+    """
+    if body.confirm.strip() != CLEAR_ALL_LOGS_PHRASE:
+        raise HTTPException(
+            status_code=400,
+            detail=f'Type "{CLEAR_ALL_LOGS_PHRASE}" in confirm to purge the request log.',
+        )
+    from app.services.client_ip import resolve_client_ip
+    from app.services.security_audit import log_security_event
+
+    total = int((await db.execute(select(func.count()).select_from(RequestLog))).scalar_one() or 0)
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=resolve_client_ip(request),
+        action="request_logs_cleared_all",
+        resource_type="request_log",
+        detail={"row_count": total},
+    )
     result = await db.execute(delete(RequestLog))
     await db.commit()
     return {"ok": True, "deleted": result.rowcount}
@@ -1071,13 +1211,17 @@ async def user_logs_route(
     limit: int = Query(200, le=500),
 ):
     rows = (
-        await db.execute(
-            select(RequestLog)
-            .where(RequestLog.user_id == user.id)
-            .order_by(RequestLog.request_time.desc())
-            .limit(limit)
+        (
+            await db.execute(
+                select(RequestLog)
+                .where(RequestLog.user_id == user.id)
+                .order_by(RequestLog.request_time.desc())
+                .limit(limit)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [_log_row(r) for r in rows]
 
 
@@ -1107,4 +1251,4 @@ async def user_request_log_cost_details(
 ):
     """Cost ledger for one owned request log — same payload shape as admin cost-details."""
     log_row = await _owned_request_log(db, user, log_id)
-    return await _cost_details_payload(db, log_row)
+    return await _cost_details_payload(db, log_row, operator_detail=False)

@@ -37,7 +37,7 @@ def _dotnet_attr_value(raw: Any) -> str:
             if len(data) >= 2 and data[1] == 0:
                 return data.decode("utf-16-le").rstrip("\x00")
             return data.decode("utf-8", errors="replace")
-        except Exception:
+        except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return "")
             return ""
     return str(raw).strip()
 
@@ -98,9 +98,7 @@ class WinLdapConnection:
             def _accept_server_cert(_connection, _certificate):
                 return True
 
-            conn.SessionOptions.VerifyServerCertificate = VerifyServerCertificateCallback(
-                _accept_server_cert
-            )
+            conn.SessionOptions.VerifyServerCertificate = VerifyServerCertificateCallback(_accept_server_cert)
         conn.Bind(cred)
 
         self._conn = conn
@@ -120,7 +118,7 @@ class WinLdapConnection:
                 return self._SearchScope.OneLevel
             if search_scope == ldap3.SUBTREE:
                 return self._SearchScope.Subtree
-        except Exception:
+        except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
             pass
         name = str(search_scope).strip().upper()
         if name in ("BASE", "0"):

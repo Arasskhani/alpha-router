@@ -1,6 +1,5 @@
 """Model-tool compatibility registry, circuit breaker, and Auto Router constraints."""
 
-import asyncio
 import datetime
 
 import pytest
@@ -93,8 +92,7 @@ def test_failure_reasons_are_classified_without_vendor_names():
     assert classify_failure_reason("boom") == "provider_error"
     assert (
         classify_failure_reason(
-            'NotFoundError - {"error":{"message":"This model is only available via '
-            'the Batch API"}}'
+            'NotFoundError - {"error":{"message":"This model is only available via the Batch API"}}'
         )
         == "model_unavailable"
     )
@@ -148,8 +146,8 @@ async def _run_inconclusive_probe_error_keeps_model() -> None:
         await engine.dispose()
 
 
-def test_inconclusive_provider_error_does_not_block_model():
-    asyncio.run(_run_inconclusive_probe_error_keeps_model())
+async def test_inconclusive_provider_error_does_not_block_model():
+    await _run_inconclusive_probe_error_keeps_model()
 
 
 async def _run_transient_failure_keeps_verified_status() -> None:
@@ -189,8 +187,8 @@ async def _run_transient_failure_keeps_verified_status() -> None:
         await engine.dispose()
 
 
-def test_transient_failure_keeps_verified_model_selectable():
-    asyncio.run(_run_transient_failure_keeps_verified_status())
+async def test_transient_failure_keeps_verified_model_selectable():
+    await _run_transient_failure_keeps_verified_status()
 
 
 async def _run_unavailable_model_backs_off() -> None:
@@ -209,8 +207,7 @@ async def _run_unavailable_model_backs_off() -> None:
                 model_id=model.id,
                 success=False,
                 source="probe",
-                detail='NotFoundError - {"error":{"message":"This model is only available '
-                'via the Batch API"}}',
+                detail='NotFoundError - {"error":{"message":"This model is only available via the Batch API"}}',
             )
             await db.commit()
 
@@ -225,8 +222,8 @@ async def _run_unavailable_model_backs_off() -> None:
         await engine.dispose()
 
 
-def test_unavailable_model_is_blocked_with_long_backoff():
-    asyncio.run(_run_unavailable_model_backs_off())
+async def test_unavailable_model_is_blocked_with_long_backoff():
+    await _run_unavailable_model_backs_off()
 
 
 async def _run_override_is_audited() -> list[ModelToolCompatibilityEvent]:
@@ -257,14 +254,16 @@ async def _run_override_is_audited() -> list[ModelToolCompatibilityEvent]:
                         .where(ModelToolCompatibilityEvent.compatibility_id == row.id)
                         .order_by(ModelToolCompatibilityEvent.id)
                     )
-                ).scalars().all()
+                )
+                .scalars()
+                .all()
             )
     finally:
         await engine.dispose()
 
 
-def test_manual_override_records_attributed_audit_trail():
-    events = asyncio.run(_run_override_is_audited())
+async def test_manual_override_records_attributed_audit_trail():
+    events = await _run_override_is_audited()
 
     assert [e.reason_code for e in events] == ["admin_force_block", "admin_auto"]
     assert all(e.source == "admin" for e in events)
@@ -324,20 +323,24 @@ async def _run_hard_failure_quarantine() -> None:
             assert blocked.value.status_code == 409
 
             events = (
-                await db.execute(
-                    select(ModelToolCompatibilityEvent).where(
-                        ModelToolCompatibilityEvent.compatibility_id == row.id
+                (
+                    await db.execute(
+                        select(ModelToolCompatibilityEvent).where(
+                            ModelToolCompatibilityEvent.compatibility_id == row.id
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             assert len(events) == 1
             assert events[0].source == "runtime"
     finally:
         await engine.dispose()
 
 
-def test_hard_runtime_failure_quarantines_model():
-    asyncio.run(_run_hard_failure_quarantine())
+async def test_hard_runtime_failure_quarantines_model():
+    await _run_hard_failure_quarantine()
 
 
 async def _run_success_recovers_model() -> None:
@@ -378,8 +381,8 @@ async def _run_success_recovers_model() -> None:
         await engine.dispose()
 
 
-def test_success_clears_quarantine_and_marks_compatible():
-    asyncio.run(_run_success_recovers_model())
+async def test_success_clears_quarantine_and_marks_compatible():
+    await _run_success_recovers_model()
 
 
 async def _run_transient_failure_is_soft() -> None:
@@ -410,8 +413,8 @@ async def _run_transient_failure_is_soft() -> None:
         await engine.dispose()
 
 
-def test_transient_failure_does_not_block_model():
-    asyncio.run(_run_transient_failure_is_soft())
+async def test_transient_failure_does_not_block_model():
+    await _run_transient_failure_is_soft()
 
 
 async def _run_manual_override() -> None:
@@ -453,8 +456,8 @@ async def _run_manual_override() -> None:
         await engine.dispose()
 
 
-def test_manual_override_wins_over_measurements():
-    asyncio.run(_run_manual_override())
+async def test_manual_override_wins_over_measurements():
+    await _run_manual_override()
 
 
 async def _run_auto_router_plugin() -> None:
@@ -510,8 +513,8 @@ async def _run_auto_router_plugin() -> None:
         await engine.dispose()
 
 
-def test_auto_router_constraints_come_from_recorded_evidence():
-    asyncio.run(_run_auto_router_plugin())
+async def test_auto_router_constraints_come_from_recorded_evidence():
+    await _run_auto_router_plugin()
 
 
 async def _run_registry_bootstrap() -> None:
@@ -523,15 +526,11 @@ async def _run_registry_bootstrap() -> None:
             image_model = await _model(db, connection, "vendor/flux", is_image_model=True)
             await db.commit()
 
-            created = await ensure_model_compatibility_rows(
-                db, [text_model, image_model]
-            )
+            created = await ensure_model_compatibility_rows(db, [text_model, image_model])
             await db.commit()
             assert created == 1
 
-            rows = (
-                await db.execute(select(ModelToolCompatibility))
-            ).scalars().all()
+            rows = (await db.execute(select(ModelToolCompatibility))).scalars().all()
             assert [row.external_model_id for row in rows] == ["vendor/text"]
             assert rows[0].tool == CODE_INTERPRETER_TOOL
             assert rows[0].status == STATUS_UNKNOWN
@@ -545,8 +544,8 @@ async def _run_registry_bootstrap() -> None:
         await engine.dispose()
 
 
-def test_sync_registers_text_models_without_guessing():
-    asyncio.run(_run_registry_bootstrap())
+async def test_sync_registers_text_models_without_guessing():
+    await _run_registry_bootstrap()
 
 
 async def _run_event_pruning() -> None:
@@ -567,9 +566,7 @@ async def _run_event_pruning() -> None:
             )
             event = (
                 await db.execute(
-                    select(ModelToolCompatibilityEvent).where(
-                        ModelToolCompatibilityEvent.compatibility_id == row.id
-                    )
+                    select(ModelToolCompatibilityEvent).where(ModelToolCompatibilityEvent.compatibility_id == row.id)
                 )
             ).scalar_one()
             event.created_at = datetime.datetime.utcnow() - datetime.timedelta(days=200)
@@ -578,14 +575,17 @@ async def _run_event_pruning() -> None:
             removed = await prune_compatibility_events(db, retention_days=90)
             await db.commit()
             assert removed == 1
-            assert await get_compatibility(
-                db,
-                connection_id=connection.id,
-                external_model_id=model.external_id,
-            ) is not None
+            assert (
+                await get_compatibility(
+                    db,
+                    connection_id=connection.id,
+                    external_model_id=model.external_id,
+                )
+                is not None
+            )
     finally:
         await engine.dispose()
 
 
-def test_old_compatibility_events_are_pruned():
-    asyncio.run(_run_event_pruning())
+async def test_old_compatibility_events_are_pruned():
+    await _run_event_pruning()

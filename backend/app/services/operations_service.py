@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import calendar
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.branding import PRODUCT_NAME
-from app.config import get_settings
 from app.models.logging import RequestLog
 from app.models.system import SystemMetricSnapshot
 from app.services.activity_service import ACTIVITY_CHART_COLORS
@@ -103,9 +102,7 @@ def _bucket_label_ts(start: datetime, bucket_seconds: int) -> str:
 def _bucket_starts(tr: OpsTimeRange) -> list[datetime]:
     until_epoch = _utc_epoch(tr.until)
     last_slot = until_epoch - (until_epoch % tr.bucket_seconds)
-    return [
-        _utc_from_epoch(last_slot - i * tr.bucket_seconds) for i in range(tr.bucket_count - 1, -1, -1)
-    ]
+    return [_utc_from_epoch(last_slot - i * tr.bucket_seconds) for i in range(tr.bucket_count - 1, -1, -1)]
 
 
 def _logs_by_bucket(logs: list[RequestLog], tr: OpsTimeRange) -> dict[str, list[RequestLog]]:
@@ -135,9 +132,7 @@ def _build_api_traffic_cards_from_logs(logs: list[RequestLog], *, tr: OpsTimeRan
         if not r.success:
             error_by_source[sk] += 1
 
-    top_error_sources = sorted(error_by_source.keys(), key=lambda k: error_by_source[k], reverse=True)[
-        :TOP_LOG_SOURCES
-    ]
+    top_error_sources = sorted(error_by_source.keys(), key=lambda k: error_by_source[k], reverse=True)[:TOP_LOG_SOURCES]
     top_req_sources = sorted(req_by_source.keys(), key=lambda k: req_by_source[k], reverse=True)[:TOP_LOG_SOURCES]
 
     errors_chart: list[dict[str, Any]] = []
@@ -279,9 +274,7 @@ def _build_model_experience(
     slow_by_source: dict[str, int] = defaultdict(int)
     for r in slow_cur:
         slow_by_source[_source_key(r.source)] += 1
-    top_slow_sources = sorted(slow_by_source.keys(), key=lambda k: slow_by_source[k], reverse=True)[
-        :TOP_LOG_SOURCES
-    ]
+    top_slow_sources = sorted(slow_by_source.keys(), key=lambda k: slow_by_source[k], reverse=True)[:TOP_LOG_SOURCES]
 
     slow_chart: list[dict[str, Any]] = []
     for start in _bucket_starts(tr):
@@ -290,9 +283,7 @@ def _build_model_experience(
         point: dict[str, Any] = {"label": _bucket_label_ts(start, tr.bucket_seconds)}
         for sk in top_slow_sources:
             point[sk] = sum(
-                1
-                for r in bucket_logs
-                if (r.response_time_ms or 0) >= SLOW_REQUEST_MS and _source_key(r.source) == sk
+                1 for r in bucket_logs if (r.response_time_ms or 0) >= SLOW_REQUEST_MS and _source_key(r.source) == sk
             )
         slow_chart.append(point)
 
@@ -327,9 +318,7 @@ def _build_model_experience(
         key = _bucket_key_ts(start, tr.bucket_seconds)
         bucket_logs = log_buckets.get(key, [])
         bucket_lats = [float(r.response_time_ms) for r in bucket_logs if r.response_time_ms is not None]
-        p95_chart.append(
-            {"label": _bucket_label_ts(start, tr.bucket_seconds), "p95_ms": round(_p95(bucket_lats), 1)}
-        )
+        p95_chart.append({"label": _bucket_label_ts(start, tr.bucket_seconds), "p95_ms": round(_p95(bucket_lats), 1)})
 
     stats_cur = _model_stats(logs_cur)
     ranked_models = sorted(
@@ -346,15 +335,16 @@ def _build_model_experience(
     )
     chart_models = by_volume[:TOP_MODELS_CHART]
     chart_keys = [_model_key(m["model_id"]) for m in chart_models]
-    key_to_label = {_model_key(m["model_id"]): m["model_id"] for m in chart_models}
 
     models_chart: list[dict[str, Any]] = []
     for start in _bucket_starts(tr):
         key = _bucket_key_ts(start, tr.bucket_seconds)
         bucket_logs = log_buckets.get(key, [])
         point: dict[str, Any] = {"label": _bucket_label_ts(start, tr.bucket_seconds)}
-        for mk, mid in zip(chart_keys, [m["model_id"] for m in chart_models]):
-            bl = [float(r.response_time_ms) for r in bucket_logs if r.model_id == mid and r.response_time_ms is not None]
+        for mk, mid in zip(chart_keys, [m["model_id"] for m in chart_models], strict=False):
+            bl = [
+                float(r.response_time_ms) for r in bucket_logs if r.model_id == mid and r.response_time_ms is not None
+            ]
             point[mk] = round(_p95(bl), 1)
         models_chart.append(point)
 

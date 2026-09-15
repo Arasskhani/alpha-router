@@ -10,7 +10,8 @@ import time
 import zipfile
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
+from collections.abc import AsyncIterator
 
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -208,36 +209,6 @@ def dedupe_media_rows_by_hash(rows: list[MediaAsset]) -> list[MediaAsset]:
     return merged
 
 
-async def cleanup_duplicate_media_assets(db: AsyncSession) -> int:
-    """Delete duplicate media_assets rows that share user_id + content_hash."""
-    rows = (
-        await db.execute(
-            select(MediaAsset)
-            .where(MediaAsset.content_hash.isnot(None))
-            .where(MediaAsset.content_hash != "")
-            .order_by(MediaAsset.user_id, MediaAsset.content_hash, MediaAsset.id.desc())
-        )
-    ).scalars().all()
-    keep_ids: set[int] = set()
-    to_delete: list[MediaAsset] = []
-    seen: set[tuple[int, str]] = set()
-    for row in rows:
-        key = (row.user_id, (row.content_hash or "").strip().lower())
-        if key in seen:
-            to_delete.append(row)
-        else:
-            seen.add(key)
-            keep_ids.add(row.id)
-    paths: list[str] = []
-    for row in to_delete:
-        paths.append(row.storage_path)
-        await db.delete(row)
-    await db.flush()
-    for path in paths:
-        await unlink_storage_if_unreferenced(db, path)
-    return len(to_delete)
-
-
 async def list_user_media_filtered(
     db: AsyncSession,
     user_id: int,
@@ -269,9 +240,7 @@ async def list_user_media_filtered(
     if end:
         stmt = stmt.where(MediaAsset.created_at <= end)
 
-    rows = (
-        await db.execute(stmt.order_by(MediaAsset.created_at.desc()))
-    ).scalars().all()
+    rows = (await db.execute(stmt.order_by(MediaAsset.created_at.desc()))).scalars().all()
     deduped = dedupe_media_rows_by_hash(rows)
     total = len(deduped)
     page = deduped[max(0, offset) : max(0, offset) + min(1000, max(1, limit))]
@@ -283,8 +252,10 @@ async def delete_user_media_ids(db: AsyncSession, user_id: int, ids: list[int]) 
         return 0
     unique = sorted({int(i) for i in ids if int(i) > 0})
     rows = (
-        await db.execute(select(MediaAsset).where(MediaAsset.user_id == user_id, MediaAsset.id.in_(unique)))
-    ).scalars().all()
+        (await db.execute(select(MediaAsset).where(MediaAsset.user_id == user_id, MediaAsset.id.in_(unique))))
+        .scalars()
+        .all()
+    )
     paths: list[str] = []
     for row in rows:
         paths.append(row.storage_path)
@@ -309,10 +280,10 @@ async def purge_user_media_older_than(db: AsyncSession, user_id: int, retention_
     days = max(1, int(retention_days))
     cutoff = dt.datetime.utcnow() - dt.timedelta(days=days)
     rows = (
-        await db.execute(
-            select(MediaAsset).where(MediaAsset.user_id == user_id, MediaAsset.created_at < cutoff)
-        )
-    ).scalars().all()
+        (await db.execute(select(MediaAsset).where(MediaAsset.user_id == user_id, MediaAsset.created_at < cutoff)))
+        .scalars()
+        .all()
+    )
     paths: list[str] = []
     for row in rows:
         paths.append(row.storage_path)
@@ -383,10 +354,10 @@ async def build_media_zip_file(db: AsyncSession, user_id: int, ids: list[int]) -
         raise MediaZipLimitError(f"Too many media files (max {max_items})")
 
     rows = (
-        await db.execute(
-            select(MediaAsset).where(MediaAsset.user_id == user_id, MediaAsset.id.in_(unique))
-        )
-    ).scalars().all()
+        (await db.execute(select(MediaAsset).where(MediaAsset.user_id == user_id, MediaAsset.id.in_(unique))))
+        .scalars()
+        .all()
+    )
     if not rows:
         raise ValueError("No media files found")
 

@@ -20,6 +20,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.models.user import User
 from app.services.bounded_io import BoundedIOError, read_upload_bounded
+from app.services.upload_screening import UploadRejected, screen_upload
 from app.services.project_chat_service import (
     append_project_chat_message,
     create_project_chat_session,
@@ -89,7 +90,6 @@ from app.services.project_memory_service import (
 from app.services.project_access_service import (
     ProjectAccessError,
     can_view_project_activity,
-    require_capability,
     resolve_project_access,
 )
 from app.services.project_service import (
@@ -138,6 +138,8 @@ class ProjectUpdateIn(BaseModel):
     name: str | None = Field(default=None, max_length=255)
     description: str | None = Field(default=None, max_length=4000)
     visibility: str | None = None
+    # Required (must equal the current project name) when switching to public.
+    confirm_public_name: str | None = Field(default=None, max_length=255)
 
 
 class MemberRoleIn(BaseModel):
@@ -174,9 +176,7 @@ async def list_projects_endpoint(
     q: str | None = Query(None),
 ) -> dict[str, Any]:
     if scope == "explore":
-        rows, total = await list_public_projects(
-            db, user=user, limit=limit, offset=offset, q=q
-        )
+        rows, total = await list_public_projects(db, user=user, limit=limit, offset=offset, q=q)
     elif scope == "recent":
         rows, total = await list_recent_projects(db, user=user, limit=min(limit, 20))
     else:
@@ -287,9 +287,7 @@ async def project_activity(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     project = await _require_project_activity(db, project_id=project_id, user=user)
-    filters = _activity_query_filters(
-        model_id=model_id, username=username, app=app, response_status=response_status
-    )
+    filters = _activity_query_filters(model_id=model_id, username=username, app=app, response_status=response_status)
     payload, options, prompts_card = await _build_scoped_activity(
         db,
         period=period,
@@ -326,9 +324,7 @@ async def project_activity_export(
     jwt_token: str = Depends(get_bearer_token),
 ):
     project = await _require_project_activity(db, project_id=project_id, user=user)
-    filters = _activity_query_filters(
-        model_id=model_id, username=username, app=app, response_status=response_status
-    )
+    filters = _activity_query_filters(model_id=model_id, username=username, app=app, response_status=response_status)
     return await _activity_export_response(
         db,
         format=format,
@@ -360,6 +356,7 @@ async def update_project_endpoint(
             name=body.name,
             description=body.description,
             visibility=body.visibility,
+            confirm_public_name=body.confirm_public_name,
         )
         await db.commit()
     except HTTPException:
@@ -435,9 +432,7 @@ async def purge_project_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     try:
-        purged = await hard_delete_project(
-            db, project_id=project_id, user=user, require_pending=True
-        )
+        purged = await hard_delete_project(db, project_id=project_id, user=user, require_pending=True)
         await db.commit()
     except HTTPException:
         await db.rollback()
@@ -490,9 +485,7 @@ async def add_member_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     try:
-        member = await add_member(
-            db, project_id=project_id, user=user, target_user_id=body.userId, role=body.role
-        )
+        member = await add_member(db, project_id=project_id, user=user, target_user_id=body.userId, role=body.role)
         await db.commit()
     except HTTPException:
         await db.rollback()
@@ -515,9 +508,7 @@ async def update_member_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     try:
-        member = await update_member_role(
-            db, project_id=project_id, user=user, target_user_id=user_id, role=body.role
-        )
+        member = await update_member_role(db, project_id=project_id, user=user, target_user_id=user_id, role=body.role)
         await db.commit()
     except HTTPException:
         await db.rollback()
@@ -541,9 +532,7 @@ async def remove_member_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     try:
-        removed = await remove_member(
-            db, project_id=project_id, user=user, target_user_id=user_id
-        )
+        removed = await remove_member(db, project_id=project_id, user=user, target_user_id=user_id)
         await db.commit()
     except HTTPException:
         await db.rollback()
@@ -564,9 +553,7 @@ async def list_invitable_users_endpoint(
     q: str | None = Query(None),
     limit: int = Query(20, ge=1, le=50),
 ) -> dict[str, Any]:
-    users = await list_invitable_users(
-        db, project_id=project_id, user=user, q=q, limit=limit
-    )
+    users = await list_invitable_users(db, project_id=project_id, user=user, q=q, limit=limit)
     if users is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     return {"users": users}
@@ -619,9 +606,7 @@ async def revoke_invitation_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     try:
-        revoked = await revoke_invitation(
-            db, project_id=project_id, invitation_id=invitation_id, user=user
-        )
+        revoked = await revoke_invitation(db, project_id=project_id, invitation_id=invitation_id, user=user)
         await db.commit()
     except HTTPException:
         await db.rollback()
@@ -680,9 +665,7 @@ async def get_project_chats(
     offset: int = Query(0, ge=0),
     q: str | None = Query(None),
 ) -> dict[str, Any]:
-    result = await list_project_chat_sessions(
-        db, project_id=project_id, user=user, limit=limit, offset=offset, q=q
-    )
+    result = await list_project_chat_sessions(db, project_id=project_id, user=user, limit=limit, offset=offset, q=q)
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     sessions, total = result
@@ -736,9 +719,7 @@ async def create_project_chat(
         )
     except ValueError as exc:
         await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     return session
@@ -751,9 +732,7 @@ async def get_project_chat(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    session = await get_project_chat_session(
-        db, project_id=project_id, session_id=session_id, user=user
-    )
+    session = await get_project_chat_session(db, project_id=project_id, session_id=session_id, user=user)
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
     return session
@@ -766,9 +745,7 @@ async def get_project_chat_composer_prefs_endpoint(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    result = await get_project_chat_composer_prefs(
-        db, project_id=project_id, session_id=session_id, user=user
-    )
+    result = await get_project_chat_composer_prefs(db, project_id=project_id, session_id=session_id, user=user)
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
     return result
@@ -806,9 +783,7 @@ async def delete_project_chat(
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    result = await delete_project_chat_session(
-        db, project_id=project_id, session_id=session_id, user=user
-    )
+    result = await delete_project_chat_session(db, project_id=project_id, session_id=session_id, user=user)
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
     return {"deleted": True}
@@ -867,9 +842,7 @@ async def pin_chat(
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    result = await pin_project_chat(
-        db, project_id=project_id, session_id=session_id, user=user
-    )
+    result = await pin_project_chat(db, project_id=project_id, session_id=session_id, user=user)
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
     return result
@@ -882,9 +855,7 @@ async def unpin_chat(
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    result = await unpin_project_chat(
-        db, project_id=project_id, session_id=session_id, user=user
-    )
+    result = await unpin_project_chat(db, project_id=project_id, session_id=session_id, user=user)
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
     return result
@@ -919,9 +890,7 @@ async def get_project_rooms(
     offset: int = Query(0, ge=0),
     q: str | None = Query(None),
 ) -> dict[str, Any]:
-    result = await list_project_rooms(
-        db, project_id=project_id, user=user, limit=limit, offset=offset, q=q
-    )
+    result = await list_project_rooms(db, project_id=project_id, user=user, limit=limit, offset=offset, q=q)
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     rooms, total = result
@@ -967,9 +936,7 @@ async def create_project_room_endpoint(
         )
     except ValueError as exc:
         await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if room is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     return room
@@ -982,9 +949,7 @@ async def get_project_room_endpoint(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    room = await get_project_room(
-        db, project_id=project_id, room_id=room_id, user=user
-    )
+    room = await get_project_room(db, project_id=project_id, room_id=room_id, user=user)
     if room is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found")
     return room
@@ -997,9 +962,7 @@ async def delete_project_room_endpoint(
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    result = await delete_project_room(
-        db, project_id=project_id, room_id=room_id, user=user
-    )
+    result = await delete_project_room(db, project_id=project_id, room_id=room_id, user=user)
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found")
     return {"deleted": True}
@@ -1070,9 +1033,7 @@ async def patch_project_room_message(
         )
     except ValueError as exc:
         await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if message is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
     return message
@@ -1117,9 +1078,7 @@ async def post_project_room_handoff(
         )
     except ValueError as exc:
         await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found")
     return result
@@ -1157,9 +1116,7 @@ async def get_project_resource_endpoint(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    resource = await get_project_resource(
-        db, project_id=project_id, resource_id=resource_id, user=user
-    )
+    resource = await get_project_resource(db, project_id=project_id, resource_id=resource_id, user=user)
     if resource is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource not found")
     return resource
@@ -1218,9 +1175,7 @@ async def delete_project_resource_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     try:
-        deleted = await delete_project_resource(
-            db, project_id=project_id, resource_id=resource_id, user=user
-        )
+        deleted = await delete_project_resource(db, project_id=project_id, resource_id=resource_id, user=user)
         await db.commit()
     except HTTPException:
         await db.rollback()
@@ -1276,6 +1231,7 @@ async def upload_project_media_endpoint(
 ) -> dict[str, Any]:
     try:
         data = await read_upload_bounded(file, max_bytes=media_input_limit())
+        await screen_upload(data, file.filename or "upload")
         item = await upload_project_media(
             db,
             project_id=project_id,
@@ -1290,6 +1246,9 @@ async def upload_project_media_endpoint(
             object_store=default_project_media_store(),
         )
         await db.commit()
+    except UploadRejected as exc:
+        await db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except (BoundedIOError, ProjectMediaValidationError) as exc:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -1315,9 +1274,7 @@ async def get_project_media_endpoint(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    item = await get_project_media(
-        db, project_id=project_id, media_id=media_id, user=user
-    )
+    item = await get_project_media(db, project_id=project_id, media_id=media_id, user=user)
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media not found")
     return item
@@ -1462,9 +1419,7 @@ async def get_project_config_versions(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
-    versions, total = await list_config_versions(
-        db, project_id=project_id, user=user, limit=limit, offset=offset
-    )
+    versions, total = await list_config_versions(db, project_id=project_id, user=user, limit=limit, offset=offset)
     return {"versions": versions, "total": total}
 
 
@@ -1525,9 +1480,7 @@ async def delete_all_auto_project_memories_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     try:
-        deleted = await delete_all_auto_project_memories(
-            db, project_id=project_id, user=user
-        )
+        deleted = await delete_all_auto_project_memories(db, project_id=project_id, user=user)
         await db.commit()
     except HTTPException:
         await db.rollback()
@@ -1599,9 +1552,7 @@ async def delete_project_memory_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     try:
-        await delete_project_memory(
-            db, project_id=project_id, user=user, memory_id=memory_id
-        )
+        await delete_project_memory(db, project_id=project_id, user=user, memory_id=memory_id)
         await db.commit()
     except HTTPException:
         await db.rollback()

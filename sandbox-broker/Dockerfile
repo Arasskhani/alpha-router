@@ -14,7 +14,8 @@ RUN curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${
     && chmod +x /usr/local/bin/docker \
     && rm -rf /tmp/docker /tmp/docker.tgz
 
-RUN pip install --no-cache-dir fastapi uvicorn \
+COPY sandbox-broker/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt && rm /tmp/requirements.txt \
     && groupadd --system --gid 10001 alpha_router \
     && useradd --system --uid 10001 --gid 10001 --create-home --home-dir /home/alpha_router --shell /usr/sbin/nologin alpha_router \
     && chown -R alpha_router:alpha_router /srv /home/alpha_router

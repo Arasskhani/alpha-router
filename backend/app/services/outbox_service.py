@@ -67,11 +67,7 @@ async def enqueue_outbox_event(
         )
     else:
         existing = (
-            await db.execute(
-                select(OutboxEvent).where(
-                    OutboxEvent.idempotency_key == idempotency_key
-                )
-            )
+            await db.execute(select(OutboxEvent).where(OutboxEvent.idempotency_key == idempotency_key))
         ).scalar_one_or_none()
         if existing is not None:
             return existing
@@ -83,17 +79,9 @@ async def enqueue_outbox_event(
     inserted_id = (await db.execute(statement)).scalar_one_or_none()
     if inserted_id is None:
         return (
-            await db.execute(
-                select(OutboxEvent).where(
-                    OutboxEvent.idempotency_key == idempotency_key
-                )
-            )
+            await db.execute(select(OutboxEvent).where(OutboxEvent.idempotency_key == idempotency_key))
         ).scalar_one()
-    return (
-        await db.execute(
-            select(OutboxEvent).where(OutboxEvent.id == inserted_id)
-        )
-    ).scalar_one()
+    return (await db.execute(select(OutboxEvent).where(OutboxEvent.id == inserted_id))).scalar_one()
 
 
 async def claim_outbox_events(
@@ -169,9 +157,7 @@ async def mark_outbox_failed(
     else:
         delay = settings.knowledge_retry_base_seconds * (2 ** (event.attempt_count - 1))
         event.status = "retry"
-        event.available_at = datetime.datetime.utcnow() + datetime.timedelta(
-            seconds=min(delay, 3600)
-        )
+        event.available_at = datetime.datetime.utcnow() + datetime.timedelta(seconds=min(delay, 3600))
     await db.flush()
     return event.status
 
@@ -204,7 +190,7 @@ async def relay_outbox_once(
                     aggregate_id=event.aggregate_id,
                     payload=dict(event.payload_json or {}),
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- falls back to a safe default value
                 status = await mark_outbox_failed(
                     db,
                     event,

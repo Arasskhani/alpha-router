@@ -39,6 +39,15 @@ from app.services.proxy_service import (
 from app.services.user_service import get_user_by_api_key
 from app.utils.app_attribution import detect_client_app
 
+
+def _is_master_key(candidate: str) -> bool:
+    """Constant-time comparison: ``==`` on secrets leaks length/prefix timing."""
+    expected = str(settings.gateway_master_key or "")
+    if not expected:
+        return False
+    return secrets.compare_digest(candidate.encode("utf-8"), expected.encode("utf-8"))
+
+
 router = APIRouter(tags=["gateway"])
 settings = get_settings()
 configure_litellm_cache()
@@ -53,15 +62,7 @@ async def _get_or_create_gateway_service_user(db: AsyncSession) -> User:
     single dedicated service account instead of any caller-supplied identity.
     The account carries an unknown random password so it cannot log in via the UI.
     """
-    user = (
-        (
-            await db.execute(
-                select(User).where(User.username == GATEWAY_SERVICE_USERNAME)
-            )
-        )
-        .scalars()
-        .first()
-    )
+    user = (await db.execute(select(User).where(User.username == GATEWAY_SERVICE_USERNAME))).scalars().first()
     if user:
         return user
     user = User(
@@ -106,15 +107,13 @@ async def _resolve_gateway_auth(
     username = "gateway"
     client_app = detect_client_app(request)
 
-    if raw_key == settings.gateway_master_key:
+    if _is_master_key(raw_key):
         # Master key → fixed service identity. body.user is intentionally ignored
         # to prevent impersonation. Usage debits the service account's budget, so
         # the key is denied (402) until an admin assigns a budget plan to it.
         user = await _get_or_create_gateway_service_user(db)
         if not user.is_active:
-            raise HTTPException(
-                status_code=403, detail="Gateway service account disabled"
-            )
+            raise HTTPException(status_code=403, detail="Gateway service account disabled")
         user_id = user.id
         username = user.username
         source = "master"
@@ -160,7 +159,7 @@ async def _require_valid_gateway_key(
     raw_key = auth.replace("Bearer ", "").strip() if auth.startswith("Bearer ") else ""
     if not raw_key:
         raise HTTPException(status_code=401, detail="Missing API key")
-    if raw_key == settings.gateway_master_key:
+    if _is_master_key(raw_key):
         return
     user, source, router_key, user_api_key = await get_user_by_api_key(db, raw_key)
     if source == "alpha_router_key" and router_key:
@@ -194,13 +193,9 @@ async def list_models(request: Request, db: AsyncSession = Depends(get_db)):
         source=auth_ctx.source,
     )
     rows = await filter_models_for_subject(db, list(rows), subject)
-    allowed_connection_ids = await allowed_connection_ids_for_key(
-        db, auth_ctx.alpha_router_api_key_id
-    )
+    allowed_connection_ids = await allowed_connection_ids_for_key(db, auth_ctx.alpha_router_api_key_id)
     rows = filter_models_for_connections(rows, allowed_connection_ids)
-    allowed_model_ids = await allowed_model_ids_for_key(
-        db, auth_ctx.alpha_router_api_key_id
-    )
+    allowed_model_ids = await allowed_model_ids_for_key(db, auth_ctx.alpha_router_api_key_id)
     rows = filter_models_for_allowlist(rows, allowed_model_ids)
     return {
         "object": "list",
@@ -269,11 +264,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             gen,
             media_type="text/event-stream",
             headers=STREAM_SSE_HEADERS,
-            background=(
-                BackgroundTask(release_capacity_fallback)
-                if permit is not None
-                else None
-            ),
+            background=(BackgroundTask(release_capacity_fallback) if permit is not None else None),
         )
     raise HTTPException(status_code=400, detail="Non-streaming mode: use stream=true")
 

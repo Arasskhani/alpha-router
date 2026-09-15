@@ -22,6 +22,9 @@ from app.services.usage_accounting_service import (
     quote_usage,
     reconcile_usage_event,
 )
+from app.core.constants import normalize_openrouter_base_url
+from app.config import get_settings
+from app.services.provider_http import build_provider_client
 
 logger = logging.getLogger("app.services.provider_reconciliation_service")
 
@@ -74,11 +77,7 @@ def _extract_usd_cost(payload: Any) -> float | None:
     return None
 
 
-def _openrouter_api_base(base_url: str | None) -> str:
-    base = (base_url or "https://openrouter.ai/api/v1").strip().rstrip("/")
-    if base == "https://openrouter.ai":
-        return f"{base}/api/v1"
-    return base
+_openrouter_api_base = normalize_openrouter_base_url
 
 
 def _openai_api_base(base_url: str | None) -> str:
@@ -166,18 +165,10 @@ class OpenAIReconciliationAdapter:
         model_id = (event.model_id or "").strip() or None
         ai_model = None
         if model_id:
-            ai_model = (
-                await db.execute(
-                    select(AIModel).where(AIModel.external_id == model_id)
-                )
-            ).scalar_one_or_none()
+            ai_model = (await db.execute(select(AIModel).where(AIModel.external_id == model_id))).scalar_one_or_none()
             if ai_model is None and "/" in model_id:
                 bare = model_id.split("/", 1)[-1]
-                ai_model = (
-                    await db.execute(
-                        select(AIModel).where(AIModel.external_id == bare)
-                    )
-                ).scalar_one_or_none()
+                ai_model = (await db.execute(select(AIModel).where(AIModel.external_id == bare))).scalar_one_or_none()
 
         quote = quote_usage(
             usage,
@@ -214,33 +205,33 @@ async def reconcile_connection_costs(
     provider = (connection.provider_type or "").strip().lower()
     adapter = _ADAPTERS.get(provider)
     if adapter is None:
-        raise ValueError(
-            f"No automatic reconciliation adapter is registered for {provider or 'unknown'}"
-        )
+        raise ValueError(f"No automatic reconciliation adapter is registered for {provider or 'unknown'}")
     now = datetime.datetime.utcnow()
     retry_before = now - datetime.timedelta(hours=1)
     events = (
-        await db.execute(
-            select(UsageEvent)
-            .where(
-                UsageEvent.connection_id == connection.id,
-                UsageEvent.provider_type == provider,
-                UsageEvent.upstream_request_id.isnot(None),
-                UsageEvent.status.in_(("succeeded", "failed")),
-                UsageEvent.cost_confidence.in_(
-                    ("calculated", "estimated", "unknown")
-                ),
-                UsageEvent.reconciliation_attempts < 5,
-                or_(
-                    UsageEvent.last_reconciliation_attempt_at.is_(None),
-                    UsageEvent.last_reconciliation_attempt_at <= retry_before,
-                ),
+        (
+            await db.execute(
+                select(UsageEvent)
+                .where(
+                    UsageEvent.connection_id == connection.id,
+                    UsageEvent.provider_type == provider,
+                    UsageEvent.upstream_request_id.isnot(None),
+                    UsageEvent.status.in_(("succeeded", "failed")),
+                    UsageEvent.cost_confidence.in_(("calculated", "estimated", "unknown")),
+                    UsageEvent.reconciliation_attempts < 5,
+                    or_(
+                        UsageEvent.last_reconciliation_attempt_at.is_(None),
+                        UsageEvent.last_reconciliation_attempt_at <= retry_before,
+                    ),
+                )
+                .order_by(UsageEvent.completed_at, UsageEvent.started_at)
+                .limit(max(1, min(500, int(limit))))
+                .with_for_update(skip_locked=True)
             )
-            .order_by(UsageEvent.completed_at, UsageEvent.started_at)
-            .limit(max(1, min(500, int(limit))))
-            .with_for_update(skip_locked=True)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     if not events:
         return None
 
@@ -262,7 +253,11 @@ async def reconcile_connection_costs(
     api_key = decrypt_secret(connection.api_key_encrypted)
     unmatched = 0
     error_message: str | None = None
-    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+    # Its own client, not the shared one: this keeps a short lookup budget and
+    # is closed when the batch ends. A scalar httpx timeout would have set the
+    # connect budget to the lookup budget too, so a stalled handshake held this
+    # loop for the full 20s with no second attempt.
+    async with build_provider_client(read_timeout=get_settings().provider_lookup_timeout_seconds) as client:
         for event_id in claimed_event_ids:
             event = await db.get(UsageEvent, event_id)
             if event is None:
@@ -279,10 +274,7 @@ async def reconcile_connection_costs(
                 )
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code in {401, 403, 429}:
-                    error_message = (
-                        f"Provider reconciliation stopped with HTTP "
-                        f"{exc.response.status_code}"
-                    )
+                    error_message = f"Provider reconciliation stopped with HTTP {exc.response.status_code}"
                     break
                 logger.warning(
                     "Provider reconciliation HTTP error provider=%s event=%s status=%s",

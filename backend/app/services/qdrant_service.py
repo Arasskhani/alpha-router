@@ -87,17 +87,13 @@ def versioned_collection_name(
 ) -> str:
     settings = get_settings()
     safe_kb = re.sub(r"[^a-zA-Z0-9_-]+", "-", knowledge_base_id).strip("-")
-    return validate_collection_name(
-        f"{settings.qdrant_collection_prefix}-{safe_kb}-v{int(index_version)}"
-    )
+    return validate_collection_name(f"{settings.qdrant_collection_prefix}-{safe_kb}-v{int(index_version)}")
 
 
 def collection_alias(*, knowledge_base_id: str) -> str:
     settings = get_settings()
     safe_kb = re.sub(r"[^a-zA-Z0-9_-]+", "-", knowledge_base_id).strip("-")
-    return validate_collection_name(
-        f"{settings.qdrant_collection_prefix}-{safe_kb}-active"
-    )
+    return validate_collection_name(f"{settings.qdrant_collection_prefix}-{safe_kb}-active")
 
 
 class QdrantVectorService:
@@ -144,9 +140,7 @@ class QdrantVectorService:
                     )
                 },
                 replication_factor=(
-                    replication_factor
-                    if replication_factor is not None
-                    else settings.qdrant_replication_factor
+                    replication_factor if replication_factor is not None else settings.qdrant_replication_factor
                 ),
                 write_consistency_factor=1,
                 on_disk_payload=True,
@@ -155,18 +149,12 @@ class QdrantVectorService:
         else:
             info = await self.client.get_collection(name)
             vectors = info.config.params.vectors
-            dense_config = (
-                vectors.get(DENSE_VECTOR_NAME) if isinstance(vectors, dict) else None
-            )
+            dense_config = vectors.get(DENSE_VECTOR_NAME) if isinstance(vectors, dict) else None
             if dense_config is None or int(dense_config.size) != dimensions:
-                raise ValueError(
-                    f"Qdrant collection {name} has an incompatible dense vector schema"
-                )
+                raise ValueError(f"Qdrant collection {name} has an incompatible dense vector schema")
             sparse = info.config.params.sparse_vectors or {}
             if SPARSE_VECTOR_NAME not in sparse:
-                raise ValueError(
-                    f"Qdrant collection {name} is missing sparse vector configuration"
-                )
+                raise ValueError(f"Qdrant collection {name} is missing sparse vector configuration")
 
         for field in _KEYWORD_PAYLOAD_FIELDS:
             await self.client.create_payload_index(
@@ -205,11 +193,7 @@ class QdrantVectorService:
         exists = any(item.alias_name == alias for item in aliases.aliases)
         actions: list[models.CreateAliasOperation | models.DeleteAliasOperation] = []
         if exists:
-            actions.append(
-                models.DeleteAliasOperation(
-                    delete_alias=models.DeleteAlias(alias_name=alias)
-                )
-            )
+            actions.append(models.DeleteAliasOperation(delete_alias=models.DeleteAlias(alias_name=alias)))
         actions.append(
             models.CreateAliasOperation(
                 create_alias=models.CreateAlias(
@@ -245,14 +229,9 @@ class QdrantVectorService:
             }
             missing = sorted(required - payload.keys())
             if missing:
-                raise ValueError(
-                    "Qdrant point payload is missing required fields: "
-                    + ", ".join(missing)
-                )
+                raise ValueError("Qdrant point payload is missing required fields: " + ", ".join(missing))
             if len(point.sparse.indices) != len(point.sparse.values):
-                raise ValueError(
-                    "Sparse vector indices and values must have equal length"
-                )
+                raise ValueError("Sparse vector indices and values must have equal length")
             structs.append(
                 models.PointStruct(
                     id=point.point_id,
@@ -317,16 +296,12 @@ class QdrantVectorService:
         if limit < 1 or limit > 1_000:
             raise ValueError("Qdrant Knowledge query limit must be between 1 and 1000")
         if channel == DENSE_VECTOR_NAME:
-            vector: list[float] | models.SparseVector = [
-                float(value) for value in query
-            ]
+            vector: list[float] | models.SparseVector = [float(value) for value in query]
         elif channel == SPARSE_VECTOR_NAME and isinstance(query, SparseValues):
             if not query.indices:
                 return []
             if len(query.indices) != len(query.values):
-                raise ValueError(
-                    "Sparse query indices and values must have equal length"
-                )
+                raise ValueError("Sparse query indices and values must have equal length")
             vector = models.SparseVector(
                 indices=[int(value) for value in query.indices],
                 values=[float(value) for value in query.values],

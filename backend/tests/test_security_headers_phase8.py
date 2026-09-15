@@ -20,9 +20,7 @@ def _settings(**overrides):
 
 def test_report_only_csp_is_emitted_without_enforcement() -> None:
     headers = build_security_headers(_settings(), request_is_https=False)
-    assert headers["Content-Security-Policy-Report-Only"] == (
-        "default-src 'self'; object-src 'none'"
-    )
+    assert headers["Content-Security-Policy-Report-Only"] == ("default-src 'self'; object-src 'none'")
     assert "Content-Security-Policy" not in headers
     assert "Strict-Transport-Security" not in headers
     assert headers["X-Frame-Options"] == "DENY"
@@ -40,9 +38,7 @@ def test_enforced_and_report_only_csp_are_independent() -> None:
 
 def test_hsts_requires_production_https_and_starts_conservatively() -> None:
     enabled = _settings(enable_hsts=True, environment="production")
-    assert "Strict-Transport-Security" not in build_security_headers(
-        enabled, request_is_https=False
-    )
+    assert "Strict-Transport-Security" not in build_security_headers(enabled, request_is_https=False)
     headers = build_security_headers(enabled, request_is_https=True)
     assert headers["Strict-Transport-Security"] == "max-age=300"
 

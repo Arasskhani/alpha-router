@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.branding import CHAT_CLIENT_APP
 from app.models.user import User
+from app.services.failure_details import failure_message
 from app.services.budget_service import budget_request_blocked, get_user_budget_state
 from app.services.chat_markers import (
     ATTACHMENT_MESSAGE_PREFIX,
@@ -172,7 +173,7 @@ async def generate_chat_title(
             return _sanitize_title(_fallback_title(messages))
         return title
     except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
-        error_message = str(exc)[:500]
+        error_message = failure_message(exc)[:500]
         return _sanitize_title(_fallback_title(messages))
     finally:
         await settle_auxiliary_usage(

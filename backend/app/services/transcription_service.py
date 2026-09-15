@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.branding import CHAT_CLIENT_APP
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
+from app.services.failure_details import failure_message
 from app.services.budget_reservation_service import (
     reservation_hold_usd,
     reservation_key,
@@ -521,7 +522,7 @@ async def transcribe_audio_bytes(
         success = True
         return transcript
     except Exception as exc:
-        error_message = str(exc)[:500]
+        error_message = failure_message(exc)[:500]
         raise
     finally:
         if tmp_path:

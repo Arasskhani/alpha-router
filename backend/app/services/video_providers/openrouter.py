@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from typing import Any
 from urllib.parse import urlparse
 
@@ -22,6 +24,30 @@ from app.services.video_providers.contracts import (
     VideoUsage,
 )
 from app.core.constants import OPENROUTER_HOST
+
+
+def _error_text(response: dict[str, Any]) -> str | None:
+    """The provider's reason for a failed job, whatever shape it arrives in.
+
+    OpenRouter documents ``{"status": "failed", "error": "..."}`` but providers
+    also nest the reason in an object. Stringifying the dict (what this used to
+    do) stored ``{'message': ...}`` in the log; taking only ``.get("error")``
+    as a string stored nothing at all when it was an object.
+    """
+    for key in ("error", "message", "failure_reason", "detail"):
+        value = response.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:2000]
+        if isinstance(value, dict):
+            for inner in ("message", "detail", "reason", "code"):
+                text = value.get(inner)
+                if isinstance(text, str) and text.strip():
+                    return text.strip()[:2000]
+            try:
+                return json.dumps(value, ensure_ascii=False)[:2000]
+            except (TypeError, ValueError):
+                return str(value)[:2000]
+    return None
 
 
 def _status(value: str) -> str:
@@ -99,7 +125,7 @@ class OpenRouterVideoAdapter:
             provider_status=str(response.get("status") or "") or None,
             provider_job_id=job.provider_job_id,
             asset_url=asset_url,
-            error_message=str(response.get("error") or response.get("message") or "")[:2000] or None,
+            error_message=_error_text(response),
             raw=response,
         )
 

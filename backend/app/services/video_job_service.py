@@ -33,6 +33,7 @@ from app.services.storage_service import (
 from app.services.user_chat_storage_service import finalize_chat_session_video
 from app.services.project_media_service import collect_personal_media_ids, persist_scoped_chat_media
 from app.services.video_billing_service import VideoBillingCapture, log_video_usage
+from app.services.failure_details import describe_failure
 from app.services.observability import increment
 
 _LOG = logging.getLogger("alpha_router.video_jobs")
@@ -475,6 +476,29 @@ async def _lease_heartbeat(job_id: str, owner: str | None):
             await task
 
 
+def _provider_failure_text(snapshot: Any, status: str) -> str:
+    """Why the provider ended the job — never an empty string.
+
+    ``RuntimeError(snapshot.error_message)`` stored "None" when the provider
+    reported a terminal state without any reason, and the caller then showed
+    the user a bare "Video generation failed". When there is no text, say which
+    state the provider reported and quote a little of its last payload.
+    """
+    message = (getattr(snapshot, "error_message", None) or "").strip() if snapshot is not None else ""
+    if message:
+        return message[:2000]
+    provider_status = (getattr(snapshot, "provider_status", None) or status or "unknown").strip()
+    raw = getattr(snapshot, "raw", None)
+    excerpt = ""
+    if isinstance(raw, dict):
+        try:
+            excerpt = json.dumps(raw, ensure_ascii=False)[:500]
+        except (TypeError, ValueError):
+            excerpt = ""
+    base = f"Provider ended the job as '{provider_status}' without an error message"
+    return f"{base}: {excerpt}" if excerpt else base
+
+
 async def _run_video_job(job_id: str) -> None:  # noqa: C901 -- Phase 4 split; complexity must not grow
     started = time.perf_counter()
     async with AsyncSessionLocal() as db:
@@ -629,7 +653,7 @@ async def _run_video_job(job_id: str) -> None:  # noqa: C901 -- Phase 4 split; c
             if status == "cancelled":
                 raise asyncio.CancelledError()
             if status != "completed" or final_snapshot is None:
-                raise RuntimeError(final_snapshot.error_message if final_snapshot else "Video generation failed")
+                raise RuntimeError(_provider_failure_text(final_snapshot, status))
 
             # Fetching the asset and writing it to object storage can outlast
             # the lease; beat while it runs so no second worker claims this job.
@@ -742,9 +766,12 @@ async def _run_video_job(job_id: str) -> None:  # noqa: C901 -- Phase 4 split; c
             billing.add_usage(None, success=False, error_message=error_message)
             await db.commit()
         except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
-            error_message = str(exc)[:2000]
+            # str(exc) is empty for every httpx timeout and a bare ConnectError,
+            # which used to store a failure with no reason at all.
+            failure = describe_failure(exc)
+            error_message = failure.message
             job.status = "failed"
-            job.error_code = "upstream_error"
+            job.error_code = failure.code
             job.error_message = error_message
             job.completed_at = _now()
             job.updated_at = _now()

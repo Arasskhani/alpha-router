@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.branding import CHAT_CLIENT_APP
 from app.core.language_detect import needs_english_translation
 from app.models.user import User
+from app.services.failure_details import failure_message
 from app.services.budget_service import budget_request_blocked, get_user_budget_state
 from app.services.model_capabilities import model_kinds, model_media_flags
 from app.services.model_tool_compatibility_service import is_auto_router_model_id
@@ -339,10 +340,10 @@ async def enhance_user_prompt(
         success = True
         return result
     except PromptEnhanceError as exc:
-        error_message = str(exc)[:500]
+        error_message = failure_message(exc)[:500]
         raise
     except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
-        error_message = str(exc)[:500]
+        error_message = failure_message(exc)[:500]
         return _fail_or_fallback(
             normalized_mode,
             "Translation failed. Try again or choose another text model.",

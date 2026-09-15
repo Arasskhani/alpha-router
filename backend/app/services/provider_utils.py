@@ -15,6 +15,7 @@ import json
 import logging
 
 from app.models.model_catalog import AIModel
+from app.services.failure_details import failure_message
 from app.services.llm_providers import (
     litellm_model_for_provider,
     normalize_model_id,
@@ -66,16 +67,22 @@ def should_retry_non_stream(_provider: str, exc: Exception) -> bool:
 
 
 def format_provider_error(exc: Exception, provider: str) -> str:
+    """Text for the SSE error frame and the request log — never empty.
+
+    ``str(exc)`` is blank for every httpx timeout and a bare ConnectError, so
+    this used to hand the client an error frame with no message and store an
+    empty ``error_message`` against the turn.
+    """
     msg = str(exc).strip()
     if provider != "openrouter":
-        return msg
+        return msg or failure_message(exc)
     for attr in ("message", "body", "text"):
         val = getattr(exc, attr, None)
         if isinstance(val, str) and val.strip() and not message_has_stream_body_read_error(val):
             return val.strip()
     if is_stream_body_read_error(exc):
         return "OpenRouter request failed. Check model availability, context size, and API key."
-    return msg
+    return msg or failure_message(exc)
 
 
 def cached_tokens_from_usage(usage) -> int:

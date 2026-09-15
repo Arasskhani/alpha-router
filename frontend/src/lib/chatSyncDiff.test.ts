@@ -10,6 +10,7 @@ import {
   mergeRemoteChatSessions,
   messagesMissingOnServer,
   pickMergedMessages,
+  sameMessageIdentity,
   type ChatMessage,
   type ChatSession,
 } from "./chatStorage";
@@ -226,5 +227,19 @@ describe("fetchAllSessionMessagesFromServer", () => {
     const result = await fetchAllSessionMessagesFromServer("s1");
     expect(result.messages).toHaveLength(1);
     expect(mockedApi).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("sameMessageIdentity", () => {
+  it("refuses only when two different ids both exist (another device's reply)", () => {
+    expect(sameMessageIdentity(msg({ content: "a", clientMessageId: "x" }), msg({ content: "b", clientMessageId: "y" }))).toBe(false);
+    expect(sameMessageIdentity(msg({ content: "a", clientMessageId: "x" }), msg({ content: "b", clientMessageId: "x" }))).toBe(true);
+  });
+
+  it("still matches a row that lost its id when it was replaced in place", () => {
+    // A speech placeholder swapped locally for an error notice: the patch has
+    // to reach the server row it replaced.
+    expect(sameMessageIdentity(msg({ content: "Speech failed.", role: "assistant" }), msg({ content: "__SPEECH_PENDING__", clientMessageId: "a1", role: "assistant" }))).toBe(true);
+    expect(sameMessageIdentity(msg({ content: "legacy" }), msg({ content: "legacy" }))).toBe(true);
   });
 });

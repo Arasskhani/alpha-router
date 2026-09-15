@@ -1989,10 +1989,17 @@ export async function syncSessionMessages(
   }
 }
 
-/** Two rows are the same message when their clientMessageIds match, or neither carries one (legacy rows). */
-function sameMessageIdentity(a: ChatMessage, b: ChatMessage): boolean {
-  if (a.clientMessageId && b.clientMessageId) return a.clientMessageId === b.clientMessageId;
-  return !a.clientMessageId && !b.clientMessageId;
+/**
+ * Whether the last local row and the last server row are the same message.
+ *
+ * Only two ids that both exist and differ prove otherwise — that is another
+ * device's reply sitting where ours should be, and patching it would overwrite
+ * someone else's message. A missing id does not: a row replaced in place (a
+ * speech or image placeholder becoming an error notice) has no id while the
+ * server copy it replaced has one, and that row still has to be patched.
+ */
+export function sameMessageIdentity(a: ChatMessage, b: ChatMessage): boolean {
+  return !(a.clientMessageId && b.clientMessageId && a.clientMessageId !== b.clientMessageId);
 }
 
 /**

@@ -235,6 +235,17 @@ def user_has_super_admin_access(slugs: list[str]) -> bool:
     return bool(FULL_ADMIN_SLUG in normalized or LEGACY_ADMIN_SLUG in normalized)
 
 
+def grants_platform_wide_role(slugs: list[str]) -> bool:
+    """Whether these slugs include a role that answers for the whole platform.
+
+    Both Super Admin and Read Only Super Admin qualify. The read-only one grants
+    no writes, but it grants sight of every menu - API keys, security settings,
+    the whole audit trail - so handing it out is a platform-wide decision in the
+    same way, and belongs to whoever already holds platform-wide access.
+    """
+    return bool({normalize_role_slug(s) for s in slugs if s} & GLOBAL_ROLE_SLUGS)
+
+
 def actor_may_assign_roles(
     actor_slugs: list[str],
     new_slugs: list[str],
@@ -242,20 +253,20 @@ def actor_may_assign_roles(
 ) -> bool:
     """Return whether ``actor_slugs`` may apply ``new_slugs`` to a target user.
 
-    Super Admin privilege may only be granted, changed, or revoked by an actor
+    A platform-wide role may only be granted, changed, or revoked by an actor
     that already has Super Admin access (explicit ``super_admin`` or legacy
     global full-admin slugs). API Key Admin and User must not escalate to
-    platform-wide control.
+    platform-wide control, in either direction.
     """
     actor_is_super = user_has_super_admin_access(actor_slugs)
-    if user_has_super_admin_access(new_slugs) and not actor_is_super:
+    if grants_platform_wide_role(new_slugs) and not actor_is_super:
         return False
-    return not (previous_slugs is not None and user_has_super_admin_access(previous_slugs) and not actor_is_super)
+    return not (previous_slugs is not None and grants_platform_wide_role(previous_slugs) and not actor_is_super)
 
 
 def user_has_super_read_only_access(slugs: list[str]) -> bool:
     normalized = {normalize_role_slug(s) for s in slugs if s}
-    return bool(READ_ONLY_FULL_ADMIN_SLUG in normalized or LEGACY_READ_ONLY_ADMIN_SLUG in normalized)
+    return bool(normalized & GLOBAL_READ_ONLY_SLUGS)
 
 
 def _build_role_catalog() -> tuple[RoleDefinition, ...]:
@@ -551,8 +562,11 @@ def expand_legacy_role_slug(slug: str) -> list[str]:
     if raw in (LEGACY_ADMIN_SLUG, FULL_ADMIN_SLUG, SUPER_ADMIN_SLUG):
         return [SUPER_ADMIN_SLUG]
     if raw in (LEGACY_READ_ONLY_ADMIN_SLUG, READ_ONLY_FULL_ADMIN_SLUG):
-        # Former platform-wide admins keep platform access as Super Admin.
-        return [SUPER_ADMIN_SLUG]
+        # These used to become Super Admin - a read-only administrator came out
+        # of the migration able to change everything - because the catalog had
+        # no platform-wide read-only role to put them in. It has one now, and it
+        # is what they already were.
+        return [READ_ONLY_SUPER_ADMIN_SLUG]
     if raw == API_KEY_ADMIN_SLUG:
         return [API_KEY_ADMIN_SLUG]
     if raw in REMOVED_ASSIGNABLE_ROLE_SLUGS:

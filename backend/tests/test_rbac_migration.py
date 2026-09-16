@@ -1,6 +1,11 @@
 """Tests for RBAC menu migration from legacy section roles."""
 
-from app.services.rbac import API_KEY_ADMIN_SLUG, SUPER_ADMIN_SLUG, expand_legacy_role_slug
+from app.services.rbac import (
+    API_KEY_ADMIN_SLUG,
+    READ_ONLY_SUPER_ADMIN_SLUG,
+    SUPER_ADMIN_SLUG,
+    expand_legacy_role_slug,
+)
 
 
 def test_expand_legacy_section_full_administrator():
@@ -9,9 +14,17 @@ def test_expand_legacy_section_full_administrator():
     assert "connections_full_administrator" not in expanded
 
 
-def test_expand_legacy_read_only_administrator_to_super_admin():
-    assert expand_legacy_role_slug("read_only_administrator") == [SUPER_ADMIN_SLUG]
-    assert expand_legacy_role_slug("read_only_full_administrator") == [SUPER_ADMIN_SLUG]
+def test_expand_legacy_read_only_administrator_stays_read_only():
+    """These used to expand to Super Admin.
+
+    That was an escalation the catalog forced: there was no platform-wide
+    read-only role to migrate a read-only administrator into, so they were given
+    write access to everything instead. Read Only Super Admin is that role, and
+    it is what they already were.
+    """
+    assert expand_legacy_role_slug("read_only_administrator") == [READ_ONLY_SUPER_ADMIN_SLUG]
+    assert expand_legacy_role_slug("read_only_full_administrator") == [READ_ONLY_SUPER_ADMIN_SLUG]
+    assert SUPER_ADMIN_SLUG not in expand_legacy_role_slug("read_only_full_administrator")
 
 
 def test_expand_legacy_admin_to_super_admin():

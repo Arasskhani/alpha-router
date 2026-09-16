@@ -17,20 +17,50 @@ wait_for_health() {
 }
 
 show_bootstrap_admin_credentials() {
-  # The app writes the first-boot admin password to a 0600 file inside the
-  # container (never to its log). Print it once here, then remove the file.
+  # .env is the source of truth for this password, and it is what gets printed.
+  #
+  # The app does not invent a password: it hashes the ADMIN_PASSWORD it was
+  # handed, and writes the same string to a 0600 file in the container so the
+  # secret never reaches a log. Printing that copy instead of .env meant the
+  # value travelled through a file write, a `compose exec`, a command
+  # substitution and a `sed` before an operator read it -- four chances for it
+  # to come out subtly different from the password the account was actually
+  # created with, and when it did, the only symptom was a login that failed.
+  #
+  # So the copy is still consumed and deleted, but only to check it. A
+  # disagreement is now reported with both values instead of silently showing
+  # one that does not work.
   local marker="BOOTSTRAP_ADMIN_CREDENTIALS_ONCE" line creds
+  local admin_user admin_pass file_pass
   line="$(compose logs alpha-router 2>&1 | grep "$marker" | tail -n 1 || true)"
   if [ -z "$line" ]; then
     return 0
   fi
+
   creds="$(compose exec -T alpha-router sh -c 'cat /app/tls/bootstrap-admin.txt 2>/dev/null && rm -f /app/tls/bootstrap-admin.txt' 2>/dev/null || true)"
-  if [ -z "$creds" ]; then
+  file_pass="$(printf '%s\n' "$creds" | sed -n 's/^password=//p' | tail -n 1 | tr -d '\r')"
+
+  admin_user="$(env_value ADMIN_USERNAME 2>/dev/null || true)"
+  [ -n "$admin_user" ] || admin_user="alpharouter"
+  admin_pass="$(env_value ADMIN_PASSWORD 2>/dev/null || true)"
+
+  if [ -z "$admin_pass" ]; then
+    # Nothing to print from the authoritative side; say where to look rather
+    # than falling back to the copy we just decided not to trust.
     printf '\n[%s] First-boot bootstrap administrator was created; the password is ADMIN_PASSWORD in .env.\n' "$LOG_PREFIX"
     return 0
   fi
-  printf '\n[%s] First-boot bootstrap administrator (shown once; the file has been removed):\n' "$LOG_PREFIX"
-  printf '%s\n' "$creds" | sed "s/^/[$LOG_PREFIX]   /"
+
+  printf '\n[%s] First-boot bootstrap administrator (shown once):\n' "$LOG_PREFIX"
+  printf '[%s]   username=%s\n' "$LOG_PREFIX" "$admin_user"
+  printf '[%s]   password=%s\n' "$LOG_PREFIX" "$admin_pass"
+
+  if [ -n "$file_pass" ] && [ "$file_pass" != "$admin_pass" ]; then
+    warn "The password recorded inside the container does not match ADMIN_PASSWORD in .env (${#file_pass} vs ${#admin_pass} characters)."
+    warn "Shown above is the .env value. If it is rejected, try: $file_pass"
+    warn "Please report this: the two should never differ."
+  fi
+
   warn "Change this password after first login."
 }
 

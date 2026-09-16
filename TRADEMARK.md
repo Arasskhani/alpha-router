@@ -37,9 +37,12 @@ These uses are allowed when they are accurate and not misleading:
 Without prior written permission from the Owner:
 
 - Name a fork, distribution, hosted service, or competing product Alpharouter,
-  Alpha Router, AlphaRouter, or any confusingly similar name.
+  Alpha Router, AlphaRouter, or any confusingly similar name. A variant is not a
+  way around this: a changed spelling, an added or dropped word, a translation,
+  or an abbreviation of the Marks is the same infringement as the Marks.
 - Use the logos, wordmark lockup, or letter-A mark on another product, site,
-  or store listing.
+  or store listing — including a recoloured, redrawn, or partial version of
+  them, or a lockup that keeps the letter-A mark.
 - Register or use a domain, social handle, package name, or organization that
   suggests an official Alpharouter project or endorsement.
 - Remove or replace the Marks in a way that presents a modified build as the
@@ -48,6 +51,14 @@ Without prior written permission from the Owner:
 
 A modified version must be named something else and must not look like the
 official release.
+
+Renaming it does not make it yours. Changing the branding is a licensing
+requirement, not a transfer of authorship: the copyright and permission notices
+travel with the code whether or not the name goes with them. A fork must not
+present the Work as its own original software, remove or obscure the
+attribution in order to do so, or describe itself as written from scratch.
+Naming the project it derives from is expected and permitted; erasing it is
+not.
 
 ## Open source does not transfer the brand
 

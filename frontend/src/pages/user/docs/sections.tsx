@@ -1208,11 +1208,23 @@ export const userManualSections: DocSection[] = [
         </p>
         <h3>Forking it</h3>
         <p>
-          A fork you publish has to carry its own name and its own visual identity. What you may not do is ship a
-          modified build that still looks like the official product, name a distribution, hosted service or competing
-          product with one of the Marks or anything confusingly similar, or register a domain, handle, package or
-          organization that suggests an official project. Removing the Marks in order to pass a modified build off as
-          the official release is the same problem from the other direction.
+          <strong>A fork you publish has to carry its own name and its own visual identity</strong> — the Marks stay
+          with this project and are not yours to take. That covers a variant as much as a copy: a changed spelling,
+          an added or dropped word, a translation, a recoloured or redrawn logo, a lockup that keeps the letter-A
+          mark. A name that is confusingly similar is the same infringement as the name itself. The same rule applies
+          to naming a distribution, a hosted service or a competing product, and to registering a domain, social
+          handle, package name or organization that suggests an official project.
+        </p>
+        <p>
+          <strong>Renaming it does not make it yours.</strong> Changing the branding is a licensing requirement, not a
+          transfer of authorship: the copyright notice and the licence text travel with the code whether or not the
+          name goes with them, and that is the one obligation MIT imposes. So a fork may not present{" "}
+          {PRODUCT_NAME_MARKED} as its own original work, strip the attribution in order to do so, or describe itself
+          as written from scratch. Naming the project it derives from is expected and permitted; erasing it is not.
+        </p>
+        <p>
+          The mirror image is equally out: shipping a modified build that still looks like the official product, or
+          removing the Marks so a modified build can be passed off as the official release.
         </p>
         <Note>
           Rebranding a fork is a licensing requirement, not a courtesy — and it is also what keeps your users from

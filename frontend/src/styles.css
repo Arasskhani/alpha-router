@@ -6928,23 +6928,28 @@ table.data-table--api-logs {
   cursor: not-allowed;
 }
 
+/* Idle, this is one of three equal controls on the composer, so it is drawn
+   like the attachment button rather than in filled accent: a solid accent tile
+   read as the primary action and pulled the eye away from Send. Accent is kept
+   for the state that has actually started something -- --recording below. */
 .alpha-router-voice-btn {
   width: 1.9rem;
   height: 1.9rem;
   border-radius: 0.5rem;
-  border: none;
-  background: var(--accent);
-  color: #fff;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background 0.15s ease, transform 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 }
 
 .alpha-router-voice-btn:hover:not(:disabled) {
-  background: var(--accent-hover);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
 }
 
 .alpha-router-voice-btn:disabled {
@@ -6952,8 +6957,16 @@ table.data-table--api-logs {
   cursor: not-allowed;
 }
 
+/* While recording the button is rendered with .alpha-router-stop, not
+   .alpha-router-voice-btn, so this has to outrank the stop button's own dark
+   rule -- `[data-scheme="dark"] .alpha-router-stop` is two selectors and was
+   winning, which left the recording state the same near-black as idle in dark
+   mode. Matching both classes ties on specificity and wins on order. */
+.alpha-router-stop.alpha-router-voice-btn--recording,
 .alpha-router-voice-btn--recording {
   background: #dc2626;
+  border-color: #dc2626;
+  color: #fff;
   animation: alpha-router-voice-pulse 1s ease-in-out infinite;
 }
 

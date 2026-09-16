@@ -23,6 +23,7 @@ const UserActivity = lazy(() => import("./pages/admin/UserActivity"));
 const AdminUserMedia = lazy(() => import("./pages/admin/AdminUserMedia"));
 const Reports = lazy(() => import("./pages/admin/Reports"));
 const ApiLogs = lazy(() => import("./pages/admin/ApiLogs"));
+const AdminLogs = lazy(() => import("./pages/admin/AdminLogs"));
 const Operations = lazy(() => import("./pages/admin/Operations"));
 const DatabaseMonitor = lazy(() => import("./pages/admin/DatabaseMonitor"));
 const ChatPanel = lazy(() => import("./components/ChatPanel"));
@@ -137,6 +138,7 @@ export default function App() {
         <Route path="reports" element={<Reports />} />
         <Route path="project-usage" element={<ProjectUsage />} />
         <Route path="logs" element={<ApiLogs />} />
+        <Route path="admin-logs" element={<AdminLogs />} />
         <Route path="operations" element={<Operations />} />
         <Route path="debug" element={<Operations />} />
         <Route path="database" element={<DatabaseMonitor />} />

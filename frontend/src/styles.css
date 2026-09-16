@@ -1864,7 +1864,28 @@ table.card tbody td:last-child {
   max-width: 100%;
 }
 
-.api-logs-toolbar__main .log-filter-combobox {
+.api-logs-toolbar__main /* Raw audit detail inside the event modal. Wraps rather than scrolls
+   horizontally: a JSON blob that needs two-axis scrolling in a dialog is
+   read by nobody. */
+.admin-log-detail {
+  margin: 0;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 4%, var(--surface));
+  color: var(--text);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  max-height: 22rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  /* The blob can carry directory names in Persian next to ASCII keys and
+     braces; isolating stops the punctuation jumping ends. */
+  unicode-bidi: isolate;
+}
+
+.log-filter-combobox {
   flex: none;
   width: 100%;
   min-width: 0;

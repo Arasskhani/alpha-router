@@ -698,6 +698,39 @@ class BulkModelAccessIn(BaseModel):
     group_ids: list[int] = []
 
 
+async def _audit_user_action(
+    db: AsyncSession,
+    request: Request,
+    admin: User,
+    *,
+    action: str,
+    user: User,
+    detail: dict | None = None,
+) -> None:
+    """Record an administrative action taken against one account.
+
+    The subject's username and email go into the detail on purpose. For a
+    permanent deletion the ``users`` row is gone moments later, so a record
+    holding only ``resource_id`` would name an account nobody can look up.
+    """
+    from app.services.client_ip import resolve_client_ip
+    from app.services.security_audit import log_security_event
+
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=resolve_client_ip(request),
+        action=action,
+        resource_type="user",
+        resource_id=str(user.id),
+        detail={
+            "username": user.username,
+            "email": user.email,
+            **(detail or {}),
+        },
+    )
+
+
 async def _audit_model_access(
     db: AsyncSession,
     request: Request,
@@ -2192,8 +2225,9 @@ async def patch_user(
 async def reset_local_user_password(
     user_id: int,
     body: ResetPasswordIn,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_users_write),
+    admin: User = Depends(require_users_write),
 ):
     user = await db.get(User, user_id)
     if not user:
@@ -2210,6 +2244,12 @@ async def reset_local_user_password(
     # Revoke all existing sessions: a password reset must invalidate any
     # previously-issued JWT (including any stolen ones).
     user.token_version = int(user.token_version or 0) + 1
+    # One administrator setting another's password is an account-takeover
+    # shaped action however legitimate the reason, so it leaves a record. The
+    # password itself is of course not part of it.
+    await _audit_user_action(
+        db, request, admin, action="user_password_reset", user=user, detail={"sessions_revoked": True}
+    )
     await db.commit()
     return {"ok": True}
 
@@ -2217,6 +2257,7 @@ async def reset_local_user_password(
 @router.post("/users/{user_id}/disable-2fa")
 async def admin_disable_user_2fa(
     user_id: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     actor: User = Depends(require_super_admin),
 ):
@@ -2234,6 +2275,10 @@ async def admin_disable_user_2fa(
     user.totp_backup_codes_hashed = None
     # Force re-login after MFA recovery.
     user.token_version = int(user.token_version or 0) + 1
+    # totp_service.audit() below writes a log line; a log line is not a trail
+    # an operator can query later, and removing someone's second factor is
+    # exactly what an investigation asks about.
+    await _audit_user_action(db, request, actor, action="user_2fa_disabled", user=user)
     await db.commit()
 
     from app.services.totp_service import audit
@@ -2397,8 +2442,9 @@ class UsersPermanentDeleteIn(BaseModel):
 @router.post("/users/{user_id}/permanently-delete")
 async def permanently_delete_user_endpoint(
     user_id: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_deleted_users_write),
+    admin: User = Depends(require_deleted_users_write),
 ):
     from app.services.user_lifecycle_service import permanently_delete_user
 
@@ -2407,6 +2453,11 @@ async def permanently_delete_user_endpoint(
         raise HTTPException(404)
     if user.deleted_at is None:
         raise HTTPException(400, detail="User must be in Deleted Users before permanent deletion")
+    # Audited BEFORE the delete: permanently_delete_user issues a real DELETE
+    # on the users row, and reading username/email off a deleted instance is
+    # not something to rely on. Same transaction, so the record and the
+    # deletion stand or fall together.
+    await _audit_user_action(db, request, admin, action="user_permanently_deleted", user=user)
     try:
         await permanently_delete_user(db, user)
     except ValueError as exc:
@@ -2418,8 +2469,9 @@ async def permanently_delete_user_endpoint(
 @router.post("/deleted-users/bulk-permanently-delete")
 async def bulk_permanently_delete_users(
     body: UsersPermanentDeleteIn,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_deleted_users_write),
+    admin: User = Depends(require_deleted_users_write),
 ):
     from app.services.user_lifecycle_service import permanently_delete_user
 
@@ -2427,14 +2479,33 @@ async def bulk_permanently_delete_users(
         raise HTTPException(400, detail="No users selected")
     users = (await db.execute(select(User).where(User.id.in_(body.user_ids)))).scalars().all()
     deleted = 0
+    removed: list[dict] = []
     for user in users:
         if user.deleted_at is None:
             continue
+        identity = {"id": user.id, "username": user.username, "email": user.email}
         try:
             await permanently_delete_user(db, user)
-            deleted += 1
         except ValueError:
             continue
+        deleted += 1
+        removed.append(identity)
+    # One event for the request, not one per account - the same shape the bulk
+    # model-access audit uses. The names are captured before each delete
+    # because the rows do not survive it.
+    if removed:
+        from app.services.client_ip import resolve_client_ip
+        from app.services.security_audit import log_security_event
+
+        await log_security_event(
+            db,
+            actor=admin,
+            actor_ip=resolve_client_ip(request),
+            action="users_permanently_deleted",
+            resource_type="user",
+            resource_id=str(removed[0]["id"]) if len(removed) == 1 else None,
+            detail={"count": len(removed), "users": removed[:50]},
+        )
     await db.commit()
     return {"ok": True, "deleted": deleted}
 

@@ -2460,7 +2460,10 @@ export const docSections: DocSection[] = [
           the user id. The foreign key is <code>ON DELETE SET NULL</code> and permanently deleting a user really does
           remove the row, so a trail that only referenced the id used to anonymise every action that person had ever
           taken the moment their account was deleted — the entry survived, but the answer to &ldquo;who&rdquo; did not.
-          Rows written before this page shipped keep only the id, and show as the id when the account is gone.
+          Rows written before this page shipped carry only the id. For those the name is looked up live against the
+          account — including a soft-deleted one, so a disabled administrator is still named — and only a{" "}
+          <em>permanently</em> deleted account leaves nothing but the id to show. Filtering by an administrator matches
+          both kinds of row, so a name you can read in the table is always a name you can filter by.
         </p>
         <h3>What is and is not in the trail</h3>
         <p>

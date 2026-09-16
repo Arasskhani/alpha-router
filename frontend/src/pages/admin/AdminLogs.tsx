@@ -48,6 +48,9 @@ function humanAction(value: string): string {
  *
  * The username is a copy taken when the event was written, so it still answers
  * "who" after the account is deleted — which is exactly when somebody asks.
+ * Events recorded before that copy existed name their actor only by id; the
+ * server looks those up while the account exists, and only once an account is
+ * permanently deleted is there genuinely no name left to show.
  */
 function actorLabel(event: AdminLogEvent): string {
   if (event.actor_username) return event.actor_username;

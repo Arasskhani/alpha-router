@@ -13,9 +13,10 @@ import json
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.api.admin_logs import _apply_filters, _parse_date, _row
+from app.api.admin_logs import _apply_filters, _parse_date, _resolve_legacy_actors, _row
 from app.database import Base
 from app.models.security import SecurityAuditEvent
+from app.models.user import User
 
 
 @pytest.fixture
@@ -115,29 +116,166 @@ class TestFilters:
 
 class TestSerialisation:
     def test_detail_comes_back_as_an_object(self):
-        assert _row(_event())["detail"] == {"https_port": 443}
+        assert _row(_event(), {})["detail"] == {"https_port": 443}
 
     def test_a_row_whose_detail_will_not_parse_is_still_listed(self):
         """Dropping an event from the trail because one column is malformed
         would be the worst possible failure mode for an audit view."""
-        out = _row(_event(detail_json="{not json"))
+        out = _row(_event(detail_json="{not json"), {})
         assert out["detail"] == {"_unparsed": "{not json"}
 
     def test_a_redacted_row_says_so(self):
         """So the operator can tell 'nothing was recorded' from 'it aged out'."""
-        out = _row(_event(detail_json=None, detail_redacted_at=datetime.datetime(2026, 9, 15, 4, 25)))
+        out = _row(_event(detail_json=None, detail_redacted_at=datetime.datetime(2026, 9, 15, 4, 25)), {})
         assert out["detail"] is None
         assert out["detail_redacted_at"] == "2026-09-15T04:25:00"
 
     def test_timestamps_are_naive_utc_with_no_suffix(self):
         """The frontend appends Z itself; a mixed wire format across the admin
         API is how a viewer ends up 3.5 hours out in Tehran."""
-        assert _row(_event())["created_at"] == "2026-09-10T12:00:00"
-        assert not _row(_event())["created_at"].endswith("Z")
+        assert _row(_event(), {})["created_at"] == "2026-09-10T12:00:00"
+        assert not _row(_event(), {})["created_at"].endswith("Z")
 
     def test_the_actor_name_is_served_from_the_row(self):
-        out = _row(_event(actor_user_id=None, actor_username="alice"))
+        out = _row(_event(actor_user_id=None, actor_username="alice"), {})
         assert out["actor_username"] == "alice"
+        assert out["actor_resolved_live"] is False
+
+
+class TestLegacyActorNames:
+    """Events written before the identity columns existed name only an id.
+
+    Left alone the viewer shows "User #2" for every one of them, which is the
+    question the page is supposed to answer, unanswered.
+    """
+
+    async def _user(self, db, **kw) -> User:
+        defaults = dict(username="bob", email="bob@test", hashed_password="x", is_active=True)
+        defaults.update(kw)
+        user = User(**defaults)
+        db.add(user)
+        await db.flush()
+        return user
+
+    async def test_a_legacy_row_is_resolved_to_the_live_name(self, db):
+        user = await self._user(db)
+        event = _event(actor_user_id=user.id, actor_username=None, actor_email=None)
+        db.add(event)
+        await db.commit()
+
+        resolved = await _resolve_legacy_actors(db, [event])
+        out = _row(event, resolved)
+        assert out["actor_username"] == "bob"
+        assert out["actor_email"] == "bob@test"
+        assert out["actor_resolved_live"] is True
+
+    async def test_a_soft_deleted_account_still_has_a_name(self, db):
+        """Deleted Users are soft-deleted rows; only a permanent delete removes
+        one, and an admin who was disabled is exactly who you look for."""
+        user = await self._user(db, deleted_at=datetime.datetime(2026, 9, 1))
+        event = _event(actor_user_id=user.id, actor_username=None)
+        db.add(event)
+        await db.commit()
+
+        resolved = await _resolve_legacy_actors(db, [event])
+        assert _row(event, resolved)["actor_username"] == "bob"
+
+    async def test_a_permanently_deleted_actor_has_no_name_to_find(self, db):
+        """Honest, not clever: the name was never recorded and the account is
+        gone, so the id is genuinely all that is left."""
+        event = _event(actor_user_id=999, actor_username=None, actor_email=None)
+        db.add(event)
+        await db.commit()
+
+        resolved = await _resolve_legacy_actors(db, [event])
+        out = _row(event, resolved)
+        assert out["actor_username"] is None
+        assert out["actor_resolved_live"] is False
+
+    async def test_the_stored_copy_wins_over_the_live_account(self, db):
+        """A renamed account must not rewrite what an old event says happened."""
+        user = await self._user(db, username="bob-renamed")
+        event = _event(actor_user_id=user.id, actor_username="bob", actor_email="bob@test")
+        db.add(event)
+        await db.commit()
+
+        resolved = await _resolve_legacy_actors(db, [event])
+        out = _row(event, resolved)
+        assert out["actor_username"] == "bob"
+        assert out["actor_resolved_live"] is False
+
+    async def test_one_query_covers_the_whole_page(self, db):
+        """The lookup is batched; a per-row query would be N+1 on every page."""
+        user = await self._user(db)
+        events = [_event(actor_user_id=user.id, actor_username=None) for _ in range(5)]
+        db.add_all(events)
+        await db.commit()
+
+        resolved = await _resolve_legacy_actors(db, events)
+        assert resolved == {user.id: ("bob", "bob@test")}
+
+    async def test_no_query_at_all_when_every_row_carries_its_copy(self, db):
+        assert await _resolve_legacy_actors(db, [_event(actor_user_id=1)]) == {}
+
+    async def test_filtering_by_name_finds_legacy_rows(self, db):
+        """The list shows the resolved name, so typing it must not hide the row
+        it came from - that would be the display and the filter disagreeing."""
+        user = await self._user(db)
+        db.add_all(
+            [
+                _event(actor_user_id=user.id, actor_username=None),
+                _event(actor_username="alice", actor_user_id=None),
+            ]
+        )
+        await db.commit()
+
+        found = await _rows(db, actor="bob")
+        assert len(found) == 1
+        assert found[0].actor_user_id == user.id
+
+    async def test_filtering_by_name_still_finds_recorded_rows(self, db):
+        await self._user(db)
+        db.add_all([_event(actor_username="alice"), _event(actor_username="bob", actor_user_id=None)])
+        await db.commit()
+        assert len(await _rows(db, actor="alice")) == 1
+
+    async def test_a_legacy_row_is_not_matched_by_another_persons_name(self, db):
+        user = await self._user(db)
+        await self._user(db, username="carol", email="carol@test")
+        db.add(_event(actor_user_id=user.id, actor_username=None))
+        await db.commit()
+        assert await _rows(db, actor="carol") == []
+
+    async def test_the_combobox_offers_legacy_actors_too(self, db):
+        """Otherwise the list omits exactly the administrators on screen, and
+        the operator concludes those events cannot be filtered."""
+        from app.api.admin_logs import admin_log_filter_options
+
+        user = await self._user(db)
+        db.add_all(
+            [
+                _event(actor_user_id=user.id, actor_username=None),
+                _event(actor_username="alice", actor_user_id=None),
+            ]
+        )
+        await db.commit()
+
+        options = await admin_log_filter_options(db=db, _=None)
+        assert options["actors"] == ["alice", "bob"]
+
+    async def test_the_combobox_does_not_list_an_actor_twice(self, db):
+        from app.api.admin_logs import admin_log_filter_options
+
+        user = await self._user(db)
+        db.add_all(
+            [
+                _event(actor_user_id=user.id, actor_username=None),
+                _event(actor_user_id=user.id, actor_username="bob"),
+            ]
+        )
+        await db.commit()
+
+        assert (await admin_log_filter_options(db=db, _=None))["actors"] == ["bob"]
 
 
 def test_the_viewer_is_gated_on_an_existing_menu():

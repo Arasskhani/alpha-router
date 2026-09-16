@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import datetime
 import json
+from collections.abc import Sequence
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_api_logs
@@ -48,21 +49,46 @@ def _parse_date(value: str | None, *, end_of_day: bool = False) -> datetime.date
     return parsed.replace(hour=23, minute=59, second=59) if end_of_day else parsed
 
 
-def _row(event: SecurityAuditEvent) -> dict[str, Any]:
+async def _resolve_legacy_actors(
+    db: AsyncSession, events: Sequence[SecurityAuditEvent]
+) -> dict[int, tuple[str, str | None]]:
+    """Names for the actors of rows written before the identity columns existed.
+
+    Those rows carry only ``actor_user_id``, so the trail showed "User #2" where
+    it should show a person. The account is usually still there - ``users`` also
+    holds soft-deleted accounts, and only a permanent delete removes the row -
+    so the name can be looked up and shown.
+
+    This is a best-effort lookup, not the stored copy: it reads the account's
+    name *now*, and it stops working once the account is permanently deleted.
+    Events written from here on carry their own copy and never depend on it.
+    """
+    ids = {e.actor_user_id for e in events if e.actor_username is None and e.actor_user_id is not None}
+    if not ids:
+        return {}
+    rows = (await db.execute(select(User.id, User.username, User.email).where(User.id.in_(ids)))).all()
+    return {int(uid): (username, email) for uid, username, email in rows}
+
+
+def _row(event: SecurityAuditEvent, resolved: dict[int, tuple[str, str | None]]) -> dict[str, Any]:
     try:
         detail = json.loads(event.detail_json) if event.detail_json else None
     except (TypeError, ValueError):
         # A row written by an older or hand-edited path should still be listed;
         # showing the raw string beats dropping the event from the trail.
         detail = {"_unparsed": event.detail_json}
+    # The copy on the row wins: it is what was true at the time, and it survives
+    # the account being deleted. The live lookup only fills rows that predate it.
+    fallback = resolved.get(event.actor_user_id) if event.actor_user_id is not None else None
     return {
         "id": event.id,
         "created_at": event.created_at.isoformat() if event.created_at else None,
         "actor_user_id": event.actor_user_id,
-        # Falls back to the live id only when the row predates the identity
-        # columns; a deleted actor keeps the name recorded at the time.
-        "actor_username": event.actor_username,
-        "actor_email": event.actor_email,
+        "actor_username": event.actor_username or (fallback[0] if fallback else None),
+        "actor_email": event.actor_email or (fallback[1] if fallback else None),
+        #: True when the name above was read from the account just now rather
+        #: than recorded with the event, so a caller can tell the two apart.
+        "actor_resolved_live": event.actor_username is None and fallback is not None,
         "actor_ip": event.actor_ip,
         "action": event.action,
         "resource_type": event.resource_type,
@@ -84,7 +110,19 @@ def _apply_filters(
     if actor:
         term = actor.strip()
         if term:
-            stmt = stmt.where(SecurityAuditEvent.actor_username.ilike(f"%{term}%"))
+            # The list resolves legacy rows to a live name, so filtering has to
+            # find them by that name as well - otherwise typing the name the
+            # table just showed you makes those rows disappear.
+            legacy = select(User.id).where(User.username.ilike(f"%{term}%"))
+            stmt = stmt.where(
+                or_(
+                    SecurityAuditEvent.actor_username.ilike(f"%{term}%"),
+                    and_(
+                        SecurityAuditEvent.actor_username.is_(None),
+                        SecurityAuditEvent.actor_user_id.in_(legacy),
+                    ),
+                )
+            )
     if action:
         stmt = stmt.where(SecurityAuditEvent.action == action.strip())
     if resource_type:
@@ -133,8 +171,10 @@ async def list_admin_logs(
     # One extra row is fetched purely to answer "is there a next page" without
     # a second COUNT over a table that has no bound on its size.
     has_more = len(rows) > limit
+    page = rows[:limit]
+    resolved = await _resolve_legacy_actors(db, page)
     return {
-        "items": [_row(event) for event in rows[:limit]],
+        "items": [_row(event, resolved) for event in page],
         "limit": limit,
         "offset": offset,
         "has_more": has_more,
@@ -161,13 +201,33 @@ async def admin_log_filter_options(
         .scalars()
         .all()
     )
-    actors = (
+    recorded = (
         (
             await db.execute(
                 select(SecurityAuditEvent.actor_username)
                 .where(SecurityAuditEvent.actor_username.isnot(None))
                 .distinct()
-                .order_by(SecurityAuditEvent.actor_username)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # Rows that predate the identity columns name their actor only by id, and
+    # the list resolves those to a live name. Offer those names here too, or the
+    # combobox omits exactly the administrators the operator can see on screen.
+    legacy = (
+        (
+            await db.execute(
+                select(User.username)
+                .distinct()
+                .where(
+                    User.id.in_(
+                        select(SecurityAuditEvent.actor_user_id).where(
+                            SecurityAuditEvent.actor_username.is_(None),
+                            SecurityAuditEvent.actor_user_id.isnot(None),
+                        )
+                    )
+                )
             )
         )
         .scalars()
@@ -176,5 +236,5 @@ async def admin_log_filter_options(
     return {
         "actions": [a for a in actions if a],
         "resource_types": [r for r in resources if r],
-        "actors": [a for a in actors if a],
+        "actors": sorted({a for a in [*recorded, *legacy] if a}),
     }

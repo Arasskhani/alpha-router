@@ -453,11 +453,34 @@ dependency audits, and container-image scanning.
 
 ## License
 
-Alpharouter is released under the [MIT License](LICENSE).
+Alpharouter is released under the [MIT License](LICENSE); that file is the
+authoritative version. Use, modification and redistribution are permitted,
+commercially included. If you redistribute Alpharouter — modified or not, as
+source or inside an image — keep the copyright notice and the licence text
+with it. That is the whole obligation.
+
+**Third-party components.** MIT covers this code, not the stack it runs on. A
+deployment also runs PostgreSQL, Redis, Qdrant, SeaweedFS, nginx, ClamAV and
+the dependencies declared in `requirements.txt` and `package.json`. Each keeps
+its own licence and some are copyleft — ClamAV is GPL. They run as their own
+processes and containers rather than being linked into Alpharouter, so
+operating the stack puts no licence obligation on code you write against it.
+
+**Your data.** Prompts, uploaded documents, and the images, video and audio
+generated through the platform belong to your organization. Alpharouter claims
+nothing in them and sends nothing anywhere except to the providers you
+configure. What a given model may be asked to produce, and how its output may
+be used, is governed by your agreement with that provider.
 
 **Alpharouter™**, Alpha Router, AlphaRouter, and the product logos are
 trademarks of Majid Arasskhani. The MIT License does not grant trademark
-rights. See [TRADEMARK.md](TRADEMARK.md) and [NOTICE](NOTICE).
+rights: a published fork needs its own name and its own visual identity, and a
+variant of the marks is the same infringement as a copy. Renaming a fork does
+not transfer authorship either — the copyright notice travels with the code.
+See [TRADEMARK.md](TRADEMARK.md) and [NOTICE](NOTICE).
+
+This section is a summary in plain terms, not legal advice; `LICENSE` and
+`TRADEMARK.md` govern where they differ.
 
 Copyright © 2026 Majid Arasskhani.
 

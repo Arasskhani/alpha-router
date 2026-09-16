@@ -751,6 +751,12 @@ export const docSections: DocSection[] = [
             </tr>
             <tr>
               <td>
+                <strong>Read Only Super Admin</strong>
+              </td>
+              <td>Every admin menu, no writes anywhere</td>
+            </tr>
+            <tr>
+              <td>
                 <strong>API Key Admin</strong>
               </td>
               <td>API Keys menu (full admin for that menu)</td>
@@ -767,9 +773,46 @@ export const docSections: DocSection[] = [
           Most other historical per-menu roles were removed from the assignable catalog; Super Admin covers those
           menus. Assign roles from <strong>Roles</strong> (bulk assign) or inline on the <strong>Users</strong> table.
         </p>
+        <h3>Read Only Super Admin</h3>
+        <p>
+          Sees exactly what Super Admin sees — every menu, every log, the security settings, the whole audit trail —
+          and can change none of it. Intended for an auditor, a reviewer, or anyone who needs the whole picture without
+          the ability to alter it.
+        </p>
+        <ul>
+          <li>
+            The lock is enforced on the server, not only in the interface: every endpoint that changes something is
+            gated on a write permission this role does not hold, so it is not bypassable by calling the API directly.
+          </li>
+          <li>
+            It is <strong>not</strong> Super Admin. Destructive and rotation operations that require Super Admin
+            specifically — clearing all media, clearing all request logs, TLS certificate and IP allowlist changes,
+            disabling another administrator&apos;s 2FA — are denied. It also does not bypass Agent maker/checker
+            approvals, does not break glass past resource ACLs, and does not count toward the &ldquo;last
+            administrator&rdquo; floor, so it can never be the reason a real Super Admin cannot be removed.
+          </li>
+          <li>
+            It does not receive Super Admin&apos;s unrestricted model access. In chat it is subject to the same model
+            visibility and plan rules as anyone else — that is spending, not reading.
+          </li>
+          <li>
+            Granting or revoking it requires Super Admin, like Super Admin itself: it hands over sight of every menu,
+            which is a platform-wide decision.
+          </li>
+          <li>
+            Held alongside Super Admin on the same account it wins, because write access requires <em>every</em> role
+            covering a menu to allow it. Assigning both makes the account read-only, not full.
+          </li>
+        </ul>
+        <Warn>
+          The bootstrap administrator account (<code>ADMIN_USERNAME</code>) cannot be made read-only. Startup restores
+          Super Admin to that account if it lacks it, which is the lock-out floor — give the role to a different
+          account instead.
+        </Warn>
         <Note>
           End-user menus (chat, media, user manual) are always writable for active accounts — they are not gated by
-          admin RBAC write locks.
+          admin RBAC write locks. A Read Only Super Admin can still use Chat and their own Media; read-only describes
+          what they may change in administration, not whether they may use the product.
         </Note>
       </>
     ),

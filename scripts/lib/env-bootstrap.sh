@@ -21,9 +21,15 @@ set_env_var() {
   local tmp
   tmp="$(mktemp)"
   if grep -qE "^${key}=" "$ENV_FILE" 2>/dev/null; then
-    awk -v k="$key" -v v="$value" '
-      BEGIN { done = 0 }
-      $0 ~ "^" k "=" {
+    # The value goes in through the environment, not `awk -v`. An assignment
+    # made with -v is processed for escape sequences, so awk silently rewrote
+    # any value containing a backslash: "abc\tdef" was stored as a literal tab
+    # and "a\nb" was truncated to "a" with the remainder becoming a bogus line
+    # in .env. ENVIRON is passed through verbatim. Generated secrets are hex
+    # today and unaffected, but an operator's own password or path is not.
+    AR_SET_ENV_KEY="$key" AR_SET_ENV_VALUE="$value" awk '
+      BEGIN { k = ENVIRON["AR_SET_ENV_KEY"]; v = ENVIRON["AR_SET_ENV_VALUE"]; done = 0 }
+      index($0, k "=") == 1 {
         print k "=" v
         done = 1
         next

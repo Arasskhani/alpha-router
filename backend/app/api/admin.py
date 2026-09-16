@@ -46,6 +46,8 @@ from app.models.user import User, UserGroup, UserRoleAssignment, user_group_memb
 from app.services import activity_service
 from app.services.model_capabilities import (
     model_catalog_meta,
+    classification_dialect,
+    classification_source,
     model_kinds,
     model_media_flags,
     video_generation_capabilities,
@@ -411,6 +413,11 @@ async def list_admin_models(
                 pricing_raw=m.pricing_raw,
                 provider_type=m.provider_type,
             ),
+            # Where the categories above came from. An operator looking at a
+            # model in the wrong filter cannot act until they know whether the
+            # provider said so or we guessed from the id.
+            "kinds_source": classification_source(m.pricing_raw),
+            "kinds_dialect": classification_dialect(m.pricing_raw),
             # Always hand over the snapshot; withholding it makes the helper
             # fall back to guessing from the id (see the same call in
             # app/api/chat.py).

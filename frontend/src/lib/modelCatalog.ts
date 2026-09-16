@@ -39,6 +39,15 @@ export type CatalogModel = {
   output_cost_per_1k: number | null;
   total_cost_per_1k: number;
   kinds?: ModelKind[];
+  /**
+   * Where `kinds` came from: "provider" when the catalog stated it, "inferred"
+   * when it was guessed from the model id because the provider published
+   * nothing. A wrong "provider" answer is a bug; a wrong "inferred" one is a
+   * model whose name misled us.
+   */
+  kinds_source?: "provider" | "inferred";
+  /** Which provider vocabulary answered, when one did. */
+  kinds_dialect?: string | null;
   is_image_model?: boolean;
   is_video_model?: boolean;
   supports_text_to_video?: boolean;

@@ -11449,6 +11449,12 @@ body.activity-pdf-export .activity-page {
   color: var(--muted);
   border: 1px solid var(--border);
 }
+/* The provider published no capability metadata, so the categories beside this
+   badge are a guess from the model id rather than an answer. */
+.models-browse-card__tag--inferred {
+  border-style: dashed;
+  font-style: italic;
+}
 .models-browse-card__desc {
   margin: 0.65rem 0 0;
   font-size: 0.9rem;

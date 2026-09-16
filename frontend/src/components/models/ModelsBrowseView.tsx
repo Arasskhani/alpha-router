@@ -56,6 +56,14 @@ export default function ModelsBrowseView({
                         {MODEL_KIND_LABELS[k]}
                       </span>
                     ))}
+                    {m.kinds_source === "inferred" ? (
+                      <span
+                        className="models-browse-card__tag models-browse-card__tag--inferred"
+                        title="This provider published no capability metadata, so these categories were guessed from the model id. Anything the provider does state is always preferred."
+                      >
+                        Inferred
+                      </span>
+                    ) : null}
                   </div>
                 ) : null}
               </div>

@@ -1598,6 +1598,30 @@ export const docSections: DocSection[] = [
         <Note>
           Only enabled models on active connections appear in the chat model picker and <code>/v1/models</code>.
         </Note>
+        <h3>Where a model&apos;s category comes from</h3>
+        <p>
+          A model&apos;s kinds (text, image, video, embeddings, …) are the provider&apos;s statement about it, not our
+          opinion. Each provider states it differently and Alpharouter reads each in its own words: OpenRouter&apos;s{" "}
+          <code>architecture.input_modalities</code> / <code>output_modalities</code>, Google&apos;s{" "}
+          <code>supportedGenerationMethods</code>, Azure&apos;s <code>capabilities</code> map, and the{" "}
+          <code>modalities</code> object several OpenAI-compatible gateways use.
+        </p>
+        <p>
+          For OpenRouter specifically, the dedicated <code>/images/models</code> and <code>/videos/models</code>{" "}
+          catalogs outrank the general one, which advertises media output for models those endpoints do not actually
+          serve.
+        </p>
+        <ul>
+          <li>
+            A model tagged <strong>Inferred</strong> is one whose provider published no capability metadata at all —
+            OpenAI&apos;s <code>/v1/models</code> returns ids and nothing else — so its categories were guessed from the
+            model id. That guess is a last resort and never overrules something a provider stated.
+          </li>
+          <li>
+            If a model with no <strong>Inferred</strong> tag sits in the wrong category, the provider&apos;s own catalog
+            says so. Re-sync the connection first; if it persists, it is worth reporting rather than working around.
+          </li>
+        </ul>
         <h3>New models arrive switched off</h3>
         <p>
           A model a provider has just added is not in service until an administrator says so. Providers extend their

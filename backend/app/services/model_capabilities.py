@@ -6,6 +6,8 @@ import json
 from datetime import datetime, UTC
 from typing import Any
 
+from app.services.provider_modalities import provider_modalities
+
 MODEL_KINDS = (
     "text",
     "image",
@@ -47,7 +49,12 @@ def authoritative_video_model(
     """
     if (provider_type or "").strip().lower() == "openrouter":
         raw = _catalog_raw(pricing_raw)
-        return isinstance(raw.get("video_generation") or raw.get("video_capabilities"), dict)
+        if raw:
+            return isinstance(raw.get("video_generation") or raw.get("video_capabilities"), dict)
+        # No snapshot at all: the stored flag is the only evidence anyone ever
+        # recorded, and the two mistakes are not symmetric. Ignoring it would
+        # offer a video model for chat, which fails in front of a user;
+        # trusting it only risks hiding one from a filter.
     return bool(is_video_model)
 
 
@@ -60,18 +67,47 @@ def authoritative_image_model(
     """Return Image Generation status from the provider's dedicated catalog."""
     if (provider_type or "").strip().lower() == "openrouter":
         raw = _catalog_raw(pricing_raw)
-        return isinstance(raw.get("image_generation"), dict)
+        if raw:
+            return isinstance(raw.get("image_generation"), dict)
+        # See authoritative_video_model: with nothing stored, the flag stands.
     return bool(is_image_model)
 
 
 def _architecture_from_raw(pricing_raw: str | None) -> dict[str, Any]:
-    data = _catalog_raw(pricing_raw)
-    arch = data.get("architecture")
-    if isinstance(arch, dict):
-        return arch
-    if "input_modalities" in data or "output_modalities" in data:
-        return data
-    return {}
+    """Modalities the provider stated, in our vocabulary.
+
+    This used to read OpenRouter's ``architecture`` block and nothing else, so
+    a provider that publishes the same facts in its own shape — Google's
+    ``supportedGenerationMethods``, Azure's ``capabilities`` map — was treated
+    as having said nothing, and the classifier fell back to guessing from the
+    model id. ``provider_modalities`` translates every dialect we know; the
+    return shape stays an architecture-like dict so the rest of this module is
+    unchanged.
+    """
+    stated = provider_modalities(_catalog_raw(pricing_raw))
+    if stated is None:
+        return {}
+    return {
+        "input_modalities": list(stated.inputs),
+        "output_modalities": list(stated.outputs),
+    }
+
+
+def classification_source(pricing_raw: str | None) -> str:
+    """``provider`` when the catalog answered, ``inferred`` when we guessed.
+
+    An operator looking at a model in the wrong category needs to know which
+    of the two happened before they can do anything about it: a wrong
+    ``provider`` answer is a bug or a provider error, a wrong ``inferred`` one
+    is a model whose id misled us and which nothing but a human can correct.
+    """
+    return "provider" if provider_modalities(_catalog_raw(pricing_raw)) else "inferred"
+
+
+def classification_dialect(pricing_raw: str | None) -> str | None:
+    """Which provider vocabulary answered, or None when none did."""
+    stated = provider_modalities(_catalog_raw(pricing_raw))
+    return stated.dialect if stated else None
 
 
 def model_catalog_meta(
@@ -317,21 +353,34 @@ def model_kinds(
         if any(x in ext for x in ("tts", "/speech", "text-to-speech")):
             kinds.add("speech")
 
-    # --- Image: output modality or authoritative flag ---
-    if (
-        auth_image
-        or (has_metadata and "image" in outputs)
-        or not has_metadata
-        and any(x in ext for x in ("dall-e", "dalle", "stable-diffusion", "flux", "midjourney", "/image"))
+    # --- Image and video ---
+    #
+    # For OpenRouter the dedicated /images/models and /videos/models catalogs
+    # are the answer and the general catalog is not: `/models` advertises media
+    # output for models those endpoints do not serve. `model_sync` trims the
+    # stored snapshot to match, but a row written before that trimming existed
+    # still carries the untrimmed list, so the rule is enforced here as well
+    # rather than trusting every row to have been written correctly.
+    openrouter = (provider_type or "").strip().lower() == "openrouter"
+
+    if auth_image or (
+        not openrouter
+        and (
+            (has_metadata and "image" in outputs)
+            or (
+                not has_metadata
+                and any(x in ext for x in ("dall-e", "dalle", "stable-diffusion", "flux", "midjourney", "/image"))
+            )
+        )
     ):
         kinds.add("image")
 
-    # --- Video: output modality or authoritative flag ---
-    if (
-        auth_video
-        or (has_metadata and "video" in outputs)
-        or not has_metadata
-        and _video_id_heuristic(external_id, is_video_model)
+    if auth_video or (
+        not openrouter
+        and (
+            (has_metadata and "video" in outputs)
+            or (not has_metadata and _video_id_heuristic(external_id, is_video_model))
+        )
     ):
         kinds.add("video")
 

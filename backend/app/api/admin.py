@@ -411,10 +411,13 @@ async def list_admin_models(
                 pricing_raw=m.pricing_raw,
                 provider_type=m.provider_type,
             ),
+            # Always hand over the snapshot; withholding it makes the helper
+            # fall back to guessing from the id (see the same call in
+            # app/api/chat.py).
             **video_generation_capabilities(
                 external_id=m.external_id or "",
                 is_video_model=media["is_video_model"],
-                pricing_raw=m.pricing_raw if media["is_video_model"] else None,
+                pricing_raw=m.pricing_raw,
             ),
             "code_interpreter": compatibility_payload(
                 compatibility.get((int(m.connection_id), m.external_id)),

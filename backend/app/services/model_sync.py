@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
+from app.services.model_capabilities import image_id_looks_generative
 from app.services.model_tool_compatibility_service import ensure_model_compatibility_rows
 from app.services.video_catalog_service import normalize_video_capabilities
 from app.services.provider_http import get_provider_rest_client
@@ -40,22 +41,6 @@ def _per_1k_from_openrouter_pricing(pricing) -> tuple[float | None, float | None
         return in_1k, out_1k
     except (TypeError, ValueError):
         return None, None
-
-
-def _guess_is_image_model(ext_id: str) -> bool:
-    low = (ext_id or "").lower()
-    return any(
-        hint in low
-        for hint in (
-            "image",
-            "dall-e",
-            "dalle",
-            "flux",
-            "sdxl",
-            "stable-diffusion",
-            "nanobanana",
-        )
-    )
 
 
 def _guess_is_video_model(ext_id: str, item: dict | None = None) -> bool:
@@ -477,7 +462,10 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
                 "display_name": m.get("display_name") or m.get("name") or ext_id,
                 "provider_type": provider,
                 "pricing_raw": json.dumps(m),
-                "is_image_model": _guess_is_image_model(ext_id),
+                # Only a guess, and only because this provider published no
+                # modality metadata; the read path re-derives the answer from
+                # the stored snapshot and prefers whatever the provider said.
+                "is_image_model": image_id_looks_generative(ext_id),
                 "is_video_model": _guess_is_video_model(ext_id, m if isinstance(m, dict) else None),
                 "last_synced_at": datetime.utcnow(),
             }

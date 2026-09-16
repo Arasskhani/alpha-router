@@ -123,18 +123,33 @@ def catalog_output_modalities(pricing_raw: str | None) -> list[str]:
     return outputs
 
 
-def _image_id_heuristic(external_id: str, is_image_model: bool = False) -> bool:
+# The only list of name fragments in the codebase that suggests image
+# generation. It is a guess about a model from its id, so it is consulted in
+# exactly one situation: the provider published no modality metadata at all.
+# Wherever the provider did answer, its answer wins -- including when it
+# contradicts a name that appears here.
+#
+# `model_sync` used to keep a second, shorter copy of this list, so the same
+# model could be classified one way at sync time and another at read time.
+IMAGE_ID_HINTS: tuple[str, ...] = (
+    "image",
+    "dall",
+    "flux",
+    "sdxl",
+    "stable-diffusion",
+    "nanobanana",
+    "midjourney",
+)
+
+
+def image_id_looks_generative(external_id: str) -> bool:
+    """Last-resort guess from the model id. Never call this over provider data."""
     ext = (external_id or "").lower()
-    return bool(
-        is_image_model
-        or "image" in ext
-        or "dall" in ext
-        or "flux" in ext
-        or "sdxl" in ext
-        or "stable-diffusion" in ext
-        or "nanobanana" in ext
-        or "midjourney" in ext
-    )
+    return any(hint in ext for hint in IMAGE_ID_HINTS)
+
+
+def _image_id_heuristic(external_id: str, is_image_model: bool = False) -> bool:
+    return bool(is_image_model or image_id_looks_generative(external_id))
 
 
 def _image_to_image_heuristic(external_id: str) -> bool:
@@ -489,15 +504,27 @@ def supports_vision(
     external_id: str,
     is_image_model: bool = False,
     pricing_raw: str | None = None,
+    provider_type: str | None = None,
 ) -> bool:
     """True when a chat model can accept an image attachment (vision input).
 
-    Image-generation models use a separate image-to-image path and are excluded.
-    Provider catalog metadata (``architecture.input_modalities``) takes precedence;
-    a name-based heuristic is used as a fallback for models without catalog metadata.
+    The provider's ``architecture.input_modalities`` is the answer whenever it
+    exists. It used to be reached only after a name check that returned False
+    for any id containing "image", "flux", "dall" and the rest, so a chat model
+    the provider declared as accepting images was denied vision because of what
+    it was called. A guess must never overrule an answer.
+
+    An image *generation* model is still excluded, because it reaches images
+    through the separate image-to-image path rather than as a chat attachment --
+    but that exclusion now asks the authoritative catalog, not the id.
     """
     ext = (external_id or "").lower()
-    if is_image_model or _image_id_heuristic(ext):
+
+    if authoritative_image_model(
+        provider_type=provider_type,
+        is_image_model=is_image_model,
+        pricing_raw=pricing_raw,
+    ):
         return False
 
     arch = _architecture_from_raw(pricing_raw)
@@ -505,7 +532,9 @@ def supports_vision(
     if inputs:
         return "image" in inputs
 
-    # Fallback heuristic when provider metadata is unavailable.
+    # Nothing from the provider: fall back to the id, exclusion included.
+    if _image_id_heuristic(ext, is_image_model):
+        return False
     if ext in ("auto", "openrouter/auto") or ext.endswith("/auto"):
         return True
     return any(hint in ext for hint in _VISION_HEURISTIC_HINTS)

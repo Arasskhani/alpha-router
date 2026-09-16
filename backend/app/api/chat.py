@@ -150,25 +150,33 @@ async def chat_models(user: User = Depends(get_current_user), db: AsyncSession =
                 static_candidate=is_code_interpreter_candidate(m),
                 auto_router=is_auto_router_model_id(m.external_id),
             ),
+            # The snapshot goes to every helper unconditionally. Passing None
+            # when the model is not classified as that kind told the helper
+            # "this provider published nothing", which sent it to its id-based
+            # fallback -- so a model this same payload reports as
+            # is_image_model=false could come back supports_text_to_image=true
+            # purely because of its name. A helper that can read the provider's
+            # answer must always be given it.
             **image_generation_capabilities(
                 external_id=m.external_id or "",
                 is_image_model=media["is_image_model"],
-                pricing_raw=m.pricing_raw if media["is_image_model"] else None,
+                pricing_raw=m.pricing_raw,
             ),
             **video_generation_capabilities(
                 external_id=m.external_id or "",
                 is_video_model=media["is_video_model"],
-                pricing_raw=m.pricing_raw if media["is_video_model"] else None,
+                pricing_raw=m.pricing_raw,
             ),
             **speech_generation_capabilities(
                 external_id=m.external_id or "",
                 is_speech_model=media["is_speech_model"],
-                pricing_raw=m.pricing_raw if media["is_speech_model"] else None,
+                pricing_raw=m.pricing_raw,
             ),
             "supports_vision": supports_vision(
                 external_id=m.external_id or "",
                 is_image_model=media["is_image_model"],
                 pricing_raw=m.pricing_raw,
+                provider_type=m.provider_type,
             ),
             "kinds": model_kinds(
                 external_id=m.external_id or "",

@@ -64,14 +64,26 @@ def is_auto_router_model_id(model_id: str | None) -> bool:
 
 
 def is_code_interpreter_candidate(model: AIModel) -> bool:
-    """Cheap static pre-filter; active probes remain the source of truth."""
-    if model.is_image_model or not model.is_enabled or model.admin_disabled:
+    """Cheap static pre-filter; active probes remain the source of truth.
+
+    Everything about the model's kind goes through ``model_kinds``. This used to
+    short-circuit on the raw ``is_image_model`` column and then call
+    ``model_kinds`` without ``provider_type`` and without ``is_video_model``,
+    which quietly disabled the authoritative-catalog path: a row still carrying
+    a guess from an older sync excluded that model from probing for good, and a
+    video model was judged as if it were a chat model.
+    """
+    if not model.is_enabled or model.admin_disabled:
         return False
     kinds = model_kinds(
         external_id=model.external_id,
         is_image_model=bool(model.is_image_model),
+        is_video_model=bool(getattr(model, "is_video_model", False)),
         pricing_raw=model.pricing_raw,
+        provider_type=model.provider_type,
     )
+    if "image" in kinds or "video" in kinds:
+        return False
     return "text" in kinds
 
 

@@ -17,6 +17,16 @@ source "$REPO/scripts/lib/env-bootstrap.sh"
 # shellcheck source=../lib/deploy-mode.sh
 source "$REPO/scripts/lib/deploy-mode.sh"
 
+# The header above promises this touches no real host. It did not hold:
+# env-bootstrap.sh assigned ENV_FILE unconditionally, so sourcing it threw away
+# the export on line 10 and every write below landed on $REPO/.env -- which on
+# a machine with a live install meant the real file was truncated and its
+# POSTGRES_PASSWORD replaced. Assert the promise instead of restating it.
+[ "$ENV_FILE" = "$TMP/.env" ] || {
+  echo "REFUSING TO RUN: ENV_FILE is $ENV_FILE, not $TMP/.env" >&2
+  exit 1
+}
+
 CALLS="$TMP/calls"
 : > "$CALLS"
 

@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # Create or patch .env with secrets required by docker-compose.yml.
 
-ENV_FILE="$ROOT_DIR/.env"
+# Overridable so a harness can point at a scratch file. This used to be an
+# unconditional assignment, which quietly won over the `export ENV_FILE` in
+# scripts/tests/test-deploy-mode-pg-rotation.sh: that test rotates
+# POSTGRES_PASSWORD, and on a machine with a live install it was rotating the
+# real one -- despite its own header promising that nothing touches a real
+# host.
+ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 ENV_EXAMPLE="$ROOT_DIR/.env.example"
 
 env_value() {

@@ -11135,6 +11135,10 @@ body.activity-pdf-export .activity-page {
 .models-default-menu {
   position: relative;
 }
+/* A dropdown panel floats over the table, so its background has to be opaque.
+   These four rules asked for `--card`, which is not a token this stylesheet
+   defines — the declaration was dropped and the panels rendered see-through.
+   The surface colour is `--surface`, which is what `.card` itself uses. */
 .models-default-menu__list {
   position: absolute;
   top: calc(100% + 0.35rem);
@@ -11146,7 +11150,7 @@ body.activity-pdf-export .activity-page {
   flex-direction: column;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--card);
+  background: var(--surface);
   box-shadow: 0 10px 30px rgb(0 0 0 / 18%);
 }
 .models-default-menu__item {
@@ -11192,7 +11196,7 @@ body.activity-pdf-export .activity-page {
   margin-bottom: 0.75rem;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: var(--card);
+  background: var(--surface);
   color: var(--text);
 }
 .set-default-modal__list {
@@ -11275,7 +11279,7 @@ body.activity-pdf-export .activity-page {
   padding: 0.55rem 0.85rem 0.55rem 2.35rem;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: var(--card);
+  background: var(--surface);
   color: var(--text);
 }
 .models-page__actions {
@@ -11343,7 +11347,7 @@ body.activity-pdf-export .activity-page {
   justify-content: center;
   padding: 0.28rem 0.4rem;
   border: none;
-  background: var(--card);
+  background: var(--surface);
   color: var(--muted);
   cursor: pointer;
 }

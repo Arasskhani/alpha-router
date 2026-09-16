@@ -31,6 +31,19 @@ type RetentionOverview = {
     settings: ChatSettings;
   };
   api_logs?: ApiLogRetention;
+  admin_logs?: AdminLogRetention;
+};
+
+type AdminLogRetention = {
+  detail_retention_days: number;
+  event_retention_days: number;
+  min_days: number;
+  max_days: number;
+  default_detail_days: number;
+  default_event_days: number;
+  stored_events: number;
+  expiring_details: number;
+  expiring_events: number;
 };
 
 type ApiLogRetention = {
@@ -81,6 +94,9 @@ export default function RetentionPolicy() {
   const [chatScheduleHour, setChatScheduleHour] = useState(4);
   const [chatScheduleMinute, setChatScheduleMinute] = useState(0);
   const [savingApiLogs, setSavingApiLogs] = useState(false);
+  const [adminLogDetailDays, setAdminLogDetailDays] = useState(90);
+  const [adminLogEventDays, setAdminLogEventDays] = useState(365);
+  const [savingAdminLogs, setSavingAdminLogs] = useState(false);
   const [apiLogRetentionDays, setApiLogRetentionDays] = useState(30);
 
   async function load() {
@@ -93,6 +109,10 @@ export default function RetentionPolicy() {
       setScheduleHour(data.settings.clear_schedule_hour);
       setScheduleMinute(data.settings.clear_schedule_minute);
       if (data.api_logs) setApiLogRetentionDays(data.api_logs.retention_days);
+      if (data.admin_logs) {
+        setAdminLogDetailDays(data.admin_logs.detail_retention_days);
+        setAdminLogEventDays(data.admin_logs.event_retention_days);
+      }
       const chat = data.chat?.settings;
       if (chat) {
         setChatRetentionEnabled(chat.retention_enabled);
@@ -158,6 +178,28 @@ export default function RetentionPolicy() {
       setError(String(e));
     } finally {
       setSavingApiLogs(false);
+    }
+  }
+
+  async function saveAdminLogSettings(e: FormEvent) {
+    e.preventDefault();
+    setSavingAdminLogs(true);
+    setError("");
+    setFlash("");
+    try {
+      await api("/api/admin/storage/admin-log-settings", {
+        method: "PATCH",
+        body: JSON.stringify({
+          detail_retention_days: adminLogDetailDays,
+          event_retention_days: adminLogEventDays,
+        }),
+      });
+      setFlash("Admin log retention updated. The nightly job applies it.");
+      await load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSavingAdminLogs(false);
     }
   }
 
@@ -482,6 +524,58 @@ export default function RetentionPolicy() {
         <div className="dialog-actions">
           <button type="submit" className="btn" disabled={savingApiLogs}>
             {savingApiLogs ? "Saving…" : "Save API log policy"}
+          </button>
+        </div>
+      </form>
+
+      <form className="card" onSubmit={saveAdminLogSettings}>
+        <h3>Admin logs — administrative audit trail</h3>
+        <p className="muted-text" style={{ marginTop: 0 }}>
+          The events behind <Link to="/admin/admin-logs">Admin Logs</Link>: who changed what, from where. An
+          event has two halves. Who did what and when is a few short columns and is the part an audit asks
+          for; the recorded detail is unbounded and is what makes an old event useful rather than merely
+          countable. So the detail is cleared first, and the event itself is kept for longer.
+        </p>
+        <label htmlFor="admin-log-detail-days">Keep event detail for (days)</label>
+        <input
+          id="admin-log-detail-days"
+          type="number"
+          min={stats?.admin_logs?.min_days ?? 7}
+          max={stats?.admin_logs?.max_days ?? 3650}
+          className="input-block"
+          value={adminLogDetailDays}
+          onChange={(e) => setAdminLogDetailDays(Number(e.target.value || 7))}
+        />
+        <label htmlFor="admin-log-event-days">Keep events for (days)</label>
+        <input
+          id="admin-log-event-days"
+          type="number"
+          min={stats?.admin_logs?.min_days ?? 7}
+          max={stats?.admin_logs?.max_days ?? 3650}
+          className="input-block"
+          value={adminLogEventDays}
+          onChange={(e) => setAdminLogEventDays(Number(e.target.value || 7))}
+        />
+        {adminLogDetailDays > adminLogEventDays ? (
+          <p className="alert alert-warning">
+            Detail cannot outlive the event it belongs to; it will be saved as {adminLogEventDays} days.
+          </p>
+        ) : null}
+        {stats?.admin_logs ? (
+          <p className="muted-text" style={{ marginTop: "0.75rem" }}>
+            {stats.admin_logs.stored_events.toLocaleString()} event(s) stored. The next nightly run will clear
+            detail on {stats.admin_logs.expiring_details.toLocaleString()} and delete{" "}
+            {stats.admin_logs.expiring_events.toLocaleString()}.
+          </p>
+        ) : null}
+        <p className="muted-text">
+          Saving does not purge immediately. Shortening a window here destroys audit evidence, so it is left to
+          the nightly job rather than happening as a side effect of saving. Changing these windows is itself
+          recorded in the trail.
+        </p>
+        <div className="dialog-actions">
+          <button type="submit" className="btn" disabled={savingAdminLogs}>
+            {savingAdminLogs ? "Saving…" : "Save admin log policy"}
           </button>
         </div>
       </form>

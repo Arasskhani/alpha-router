@@ -1578,7 +1578,8 @@ export const docSections: DocSection[] = [
           </li>
           <li>Browse (tiles) or table view; per-model enable toggle.</li>
           <li>
-            Bulk edit: turn ON, OFF, or delete selected models.
+            Bulk edit: turn ON, OFF, or delete selected models — the practical way to approve a batch after a sync
+            brings in new ones.
           </li>
           <li>
             <strong>Set Default</strong> — select one public, enabled, text-capable model. New chats use it only when
@@ -1596,6 +1597,36 @@ export const docSections: DocSection[] = [
         </ul>
         <Note>
           Only enabled models on active connections appear in the chat model picker and <code>/v1/models</code>.
+        </Note>
+        <h3>New models arrive switched off</h3>
+        <p>
+          A model a provider has just added is not in service until an administrator says so. Providers extend their
+          catalogs on their own schedule — OpenRouter gains models most weeks — and a model nobody has looked at has
+          unknown cost, unknown behaviour and no owner inside your organization. So a sync inserts it{" "}
+          <strong>OFF</strong>, marked <strong>Needs approval</strong>, and no user can select it.
+        </p>
+        <ul>
+          <li>
+            Turning it <strong>ON</strong> is the approval — one action, individually or in bulk. Nothing else has to be
+            unlocked first.
+          </li>
+          <li>
+            Until then it stays off through everything: a later sync, and disabling and re-enabling the connection.
+            That last one is the point of the lock — enabling a connection switches its models back on, and an
+            unapproved model must not ride in on that.
+          </li>
+          <li>
+            Models you have already approved are untouched by a sync. Their ON/OFF state is yours and stays that way.
+          </li>
+          <li>
+            Use the <strong>New</strong> filter (<code>1d</code>…<code>30d</code>) to see what has arrived since you
+            last looked.
+          </li>
+        </ul>
+        <Note>
+          The first sync of a brand-new connection therefore lands the whole catalog — several hundred models on
+          OpenRouter — switched off. Filter to what you actually want, select, and use bulk ON. That one-time cost buys
+          a catalog where everything selectable was chosen.
         </Note>
         <h3>Code Interpreter compatibility</h3>
         <p>

@@ -272,6 +272,10 @@ async def set_model_admin_enabled(db: AsyncSession, model: AIModel, enabled: boo
 
     OFF locks the model (`admin_disabled`) so sync / connection enable cannot turn it on.
     ON clears the lock and sets `is_enabled` only when the parent connection is active.
+
+    A model the provider has just added arrives locked (see
+    ``_upsert_catalog_model``), so ON here is also the approval action that puts
+    a new model into service for the first time.
     """
     if not enabled:
         model.admin_disabled = True
@@ -285,14 +289,25 @@ async def set_model_admin_enabled(db: AsyncSession, model: AIModel, enabled: boo
     model.is_enabled = bool(conn.is_active) if conn is not None else False
 
 
-def _upsert_catalog_model(
-    db: AsyncSession,
-    existing: AIModel | None,
-    payload: dict,
-    *,
-    new_enabled: bool,
-) -> None:
-    """Update an existing catalog row, or insert with a sticky first-seen time."""
+def _upsert_catalog_model(db: AsyncSession, existing: AIModel | None, payload: dict) -> None:
+    """Update an existing catalog row, or insert a new model switched off.
+
+    A model nobody has approved is not in service. Providers add to their
+    catalogs whenever they like -- OpenRouter alone gains models weekly -- and
+    with the previous behaviour each one became selectable by every user the
+    moment a sync noticed it: unknown cost, unknown behaviour, no owner inside
+    the organization, live without anyone having decided so.
+
+    So a new row is inserted `is_enabled=False` and `admin_disabled=True`. The
+    lock is what makes it hold: `is_enabled=False` on its own would be undone
+    the next time the connection is toggled off and on, because
+    ``enable_models_for_connection`` switches on everything that is not locked.
+    Turning the model ON in the admin UI clears the lock and puts it in service
+    -- that single action is the approval.
+
+    Existing rows keep whatever state they have; a sync never changes
+    `is_enabled` or `admin_disabled` on a model that is already known.
+    """
     if existing:
         for key, value in payload.items():
             setattr(existing, key, value)
@@ -300,8 +315,8 @@ def _upsert_catalog_model(
     db.add(
         AIModel(
             **payload,
-            is_enabled=new_enabled,
-            admin_disabled=False,
+            is_enabled=False,
+            admin_disabled=True,
             first_seen_at=payload.get("last_synced_at") or datetime.utcnow(),
         )
     )
@@ -310,12 +325,12 @@ def _upsert_catalog_model(
 async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: str) -> int:
     """Upsert models for a connection; pricing copied verbatim from provider response.
 
-    Existing rows keep `is_enabled` / `admin_disabled`. New rows start unlocked and
-    enabled only when the connection itself is active.
+    Existing rows keep `is_enabled` / `admin_disabled`. New models arrive off and
+    locked, waiting for an administrator to approve them -- see
+    ``_upsert_catalog_model``.
     """
     provider = conn.provider_type.lower()
     synced = 0
-    new_enabled = bool(conn.is_active)
 
     if provider == "openrouter":
         items = await fetch_openrouter_models(api_key, conn.base_url)
@@ -361,7 +376,7 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
                 "is_video_model": bool(video_meta),
                 "last_synced_at": datetime.utcnow(),
             }
-            _upsert_catalog_model(db, existing, payload, new_enabled=new_enabled)
+            _upsert_catalog_model(db, existing, payload)
             synced += 1
 
         # Upsert video-only catalog entries that appear on /videos/models but not /models.
@@ -423,7 +438,7 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
                 "is_video_model": True,
                 "last_synced_at": datetime.utcnow(),
             }
-            _upsert_catalog_model(db, existing, video_only_payload, new_enabled=new_enabled)
+            _upsert_catalog_model(db, existing, video_only_payload)
             synced += 1
 
         # A fresh provider catalog is authoritative. Models that disappeared
@@ -466,7 +481,7 @@ async def sync_connection_models(db: AsyncSession, conn: Connection, api_key: st
                 "is_video_model": _guess_is_video_model(ext_id, m if isinstance(m, dict) else None),
                 "last_synced_at": datetime.utcnow(),
             }
-            _upsert_catalog_model(db, existing, payload, new_enabled=new_enabled)
+            _upsert_catalog_model(db, existing, payload)
             synced += 1
 
     conn.last_sync_at = datetime.utcnow()

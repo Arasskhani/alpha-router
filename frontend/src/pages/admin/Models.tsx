@@ -474,8 +474,11 @@ export default function Models() {
                           {m.enabled ? "ON" : "OFF"}
                         </button>
                         {m.admin_disabled ? (
-                          <span className="model-admin-off-badge" title="Disabled by admin — sync will not re-enable">
-                            Admin off
+                          <span
+                            className="model-admin-off-badge"
+                            title="Stays off until an administrator turns it on. A sync or a connection change will not enable it — new models arrive in this state."
+                          >
+                            Needs approval
                           </span>
                         ) : null}
                         {m.is_system_default ? (

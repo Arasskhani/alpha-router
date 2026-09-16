@@ -10,6 +10,7 @@ from app.database import Base
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.services.model_sync import (
+    disable_models_for_connection,
     enable_models_for_connection,
     set_model_admin_enabled,
     sync_connection_models,
@@ -50,6 +51,10 @@ async def _seed_connection(db: AsyncSession, *, name: str = "or", active: bool =
     db.add(conn)
     await db.flush()
     return conn
+
+
+async def _find(db: AsyncSession, external_id: str) -> AIModel | None:
+    return (await db.execute(select(AIModel).where(AIModel.external_id == external_id))).scalars().first()
 
 
 async def _seed_model(
@@ -196,6 +201,7 @@ async def _test_sync_flash_does_not_touch_other_connection() -> None:
 
 
 async def _test_new_model_from_sync_defaults() -> None:
+    """A model the provider just added is not in service until someone says so."""
     factory, engine = await _session_factory()
     async with factory() as db:
         conn = await _seed_connection(db, active=True)
@@ -215,45 +221,89 @@ async def _test_new_model_from_sync_defaults() -> None:
             await sync_connection_models(db, conn, "sk-test")
             await db.commit()
 
-        row = (
-            (
-                await db.execute(
-                    select(AIModel).where(
-                        AIModel.connection_id == conn.id,
-                        AIModel.external_id == "openai/new-model",
-                    )
-                )
-            )
-            .scalars()
-            .first()
-        )
+        row = await _find(db, "openai/new-model")
         assert row is not None
-        assert row.is_enabled is True
-        assert row.admin_disabled is False
+        # Off even though the connection is active: the provider adding a model
+        # is not a decision this organization has made.
+        assert row.is_enabled is False
+        # And locked, or the next connection toggle would quietly enable it.
+        assert row.admin_disabled is True
+    await engine.dispose()
 
-        conn.is_active = False
+
+async def _test_new_model_stays_off_across_a_connection_toggle() -> None:
+    """The hazard the lock exists for.
+
+    `enable_models_for_connection` switches on everything that is not locked, so
+    an unapproved model recorded only as `is_enabled=False` would go live the
+    first time an administrator disabled and re-enabled the connection.
+    """
+    factory, engine = await _session_factory()
+    async with factory() as db:
+        conn = await _seed_connection(db, active=True)
+        approved = await _seed_model(db, conn, external_id="openai/approved")
         await db.commit()
+
         with patch(
             "app.services.model_sync.fetch_openrouter_models",
             new=AsyncMock(
                 return_value=[
-                    {
-                        "id": "openai/inactive-new",
-                        "name": "Inactive New",
-                        "pricing": {"prompt": "0.000001", "completion": "0.000002"},
-                    }
+                    {"id": "openai/approved", "name": "Approved", "pricing": {}},
+                    {"id": "openai/brand-new", "name": "Brand new", "pricing": {}},
                 ]
             ),
         ):
             await sync_connection_models(db, conn, "sk-test")
             await db.commit()
 
-        inactive_new = (
-            (await db.execute(select(AIModel).where(AIModel.external_id == "openai/inactive-new"))).scalars().first()
-        )
-        assert inactive_new is not None
-        assert inactive_new.is_enabled is False
-        assert inactive_new.admin_disabled is False
+        conn.is_active = False
+        await disable_models_for_connection(db, conn.id)
+        await db.commit()
+        conn.is_active = True
+        await enable_models_for_connection(db, conn.id)
+        await db.commit()
+
+        await db.refresh(approved)
+        assert approved.is_enabled is True, "an approved model comes back with the connection"
+
+        brand_new = await _find(db, "openai/brand-new")
+        assert brand_new is not None
+        assert brand_new.is_enabled is False, "an unapproved model must not ride in on a connection toggle"
+        assert brand_new.admin_disabled is True
+    await engine.dispose()
+
+
+async def _test_approving_a_new_model_is_one_action() -> None:
+    """Turning it ON is the approval — no separate unlock step."""
+    factory, engine = await _session_factory()
+    async with factory() as db:
+        conn = await _seed_connection(db, active=True)
+        await db.commit()
+        with patch(
+            "app.services.model_sync.fetch_openrouter_models",
+            new=AsyncMock(return_value=[{"id": "openai/fresh", "name": "Fresh", "pricing": {}}]),
+        ):
+            await sync_connection_models(db, conn, "sk-test")
+            await db.commit()
+
+        fresh = await _find(db, "openai/fresh")
+        assert fresh is not None
+        await set_model_admin_enabled(db, fresh, True)
+        await db.commit()
+        await db.refresh(fresh)
+        assert fresh.is_enabled is True
+        assert fresh.admin_disabled is False
+
+        # And a later sync leaves that decision alone.
+        with patch(
+            "app.services.model_sync.fetch_openrouter_models",
+            new=AsyncMock(return_value=[{"id": "openai/fresh", "name": "Fresh v2", "pricing": {}}]),
+        ):
+            await sync_connection_models(db, conn, "sk-test")
+            await db.commit()
+        await db.refresh(fresh)
+        assert fresh.is_enabled is True
+        assert fresh.display_name == "Fresh v2"
     await engine.dispose()
 
 
@@ -279,3 +329,11 @@ async def test_sync_flash_does_not_touch_other_connection():
 
 async def test_new_model_from_sync_defaults():
     await _test_new_model_from_sync_defaults()
+
+
+async def test_new_model_stays_off_across_a_connection_toggle():
+    await _test_new_model_stays_off_across_a_connection_toggle()
+
+
+async def test_approving_a_new_model_is_one_action():
+    await _test_approving_a_new_model_is_one_action()

@@ -1978,6 +1978,31 @@ export const docSections: DocSection[] = [
           <li>Assign plan modal: choose target type and entity.</li>
           <li>Show members: who currently resolves to this plan.</li>
         </ul>
+        <h3>Budget warnings</h3>
+        <p>
+          Users are notified in the app once at <strong>70%</strong> and once at <strong>90%</strong> of their
+          resolved monthly budget, so a refused request is no longer the first sign that the money has run out.
+          The thresholds are fixed platform-wide and the percentage uses{" "}
+          <em>used + reserved</em> — the same figure enforcement and the user&apos;s profile menu use.
+        </p>
+        <ul>
+          <li>
+            Users with no plan (0.00 budget) are never warned: there is no percentage to report. They already get
+            HTTP 402 with a &quot;no plan assigned&quot; message.
+          </li>
+          <li>
+            A level is recorded only once the browser has actually displayed it, so a warning is not lost to a
+            closed tab or a dropped connection — it reappears on the next load.
+          </li>
+          <li>
+            Raising a user&apos;s plan, the monthly rollover, and <strong>Reset budget</strong> on the user row all
+            lower the recorded level automatically, so the warnings fire again as usage climbs back.
+          </li>
+          <li>
+            Gateway API keys are unaffected: they bill against their own credit pool and their responses never
+            carry a budget warning.
+          </li>
+        </ul>
         <p>
           See also <a href="#budget-pricing">Budget &amp; pricing</a>.
         </p>

@@ -1092,6 +1092,15 @@ export const userManualSections: DocSection[] = [
             Separate <strong>gateway API keys</strong> issued by administrators use their own credit pool.
           </li>
           <li>
+            <strong>Budget warnings</strong> — a notification appears once when you pass{" "}
+            <strong>70%</strong> of your monthly budget, and again at <strong>90%</strong>. Each level is shown
+            once per month, and the figure counts spend already committed to requests still running, so it matches
+            the number in this menu. A single expensive request that jumps straight past both lines shows only the
+            90% warning. If an administrator raises your plan or resets your usage, the warnings can appear again
+            later in the same month. Once you reach 100% requests are refused (HTTP 402) until the next month or a
+            plan change.
+          </li>
+          <li>
             <strong>Theme</strong> — follows Settings; applied across the app.
           </li>
           <li>

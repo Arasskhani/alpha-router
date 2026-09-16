@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
+import { presentBudgetNotice } from "../lib/budgetNotice";
 import { clearStoredImageGenerationForCurrentUser } from "../lib/chatStorage";
 import { formatSessionDuration, getMyActivityPath, getSessionUser, logout } from "../lib/session";
 import { MY_USAGE_AND_ACTIVITY_LABEL } from "../lib/usageActivityLabel";
@@ -14,6 +15,7 @@ type UserBudget = {
   used_usd: number;
   reserved_usd?: number;
   remaining_usd: number | null;
+  budget_notice?: unknown;
 };
 
 function formatBudgetUsd(value: number): string {
@@ -85,7 +87,13 @@ export default function UserProfile({ theme, onThemeChange }: Props) {
     if (!open) return;
     setBudgetLoading(true);
     api<UserBudget>("/api/user/budget")
-      .then(setBudget)
+      .then((data) => {
+        setBudget(data);
+        // The same response already says whether a warning is outstanding;
+        // showing it here costs nothing and catches the user who opens their
+        // budget without having sent a message this session.
+        presentBudgetNotice(data?.budget_notice);
+      })
       .catch(() => setBudget(null))
       .finally(() => setBudgetLoading(false));
   }, [open]);

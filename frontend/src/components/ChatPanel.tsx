@@ -115,6 +115,7 @@ import {
   notifyReplyReady,
   REPLY_READY_FOCUS_EVENT,
 } from "../lib/replyReadyNotify";
+import { checkBudgetNotice, presentBudgetNotice } from "../lib/budgetNotice";
 import { getSessionUser, isPlatformFeatureEnabled, isSessionActive, logout } from "../lib/session";
 import { copyFreshChatTools, anyChatToolEnabled, isAllowedVideoDuration, toolsToApiPayload, type ChatToolsState } from "../lib/chatTools";
 import MediaViewerModal from "./MediaViewerModal";
@@ -1691,6 +1692,13 @@ export default function ChatPanel({
     }
     window.addEventListener(BROWSER_EVENT_NAMES.userPrefsSaved, onPrefsSaved);
     return () => window.removeEventListener(BROWSER_EVENT_NAMES.userPrefsSaved, onPrefsSaved);
+  }, []);
+
+  // A warning that was raised while the user was away — or whose trailing
+  // frame never arrived because the tab was closed mid-stream — is still
+  // outstanding on the server and is shown on the next load.
+  useEffect(() => {
+    void checkBudgetNotice();
   }, []);
 
   useEffect(() => {
@@ -3728,6 +3736,10 @@ export default function ChatPanel({
               : json.error?.message || JSON.stringify(json.error);
           throw new Error(errMsg);
         }
+        // Arrives in the same trailing frame as request_log_id, so a warning
+        // reaches the user on the turn that crossed the line rather than the
+        // next time they open their profile.
+        presentBudgetNotice(json?.alpha_router?.budget_notice);
         const metaLogId = json?.alpha_router?.request_log_id;
         if (typeof metaLogId === "number" && Number.isFinite(metaLogId)) {
           requestLogId = metaLogId;
@@ -5096,6 +5108,11 @@ export default function ChatPanel({
     } finally {
       delete abortControllersRef.current[sessionId];
       setSessionStreaming(sessionId, false);
+      // Image, video and speech turns never produce a chat metadata frame, so
+      // the stream alone would leave a media-only user unwarned. The server
+      // answers with nothing when there is nothing to say, and the module
+      // de-duplicates against whatever the frame already showed.
+      void checkBudgetNotice();
     }
   }
 

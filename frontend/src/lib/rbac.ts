@@ -47,6 +47,20 @@ const SUPER_ADMIN = "super_admin";
 const LEGACY_READ_ONLY_ADMIN = "read_only_administrator";
 const USER = "user";
 const LEGACY_ADMIN = "admin";
+const READ_ONLY_SUPER_ADMIN = "read_only_super_admin";
+
+/**
+ * Roles that answer for the whole platform rather than naming one menu.
+ *
+ * These two sets are the mirror of the backend's GLOBAL_FULL_ADMIN_SLUGS and
+ * GLOBAL_READ_ONLY_SLUGS. Keeping them as sets rather than inline comparisons
+ * matters here: accessibleMenuKeys gives an unrecognised slug *zero* menus, so
+ * a global role this file has not been told about disappears from the UI
+ * entirely rather than failing loudly.
+ */
+const GLOBAL_WRITE_ROLES = new Set([SUPER_ADMIN, FULL_ADMIN, LEGACY_ADMIN]);
+const GLOBAL_READ_ONLY_ROLES = new Set([READ_ONLY_SUPER_ADMIN, READ_ONLY_FULL_ADMIN, LEGACY_READ_ONLY_ADMIN]);
+const GLOBAL_ROLES = new Set([...GLOBAL_WRITE_ROLES, ...GLOBAL_READ_ONLY_ROLES]);
 const AGENT_PLATFORM_ROLES = new Set([
   "agents_administrator",
   "agent_designer",
@@ -80,7 +94,7 @@ export function userHasSuperAdminAccess(
   fallbackRole?: string | null,
 ): boolean {
   const slugs = (roles?.length ? roles : fallbackRole ? [fallbackRole] : []).map(normalizeRole);
-  return slugs.some((s) => s === SUPER_ADMIN || s === FULL_ADMIN);
+  return slugs.some((s) => GLOBAL_WRITE_ROLES.has(s));
 }
 
 const MENU_PATH_PREFIXES: Record<MenuKey, string[]> = {
@@ -173,7 +187,7 @@ export function isAdminUserFeaturePath(pathname: string): boolean {
 
 function accessibleMenuKeys(role: string | undefined | null): MenuKey[] | null {
   const slug = normalizeRole(role);
-  if (slug === FULL_ADMIN || slug === READ_ONLY_FULL_ADMIN || slug === SUPER_ADMIN) return null;
+  if (GLOBAL_ROLES.has(slug)) return null;
   if (AGENT_PLATFORM_ROLES.has(slug)) return ["agents"];
   const match = slug.match(
     /^([a-z_]+)_(full|read_only)_administrator$/,
@@ -292,7 +306,10 @@ function canWriteMenu(role: string | undefined | null, menu: MenuKey): boolean {
   if (!isAdminPanelRole(slug)) return false;
   if (USER_APP_MENUS.includes(menu)) return true;
   if (!canAccessMenu(slug, menu)) return false;
-  if (slug === READ_ONLY_FULL_ADMIN || slug === LEGACY_READ_ONLY_ADMIN) return false;
+  // Before the suffix test below, which only catches slugs named after a menu:
+  // a global read-only slug named after the role would slip past it and be
+  // granted write access.
+  if (GLOBAL_READ_ONLY_ROLES.has(slug)) return false;
   if (slug.endsWith("_read_only_administrator")) return false;
   return true;
 }

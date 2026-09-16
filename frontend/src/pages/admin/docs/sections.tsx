@@ -2563,18 +2563,56 @@ export const docSections: DocSection[] = [
   // ── Legal ─────────────────────────────────────────────────────────────────
   {
     id: "copyright",
-    title: "Copyright",
+    title: "Copyright & licensing",
     group: "Legal",
     content: (
       <>
-        <h2>Copyright</h2>
-        <p>Copyright © 2026 Majid Arasskhani.</p>
+        <h2>Copyright &amp; licensing</h2>
+        <p>Copyright © 2026 {TRADEMARK_OWNER}.</p>
+
+        <h3>The source code</h3>
         <p>
-          The {PRODUCT_NAME_MARKED} source code is licensed under the MIT License. Use, modification, and
-          redistribution are permitted under that license. The name and logos are not included; see{" "}
+          {PRODUCT_NAME_MARKED} is licensed under the MIT License; the full text ships as <code>LICENSE</code> in the
+          repository and is the authoritative version. Use, modification and redistribution are permitted, commercially
+          included. If you redistribute {PRODUCT_NAME_MARKED} — modified or not, as source or inside an image — keep the
+          copyright notice and the licence text with it. That is the whole obligation.
+        </p>
+        <p>
+          The name and the logos are not part of it. They are licensed separately; see{" "}
           <a href="#trademarks">Trademarks</a>.
         </p>
-        <p>Contact: Majid.Arasskhani@gmail.com</p>
+
+        <h3>Third-party components</h3>
+        <p>
+          A deployment runs software {PRODUCT_NAME_MARKED} neither owns nor relicenses: PostgreSQL, Redis, Qdrant,
+          SeaweedFS, nginx, ClamAV, and the Python and JavaScript dependencies declared in <code>requirements.txt</code>{" "}
+          and <code>package.json</code>. Each keeps its own licence and some are copyleft — ClamAV is GPL.
+        </p>
+        <p>
+          They run as their own processes and containers rather than being linked into {PRODUCT_NAME_MARKED}, so
+          operating the stack puts no licence obligation on code you write against it. Redistributing a modified build
+          of one of those components is governed by that component&apos;s licence, not by this one.
+        </p>
+
+        <h3>Your data, and what the models produce</h3>
+        <p>
+          Prompts, uploaded documents, and the images, video and audio generated through the platform belong to your
+          organization. {PRODUCT_NAME_MARKED} claims nothing in them and sends nothing anywhere except to the providers
+          you configure.
+        </p>
+        <p>
+          What a given model may be asked to produce, and how its output may be used, is governed by your agreement
+          with that provider. {PRODUCT_NAME_MARKED} routes the request and records the cost; it does not grant those
+          rights and cannot widen them.
+        </p>
+
+        <p>
+          Contact: <a href="mailto:Majid.Arasskhani@gmail.com">Majid.Arasskhani@gmail.com</a>
+        </p>
+        <Note>
+          This section describes the licence in plain terms so an operator knows what to check. It is a summary, not
+          legal advice, and <code>LICENSE</code> and <code>TRADEMARK.md</code> govern where they differ.
+        </Note>
       </>
     ),
   },
@@ -2586,13 +2624,30 @@ export const docSections: DocSection[] = [
       <>
         <h2>Trademarks</h2>
         <p>
-          {PRODUCT_NAME_MARKED}, Alpha Router, AlphaRouter, and the product logos are trademarks of{" "}
-          {TRADEMARK_OWNER}.
+          {PRODUCT_NAME_MARKED}, Alpha Router, AlphaRouter and the product logos (the <strong>Marks</strong>) are
+          trademarks of {TRADEMARK_OWNER}. The MIT License covers the source code only and grants no right to the
+          Marks. <code>TRADEMARK.md</code> in the repository is the policy of record; this is the short version.
         </p>
+        <h3>Running it, and talking about it</h3>
         <p>
-          The MIT License covers the source code only. It does not grant permission to use these
-          marks for a fork, a competing product, or any use that implies an official relationship.
+          Deploying {PRODUCT_NAME_MARKED} inside your organization needs no permission and no branding change. You may
+          say you run it, that a tool is compatible with it, or that something is based on it, and you may name it in
+          documentation, reviews and academic work — as long as the statement is accurate and does not imply the
+          project endorses you.
         </p>
+        <h3>Forking it</h3>
+        <p>
+          A fork you publish has to carry its own name and its own visual identity. What you may not do is ship a
+          modified build that still looks like the official product, name a distribution, hosted service or competing
+          product with one of the Marks or anything confusingly similar, or register a domain, handle, package or
+          organization that suggests an official project. Removing the Marks in order to pass a modified build off as
+          the official release is the same problem from the other direction.
+        </p>
+        <Note>
+          Rebranding a fork is a licensing requirement, not a courtesy — and it is also what keeps your users from
+          filing your bugs against this project. For an official partnership or an approved distribution, ask:{" "}
+          <a href="mailto:Majid.Arasskhani@gmail.com">Majid.Arasskhani@gmail.com</a>.
+        </Note>
       </>
     ),
   },

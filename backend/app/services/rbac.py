@@ -51,6 +51,7 @@ READ_ONLY_FULL_ADMIN_SLUG = "read_only_full_administrator"
 LEGACY_READ_ONLY_ADMIN_SLUG = "read_only_administrator"
 USER_SLUG = "user"
 SUPER_ADMIN_SLUG = "super_admin"
+READ_ONLY_SUPER_ADMIN_SLUG = "read_only_super_admin"
 API_KEY_ADMIN_SLUG = "api_keys_full_administrator"
 DASHBOARD_VIEW_SLUG = "dashboard_read_only_administrator"
 REPORTS_ACCESS_SLUG = "reports_full_administrator"
@@ -136,6 +137,22 @@ LEGACY_SUPER_ADMIN_SLUGS: frozenset[str] = frozenset(
 )
 
 GLOBAL_FULL_ADMIN_SLUGS: frozenset[str] = frozenset({SUPER_ADMIN_SLUG, FULL_ADMIN_SLUG, LEGACY_ADMIN_SLUG})
+
+#: Sees every admin menu, writes to none of them - the read-only counterpart of
+#: GLOBAL_FULL_ADMIN_SLUGS. Read Only Super Admin is the assignable one; the two
+#: others are retired slugs that predate it and still appear on old assignments.
+#:
+#: Every global-read-only decision in this module goes through this set rather
+#: than comparing slugs inline. The write predicate below ends with
+#: ``not slug.endswith("_read_only_administrator")``, which a slug named for the
+#: role rather than the menu does not match - so a new global read-only slug
+#: that missed one of these checks would silently be granted write access.
+GLOBAL_READ_ONLY_SLUGS: frozenset[str] = frozenset(
+    {READ_ONLY_SUPER_ADMIN_SLUG, READ_ONLY_FULL_ADMIN_SLUG, LEGACY_READ_ONLY_ADMIN_SLUG}
+)
+
+#: Platform-wide roles: they answer "all menus" rather than naming one.
+GLOBAL_ROLE_SLUGS: frozenset[str] = GLOBAL_FULL_ADMIN_SLUGS | GLOBAL_READ_ONLY_SLUGS
 
 MENU_LABELS: dict[MenuKey, str] = {m[0]: m[1] for m in MENU_DEFINITIONS}
 MENU_GROUP_KEYS: dict[MenuKey, CategoryKey] = {m[0]: m[2] for m in MENU_DEFINITIONS}
@@ -259,6 +276,14 @@ def _build_role_catalog() -> tuple[RoleDefinition, ...]:
             category=ALL_SECTIONS_CATEGORY,
             menu_key=None,
             read_only=False,
+        ),
+        RoleDefinition(
+            slug=READ_ONLY_SUPER_ADMIN_SLUG,
+            name="Read Only Super Admin",
+            description="Sees every admin menu and the whole platform, and cannot change any of it.",
+            category=ALL_SECTIONS_CATEGORY,
+            menu_key=None,
+            read_only=True,
         ),
         RoleDefinition(
             slug=API_KEY_ADMIN_SLUG,
@@ -608,7 +633,7 @@ def is_admin_panel_role(role: str | None) -> bool:
     slug = normalize_role_slug(role)
     if slug in REMOVED_ASSIGNABLE_ROLE_SLUGS - {FULL_ADMIN_SLUG, READ_ONLY_FULL_ADMIN_SLUG}:
         return False
-    if slug in (FULL_ADMIN_SLUG, READ_ONLY_FULL_ADMIN_SLUG):
+    if slug in GLOBAL_ROLE_SLUGS:
         return True
     definition = get_role_definition(slug)
     return definition is not None and not definition.is_user_panel
@@ -620,7 +645,7 @@ def is_full_administrator(role: str | None) -> bool:
 
 def is_read_only_role(role: str | None) -> bool:
     slug = normalize_role_slug(role)
-    if slug in (READ_ONLY_FULL_ADMIN_SLUG, LEGACY_READ_ONLY_ADMIN_SLUG):
+    if slug in GLOBAL_READ_ONLY_SLUGS:
         return True
     definition = get_role_definition(role)
     return bool(definition and definition.read_only)
@@ -629,7 +654,7 @@ def is_read_only_role(role: str | None) -> bool:
 def accessible_menu_keys(role: str | None) -> frozenset[MenuKey] | None:
     """Return None when the role can access all admin menus."""
     slug = normalize_role_slug(role)
-    if slug in (SUPER_ADMIN_SLUG, FULL_ADMIN_SLUG, READ_ONLY_FULL_ADMIN_SLUG):
+    if slug in GLOBAL_ROLE_SLUGS:
         return None
     definition = get_role_definition(slug)
     if not definition or definition.is_user_panel or not definition.menu_key:
@@ -655,7 +680,7 @@ def can_write_menu(role: str | None, menu: MenuKey | None = None) -> bool:
             return True
         if not can_access_menu(role, menu):
             return False
-    if slug in (READ_ONLY_FULL_ADMIN_SLUG, LEGACY_READ_ONLY_ADMIN_SLUG):
+    if slug in GLOBAL_READ_ONLY_SLUGS:
         return False
     return not slug.endswith("_read_only_administrator")
 
@@ -680,7 +705,10 @@ def _role_privilege_rank(slug: str) -> int:
     slug = normalize_role_slug(slug)
     if slug == USER_SLUG:
         return 0
-    if slug == READ_ONLY_FULL_ADMIN_SLUG:
+    if slug in GLOBAL_READ_ONLY_SLUGS:
+        # Ranked below every write-capable role so primary_role_slug reports it:
+        # a user who holds both this and Super Admin is read-only in effect,
+        # because user_can_write_menu needs every covering role to allow a write.
         return 10
     if is_read_only_role(slug):
         return 20
@@ -722,7 +750,7 @@ def effective_accessible_menu_keys(slugs: list[str]) -> frozenset[MenuKey] | Non
 
     merged: set[MenuKey] = set()
     for slug in normalized:
-        if slug in (SUPER_ADMIN_SLUG, FULL_ADMIN_SLUG, READ_ONLY_FULL_ADMIN_SLUG):
+        if slug in GLOBAL_ROLE_SLUGS:
             continue
         allowed = accessible_menu_keys(slug)
         if allowed is not None:

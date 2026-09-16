@@ -1,6 +1,7 @@
 """Tests for RBAC role definitions and permission checks."""
 
 from app.services.rbac import (
+    ALL_SECTIONS_CATEGORY,
     AGENT_AUDITOR_SLUG,
     AGENT_DESIGNER_SLUG,
     AGENT_OPERATIONS_ADMIN_SLUG,
@@ -17,10 +18,15 @@ from app.services.rbac import (
     MENU_GROUP_KEYS,
     MENUS_BY_CATEGORY,
     READ_ONLY_FULL_ADMIN_SLUG,
+    READ_ONLY_SUPER_ADMIN_SLUG,
     REPORTS_ACCESS_SLUG,
     SUPER_ADMIN_SLUG,
     TOOL_ADMIN_SLUG,
     USER_SLUG,
+    MENU_LABELS,
+    USER_APP_MENUS,
+    accessible_menu_keys,
+    is_valid_role_slug,
     actor_may_assign_roles,
     agent_permissions_for_slugs,
     bootstrap_super_admin_role_slugs,
@@ -37,6 +43,7 @@ from app.services.rbac import (
     session_payload_for_slugs,
     user_can_access_menu,
     user_can_write_menu,
+    expand_legacy_role_slug,
     user_has_agent_permission,
     user_has_super_admin_access,
     user_has_super_read_only_access,
@@ -73,6 +80,7 @@ def test_role_catalog_keeps_existing_roles_and_adds_scoped_views():
     assert set(by_slug) == {
         USER_SLUG,
         SUPER_ADMIN_SLUG,
+        READ_ONLY_SUPER_ADMIN_SLUG,
         API_KEY_ADMIN_SLUG,
         DASHBOARD_VIEW_SLUG,
         REPORTS_ACCESS_SLUG,
@@ -254,3 +262,102 @@ def test_agent_permission_union_is_composable():
     assert "agent.edit" in permissions
     assert "knowledge.publish" in permissions
     assert "tool.manage" not in permissions
+
+
+class TestReadOnlySuperAdmin:
+    """Sees everything Super Admin sees; changes none of it.
+
+    The codebase already carried a retired platform-wide read-only role
+    (``read_only_full_administrator``) that every guard understood but nothing
+    could assign. This is that capability, made assignable under the name it is
+    asked for, with the legacy slugs kept working beside it.
+    """
+
+    SLUG = READ_ONLY_SUPER_ADMIN_SLUG
+
+    def _admin_menus(self):
+        return [m for m in MENU_LABELS if m not in USER_APP_MENUS]
+
+    def test_it_is_in_the_catalog_and_assignable(self):
+        by_slug = {r["slug"]: r for r in list_roles()}
+        role = by_slug[self.SLUG]
+        assert role["name"] == "Read Only Super Admin"
+        assert role["read_only"] is True
+        assert role["menu_key"] is None
+        assert role["category"] == ALL_SECTIONS_CATEGORY
+        assert is_valid_role_slug(self.SLUG)
+
+    def test_it_sees_every_admin_menu(self):
+        assert accessible_menu_keys(self.SLUG) is None
+        assert effective_accessible_menu_keys([self.SLUG]) is None
+        for menu in MENU_LABELS:
+            assert can_access_menu(self.SLUG, menu), menu
+
+    def test_it_writes_to_none_of_them(self):
+        """The one that matters. can_write_menu ends with a suffix test on
+        '_read_only_administrator', which this slug does not match - so a missed
+        check here reads as full write access, not as no access."""
+        for menu in self._admin_menus():
+            assert not can_write_menu(self.SLUG, menu), menu
+            assert not user_can_write_menu([self.SLUG], menu), menu
+        assert not user_can_write_menu([self.SLUG])
+
+    def test_chat_and_media_stay_usable(self):
+        """Read-only means it changes no administration, not that the person
+        cannot use the product."""
+        for menu in USER_APP_MENUS:
+            assert can_write_menu(self.SLUG, menu), menu
+
+    def test_it_holds_no_agent_permissions(self):
+        assert agent_permissions_for_slugs([self.SLUG]) == frozenset()
+        for permission in ("agent.publish", "knowledge.purge", "governance.retention.run"):
+            assert not user_has_agent_permission([self.SLUG], permission)
+
+    def test_it_is_an_admin_but_not_a_super_admin(self):
+        assert is_admin_panel_role(self.SLUG)
+        assert is_read_only_role(self.SLUG)
+        assert user_is_read_only_admin([self.SLUG])
+        assert user_has_super_read_only_access([self.SLUG])
+        assert not user_has_super_admin_access([self.SLUG])
+        assert not is_full_administrator(self.SLUG)
+
+    def test_holding_it_alongside_super_admin_vetoes_writes(self):
+        """A user given both is read-only in effect: user_can_write_menu needs
+        every role covering the menu to allow the write."""
+        both = [SUPER_ADMIN_SLUG, self.SLUG]
+        assert effective_accessible_menu_keys(both) is None
+        for menu in self._admin_menus():
+            assert not user_can_write_menu(both, menu), menu
+        assert primary_role_slug(both) == self.SLUG
+
+    def test_the_session_payload_reports_it(self):
+        payload = session_payload_for_slugs([self.SLUG])
+        assert payload["role"] == self.SLUG
+        assert payload["role_name"] == "Read Only Super Admin"
+        assert payload["read_only"] is True
+        assert payload["is_admin_panel"] is True
+        assert payload["menus"] is None
+
+    def test_granting_it_requires_super_admin(self):
+        """It grants sight of every menu - API keys, security settings, the
+        whole audit trail - so handing it out is a platform-wide decision."""
+        assert actor_may_assign_roles([SUPER_ADMIN_SLUG], [self.SLUG])
+        assert not actor_may_assign_roles([API_KEY_ADMIN_SLUG], [self.SLUG])
+        assert not actor_may_assign_roles([USER_SLUG], [self.SLUG])
+        # and revoking it, in the other direction
+        assert not actor_may_assign_roles([API_KEY_ADMIN_SLUG], [USER_SLUG], [self.SLUG])
+        assert actor_may_assign_roles([SUPER_ADMIN_SLUG], [USER_SLUG], [self.SLUG])
+
+    def test_the_retired_global_read_only_slugs_behave_the_same(self):
+        for legacy in (READ_ONLY_FULL_ADMIN_SLUG, "read_only_administrator"):
+            assert accessible_menu_keys(legacy) is None, legacy
+            assert not user_can_write_menu([legacy], "users"), legacy
+            assert user_is_read_only_admin([legacy]), legacy
+
+    def test_the_legacy_remap_no_longer_escalates(self):
+        """It used to return super_admin: a read-only administrator came out of
+        the migration able to change everything, because there was no
+        platform-wide read-only role to migrate them into."""
+        assert expand_legacy_role_slug(READ_ONLY_FULL_ADMIN_SLUG) == [self.SLUG]
+        assert expand_legacy_role_slug("read_only_administrator") == [self.SLUG]
+        assert expand_legacy_role_slug(FULL_ADMIN_SLUG) == [SUPER_ADMIN_SLUG]

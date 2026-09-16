@@ -20,6 +20,7 @@ from app.api import (
     admin_agent_governance,
     admin_agents,
     admin_knowledge,
+    admin_logs,
     admin_memory,
     admin_security,
     agents,
@@ -760,6 +761,7 @@ if settings.agents_platform_enabled:
     app.include_router(admin_agent_governance.router)
     app.include_router(admin_agents.router)
     app.include_router(admin_knowledge.router)
+app.include_router(admin_logs.router)
 app.include_router(admin_memory.router)
 if settings.agents_platform_enabled:
     app.include_router(agents.router)

@@ -82,3 +82,7 @@ backups/
 _phase*/
 Claude outputs/
 *.bundle
+# Throwaway self-signed cert/key written while testing the edge container.
+# A pair once reached a commit this way (94e273c, removed in 068776a) and
+# a private key cannot be un-published once it is pushed.
+.tmp-edge-test/

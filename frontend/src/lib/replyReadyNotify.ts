@@ -1,5 +1,7 @@
 /** Lightweight reply-ready notifications when the user is away from that chat/tab. */
 
+import { showToast } from "./toastHost";
+
 export const REPLY_READY_FOCUS_EVENT = "alpha-router:reply-ready-focus";
 
 const DEDUPE_TTL_MS = 2000;
@@ -18,8 +20,6 @@ type NotifyArgs = {
 
 const recentKeys = new Map<string, number>();
 let audioCtx: AudioContext | null = null;
-let toastHost: HTMLDivElement | null = null;
-let toastHideTimer: number | null = null;
 
 function pruneDedupe(now: number) {
   for (const [key, at] of recentKeys) {
@@ -88,16 +88,6 @@ function playLocalBeep() {
   }
 }
 
-function ensureToastHost(): HTMLDivElement {
-  if (toastHost && document.body.contains(toastHost)) return toastHost;
-  const host = document.createElement("div");
-  host.className = "reply-ready-toast-host";
-  host.setAttribute("aria-live", "polite");
-  document.body.appendChild(host);
-  toastHost = host;
-  return host;
-}
-
 function dispatchFocusSession(sessionId: string) {
   window.dispatchEvent(
     new CustomEvent(REPLY_READY_FOCUS_EVENT, { detail: { sessionId } }),
@@ -110,26 +100,13 @@ function dispatchFocusSession(sessionId: string) {
 }
 
 function showInAppToast(sessionId: string, title: string) {
-  const host = ensureToastHost();
-  host.replaceChildren();
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "reply-ready-toast";
-  btn.innerHTML =
-    `<span class="reply-ready-toast__eyebrow">Chat ready</span>` +
-    `<span class="reply-ready-toast__title"></span>`;
-  const titleEl = btn.querySelector(".reply-ready-toast__title");
-  if (titleEl) titleEl.textContent = title;
-  btn.addEventListener("click", () => {
-    dispatchFocusSession(sessionId);
-    host.replaceChildren();
+  showToast({
+    eyebrow: "Chat ready",
+    title,
+    dedupeKey: `reply-ready::${sessionId}`,
+    ttlMs: TOAST_TTL_MS,
+    onClick: () => dispatchFocusSession(sessionId),
   });
-  host.appendChild(btn);
-  if (toastHideTimer != null) window.clearTimeout(toastHideTimer);
-  toastHideTimer = window.setTimeout(() => {
-    if (toastHost === host) host.replaceChildren();
-    toastHideTimer = null;
-  }, TOAST_TTL_MS);
 }
 
 function showOsNotification(sessionId: string, title: string) {

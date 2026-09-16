@@ -12965,9 +12965,12 @@ body.login-route #root {
 }
 
 /* Reply-ready in-app toast (away from that chat, tab still visible) */
-.reply-ready-toast-host {
+/* Shared toast host. Was reply-ready's private furniture; a second kind of
+   message (budget warnings) made one shared, queueing host the only sane
+   arrangement. Logical inset so it lands on the correct side under RTL. */
+.app-toast-host {
   position: fixed;
-  right: 1rem;
+  inset-inline-end: 1rem;
   bottom: 1rem;
   z-index: 12000;
   display: flex;
@@ -12977,7 +12980,7 @@ body.login-route #root {
   pointer-events: none;
 }
 
-.reply-ready-toast {
+.app-toast {
   pointer-events: auto;
   display: flex;
   flex-direction: column;
@@ -12987,19 +12990,60 @@ body.login-route #root {
   padding: 0.7rem 0.9rem;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: var(--panel, var(--bg));
+  background: var(--surface);
   color: var(--text);
   box-shadow: 0 10px 28px color-mix(in srgb, var(--text) 14%, transparent);
   font: inherit;
   text-align: start;
+}
+
+button.app-toast {
   cursor: pointer;
 }
 
-.reply-ready-toast:hover {
+button.app-toast:hover {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
 
-.reply-ready-toast__eyebrow {
+/* Tone is carried by the border and the eyebrow rather than a filled
+   background, and the values are the same amber/red pair .alert-warning and
+   .alert-error already use — including their [data-scheme="dark"] override,
+   because #f59e0b as text on a light surface does not carry. There is no
+   --warn or --danger custom property in this stylesheet; inventing one here
+   would have been a declaration that silently drops. */
+.app-toast--warning {
+  border-color: #f59e0b;
+}
+
+.app-toast--warning .app-toast__eyebrow {
+  color: #92400e;
+}
+
+.app-toast--danger {
+  border-color: #ef4444;
+}
+
+.app-toast--danger .app-toast__eyebrow {
+  color: #991b1b;
+}
+
+[data-scheme="dark"] .app-toast--warning {
+  border-color: color-mix(in srgb, #f59e0b 55%, var(--border));
+}
+
+[data-scheme="dark"] .app-toast--warning .app-toast__eyebrow {
+  color: #fbbf24;
+}
+
+[data-scheme="dark"] .app-toast--danger {
+  border-color: color-mix(in srgb, #ef4444 55%, var(--border));
+}
+
+[data-scheme="dark"] .app-toast--danger .app-toast__eyebrow {
+  color: #fca5a5;
+}
+
+.app-toast__eyebrow {
   font-size: 0.72rem;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -13007,14 +13051,18 @@ body.login-route #root {
   text-transform: uppercase;
 }
 
-.reply-ready-toast__title {
+.app-toast__title {
   font-size: 0.9rem;
   font-weight: 600;
   line-height: 1.3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.app-toast__detail {
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.35;
 }
 
 .settings-row__trail input[type="checkbox"] {

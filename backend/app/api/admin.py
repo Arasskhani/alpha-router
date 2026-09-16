@@ -3530,6 +3530,11 @@ async def get_storage_overview(db: AsyncSession = Depends(get_db), _: User = Dep
     # Raw provider responses stored behind API Logs: the third thing this page
     # governs, alongside media files and chat history.
     stats["api_logs"] = await get_raw_payload_retention(db)
+
+    from app.services.admin_log_retention_service import get_admin_log_retention
+
+    # The administrative audit trail: the fourth thing this page governs.
+    stats["admin_logs"] = await get_admin_log_retention(db)
     quota_gb = await get_user_media_quota_gb(db)
     stats["settings"]["user_media_quota_gb"] = quota_gb
     stats["settings"]["user_media_quota_bytes"] = await get_user_media_quota_bytes(db)
@@ -3655,6 +3660,54 @@ async def patch_api_log_retention_settings(
     )
     await db.commit()
     return {"ok": True, "api_logs": await get_raw_payload_retention(db), "purged": purged}
+
+
+class AdminLogRetentionSettingsPatch(BaseModel):
+    detail_retention_days: int | None = Field(default=None, ge=7, le=3650)
+    event_retention_days: int | None = Field(default=None, ge=7, le=3650)
+
+
+@router.patch("/storage/admin-log-settings")
+async def patch_admin_log_retention_settings(
+    body: AdminLogRetentionSettingsPatch,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_storage_write),
+):
+    """How long administrative audit events keep their detail, and themselves.
+
+    Unlike the raw-payload window next door, saving does NOT purge immediately.
+    Shortening a window here destroys audit evidence, and doing that as a side
+    effect of pressing Save gives the operator no chance to notice they typed
+    9 instead of 90. The nightly job applies it; the counts shown on the page
+    say what the next run will touch.
+
+    Changing the retention of the audit trail is itself audited - and because
+    the row is written in this request's transaction, it is kept under the new
+    window rather than the old one.
+    """
+    from app.services.admin_log_retention_service import set_admin_log_retention
+    from app.services.client_ip import resolve_client_ip
+    from app.services.security_audit import log_security_event
+
+    saved = await set_admin_log_retention(
+        db,
+        detail_retention_days=body.detail_retention_days,
+        event_retention_days=body.event_retention_days,
+    )
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=resolve_client_ip(request),
+        action="admin_log_retention_changed",
+        resource_type="security_audit",
+        detail={
+            "detail_retention_days": saved["detail_retention_days"],
+            "event_retention_days": saved["event_retention_days"],
+        },
+    )
+    await db.commit()
+    return {"ok": True, "admin_logs": saved}
 
 
 @router.patch("/storage/chat-settings")

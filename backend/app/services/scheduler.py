@@ -247,6 +247,49 @@ async def job_chat_retention_cleanup():
             logger.exception("Chat retention cleanup failed")
 
 
+async def job_admin_log_retention():
+    """Apply the administrative audit trail's two retention windows.
+
+    The run records itself in the governance audit chain, which this job never
+    prunes: a retention pass that destroys evidence must leave evidence that it
+    ran, somewhere it cannot reach.
+    """
+    async with AsyncSessionLocal() as db:
+        from app.services.admin_log_retention_service import purge_expired_admin_logs
+
+        try:
+            result = await purge_expired_admin_logs(db)
+            if result["details_redacted"] or result["events_deleted"]:
+                logger.info(
+                    "Admin log retention: %s details redacted (>%sd), %s events deleted (>%sd)",
+                    result["details_redacted"],
+                    result["detail_retention_days"],
+                    result["events_deleted"],
+                    result["event_retention_days"],
+                )
+                try:
+                    from app.services.agent_governance_service import append_governance_audit_event
+
+                    await append_governance_audit_event(
+                        db,
+                        event_type="governance.retention.admin_logs.purged",
+                        resource_type="security_audit",
+                        resource_id=None,
+                        actor_user_id=None,
+                        outcome="success",
+                        payload=dict(result),
+                    )
+                    await db.commit()
+                except Exception:
+                    # The purge already committed; failing to record it must not
+                    # roll anything back or hide the run from the log above.
+                    await db.rollback()
+                    logger.exception("Admin log retention ran but could not be recorded in the audit chain")
+        except Exception:
+            await db.rollback()
+            logger.exception("Admin log retention run failed")
+
+
 async def job_raw_payload_retention():
     """Clear provider payloads past the window set on the API Logs page."""
     async with AsyncSessionLocal() as db:
@@ -402,6 +445,14 @@ def start_scheduler():
         minute=10,
         timezone=get_server_timezone(),
         id="api_logs_raw_payload_retention",
+    )
+    scheduler.add_job(
+        job_admin_log_retention,
+        "cron",
+        hour=4,
+        minute=25,
+        timezone=get_server_timezone(),
+        id="admin_log_retention",
     )
     scheduler.add_job(
         job_user_memory_maintenance,

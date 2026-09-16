@@ -376,8 +376,16 @@ async def deactivate_tls(
 @router.post("/tls/verify")
 async def verify_tls_listener(
     body: TlsVerifyIn | None = None,
-    _: User = Depends(require_super_admin),
+    _: User = Depends(require_security_settings),
 ):
+    """Probe the HTTPS listener. POST only because it carries a port in the body.
+
+    This changes nothing - no database session, no audit event, just an outbound
+    request to the health URL - so it is gated like the other reads on this
+    router rather than like the certificate operations around it. That also lets
+    Read Only Super Admin confirm HTTPS is up, which is a question about state,
+    not a change to it.
+    """
     port = body.https_port if body and body.https_port else 443
     try:
         validate_https_port(int(port))

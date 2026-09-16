@@ -19,7 +19,7 @@ from app.config import get_settings
 from app.core.security import decode_access_token
 from app.database import AsyncSessionLocal
 from app.models.user import User
-from app.services.rbac import user_has_super_admin_access
+from app.services.rbac import user_has_super_admin_access, user_has_super_read_only_access
 from app.services.user_role_service import get_user_role_slugs
 from app.services.observability import increment
 
@@ -55,7 +55,12 @@ def _extract_token(request: Request) -> str | None:
 
 
 async def request_has_super_admin(request: Request) -> bool:
-    """Resolve the request's user and return True only for an active Super Admin."""
+    """Resolve the request's user and return True for an active platform-wide admin.
+
+    Read Only Super Admin counts: the OpenAPI reference is documentation, and a
+    role defined as "sees everything Super Admin sees" that cannot open the API
+    docs would be missing a read, not a write.
+    """
     token = _extract_token(request)
     if not token:
         return False
@@ -73,7 +78,7 @@ async def request_has_super_admin(request: Request) -> bool:
         if jwt_ver < int(user.token_version or 0):
             return False
         slugs = await get_user_role_slugs(db, user.id)
-        return user_has_super_admin_access(slugs)
+        return user_has_super_admin_access(slugs) or user_has_super_read_only_access(slugs)
 
 
 class OpenApiDocsGuardMiddleware(BaseHTTPMiddleware):

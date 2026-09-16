@@ -161,19 +161,28 @@ async def _build_users(factory):
             auth_provider="local",
             is_active=True,
         )
-        db.add_all([super_user, regular])
+        read_only = User(
+            username="read-only-super",
+            email="ro@alpha-router.local",
+            display_name="Read Only Super",
+            hashed_password="x",
+            auth_provider="local",
+            is_active=True,
+        )
+        db.add_all([super_user, regular, read_only])
         await db.flush()
         db.add(UserRoleAssignment(user_id=super_user.id, role_slug="super_admin"))
         db.add(UserRoleAssignment(user_id=regular.id, role_slug="user"))
+        db.add(UserRoleAssignment(user_id=read_only.id, role_slug="read_only_super_admin"))
         await db.commit()
-        return super_user.username, regular.username
+        return super_user.username, regular.username, read_only.username
 
 
 async def test_request_has_super_admin_accepts_super_admin_cookie():
     engine, factory = _setup_db()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    super_username, _ = await _build_users(factory)
+    super_username, _, _ = await _build_users(factory)
     token = create_access_token(super_username, "super_admin")
     request = _cookie_request(token)
     with patch("app.services.docs_guard.AsyncSessionLocal", factory):
@@ -185,7 +194,7 @@ async def test_request_has_super_admin_rejects_regular_user_cookie():
     engine, factory = _setup_db()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    _, regular_username = await _build_users(factory)
+    _, regular_username, _ = await _build_users(factory)
     token = create_access_token(regular_username, "user")
     request = _cookie_request(token)
     with patch("app.services.docs_guard.AsyncSessionLocal", factory):
@@ -220,3 +229,17 @@ def _cookie_request(token: str | None) -> _FakeRequest:
 @pytest.fixture(autouse=True)
 def _no_asyncio_loop():
     yield
+
+
+async def test_request_has_super_admin_accepts_read_only_super_admin():
+    """The API reference is documentation. A role defined as "sees everything
+    Super Admin sees" that could not open /docs would be missing a read."""
+    engine, factory = _setup_db()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    _, _, read_only_username = await _build_users(factory)
+    token = create_access_token(read_only_username, "read_only_super_admin")
+    request = _cookie_request(token)
+    with patch("app.services.docs_guard.AsyncSessionLocal", factory):
+        assert await request_has_super_admin(request) is True
+    await engine.dispose()

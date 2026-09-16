@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import AdminPage from "../../components/AdminPage";
 import LogFilterCombobox from "../../components/admin/LogFilterCombobox";
@@ -6,6 +6,7 @@ import ModelName from "../../components/ModelName";
 import RequestLogCostDetailsModal from "../../components/RequestLogCostDetailsModal";
 import ApiKeyInspectButtons from "../../components/apiKeys/ApiKeyInspectButtons";
 import { api, authFetch, formatApiError } from "../../api";
+import { attachDragScroll } from "../../lib/dragScroll";
 import { useConfirm } from "../../context/ConfirmContext";
 import { useAdminWriteLock } from "../../lib/adminWriteLock";
 import { formatLocalDateTime } from "../../lib/dateTime";
@@ -76,6 +77,16 @@ export default function ApiLogs({ apiKeyId }: Props) {
   const [model, setModel] = useState(searchParams.get("model_id") || searchParams.get("model") || "");
   const [responseStatus, setResponseStatus] = useState<"" | "success" | "fail">("");
   const [promptCache, setPromptCache] = useState<"" | "yes" | "no">("");
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Grab-and-pull sideways. The table is wider than the page on a laptop now
+  // that columns are no longer hidden, and a mouse has no other way across it
+  // than the scrollbar under a full screen of rows.
+  useEffect(() => {
+    const el = tableScrollRef.current;
+    if (!el) return;
+    return attachDragScroll(el);
+  }, []);
   const [operationType, setOperationType] = useState("");
   const [errorCode, setErrorCode] = useState("");
   const [start, setStart] = useState("");
@@ -429,7 +440,7 @@ export default function ApiLogs({ apiKeyId }: Props) {
         </div>
         {exportError && !selectedLog && <p className="error api-logs-export-error">{exportError}</p>}
       </div>
-      <div className="table-wrap table-wrap--api-logs">
+      <div className="table-wrap table-wrap--api-logs" ref={tableScrollRef}>
         <table className="card data-table data-table--api-logs">
           <thead>
             <tr>

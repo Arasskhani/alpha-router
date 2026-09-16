@@ -1901,12 +1901,43 @@ table.card tbody td:last-child {
   overflow-y: visible;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
+  /* A trackpad can swipe sideways and a touchscreen can pan; a mouse has only
+     the scrollbar, which on a full page of logs sits far below the fold. So
+     the bar is made permanently visible here rather than left to the platform's
+     overlay behaviour, and dragScroll.ts adds grab-and-pull on top. */
+  scrollbar-width: thin;
+}
+
+.table-wrap--api-logs::-webkit-scrollbar {
+  height: 10px;
+}
+
+.table-wrap--api-logs::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text) 25%, transparent);
+  border-radius: 999px;
+}
+
+.table-wrap--api-logs::-webkit-scrollbar-track {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-radius: 999px;
+}
+
+/* Only while a drag is actually under way: a permanent grab cursor over a
+   table whose cells are meant to be selectable is a lie about what a click
+   does. */
+.table-wrap--api-logs.is-drag-scrolling {
+  cursor: grabbing;
+  user-select: none;
 }
 
 .data-table--api-logs,
 table.data-table--api-logs {
   width: 100%;
-  min-width: 100%;
+  /* max-content, not a percentage: on a wide screen width:100% is the larger
+     of the two and the table fills the page as before, while on a narrow one
+     this keeps every column at its natural width and lets the wrapper scroll
+     rather than crushing or dropping columns. */
+  min-width: max-content;
   max-width: none;
   table-layout: auto;
 }
@@ -1962,11 +1993,13 @@ table.data-table--api-logs {
   white-space: nowrap;
 }
 
+/* Below 1280px this table used to hide every --secondary column outright.
+   Hiding is indistinguishable from a bug: a Prompt Cache column an operator
+   checked daily simply stopped existing on a laptop, with nothing on screen to
+   say why or how to get it back. The table keeps its natural width and the
+   wrapper scrolls instead. The identity tag still collapses, because that is a
+   duplicate of the icon beside it rather than a column of its own. */
 @media (max-width: 1280px) {
-  .data-table--api-logs .api-log-col--secondary {
-    display: none;
-  }
-
   .data-table--api-logs .api-log-identity-tag {
     display: none;
   }

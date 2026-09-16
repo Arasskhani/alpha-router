@@ -8,6 +8,7 @@ import ModelsNewFilterMenu from "../../components/models/ModelsNewFilterMenu";
 import ModelsBrowseView from "../../components/models/ModelsBrowseView";
 import ModelAccessModal from "../../components/models/ModelAccessModal";
 import ModelCodeInterpreterModal from "../../components/models/ModelCodeInterpreterModal";
+import BulkModelAccessModal from "../../components/models/BulkModelAccessModal";
 import SetDefaultModelModal, {
   type DefaultKind,
 } from "../../components/models/SetDefaultModelModal";
@@ -56,6 +57,7 @@ export default function Models() {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkAccessOpen, setBulkAccessOpen] = useState(false);
   const [accessModelId, setAccessModelId] = useState<number | null>(null);
   const [compatModelId, setCompatModelId] = useState<number | null>(null);
   const [msg, setMsg] = useState("");
@@ -201,6 +203,14 @@ export default function Models() {
       });
       if (!ok) return;
     }
+    if (action === "private") {
+      // Private on its own is only half a policy: it says these models are
+      // restricted without saying to whom. The dialog asks, seeded with the
+      // access the selection already has.
+      setBulkOpen(false);
+      setBulkAccessOpen(true);
+      return;
+    }
     if (action === "public") {
       const ok = await confirm({
         title: "Set Public",
@@ -221,7 +231,9 @@ export default function Models() {
         off: `Turned off ${r.count} model(s).`,
         delete: `Deleted ${r.count} model(s).`,
         public: `Set ${r.count} model(s) to Public.`,
-        private: `Set ${r.count} model(s) to Private.`,
+        // "private" never reaches here: it opens the audience dialog above,
+        // which reports its own result.
+        private: "",
       };
       setMsg(labels[action]);
       setBulkOpen(false);
@@ -516,7 +528,9 @@ export default function Models() {
             Public
           </button>
           <button type="button" className="btn btn-ghost" disabled={bulkBusy} onClick={() => runBulk("private")}>
-            Private
+            {/* The ellipsis is the promise that a dialog follows: this one asks
+                who the models are private to before changing anything. */}
+            Private…
           </button>
           <button type="button" className="btn btn-danger" disabled={bulkBusy} onClick={() => runBulk("delete")}>
             Delete
@@ -526,6 +540,17 @@ export default function Models() {
           </button>
         </div>
       </Modal>
+
+      <BulkModelAccessModal
+        open={bulkAccessOpen}
+        modelIds={selectedIds}
+        onClose={() => setBulkAccessOpen(false)}
+        onSaved={async (message) => {
+          setMsg(message);
+          setSelectedIds([]);
+          setAllModels(await loadModels());
+        }}
+      />
 
       <SetDefaultModelModal
         kind={defaultKind}

@@ -53,8 +53,9 @@ from app.services.model_capabilities import (
     video_generation_capabilities,
 )
 from app.services.model_access_service import (
-    bulk_set_access_type,
+    bulk_set_model_access,
     get_model_access_detail,
+    summarize_access_for_models,
     list_assignment_counts,
     set_model_access,
 )
@@ -686,12 +687,118 @@ class ModelAccessIn(BaseModel):
     group_ids: list[int] = []
 
 
+class ModelAccessSummaryIn(BaseModel):
+    ids: list[int]
+
+
+class BulkModelAccessIn(BaseModel):
+    ids: list[int]
+    access_type: str
+    user_ids: list[int] = []
+    group_ids: list[int] = []
+
+
+async def _audit_model_access(
+    db: AsyncSession,
+    request: Request,
+    admin: User,
+    *,
+    model_ids: list[int],
+    access_type: str,
+    user_ids: list[int],
+    group_ids: list[int],
+) -> None:
+    """Record who changed which models' audience, and to what.
+
+    Changing who may use a model is a permission change; neither the
+    single-model nor the bulk path left any record of one before.
+    """
+    from app.services.client_ip import resolve_client_ip
+    from app.services.security_audit import log_security_event
+
+    access = (access_type or "").strip().lower()
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=resolve_client_ip(request),
+        action="model_access_changed",
+        resource_type="ai_model",
+        resource_id=str(model_ids[0]) if len(model_ids) == 1 else None,
+        detail={
+            "models": len(model_ids),
+            "model_ids": sorted(model_ids)[:50],
+            "access_type": access,
+            "user_ids": sorted(user_ids) if access == "private" else [],
+            "group_ids": sorted(group_ids) if access == "private" else [],
+        },
+    )
+
+
+@router.post("/models/access-summary")
+async def models_access_summary(
+    body: ModelAccessSummaryIn,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_models),
+):
+    """Who can currently use the selected models, with partial counts.
+
+    The bulk dialog opens on this: an administrator replacing the audience of
+    forty models has to see the audience they are replacing, including a group
+    that only holds access to twelve of them.
+    """
+    return await summarize_access_for_models(db, body.ids)
+
+
+@router.put("/models/access")
+async def put_bulk_model_access(
+    body: BulkModelAccessIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_models_write),
+):
+    """Give every selected model the same audience, replacing what it had.
+
+    The last change is the source of truth: afterwards a selected model is
+    usable by exactly the subjects passed here. A model that was private to
+    Engineering and Finance, submitted here with Engineering alone, is private
+    to Engineering.
+    """
+    if not body.ids:
+        raise HTTPException(status_code=400, detail="No models selected")
+    ids = list(dict.fromkeys(int(x) for x in body.ids))
+    try:
+        result = await bulk_set_model_access(
+            db,
+            ids,
+            access_type=body.access_type,
+            user_ids=body.user_ids,
+            group_ids=body.group_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if (body.access_type or "").strip().lower() == "private":
+        await clear_global_default_if_ids(db, ids)
+    await drop_unusable_global_default(db)
+    await _audit_model_access(
+        db,
+        request,
+        admin,
+        model_ids=ids,
+        access_type=body.access_type,
+        user_ids=body.user_ids,
+        group_ids=body.group_ids,
+    )
+    await db.commit()
+    return {"ok": True, **result}
+
+
 @router.put("/models/{model_id}/access")
 async def put_model_access(
     model_id: int,
     body: ModelAccessIn,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_models_write),
+    admin: User = Depends(require_models_write),
 ):
     m = await db.get(AIModel, model_id)
     if not m:
@@ -709,6 +816,15 @@ async def put_model_access(
     if body.access_type.strip().lower() == "private":
         await clear_global_default_if_ids(db, [model_id])
     await drop_unusable_global_default(db)
+    await _audit_model_access(
+        db,
+        request,
+        admin,
+        model_ids=[model_id],
+        access_type=body.access_type,
+        user_ids=body.user_ids,
+        group_ids=body.group_ids,
+    )
     await db.commit()
     detail = await get_model_access_detail(db, model_id)
     return {"ok": True, **(detail or {})}
@@ -721,9 +837,10 @@ class BulkModelsIn(BaseModel):
 @router.post("/models/bulk")
 async def bulk_models(
     body: BulkModelsIn,
+    request: Request,
     action: str = Query(..., pattern="^(on|off|delete|public|private)$"),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_models_write),
+    admin: User = Depends(require_models_write),
 ):
     if not body.ids:
         raise HTTPException(status_code=400, detail="No models selected")
@@ -733,13 +850,22 @@ async def bulk_models(
         result = await db.execute(delete(AIModel).where(AIModel.id.in_(ids)))
         await db.commit()
         return {"ok": True, "count": result.rowcount or 0}
-    if action in ("public", "private"):
-        count = await bulk_set_access_type(db, ids, action)
-        if action == "private":
-            await clear_global_default_if_ids(db, ids)
+    if action == "private":
+        # Private without an audience is half a policy: it says these models are
+        # restricted without saying to whom, and the old behaviour left each
+        # model's existing assignments in place, so one call could give the
+        # selected models different audiences. `PUT /models/access` takes both
+        # halves at once.
+        raise HTTPException(
+            status_code=400,
+            detail="Use PUT /api/admin/models/access to set Private together with its users and groups",
+        )
+    if action == "public":
+        result = await bulk_set_model_access(db, ids, access_type="public")
         await drop_unusable_global_default(db)
+        await _audit_model_access(db, request, admin, model_ids=ids, access_type="public", user_ids=[], group_ids=[])
         await db.commit()
-        return {"ok": True, "count": count}
+        return {"ok": True, "count": result["models"]}
     enabled = action == "on"
     rows = (await db.execute(select(AIModel).where(AIModel.id.in_(ids)))).scalars().all()
     for m in rows:

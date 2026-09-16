@@ -1591,12 +1591,46 @@ export const docSections: DocSection[] = [
             beyond the owner through key settings.
           </li>
           <li>
+            Bulk <strong>Private</strong> asks who the models are private <em>to</em>, in the same step. The dialog
+            opens on the access the selection already has, so you can remove an audience as easily as add one, and it
+            marks any entry that currently covers only some of the selected models.
+          </li>
+          <li>
             <strong>Code Interpreter</strong> column — measured compatibility per model, with probe history and manual
             pinning.
           </li>
         </ul>
         <Note>
           Only enabled models on active connections appear in the chat model picker and <code>/v1/models</code>.
+        </Note>
+        <h3>Changing access for many models at once</h3>
+        <p>
+          Select the models, then <strong>Bulk edit → Private</strong>. What you leave in the dialog becomes the access
+          for <em>every</em> selected model: the last change is the source of truth. A model that was private to
+          Engineering and Finance, applied here with Engineering alone, ends up private to Engineering.
+        </p>
+        <ul>
+          <li>
+            Removing an entry revokes it on all selected models; adding one grants it on all of them. There is no
+            separate add or remove mode to choose between.
+          </li>
+          <li>
+            An entry marked <em>on N of M</em> currently applies to only part of the selection. Keeping it grants it on
+            the whole selection; removing it revokes it everywhere. It is shown so that a replace cannot quietly take
+            away access you did not know was there.
+          </li>
+          <li>
+            Applying with nobody selected makes those models usable by Super Admins only. The dialog says so and asks
+            again before it does it.
+          </li>
+          <li>
+            Bulk <strong>Public</strong> clears every assignment, which is what makes it the way back: filter by{" "}
+            <strong>Private</strong>, select all, Public.
+          </li>
+        </ul>
+        <Note>
+          Every access change — one model or many — is written to the security audit with who made it, how many models
+          it covered and the audience it set.
         </Note>
         <h3>Where a model&apos;s category comes from</h3>
         <p>

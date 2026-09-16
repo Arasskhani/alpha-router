@@ -191,21 +191,150 @@ async def set_model_access(
             )
 
 
-async def bulk_set_access_type(
+async def summarize_access_for_models(db: AsyncSession, model_ids: list[int]) -> dict:
+    """Who can currently use this set of models, and on how many of them.
+
+    A bulk access change replaces the audience of every selected model, so the
+    administrator has to see what is there first. With several models selected
+    their audiences need not agree: a group may hold access to twelve of forty.
+    Hiding that would let a replace quietly revoke access nobody knew about, so
+    every subject carries the number of selected models it currently applies to
+    and the caller can render the partial ones differently.
+    """
+    ids = list(dict.fromkeys(int(x) for x in model_ids))
+    empty = {"model_count": 0, "private_count": 0, "public_count": 0, "users": [], "groups": []}
+    if not ids:
+        return empty
+
+    access_rows = (await db.execute(select(AIModel.id, AIModel.access_type).where(AIModel.id.in_(ids)))).all()
+    if not access_rows:
+        return empty
+    private_count = sum(1 for _id, access in access_rows if (access or ACCESS_PUBLIC).strip().lower() == ACCESS_PRIVATE)
+
+    assignments = (
+        (await db.execute(select(ModelAccessAssignment).where(ModelAccessAssignment.model_id.in_(ids)))).scalars().all()
+    )
+    user_models: dict[int, set[int]] = {}
+    group_models: dict[int, set[int]] = {}
+    for row in assignments:
+        if row.user_id is not None:
+            user_models.setdefault(int(row.user_id), set()).add(int(row.model_id))
+        elif row.group_id is not None:
+            group_models.setdefault(int(row.group_id), set()).add(int(row.model_id))
+
+    users: list[dict] = []
+    if user_models:
+        rows = (
+            (await db.execute(select(User).where(User.id.in_(list(user_models)), User.deleted_at.is_(None))))
+            .scalars()
+            .all()
+        )
+        users = [
+            {
+                "id": u.id,
+                "username": u.username,
+                "email": u.email or "",
+                "display_name": u.display_name,
+                "model_count": len(user_models.get(int(u.id), ())),
+            }
+            for u in rows
+        ]
+        users.sort(key=lambda item: (-item["model_count"], item["username"] or ""))
+
+    groups: list[dict] = []
+    if group_models:
+        rows = (await db.execute(select(UserGroup).where(UserGroup.id.in_(list(group_models))))).scalars().all()
+        groups = [
+            {
+                "id": g.id,
+                "name": g.name,
+                "source": g.source or "local",
+                "model_count": len(group_models.get(int(g.id), ())),
+            }
+            for g in rows
+        ]
+        groups.sort(key=lambda item: (-item["model_count"], item["name"] or ""))
+
+    return {
+        "model_count": len(access_rows),
+        "private_count": private_count,
+        "public_count": len(access_rows) - private_count,
+        "users": users,
+        "groups": groups,
+    }
+
+
+async def bulk_set_model_access(
     db: AsyncSession,
     model_ids: list[int],
+    *,
     access_type: str,
-) -> int:
+    user_ids: list[int] | None = None,
+    group_ids: list[int] | None = None,
+) -> dict:
+    """Give every selected model the same access policy, replacing what it had.
+
+    The last change is the source of truth: after this, a selected model is
+    readable by exactly the subjects passed here and by nobody else. That is
+    what makes the operation predictable — the result depends only on the
+    arguments, never on which of the models happened to be private already or
+    who used to be assigned to them.
+
+    The helper this replaces wrote the access type and left the assignments
+    alone. Selecting a model that was private to one group together with a
+    public one and pressing Private gave the two of them different audiences
+    from a single action.
+    """
     access = (access_type or "").strip().lower()
     if access not in VALID_ACCESS_TYPES:
         raise ValueError("access_type must be 'public' or 'private'")
-    if not model_ids:
-        return 0
     ids = list(dict.fromkeys(int(x) for x in model_ids))
-    result = await db.execute(update(AIModel).where(AIModel.id.in_(ids)).values(access_type=access))
+    if not ids:
+        return {"models": 0, "users": 0, "groups": 0}
+
+    # Only ids that name a real model: the UPDATE would ignore the rest anyway,
+    # but the INSERT below would happily write assignment rows pointing at
+    # nothing.
+    ids = list((await db.execute(select(AIModel.id).where(AIModel.id.in_(ids)))).scalars().all())
+    if not ids:
+        return {"models": 0, "users": 0, "groups": 0}
+
+    await db.execute(update(AIModel).where(AIModel.id.in_(ids)).values(access_type=access))
+    # Cleared for both outcomes: public has no audience, and private is being
+    # given a new one in full.
+    await db.execute(delete(ModelAccessAssignment).where(ModelAccessAssignment.model_id.in_(ids)))
     if access == ACCESS_PUBLIC:
-        await db.execute(delete(ModelAccessAssignment).where(ModelAccessAssignment.model_id.in_(ids)))
-    return result.rowcount or 0
+        return {"models": len(ids), "users": 0, "groups": 0}
+
+    clean_users = list(dict.fromkeys(int(x) for x in (user_ids or []) if x is not None))
+    clean_groups = list(dict.fromkeys(int(x) for x in (group_ids or []) if x is not None))
+
+    live_users: list[int] = []
+    if clean_users:
+        found = set(
+            (await db.execute(select(User.id).where(User.id.in_(clean_users), User.deleted_at.is_(None))))
+            .scalars()
+            .all()
+        )
+        live_users = [uid for uid in clean_users if uid in found]
+
+    live_groups: list[int] = []
+    if clean_groups:
+        found = set((await db.execute(select(UserGroup.id).where(UserGroup.id.in_(clean_groups)))).scalars().all())
+        live_groups = [gid for gid in clean_groups if gid in found]
+
+    now = datetime.utcnow()
+    for model_id in ids:
+        for uid in live_users:
+            db.add(ModelAccessAssignment(model_id=model_id, user_id=uid, group_id=None, assigned_at=now))
+        for gid in live_groups:
+            db.add(ModelAccessAssignment(model_id=model_id, user_id=None, group_id=gid, assigned_at=now))
+
+    return {
+        "models": len(ids),
+        "users": len(live_users),
+        "groups": len(live_groups),
+    }
 
 
 async def list_assignment_counts(db: AsyncSession, model_ids: list[int]) -> dict[int, dict[str, int]]:

@@ -13,7 +13,7 @@ from app.models.user import User, UserGroup, UserRoleAssignment, user_group_memb
 from app.services.model_access_service import (
     ACCESS_PRIVATE,
     ACCESS_PUBLIC,
-    bulk_set_access_type,
+    bulk_set_model_access,
     filter_models_for_subject,
     resolve_access_subject,
     set_model_access,
@@ -123,7 +123,7 @@ async def _test_private_empty_super_admin_only() -> None:
     await engine.dispose()
 
 
-async def _test_bulk_public_clears_assignments_private_keeps() -> None:
+async def _test_bulk_access_replaces_the_audience() -> None:
     factory, engine = await _session_factory()
     async with factory() as db:
         user = await _user(db, "alice")
@@ -134,18 +134,20 @@ async def _test_bulk_public_clears_assignments_private_keeps() -> None:
         await set_model_access(db, b, access_type=ACCESS_PRIVATE, user_ids=[user.id])
         await db.commit()
 
-        await bulk_set_access_type(db, [a.id, b.id], ACCESS_PRIVATE)
+        # Re-applying private with no audience now means exactly that: the
+        # previous assignment is not silently carried over.
+        await bulk_set_model_access(db, [a.id, b.id], access_type=ACCESS_PRIVATE)
         await db.commit()
         still = (
             (await db.execute(select(ModelAccessAssignment).where(ModelAccessAssignment.model_id == a.id)))
             .scalars()
             .all()
         )
-        assert len(still) == 1
+        assert still == []
         await db.refresh(a)
         assert a.access_type == ACCESS_PRIVATE
 
-        await bulk_set_access_type(db, [a.id, b.id], ACCESS_PUBLIC)
+        await bulk_set_model_access(db, [a.id, b.id], access_type=ACCESS_PUBLIC)
         await db.commit()
         cleared = (
             (await db.execute(select(ModelAccessAssignment).where(ModelAccessAssignment.model_id.in_([a.id, b.id]))))
@@ -253,8 +255,8 @@ async def test_private_empty_super_admin_only():
     await _test_private_empty_super_admin_only()
 
 
-async def test_bulk_public_clears_assignments_private_keeps():
-    await _test_bulk_public_clears_assignments_private_keeps()
+async def test_bulk_access_replaces_the_audience():
+    await _test_bulk_access_replaces_the_audience()
 
 
 async def test_master_and_alpha_router_key_subjects():

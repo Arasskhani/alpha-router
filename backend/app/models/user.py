@@ -71,6 +71,11 @@ class User(Base):
     budget_used_usd = Column(MoneyUSD, default=0.0)
     budget_reserved_usd = Column(MoneyUSD, nullable=False, server_default="0", default=0.0)
     budget_period_start = Column(DateTime, nullable=True)
+    # Highest budget-usage threshold (percent) already announced to this user
+    # in the current period. 0 = nothing announced. Kept in step with the live
+    # percentage in both directions, so a plan increase or an admin reset lets
+    # the same warning fire again instead of being silently swallowed.
+    budget_notice_level = Column(Integer, nullable=False, server_default="0", default=0)
 
     # Local-account TOTP (2FA). Secret is Fernet-encrypted at rest.
     totp_secret_encrypted = Column(Text, nullable=True)

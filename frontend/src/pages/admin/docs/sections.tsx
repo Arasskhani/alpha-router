@@ -1025,7 +1025,7 @@ export const docSections: DocSection[] = [
             </tr>
             <tr>
               <td>Data &amp; reports</td>
-              <td>Storage Management, Retention Policy, Memory, Reports, Projects, API Logs</td>
+              <td>Storage Management, Retention Policy, Memory, Reports, Projects, API Logs, Admin Logs</td>
             </tr>
             <tr>
               <td>Developer</td>
@@ -2129,6 +2129,13 @@ export const docSections: DocSection[] = [
             <a href="#admin-logs">API Logs</a> are kept (1–365, default 30). The card shows how many payloads are stored and how many the current
             window already excludes, so you can see what a shorter window would remove before you save it.
           </li>
+          <li>
+            <strong>Admin logs — administrative audit trail</strong> — two windows over{" "}
+            <a href="#admin-activity-logs">Admin Logs</a>: <strong>detail</strong> (default 90 days) and{" "}
+            <strong>events</strong> (default 365 days), each 7–3650. Detail is blanked first; the event itself is
+            deleted only when the longer window passes. Detail cannot outlive the event, so a detail window longer
+            than the event window is clamped down when you save, and the card warns before you do.
+          </li>
         </ul>
         <h3>Why the payload window is separate</h3>
         <p>
@@ -2141,6 +2148,21 @@ export const docSections: DocSection[] = [
           A daily job clears expired payloads, and saving applies the new window immediately rather than waiting for the
           next run, because an operator who shortens it expects what falls outside to be gone now. The change and the
           number of rows cleared are written to the security audit.
+        </p>
+        <h3>Why the admin trail has two windows</h3>
+        <p>
+          An audit row has two halves worth very different amounts. Who did what, to which resource, when and from
+          where is a handful of short columns — the part an auditor asks for, and almost free to keep, so it is kept
+          for a long time. The recorded detail is an unbounded text column holding whatever the call site chose to
+          store; it is what makes an old event <em>useful</em> rather than merely countable, and it is the only part
+          that can grow without limit. So it is cleared first, on the shorter clock, and the row is marked as redacted
+          — the viewer then says <strong>Aged out</strong> rather than leaving you unable to tell that from
+          &ldquo;nothing was recorded&rdquo;, which is a different answer.
+        </p>
+        <p>
+          Saving these two windows does <strong>not</strong> purge immediately, unlike the payload window above: this
+          clock deletes audit rows rather than clearing a column, so the change takes effect on the next nightly run
+          and a mistyped number can be corrected before anything is lost. The change itself is written to the trail.
         </p>
         <Note>
           Users can also schedule personal media cleanup from the Media library; that schedule is separate from the
@@ -2392,6 +2414,96 @@ export const docSections: DocSection[] = [
           correlation ID, the provider job ID and the recorded source IP are withheld — those answer an
           operator&apos;s questions, not the account holder&apos;s.
         </Note>
+      </>
+    ),
+  },
+  {
+    id: "admin-activity-logs",
+    title: "Admin Logs",
+    group: "Data & reports",
+    content: (
+      <>
+        <h2>Admin Logs</h2>
+        <p>
+          Path: <code>/admin/admin-logs</code>. The administrative audit trail: who took a security-sensitive action,
+          when, from which IP, against which resource, and what the action recorded about itself.
+        </p>
+        <Note>
+          Not the same thing as <a href="#admin-logs">API Logs</a>, despite the neighbouring names. API Logs answers
+          &ldquo;what did this request cost and why did it fail&rdquo;. Admin Logs answers &ldquo;who changed
+          this&rdquo;. They share a menu permission (<code>api_logs</code>) but nothing else.
+        </Note>
+        <ul>
+          <li>
+            Columns: time (in your browser&apos;s timezone), administrator, source IP, action, resource, and whether
+            detail was recorded. Click a row for the full detail.
+          </li>
+          <li>
+            Filters: administrator, action, resource type and a date range. The three comboboxes are populated from the
+            values actually present in the trail, so an empty list means nothing of that kind has been recorded yet.
+            Filters apply on <strong>Filter</strong>, not on every keystroke — the same contract as API Logs.
+          </li>
+          <li>
+            Paging is <strong>Previous</strong>/<strong>Next</strong> over 100 rows, ordered newest first. There is no
+            total count: the table has no bound on its size and counting it on every page view would be the most
+            expensive query on the page.
+          </li>
+          <li>
+            The detail column distinguishes three states — <strong>View</strong> (detail was recorded),{" "}
+            <strong>Aged out</strong> (it was recorded and retention has since blanked it), and{" "}
+            <strong>—</strong> (the action recorded none). Those are different answers and the page does not blur them.
+          </li>
+        </ul>
+        <h3>The administrator name is a copy, not a join</h3>
+        <p>
+          Each row stores the administrator&apos;s username and email as they were at the time of the action, alongside
+          the user id. The foreign key is <code>ON DELETE SET NULL</code> and permanently deleting a user really does
+          remove the row, so a trail that only referenced the id used to anonymise every action that person had ever
+          taken the moment their account was deleted — the entry survived, but the answer to &ldquo;who&rdquo; did not.
+          Rows written before this page shipped keep only the id, and show as the id when the account is gone.
+        </p>
+        <h3>What is and is not in the trail</h3>
+        <p>
+          The trail covers the actions that were instrumented as security-sensitive: TLS certificate upload, activation
+          and deletion; admin IP allowlist changes; connection and gateway API key deletion; model access changes;
+          password resets and administrative 2FA disable; permanent user deletion, singly and in bulk; clearing all
+          media or all request logs; retention window changes; and rejected SAML responses. It is not a record of every
+          administrative change — plans, groups, auth providers and SMTP settings, among others, are not yet
+          instrumented.
+        </p>
+        <Warn>
+          Read the absence of an entry as &ldquo;this action is not instrumented&rdquo;, not as &ldquo;this did not
+          happen&rdquo;. The source IP is the address the application saw, which behind a proxy is only as trustworthy
+          as the proxy configuration described under <a href="#hardening">Production hardening</a>.
+        </Warn>
+        <h3>Retention</h3>
+        <p>
+          Two windows, both on <a href="#admin-retention">Retention Policy</a>: detail is blanked after the shorter one
+          (default 90 days) and the event itself is deleted after the longer one (default 365). A nightly job applies
+          them and writes what it removed into the hash-chained governance audit, which it never prunes — a retention
+          pass that destroys evidence has to leave evidence that it ran, somewhere it cannot reach.
+        </p>
+        <p>
+          The trail is deliberately not hash-chained itself. Pruning any row of a hash chain makes every later row fail
+          verification, so a table that must be prunable cannot also be a chain; the chain lives in the governance
+          audit, which is never pruned.
+        </p>
+        <h3>API</h3>
+        <ul>
+          <li>
+            <code>GET /api/admin/admin-logs</code> — <code>limit</code> (≤500), <code>offset</code>,{" "}
+            <code>actor</code>, <code>action</code>, <code>resource_type</code>, <code>start_date</code>,{" "}
+            <code>end_date</code> (<code>YYYY-MM-DD</code>). Returns <code>items</code>, <code>limit</code>,{" "}
+            <code>offset</code> and <code>has_more</code>.
+          </li>
+          <li>
+            <code>GET /api/admin/admin-logs/filter-options</code> — the distinct actions, resource types and
+            administrators behind the comboboxes.
+          </li>
+          <li>
+            <code>PATCH /api/admin/storage/admin-log-settings</code> — the two retention windows.
+          </li>
+        </ul>
       </>
     ),
   },
@@ -2664,6 +2776,7 @@ export const docSections: DocSection[] = [
           <li>Provider cost reconciliation for registered adapters</li>
           <li>Media and chat retention cleanup (cron from Retention Policy)</li>
           <li>Raw provider payload retention for API Logs (daily, shortly after the chat cleanup)</li>
+          <li>Administrative audit retention for Admin Logs (daily 04:25 server time; records the run in the governance chain)</li>
           <li>Per-user media cleanup schedules</li>
           <li>System metrics snapshots</li>
           <li>Chat session stats reconcile</li>

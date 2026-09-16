@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
 from app.services.agent_run_service import finalize_agent_run
+from app.services.budget_notice_service import budget_notice_after_settlement
 from app.services.agent_chat_integration_service import PreparedAgentTurn
 from app.services.agent_runtime_service import AgentCompletionReview
 from app.services.code_interpreter_capacity_service import CapacityPermit, release_code_interpreter_turn
@@ -311,6 +312,17 @@ async def settle_turn(
     response_metadata: dict[str, object] = {}
     if not outcome.was_cancelled and outcome.success and request_log_id and identity.source == "alpha_router_chat":
         response_metadata["request_log_id"] = int(request_log_id)
+
+    # Budget warnings belong to the person sitting in front of the chat UI.
+    # Gateway API-key callers bill against a different pool and would only be
+    # handed an unexpected field in their response body, so the same gate as
+    # request_log_id applies. Reading here does not consume the notice: it is
+    # marked shown only when the browser acknowledges it, which is what makes a
+    # dropped trailing frame harmless.
+    if not outcome.was_cancelled and identity.source == "alpha_router_chat":
+        budget_notice = await budget_notice_after_settlement(identity.user_id)
+        if budget_notice:
+            response_metadata["budget_notice"] = budget_notice
 
     agent_turn = identity.agent_turn
     if agent_turn is not None:

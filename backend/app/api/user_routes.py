@@ -56,6 +56,7 @@ async def list_user_keys(user: User = Depends(get_current_user), db: AsyncSessio
 
 @router.get("/budget")
 async def user_budget(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    from app.services.budget_notice_service import pending_budget_notice
     from app.services.budget_service import ensure_budget_period, resolve_monthly_budget
 
     await ensure_budget_period(db, user)
@@ -68,7 +69,34 @@ async def user_budget(user: User = Depends(get_current_user), db: AsyncSession =
         "used_usd": used,
         "reserved_usd": reserved,
         "remaining_usd": remaining,
+        # This endpoint, not the chat stream, is the authority on whether a
+        # warning is outstanding. Image, video and speech spend never passes
+        # through a chat turn, so a user who only generates media would
+        # otherwise never be warned at all.
+        "budget_notice": await pending_budget_notice(db, user),
     }
+
+
+class BudgetNoticeAck(BaseModel):
+    level: int = Field(ge=0, le=100)
+
+
+@router.post("/budget/notice-ack")
+async def acknowledge_user_budget_notice(
+    body: BudgetNoticeAck,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Called once the browser has actually put the warning on screen.
+
+    Showing is what spends a notice, not computing one. Until this arrives the
+    same warning keeps being reported, which is what makes it survive a closed
+    tab or a dropped connection.
+    """
+    from app.services.budget_notice_service import acknowledge_budget_notice
+
+    stored = await acknowledge_budget_notice(db, int(user.id), int(body.level))
+    return {"ok": True, "level": stored}
 
 
 @router.post("/presence")

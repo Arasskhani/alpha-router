@@ -1,8 +1,10 @@
 """Application configuration loaded from environment variables."""
 
 from functools import lru_cache
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from pydantic import TypeAdapter, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.branding import (
@@ -47,8 +49,63 @@ DEFAULT_CSP_REPORT_ONLY = (
 )
 
 
+#: Memoised per settings class rather than with lru_cache, which types a class
+#: argument as Hashable and does not accept a pydantic model class.
+_BLANK_HOSTILE_FIELDS: dict[type, frozenset[str]] = {}
+
+
+def _fields_rejecting_blank(model: type[BaseSettings]) -> frozenset[str]:
+    """Fields whose type cannot parse an empty string.
+
+    Of 216 settings, about 150 are typed int, float or bool. Every one of them
+    has a default, so an empty value can always fall back to it.
+    """
+    cached = _BLANK_HOSTILE_FIELDS.get(model)
+    if cached is not None:
+        return cached
+    names = set()
+    for name, field in model.model_fields.items():
+        try:
+            TypeAdapter(field.annotation).validate_python("")
+        except Exception:  # noqa: BLE001 - any rejection means "cannot be blank"
+            names.add(name)
+    cached = frozenset(names)
+    _BLANK_HOSTILE_FIELDS[model] = cached
+    return cached
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _a_blank_value_means_unset(cls, data: Any) -> Any:
+        """``FOO=`` in .env means "leave the default", not "the value is ''".
+
+        An operator writes a bare key to document a setting they are not using,
+        and upgrade.sh copies exactly such lines out of .env.example into .env
+        when a new key appears. Without this, the first int- or bool-typed key
+        that arrives blank stops the whole deployment at import time:
+
+            video_max_duration_seconds
+              Input should be a valid integer, unable to parse string as an
+              integer [input_value='']
+
+        That is what the operator sees - a pydantic traceback from db-init, no
+        mention of which file to edit - for having left a line empty.
+
+        Only fields whose type cannot hold an empty string are dropped. A str
+        field keeps it, because there ``FOO=`` really does mean the empty
+        string: REDIS_PASSWORD= is "no password", not "use the default".
+        """
+        if not isinstance(data, dict):
+            return data
+        blank_hostile = _fields_rejecting_blank(cls)
+        return {
+            key: value
+            for key, value in data.items()
+            if not (isinstance(value, str) and not value.strip() and key in blank_hostile)
+        }
 
     app_name: str = PRODUCT_NAME
     #: Stamped into the image at build time from the git tag (Dockerfile ARG

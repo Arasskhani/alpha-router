@@ -141,6 +141,7 @@ export default function Operations() {
   const readOnly = useReadOnly();
   const [data, setData] = useState<DashboardPayload | null>(null);
   const [capacity, setCapacity] = useState<CodeInterpreterCapacityPayload | null>(null);
+  const [build, setBuild] = useState<{ version: string; revision: string } | null>(null);
   const [capacityMax, setCapacityMax] = useState(200);
   const [capacityPerSubject, setCapacityPerSubject] = useState(2);
   const [capacityRetryAfter, setCapacityRetryAfter] = useState(30);
@@ -191,6 +192,11 @@ export default function Operations() {
   );
 
   useEffect(() => {
+    // The running build cannot change while the page is open, so this is not
+    // part of the hourly refresh below.
+    api<{ version: string; revision: string }>("/api/admin/version")
+      .then(setBuild)
+      .catch(() => {});
     void load(false, rangeKey);
     void loadCapacity();
     intervalRef.current = window.setInterval(() => {
@@ -278,6 +284,13 @@ export default function Operations() {
           )}
           {data.snapshot_count > 0 && <> · {data.snapshot_count} infra samples</>}
           {data.request_log_count >= 0 && <> · {formatCount(data.request_log_count)} API log rows</>}
+          {build && (
+            <>
+              {" "}
+              · Version:{" "}
+              <strong title={build.revision ? `commit ${build.revision}` : undefined}>{build.version}</strong>
+            </>
+          )}
         </p>
       )}
       {error && <p className="alert alert-error">{error}</p>}

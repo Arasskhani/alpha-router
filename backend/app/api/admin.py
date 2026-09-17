@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
     get_bearer_token,
+    require_admin,
     require_api_keys,
     require_api_keys_write,
     require_connections,
@@ -3506,6 +3507,28 @@ class ChatRetentionSettingsPatch(BaseModel):
     clear_schedule_enabled: bool | None = None
     clear_schedule_hour: int | None = None
     clear_schedule_minute: int | None = None
+
+
+@router.get("/version")
+async def get_application_version(_: User = Depends(require_admin)) -> dict[str, str]:
+    """Which build is running, for an administrator who needs to answer that.
+
+    Read from the image, not from git: the version was stamped in at build time
+    from the tag, and the container has no repository to ask. ``unknown`` means
+    the image was built outside install.sh / upgrade.sh, which is the honest
+    answer rather than a number nobody set.
+
+    Behind an admin guard on purpose. The version is not on /health or /ready -
+    those answer unauthenticated, and handing an exact build number to anyone
+    who can reach the port works against the production hardening this product
+    otherwise asks for.
+    """
+    from app.config import application_version, get_settings
+
+    return {
+        "version": application_version(),
+        "revision": (get_settings().app_revision or "").strip(),
+    }
 
 
 @router.get("/storage")

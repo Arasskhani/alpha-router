@@ -67,6 +67,22 @@ def test_the_openapi_document_carries_it():
         assert app.openapi()["info"]["version"] == "v9.9.9"
 
 
+async def test_the_admin_endpoint_returns_version_and_revision():
+    from app.api.admin import get_application_version
+
+    with _with_env(APP_VERSION="v1.0.1", APP_REVISION="a" * 40):
+        payload = await get_application_version(_=None)
+    assert payload == {"version": "v1.0.1", "revision": "a" * 40}
+
+
+async def test_the_admin_endpoint_is_honest_about_an_unstamped_image():
+    from app.api.admin import get_application_version
+
+    with _with_env(APP_VERSION="", APP_REVISION=""):
+        payload = await get_application_version(_=None)
+    assert payload == {"version": UNKNOWN_VERSION, "revision": ""}
+
+
 def test_the_version_is_not_on_an_unauthenticated_endpoint():
     """/health and /ready answer without a session. Handing an exact build
     number to anyone who can reach the port works against the hardening this
@@ -76,3 +92,12 @@ def test_the_version_is_not_on_an_unauthenticated_endpoint():
     from app.main import health_payload
 
     assert "version" not in inspect.getsource(health_payload)
+
+
+def test_the_admin_endpoint_is_guarded():
+    import inspect
+
+    from app.api import admin
+
+    source = inspect.getsource(admin.get_application_version)
+    assert "require_admin" in source

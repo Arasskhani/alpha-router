@@ -47,6 +47,41 @@ pre-commit install --install-hooks -t pre-commit -t commit-msg
 type/scope marks a breaking change. `scripts/check-commit-message.py` is the
 hook; `scripts/tests/test-commit-message.sh` shows what passes.
 
+These subjects are also the release notes, so write the description for
+somebody reading the release page rather than the diff. A `!` or a
+`BREAKING CHANGE:` body line puts the commit at the top of the notes, and the
+scopes `security`, `rbac`, `audit` and `auth` move a `feat`/`fix` into the
+"Security & hardening" section.
+
+## Releasing
+
+Tagging is the whole release. The tag decides which code a host deploys
+(`latest_release_tag`), what the product reports as its version
+(`resolve_app_version`, stamped into the image at build time), and — via
+`.github/workflows/release.yml` — the GitHub Release notes. There is no version
+file to bump and no changelog to edit.
+
+```bash
+git push origin main
+git tag -a v1.2.3 -m "<a short title>"
+git push origin v1.2.3            # publishes the release notes
+```
+
+`vMAJOR.MINOR.PATCH` exactly: a tag of any other shape is not a release, is not
+what hosts upgrade to, and does not publish notes. Use it for a pre-release
+(`v2.0.0-rc1`) when that is what you mean.
+
+The notes come from the Conventional Commits between this tag and the previous
+release. Preview them before tagging:
+
+```bash
+python3 scripts/release-notes.py v1.2.3 --since v1.2.2
+```
+
+Re-pushing a tag rewrites that release's notes rather than duplicating them.
+Commits whose subject predates the hook are listed under "Other changes" —
+nothing is silently dropped.
+
 ## The gates, and how to satisfy them
 
 | Gate | Command | When it fails |

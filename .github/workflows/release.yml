@@ -1,0 +1,63 @@
+# Publish the GitHub Release for a version tag.
+#
+# Pushing v1.2.3 is already what decides which code a host deploys and what the
+# product reports as its version. This makes it also publish the release notes,
+# so there is no separate step to forget.
+#
+# Notes come from the Conventional Commits between this tag and the previous
+# release (scripts/release-notes.py). Re-pushing a tag, or re-running this
+# workflow, rewrites that release's notes rather than failing or duplicating.
+#
+# This does not run the test suite - CI lives in .gitlab-ci.yml. It publishes
+# notes for a tag somebody chose to create; it is not a quality gate.
+
+name: Release
+
+on:
+  push:
+    tags:
+      # The same shape latest_release_tag accepts in scripts/lib/stack.sh, so a
+      # tag that publishes a release is exactly a tag that hosts will upgrade
+      # to. A pre-release tag such as v2.0.0-rc1 matches neither.
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+# Only what creating a release needs.
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the full history
+        uses: actions/checkout@v4
+        with:
+          # The notes are a range between two tags, so the shallow default is
+          # not enough: it has neither the previous tag nor the commits.
+          fetch-depth: 0
+          # gh authenticates with GITHUB_TOKEN below; no need to leave git
+          # credentials lying around in the checkout.
+          persist-credentials: false
+
+      - name: Build the release notes
+        run: |
+          python3 scripts/release-notes.py "${GITHUB_REF_NAME}" \
+            --repo-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" > release-notes.md
+          echo "--- notes for ${GITHUB_REF_NAME} ---"
+          cat release-notes.md
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag exists; replacing its notes."
+            gh release edit "$tag" --title "$tag" --notes-file release-notes.md
+          else
+            echo "Creating release $tag."
+            # --verify-tag: publish only for a tag that really exists, so a
+            # typo creates nothing rather than an empty release and a new tag.
+            gh release create "$tag" --verify-tag --title "$tag" --notes-file release-notes.md
+          fi

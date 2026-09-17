@@ -54,7 +54,7 @@ from app.branding import (
     PRODUCT_SLUG,
     SESSION_COOKIE_NAME,
 )
-from app.config import INSECURE_DEFAULTS, get_settings
+from app.config import INSECURE_DEFAULTS, application_version, get_settings
 from app.core.security import hash_password
 from app.database import AsyncSessionLocal, engine
 from app.db_migrate import (
@@ -695,7 +695,7 @@ _DOCS_LOCKED = bool(settings.openapi_admin_only)
 
 app = FastAPI(
     title=APPLICATION_TITLE,
-    version="1.0.0",
+    version=application_version(),
     lifespan=lifespan,
     # When docs are admin-locked, disable the public default endpoints and serve
     # them under /api/* (see below) so the session cookie (path=/api) is sent.

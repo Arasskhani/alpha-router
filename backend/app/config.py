@@ -51,6 +51,14 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = PRODUCT_NAME
+    #: Stamped into the image at build time from the git tag (Dockerfile ARG
+    #: APP_VERSION, fed by scripts/lib/stack.sh). Empty means the image was
+    #: built outside install.sh / upgrade.sh, and the product says so rather
+    #: than claiming a version nobody set.
+    app_version: str = ""
+    #: The full commit the image was built from. Answers "which code is this"
+    #: when the version is a release tag and the question is which patch.
+    app_revision: str = ""
     debug: bool = False
     # "development" (default) keeps all hardening opt-in so existing single-box
     # deployments boot unchanged. "production" enables the startup guard that
@@ -411,6 +419,15 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+#: What an image with no stamped version reports. Not "1.0.0": a hardcoded
+#: number would be a claim, and this is the absence of one.
+UNKNOWN_VERSION = "unknown"
+
+
+def application_version() -> str:
+    return get_settings().app_version.strip() or UNKNOWN_VERSION
 
 
 def build_redis_url(redis_url: str, redis_password: str) -> str:

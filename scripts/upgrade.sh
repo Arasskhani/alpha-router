@@ -168,6 +168,7 @@ main() {
   if [ "$FROM_SOURCE" -eq 1 ] && [ "$SKIP_BUILD" -ne 1 ]; then
     tag_previous_images
   fi
+  export_app_version
   start_stack
   wait_for_health
   print_success

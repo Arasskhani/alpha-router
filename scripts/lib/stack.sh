@@ -217,6 +217,55 @@ upgrade_pinned_release() {
   git -C "$ROOT_DIR" -c advice.detachedHead=false checkout "refs/tags/$tag"
 }
 
+# The version the image will carry, derived from the git tag.
+#
+# The tag is already the source of truth for *which* code a host runs
+# (latest_release_tag above); this makes it the source of truth for what the
+# product calls itself, so the two cannot drift. Docker gets it as a build arg,
+# so it ends up baked into the image rather than read at run time - the
+# container has no .git (see .dockerignore) and could not ask git anyway.
+#
+# Honest about what it does not know:
+#   on a release tag        -> v1.0.1
+#   past a tag on a branch  -> v1.0.1-3-gabc1234        (git describe)
+#   uncommitted changes     -> ...-dirty
+#   tagless repo            -> g<short sha>
+#   no git, or no checkout  -> empty, and the app says "unknown"
+resolve_app_version() {
+  local dir="${1:-$ROOT_DIR}"
+  [ -d "$dir/.git" ] || return 0
+  command -v git >/dev/null 2>&1 || return 0
+  local described
+  described="$(git -C "$dir" describe --tags --dirty --match 'v[0-9]*' 2>/dev/null || true)"
+  if [ -z "$described" ]; then
+    # No tag is reachable: name the commit rather than invent a version.
+    described="$(git -C "$dir" rev-parse --short HEAD 2>/dev/null || true)"
+    [ -n "$described" ] && described="g$described"
+  fi
+  printf '%s' "$described"
+}
+
+resolve_app_revision() {
+  local dir="${1:-$ROOT_DIR}"
+  [ -d "$dir/.git" ] || return 0
+  command -v git >/dev/null 2>&1 || return 0
+  git -C "$dir" rev-parse HEAD 2>/dev/null || true
+}
+
+# Exported so `docker compose` interpolates them into the build args. Set here
+# rather than written into .env: .env belongs to the operator, and upgrade.sh
+# has clobbered operator values there before.
+export_app_version() {
+  ALPHAROUTER_VERSION="$(resolve_app_version)"
+  ALPHAROUTER_REVISION="$(resolve_app_revision)"
+  export ALPHAROUTER_VERSION ALPHAROUTER_REVISION
+  if [ -n "$ALPHAROUTER_VERSION" ]; then
+    log "Build version: $ALPHAROUTER_VERSION"
+  else
+    warn "No git checkout: the image will report its version as unknown."
+  fi
+}
+
 git_pull_ff_only() {
   if [ ! -d "$ROOT_DIR/.git" ]; then
     log "Not a git checkout; skipping git pull (source was copied)."

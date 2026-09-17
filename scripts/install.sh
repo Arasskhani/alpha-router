@@ -252,6 +252,7 @@ main() {
     exit 0
   fi
 
+  export_app_version
   start_stack
   wait_for_health
   print_success

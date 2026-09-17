@@ -75,6 +75,26 @@ RUN groupadd --system --gid 10001 alpha_router \
 
 USER alpha_router
 
+# The running version, stamped from the git tag by scripts/install.sh and
+# scripts/upgrade.sh (see resolve_app_version in scripts/lib/stack.sh).
+#
+# Baked into the image rather than injected at run time on purpose. `upgrade.sh
+# --skip-build` pulls new code without rebuilding; a version read from the
+# environment would then label the old image with the new tag, and a version
+# string that lies is worse than one that is missing. As an image property it
+# cannot disagree with the code it was built from.
+#
+# Declared here, after every expensive layer, because an ARG invalidates the
+# build cache from its own line onward - putting it at the top would rebuild
+# apt, the wheels and Chromium on every new tag.
+ARG APP_VERSION=""
+ARG APP_REVISION=""
+ENV APP_VERSION=${APP_VERSION} APP_REVISION=${APP_REVISION}
+LABEL org.opencontainers.image.version="${APP_VERSION}" \
+      org.opencontainers.image.revision="${APP_REVISION}" \
+      org.opencontainers.image.title="Alpharouter" \
+      org.opencontainers.image.source="https://github.com/Arasskhani/alpha-router"
+
 EXPOSE 8080
 ENV DATABASE_URL=postgresql+asyncpg://alpha_router:changeme@postgres:5432/alpha_router
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]

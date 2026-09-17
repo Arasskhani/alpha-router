@@ -233,6 +233,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Stamped from the git tag by install.sh / upgrade.sh. Both services that
+      # build alpha-router:latest pass the same values, so whichever one builds
+      # cannot leave the image labelled with a different version.
+      args:
+        APP_VERSION: ${ALPHAROUTER_VERSION:-}
+        APP_REVISION: ${ALPHAROUTER_REVISION:-}
     image: alpha-router:latest
     env_file:
       - .env
@@ -317,6 +323,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        APP_VERSION: ${ALPHAROUTER_VERSION:-}
+        APP_REVISION: ${ALPHAROUTER_REVISION:-}
     image: alpha-router:latest
     restart: unless-stopped
     # Chat completions stream for minutes. Give in-flight turns time to finish

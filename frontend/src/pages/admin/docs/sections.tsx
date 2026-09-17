@@ -1231,7 +1231,58 @@ export const docSections: DocSection[] = [
             broker job counts, and editable operational limits. The environment ceiling remains a hard upper bound;
             rejection and cancellation counters are exposed by observability.
           </li>
+          <li>
+            <strong>Version</strong> — the build this host is running, on the line under the heading. Hover it to see
+            the exact commit.
+          </li>
         </ul>
+        <h3>Which version am I running?</h3>
+        <p>
+          The version comes from the git release tag and is stamped into the image when it is built, so it cannot
+          disagree with the code inside it. <code>install.sh</code> and <code>upgrade.sh</code> derive it with{" "}
+          <code>git describe</code> and pass it to the build; the same value becomes the{" "}
+          <code>org.opencontainers.image.version</code> label, so <code>docker inspect alpha-router:latest</code>{" "}
+          answers the question without the application running.
+        </p>
+        <table className="docs-table">
+          <thead>
+            <tr>
+              <th>Shown as</th>
+              <th>Means</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <code>v1.0.1</code>
+              </td>
+              <td>A release: the checkout was exactly on that tag when the image was built</td>
+            </tr>
+            <tr>
+              <td>
+                <code>v1.0.1-3-gabc1234</code>
+              </td>
+              <td>Three commits past that tag — a branch checkout, not a release</td>
+            </tr>
+            <tr>
+              <td>
+                <code>…-dirty</code>
+              </td>
+              <td>The working tree had uncommitted changes at build time</td>
+            </tr>
+            <tr>
+              <td>
+                <code>unknown</code>
+              </td>
+              <td>Built outside the install/upgrade scripts, so no version was stamped in</td>
+            </tr>
+          </tbody>
+        </table>
+        <Note>
+          The version is behind the admin guard (<code>GET /api/admin/version</code>) and deliberately absent from{" "}
+          <code>/health</code> and <code>/ready</code>, which answer without a session — an exact build number is
+          something an attacker uses to pick an exploit.
+        </Note>
         <Note>
           Code Interpreter requests above the configured ceiling are rejected before provider billing with{" "}
           <code>HTTP 429</code> and <code>Retry-After</code>. Observability counters are also available via{" "}

@@ -502,8 +502,31 @@ async def oidc_callback(
     return redirect
 
 
+def _require_top_level_navigation(request: Request) -> None:
+    """Refuse a logout that the user did not navigate to.
+
+    These endpoints are GET because they end in a redirect to the identity
+    provider's single-logout URL, which only a top-level navigation can follow -
+    so they cannot simply become POST. But they also bump ``token_version``, and
+    ``CsrfProtectionMiddleware`` only guards unsafe methods, so
+    ``<img src=".../api/auth/oidc/logout">`` on any page terminated every
+    session of any logged-in visitor.
+
+    ``Sec-Fetch-Dest`` distinguishes the two: a real navigation says
+    ``document``, an image or a background fetch says something else. A browser
+    old enough not to send the header is allowed through - there is nothing
+    better available for it, and the outcome is a forced logout, not a
+    disclosure.
+    """
+
+    dest = (request.headers.get("sec-fetch-dest") or "").strip().lower()
+    if dest and dest != "document":
+        raise HTTPException(status_code=400, detail="Logout must be a top-level navigation")
+
+
 @router.get("/oidc/logout")
 async def oidc_logout(request: Request, db: AsyncSession = Depends(get_db)):
+    _require_top_level_navigation(request)
     token = request.cookies.get(settings.session_cookie_name)
     if token:
         from app.core.security import decode_access_token
@@ -553,6 +576,7 @@ async def saml_metadata(db: AsyncSession = Depends(get_db)):
 @router.get("/saml/logout")
 async def saml_logout(request: Request, db: AsyncSession = Depends(get_db)):
     """Terminate the Alpharouter session and optionally redirect to IdP SLO."""
+    _require_top_level_navigation(request)
     token = request.cookies.get(settings.session_cookie_name)
     name_id: str | None = None
     if token:

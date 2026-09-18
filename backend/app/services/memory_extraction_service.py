@@ -695,7 +695,13 @@ async def extract_memory_operations(
             await persist_usage_operation(
                 db,
                 events=[event],
-                user_id=None,
+                # Attributed to the person whose memory is being extracted. It
+                # used to be None, so this spend appeared in no report and
+                # against no subject - real money the Guide says "every provider
+                # attempt counts" for. No budget reservation goes with it: the
+                # point is that the cost is visible, not that a background job
+                # can start refusing to run.
+                user_id=window.user_id,
                 alpha_router_api_key_id=None,
                 budget_reservation_id=None,
                 request_log_id=None,

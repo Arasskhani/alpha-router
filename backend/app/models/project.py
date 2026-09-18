@@ -261,7 +261,15 @@ class ProjectConfigVersion(Base):
     id = Column(String(36), primary_key=True)
     project_id = Column(
         String(36),
-        ForeignKey("projects.id", ondelete="CASCADE", use_alter=True),
+        # Named to match the migration: an unnamed ``use_alter`` constraint
+        # cannot be emitted as DROP CONSTRAINT, which made metadata.drop_all()
+        # impossible on PostgreSQL and kept the test fixtures on SQLite.
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            use_alter=True,
+            name="fk_project_config_versions_project_id",
+        ),
         nullable=False,
     )
     revision = Column(Integer, nullable=False)

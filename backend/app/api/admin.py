@@ -2325,7 +2325,12 @@ async def admin_disable_user_2fa(
 
 class UsersBulkIn(BaseModel):
     user_ids: list[int]
+    #: Replaces the user's entire role set. ``roles`` is the one to send: the
+    #: scalar ``role`` can only ever express a single assignment, so the Roles
+    #: page - which lets an administrator select several - silently stripped
+    #: every other role the user held. Kept for existing callers.
     role: str | None = None
+    roles: list[str] | None = None
     is_active: bool | None = None
     group_id: int | None = None
     group_action: Literal["add", "remove"] | None = None
@@ -2352,9 +2357,19 @@ async def bulk_update_users(  # noqa: C901 -- Phase 4 split; complexity must not
 
     changed = 0
 
-    if body.role is not None:
-        new_role = _normalize_role(body.role)
-        new_slugs = [new_role]
+    if body.roles is not None or body.role is not None:
+        if body.roles is not None:
+            if not body.roles:
+                raise HTTPException(400, detail="Select at least one role")
+            seen: set[str] = set()
+            new_slugs = []
+            for raw in body.roles:
+                slug = _normalize_role(raw)
+                if slug not in seen:
+                    seen.add(slug)
+                    new_slugs.append(slug)
+        else:
+            new_slugs = [_normalize_role(body.role or "")]
         if not user_has_super_admin_access(new_slugs):
             demote_count = 0
             for u in users:

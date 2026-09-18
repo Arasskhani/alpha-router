@@ -3,6 +3,7 @@ import AdminPage from "../../components/AdminPage";
 import Modal from "../../components/Modal";
 import { api } from "../../api";
 import { roleLabel, type RoleRecord } from "../../lib/rbac";
+import { useConfirm } from "../../context/ConfirmContext";
 
 type UserRow = {
   id: number;
@@ -13,6 +14,7 @@ type UserRow = {
 };
 
 export default function Roles() {
+  const { confirm } = useConfirm();
   const [roles, setRoles] = useState<RoleRecord[]>([]);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [err, setErr] = useState("");
@@ -20,7 +22,6 @@ export default function Roles() {
   const [query, setQuery] = useState("");
   const [selectedRoleSlugs, setSelectedRoleSlugs] = useState<string[]>([]);
   const [assignOpen, setAssignOpen] = useState(false);
-  const [assignRoleSlug, setAssignRoleSlug] = useState("");
   const [assignUserIds, setAssignUserIds] = useState<number[]>([]);
   const [assignUserQuery, setAssignUserQuery] = useState("");
   const [assignSaving, setAssignSaving] = useState(false);
@@ -75,7 +76,6 @@ export default function Roles() {
     if (selectedRoles.length === 0) return;
     setErr("");
     setFlash("");
-    setAssignRoleSlug(selectedRoles[0]?.slug || "");
     setAssignUserIds([]);
     setAssignUserQuery("");
     setAssignOpen(true);
@@ -92,19 +92,34 @@ export default function Roles() {
 
   async function submitAssign(e: FormEvent) {
     e.preventDefault();
-    if (!assignRoleSlug || assignUserIds.length === 0) {
-      setErr("Select a role and at least one user.");
+    const slugs = selectedRoles.map((r) => r.slug);
+    if (slugs.length === 0 || assignUserIds.length === 0) {
+      setErr("Select at least one role and at least one user.");
       return;
     }
+    // This replaces the user's whole role set - it always did, silently. An
+    // administrator assigning "Reports" to someone who also held "API Logs"
+    // removed "API Logs", with no confirmation, no undo and nothing in the
+    // flash message to say so.
+    const names = selectedRoles.map((r) => r.name).join(", ");
+    const ok = await confirm({
+      title: "Replace roles",
+      message: `${assignUserIds.length} user${assignUserIds.length === 1 ? "" : "s"} will hold exactly ${names}. Any other role they currently have will be removed.`,
+      emphasize: "Any other role they currently have will be removed",
+      confirmLabel: "Replace roles",
+      cancelLabel: "Cancel",
+      danger: true,
+    });
+    if (!ok) return;
     setAssignSaving(true);
     setErr("");
     try {
       await api("/api/admin/users/bulk", {
         method: "POST",
-        body: JSON.stringify({ user_ids: assignUserIds, role: assignRoleSlug }),
+        body: JSON.stringify({ user_ids: assignUserIds, roles: slugs }),
       });
       setFlash(
-        `Assigned ${roleLabel(roles, assignRoleSlug)} to ${assignUserIds.length} user${assignUserIds.length === 1 ? "" : "s"}.`,
+        `${assignUserIds.length} user${assignUserIds.length === 1 ? "" : "s"} now hold exactly: ${names}.`,
       );
       setAssignOpen(false);
       setSelectedRoleSlugs([]);
@@ -192,22 +207,14 @@ export default function Roles() {
         <form onSubmit={submitAssign}>
           {err && assignOpen && <p className="alert alert-error">{err}</p>}
           <p className="muted-text">
-            Selected {selectedRoles.length} role{selectedRoles.length === 1 ? "" : "s"}. Choose which role to apply, then
-            pick one or more users.
+            The selected users will hold <strong>exactly</strong> these {selectedRoles.length} role
+            {selectedRoles.length === 1 ? "" : "s"}. Any other role they currently have is removed.
           </p>
-          <label className="form-label">Role to assign</label>
-          <select
-            className="input-block"
-            value={assignRoleSlug}
-            onChange={(e) => setAssignRoleSlug(e.target.value)}
-            required
-          >
+          <ul className="roles-assign-summary">
             {selectedRoles.map((role) => (
-              <option key={role.slug} value={role.slug}>
-                {role.name}
-              </option>
+              <li key={role.slug}>{role.name}</li>
             ))}
-          </select>
+          </ul>
           <label className="form-label" style={{ marginTop: "1rem" }}>
             Users
           </label>

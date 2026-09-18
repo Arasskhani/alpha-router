@@ -138,6 +138,7 @@ from app.services.username_norm import normalize_username, username_taken_ci
 from app.services.rbac import (
     USER_SLUG,
     actor_may_assign_roles,
+    grants_platform_wide_role,
     is_valid_role_slug,
     list_roles,
     normalize_role_slug,
@@ -227,6 +228,30 @@ async def _ensure_actor_may_assign_roles(
             status_code=403,
             detail="Only Super Admin can grant, change, or revoke Super Admin access",
         )
+
+
+async def _ensure_actor_may_own_key(db: AsyncSession, actor: User, owner: User) -> None:
+    """Only a Super Admin may name a platform-wide account as a key's owner.
+
+    A gateway key inherits its *owner's* model ACL: ``resolve_key_subject``
+    answers ``unrestricted=True`` for a key owned by anyone with Super Admin
+    access. Naming the owner was gated on nothing but existence, so the API Key
+    Admin role - documented as "full access to the API Keys menu" - could mint a
+    key owned by a Super Admin with ``unlimited_budget`` and read the raw secret
+    out of the response: every private model in the catalogue, no budget, and
+    the owner's Knowledge and Agent read access, from a scoped admin account.
+    """
+
+    owner_slugs = await get_user_role_slugs(db, owner.id)
+    if not grants_platform_wide_role(owner_slugs):
+        return
+    actor_slugs = await get_user_role_slugs(db, actor.id)
+    if user_has_super_admin_access(actor_slugs):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="Only Super Admin can create or reassign a key owned by a platform-wide account",
+    )
 
 
 @router.get("/roles")
@@ -947,6 +972,7 @@ async def create_alpha_router_key(
     owner = await db.get(User, body.owner_user_id)
     if not owner:
         raise HTTPException(400, detail="Owner user not found")
+    await _ensure_actor_may_own_key(db, admin, owner)
     if body.credit_limit_usd < 0:
         raise HTTPException(400, detail="Credit limit must be >= 0")
     if body.credit_limit_usd <= 0 and not body.unlimited_budget:
@@ -1038,6 +1064,7 @@ async def email_api_key_credentials(
     owner = await db.get(User, body.owner_user_id)
     if not owner or not (owner.email or "").strip():
         raise HTTPException(400, detail="Owner user or email not found")
+    await _ensure_actor_may_own_key(db, admin, owner)
     cc: list[str] | None = None
     if body.copy_to_admin:
         admin_email = (admin.email or "").strip()
@@ -1950,6 +1977,7 @@ async def patch_alpha_router_key(
         owner = await db.get(User, body.owner_user_id)
         if not owner:
             raise HTTPException(400, detail="Owner user not found")
+        await _ensure_actor_may_own_key(db, admin, owner)
         k.owner_user_id = body.owner_user_id
         patches["owner_user_id"] = body.owner_user_id
     if body.credit_limit_usd is not None:

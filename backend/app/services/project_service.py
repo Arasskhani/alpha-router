@@ -31,6 +31,7 @@ from app.models.project import (
     PROJECT_VISIBILITY_PUBLIC,
     Project,
     ProjectInvitation,
+    ProjectAuditEvent,
     ProjectMediaAsset,
     ProjectMember,
     ProjectResource,
@@ -470,14 +471,62 @@ async def archive_project(db: AsyncSession, *, project_id: str, user: User) -> d
     return _serialize_project(project, role=access.role, is_member=access.is_member)
 
 
+async def _status_before_deletion(db: AsyncSession, project_id: str) -> str:
+    """What the project was before it was marked for deletion.
+
+    ``delete_project`` records it on the audit event, so a project that was
+    archived when it was deleted comes back archived rather than reappearing in
+    Explore.
+    """
+
+    row = (
+        (
+            await db.execute(
+                select(ProjectAuditEvent)
+                .where(
+                    ProjectAuditEvent.project_id == project_id,
+                    ProjectAuditEvent.event_type == "project.deleted",
+                )
+                .order_by(ProjectAuditEvent.created_at.desc())
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    payload = row.payload_json if row is not None and isinstance(row.payload_json, dict) else {}
+    previous = str(payload.get("previous_status") or "")
+    return previous if previous in (PROJECT_STATUS_ACTIVE, PROJECT_STATUS_ARCHIVED) else PROJECT_STATUS_ACTIVE
+
+
 async def restore_project(db: AsyncSession, *, project_id: str, user: User) -> dict[str, Any] | None:
-    """Restore an archived project to active."""
+    """Restore an archived or deletion-pending project.
+
+    Deletion-pending used to be refused here, while the Projects page told the
+    owner "these projects are marked for deletion - owners can restore them or
+    purge now". Nothing in the codebase moved a project off that status: the
+    only write to it was the one that set it. The 30-day grace period exists
+    precisely so the deletion can be taken back, and now it can be.
+    """
+
     access = await require_capability(db, project_id=project_id, user=user, capability="project.delete")
     project = await db.get(Project, project_id)
     if project is None:
         return None
     if project.status == PROJECT_STATUS_DELETION_PENDING:
-        raise ProjectValidationError("Cannot restore a project that is pending deletion")
+        target = await _status_before_deletion(db, project_id)
+        project.status = target
+        project.archived_at = project.archived_at if target == PROJECT_STATUS_ARCHIVED else None
+        project.updated_at = datetime.datetime.utcnow()
+        await db.flush()
+        await append_project_audit(
+            db,
+            project_id=project_id,
+            event_type="project.restored",
+            actor_user_id=user.id,
+            payload={"from": PROJECT_STATUS_DELETION_PENDING, "to": target},
+        )
+        return _serialize_project(project, role=access.role, is_member=access.is_member)
     if project.status != PROJECT_STATUS_ACTIVE:
         project.status = PROJECT_STATUS_ACTIVE
         project.archived_at = None

@@ -13,6 +13,8 @@ from fastapi import Request
 from app.config import get_settings
 
 DEFAULT_TRUSTED_PROXY_CIDRS = "127.0.0.1/32,::1/128"
+#: Everything ``ip_is_loopback`` answers True for. Always trusted as a hop.
+LOOPBACK_CIDRS = "127.0.0.0/8,::1/128"
 PROC_NET_ROUTE = Path("/proc/net/route")
 
 _gateway_networks: list[ipaddress._BaseNetwork] | None = None
@@ -103,11 +105,30 @@ def reset_gateway_cache() -> None:
 
 
 def trusted_proxy_networks(raw: str | None = None) -> list[ipaddress._BaseNetwork]:
+    """Hops ``resolve_client_ip`` will skip when walking X-Forwarded-For.
+
+    The whole loopback range is always in here, and that is not cosmetic. The
+    admin IP allowlist auto-passes any address ``ip_is_loopback`` accepts, which
+    is all of 127.0.0.0/8, while the configured trust set was only
+    ``127.0.0.1/32``. So ``X-Forwarded-For: 127.0.0.2`` was not skipped as a
+    proxy hop - it was accepted as the client - and then waved through the
+    allowlist. Any request whose direct peer is a trusted proxy could set that
+    header and defeat enforce mode on the whole admin surface.
+
+    The two definitions have to be the same set. Widening the trust set is the
+    safe direction: a loopback address inside X-Forwarded-For was either put
+    there by a proxy on this host or forged, and in both cases it is not the
+    client.
+    """
+
     settings = get_settings()
     value = raw if raw is not None else getattr(settings, "trusted_proxy_cidrs", DEFAULT_TRUSTED_PROXY_CIDRS)
     networks = parse_cidrs(value)
     if not networks:
         networks = parse_cidrs(DEFAULT_TRUSTED_PROXY_CIDRS)
+    for network in parse_cidrs(LOOPBACK_CIDRS):
+        if network not in networks:
+            networks.append(network)
     if getattr(settings, "trust_local_gateway_proxy", True):
         for network in local_gateway_networks():
             if network not in networks:

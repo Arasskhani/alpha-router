@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, require_active_user
 from app.database import get_db
 from app.models.user import User
-from app.services.storage_service import purge_expired_media
 from app.services.user_media_service import (
     _media_row_dict,
     MediaZipLimitError,
@@ -45,7 +44,6 @@ class SchedulePatchIn(BaseModel):
 
 @router.get("/quota")
 async def media_quota(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    await purge_expired_media(db)
     return await user_media_quota_summary(db, user.id)
 
 
@@ -59,7 +57,6 @@ async def list_media(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    await purge_expired_media(db)
     rows, total = await list_user_media_filtered(
         db,
         user.id,

@@ -92,7 +92,6 @@ from app.services.proxy_service import (
 from app.services.storage_service import (
     list_user_media,
     media_public_url,
-    purge_expired_media,
     read_media_bytes,
     read_media_range,
     store_generated_blob,
@@ -722,7 +721,6 @@ async def user_media(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    await purge_expired_media(db)
     rows = await list_user_media(db, user.id, limit=min(500, max(1, limit)))
     return [
         {

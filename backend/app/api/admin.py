@@ -3899,7 +3899,6 @@ async def admin_user_media_quota(
     _: User = Depends(require_users),
 ):
     target = await _admin_media_target_user(db, user_id)
-    await purge_expired_media(db)
     summary = await user_media_quota_summary(db, target.id)
     return {
         **summary,
@@ -3921,7 +3920,6 @@ async def admin_user_media_list(
     _: User = Depends(require_users),
 ):
     target = await _admin_media_target_user(db, user_id)
-    await purge_expired_media(db)
     rows, total = await list_user_media_filtered(
         db,
         target.id,

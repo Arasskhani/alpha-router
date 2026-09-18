@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import time
+from collections.abc import Iterable
 from typing import Any
 
 from sqlalchemy import delete, func, select
@@ -550,12 +551,28 @@ async def storage_stats(db: AsyncSession) -> dict[str, Any]:
     }
 
 
+async def _delete_unreferenced_objects(db: AsyncSession, paths: Iterable[str]) -> None:
+    """Drop objects no surviving row points at. Call this only after a commit.
+
+    Deleting from object storage cannot be rolled back. If the rows that record
+    the files are still uncommitted when the objects go, any later failure -
+    even one in unrelated code further down the same request - restores the
+    whole catalogue while the bytes are gone, and the user is left with a media
+    library where every item 404s and nothing can be deleted to fix it.
+    """
+
+    for storage_path in paths:
+        await unlink_storage_if_unreferenced(db, storage_path)
+
+
 async def clear_all_media(db: AsyncSession) -> dict[str, int]:
+    """Delete every media asset. Commits before touching object storage."""
+
     rows = (await db.execute(select(MediaAsset))).scalars().all()
     removed = len(rows)
     paths = {row.storage_path for row in rows}
     await db.execute(delete(MediaAsset))
-    await db.flush()
+    await db.commit()
     for path in paths:
         if oss.is_cdn_object_key(path):
             await asyncio.to_thread(oss.delete_object, path)
@@ -563,6 +580,13 @@ async def clear_all_media(db: AsyncSession) -> dict[str, int]:
 
 
 async def purge_expired_media(db: AsyncSession, retention_days: int | None = None) -> dict[str, int]:
+    """Delete media past the retention window. Commits before deleting objects.
+
+    Not to be called from a read endpoint. This destroys files; a GET that
+    happens to run it turns "show me my images" into an irreversible operation
+    whose rows are still uncommitted while the bytes are already gone.
+    """
+
     settings = await get_storage_settings(db)
     days = retention_days if retention_days is not None else int(settings["retention_days"])
     cutoff = dt.datetime.utcnow() - dt.timedelta(days=max(1, days))
@@ -573,9 +597,11 @@ async def purge_expired_media(db: AsyncSession, retention_days: int | None = Non
         paths.append(row.storage_path)
         await db.delete(row)
         removed += 1
-    await db.flush()
-    for storage_path in paths:
-        await unlink_storage_if_unreferenced(db, storage_path)
+    # The rows are gone for good before a single object is touched. The nightly
+    # job used to end here without committing at all, so the files were deleted
+    # and every row came back on rollback.
+    await db.commit()
+    await _delete_unreferenced_objects(db, paths)
     return {"removed_files": removed}
 
 

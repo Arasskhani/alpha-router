@@ -698,6 +698,9 @@ async def store_media(
             file_name_hint=body.file_name,
             metadata=body.metadata or {},
         )
+    except UploadRejected as exc:
+        # Before ValueError: UploadRejected is one, and it carries its own status.
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except ValueError as exc:
         detail = str(exc)
         if "quota" in detail.lower() or "limit" in detail.lower() or "too large" in detail.lower():

@@ -437,6 +437,16 @@ async def store_generated_media(
     if not data_url and not source_url:
         raise ValueError("Either data_url or source_url is required")
     blob, mime = await resolve_media_blob(data_url=data_url, source_url=source_url)
+    # These bytes come from the client - POST /api/chat/media/store accepts a
+    # base64 data URL or a URL to fetch - so they go through the same screening
+    # as every other user upload. upload_screening's own docstring calls itself
+    # "the one place all of them call"; this path was the exception, and ClamAV
+    # never saw it. store_generated_blob is deliberately left alone: its callers
+    # are the image, video and speech generators, whose bytes came from a
+    # provider rather than from a browser.
+    from app.services.upload_screening import screen_upload
+
+    await screen_upload(blob, file_name_hint or f"{kind}{_ext_from_mime(mime)}")
     return await store_generated_blob(
         db,
         user_id=user_id,

@@ -448,6 +448,22 @@ AGENT_DOMAIN_PERMISSIONS: frozenset[str] = frozenset(
     }
 )
 
+#: The subset that changes nothing. A platform-wide read-only role is capped to
+#: exactly this, so that the permission gate and ``user_can_write_menu`` cannot
+#: disagree about whether an account may write in this domain.
+AGENT_READ_PERMISSIONS: frozenset[str] = frozenset(
+    {
+        "agent.read",
+        "knowledge.read",
+        "tool.read",
+        "evaluation.read",
+        "approval.read",
+        "activity.read",
+        "governance.read",
+        "operations.read",
+    }
+)
+
 AGENT_ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     AGENTS_ADMIN_SLUG: AGENT_DOMAIN_PERMISSIONS,
     AGENT_DESIGNER_SLUG: frozenset(
@@ -625,14 +641,34 @@ def is_valid_role_slug(role: str | None) -> bool:
 
 
 def agent_permissions_for_slugs(slugs: list[str]) -> frozenset[str]:
-    """Union action-level permissions for the Agents & Knowledge domain."""
+    """Action-level permissions for the Agents & Knowledge domain.
+
+    Permissions are the union of the roles held, then capped: holding any
+    platform-wide read-only role reduces the result to reads.
+
+    The cap is what makes this gate agree with ``user_can_write_menu``, which
+    every other admin route uses and which takes ALL semantics - one read-only
+    role that covers a menu forbids writing it, whatever else is held. Without
+    the cap the two gates disagreed, and Agents is the only domain guarded by
+    this one: Read Only Super Admin plus any agents role answered "no" to the
+    menu and "yes" here, so an account the product called read-only could
+    permanently purge a Knowledge Base.
+
+    The cap also fixes the mirror of that. A platform-wide read-only role on its
+    own matched no entry in ``AGENT_ROLE_PERMISSIONS`` and so held nothing: the
+    role whose purpose is sight of the whole platform got the Agents menu in the
+    navigation and a 403 from every endpoint behind it.
+    """
 
     normalized = {normalize_role_slug(slug) for slug in slugs if slug}
     if any(user_has_super_admin_access([slug]) for slug in normalized):
-        return AGENT_DOMAIN_PERMISSIONS
-    permissions: set[str] = set()
-    for slug in normalized:
-        permissions.update(AGENT_ROLE_PERMISSIONS.get(slug, ()))
+        permissions = set(AGENT_DOMAIN_PERMISSIONS)
+    else:
+        permissions = set()
+        for slug in normalized:
+            permissions.update(AGENT_ROLE_PERMISSIONS.get(slug, ()))
+    if normalized & GLOBAL_READ_ONLY_SLUGS:
+        return AGENT_READ_PERMISSIONS
     return frozenset(permissions)
 
 

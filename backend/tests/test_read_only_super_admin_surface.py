@@ -146,8 +146,18 @@ def test_the_role_can_write_no_admin_menu_at_all():
         assert not user_can_write_menu(slugs, menu), menu
 
 
-def test_the_role_satisfies_no_agent_permission():
-    """require_agent_permission is the other way into a mutating handler."""
+def test_the_role_satisfies_no_writing_agent_permission():
+    """require_agent_permission is the other way into a mutating handler.
+
+    It holds the read permissions - without them the Agents menu appeared in the
+    navigation and every endpoint behind it answered 403 - and no others. The
+    combination case lives in test_role_combination_write_gate.py, which is
+    where this test's single-slug view missed an escalation.
+    """
+
+    from app.services.rbac import AGENT_READ_PERMISSIONS
+
     slugs = [READ_ONLY_SUPER_ADMIN_SLUG]
-    assert agent_permissions_for_slugs(slugs) == frozenset()
     assert AGENT_DOMAIN_PERMISSIONS, "sanity: the permission set is not empty"
+    assert agent_permissions_for_slugs(slugs) == AGENT_READ_PERMISSIONS
+    assert agent_permissions_for_slugs(slugs) & (AGENT_DOMAIN_PERMISSIONS - AGENT_READ_PERMISSIONS) == frozenset()

@@ -308,10 +308,21 @@ class TestReadOnlySuperAdmin:
         for menu in USER_APP_MENUS:
             assert can_write_menu(self.SLUG, menu), menu
 
-    def test_it_holds_no_agent_permissions(self):
-        assert agent_permissions_for_slugs([self.SLUG]) == frozenset()
+    def test_it_reads_agents_and_knowledge_and_writes_nothing(self):
+        """It used to hold *nothing*, so the menu appeared and every route 403'd."""
+
+        from app.services.rbac import AGENT_READ_PERMISSIONS
+
+        assert agent_permissions_for_slugs([self.SLUG]) == AGENT_READ_PERMISSIONS
+        for permission in ("agent.read", "knowledge.read", "governance.read"):
+            assert user_has_agent_permission([self.SLUG], permission)
         for permission in ("agent.publish", "knowledge.purge", "governance.retention.run"):
             assert not user_has_agent_permission([self.SLUG], permission)
+
+    def test_it_caps_any_agents_role_it_is_combined_with(self):
+        held = [self.SLUG, "agents_administrator"]
+        for permission in ("agent.publish", "knowledge.purge"):
+            assert not user_has_agent_permission(held, permission)
 
     def test_it_is_an_admin_but_not_a_super_admin(self):
         assert is_admin_panel_role(self.SLUG)

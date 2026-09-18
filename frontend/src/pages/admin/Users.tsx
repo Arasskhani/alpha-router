@@ -992,7 +992,7 @@ export default function Users() {
                   )}
                 </td>
                 <td className="col-actions">
-                  <RowActionsMenu actions={userRowActions(u)} />
+                  <RowActionsMenu onError={setErr} actions={userRowActions(u)} />
                 </td>
               </tr>
             ))}

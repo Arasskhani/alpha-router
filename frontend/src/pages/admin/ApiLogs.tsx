@@ -106,6 +106,7 @@ export default function ApiLogs({ apiKeyId }: Props) {
   const [exporting, setExporting] = useState(false);
   const [exportingOne, setExportingOne] = useState(false);
   const [exportError, setExportError] = useState("");
+  const [loadError, setLoadError] = useState("");
 
   const buildFilterQuery = useCallback(
     (limit?: string) => {
@@ -142,10 +143,18 @@ export default function ApiLogs({ apiKeyId }: Props) {
   const load = useCallback(async () => {
     const q = buildFilterQuery("200");
     setLoading(true);
+    setLoadError("");
     try {
       const d = await api<{ items: Log[]; api_key?: ApiKeyMeta }>(`${logsPath}?${q}`);
       setItems(d.items);
       setKeyMeta(d.api_key ?? null);
+    } catch (e) {
+      // try/finally with no catch meant a failed query looked like an empty
+      // result: the spinner stopped and the table showed nothing, so the
+      // administrator concluded there had been no matching API calls. On an
+      // audit screen that is a wrong answer, not a missing one.
+      setItems([]);
+      setLoadError(String(e));
     } finally {
       setLoading(false);
     }
@@ -438,6 +447,11 @@ export default function ApiLogs({ apiKeyId }: Props) {
             Refresh
           </button>
         </div>
+        {loadError && !selectedLog && (
+          <p className="alert alert-error" role="alert">
+            Could not load the API logs, so this table is not showing what happened. {loadError}
+          </p>
+        )}
         {exportError && !selectedLog && <p className="error api-logs-export-error">{exportError}</p>}
       </div>
       <div className="table-wrap table-wrap--api-logs" ref={tableScrollRef}>
@@ -464,6 +478,13 @@ export default function ApiLogs({ apiKeyId }: Props) {
             </tr>
           </thead>
           <tbody>
+            {!loading && !loadError && items.length === 0 ? (
+              <tr>
+                <td colSpan={99} className="muted-text">
+                  No API calls match these filters.
+                </td>
+              </tr>
+            ) : null}
             {items.map((r) => {
               const cached = (r.cached_tokens || 0) > 0;
               const cost = costQuality(r);

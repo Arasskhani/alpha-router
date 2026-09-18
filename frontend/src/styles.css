@@ -16177,3 +16177,14 @@ button.app-toast:hover {
 .roles-assign-summary li {
   margin: 0.15rem 0;
 }
+
+/* A row action that failed. Inline so the message stays next to the row that
+   produced it, rather than at the top of a long table. */
+.row-actions-error {
+  margin: 0.35rem 0 0;
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  color: var(--danger, #b42318);
+  text-align: right;
+  max-width: 22rem;
+}

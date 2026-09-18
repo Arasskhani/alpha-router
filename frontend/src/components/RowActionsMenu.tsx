@@ -5,7 +5,15 @@ import { ADMIN_WRITE_LOCK_TITLE } from "../lib/adminWriteLock";
 
 export type RowAction = {
   label: string;
-  onClick: () => void;
+  /**
+   * May return a promise. It used to be typed ``() => void``, so a rejected one
+   * was simply dropped: delete a connection, revoke an API key, remove an IP
+   * allowlist entry or a TLS certificate, and a 403, 409 or 500 produced
+   * nothing at all - no message, no reload, the row still there. The
+   * administrator could not tell "the server refused" from "the click did not
+   * register", and retried.
+   */
+  onClick: () => void | Promise<void>;
   danger?: boolean;
   disabled?: boolean;
   /** Allow label to wrap (keeps the menu narrow for long labels). */
@@ -17,13 +25,19 @@ type Props = {
   label?: string;
   /** Extra class on the portaled menu panel (e.g. size variants). */
   menuClassName?: string;
+  /**
+   * Shown the error when an action rejects. Pages that already surface their
+   * own errors pass their setter; the fallback keeps the failure visible on the
+   * ones that do not, rather than losing it.
+   */
+  onError?: (message: string) => void;
 };
 
 const MENU_MIN_WIDTH = 168;
 const MENU_MAX_HEIGHT = 260;
 const VIEWPORT_PAD = 8;
 
-export default function RowActionsMenu({ actions, label = "Actions", menuClassName = "" }: Props) {
+export default function RowActionsMenu({ actions, label = "Actions", menuClassName = "", onError }: Props) {
   const readOnly = useReadOnly();
   const [open, setOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
@@ -31,7 +45,20 @@ export default function RowActionsMenu({ actions, label = "Actions", menuClassNa
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  const [actionError, setActionError] = useState("");
   const visible = actions.filter((a) => !a.disabled);
+
+  async function runAction(action: RowAction) {
+    setOpen(false);
+    setActionError("");
+    try {
+      await action.onClick();
+    } catch (err) {
+      const message = `${action.label} failed: ${String(err)}`;
+      if (onError) onError(message);
+      else setActionError(message);
+    }
+  }
 
   useEffect(() => {
     if (readOnly) setOpen(false);
@@ -107,10 +134,7 @@ export default function RowActionsMenu({ actions, label = "Actions", menuClassNa
                 type="button"
                 role="menuitem"
                 className={`row-actions-item${a.danger ? " row-actions-item-danger" : ""}${a.menuWrap ? " row-actions-item--wrap" : ""}`}
-                onClick={() => {
-                  a.onClick();
-                  setOpen(false);
-                }}
+                onClick={() => void runAction(a)}
               >
                 {a.label}
               </button>
@@ -135,6 +159,11 @@ export default function RowActionsMenu({ actions, label = "Actions", menuClassNa
         {label}
         {label !== "⋯" && label !== "⋮" ? <span aria-hidden>▾</span> : null}
       </button>
+      {actionError ? (
+        <p className="row-actions-error" role="alert">
+          {actionError}
+        </p>
+      ) : null}
       {menu}
     </div>
   );

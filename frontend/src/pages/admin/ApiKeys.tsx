@@ -392,7 +392,7 @@ export default function AdminApiKeys() {
                     </div>
                   </td>
                   <td className="col-actions">
-                    <RowActionsMenu
+                    <RowActionsMenu onError={setErr}
                       actions={[
                         {
                           label: "Edit",

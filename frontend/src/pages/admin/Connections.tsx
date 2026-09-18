@@ -209,7 +209,7 @@ export default function Connections() {
                 <td className="col-lg">{c.last_sync_at ? formatDateTime(c.last_sync_at) : "—"}</td>
                 <td className="col-md">{syncScheduleLabel(c.sync_interval_hours)}</td>
                 <td className="col-actions">
-                  <RowActionsMenu
+                  <RowActionsMenu onError={setErr}
                     actions={[
                       { label: "Edit", onClick: () => setEditConn(c) },
                       {

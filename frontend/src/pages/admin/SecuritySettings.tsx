@@ -170,8 +170,12 @@ export default function SecuritySettings() {
       confirmLabel: "Remove",
     });
     if (!ok) return;
-    await api(`/api/admin/security/ip-allowlist/${id}`, { method: "DELETE" });
-    await load();
+    try {
+      await api(`/api/admin/security/ip-allowlist/${id}`, { method: "DELETE" });
+      await load();
+    } catch (e) {
+      setMsg(`Could not remove the allowlist entry: ${String(e)}`);
+    }
   }
 
   async function uploadCertificate(e: FormEvent) {
@@ -278,8 +282,12 @@ export default function SecuritySettings() {
       confirmLabel: "Delete",
     });
     if (!ok) return;
-    await api(`/api/admin/security/tls/certificates/${id}`, { method: "DELETE" });
-    await load();
+    try {
+      await api(`/api/admin/security/tls/certificates/${id}`, { method: "DELETE" });
+      await load();
+    } catch (e) {
+      setMsg(`Could not delete the certificate: ${String(e)}`);
+    }
   }
 
   const expiry = expiryBannerLevel(tls?.days_remaining ?? certs.find((c) => c.is_active)?.days_remaining ?? null);

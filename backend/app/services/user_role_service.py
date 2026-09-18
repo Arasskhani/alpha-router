@@ -99,22 +99,31 @@ async def user_bypasses_maker_checker(db: AsyncSession, user_id: int) -> bool:
     return await user_has_full_administrator(db, user_id)
 
 
-async def count_full_administrators(db: AsyncSession) -> int:
-    user_ids = (await db.execute(select(User.id))).scalars().all()
-    total = 0
-    for uid in user_ids:
-        if uid is not None and await user_has_full_administrator(db, int(uid)):
-            total += 1
-    return total
-
-
 async def count_active_full_administrators(db: AsyncSession) -> int:
-    user_ids = (await db.execute(select(User.id).where(User.is_active.is_(True)))).scalars().all()
-    total = 0
-    for uid in user_ids:
-        if uid is not None and await user_has_full_administrator(db, int(uid)):
-            total += 1
-    return total
+    """How many Full Administrators could actually sign in right now.
+
+    Every guard that protects the organisation from locking itself out has to
+    ask this question, and only this one. A count that includes disabled or
+    soft-deleted accounts reports administrators who cannot log in: with two
+    Super Admins, soft-deleting one and then permanently deleting the other was
+    allowed, because the count still read 2.
+
+    One query, not one per user: the guard runs on the deletion path, where an
+    installation with a synced directory would otherwise pay a full table walk.
+    """
+
+    rows = (
+        await db.execute(
+            select(UserRoleAssignment.user_id, UserRoleAssignment.role_slug)
+            .join(User, User.id == UserRoleAssignment.user_id)
+            .where(User.is_active.is_(True), User.deleted_at.is_(None))
+        )
+    ).all()
+    by_user: dict[int, list[str]] = {}
+    for user_id, slug in rows:
+        if user_id is not None:
+            by_user.setdefault(int(user_id), []).append(slug)
+    return sum(1 for slugs in by_user.values() if user_has_super_admin_access(slugs))
 
 
 async def ensure_super_admin_roles(db: AsyncSession, user: User, *, admin_username: str) -> None:

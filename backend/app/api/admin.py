@@ -146,7 +146,6 @@ from app.services.rbac import (
 )
 from app.services.user_role_service import (
     count_active_full_administrators,
-    count_full_administrators,
     get_roles_map,
     get_user_role_slugs,
     primary_role_for_user,
@@ -209,7 +208,7 @@ async def _ensure_not_last_full_admin_removal(db: AsyncSession, user_id: int, ne
     if (
         user_has_super_admin_access(current)
         and not user_has_super_admin_access(new_slugs)
-        and await count_full_administrators(db) <= 1
+        and await count_active_full_administrators(db) <= 1
     ):
         raise HTTPException(400, detail="Cannot demote the last Full Administrator account")
 
@@ -2330,7 +2329,7 @@ async def bulk_update_users(  # noqa: C901 -- Phase 4 split; complexity must not
                 cur = await get_user_role_slugs(db, u.id)
                 if user_has_super_admin_access(cur):
                     demote_count += 1
-            if demote_count and await count_full_administrators(db) - demote_count < 1:
+            if demote_count and await count_active_full_administrators(db) - demote_count < 1:
                 raise HTTPException(400, detail="Cannot demote the last Full Administrator account")
         for u in users:
             cur = await get_user_role_slugs(db, u.id)
@@ -2429,7 +2428,7 @@ async def delete_local_user(
         raise HTTPException(404)
     if user.deleted_at is not None:
         raise HTTPException(400, detail="User is already in Deleted Users")
-    if await user_has_full_administrator(db, user.id) and await count_full_administrators(db) <= 1:
+    if await user_has_full_administrator(db, user.id) and await count_active_full_administrators(db) <= 1:
         raise HTTPException(400, detail="Cannot delete the last Full Administrator account")
     await soft_delete_user(db, user)
     await db.commit()

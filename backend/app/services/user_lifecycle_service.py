@@ -11,7 +11,7 @@ from app.models.budget import PlanAssignment
 from app.models.logging import RequestLog
 from app.models.user import User, user_group_members
 from app.services.user_account_cleanup_service import purge_user_account_data
-from app.services.user_role_service import user_has_full_administrator, count_full_administrators
+from app.services.user_role_service import count_active_full_administrators, user_has_full_administrator
 
 
 async def record_user_login(db: AsyncSession, user: User) -> None:
@@ -31,7 +31,7 @@ async def restore_directory_user(db: AsyncSession, user: User) -> None:
 
 
 async def permanently_delete_user(db: AsyncSession, user: User) -> None:
-    if await user_has_full_administrator(db, user.id) and await count_full_administrators(db) <= 1:
+    if await user_has_full_administrator(db, user.id) and await count_active_full_administrators(db) <= 1:
         raise ValueError("Cannot delete the last Full Administrator account")
     from app.models.api_key import UserApiKey
 

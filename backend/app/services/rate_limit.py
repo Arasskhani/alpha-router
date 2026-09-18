@@ -104,14 +104,29 @@ def prune_stale_buckets(max_age_seconds: int = 3600) -> None:
 async def check_login_rate_limit(username: str, source_ip: str | None) -> None:
     """Brute-force protection on the login endpoint.
 
-    Two independent windows: per-username (stops targeted guessing on one
-    account) and per-source-IP (stops distributed guessing across many
-    accounts from one host). Both must pass.
+    Two windows, both of which must pass: one per (username, source IP) pair
+    and one per source IP.
+
+    The per-username window used to be global to the account, and that made it
+    a denial-of-service primitive rather than a protection. The limit is checked
+    before the user is even looked up and nothing resets it on success, so
+    anyone who knows an administrator's username - ``alpharouter`` by default -
+    could send 21 junk attempts a minute and lock the real administrator out
+    indefinitely. One IP, well under the per-IP ceiling, so the attacker never
+    limited themselves. That is exactly the lockout DoS this design avoids
+    lockouts to prevent.
+
+    Scoping it per pair keeps what it was for: guessing one account from one
+    host still stops at 20 a minute, and an attacker who spreads the attempts
+    across hosts now pays the per-IP window on each of them. Distributed slow
+    guessing against a single account is the case this does not catch on its
+    own; login events reaching the audit trail are what make that visible.
 
     Fail-closed if Redis is down so limits cannot weaken across workers.
     """
+    scope = source_ip or "unknown"
     await check_rate_limit(
-        f"login:user:{username}",
+        f"login:user:{username}:{scope}",
         limit=_LOGIN_USER_LIMIT,
         fail_closed=True,
     )

@@ -101,13 +101,27 @@ prune_old_backups() {
   done
 }
 
+# Services this run stopped, and the one place that starts them again. Global
+# rather than local because the EXIT trap has to see it.
+STOPPED_SERVICES=()
+
+restart_stopped_services() {
+  local status=$?
+  if [ "${#STOPPED_SERVICES[@]}" -gt 0 ]; then
+    log "starting ${STOPPED_SERVICES[*]} again"
+    compose start "${STOPPED_SERVICES[@]}" >/dev/null || warn "could not restart: ${STOPPED_SERVICES[*]}"
+    STOPPED_SERVICES=()
+  fi
+  return "$status"
+}
+
 main() {
   parse_args "$@"
   cd "$ROOT_DIR"
   [ -f "$ROOT_DIR/.env" ] || die "No .env in $ROOT_DIR; nothing to back up."
   command -v docker >/dev/null 2>&1 || die "docker is required."
 
-  local stamp dest stopped=()
+  local stamp dest
   stamp="$(date +%Y%m%d%H%M%S)"
   dest="$BACKUP_DIR/$stamp"
   mkdir -p "$dest"
@@ -131,19 +145,23 @@ main() {
       if service_running "$svc"; then
         log "stopping $svc for a consistent volume copy"
         compose stop "$svc" >/dev/null
-        stopped+=("$svc")
+        STOPPED_SERVICES+=("$svc")
       fi
     done
   else
     warn "online mode: qdrant/seaweedfs volumes are copied while running; use --consistent for a crash-consistent copy."
   fi
+  # From here until the services are back up, any failure must still restart
+  # them. Under `set -e` a failing tar used to exit with qdrant and seaweedfs
+  # stopped - and upgrade.sh runs this *before* bringing the stack up, so a
+  # failed backup aborted the upgrade leaving the host worse than it started,
+  # silently.
+  trap restart_stopped_services EXIT INT TERM
   for vol in "${DATA_VOLUMES[@]}"; do
     tar_volume "$vol" "$dest"
   done
-  if [ "${#stopped[@]}" -gt 0 ]; then
-    log "starting ${stopped[*]} again"
-    compose start "${stopped[@]}" >/dev/null
-  fi
+  restart_stopped_services
+  trap - EXIT INT TERM
 
   prune_old_backups "$BACKUP_KEEP"
   log "Backup complete: $dest"

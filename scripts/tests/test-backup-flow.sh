@@ -61,6 +61,68 @@ check "three volume archives" '[ -f "$snap/alpha_router_qdrant.tgz" ] && [ -f "$
 check "consistent: qdrant/seaweedfs stopped then started" 'grep -q "stop qdrant" "$CALLS" && grep -q "start qdrant seaweedfs" "$CALLS"'
 check "postgres never stopped (it was running)" '! grep -q "stop postgres" "$CALLS" && ! grep -q "up -d --no-deps postgres" "$CALLS"'
 
+# A failed tar must still bring qdrant and seaweedfs back. Without the trap,
+# `set -e` exits with both services stopped - and upgrade.sh runs this *before*
+# starting the stack, so the host is left worse off than before the upgrade.
+FAILCALLS="$TMP/failcalls"; : > "$FAILCALLS"
+cat > "$TMP/bin/docker" <<'FAKE'
+#!/usr/bin/env bash
+echo "docker $*" >> "$CALLS"
+case "$1" in
+  volume) exit 0 ;;
+  image) echo sha256:deadbeef; exit 0 ;;
+  run) echo "tar failed" >&2; exit 2 ;;
+  compose)
+    shift; while [ "${1:-}" = -f ]; do shift 2; done
+    case "$1" in
+      ps) printf 'postgres\nqdrant\nseaweedfs\n'; exit 0 ;;
+      exec)
+        if [[ "$*" == *pg_isready* ]]; then exit 0; fi
+        if [[ "$*" == *pg_dump* ]]; then printf 'PGDMP-fake'; exit 0; fi
+        exit 0 ;;
+      *) exit 0 ;;
+    esac ;;
+esac
+exit 0
+FAKE
+chmod +x "$TMP/bin/docker"
+: > "$CALLS"
+( cd "$WORK" && CALLS="$CALLS" BACKUP_KEEP=2 bash scripts/backup.sh --consistent >/dev/null 2>&1 ) && backup_rc=0 || backup_rc=$?
+check "a failed volume copy still fails the backup" '[ "$backup_rc" -ne 0 ]'
+check "a failed volume copy restarts qdrant/seaweedfs" 'grep -q "start qdrant seaweedfs" "$CALLS"'
+
+# Restore the working fake for the pruning case below.
+cat > "$TMP/bin/docker" <<'FAKE'
+#!/usr/bin/env bash
+echo "docker $*" >> "$CALLS"
+case "$1" in
+  volume) exit 0 ;;
+  image) echo sha256:deadbeef; exit 0 ;;
+  run)
+    dest=""; name=""
+    for a in "$@"; do
+      case "$a" in
+        *:/backup) dest="${a%%:/backup}" ;;
+        *tar\ czf*) name="$(echo "$a" | sed -E 's/.*\/backup\/([^"]+)".*/\1/')" ;;
+      esac
+    done
+    [ -n "$dest" ] && [ -n "$name" ] && tar czf "$dest/$name" -T /dev/null
+    exit 0 ;;
+  compose)
+    shift; while [ "${1:-}" = -f ]; do shift 2; done
+    case "$1" in
+      ps) printf 'postgres\nqdrant\nseaweedfs\n'; exit 0 ;;
+      exec)
+        if [[ "$*" == *pg_isready* ]]; then exit 0; fi
+        if [[ "$*" == *pg_dump* ]]; then printf 'PGDMP-fake'; exit 0; fi
+        exit 0 ;;
+      *) exit 0 ;;
+    esac ;;
+esac
+exit 0
+FAKE
+chmod +x "$TMP/bin/docker"
+
 # pruning: create two older fake snapshots, keep=2 -> only newest two remain
 mkdir -p "$WORK/backups/20200101000000" "$WORK/backups/20200102000000"
 ( cd "$WORK" && BACKUP_KEEP=2 bash scripts/backup.sh >/dev/null 2>&1 )

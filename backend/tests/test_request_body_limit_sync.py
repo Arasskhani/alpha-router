@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import uuid
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -24,14 +22,6 @@ from app.services.tls_edge_service import (
 )
 
 
-def _workdir() -> Path:
-    root = Path(__file__).resolve().parent / "_tmp_request_body_limit"
-    root.mkdir(parents=True, exist_ok=True)
-    path = root / uuid.uuid4().hex
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
 def test_resolve_request_body_uses_max_plus_margin():
     assert resolve_request_body_limit_mb(upload_mb=100, chat_total_mb=200) == 200 + REQUEST_BODY_MARGIN_MB
     assert resolve_request_body_limit_mb(upload_mb=500, chat_total_mb=100) == 500 + REQUEST_BODY_MARGIN_MB
@@ -48,8 +38,7 @@ def test_resolve_from_limits_dict():
     )
 
 
-def test_publish_and_read_shared_limit(monkeypatch):
-    tmp_path = _workdir()
+def test_publish_and_read_shared_limit(monkeypatch, tmp_path):
     settings = SimpleNamespace(tls_state_dir=str(tmp_path))
     monkeypatch.setattr(
         "app.services.request_body_limit_service.get_settings",
@@ -68,8 +57,7 @@ def test_publish_and_read_shared_limit(monkeypatch):
     assert data["request_body_mb"] == 128
 
 
-def test_nginx_conf_embeds_body_mb_and_parser_reads_it():
-    tmp_path = _workdir()
+def test_nginx_conf_embeds_body_mb_and_parser_reads_it(tmp_path):
     conf = render_nginx_config(
         https_port=443,
         http_mode="loopback_only",
@@ -83,8 +71,7 @@ def test_nginx_conf_embeds_body_mb_and_parser_reads_it():
     assert read_nginx_client_max_body_mb(path) == 44
 
 
-async def test_sync_edge_body_limit_https_disabled_still_publishes(monkeypatch):
-    tmp_path = _workdir()
+async def test_sync_edge_body_limit_https_disabled_still_publishes(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "app.services.request_body_limit_service.get_settings",
         lambda: SimpleNamespace(tls_state_dir=str(tmp_path)),
@@ -130,11 +117,10 @@ class _DownRedis:
         raise ConnectionError("redis down")
 
 
-async def test_redis_publish_reaches_other_workers(monkeypatch) -> None:
+async def test_redis_publish_reaches_other_workers(monkeypatch, tmp_path) -> None:
     import app.core.redis_client as redis_client
     import app.services.request_body_limit_service as svc
 
-    tmp_path = _workdir()
     monkeypatch.setattr(svc, "get_settings", lambda: SimpleNamespace(tls_state_dir=str(tmp_path)))
     monkeypatch.setattr("app.services.tls_edge_service.tls_state_dir", lambda: tmp_path)
     fake = _FakeRedis()
@@ -157,11 +143,10 @@ async def test_redis_publish_reaches_other_workers(monkeypatch) -> None:
     assert fake.calls == calls
 
 
-async def test_redis_outage_falls_back_to_file_and_backs_off(monkeypatch) -> None:
+async def test_redis_outage_falls_back_to_file_and_backs_off(monkeypatch, tmp_path) -> None:
     import app.core.redis_client as redis_client
     import app.services.request_body_limit_service as svc
 
-    tmp_path = _workdir()
     monkeypatch.setattr(svc, "get_settings", lambda: SimpleNamespace(tls_state_dir=str(tmp_path)))
     monkeypatch.setattr("app.services.tls_edge_service.tls_state_dir", lambda: tmp_path)
     monkeypatch.setattr(redis_client, "get_redis", lambda: _DownRedis())

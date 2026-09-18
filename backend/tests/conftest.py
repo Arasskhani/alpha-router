@@ -6,9 +6,13 @@ deliberately need two event loops.
 
 Fixtures:
 
-``engine``      SQLite in-memory by default, or the database named by
-                ``TEST_DATABASE_URL`` (Postgres in CI) with every ORM table
-                created. Function-scoped: each test starts from an empty schema.
+``engine``      the database named by ``TEST_DATABASE_URL``, else SQLite
+                in-memory, with every ORM table created. Function-scoped: each
+                test starts from an empty schema. SQLite runs with
+                ``PRAGMA foreign_keys=ON`` so that ``ON DELETE`` clauses behave
+                as they do on PostgreSQL; ``backend-tests-postgres`` in CI sets
+                ``TEST_DATABASE_URL`` so the locking and trigger behaviour that
+                SQLite cannot express is exercised for real.
 ``db_session``  one ``AsyncSession`` on that engine (``expire_on_commit=False``).
 ``session_factory``  the ``async_sessionmaker`` when a test needs several sessions.
 ``client``      ``httpx.AsyncClient`` over the real FastAPI app with ``get_db``
@@ -25,28 +29,42 @@ import os
 from collections.abc import AsyncIterator
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 import app.models as _orm_models  # noqa: F401 -- registers every ORM table on Base.metadata
-from app.database import Base
+from app.database import Base, enable_sqlite_foreign_keys
 
 _TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "").strip()
+
+
+async def _reset_schema(conn) -> None:
+    """Empty the database the hard way.
+
+    ``Base.metadata.drop_all`` cannot do this on PostgreSQL: the schema contains
+    ``use_alter`` foreign keys, which SQLAlchemy drops with an unconditional
+    ``ALTER TABLE ... DROP CONSTRAINT`` that fails when the table is already
+    gone. Dropping the schema is both correct and faster.
+    """
+
+    await conn.execute(text("DROP SCHEMA public CASCADE"))
+    await conn.execute(text("CREATE SCHEMA public"))
 
 
 @pytest.fixture
 async def engine() -> AsyncIterator[AsyncEngine]:
     url = _TEST_DATABASE_URL or "sqlite+aiosqlite:///:memory:"
-    eng = create_async_engine(url)
+    eng = enable_sqlite_foreign_keys(create_async_engine(url))
     async with eng.begin() as conn:
         if _TEST_DATABASE_URL:
-            await conn.run_sync(Base.metadata.drop_all)
+            await _reset_schema(conn)
         await conn.run_sync(Base.metadata.create_all)
     try:
         yield eng
     finally:
         if _TEST_DATABASE_URL:
             async with eng.begin() as conn:
-                await conn.run_sync(Base.metadata.drop_all)
+                await _reset_schema(conn)
         await eng.dispose()
 
 

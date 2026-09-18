@@ -67,6 +67,33 @@ backend-tests:
     - python -m pip check
     - cd backend && python -m pytest tests -q
 
+# The same suite, on the engine production actually runs.
+#
+# backend-tests above uses SQLite, where foreign keys are enforced (the shared
+# fixture sets the pragma) but SELECT ... FOR UPDATE, SKIP LOCKED and row
+# triggers are silently ignored. A referential action on PostgreSQL is a real
+# UPDATE that fires triggers, and that difference has hidden at least one bug
+# that made an endpoint fail in production while every test stayed green. So the
+# suite runs twice: once fast, once truthful.
+backend-tests-postgres:
+  stage: verify
+  image: python:3.12-slim
+  <<: *backend-rules
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+  variables:
+    POSTGRES_USER: alpha_router
+    POSTGRES_PASSWORD: ci-tests
+    POSTGRES_DB: alpha_router_test
+    POSTGRES_HOST_AUTH_METHOD: trust
+    TEST_DATABASE_URL: postgresql+asyncpg://alpha_router:ci-tests@postgres:5432/alpha_router_test
+  script:
+    # Two installs: the lock is hash-verified, the dev tools are not (pip refuses to mix).
+    - python -m pip install --no-cache-dir --require-hashes -r backend/requirements.lock
+    - python -m pip install --no-cache-dir -r backend/requirements-dev.txt
+    - cd backend && python -m pytest tests -q
+
 # The money path relies on SELECT ... FOR UPDATE / SKIP LOCKED, which SQLite
 # silently ignores. Run the real migration entrypoint (the same one db-init
 # executes) and the opt-in reservation canary against PostgreSQL 16.

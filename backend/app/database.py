@@ -4,13 +4,42 @@ from collections.abc import AsyncGenerator
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Numeric
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import Numeric, event
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import get_settings
 
 settings = get_settings()
+
+
+def enable_sqlite_foreign_keys(target: AsyncEngine) -> AsyncEngine:
+    """Make SQLite enforce the foreign keys the schema declares.
+
+    SQLite defaults ``PRAGMA foreign_keys`` to OFF, per connection. Every
+    ``ON DELETE CASCADE`` and ``ON DELETE SET NULL`` in the models is therefore
+    inert there, which is not how the deployed database behaves: PostgreSQL
+    always enforces them, and on PostgreSQL a ``SET NULL`` runs as a real UPDATE
+    that fires row triggers. Leaving the pragma off means the two engines
+    disagree about what a delete does, and the tests - which run on SQLite -
+    cannot see the difference.
+
+    Applied to any engine, so tests that build their own can opt in with one
+    call instead of a per-file event hook.
+    """
+
+    if not target.url.get_backend_name().startswith("sqlite"):
+        return target
+
+    @event.listens_for(target.sync_engine, "connect")
+    def _fk_on(dbapi_connection, _record) -> None:  # pragma: no cover - driver callback
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cursor.close()
+
+    return target
 
 
 def asyncpg_connect_args() -> dict[str, Any]:
@@ -40,7 +69,7 @@ else:
         connect_args=asyncpg_connect_args(),
     )
 
-engine = create_async_engine(settings.database_url, **_engine_kwargs)
+engine = enable_sqlite_foreign_keys(create_async_engine(settings.database_url, **_engine_kwargs))
 
 read_engine = None
 AsyncReadSessionLocal: async_sessionmaker[AsyncSession] | None = None

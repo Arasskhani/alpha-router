@@ -73,13 +73,13 @@ async def _event(db_session, *, age_days: int, raw: str | None) -> str:
     return event.id
 
 
-async def test_purge_clears_old_payloads_and_keeps_the_rows(db_session):
+async def test_purge_clears_old_payloads_and_keeps_the_rows(db_session, user):
     old_id = await _event(db_session, age_days=40, raw='{"status":"failed"}')
     recent_id = await _event(db_session, age_days=2, raw='{"status":"completed"}')
 
     job = VideoGenerationJob(
         id="job-old",
-        user_id=1,
+        user_id=user.id,
         model_id="bytedance/seedance-1-pro",
         prompt="a cat",
         operation="generation",

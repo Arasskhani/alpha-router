@@ -18,6 +18,7 @@ from app.models.budget import BudgetPlan, PlanAssignment
 from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel
 from app.models.user import User, UserGroup, user_group_members
+from app.services.group_membership import live_member_ids_for_groups_stmt, live_member_ids_stmt
 from app.services.plan_assignment_service import USER_PLAN_NONE, get_user_direct_assignment, user_plan_mode
 
 
@@ -51,9 +52,7 @@ async def users_for_plan(db: AsyncSession, plan_id: int) -> list[int]:
         if a.department:
             departments.add(str(a.department))
     if group_ids:
-        rows = (
-            await db.execute(select(user_group_members.c.user_id).where(user_group_members.c.group_id.in_(group_ids)))
-        ).all()
+        rows = (await db.execute(live_member_ids_for_groups_stmt(group_ids))).all()
         user_ids.update(int(r[0]) for r in rows if r[0] is not None)
     if departments:
         rows = (
@@ -907,13 +906,7 @@ async def report_group_members_usage(db: AsyncSession, group_id: int, start: dat
     group = await db.get(UserGroup, group_id)
     if not group:
         raise HTTPException(404, "Group not found")
-    member_ids = [
-        int(r[0])
-        for r in (
-            await db.execute(select(user_group_members.c.user_id).where(user_group_members.c.group_id == group_id))
-        ).all()
-        if r[0] is not None
-    ]
+    member_ids = [int(r[0]) for r in (await db.execute(live_member_ids_stmt(group_id))).all() if r[0] is not None]
     if not member_ids:
         return pd.DataFrame(columns=["group", "username", "cost_usd", "requests"])
     q = (

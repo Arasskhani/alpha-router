@@ -18,6 +18,7 @@ from app.api.deps import get_bearer_token, require_groups, require_groups_write
 from app.database import get_db
 from app.models.budget import PlanAssignment
 from app.models.user import User, UserGroup, user_group_members
+from app.services.group_membership import live_member_ids_stmt
 from app.services import activity_service
 from app.services.auth_config import get_provider_config
 from app.services.ldap_auth import fetch_ldap_groups
@@ -225,9 +226,7 @@ async def update_local_group(
 
 
 async def _group_member_ids(db: AsyncSession, group_id: int) -> list[int]:
-    rows = (
-        await db.execute(select(user_group_members.c.user_id).where(user_group_members.c.group_id == group_id))
-    ).all()
+    rows = (await db.execute(live_member_ids_stmt(group_id))).all()
     return [int(r[0]) for r in rows if r[0] is not None]
 
 

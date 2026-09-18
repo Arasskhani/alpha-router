@@ -88,6 +88,52 @@ export default function DeletedUsers() {
     }
   }
 
+  async function restoreUser(u: DeletedUser) {
+    const ok = await confirm({
+      title: "Restore user",
+      message: `Restore "${u.username}"? The account will be able to sign in again, with the groups, plan and access it had.`,
+      confirmLabel: "Restore",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+    setErr("");
+    try {
+      await api(`/api/admin/users/${u.id}/restore`, { method: "POST" });
+      setFlash(`User "${u.username}" restored.`);
+      setSelectedIds((prev) => prev.filter((id) => id !== u.id));
+      load();
+    } catch (e) {
+      setErr(String(e));
+    }
+  }
+
+  async function bulkRestore() {
+    if (!selectedIds.length) return;
+    const ok = await confirm({
+      title: "Restore users",
+      message: `Restore ${selectedIds.length} selected user(s)? They will be able to sign in again.`,
+      confirmLabel: "Restore",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+    setBulkBusy(true);
+    setErr("");
+    try {
+      const res = await api<{ restored: number }>("/api/admin/deleted-users/bulk-restore", {
+        method: "POST",
+        body: JSON.stringify({ user_ids: selectedIds }),
+      });
+      setFlash(`Restored ${res.restored ?? 0} user(s).`);
+      setSelectedIds([]);
+      setBulkOpen(false);
+      load();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   async function bulkPermanentlyDelete() {
     if (!selectedIds.length) return;
     const ok1 = await confirm({
@@ -136,6 +182,10 @@ export default function DeletedUsers() {
         onClick: () => navigate(`/admin/users/${u.id}/media`),
       },
       {
+        label: "Restore User",
+        onClick: () => void restoreUser(u),
+      },
+      {
         label: "Permanently Delete User",
         onClick: () => void permanentlyDeleteUser(u),
         danger: true,
@@ -153,7 +203,8 @@ export default function DeletedUsers() {
       {flash && <p className="alert alert-success">{flash}</p>}
       {err && <p className="alert alert-error">{err}</p>}
       <p className="muted-text">
-        Users removed from sync or deleted by an admin. They cannot sign in. Data is kept until permanently deleted.
+        Users removed from sync or deleted by an admin. They cannot sign in. Restoring an account brings back
+        the groups, plan and access it had. Data is kept until permanently deleted.
       </p>
       <div className="search-bar">
         <button
@@ -210,8 +261,13 @@ export default function DeletedUsers() {
       </div>
 
       <Modal open={bulkOpen} title={`Bulk Edit (${selectedIds.length} users)`} onClose={() => !bulkBusy && setBulkOpen(false)}>
-        <p className="muted-text">Permanently remove selected users and all their data from the server.</p>
+        <p className="muted-text">
+          Restore the selected users, or permanently remove them and all their data from the server.
+        </p>
         <div className="dialog-actions">
+          <button type="button" className="btn" disabled={bulkBusy} onClick={() => void bulkRestore()}>
+            {bulkBusy ? "…" : "Restore Users"}
+          </button>
           <button type="button" className="btn btn-danger" disabled={bulkBusy} onClick={() => void bulkPermanentlyDelete()}>
             {bulkBusy ? "…" : "Permanently Delete User"}
           </button>

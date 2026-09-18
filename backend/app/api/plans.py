@@ -108,7 +108,6 @@ async def list_departments(db: AsyncSession = Depends(get_db), _: User = Depends
 
 @router.get("/{plan_id}/members")
 async def plan_members(plan_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(require_plans)):
-    from app.models.user import user_group_members
 
     plan = await db.get(BudgetPlan, plan_id)
     if not plan:
@@ -128,13 +127,9 @@ async def plan_members(plan_id: int, db: AsyncSession = Depends(get_db), _: User
 
     member_counts: dict[int, int] = {}
     if group_ids:
-        count_rows = (
-            await db.execute(
-                select(user_group_members.c.group_id, func.count())
-                .where(user_group_members.c.group_id.in_(group_ids))
-                .group_by(user_group_members.c.group_id)
-            )
-        ).all()
+        from app.services.group_membership import live_member_counts_stmt
+
+        count_rows = (await db.execute(live_member_counts_stmt(group_ids))).all()
         member_counts = {int(gid): int(cnt) for gid, cnt in count_rows}
 
     users_out = []

@@ -24,14 +24,40 @@ async def record_user_login(db: AsyncSession, user: User) -> None:
 
 
 async def soft_delete_user(db: AsyncSession, user: User) -> None:
+    """Move the account to Deleted Users. Reversible, which is the point.
+
+    Group memberships used to be deleted here. Nothing snapshotted them, so the
+    deletion was not reversible at all: an LDAP user pruned by an OU change and
+    picked up again by the next sync came back with no groups, and therefore no
+    inherited budget plan, no group model access and no group knowledge or agent
+    access - silently, and with no way to reconstruct what they had.
+
+    The rows stay. ``app.services.group_membership`` is how "who is in this
+    group" stays correctly answered while they do: a deleted account is not a
+    member for any purpose a person or a bill can see.
+    """
+
     user.deleted_at = datetime.datetime.utcnow()
     user.is_active = False
-    await db.execute(delete(user_group_members).where(user_group_members.c.user_id == user.id))
+    # Sessions have to end now, not when the JWT expires.
+    user.token_version = int(user.token_version or 0) + 1
+    await db.flush()
+
+
+async def restore_user(db: AsyncSession, user: User) -> None:
+    """Bring an account back from Deleted Users, with everything it had."""
+
+    if user.purged_at is not None:
+        raise ValueError("Cannot restore a permanently deleted account")
+    user.deleted_at = None
+    user.is_active = True
+    await db.flush()
 
 
 async def restore_directory_user(db: AsyncSession, user: User) -> None:
-    user.deleted_at = None
-    user.is_active = True
+    """Restore path used by LDAP sync when a user returns to the OU filter."""
+
+    await restore_user(db, user)
 
 
 async def permanently_delete_user(db: AsyncSession, user: User) -> None:

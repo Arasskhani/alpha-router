@@ -7,7 +7,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.budget import BudgetPlan, PlanAssignment
-from app.models.user import User, UserGroup, user_group_members
+from app.models.user import User, UserGroup
+from app.services.group_membership import live_member_ids_stmt
 from app.services.budget_service import resolve_monthly_budget
 
 USER_PLAN_INHERIT = "inherit"
@@ -28,9 +29,7 @@ def user_plan_mode(assignment: PlanAssignment | None) -> str:
 
 
 async def _member_user_ids(db: AsyncSession, group_id: int) -> list[int]:
-    rows = (
-        await db.execute(select(user_group_members.c.user_id).where(user_group_members.c.group_id == group_id))
-    ).all()
+    rows = (await db.execute(live_member_ids_stmt(group_id))).all()
     return [int(r[0]) for r in rows if r[0] is not None]
 
 

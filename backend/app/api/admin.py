@@ -2499,6 +2499,62 @@ async def permanently_delete_user_endpoint(
     return {"ok": True}
 
 
+@router.post("/users/{user_id}/restore")
+async def restore_user_endpoint(
+    user_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_deleted_users_write),
+):
+    """Bring an account back from Deleted Users.
+
+    Until now the only exits from that list were permanent deletion and - for
+    LDAP accounts only - a silent un-delete by the next directory sync. A local
+    account that was soft-deleted by mistake could not be recovered at all.
+    """
+
+    from app.services.user_lifecycle_service import restore_user
+
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(404)
+    if user.deleted_at is None:
+        raise HTTPException(400, detail="User is not in Deleted Users")
+    try:
+        await restore_user(db, user)
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+    await _audit_user_action(db, request, admin, action="user_restored", user=user)
+    await db.commit()
+    return {"ok": True, "restored": True}
+
+
+@router.post("/deleted-users/bulk-restore")
+async def bulk_restore_users(
+    body: UsersPermanentDeleteIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_deleted_users_write),
+):
+    from app.services.user_lifecycle_service import restore_user
+
+    if not body.user_ids:
+        raise HTTPException(400, detail="No users selected")
+    users = (await db.execute(select(User).where(User.id.in_(body.user_ids)))).scalars().all()
+    restored = 0
+    for user in users:
+        if user.deleted_at is None or user.purged_at is not None:
+            continue
+        try:
+            await restore_user(db, user)
+        except ValueError:
+            continue
+        await _audit_user_action(db, request, admin, action="user_restored", user=user)
+        restored += 1
+    await db.commit()
+    return {"ok": True, "restored": restored}
+
+
 @router.post("/deleted-users/bulk-permanently-delete")
 async def bulk_permanently_delete_users(
     body: UsersPermanentDeleteIn,

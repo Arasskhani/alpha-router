@@ -152,6 +152,9 @@ class TurnContext:
     project_memory_project_id: str | None
     injected_memory_ids: list[str]
     injected_project_memory_ids: list[str]
+    #: What the budget hold for this turn is worth, so the stream can watch its
+    #: own running cost against it. None when the turn is not budgeted.
+    budget_hold_usd: float | None = None
 
 
 async def adaptive_openrouter_extra_body(ai_model: AIModel) -> dict | None:
@@ -328,6 +331,7 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
     model = resolved.model_id
 
     stream_reservation_id = getattr(resolved, "budget_reservation_id", None)
+    budget_hold_usd = getattr(resolved, "budget_hold_usd", None)
     lease = CapacityLease(
         permit=getattr(resolved, "code_interpreter_capacity_permit", None),
         stream_reservation_id=stream_reservation_id,
@@ -486,6 +490,7 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
             project_memory_project_id=project_memory_project_id,
             injected_memory_ids=injected_memory_ids,
             injected_project_memory_ids=injected_project_memory_ids,
+            budget_hold_usd=budget_hold_usd,
         )
     except BaseException:
         await lease.abandon("turn preparation error")

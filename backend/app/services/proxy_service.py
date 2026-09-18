@@ -157,6 +157,65 @@ _resolve_litellm_provider = resolve_litellm_provider
 
 settings = get_settings()
 
+#: How much new text to accumulate before re-pricing the turn in flight.
+#: Re-pricing every chunk would run the tokenizer thousands of times per turn;
+#: a few hundred characters catches an overrun while it is still small.
+BUDGET_RECHECK_CHARS = 400
+
+
+def turn_cost_exceeds_hold(
+    *,
+    ai_model,
+    provider_type: str | None,
+    model: str,
+    messages,
+    completion_text: str,
+    hold_usd: float | None,
+) -> bool:
+    """Has this turn already cost more than was reserved for it?
+
+    The hold is an estimate. For chat it is sized from ``max_tokens``, which
+    reaches ``completion_kwargs`` only on the agent path - so an ordinary turn
+    asks the provider for an unbounded completion against a hold that assumed a
+    bounded one. Budget is otherwise checked only at admission, so the overrun
+    is charged in full and only the *next* request is refused.
+
+    There is no honest way to fix that with a better estimate: the catalog
+    carries ``context_length`` and no ``max_output_tokens``, so there is no
+    number to send. Watching the running cost is the control that matches the
+    problem.
+
+    Returns False when anything is unknown - an unpriced model, a tokenizer
+    that could not count, no hold at all. A turn is never stopped on a guess.
+    """
+
+    if hold_usd is None or hold_usd <= 0 or ai_model is None:
+        return False
+    est_prompt, est_completion = estimate_tokens(
+        provider_type=provider_type,
+        model=model,
+        messages=messages,
+        completion_text=completion_text,
+    )
+    if not est_completion:
+        return False
+    running = _compute_token_cost_usd(
+        ai_model,
+        prompt_tokens=est_prompt,
+        completion_tokens=est_completion,
+        model_id=model,
+        messages=messages,
+        completion_text=completion_text,
+        provider_type=provider_type,
+    )
+    return running > hold_usd
+
+
+BUDGET_EXCEEDED_MESSAGE = (
+    "This reply was stopped because it passed the budget reserved for it. "
+    "The part already generated has been billed. Try a shorter request, or ask an administrator to raise your budget."
+)
+
 STREAM_SSE_HEADERS = {
     "Cache-Control": "no-cache",
     "Connection": "keep-alive",
@@ -172,6 +231,11 @@ class ResolvedStreamContext:
     provider_type: str
     model_id: str
     budget_reservation_id: str | None = None
+    #: What the hold is worth. The stream watches its own running cost against
+    #: this: the hold is an estimate, and a chat turn's completion length is not
+    #: knowable in advance, so without a check the turn can outgrow what was
+    #: reserved and the overspend is only noticed by the *next* request.
+    budget_hold_usd: float | None = None
     code_interpreter_workspace_files: dict[str, str] | None = None
     code_interpreter_capacity_permit: CapacityPermit | None = None
     agent_turn: PreparedAgentTurn | None = None
@@ -655,6 +719,7 @@ async def preflight_stream_chat(  # noqa: C901 -- Phase 4 split; complexity must
         provider_type=provider_type or ai_model.provider_type or "",
         model_id=litellm_model_for_provider(ai_model.external_id, provider_type or ai_model.provider_type),
         budget_reservation_id=hold.id if hold else None,
+        budget_hold_usd=float(hold.reserved_usd) if hold is not None else None,
         code_interpreter_workspace_files=workspace_files,
         code_interpreter_capacity_permit=capacity_permit,
         agent_turn=agent_turn,
@@ -736,6 +801,7 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
         project_memory_project_id = ctx.project_memory_project_id
         injected_memory_ids = ctx.injected_memory_ids
         injected_project_memory_ids = ctx.injected_project_memory_ids
+        budget_hold_usd = ctx.budget_hold_usd
 
         prompt_tokens = completion_tokens = cached_tokens = 0
         total_cost = 0.0
@@ -805,6 +871,21 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
         # Sticky for the whole request: once the user presses Stop (or the client
         # goes away), later Code Interpreter iterations must not resume work.
         client_disconnected = False
+        budget_exceeded = False
+        # Re-pricing every chunk would run the tokenizer thousands of times per
+        # turn. Every few hundred characters is often enough to catch an overrun
+        # while it is still small, and costs almost nothing.
+        budget_checked_at_len = 0
+
+        def _over_budget(text: str) -> bool:
+            return turn_cost_exceeds_hold(
+                ai_model=ai_model,
+                provider_type=provider_type,
+                model=model,
+                messages=messages,
+                completion_text=text,
+                hold_usd=budget_hold_usd,
+            )
 
         async def _client_stopped() -> bool:
             """Checkpoint used outside the chunk loop (around sandbox execution)."""
@@ -918,6 +999,17 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                     if delta:
                         attempt.record_text(delta)
                         collected_content += delta
+                    if (
+                        budget_hold_usd is not None
+                        and len(collected_content) - budget_checked_at_len >= BUDGET_RECHECK_CHARS
+                    ):
+                        budget_checked_at_len = len(collected_content)
+                        if _over_budget(collected_content):
+                            budget_exceeded = True
+                            client_disconnected = True
+                            await attempt.close()
+                            yield _sse_error_frame(BUDGET_EXCEEDED_MESSAGE)
+                            break
                     if not client_disconnected and agent_turn is None:
                         yield f"data: {_serialize_stream_chunk(chunk)}\n\n".encode()
                     # Persist after yield and without awaiting DB: token printing
@@ -1059,6 +1151,12 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                 code_loop.iterations += 1
 
             _compute_cost()
+            if budget_exceeded:
+                # Not a provider failure and not a user cancellation: the turn
+                # was stopped by us, and the log should say which.
+                success = False
+                error_code = "budget_exceeded"
+                error_message = BUDGET_EXCEEDED_MESSAGE
             if agent_turn is not None and not client_disconnected and success:
                 await _review_agent_output()
                 yield _sse_delta_chunk(collected_content)

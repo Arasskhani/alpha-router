@@ -653,6 +653,23 @@ async def _upsert_directory_user(db: AsyncSession, profile: dict, provider: str)
                         "Refusing cross-provider account takeover."
                     ),
                 )
+            # Adoption by username exists to backfill external_id on rows that
+            # predate it. A row already bound to a *different* directory
+            # principal is not that: taking it over would hand this login the
+            # other person's roles, budget, chats and groups, and the write
+            # below would replace their external_id so they could never sign in
+            # again. The username claim is not always the IdP's to guarantee -
+            # the OIDC fallback chain ends at ``email``, which several IdPs let
+            # the account holder edit - so this has to be refused here.
+            existing_external_id = (by_username.external_id or "").strip()
+            if existing_external_id and existing_external_id != external_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Username '{username}' is already bound to a different {provider} account. "
+                        "Refusing account takeover."
+                    ),
+                )
             user = by_username
 
     if user and user.deleted_at is not None:

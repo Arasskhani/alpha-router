@@ -466,7 +466,11 @@ def build_profile_from_claims(
     username_claim = (cfg.get("claim_username") or "preferred_username").strip()
     email_claim = (cfg.get("claim_email") or "email").strip()
     name_claim = (cfg.get("claim_display_name") or "name").strip()
-    username = pick(username_claim, "preferred_username", "email", "sub")
+    # Deliberately no "email" fallback: in several IdP configurations the
+    # account holder can edit their own address, which would let them choose
+    # the username an Alpharouter account is matched on. ``sub`` is the one
+    # claim the IdP always controls, so it is the last resort.
+    username = pick(username_claim, "preferred_username", "sub")
     email = pick(email_claim, "email")
     display_name = pick(name_claim, "name")
     if not username:

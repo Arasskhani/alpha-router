@@ -165,9 +165,12 @@ main() {
   fi
 
   backup_before_upgrade
-  if [ "$FROM_SOURCE" -eq 1 ] && [ "$SKIP_BUILD" -ne 1 ]; then
-    tag_previous_images
-  fi
+  # Every path here replaces :latest - a source build, a registry pull, and
+  # --skip-build too, because the release checkout moved underneath it. The
+  # guard used to run this only for a source build, so restore.sh
+  # --previous-images silently kept the new code on the other two: the operator
+  # restored old data and ran it under the build they were rolling back from.
+  tag_previous_images
   export_app_version
   start_stack
   wait_for_health

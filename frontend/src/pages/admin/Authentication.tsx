@@ -119,28 +119,60 @@ export default function Authentication() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [idpXmlFileName, setIdpXmlFileName] = useState("");
+  const [loadFailed, setLoadFailed] = useState<string[]>([]);
   const idpXmlInputRef = useRef<HTMLInputElement>(null);
 
+  // Save PUTs the whole form object, so a failed load is not a cosmetic
+  // problem: the form would sit on its defaults, look plausible, and write an
+  // empty host, empty bind DN and enabled:false over a working directory
+  // configuration the moment the admin changed one field. Saving is blocked
+  // until every provider has actually been read.
   useEffect(() => {
-    api<LdapSimple>("/api/admin/authentication/ldap").then((r) => setLdap(normalizeLdap(r)));
-    api<SamlCfg>("/api/admin/authentication/saml").then((r) => {
-      setSaml({
-        ...defaultSaml(),
-        ...r,
-        enabled: Boolean(r.enabled),
-        strict: r.strict !== false,
-        want_assertions_signed: r.want_assertions_signed !== false,
-      });
-      setIdpXmlFileName(r.idp_metadata_xml?.trim() ? "Stored IdP metadata XML" : "");
-    });
-    api<OidcCfg>("/api/admin/authentication/oidc").then((r) => {
-      setOidc({
-        ...defaultOidc(),
-        ...r,
-        enabled: Boolean(r.enabled),
-        client_secret: r.client_secret || "",
-      });
-    });
+    let cancelled = false;
+    const failures: string[] = [];
+
+    async function load() {
+      try {
+        const r = await api<LdapSimple>("/api/admin/authentication/ldap");
+        if (!cancelled) setLdap(normalizeLdap(r));
+      } catch {
+        failures.push("Active Directory");
+      }
+      try {
+        const r = await api<SamlCfg>("/api/admin/authentication/saml");
+        if (!cancelled) {
+          setSaml({
+            ...defaultSaml(),
+            ...r,
+            enabled: Boolean(r.enabled),
+            strict: r.strict !== false,
+            want_assertions_signed: r.want_assertions_signed !== false,
+          });
+          setIdpXmlFileName(r.idp_metadata_xml?.trim() ? "Stored IdP metadata XML" : "");
+        }
+      } catch {
+        failures.push("SAML");
+      }
+      try {
+        const r = await api<OidcCfg>("/api/admin/authentication/oidc");
+        if (!cancelled) {
+          setOidc({
+            ...defaultOidc(),
+            ...r,
+            enabled: Boolean(r.enabled),
+            client_secret: r.client_secret || "",
+          });
+        }
+      } catch {
+        failures.push("OIDC");
+      }
+      if (!cancelled) setLoadFailed(failures);
+    }
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function onIdpMetadataFile(file: File | null) {
@@ -361,6 +393,12 @@ export default function Authentication() {
         <strong>LDAPS on port 636</strong> only — the Alpharouter container must be able to reach the DC on that port.
       </p>
 
+      {loadFailed.length > 0 && (
+        <p className="alert alert-error" role="alert">
+          Could not load the current {loadFailed.join(", ")} settings. Saving is disabled so the
+          form cannot overwrite them with blanks &mdash; reload the page to try again.
+        </p>
+      )}
       {msg && <p className="card">{msg}</p>}
 
       <div className="tabs">
@@ -534,7 +572,7 @@ export default function Authentication() {
           )}
 
           <div className="dialog-actions" style={{ marginTop: 12 }}>
-            <button className="btn" type="submit" disabled={saving || !canTry}>
+            <button className="btn" type="submit" disabled={saving || !canTry || loadFailed.length > 0}>
               {saving ? "Saving…" : "Save"}
             </button>
             <button className="btn btn-ghost" type="button" disabled={!canTry || testing} onClick={() => void runLdapTest()}>
@@ -686,7 +724,7 @@ export default function Authentication() {
           )}
 
           <div className="dialog-actions" style={{ marginTop: 12 }}>
-            <button className="btn" type="submit" disabled={saving}>
+            <button className="btn" type="submit" disabled={saving || loadFailed.length > 0}>
               {saving ? "Saving…" : "Save SAML"}
             </button>
           </div>
@@ -792,7 +830,7 @@ export default function Authentication() {
           </label>
 
           <div className="dialog-actions" style={{ marginTop: 12 }}>
-            <button className="btn" type="submit" disabled={saving}>
+            <button className="btn" type="submit" disabled={saving || loadFailed.length > 0}>
               {saving ? "Saving…" : "Save OIDC"}
             </button>
           </div>

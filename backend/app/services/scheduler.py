@@ -378,6 +378,15 @@ async def refresh_chat_retention_cleanup_schedule() -> None:
         )
 
 
+async def job_purge_expired_private_videos():
+    from app.services.video_job_service import purge_expired_private_videos
+
+    try:
+        await purge_expired_private_videos()
+    except Exception:
+        logger.exception("Expired private video purge failed")
+
+
 async def job_reclaim_stale_video_jobs():
     from app.services.video_job_service import reclaim_stale_video_jobs
 
@@ -408,6 +417,17 @@ def start_scheduler():
         "interval",
         minutes=5,
         id="video_job_reclaim",
+        max_instances=1,
+        coalesce=True,
+    )
+    # Private videos expire on a clock rather than being destroyed by the first
+    # read. Without this the object behind one that is never downloaded would
+    # never be deleted at all.
+    scheduler.add_job(
+        job_purge_expired_private_videos,
+        "interval",
+        minutes=5,
+        id="private_video_expiry",
         max_instances=1,
         coalesce=True,
     )

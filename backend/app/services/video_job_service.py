@@ -384,6 +384,62 @@ async def cancel_video_job(db: AsyncSession, job: VideoGenerationJob) -> VideoGe
     return job
 
 
+async def purge_expired_private_videos() -> int:
+    """Delete the object behind a private video once its window has passed.
+
+    A private video used to be destroyed by the first GET: the handler read the
+    bytes, stamped ``ephemeral_consumed_at``, nulled the path and deleted the
+    object, all in the same request. That made the file unplayable in practice -
+    a ``<video>`` element seeking issues a second request and got a 404
+    mid-playback, and a page refresh lost it for good, after the user had paid
+    for it.
+
+    The expiry column was already there and was the honest control; nothing ever
+    acted on it, so removing consume-on-read without this would leak every
+    private video that is never downloaded. This is the other half.
+    """
+
+    removed = 0
+    async with AsyncSessionLocal() as db:
+        if db.get_bind().dialect.name == "postgresql":
+            locked = await db.execute(text("SELECT pg_try_advisory_xact_lock(56023121)"))
+            if not bool(locked.scalar()):
+                return 0
+        rows = (
+            (
+                await db.execute(
+                    select(VideoGenerationJob).where(
+                        VideoGenerationJob.ephemeral_storage_path.is_not(None),
+                        VideoGenerationJob.ephemeral_expires_at.is_not(None),
+                        VideoGenerationJob.ephemeral_expires_at < _now(),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        paths: list[str] = []
+        for job in rows:
+            path = job.ephemeral_storage_path
+            if path:
+                paths.append(path)
+            job.ephemeral_storage_path = None
+            job.ephemeral_consumed_at = job.ephemeral_consumed_at or _now()
+            removed += 1
+        # Commit before deleting: the object cannot be brought back, so the rows
+        # that stop pointing at it must be durable first.
+        await db.commit()
+
+    from app.services import object_storage_service as oss
+
+    for path in paths:
+        try:
+            await asyncio.to_thread(oss.delete_object, path)
+        except Exception:  # noqa: BLE001 -- a missing object is the desired end state
+            _LOG.warning("Could not delete expired private video object %s", path)
+    return removed
+
+
 async def reclaim_stale_video_jobs() -> int:
     """Mark stuck running/queued jobs as failed and settle billing when possible."""
     settings = get_settings()

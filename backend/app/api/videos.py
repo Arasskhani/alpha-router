@@ -305,12 +305,57 @@ async def get_video_job(
     return payload
 
 
+def _parse_single_range(header: str | None, size: int) -> tuple[int, int] | None:
+    """One ``bytes=`` range, clamped to the object. Anything else plays whole.
+
+    A ``<video>`` element seeks by asking for a byte range. Serving a plain 200
+    with no ``Accept-Ranges`` means the browser re-requests the whole file to
+    seek, which is what made a private video unplayable once the first read had
+    destroyed it.
+    """
+
+    if not header:
+        return None
+    value = header.strip().lower()
+    if not value.startswith("bytes=") or "," in value:
+        return None
+    spec = value[len("bytes=") :].strip()
+    start_text, _, end_text = spec.partition("-")
+    try:
+        if not start_text:
+            # bytes=-N: the last N bytes.
+            length = int(end_text)
+            if length <= 0:
+                return None
+            return max(0, size - length), size - 1
+        start = int(start_text)
+        end = int(end_text) if end_text else size - 1
+    except ValueError:
+        return None
+    if start < 0 or start >= size or end < start:
+        return None
+    return start, min(end, size - 1)
+
+
 @router.get("/jobs/{job_id}/private-file")
 async def get_private_video_file(
     job_id: str,
+    request: Request,
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Serve a private video for as long as its window lasts.
+
+    This used to consume the file: it read the bytes, stamped
+    ``ephemeral_consumed_at``, nulled the path, committed and deleted the
+    object, in the same request. Every later request answered 404 - so seeking
+    in the player broke playback mid-stream, and a page refresh lost a video the
+    user had already paid for.
+
+    ``ephemeral_expires_at`` was always the honest control and was already being
+    set; ``job_purge_expired_private_videos`` is what now acts on it.
+    """
+
     if not re.fullmatch(r"[0-9a-fA-F-]{36}", job_id):
         raise HTTPException(status_code=404, detail="Job not found")
     job = await db.get(VideoGenerationJob, job_id)
@@ -328,12 +373,27 @@ async def get_private_video_file(
         data = await asyncio.to_thread(oss.get_object_bytes, job.ephemeral_storage_path)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Private video is unavailable") from None
-    job.ephemeral_consumed_at = datetime.datetime.utcnow()
-    path = job.ephemeral_storage_path
-    job.ephemeral_storage_path = None
-    await db.commit()
-    await asyncio.to_thread(oss.delete_object, path)
-    return Response(content=data, media_type="video/mp4", headers={"Content-Disposition": "inline"})
+
+    size = len(data)
+    headers = {
+        "Content-Disposition": "inline",
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "no-store",
+    }
+    span = _parse_single_range(request.headers.get("range"), size)
+    if span is None:
+        headers["Content-Length"] = str(size)
+        return Response(content=data, media_type="video/mp4", headers=headers)
+
+    start, end = span
+    headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    headers["Content-Length"] = str(end - start + 1)
+    return Response(
+        content=data[start : end + 1],
+        status_code=206,
+        media_type="video/mp4",
+        headers=headers,
+    )
 
 
 @router.post("/jobs/{job_id}/cancel")

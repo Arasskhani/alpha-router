@@ -74,16 +74,16 @@ class _FakeRedisBroken:
         pass
 
 
-async def test_check_rate_limit_allows_under_limit():
+async def test_check_rate_limit_allows_under_limit(monkeypatch):
     fake = _FakeRedisOk()
-    rl._client = lambda: fake  # type: ignore[assignment]
+    monkeypatch.setattr(rl, "_client", lambda: fake)
     for _ in range(5):
         await rl.check_rate_limit("k1", limit=5)
 
 
-async def test_check_rate_limit_blocks_over_limit():
+async def test_check_rate_limit_blocks_over_limit(monkeypatch):
     fake = _FakeRedisOk()
-    rl._client = lambda: fake  # type: ignore[assignment]
+    monkeypatch.setattr(rl, "_client", lambda: fake)
     for _ in range(3):
         await rl.check_rate_limit("k2", limit=3)
     with pytest.raises(HTTPException) as exc:
@@ -91,43 +91,43 @@ async def test_check_rate_limit_blocks_over_limit():
     assert exc.value.status_code == 429
 
 
-async def test_check_rate_limit_fails_open_to_in_memory_when_redis_down():
+async def test_check_rate_limit_fails_open_to_in_memory_when_redis_down(monkeypatch):
     # When the fake client raises, non-auth limiters fall back to the
     # in-memory per-process counter (fail-open) instead of erroring.
     broken = _FakeRedisBroken()
     rl._buckets.clear()
-    rl._client = lambda: broken  # type: ignore[assignment]
+    monkeypatch.setattr(rl, "_client", lambda: broken)
     for _ in range(2):
         await rl.check_rate_limit("k3", limit=2)
     with pytest.raises(HTTPException):
         await rl.check_rate_limit("k3", limit=2)
 
 
-async def test_check_rate_limit_fail_closed_when_redis_errors():
+async def test_check_rate_limit_fail_closed_when_redis_errors(monkeypatch):
     broken = _FakeRedisBroken()
-    rl._client = lambda: broken  # type: ignore[assignment]
+    monkeypatch.setattr(rl, "_client", lambda: broken)
     with pytest.raises(HTTPException) as exc:
         await rl.check_rate_limit("login:user:alice", limit=20, fail_closed=True)
     assert exc.value.status_code == 503
     assert "unavailable" in exc.value.detail.lower()
 
 
-async def test_check_rate_limit_fail_closed_when_client_missing():
-    rl._client = lambda: None  # type: ignore[assignment]
+async def test_check_rate_limit_fail_closed_when_client_missing(monkeypatch):
+    monkeypatch.setattr(rl, "_client", lambda: None)
     with pytest.raises(HTTPException) as exc:
         await rl.check_rate_limit("login:ip:1.2.3.4", limit=60, fail_closed=True)
     assert exc.value.status_code == 503
 
 
-async def test_check_login_rate_limit_fail_closed_on_redis_outage():
+async def test_check_login_rate_limit_fail_closed_on_redis_outage(monkeypatch):
     broken = _FakeRedisBroken()
-    rl._client = lambda: broken  # type: ignore[assignment]
+    monkeypatch.setattr(rl, "_client", lambda: broken)
     with pytest.raises(HTTPException) as exc:
         await rl.check_login_rate_limit("alice", "10.0.0.1")
     assert exc.value.status_code == 503
 
 
-async def test_check_login_rate_limit_allows_under_limit_via_redis():
+async def test_check_login_rate_limit_allows_under_limit_via_redis(monkeypatch):
     fake = _FakeRedisOk()
-    rl._client = lambda: fake  # type: ignore[assignment]
+    monkeypatch.setattr(rl, "_client", lambda: fake)
     await rl.check_login_rate_limit("bob", "10.0.0.2")

@@ -11,6 +11,8 @@ resources were the gap.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from app.core.security import hash_password
@@ -38,14 +40,17 @@ async def _project_with(db_session, *, active: int, revoked: int = 0) -> str:
     project = await create_project(db_session, user=owner, name="Resourceful")
     project_id = project["id"]
 
-    base = KnowledgeBase(id=f"kb-{project_id}", name="Project KB", slug=f"kb-{project_id}")
+    # Ids are String(36): PostgreSQL enforces that and SQLite does not, so a
+    # prefixed uuid is three characters too long to insert for real.
+    kb_id = str(uuid.uuid4())
+    base = KnowledgeBase(id=kb_id, name="Project KB", slug=f"kb-{project_id}")
     db_session.add(base)
     await db_session.flush()
 
     for index in range(active + revoked):
         db_session.add(
             KnowledgeDocument(
-                id=f"doc-{project_id}-{index}",
+                id=f"{kb_id[:28]}-d{index:03d}",
                 knowledge_base_id=base.id,
                 canonical_key=f"file-{index}.pdf",
                 title=f"file-{index}.pdf",
@@ -53,9 +58,9 @@ async def _project_with(db_session, *, active: int, revoked: int = 0) -> str:
         )
         db_session.add(
             ProjectResource(
-                id=f"res-{project_id}-{index}",
+                id=f"{kb_id[:28]}-r{index:03d}",
                 project_id=project_id,
-                document_id=f"doc-{project_id}-{index}",
+                document_id=f"{kb_id[:28]}-d{index:03d}",
                 title=f"file-{index}.pdf",
                 status=PROJECT_RESOURCE_STATUS_ACTIVE if index < active else PROJECT_RESOURCE_STATUS_REVOKED,
             )

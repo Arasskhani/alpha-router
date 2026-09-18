@@ -15,6 +15,7 @@ import uuid
 from typing import Any
 
 from sqlalchemy import delete, func, or_, select
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chat import ChatSession, ai_channel_filter
@@ -931,13 +932,22 @@ async def revoke_invitation(db: AsyncSession, *, project_id: str, invitation_id:
 
 
 async def claim_invitation(db: AsyncSession, *, token: str, user: User) -> dict[str, Any] | None:
-    """Claim an invitation link and join the project with the granted role."""
+    """Claim an invitation link and join the project with the granted role.
+
+    The use count is enforced under a row lock. Read-check-increment in Python
+    is not enough here: ``project_members`` is keyed on (project, user), so two
+    different people claiming the same single-use link concurrently do not
+    collide on insert. Both would read ``use_count = 0``, both would pass the
+    exhaustion check, and both would write ``1`` - a link marked as used once
+    that admitted two members. That is an authorization bypass, not a counter
+    drift, so the count is the thing that has to be serialized.
+    """
+
     token_hash = _hash_token(token)
-    invitation = (
-        (await db.execute(select(ProjectInvitation).where(ProjectInvitation.token_hash == token_hash)))
-        .scalars()
-        .first()
-    )
+    stmt = select(ProjectInvitation).where(ProjectInvitation.token_hash == token_hash)
+    if db.get_bind().dialect.name == "postgresql":
+        stmt = stmt.with_for_update()
+    invitation = (await db.execute(stmt)).scalars().first()
     if invitation is None:
         return None
     now = datetime.datetime.utcnow()
@@ -956,8 +966,20 @@ async def claim_invitation(db: AsyncSession, *, token: str, user: User) -> dict[
         project = await db.get(Project, invitation.project_id)
         return _serialize_project(project, role=existing.role, is_member=True) if project else None
 
-    if invitation.use_count >= invitation.max_uses:
+    # Claim a use with a conditional UPDATE and check what it actually changed.
+    # On PostgreSQL the row lock above already serializes this; the rowcount is
+    # what makes it correct on SQLite too, where FOR UPDATE does nothing.
+    claimed = await db.execute(
+        sa_update(ProjectInvitation)
+        .where(
+            ProjectInvitation.id == invitation.id,
+            ProjectInvitation.use_count < ProjectInvitation.max_uses,
+        )
+        .values(use_count=ProjectInvitation.use_count + 1)
+    )
+    if claimed.rowcount != 1:
         raise ProjectValidationError("Invitation has been exhausted")
+    await db.refresh(invitation, ["use_count"])
 
     member = ProjectMember(
         project_id=invitation.project_id,
@@ -966,7 +988,6 @@ async def claim_invitation(db: AsyncSession, *, token: str, user: User) -> dict[
         invited_by_user_id=invitation.created_by_user_id,
     )
     db.add(member)
-    invitation.use_count = int(invitation.use_count) + 1
     invitation.claimed_by_user_id = user.id
     invitation.claimed_at = now
     project = await db.get(Project, invitation.project_id)

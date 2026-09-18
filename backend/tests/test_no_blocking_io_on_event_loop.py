@@ -85,6 +85,4 @@ def test_object_storage_is_never_called_synchronously_from_async_code():
         visitor.visit(tree)
         offenders.extend(visitor.offenders)
 
-    assert offenders == [], (
-        "synchronous object-storage calls inside async functions:\n  " + "\n  ".join(offenders)
-    )
+    assert offenders == [], "synchronous object-storage calls inside async functions:\n  " + "\n  ".join(offenders)

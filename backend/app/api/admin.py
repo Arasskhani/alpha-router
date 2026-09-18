@@ -1301,12 +1301,7 @@ async def _query_owner_picker_users(
         u = await db.get(User, user_id)
         return [u] if u else []
     term = (q or "").strip()
-    stmt = (
-        select(User)
-        .where(User.deleted_at.is_(None), User.purged_at.is_(None))
-        .order_by(User.username)
-        .limit(25)
-    )
+    stmt = select(User).where(User.deleted_at.is_(None), User.purged_at.is_(None)).order_by(User.username).limit(25)
     if len(term) >= 2:
         like = f"%{term}%"
         stmt = stmt.where(

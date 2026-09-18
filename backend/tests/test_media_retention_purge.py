@@ -109,9 +109,7 @@ async def test_reading_media_does_not_delete_anything(db_session, user, monkeypa
     monkeypatch.setattr(admin, "_admin_media_target_user", _target)
 
     await user_media.media_quota(user=user, db=db_session)
-    await user_media.list_media(
-        q=None, from_date=None, to_date=None, limit=50, offset=0, user=user, db=db_session
-    )
+    await user_media.list_media(q=None, from_date=None, to_date=None, limit=50, offset=0, user=user, db=db_session)
     await chat.user_media(limit=50, user=user, db=db_session)
     await admin.admin_user_media_quota(user_id=user.id, db=db_session, _=user)
     await admin.admin_user_media_list(

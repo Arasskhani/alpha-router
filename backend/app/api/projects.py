@@ -53,6 +53,7 @@ from app.services.project_room_service import (
     update_project_room_message,
 )
 from app.services.project_resource_service import (
+    ProjectResourceQuotaError,
     delete_project_resource,
     get_project_resource,
     list_project_resources,
@@ -1146,6 +1147,10 @@ async def upload_project_resource_endpoint(
             title=title,
         )
         await db.commit()
+    except ProjectResourceQuotaError as exc:
+        # Before ValueError, which it is: a quota answer is 413, not 400.
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=str(exc)) from exc
     except (BoundedIOError, ValueError) as exc:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

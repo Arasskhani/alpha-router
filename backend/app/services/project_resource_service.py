@@ -93,6 +93,53 @@ async def ensure_project_knowledge_base(
     return kb
 
 
+#: What the UI has always told the user (``MAX_PROJECT_RESOURCE_UPLOAD_FILES``
+#: in projectsApi.ts). It was advertised to the user and enforced nowhere on the
+#: server, which made it a suggestion: one authenticated account could create
+#: unlimited projects and fill each with unlimited files, every one of them
+#: running ClamAV, a sandboxed parse, OCR, chunking and an embedding pass.
+#: Every other user-facing limit in this product is enforced in both places.
+PROJECT_RESOURCE_MAX_FILES = 20
+
+
+class ProjectResourceQuotaError(ValueError):
+    """The upload would take the project past a resource limit."""
+
+    def __init__(self, message: str, *, used: int, limit: int) -> None:
+        super().__init__(message)
+        self.used = used
+        self.limit = limit
+
+
+async def count_project_resources(db: AsyncSession, project_id: str) -> int:
+    """Resources that still occupy a slot. A revoked one has been given back."""
+
+    return int(
+        (
+            await db.execute(
+                select(func.count())
+                .select_from(ProjectResource)
+                .where(
+                    ProjectResource.project_id == project_id,
+                    ProjectResource.status != PROJECT_RESOURCE_STATUS_REVOKED,
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+
+
+async def ensure_project_resource_quota(db: AsyncSession, project_id: str) -> None:
+    used = await count_project_resources(db, project_id)
+    if used >= PROJECT_RESOURCE_MAX_FILES:
+        raise ProjectResourceQuotaError(
+            f"This project already has {used} of {PROJECT_RESOURCE_MAX_FILES} resources. "
+            "Remove one before adding another.",
+            used=used,
+            limit=PROJECT_RESOURCE_MAX_FILES,
+        )
+
+
 async def upload_project_resource(
     db: AsyncSession,
     *,
@@ -118,6 +165,11 @@ async def upload_project_resource(
     project = await db.get(Project, project_id)
     if project is None:
         raise ValueError("Project not found")
+
+    # Before the ingestion pipeline runs: refusing after ClamAV, the sandboxed
+    # parse, OCR, chunking and the embedding pass would mean paying for an
+    # upload that is then thrown away.
+    await ensure_project_resource_quota(db, project_id)
 
     kb = await ensure_project_knowledge_base(db, project=project)
 

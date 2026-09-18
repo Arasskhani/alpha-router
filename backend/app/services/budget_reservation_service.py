@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import datetime
 import uuid
 
@@ -389,6 +390,35 @@ async def _existing_reservation(
     ).scalar_one_or_none()
 
 
+#: ``budget_reservations.idempotency_key`` is String(160).
+_SCOPED_KEY_MAX = 160
+
+
+def _scoped_idempotency_key(subject_type: str, subject_id: int, idempotency_key: str) -> str:
+    """Scope a caller's key to its subject without letting two of them collide.
+
+    This used to be a plain ``[:160]`` slice. ``subject_type`` can be
+    ``alpha_router_key`` and the operation prefix adds up to 32 more, so a
+    caller-supplied key of the documented length could be cut short - and two
+    requests that differ only in the dropped tail collapsed onto one row, so the
+    second was refused with "Duplicate request idempotency key". Nothing
+    validates the length, so the failure was silent and looked like a duplicate.
+
+    Anything that fits is left verbatim, so existing keys and existing rows are
+    unaffected; only the over-long ones are hashed, which cannot collide by
+    accident.
+    """
+
+    scoped = f"{subject_type}:{subject_id}:{idempotency_key}"
+    if len(scoped) <= _SCOPED_KEY_MAX:
+        return scoped
+    digest = hashlib.sha256(scoped.encode("utf-8")).hexdigest()
+    prefix = f"{subject_type}:{subject_id}:"
+    room = _SCOPED_KEY_MAX - len(prefix) - len(digest) - 1
+    head = idempotency_key[:room] if room > 0 else ""
+    return f"{prefix}{head}~{digest}"[:_SCOPED_KEY_MAX]
+
+
 async def reserve(
     db: AsyncSession,
     *,
@@ -411,7 +441,7 @@ async def reserve(
         return None
     subject_type = SUBJECT_ALPHA_ROUTER_KEY if alpha_router_api_key_id is not None else SUBJECT_USER
     subject_id = int(alpha_router_api_key_id if alpha_router_api_key_id is not None else user_id)
-    scoped_key = f"{subject_type}:{subject_id}:{idempotency_key}"[:160]
+    scoped_key = _scoped_idempotency_key(subject_type, subject_id, idempotency_key)
     # No upper cap here. Every caller derives ``amount_usd`` from
     # ``reservation_hold_usd`` -> ``quote_hold``, which already bounds an
     # *unpriced* estimate to the small global fallback. Re-clamping to

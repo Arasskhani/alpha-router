@@ -30,6 +30,7 @@ from app.models.project import (
     PROJECT_MEDIA_KINDS,
     ProjectMediaAsset,
 )
+from app.services.attachment_policy import coerce_safe_storage_mime
 from app.services.project_access_service import (
     append_project_audit,
     is_project_owner_role,
@@ -365,8 +366,14 @@ async def upload_project_media(
     if len(blob) > max_bytes:
         raise ProjectMediaValidationError(f"File exceeds the {max_bytes} byte upload limit")
 
-    mime = (mime_type or "application/octet-stream").strip()[:128] or "application/octet-stream"
-    resolved_kind = _infer_kind(mime, kind)
+    # The client's Content-Type was stored verbatim and replayed on download.
+    # An SVG declared as image/svg+xml was served inline on the application's
+    # own origin, so any script inside it ran as the victim - and the CSRF
+    # cookie is readable by design, so it could act as them. Personal media has
+    # coerced the type since it shipped; this path simply never called it.
+    declared = (mime_type or "application/octet-stream").strip()[:128] or "application/octet-stream"
+    resolved_kind = _infer_kind(declared, kind)
+    mime = coerce_safe_storage_mime(resolved_kind, declared)
     digest = (content_hash or "").strip().lower() or _sha256_hex(blob)
     if len(digest) != 64:
         digest = _sha256_hex(blob)

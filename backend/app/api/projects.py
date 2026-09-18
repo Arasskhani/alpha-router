@@ -19,6 +19,7 @@ from app.api.deps import get_bearer_token, get_current_user, require_active_user
 from app.config import get_settings
 from app.database import get_db
 from app.models.user import User
+from app.services.attachment_policy import media_response_type_and_disposition
 from app.services.bounded_io import BoundedIOError, read_upload_bounded
 from app.services.upload_screening import UploadRejected, screen_upload
 from app.services.project_chat_service import (
@@ -1305,14 +1306,15 @@ async def download_project_media_endpoint(
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media not found")
     row, blob = result
-    mime = row.mime_type or "application/octet-stream"
-    filename = (row.file_name or "download").replace('"', "")
-    disposition = "inline" if mime.startswith(("image/", "video/")) else "attachment"
-    return Response(
-        content=blob,
-        media_type=mime,
-        headers={"Content-Disposition": f'{disposition}; filename="{filename}"'},
+    # Personal media has gone through this pair since it shipped; project media
+    # replayed the client's Content-Type and marked anything image/* inline, so
+    # an SVG containing a script executed on the application's own origin.
+    media_type, disposition = media_response_type_and_disposition(
+        file_name=row.file_name or "download",
+        kind=row.kind,
+        stored_mime=row.mime_type,
     )
+    return Response(content=blob, media_type=media_type, headers={"Content-Disposition": disposition})
 
 
 @router.delete("/{project_id}/media/{media_id}")

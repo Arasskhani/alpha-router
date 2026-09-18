@@ -6,14 +6,19 @@ import { ReadOnlyProvider } from "../../context/ReadOnlyContext";
 import { isAdminUserFeaturePath, userCanWriteAdminPath } from "../../lib/rbac";
 
 export default function AdminLayout() {
-  const { nav, session, role } = useAdminShellNav();
+  const { nav, session, role, sessionKnown } = useAdminShellNav();
   const loc = useLocation();
 
   const readOnly = useMemo(() => {
+    // Until the live session has been read, assume read-only. The alternative
+    // is to trust the cached role in localStorage, which is what let a
+    // deactivated administrator keep a writable UI when the session request
+    // failed.
+    if (!sessionKnown) return true;
     if (session?.is_active === false) return true;
     if (isAdminUserFeaturePath(loc.pathname)) return false;
     return !userCanWriteAdminPath(loc.pathname, session, role);
-  }, [loc.pathname, session, role]);
+  }, [loc.pathname, session, role, sessionKnown]);
 
   return (
     <ReadOnlyProvider value={readOnly}>

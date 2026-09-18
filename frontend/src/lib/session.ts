@@ -66,6 +66,31 @@ export function getMyActivityPath(role: string): string {
   return rbacMyActivityPath(role);
 }
 
+/**
+ * Remove everything Private Mode kept in this browser.
+ *
+ * Private Mode tells the user their messages and media live only here and go
+ * when they log out. That was true of the Logout button and of nothing else:
+ * an expired or revoked session takes the `onUnauthorized` path in api.ts,
+ * which bounced the user to /login and left the full message bodies in
+ * localStorage and every generated image in IndexedDB. On a shared machine
+ * they stayed there indefinitely.
+ */
+export async function purgePrivateModeData(): Promise<void> {
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith(`${STORAGE_KEYS.privateChats}:`)) localStorage.removeItem(key);
+    }
+  } catch {
+    /* storage unavailable — nothing to clear */
+  }
+  try {
+    await clearPrivateMediaStore();
+  } catch {
+    /* best-effort browser cleanup */
+  }
+}
+
 export async function logout() {
   const session = getCachedSession();
   const provider = session?.auth_provider || localStorage.getItem(STORAGE_KEYS.authProvider);
@@ -77,16 +102,7 @@ export async function logout() {
   } catch {
     /* network error — proceed to clear local state anyway */
   }
-  if (localStorage.getItem(STORAGE_KEYS.privatePersist) !== "1") {
-    for (const key of Object.keys(localStorage)) {
-      if (key.startsWith(`${STORAGE_KEYS.privateChats}:`)) localStorage.removeItem(key);
-    }
-    try {
-      await clearPrivateMediaStore();
-    } catch {
-      /* best-effort browser cleanup */
-    }
-  }
+  await purgePrivateModeData();
   clearCachedSession();
   localStorage.removeItem(STORAGE_KEYS.chatTools);
   localStorage.removeItem(STORAGE_KEYS.token);

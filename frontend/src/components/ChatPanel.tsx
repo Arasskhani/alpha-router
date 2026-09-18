@@ -89,6 +89,7 @@ import {
   sidebarOlderThan7DaysCutoffMs,
   sidebarHydrateMinActivityMs,
   stableMessageKeys,
+  enablePrivateModeOnServer,
 } from "../lib/chatStorage";
 import {
   PROJECT_MEDIA_ATTACH_EVENT,
@@ -4334,10 +4335,22 @@ export default function ChatPanel({
         danger: true,
       });
       if (!finalConfirmed) return;
+      // The dialogs promise the chat is stored only in this browser. Flipping a
+      // local flag did not make that true: everything written before this point
+      // stayed on the server. Ask the server to remove its copy first, and only
+      // treat the chat as private once it has.
+      try {
+        await enablePrivateModeOnServer(sid);
+      } catch (e) {
+        setChatError(
+          `Private Mode was not enabled: the server copy of this chat could not be removed. ${String(e)}`,
+        );
+        return;
+      }
       persistSessions(
         (prev) =>
           prev.map((s) =>
-            s.id === sid ? { ...s, privateMode: true, updatedAt: Date.now() } : s,
+            s.id === sid ? { ...s, privateMode: true, messageCount: 0, updatedAt: Date.now() } : s,
           ),
         { debounce: false },
       );

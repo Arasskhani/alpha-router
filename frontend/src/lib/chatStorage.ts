@@ -1316,6 +1316,30 @@ async function syncFoldersToServer(folders: ChatFolder[]): Promise<void> {
   }
 }
 
+/**
+ * Remove the server's copy of a chat and mark it private, in one request.
+ *
+ * Enabling Private Mode used to be a local flag. Everything written before the
+ * toggle stayed on the server, while the dialog the user agreed to said the
+ * chat lives only in their browser. The server refuses to mark a session
+ * private while it still holds messages, so the removal and the flag are one
+ * operation rather than two the client could half-complete.
+ */
+export async function enablePrivateModeOnServer(sessionId: string): Promise<void> {
+  if (getProjectChatScope()) return;
+  try {
+    await api(`/api/user/chats/sessions/${encodeURIComponent(sessionId)}/private-mode`, {
+      method: "POST",
+    });
+  } catch (err) {
+    const status = err && typeof err === "object" ? (err as { status?: number }).status : undefined;
+    // 404: the chat was never written to the server, so there is nothing to
+    // remove and the local flag alone is already truthful.
+    if (status === 404) return;
+    throw err;
+  }
+}
+
 export async function deleteChatSessionOnServer(sessionId: string): Promise<void> {
   markPendingDelete(sessionId);
   try {

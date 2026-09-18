@@ -40,7 +40,6 @@ describe("project-owned naming contracts", () => {
       chatTools: "alpha_router_chat_tools",
       defaultModel: "alpha_router_default_model",
       privateChats: "alpha_router_private_chats",
-      privatePersist: "alpha_router_private_persist",
       authProvider: "alpha_router_auth_provider",
       adminSidebarOpenSections: "alpha_router_admin_sidebar_open_sections",
       modelsView: "alpha_router_models_view",

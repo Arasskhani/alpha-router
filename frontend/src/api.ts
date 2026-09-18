@@ -37,6 +37,11 @@ function onUnauthorized(path: string) {
     || path.startsWith("/api/auth/logout")
   ) return;
   cachedSession = null;
+  // Private Mode promises the content lives only in this browser and goes when
+  // the session does. An expired or revoked session arrives here, not at the
+  // Logout button, and used to leave every private message body and every
+  // generated image on the disk of what may be a shared machine.
+  void import("./lib/session").then((m) => m.purgePrivateModeData()).catch(() => {});
   localStorage.removeItem(STORAGE_KEYS.token);
   localStorage.removeItem(STORAGE_KEYS.role);
   if (handlingUnauthorized || window.location.pathname === "/login") return;

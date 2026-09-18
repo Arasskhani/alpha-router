@@ -1200,6 +1200,44 @@ async def append_session_messages(
     return [_message_to_client(r) for r in inserted]
 
 
+async def purge_session_messages_for_private_mode(
+    db: AsyncSession,
+    user_id: int,
+    session_id: str,
+) -> dict[str, Any] | None:
+    """Delete this session's server copy and turn Private Mode on, in one step.
+
+    Enabling Private Mode showed the user two dialogs - "messages and media will
+    be stored only in this browser" and "this chat will be deleted when you log
+    out" - and then set a flag in the browser. Nothing removed what the server
+    already had, so every message written before the toggle stayed on the server
+    permanently and the session stayed listable. The consent copy said otherwise.
+
+    ``update_chat_session`` refuses to convert a session that still has messages,
+    which is the right invariant and the reason this cannot be a plain PATCH:
+    the removal and the flag have to happen together, in one transaction, so the
+    session can never end up private with a readable server copy behind it.
+    """
+
+    session = await db.get(ChatSession, session_id)
+    session = await _owned_or_project_session(db, session, user_id, write=True)
+    if session is None:
+        return None
+    if session.project_id:
+        raise PrivateModePersistenceError("Private Mode is not allowed in project chats")
+
+    removed = len(
+        (await db.execute(select(ChatMessage.id).where(ChatMessage.session_id == session_id))).scalars().all()
+    )
+    await db.execute(delete(ChatMessage).where(ChatMessage.session_id == session_id))
+    session.message_count = 0
+    session.last_message_at = None
+    session.private_mode = True
+    _bump_session_revision(session)
+    await db.flush()
+    return {"purgedMessages": removed, "session": _session_to_client(session)}
+
+
 async def replace_session_messages(
     db: AsyncSession,
     user_id: int,

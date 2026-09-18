@@ -27,6 +27,7 @@ from app.services.user_chat_storage_service import (
     list_chat_sessions,
     list_session_messages,
     load_user_prefs,
+    purge_session_messages_for_private_mode,
     replace_session_messages,
     save_user_prefs,
     search_chat_messages,
@@ -295,6 +296,31 @@ async def patch_chat_session(
         raise HTTPException(status_code=404, detail="Session not found")
     await db.commit()
     return session
+
+
+@router.post("/sessions/{session_id}/private-mode")
+async def enable_private_mode(
+    session_id: str,
+    user: User = Depends(require_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove the server copy of this chat and mark it private, in one step.
+
+    The two are inseparable. Enabling Private Mode used to set a flag in the
+    browser and nothing else, so everything written before the toggle stayed on
+    the server - while the dialog the user agreed to said the chat is stored
+    only in their browser.
+    """
+
+    try:
+        result = await purge_session_messages_for_private_mode(db, user.id, session_id)
+    except PrivateModePersistenceError as exc:
+        await db.rollback()
+        raise _private_mode_conflict(exc) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    await db.commit()
+    return result
 
 
 @router.delete("/sessions/{session_id}")

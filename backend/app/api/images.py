@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 import httpx
 import litellm
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -239,10 +239,19 @@ _normalize_model_id = normalize_model_id
 _normalize_openrouter_base = normalize_openrouter_base_url
 
 
+#: Most images one request may ask for. The budget hold has always quoted
+#: ``min(4, n)``, so this is the number the user was told they would be charged
+#: for. ``n`` itself was unbounded and passed to the provider verbatim, and the
+#: bill counted what came back - so a request for 50 was admitted against a hold
+#: for 4, charged in full, and only the *next* request was refused. Making the
+#: schema say 4 means the quote and the request are the same number.
+IMAGE_MAX_BATCH = 4
+
+
 class ImageRequest(BaseModel):
     model: str
     prompt: str
-    n: int = 1
+    n: int = Field(1, ge=1, le=IMAGE_MAX_BATCH)
     size: str = "1024x1024"
     aspect_ratio: str | None = None
     operation: str = "generation"  # generation | img2img | imagine | outpaint
@@ -590,7 +599,7 @@ async def _finalize_image_response(
             model=body.model,
             prompt=body.prompt,
             chat_session_id=body.chat_session_id,
-            max_items=max(1, min(4, int(body.n or 1))),
+            max_items=max(1, min(IMAGE_MAX_BATCH, int(body.n or 1))),
             project_id=project_id,
         )
         if body.chat_session_id and items:
@@ -944,7 +953,7 @@ async def generate_image(  # noqa: C901 -- Phase 4 split; complexity must not gr
         hold_body = body.model_dump()
         if request.headers.get("Idempotency-Key"):
             hold_body["_idempotency_key"] = request.headers["Idempotency-Key"]
-        requested_quantity = max(1, min(4, int(body.n or 1)))
+        requested_quantity = max(1, min(IMAGE_MAX_BATCH, int(body.n or 1)))
         hold = await reserve(
             db,
             user_id=user.id,
@@ -998,7 +1007,8 @@ async def generate_image(  # noqa: C901 -- Phase 4 split; complexity must not gr
             kwargs = {
                 "model": provider_model,
                 "prompt": upstream_prompt,
-                "n": body.n,
+                # The same number the hold quoted, not the raw field.
+                "n": max(1, min(IMAGE_MAX_BATCH, int(body.n or 1))),
                 "size": body.size,
             }
             if api_key:
@@ -1032,7 +1042,7 @@ async def generate_image(  # noqa: C901 -- Phase 4 split; complexity must not gr
                             path=path,
                             model=optimize_openrouter_image_model(model_id),
                             prompt=upstream_prompt,
-                            n=max(1, min(4, int(body.n or 1))),
+                            n=max(1, min(IMAGE_MAX_BATCH, int(body.n or 1))),
                             size=body.size,
                             input_references=input_refs,
                         )

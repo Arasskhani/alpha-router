@@ -166,6 +166,13 @@ class Settings(BaseSettings):
     chat_list_since_rate_limit_per_min: int = 600  # env: CHAT_LIST_SINCE_RATE_LIMIT_PER_MIN
     chat_search_rate_limit_per_min: int = 45  # env: CHAT_SEARCH_RATE_LIMIT_PER_MIN
     chat_message_search_rate_limit_per_min: int = 45  # env: CHAT_MESSAGE_SEARCH_RATE_LIMIT_PER_MIN
+    # The endpoints that cost real money per call. The limiter was wired to
+    # login and to the chat list and search - the cheap reads - and to none of
+    # the expensive paths, so a leaked key or a runaway client was bounded only
+    # by the monthly budget, discovered after the fact.
+    generation_rate_limit_per_min: int = 60  # env: GENERATION_RATE_LIMIT_PER_MIN
+    image_generation_rate_limit_per_min: int = 20  # env: IMAGE_GENERATION_RATE_LIMIT_PER_MIN
+    speech_rate_limit_per_min: int = 30  # env: SPEECH_RATE_LIMIT_PER_MIN
     uvicorn_workers: int = 4  # env: UVICORN_WORKERS — process count in Docker/production
     redis_url: str = "redis://redis:6379/0"  # env: REDIS_URL
     # Phase 9: Redis auth. When set, the connection URL is rebuilt with this

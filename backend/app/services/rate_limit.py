@@ -101,6 +101,30 @@ def prune_stale_buckets(max_age_seconds: int = 3600) -> None:
             del _buckets[k]
 
 
+def generation_subject(*, user_id: int | None, api_key_id: int | None) -> str:
+    """Who to count a paid call against: the API key if there is one, else the user."""
+
+    if api_key_id:
+        return f"key:{int(api_key_id)}"
+    return f"user:{int(user_id)}" if user_id else "anonymous"
+
+
+async def check_generation_rate_limit(kind: str, subject: str, limit: int) -> None:
+    """Bound the endpoints that spend money per call.
+
+    The limiter was wired to login and to the chat list and search - the cheap
+    reads - and to none of the expensive paths: chat completions, the OpenAI
+    compatible gateway, image generation and speech. A leaked API key or a
+    runaway client was bounded only by the monthly budget, which is discovered
+    after the money is gone.
+
+    Fail-open, unlike login: a Redis outage must not stop people working. The
+    budget reservation is still the hard ceiling underneath.
+    """
+
+    await check_rate_limit(f"generation:{kind}:{subject}", limit=max(1, int(limit)))
+
+
 async def check_login_rate_limit(username: str, source_ip: str | None) -> None:
     """Brute-force protection on the login endpoint.
 

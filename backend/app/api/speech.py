@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_active_user
 from app.config import get_settings
+from app.services.rate_limit import check_generation_rate_limit, generation_subject
 from app.database import AsyncSessionLocal, get_db
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
@@ -236,8 +237,13 @@ async def generate_speech(  # noqa: C901 -- Phase 4 split; complexity must not g
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     await assert_session_allows_model_generation(db, body.chat_session_id)
-    generation_start = time.perf_counter()
     settings = get_settings()
+    await check_generation_rate_limit(
+        "speech",
+        generation_subject(user_id=user.id, api_key_id=None),
+        settings.speech_rate_limit_per_min,
+    )
+    generation_start = time.perf_counter()
     # Capture identity primitives before any commit/rollback expires the ORM user.
     settle_user_id = int(user.id)
     settle_username = str(user.username or "")

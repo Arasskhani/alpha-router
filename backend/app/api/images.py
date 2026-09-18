@@ -35,6 +35,7 @@ from app.services.budget_reservation_service import (
     reserve,
 )
 from app.config import get_settings
+from app.services.rate_limit import check_generation_rate_limit, generation_subject
 from app.services.media_authorization_service import MediaAccessAction, load_authorized_media_asset
 from app.services.openrouter_image_service import (
     OPENROUTER_EMPTY_IMAGE_RETRY_DELAYS_SEC,
@@ -862,6 +863,11 @@ async def generate_image(  # noqa: C901 -- Phase 4 split; complexity must not gr
     db: AsyncSession = Depends(get_db),
 ):
     await assert_session_allows_model_generation(db, body.chat_session_id)
+    await check_generation_rate_limit(
+        "image",
+        generation_subject(user_id=user.id, api_key_id=None),
+        get_settings().image_generation_rate_limit_per_min,
+    )
     generation_start = time.perf_counter()
     billing = ImageBillingCapture(model_id=_normalize_model_id(body.model))
     budget_reservation_id: str | None = None

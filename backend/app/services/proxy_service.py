@@ -132,6 +132,7 @@ from app.services.code_interpreter_turn import (
     run_sandbox_until_stopped,
 )
 from app.services.provider_stream import NonStreamRetry, ProviderAttempt, estimate_tokens
+from app.services.rate_limit import check_generation_rate_limit, generation_subject
 from app.services.chat_turn_context import (
     NonGeneratingReply,
     _adaptive_openrouter_extra_body,
@@ -558,6 +559,17 @@ async def preflight_stream_chat(  # noqa: C901 -- Phase 4 split; complexity must
     )
 
     await assert_session_allows_model_generation(db, str(body.get("chat_session_id") or "").strip() or None)
+
+    # Before the model lookup and the budget hold, so a runaway client is turned
+    # away cheaply. Chat completions and the OpenAI-compatible gateway both land
+    # here, and neither had any limit: a leaked key was bounded only by the
+    # monthly budget, which is discovered after the money is gone.
+    if operation != "embedding":
+        await check_generation_rate_limit(
+            "chat",
+            generation_subject(user_id=user_id, api_key_id=alpha_router_api_key_id),
+            settings.generation_rate_limit_per_min,
+        )
 
     agent_turn: PreparedAgentTurn | None = None
     try:

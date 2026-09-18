@@ -257,7 +257,11 @@ def _sanitize_username_dir(username: str) -> str:
 
 
 async def _put_object_once(key: str, blob: bytes, mime: str) -> bool:
-    if oss.object_exists(key):
+    # Both calls are network I/O and both belong off the event loop. Only the
+    # put was moved; head_object stayed on it, so a slow storage backend froze
+    # the worker - and with boto3's retries, for as long as ~30 seconds per
+    # media write, stopping every concurrent SSE stream mid-token.
+    if await asyncio.to_thread(oss.object_exists, key):
         return False
     await asyncio.to_thread(oss.put_object, key, blob, mime)
     return True

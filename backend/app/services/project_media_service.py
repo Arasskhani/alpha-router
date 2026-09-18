@@ -66,7 +66,11 @@ class S3ProjectMediaObjectStore:
 
         from app.services import object_storage_service as oss
 
-        if oss.object_exists(key):
+        # head_object is a network call. Run it off the loop like the put on the
+        # next line: boto3 retries can hold the event loop for tens of seconds
+        # when storage is slow, and every SSE stream in this worker stops
+        # mid-token while it does.
+        if await asyncio.to_thread(oss.object_exists, key):
             return
         await asyncio.to_thread(oss.put_object, key, body, mime)
 

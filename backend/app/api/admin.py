@@ -1172,6 +1172,10 @@ def _apply_user_list_filters(
     deleted_only: bool = False,
     active_only: bool = True,
 ):
+    # A purged account is not a user any more: the row survives only because
+    # four append-only audit tables reference it (see permanently_delete_user).
+    # It belongs in neither listing.
+    stmt = stmt.where(User.purged_at.is_(None))
     if deleted_only:
         stmt = stmt.where(User.deleted_at.is_not(None))
     elif active_only:
@@ -1297,7 +1301,12 @@ async def _query_owner_picker_users(
         u = await db.get(User, user_id)
         return [u] if u else []
     term = (q or "").strip()
-    stmt = select(User).where(User.deleted_at.is_(None)).order_by(User.username).limit(25)
+    stmt = (
+        select(User)
+        .where(User.deleted_at.is_(None), User.purged_at.is_(None))
+        .order_by(User.username)
+        .limit(25)
+    )
     if len(term) >= 2:
         like = f"%{term}%"
         stmt = stmt.where(
@@ -2453,10 +2462,11 @@ async def permanently_delete_user_endpoint(
         raise HTTPException(404)
     if user.deleted_at is None:
         raise HTTPException(400, detail="User must be in Deleted Users before permanent deletion")
-    # Audited BEFORE the delete: permanently_delete_user issues a real DELETE
-    # on the users row, and reading username/email off a deleted instance is
-    # not something to rely on. Same transaction, so the record and the
-    # deletion stand or fall together.
+    if user.purged_at is not None:
+        raise HTTPException(400, detail="User has already been permanently deleted")
+    # Audited BEFORE the purge: permanently_delete_user clears the username and
+    # email off the row, so afterwards there is no identity left to record.
+    # Same transaction, so the record and the purge stand or fall together.
     await _audit_user_action(db, request, admin, action="user_permanently_deleted", user=user)
     try:
         await permanently_delete_user(db, user)
@@ -2481,7 +2491,7 @@ async def bulk_permanently_delete_users(
     deleted = 0
     removed: list[dict] = []
     for user in users:
-        if user.deleted_at is None:
+        if user.deleted_at is None or user.purged_at is not None:
             continue
         identity = {"id": user.id, "username": user.username, "email": user.email}
         try:

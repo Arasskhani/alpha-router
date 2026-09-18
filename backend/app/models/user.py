@@ -86,6 +86,14 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     last_login_at = Column(DateTime, nullable=True)
     deleted_at = Column(DateTime, nullable=True, index=True)
+    # Set when the account was permanently deleted. The row survives on purpose:
+    # four audit tables reference ``users.id`` with ``ON DELETE SET NULL`` and
+    # carry a ``BEFORE UPDATE`` append-only trigger, so PostgreSQL refuses the
+    # DELETE outright - and the governance hash chain is computed over
+    # ``actor_user_id``, so nulling it would make every event by that actor read
+    # as tampered. Everything identifying is cleared instead; what remains is an
+    # opaque id that keeps the audit trail verifiable.
+    purged_at = Column(DateTime, nullable=True, index=True)
 
     groups = relationship("UserGroup", secondary=user_group_members, back_populates="members")
     role_assignments = relationship(

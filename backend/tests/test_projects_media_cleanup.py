@@ -199,7 +199,13 @@ async def test_user_deletion_preserves_project_media(monkeypatch):
             await permanently_delete_user(db, contrib)
             await db.flush()
 
-            assert await db.get(User, contrib.id) is None
+            # The row survives on purpose - it anchors append-only audit
+            # references - but nothing on it identifies the person any more.
+            purged = await db.get(User, contrib.id)
+            assert purged is not None
+            assert purged.purged_at is not None
+            assert purged.email is None and purged.hashed_password is None
+
             row = await db.get(ProjectMediaAsset, media_id)
             assert row is not None
             assert row.project_id == PROJ

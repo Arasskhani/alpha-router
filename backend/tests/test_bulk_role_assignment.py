@@ -17,10 +17,19 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.admin import UsersBulkIn, bulk_update_users
+
+
 from app.core.security import hash_password
 from app.models.user import User
 from app.services.rbac import SUPER_ADMIN_SLUG
 from app.services.user_role_service import get_user_role_slugs, set_user_roles
+
+
+class _Request:
+    """Enough of a Request for the audit row's client IP."""
+
+    client = type("C", (), {"host": "203.0.113.10"})()
+    headers: dict[str, str] = {}
 
 
 async def _person(db_session, username: str, slugs: list[str]) -> User:
@@ -47,6 +56,7 @@ async def test_several_roles_can_be_assigned_at_once(db_session):
 
     await bulk_update_users(
         UsersBulkIn(user_ids=[target.id], roles=["reports_full_administrator", "api_keys_full_administrator"]),
+        _Request(),
         db_session,
         actor,
     )
@@ -63,7 +73,9 @@ async def test_the_set_is_replaced_not_merged(db_session):
     actor = await _actor(db_session)
     target = await _person(db_session, "replaced", ["reports_full_administrator", "api_keys_full_administrator"])
 
-    await bulk_update_users(UsersBulkIn(user_ids=[target.id], roles=["reports_full_administrator"]), db_session, actor)
+    await bulk_update_users(
+        UsersBulkIn(user_ids=[target.id], roles=["reports_full_administrator"]), _Request(), db_session, actor
+    )
     await db_session.flush()
 
     assert await get_user_role_slugs(db_session, target.id) == ["reports_full_administrator"]
@@ -75,6 +87,7 @@ async def test_duplicates_in_the_request_collapse(db_session):
 
     await bulk_update_users(
         UsersBulkIn(user_ids=[target.id], roles=["reports_full_administrator", "reports_full_administrator"]),
+        _Request(),
         db_session,
         actor,
     )
@@ -88,7 +101,7 @@ async def test_an_empty_list_is_refused(db_session):
     target = await _person(db_session, "unchanged", ["reports_full_administrator"])
 
     with pytest.raises(HTTPException) as exc:
-        await bulk_update_users(UsersBulkIn(user_ids=[target.id], roles=[]), db_session, actor)
+        await bulk_update_users(UsersBulkIn(user_ids=[target.id], roles=[]), _Request(), db_session, actor)
     assert exc.value.status_code == 400
     assert await get_user_role_slugs(db_session, target.id) == ["reports_full_administrator"]
 
@@ -99,7 +112,9 @@ async def test_the_scalar_field_still_works(db_session):
     actor = await _actor(db_session)
     target = await _person(db_session, "legacy_caller", ["user"])
 
-    await bulk_update_users(UsersBulkIn(user_ids=[target.id], role="reports_full_administrator"), db_session, actor)
+    await bulk_update_users(
+        UsersBulkIn(user_ids=[target.id], role="reports_full_administrator"), _Request(), db_session, actor
+    )
     await db_session.flush()
 
     assert await get_user_role_slugs(db_session, target.id) == ["reports_full_administrator"]

@@ -22,10 +22,11 @@ async def log_security_event(
     resource_id: str | None = None,
     detail: dict[str, Any] | None = None,
 ) -> None:
-    # Copied, not joined. The foreign key is ON DELETE SET NULL and
-    # permanently_delete_user really does DELETE the row, so an actor
-    # identified only by id loses their name the moment their account is
-    # removed - taking the answer to "who did this" with it.
+    # Copied, not joined. Permanent deletion empties the ``users`` row rather
+    # than removing it, so the id survives - but the username and email do not,
+    # which is the same problem by a different route: an actor identified only
+    # by id loses their name the moment their account is purged, taking the
+    # answer to "who did this" with it.
     actor_username: str | None = None
     actor_email: str | None = None
     if actor is not None:

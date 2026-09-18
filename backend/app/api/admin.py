@@ -230,6 +230,36 @@ async def _ensure_actor_may_assign_roles(
         )
 
 
+async def _audit_role_change(
+    db: AsyncSession,
+    request: Request,
+    admin: User,
+    *,
+    user: User,
+    previous: list[str],
+    new: list[str],
+) -> None:
+    """Record who changed whose privileges, and to what.
+
+    Role assignment is the single most consequential administrative action in
+    the product and was not audited at all - while ``model_access_changed``,
+    written from the same file, was. Every path that replaces a user's roles
+    comes through here: creating an account with roles, editing one, and the
+    bulk operation.
+    """
+
+    if sorted(previous) == sorted(new):
+        return
+    await _audit_user_action(
+        db,
+        request,
+        admin,
+        action="user_roles_changed",
+        user=user,
+        detail={"previous_roles": sorted(previous), "new_roles": sorted(new)},
+    )
+
+
 async def _ensure_actor_may_own_key(db: AsyncSession, actor: User, owner: User) -> None:
     """Only a Super Admin may name a platform-wide account as a key's owner.
 
@@ -1121,6 +1151,7 @@ def _normalize_role(role: str) -> str:
 @router.post("/users")
 async def create_local_user(
     body: LocalUserIn,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     actor: User = Depends(require_users_write),
 ):
@@ -1157,6 +1188,7 @@ async def create_local_user(
     db.add(user)
     await db.flush()
     await set_user_roles(db, user, new_slugs)
+    await _audit_role_change(db, request, actor, user=user, previous=[], new=new_slugs)
     if body.group_id is not None:
         group = await db.get(UserGroup, body.group_id)
         if not group:
@@ -2183,6 +2215,7 @@ class ResetPasswordIn(BaseModel):
 async def patch_user(
     user_id: int,
     body: UserAdminPatch,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     actor: User = Depends(require_users_write),
 ):
@@ -2211,12 +2244,14 @@ async def patch_user(
         await _ensure_actor_may_assign_roles(db, actor, new_slugs, previous_slugs=previous)
         await _ensure_not_last_full_admin_removal(db, user.id, new_slugs)
         saved_roles = await set_user_roles(db, user, new_slugs)
+        await _audit_role_change(db, request, actor, user=user, previous=previous, new=saved_roles)
     elif body.role is not None:
         new_role = _normalize_role(body.role)
         previous = await get_user_role_slugs(db, user.id)
         await _ensure_actor_may_assign_roles(db, actor, [new_role], previous_slugs=previous)
         await _ensure_not_last_full_admin_removal(db, user.id, [new_role])
         saved_roles = await set_user_roles(db, user, [new_role])
+        await _audit_role_change(db, request, actor, user=user, previous=previous, new=saved_roles)
     else:
         saved_roles = await get_user_role_slugs(db, user.id)
     if body.company is not None:
@@ -2344,6 +2379,7 @@ class UsersBulkIn(BaseModel):
 @router.post("/users/bulk")
 async def bulk_update_users(  # noqa: C901 -- Phase 4 split; complexity must not grow
     body: UsersBulkIn,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     actor: User = Depends(require_users_write),
 ):
@@ -2383,6 +2419,7 @@ async def bulk_update_users(  # noqa: C901 -- Phase 4 split; complexity must not
             if cur != new_slugs:
                 await _ensure_actor_may_assign_roles(db, actor, new_slugs, previous_slugs=cur)
                 await set_user_roles(db, u, new_slugs)
+                await _audit_role_change(db, request, actor, user=u, previous=cur, new=new_slugs)
                 changed += 1
 
     if body.is_active is not None:

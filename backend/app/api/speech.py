@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_active_user
 from app.config import get_settings
+from app.services.client_ip import resolve_client_ip
 from app.services.rate_limit import check_generation_rate_limit, generation_subject
 from app.database import AsyncSessionLocal, get_db
 from app.models.connection import Connection
@@ -458,7 +459,7 @@ async def generate_speech(  # noqa: C901 -- Phase 4 split; complexity must not g
                             error_message=error_message,
                             error_code=error_code,
                             http_status=http_status,
-                            source_ip=request.client.host if request.client else None,
+                            source_ip=resolve_client_ip(request),
                             budget_reservation_id=budget_reservation_id,
                         )
                         if log_id and success and body.chat_session_id:

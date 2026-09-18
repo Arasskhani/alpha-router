@@ -113,6 +113,7 @@ async def logout_local(
 
     user.token_version = int(user.token_version or 0) + 1
     await db.commit()
+    await _record_auth_event(request, action="logout", user=user)
     await clear_presence(user.id)
     clear_session_cookies(response, request=request)
     return {"ok": True}
@@ -130,6 +131,51 @@ async def auth_methods(db: AsyncSession = Depends(get_db)):
     }
 
 
+async def _record_auth_event(
+    request: Request,
+    *,
+    action: str,
+    user: User | None,
+    username: str | None = None,
+    detail: dict | None = None,
+) -> None:
+    """Write one authentication event to the security audit trail.
+
+    There were none. No ``login_success``, no ``login_failed``, no ``logout`` -
+    the only trace of a successful sign-in was ``users.last_login_at``, which is
+    overwritten every time and carries no address. So the platform could not
+    answer "who signed in, from where, when", nor "is someone grinding this
+    account", from its own audit surface.
+
+    Written in its own session and committed immediately. A failed login raises,
+    and ``get_db`` rolls the request transaction back - which would take the
+    record of the failure with it, exactly when it matters most.
+    """
+
+    from app.database import AsyncSessionLocal
+    from app.services.client_ip import resolve_client_ip
+    from app.services.security_audit import log_security_event
+
+    payload = dict(detail or {})
+    if username and (user is None or username != user.username):
+        payload["username"] = str(username)[:255]
+    try:
+        async with AsyncSessionLocal() as audit_db:
+            actor = await audit_db.get(User, user.id) if user is not None else None
+            await log_security_event(
+                audit_db,
+                actor=actor,
+                actor_ip=resolve_client_ip(request),
+                action=action,
+                resource_type="authentication",
+                resource_id=str(user.id) if user is not None else None,
+                detail=payload or None,
+            )
+            await audit_db.commit()
+    except Exception:  # noqa: BLE001 -- an audit write must never break a login
+        logger.exception("Failed to record authentication event action=%s", action)
+
+
 async def _token_response(
     db: AsyncSession,
     user: User,
@@ -144,6 +190,7 @@ async def _token_response(
     primary = primary_role_slug(slugs)
     token = create_access_token(user.username, primary, token_version=user.token_version)
     set_session_cookies(response, access_token=token, request=request)
+    await _record_auth_event(request, action="login_success", user=user, detail={"provider": user.auth_provider})
     settings = get_settings()
     body_token = token if settings.allow_legacy_bearer_auth else ""
     return TokenResponse(
@@ -169,6 +216,9 @@ async def login_local(
     await check_login_rate_limit(normalize_username(username) or username, source_ip)
     user = await find_user_by_username_ci(db, username)
     if user and user.deleted_at is not None:
+        await _record_auth_event(
+            request, action="login_failed", user=None, username=username, detail={"reason": "deleted"}
+        )
         raise HTTPException(status_code=401, detail="Account removed")
     if user and user.hashed_password:
         if verify_password(body.password, user.hashed_password):
@@ -180,6 +230,9 @@ async def login_local(
                 return await _two_factor_challenge(user)
             return await _token_response(db, user, response, request)
         if (user.auth_provider or "local") == "local":
+            await _record_auth_event(
+                request, action="login_failed", user=user, username=username, detail={"reason": "bad_password"}
+            )
             raise HTTPException(status_code=401, detail="Invalid username or password")
 
     ldap_cfg = await get_provider_config(db, "ldap")
@@ -200,6 +253,7 @@ async def login_local(
                 return await _two_factor_challenge(user)
             return await _token_response(db, user, response, request)
 
+    await _record_auth_event(request, action="login_failed", user=user, username=username, detail={"reason": "unknown"})
     raise HTTPException(status_code=401, detail="Invalid username or password")
 
 

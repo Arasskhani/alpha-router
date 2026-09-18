@@ -22,6 +22,7 @@ from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
+from app.services.client_ip import resolve_client_ip
 from app.services.agent_run_service import finalize_agent_run
 from app.services.budget_notice_service import budget_notice_after_settlement
 from app.services.agent_chat_integration_service import PreparedAgentTurn
@@ -191,7 +192,7 @@ async def _persist_stream_usage(identity: TurnIdentity, outcome: TurnOutcome) ->
                     total_cost_usd=outcome.total_cost,
                     response_time_ms=outcome.elapsed_ms,
                     prompt_language=identity.prompt_lang,
-                    source_ip=identity.request.client.host if identity.request.client else None,
+                    source_ip=resolve_client_ip(identity.request),
                     source=identity.source,
                     success=outcome.success,
                     error_message=outcome.error_message,

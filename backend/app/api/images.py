@@ -23,6 +23,7 @@ from app.database import AsyncSessionLocal, get_db
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
+from app.services.client_ip import resolve_client_ip
 from app.services.secret_crypto import decrypt_secret
 from app.services.image_model_resolver import (
     is_image_model_failover_error,
@@ -1716,7 +1717,7 @@ async def generate_image(  # noqa: C901 -- Phase 4 split; complexity must not gr
                             error_message=error_message,
                             error_code=error_code,
                             http_status=http_status,
-                            source_ip=request.client.host if request.client else None,
+                            source_ip=resolve_client_ip(request),
                             operation=body.operation,
                             budget_reservation_id=budget_reservation_id,
                             quantity=body.n,

@@ -16,6 +16,7 @@ from app.database import get_db
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
+from app.services.client_ip import resolve_client_ip
 from app.services.alpha_router_api_key_service import ensure_key_usable
 from app.services.api_key_connection_policy import (
     allowed_connection_ids_for_key,
@@ -285,6 +286,6 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
         alpha_router_api_key_id=auth_ctx.alpha_router_api_key_id,
         user_api_key_id=auth_ctx.user_api_key_id,
         client_app=auth_ctx.client_app,
-        source_ip=request.client.host if request.client else None,
+        source_ip=resolve_client_ip(request),
     )
     return JSONResponse(content=payload)

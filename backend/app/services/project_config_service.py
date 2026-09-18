@@ -145,7 +145,15 @@ async def update_project_config(
         user=user,
         capability="project.edit",
     )
-    project = await db.get(Project, project_id)
+    # Lock the project before reading MAX(revision): two owners saving Advanced
+    # settings at the same moment both read the same maximum, both write the
+    # next number, and one edit disappears from a history the product calls
+    # immutable and reproducible. The unique constraint added alongside this is
+    # the backstop; the lock is what turns a collision into a wait.
+    project_stmt = select(Project).where(Project.id == project_id)
+    if db.get_bind().dialect.name == "postgresql":
+        project_stmt = project_stmt.with_for_update()
+    project = (await db.execute(project_stmt)).scalars().first()
     if project is None:
         raise ValueError("Project not found")
 

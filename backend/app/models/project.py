@@ -256,7 +256,14 @@ class ProjectConfigVersion(Base):
     """Immutable snapshot of project Advanced settings for reproducible AI runs."""
 
     __tablename__ = "project_config_versions"
-    __table_args__ = (Index("ix_project_config_versions_project", "project_id"),)
+    __table_args__ = (
+        Index("ix_project_config_versions_project", "project_id"),
+        # Revision numbers are allocated as MAX(revision)+1. Every other
+        # MAX()+1 in this codebase has a unique constraint behind it; this one
+        # did not, so two concurrent saves produced two rows claiming the same
+        # revision and one owner's change vanished from the history.
+        UniqueConstraint("project_id", "revision", name="uq_project_config_versions_revision"),
+    )
 
     id = Column(String(36), primary_key=True)
     project_id = Column(

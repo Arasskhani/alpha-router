@@ -18,6 +18,7 @@ from app.models.agent_runtime import AgentCitation, AgentRun
 from app.models.chat import ChatSession
 from app.models.knowledge import (
     KnowledgeBase,
+    KnowledgeDocument,
     KnowledgeDocumentVersion,
 )
 from app.models.user import User
@@ -181,6 +182,19 @@ async def download_citation_source(
     version = await db.get(KnowledgeDocumentVersion, version_id) if version_id else None
     if version is None or not version.storage_key:
         raise HTTPException(404, "Citation source not found")
+    # Retrieval only ever exposed excerpts; this hands over the entire original
+    # file, and it did so on run ownership alone. A citation is therefore a
+    # permanent grant: revoking a document version, or deleting the document,
+    # left every past run's download working. Revocation has to mean something
+    # at the moment of the download, not at the moment of the turn.
+    document = await db.get(KnowledgeDocument, version.document_id) if version.document_id else None
+    if (
+        version.revoked_at is not None
+        or document is None
+        or document.revoked_at is not None
+        or document.deleted_at is not None
+    ):
+        raise HTTPException(404, "Citation source is no longer available")
     settings = get_settings()
     store = default_knowledge_object_store()
     try:

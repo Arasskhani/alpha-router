@@ -2598,7 +2598,7 @@ table.data-table--api-logs {
 
 .btn {
   background: var(--accent);
-  color: white;
+  color: var(--accent-contrast);
   border: none;
   padding: var(--control-pad-y) 1rem;
   min-height: var(--control-height);
@@ -8040,11 +8040,11 @@ table.data-table--api-logs {
   margin-left: 0;
 }
 .btn-danger {
-  background: #dc2626;
-  color: #fff;
+  background: var(--danger);
+  color: var(--danger-contrast);
   border: none;
 }
-.btn-danger:hover { background: #b91c1c; }
+.btn-danger:hover { background: var(--danger-hover); }
 .btn-sm.btn-danger { padding: 0.35rem 0.65rem; font-size: 0.8rem; }
 .input-block {
   width: 100%;

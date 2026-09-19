@@ -15,6 +15,7 @@ budget reservation / provider calls::
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from dataclasses import dataclass
@@ -26,11 +27,24 @@ from app.core.redis_client import get_redis
 from app.config import get_settings
 from app.services.observability import increment
 
+logger = logging.getLogger(__name__)
+
+#: Last ``enabled`` value this worker published or read. Redis holds the copy the
+#: admission path consults, and Redis can be flushed without a restart - which
+#: would hand back an empty policy hash and, with it, the permissive default.
+#: An off switch that turns itself back on when the cache is cleared is not an
+#: off switch, and an incident is exactly when someone clears a cache. Falling
+#: back to the last value this process saw keeps it off until the database says
+#: otherwise; a worker that has seen nothing yet is covered by the startup sync.
+_last_known_enabled: int | None = None
+
 CAPACITY_BUSY_CODE = "code_interpreter_capacity_busy"
 CAPACITY_UNAVAILABLE_CODE = "code_interpreter_capacity_unavailable"
+CAPACITY_DISABLED_CODE = "code_interpreter_disabled"
 
 _BUSY_MESSAGE = "Code Interpreter is currently busy. Please try again later."
 _UNAVAILABLE_MESSAGE = "Code Interpreter is temporarily unavailable. Try again shortly."
+_DISABLED_MESSAGE = "Code Interpreter has been turned off by an administrator."
 
 _KEY_PREFIX = "ci:capacity"
 _GLOBAL_ZSET = f"{_KEY_PREFIX}:global"
@@ -40,6 +54,11 @@ _POLICY_HASH = f"{_KEY_PREFIX}:policy"
 _SETTING_GLOBAL_MAX = "code_interpreter_capacity_global_max"
 _SETTING_PER_SUBJECT_MAX = "code_interpreter_capacity_per_subject_max"
 _SETTING_RETRY_AFTER = "code_interpreter_capacity_retry_after_seconds"
+#: The operational off switch. Lowering the ceiling to 1 was the only way to
+#: stop Code Interpreter during an incident, and it does not stop it - it
+#: leaves one turn running and gives everyone else a 429 that says "busy",
+#: which is not what happened.
+_SETTING_ENABLED = "code_interpreter_enabled"
 
 # Atomic acquire: prune expired members, enforce global + subject caps, then
 # add lease_id to both ZSETs and store subject metadata with TTL.
@@ -180,6 +199,9 @@ def _capacity_settings() -> dict[str, int]:
         "lease_ttl": max(30, int(settings.code_interpreter_capacity_lease_ttl_seconds or 900)),
         "heartbeat": max(5, int(settings.code_interpreter_capacity_heartbeat_seconds or 30)),
         "retry_after": max(1, int(settings.code_interpreter_capacity_retry_after_seconds or 30)),
+        #: Not an environment setting: the switch lives in the database only, so
+        #: a restart cannot silently turn Code Interpreter back on.
+        "enabled": 1,
     }
 
 
@@ -189,6 +211,7 @@ def _normalize_policy(
     global_max: int | None = None,
     per_subject_max: int | None = None,
     retry_after: int | None = None,
+    enabled: int | None = None,
 ) -> dict[str, int]:
     hard_global = max(1, int(base["global_max"]))
     operational_global = min(
@@ -214,16 +237,17 @@ def _normalize_policy(
             ),
         ),
         "hard_global_max": hard_global,
+        "enabled": 1 if (base.get("enabled", 1) if enabled is None else enabled) else 0,
     }
 
 
 async def _effective_policy(client: Any, base: dict[str, int]) -> dict[str, int]:
     hgetall = getattr(client, "hgetall", None)
     if not callable(hgetall):
-        return _normalize_policy(base)
+        return _normalize_policy(base, enabled=_last_known_enabled)
     raw = await hgetall(_POLICY_HASH)
     if not raw:
-        return _normalize_policy(base)
+        return _normalize_policy(base, enabled=_last_known_enabled)
 
     def _optional_int(key: str) -> int | None:
         value = raw.get(key)
@@ -232,12 +256,26 @@ async def _effective_policy(client: Any, base: dict[str, int]) -> dict[str, int]
         except (TypeError, ValueError):
             return None
 
-    return _normalize_policy(
+    policy = _normalize_policy(
         base,
         global_max=_optional_int("global_max"),
         per_subject_max=_optional_int("per_subject_max"),
         retry_after=_optional_int("retry_after"),
+        enabled=_optional_int("enabled") if "enabled" in raw else _last_known_enabled,
     )
+    _remember_enabled(policy["enabled"])
+    return policy
+
+
+def _remember_enabled(value: int) -> None:
+    global _last_known_enabled
+    _last_known_enabled = 1 if value else 0
+
+
+def reset_capacity_policy_cache() -> None:
+    """Forget the remembered switch. Test hook; harmless in production."""
+    global _last_known_enabled
+    _last_known_enabled = None
 
 
 def _subject_zset_key(subject: str) -> str:
@@ -257,6 +295,17 @@ def _busy_exception(retry_after: int) -> HTTPException:
             "retry_after_seconds": retry_after,
         },
         headers={"Retry-After": str(retry_after)},
+    )
+
+
+def _disabled_exception() -> HTTPException:
+    """503, not 429: nothing the caller does and no amount of waiting helps."""
+    return HTTPException(
+        status_code=503,
+        detail={
+            "code": CAPACITY_DISABLED_CODE,
+            "message": _DISABLED_MESSAGE,
+        },
     )
 
 
@@ -319,22 +368,33 @@ async def acquire_code_interpreter_turn(
             int(subject_limit if subject_limit is not None else cfg["per_subject_max"]),
         )
         retry_after = cfg["retry_after"]
-        result = await client.eval(
-            _ACQUIRE_LUA,
-            3,
-            _GLOBAL_ZSET,
-            _subject_zset_key(subject),
-            _lease_key(lease),
-            lease,
-            subject,
-            str(now),
-            str(expiry),
-            str(ttl),
-            str(g_max),
-            str(s_max),
-        )
+        if not cfg.get("enabled", 1):
+            # Refused before the semaphore is touched, so turns already running
+            # keep their leases and finish. Raised outside this try block: it is
+            # the answer, not a Redis failure to be translated into a 503.
+            disabled = True
+        else:
+            disabled = False
+            result = await client.eval(
+                _ACQUIRE_LUA,
+                3,
+                _GLOBAL_ZSET,
+                _subject_zset_key(subject),
+                _lease_key(lease),
+                lease,
+                subject,
+                str(now),
+                str(expiry),
+                str(ttl),
+                str(g_max),
+                str(s_max),
+            )
     except Exception as exc:
         raise _unavailable_exception(retry_after) from exc
+
+    if disabled:
+        increment("code_interpreter_disabled_rejected")
+        raise _disabled_exception()
 
     status = int(result[0]) if result else 0
     if status == 1:
@@ -434,6 +494,7 @@ async def code_interpreter_capacity_stats() -> dict[str, Any]:
         "heartbeat_seconds": cfg["heartbeat"],
         "retry_after_seconds": cfg["retry_after"],
         "hard_limit": cfg["hard_global_max"],
+        "enabled": bool(cfg.get("enabled", 1)),
     }
 
 
@@ -457,6 +518,7 @@ async def get_code_interpreter_capacity_policy(db: Any) -> dict[str, int]:
         global_max=await _read(_SETTING_GLOBAL_MAX),
         per_subject_max=await _read(_SETTING_PER_SUBJECT_MAX),
         retry_after=await _read(_SETTING_RETRY_AFTER),
+        enabled=await _read(_SETTING_ENABLED),
     )
     return {
         "global_max": policy["global_max"],
@@ -465,6 +527,7 @@ async def get_code_interpreter_capacity_policy(db: Any) -> dict[str, int]:
         "lease_ttl_seconds": policy["lease_ttl"],
         "heartbeat_seconds": policy["heartbeat"],
         "hard_global_max": policy["hard_global_max"],
+        "enabled": policy["enabled"],
     }
 
 
@@ -480,34 +543,45 @@ async def sync_code_interpreter_capacity_policy(db: Any) -> dict[str, int]:
                 "global_max": str(policy["global_max"]),
                 "per_subject_max": str(policy["per_subject_max"]),
                 "retry_after": str(policy["retry_after_seconds"]),
+                "enabled": str(policy["enabled"]),
             },
         )
     except Exception as exc:
         raise _unavailable_exception(policy["retry_after_seconds"]) from exc
+    _remember_enabled(policy["enabled"])
     return policy
 
 
 async def set_code_interpreter_capacity_policy(
     db: Any,
     *,
-    global_max: int,
-    per_subject_max: int,
-    retry_after_seconds: int,
+    global_max: int | None = None,
+    per_subject_max: int | None = None,
+    retry_after_seconds: int | None = None,
+    enabled: bool | None = None,
 ) -> dict[str, int]:
-    """Persist and publish Admin-managed operational limits."""
+    """Persist and publish Admin-managed operational limits.
+
+    Every field is optional so the off switch can be thrown without restating
+    the three ceilings, and a ceiling can be changed without touching the
+    switch. Whatever is left out keeps its stored value.
+    """
     from app.models.system import SystemSetting
 
     base = _capacity_settings()
+    current = await get_code_interpreter_capacity_policy(db)
     normalized = _normalize_policy(
         base,
-        global_max=global_max,
-        per_subject_max=per_subject_max,
-        retry_after=retry_after_seconds,
+        global_max=current["global_max"] if global_max is None else global_max,
+        per_subject_max=current["per_subject_max"] if per_subject_max is None else per_subject_max,
+        retry_after=current["retry_after_seconds"] if retry_after_seconds is None else retry_after_seconds,
+        enabled=current["enabled"] if enabled is None else int(bool(enabled)),
     )
     values = {
         _SETTING_GLOBAL_MAX: normalized["global_max"],
         _SETTING_PER_SUBJECT_MAX: normalized["per_subject_max"],
         _SETTING_RETRY_AFTER: normalized["retry_after"],
+        _SETTING_ENABLED: normalized["enabled"],
     }
     for key, value in values.items():
         row = await db.get(SystemSetting, key)
@@ -523,4 +597,5 @@ async def set_code_interpreter_capacity_policy(
         "lease_ttl_seconds": normalized["lease_ttl"],
         "heartbeat_seconds": normalized["heartbeat"],
         "hard_global_max": normalized["hard_global_max"],
+        "enabled": normalized["enabled"],
     }

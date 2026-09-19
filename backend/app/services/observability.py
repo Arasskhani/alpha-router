@@ -44,6 +44,7 @@ _KNOWN_EVENTS = frozenset(
         "budget_hold_leak",
         "budget_reserved_drift_repaired",
         "code_interpreter_capacity_rejected",
+        "code_interpreter_disabled_rejected",
         "code_interpreter_lease_expired",
         "code_interpreter_cancelled",
         "docs_denied",

@@ -14,9 +14,13 @@ router = APIRouter(prefix="/api/admin/operations", tags=["operations"])
 
 
 class CodeInterpreterCapacityPatch(BaseModel):
-    max_concurrent_turns: int = Field(ge=1)
-    max_per_subject: int = Field(ge=1)
-    retry_after_seconds: int = Field(ge=1, le=300)
+    max_concurrent_turns: int | None = Field(default=None, ge=1)
+    max_per_subject: int | None = Field(default=None, ge=1)
+    retry_after_seconds: int | None = Field(default=None, ge=1, le=300)
+    #: The off switch. Optional like the rest, so throwing it during an incident
+    #: does not mean restating three ceilings from a page the operator may not
+    #: have open.
+    enabled: bool | None = None
 
 
 def _effective_capacity(policy: dict, runtime: dict, broker: dict) -> dict:
@@ -66,6 +70,7 @@ def _capacity_payload(policy: dict, runtime: dict, broker: dict) -> dict:
             "lease_ttl_seconds": int(policy["lease_ttl_seconds"]),
             "heartbeat_seconds": int(policy["heartbeat_seconds"]),
             "hard_max_concurrent_turns": int(policy["hard_global_max"]),
+            "enabled": bool(policy.get("enabled", 1)),
         },
         "runtime": {
             "active": int(runtime["active"]),
@@ -163,6 +168,7 @@ async def patch_code_interpreter_capacity(
         global_max=body.max_concurrent_turns,
         per_subject_max=body.max_per_subject,
         retry_after_seconds=body.retry_after_seconds,
+        enabled=body.enabled,
     )
     await db.commit()
     policy = await sync_code_interpreter_capacity_policy(db)

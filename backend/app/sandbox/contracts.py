@@ -119,6 +119,11 @@ class JobSubmitRequest(BaseModel):
     job_id: str | None = None
     code: str = Field(min_length=1)
     files: dict[str, str] = Field(default_factory=dict)
+    #: How long the caller is willing to let this execution run. Advisory: the
+    #: broker clamps it to its own hard ceiling, because a client asking for an
+    #: hour is exactly the request that ceiling exists to refuse. Omitted, the
+    #: broker uses its default.
+    timeout_seconds: int | None = Field(default=None, ge=1, le=3600)
 
     @field_validator("job_id")
     @classmethod

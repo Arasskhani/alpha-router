@@ -69,7 +69,14 @@ MAX_RESULT_CHARS = 200_000
 MAX_ARTIFACTS = 5
 MAX_ARTIFACT_BYTES = 5 * 1024 * 1024
 MAX_TOTAL_ARTIFACT_BYTES = 10 * 1024 * 1024
-EXECUTION_TIMEOUT_SECONDS = 30
+# Default wall-clock ceiling for one execution, and the hard ceiling no caller
+# can exceed. ``CODE_SANDBOX_TIMEOUT_SECONDS`` on the application side used to
+# name a limit it did not set: it only shaped the client's polling deadline,
+# while the real kill happened here at a hardcoded 30s. The application now
+# sends its value with the job and the broker clamps it, so the setting means
+# what its name says.
+EXECUTION_TIMEOUT_SECONDS = _int_env("SANDBOX_EXECUTION_TIMEOUT_SECONDS", 30)
+HARD_MAX_EXECUTION_TIMEOUT_SECONDS = _int_env("SANDBOX_HARD_MAX_EXECUTION_SECONDS", 300)
 
 # Capacity + admission control. These honor the compose-managed environment
 # contract (SANDBOX_MAX_CONCURRENT, SANDBOX_QUEUE_TIMEOUT_SECONDS,
@@ -398,7 +405,12 @@ async def _force_remove(container_name: str) -> None:
         await asyncio.wait_for(cleanup.wait(), timeout=5)
 
 
-async def _run_container(body: ExecuteRequest, job: _Job | None = None) -> dict[str, object]:
+async def _run_container(
+    body: ExecuteRequest,
+    job: _Job | None = None,
+    *,
+    timeout_seconds: int | None = None,
+) -> dict[str, object]:
     container_name = f"alpha-router-sandbox-{uuid.uuid4().hex}"
     payload = json.dumps(
         {"code": body.code, "files": body.files},
@@ -463,7 +475,9 @@ async def _run_container(body: ExecuteRequest, job: _Job | None = None) -> dict[
     try:
         stdout_b, stderr_b = await asyncio.wait_for(
             _exchange(proc, payload),
-            timeout=EXECUTION_TIMEOUT_SECONDS,
+            timeout=_resolved_execution_timeout(
+                timeout_seconds if timeout_seconds is not None else (job.timeout_seconds if job else None)
+            ),
         )
         completed = True
     except TimeoutError:
@@ -521,10 +535,18 @@ def _now() -> datetime.datetime:
     return datetime.datetime.now(datetime.UTC)
 
 
+def _resolved_execution_timeout(requested: int | None) -> int:
+    """Clamp a requested execution ceiling into what this broker will allow."""
+    if requested is None:
+        return max(1, EXECUTION_TIMEOUT_SECONDS)
+    return max(1, min(int(requested), max(1, HARD_MAX_EXECUTION_TIMEOUT_SECONDS)))
+
+
 @dataclasses.dataclass
 class _Job:
     job_id: str
     request: ExecuteRequest | None = None
+    timeout_seconds: int = EXECUTION_TIMEOUT_SECONDS
     state: JobState = JobState.PENDING
     created_at: datetime.datetime = dataclasses.field(default_factory=_now)
     updated_at: datetime.datetime = dataclasses.field(default_factory=_now)
@@ -728,7 +750,11 @@ async def submit_job(body: JobSubmitRequest):
                 "Sandbox capacity is unavailable",
                 headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
             )
-        job = _Job(job_id=job_id, request=request)
+        job = _Job(
+            job_id=job_id,
+            request=request,
+            timeout_seconds=_resolved_execution_timeout(body.timeout_seconds),
+        )
         _jobs[job_id] = job
         job.task = asyncio.create_task(_run_job(job))
 

@@ -84,6 +84,10 @@ class DockerBrokerSandboxExecutor:
                     "job_id": resolved_job_id,
                     "code": code,
                     "files": files,
+                    # The broker clamps this to its own hard ceiling; sending it
+                    # is what makes CODE_SANDBOX_TIMEOUT_SECONDS mean the thing
+                    # its name promises rather than only shaping the poll loop.
+                    "timeout_seconds": self.execution_timeout_seconds,
                 },
                 headers=self._headers,
             )

@@ -57,6 +57,10 @@ class SecurityAuditEvent(Base):
         # every filtered page was a sequential scan of the whole table.
         Index("ix_security_audit_events_actor_created", "actor_user_id", "created_at"),
         Index("ix_security_audit_events_action_created", "action", "created_at"),
+        # The filter panel runs SELECT DISTINCT over these two as well, and
+        # neither had anything to read but the heap.
+        Index("ix_security_audit_events_resource_type", "resource_type"),
+        Index("ix_security_audit_events_actor_username", "actor_username"),
     )
 
     id = Column(Integer, primary_key=True)

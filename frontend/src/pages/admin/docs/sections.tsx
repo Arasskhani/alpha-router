@@ -312,8 +312,8 @@ export const docSections: DocSection[] = [
         </p>
         <Warn>
           Do not advertise a 200-execution profile by only raising the concurrency ceiling. Validate 50, 100, 150, and
-          200 concurrency stages with representative workspace and artifact sizes, then set the operational ceiling from
-          <a href="#admin-code-interpreter">Admin → Code Interpreter</a> to the highest stage that passes
+          200 concurrency stages with representative workspace and artifact sizes, then set the operational ceiling
+          from <a href="#admin-code-interpreter">Admin → Code Interpreter</a> to the highest stage that passes
           latency, memory, cancellation, and soak-test gates. See{" "}
           <a href="#architecture">Architecture &amp; services</a> for the request path and broker trust boundary.
         </Warn>

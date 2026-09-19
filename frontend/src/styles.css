@@ -1972,6 +1972,21 @@ table.card tbody td:last-child {
   align-items: center;
 }
 
+/* Previous / Next under a paged admin table, with the range on the left. */
+.users-pager {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 0.5rem 0 1rem;
+  font-size: 0.85rem;
+}
+.users-pager__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
 /* Page never scrolls sideways; only the table wrapper does. */
 .admin-page:has(.table-wrap--api-logs) {
   min-width: 0;

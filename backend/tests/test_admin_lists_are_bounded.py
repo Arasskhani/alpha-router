@@ -74,6 +74,8 @@ def _user_list_args(response, db_session) -> dict:
         "user_id": None,
         "online": None,
         "picker": False,
+        "limit": None,
+        "offset": 0,
         "response": response,
         "db": db_session,
         "_": None,

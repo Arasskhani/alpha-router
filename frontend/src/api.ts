@@ -177,7 +177,13 @@ export const NO_LIST_BOUNDS: ListBounds = { truncated: false, cap: 0 };
  * `X-List-Truncated`, so a missing header means an endpoint that has no cap -
  * not a page that happens to fit.
  */
-export async function apiList<T>(path: string, init?: RequestInit): Promise<{ data: T; bounds: ListBounds }> {
+/** Paging headers a paged list endpoint sets; zeros/false when it did not page. */
+export type ListPage = { total: number | null; hasMore: boolean };
+
+export async function apiList<T>(
+  path: string,
+  init?: RequestInit,
+): Promise<{ data: T; bounds: ListBounds; page: ListPage }> {
   const headers = new Headers(init?.headers);
   const res = await authFetch(path, { ...init, headers });
   if (!res.ok) {
@@ -187,8 +193,11 @@ export async function apiList<T>(path: string, init?: RequestInit): Promise<{ da
   }
   const flag = res.headers.get("X-List-Truncated");
   const cap = Number(res.headers.get("X-List-Cap") || 0);
+  const totalHeader = res.headers.get("X-List-Total");
+  const total = totalHeader === null ? null : Number(totalHeader);
   return {
     data: (res.status === 204 ? undefined : await res.json()) as T,
     bounds: flag === "true" ? { truncated: true, cap: Number.isFinite(cap) ? cap : 0 } : NO_LIST_BOUNDS,
+    page: { total: total !== null && Number.isFinite(total) ? total : null, hasMore: res.headers.get("X-Has-More") === "true" },
   };
 }

@@ -195,6 +195,9 @@ const emptyEditForm: EditForm = {
   confirm_password: "",
 };
 
+/** Accounts per page. A screenful and a bit; the filters do the narrowing. */
+const USERS_PAGE_SIZE = 100;
+
 export default function Users() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -238,6 +241,11 @@ export default function Users() {
   const [addToGroupSaving, setAddToGroupSaving] = useState(false);
   const [roleCatalog, setRoleCatalog] = useState<RoleRecord[]>([]);
   const [presenceAvailable, setPresenceAvailable] = useState(true);
+  // Paged in the database: one page of accounts at a time. Filters reset to
+  // the first page; Previous/Next move through the filtered list.
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState<number | null>(null);
   const usersLoadSeq = useRef(0);
 
   function buildUsersQuery(): string {
@@ -256,6 +264,8 @@ export default function Users() {
       params.set("is_active", "true");
     }
     if (filterGroupId) params.set("group_id", filterGroupId);
+    params.set("limit", String(USERS_PAGE_SIZE));
+    params.set("offset", String(offset));
     const qs = params.toString();
     return qs ? `?${qs}` : "";
   }
@@ -263,9 +273,11 @@ export default function Users() {
   async function loadUsers() {
     const seq = ++usersLoadSeq.current;
     try {
-      const { data: rows, bounds } = await apiList<U[]>(`/api/admin/users${buildUsersQuery()}`);
+      const { data: rows, bounds, page } = await apiList<U[]>(`/api/admin/users${buildUsersQuery()}`);
       if (seq !== usersLoadSeq.current) return;
       setUsersBounds(bounds);
+      setHasMore(page.hasMore);
+      setTotal(page.total);
       const nextUsers = rows.map((u) => {
         const roles = (u.roles?.length ? u.roles : [u.role]).map(normalizeRole);
         return { ...u, roles, role: normalizeRole(u.role) };
@@ -290,7 +302,18 @@ export default function Users() {
     api<Plan[]>("/api/admin/plans").then(setPlans).catch(() => {});
     api<GroupOption[]>("/api/admin/groups").then(setGroups).catch(() => {});
     api<RoleRecord[]>("/api/admin/roles").then(setRoleCatalog).catch(() => {});
-  }, [debouncedUser, debouncedEmail, debouncedDepartment, debouncedJobTitle, filterRole, filterPlan, statusFilter, filterGroupId]);
+  }, [debouncedUser, debouncedEmail, debouncedDepartment, debouncedJobTitle, filterRole, filterPlan, statusFilter, filterGroupId, offset]);
+
+  // A changed filter means a different list; start it from the first page.
+  // State adjusted during render (React's documented pattern), not an effect,
+  // so the first page is fetched once rather than after a page of the old
+  // offset has already been requested.
+  const filterKey = [debouncedUser, debouncedEmail, debouncedDepartment, debouncedJobTitle, filterRole, filterPlan, statusFilter, filterGroupId].join("\u0000");
+  const [appliedFilterKey, setAppliedFilterKey] = useState(filterKey);
+  if (appliedFilterKey !== filterKey) {
+    setAppliedFilterKey(filterKey);
+    if (offset !== 0) setOffset(0);
+  }
 
   // Only the Online filter needs a live list: who is online changes by the
   // minute, and a snapshot from the moment the button was clicked goes stale.
@@ -1002,6 +1025,28 @@ export default function Users() {
             ))}
           </tbody>
         </table>
+      </div>
+      <div className="users-pager">
+        <span className="muted-text">
+          {total === null
+            ? ""
+            : total === 0
+              ? "No accounts match"
+              : `${offset + 1}–${Math.min(offset + USERS_PAGE_SIZE, total)} of ${total.toLocaleString()}`}
+        </span>
+        <div className="users-pager__actions">
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={offset === 0}
+            onClick={() => setOffset(Math.max(0, offset - USERS_PAGE_SIZE))}
+          >
+            Previous
+          </button>
+          <button type="button" className="btn btn-ghost" disabled={!hasMore} onClick={() => setOffset(offset + USERS_PAGE_SIZE)}>
+            Next
+          </button>
+        </div>
       </div>
 
       <Modal open={!!editUser} title="Edit User" onClose={() => setEditUser(null)}>

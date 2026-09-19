@@ -1527,26 +1527,37 @@ async def _list_admin_user_dicts(
     after_username: str | None = None,
     page_size: int | None = None,
     cursor: dict | None = None,
+    offset: int | None = None,
+    limit: int | None = None,
 ) -> tuple[list[dict], bool]:
     """``(rows, whether the cap cut the list short)``.
 
-    With ``page_size`` the query is a keyset window on ``username`` (unique,
-    indexed, and the list's sort order) starting after ``after_username``;
-    ``cursor`` is filled with the last username fetched and how many rows the
-    window returned before the Python-side filters, so a caller can walk the
-    whole table page by page - the export does.
+    Three ways to read the list:
+
+    * neither ``limit`` nor ``page_size``: everything under ``cap``;
+    * ``page_size`` (+ ``after_username``): a keyset window on username, the
+      list's own sort order, for walking the whole table - the export does;
+      ``cursor`` gets the last username and the window's raw row count;
+    * ``offset`` + ``limit``: a page. The plan filter is decided by the query,
+      so the page is cut in SQL. The presence filter cannot be - it is one
+      Redis key per user and the keyspace is never scanned - so for ``online``
+      the page is cut from the filtered *ids* (one indexed column, one MGET)
+      and only that page's rows are loaded in full. ``cursor`` gets ``total``
+      and ``has_more``.
     """
 
-    from app.services.presence_service import online_user_ids
+    from app.services import presence_service
 
+    paged = limit is not None
+    size = int(limit) if limit is not None else 0
+    online_ids: set[int] | None = None
     if picker and user_id is not None:
         users = await _query_owner_picker_users(db, user_id=user_id)
     elif picker:
         users = await _query_owner_picker_users(db, q=q)
     else:
-        stmt = select(User).order_by(User.username)
-        stmt = _apply_user_list_filters(
-            stmt,
+        filtered = _apply_user_list_filters(
+            select(User),
             q=q,
             username=username,
             email=email,
@@ -1559,25 +1570,56 @@ async def _list_admin_user_dicts(
             no_plan=False if picker else no_plan,
             active_only=True,
         )
-        if cap is not None:
-            stmt = capped(stmt, cap=cap)
-        if page_size is not None:
-            if after_username is not None:
-                stmt = stmt.where(User.username > after_username)
-            stmt = stmt.limit(page_size)
-        users = list((await db.execute(stmt)).scalars().all())
-    if cursor is not None:
+        stmt = filtered.order_by(User.username)
+        if paged and online:
+            # Membership first, page second. is_active is part of "online" here,
+            # as it always was for this filter.
+            id_stmt = filtered.with_only_columns(User.id).where(User.is_active.is_(True)).order_by(User.username)
+            id_stmt = id_stmt.limit(presence_service.MAX_PRESENCE_LOOKUP + 1)
+            candidate_ids = [int(i) for i in (await db.execute(id_stmt)).scalars().all()]
+            online_ids = await presence_service.online_user_ids(candidate_ids)
+            kept = candidate_ids if online_ids is None else [i for i in candidate_ids if i in online_ids]
+            start = int(offset or 0)
+            page_ids = kept[start : start + size]
+            if cursor is not None:
+                cursor["total"] = len(kept)
+                cursor["has_more"] = start + size < len(kept)
+            users = (
+                list(
+                    (await db.execute(select(User).where(User.id.in_(page_ids)).order_by(User.username)))
+                    .scalars()
+                    .all()
+                )
+                if page_ids
+                else []
+            )
+        elif paged:
+            total = int((await db.execute(select(func.count()).select_from(filtered.subquery()))).scalar_one() or 0)
+            start = int(offset or 0)
+            users = list((await db.execute(stmt.offset(start).limit(size))).scalars().all())
+            if cursor is not None:
+                cursor["total"] = total
+                cursor["has_more"] = start + len(users) < total
+        else:
+            if cap is not None:
+                stmt = capped(stmt, cap=cap)
+            if page_size is not None:
+                if after_username is not None:
+                    stmt = stmt.where(User.username > after_username)
+                stmt = stmt.limit(page_size)
+            users = list((await db.execute(stmt)).scalars().all())
+    if cursor is not None and not paged:
         cursor["raw_count"] = len(users)
         cursor["last_username"] = users[-1].username if users else after_username
     truncated = False
-    if cap is not None:
+    if cap is not None and not paged:
         users, truncated = split_overflow(users, cap=cap)
-    # One Redis MGET. Narrow the list here so the plan/group/budget batches below
-    # only run for rows that survive the filter. ``None`` means presence is
+    # One Redis MGET for the rows on screen. ``None`` means presence is
     # unavailable, in which case the filter is ignored rather than returning an
     # empty table that looks like a bug.
-    online_ids = None if picker else await online_user_ids([u.id for u in users])
-    if online and online_ids is not None:
+    if online_ids is None and not picker:
+        online_ids = await presence_service.online_user_ids([u.id for u in users])
+    if online and online_ids is not None and not paged:
         users = [u for u in users if u.id in online_ids and bool(u.is_active)]
     user_ids = [u.id for u in users]
     plan_state = await _build_user_plan_state_map(db, user_ids)
@@ -1661,15 +1703,23 @@ async def list_users(
     user_id: int | None = Query(None),
     online: bool | None = Query(None, description="Keep only users online right now"),
     picker: bool = Query(False, description="Owner picker: search-only, no full list"),
+    limit: int | None = Query(
+        None, ge=1, le=ADMIN_LIST_HARD_CAP, description="Page size; omit for the capped full list"
+    ),
+    offset: int = Query(0, ge=0),
     response: Response = None,  # type: ignore[assignment]
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_users),
 ):
     if plan_id is not None and no_plan:
         raise HTTPException(400, detail="Specify only one of plan_id or no_plan")
+    cursor: dict[str, object] = {}
     rows, truncated = await _list_admin_user_dicts(
         db,
-        cap=ADMIN_LIST_HARD_CAP,
+        cap=None if limit is not None else ADMIN_LIST_HARD_CAP,
+        offset=offset if limit is not None else None,
+        limit=limit,
+        cursor=cursor if limit is not None else None,
         q=q,
         username=username,
         email=email,
@@ -1684,7 +1734,14 @@ async def list_users(
         plan_id=plan_id,
         no_plan=no_plan,
     )
-    mark_truncated(response, truncated, cap=ADMIN_LIST_HARD_CAP)
+    if limit is not None:
+        if response is not None:
+            response.headers["X-List-Total"] = str(cursor.get("total", len(rows)))
+            response.headers["X-Has-More"] = "true" if cursor.get("has_more") else "false"
+            response.headers["X-List-Offset"] = str(offset)
+            response.headers["X-List-Limit"] = str(limit)
+    else:
+        mark_truncated(response, truncated, cap=ADMIN_LIST_HARD_CAP)
     return rows
 
 

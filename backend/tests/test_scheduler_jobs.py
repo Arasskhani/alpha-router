@@ -342,7 +342,8 @@ async def test_model_tool_compatibility_probes_each_claimed_model_and_prunes(job
     pruned: list = []
 
     async def claim(db):
-        return ["m-missing"]
+        # An integer, as the real claim returns: PostgreSQL rejects a string key.
+        return [987_654]
 
     async def do_probe(db, model):
         probed.append(model.id)

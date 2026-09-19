@@ -14301,7 +14301,7 @@ button.app-toast:hover {
   width: 100%;
   margin-top: 0.45rem;
   resize: vertical;
-  font-family: var(--font-mono);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.68rem;
 }
 
@@ -15238,10 +15238,19 @@ button.app-toast:hover {
   color: var(--muted);
 }
 
+/* Inline error text. `.error` had no rule at all - twenty <p className="error">
+   rendered as body text - and `.form-error` hardcoded a red no theme controls. */
+.error {
+  color: var(--danger);
+}
+p.error,
+.form-error {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--danger);
+}
 .form-error {
   margin: 0 0 0.85rem;
-  font-size: 0.85rem;
-  color: #dc2626;
 }
 
 .form-field--inline {

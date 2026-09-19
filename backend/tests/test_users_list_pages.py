@@ -24,9 +24,24 @@ from app.services import presence_service
 
 def _args(response, db, **overrides) -> dict:
     base = {
-        "q": None, "username": None, "email": None, "department": None, "job_title": None, "role": None,
-        "is_active": None, "group_id": None, "plan_id": None, "no_plan": False, "user_id": None,
-        "online": None, "picker": False, "limit": None, "offset": 0, "response": response, "db": db, "_": None,
+        "q": None,
+        "username": None,
+        "email": None,
+        "department": None,
+        "job_title": None,
+        "role": None,
+        "is_active": None,
+        "group_id": None,
+        "plan_id": None,
+        "no_plan": False,
+        "user_id": None,
+        "online": None,
+        "picker": False,
+        "limit": None,
+        "offset": 0,
+        "response": response,
+        "db": db,
+        "_": None,
     }
     base.update(overrides)
     return base

@@ -178,7 +178,7 @@ export default function Plans() {
   return (
     <AdminPage title="Plans">
       {msg && <p className="alert alert-success">{msg}</p>}
-      {err && <p className="alert alert-error">{err}</p>}
+      {err && <p className="alert alert-error" role="alert">{err}</p>}
 
       <div className="search-bar">
         <input

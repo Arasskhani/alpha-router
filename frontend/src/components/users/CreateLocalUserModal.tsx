@@ -226,7 +226,7 @@ export default function CreateLocalUserModal({ open, roles, plans, onClose, onSu
             </option>
           ))}
         </select>
-        {err && <p className="error">{err}</p>}
+        {err && <p className="error" role="alert">{err}</p>}
         <div className="modal-actions">
           <button type="button" className="btn btn-ghost" onClick={onClose} disabled={saving}>
             Cancel

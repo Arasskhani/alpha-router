@@ -47,7 +47,7 @@ export default function RequestLogCostDetailsModal({
       {log && (
         <div className="api-log-cost-details">
           {exportSlot ? <div className="api-log-cost-details__actions">{exportSlot}</div> : null}
-          {exportError ? <p className="error">{exportError}</p> : null}
+          {exportError ? <p className="error" role="alert">{exportError}</p> : null}
           <div className="api-log-cost-details__summary">
             <div>
               <span className="muted">Time</span>
@@ -85,7 +85,7 @@ export default function RequestLogCostDetailsModal({
           </div>
 
           {loading && <p className="muted">Loading cost ledger…</p>}
-          {error && <p className="error">{error}</p>}
+          {error && <p className="error" role="alert">{error}</p>}
 
           {!loading && !error && details?.request && !details.request.success && (
             <div className="api-log-cost-details__failure">

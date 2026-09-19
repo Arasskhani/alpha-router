@@ -333,7 +333,7 @@ export default function MemoryAdmin() {
           (system cost). Until a model is selected, nothing is learned.
         </p>
         {flash ? <p className="alert alert-success">{flash}</p> : null}
-        {error ? <p className="alert alert-error">{error}</p> : null}
+        {error ? <p className="alert alert-error" role="alert">{error}</p> : null}
 
         <section className="memory-admin__status" aria-label="Memory health">
           <div>

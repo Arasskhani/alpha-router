@@ -187,7 +187,7 @@ export default function ToolRegistry() {
       <p className="agent-page-lead">
         Versioned JSON contracts, effect classification, explicit approvals, and model compatibility.
       </p>
-      {error ? <div className="error">{error}</div> : null}
+      {error ? <div className="error" role="alert">{error}</div> : null}
       {flash ? <div className="success">{flash}</div> : null}
       <div className="tool-registry-layout" aria-busy={loading}>
         <div className="tool-registry-table table-wrap">

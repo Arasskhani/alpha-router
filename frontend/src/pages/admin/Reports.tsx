@@ -463,7 +463,7 @@ export default function Reports() {
 
   return (
     <AdminPage title="Reports">
-      {err && <p className="alert alert-error">{err}</p>}
+      {err && <p className="alert alert-error" role="alert">{err}</p>}
 
       <div className="search-bar">
         <input placeholder="Search reports…" value={search} onChange={(e) => setSearch(e.target.value)} />

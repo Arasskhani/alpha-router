@@ -149,7 +149,7 @@ export default function Roles() {
       </p>
 
       {flash && <p className="alert alert-success">{flash}</p>}
-      {err && !assignOpen && <p className="alert alert-error">{err}</p>}
+      {err && !assignOpen && <p className="alert alert-error" role="alert">{err}</p>}
 
       <div className="admin-toolbar roles-toolbar">
         <input
@@ -205,7 +205,7 @@ export default function Roles() {
 
       <Modal open={assignOpen} title="Assign Roles" onClose={() => setAssignOpen(false)}>
         <form onSubmit={submitAssign}>
-          {err && assignOpen && <p className="alert alert-error">{err}</p>}
+          {err && assignOpen && <p className="alert alert-error" role="alert">{err}</p>}
           <p className="muted-text">
             The selected users will hold <strong>exactly</strong> these {selectedRoles.length} role
             {selectedRoles.length === 1 ? "" : "s"}. Any other role they currently have is removed.

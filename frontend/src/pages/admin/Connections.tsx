@@ -156,7 +156,7 @@ export default function Connections() {
         chat, embeddings, video, or other API paths — then sync models for that endpoint.
       </p>
       {msg && <p className="alert alert-success">{msg}</p>}
-      {err && <p className="alert alert-error">{err}</p>}
+      {err && <p className="alert alert-error" role="alert">{err}</p>}
 
       <div className="connections-toolbar card">
         <input

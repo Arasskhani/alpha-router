@@ -209,7 +209,7 @@ export default function AgentEvaluations() {
         Versioned bilingual golden sets, deterministic scorecards, independent review, and
         fail-closed publish gates.
       </p>
-      {error ? <div className="error">{error}</div> : null}
+      {error ? <div className="error" role="alert">{error}</div> : null}
       {showCreate ? (
         <section className="agent-hold-panel">
           <div>

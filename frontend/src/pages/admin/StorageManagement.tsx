@@ -277,7 +277,7 @@ export default function StorageManagement() {
         Platform media usage, per-user and per-project storage limits, and global transfer size limits.
       </p>
       {flash && <p className="alert alert-success">{flash}</p>}
-      {error && <p className="alert alert-error">{error}</p>}
+      {error && <p className="alert alert-error" role="alert">{error}</p>}
 
       <div className="card">
         <h3>Media &amp; files — usage</h3>

@@ -134,7 +134,7 @@ export default function ModelCodeInterpreterModal({
 
   return (
     <Modal open={open} title={`Code Interpreter — ${modelLabel}`} onClose={onClose}>
-      {err ? <p className="error">{err}</p> : null}
+      {err ? <p className="error" role="alert">{err}</p> : null}
       {msg ? <p className="muted-text">{msg}</p> : null}
       {loading ? (
         <p className="muted-text">Loading…</p>

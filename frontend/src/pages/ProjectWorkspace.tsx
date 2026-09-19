@@ -493,7 +493,7 @@ function ProjectActionsMenu({
               Making this project public grants every authenticated user read access to its chats and knowledge resources (memory, media, members and the custom prompt stay members-only). Only do this if that content is safe to share organization-wide.
             </p>
           ) : null}
-          {err ? <p className="form-error">{err}</p> : null}
+          {err ? <p className="form-error" role="alert">{err}</p> : null}
           <div className="dialog-actions">
             <button type="submit" className="btn btn-primary" disabled={busy || !name.trim()}>
               {busy ? "Saving…" : "Save"}
@@ -718,7 +718,7 @@ function OverviewTab({
         </section>
       ) : null}
 
-      {error ? <p className="form-error">{error}</p> : null}
+      {error ? <p className="form-error" role="alert">{error}</p> : null}
     </div>
   );
 }

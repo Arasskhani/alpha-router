@@ -584,7 +584,7 @@ export default function AgentStudio() {
         </>
       }
     >
-      {error ? <div className="error">{error}</div> : null}
+      {error ? <div className="error" role="alert">{error}</div> : null}
       {flash ? <div className="success">{flash}</div> : null}
       <div className="agent-studio-layout" aria-busy={loading}>
         <aside className="agent-studio-list">

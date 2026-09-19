@@ -51,7 +51,7 @@ export default function ConnectionAllowlistField({ selectedIds, onChange, disabl
   }
 
   if (err) {
-    return <p className="alert alert-error">{err}</p>;
+    return <p className="alert alert-error" role="alert">{err}</p>;
   }
 
   return (

@@ -225,7 +225,7 @@ export default function PersonalApiKeyPanel() {
         </div>
       )}
 
-      {error && <p className="settings-error">{error}</p>}
+      {error && <p className="settings-error" role="alert">{error}</p>}
       {message && <p className="settings-success">{message}</p>}
 
       {activeKey ? (

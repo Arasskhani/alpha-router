@@ -170,7 +170,7 @@ export default function AgentActivity() {
           ? ` Showing the last ${activityQuery.sinceHours} hours.`
           : ""}
       </p>
-      {error ? <div className="error">{error}</div> : null}
+      {error ? <div className="error" role="alert">{error}</div> : null}
       <section className="agent-governance-summary" aria-label="Governance status">
         <div>
           <span>Audit chain</span>

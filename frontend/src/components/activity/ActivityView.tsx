@@ -560,7 +560,7 @@ export default function ActivityView({
       </header>
 
       {exportingPdf ? <p className="muted activity-export-status">Generating PDF from dashboard…</p> : null}
-      {err ? <p className="error">{err}</p> : null}
+      {err ? <p className="error" role="alert">{err}</p> : null}
       {loading ? <p className="muted">Loading activity…</p> : null}
 
       {!exportMode ? (

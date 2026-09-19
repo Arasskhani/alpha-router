@@ -290,7 +290,7 @@ export default function Groups() {
   return (
     <AdminPage title="Groups">
       {flash && <p className="alert alert-success">{flash}</p>}
-      {err && <p className="alert alert-error">{err}</p>}
+      {err && <p className="alert alert-error" role="alert">{err}</p>}
       <ListTruncatedBanner bounds={bounds} noun="groups" />
       <div className="search-bar">
         <input placeholder="Search groups…" value={search} onChange={(e) => setSearch(e.target.value)} />

@@ -218,7 +218,7 @@ export default function AssignPlanModal({
           </>
         ) : null}
 
-        {err && <p className="alert alert-error">{err}</p>}
+        {err && <p className="alert alert-error" role="alert">{err}</p>}
         <div className="dialog-actions">
           <button type="submit" className="btn" disabled={saving}>
             {saving ? "Assigning…" : "Assign"}

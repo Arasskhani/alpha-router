@@ -132,7 +132,7 @@ export default function AgentApprovals() {
         Maker-checker queue for version publication and sensitive knowledge access.
         Super Admin can complete both maker and checker steps when needed.
       </p>
-      {error ? <div className="error">{error}</div> : null}
+      {error ? <div className="error" role="alert">{error}</div> : null}
       {flash ? <div className="success">{flash}</div> : null}
       <div className="agent-filter-tabs" role="tablist">
         {filters.map(([value, label]) => (

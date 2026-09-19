@@ -361,7 +361,7 @@ export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProp
         </p>
       ) : null}
       {flash ? <p className="alert alert-success">{flash}</p> : null}
-      {error ? <p className="alert alert-error">{error}</p> : null}
+      {error ? <p className="alert alert-error" role="alert">{error}</p> : null}
 
       <section className="media-page-quota card">
         <div className="media-page-quota__head">

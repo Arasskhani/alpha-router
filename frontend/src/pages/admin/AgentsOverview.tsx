@@ -78,7 +78,7 @@ export default function AgentsOverview() {
       <p className="agent-page-lead">
         Govern specialist Agents, approved knowledge, tool contracts, and runtime evidence.
       </p>
-      {error ? <div className="error">{error}</div> : null}
+      {error ? <div className="error" role="alert">{error}</div> : null}
       <div className="agent-kpi-grid" aria-busy={loading}>
         <Link className="agent-kpi-card" to="/admin/agents/studio">
           <span>Agents</span>

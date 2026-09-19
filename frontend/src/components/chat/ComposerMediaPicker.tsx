@@ -146,7 +146,7 @@ export default function ComposerMediaPicker({
           autoFocus
         />
       </label>
-      {error ? <p className="form-error">{error}</p> : null}
+      {error ? <p className="form-error" role="alert">{error}</p> : null}
       {flash ? <p className="alpha-router-media-picker__flash">{flash}</p> : null}
       {loading && !items.length ? <p className="muted-text">Loading media…</p> : null}
       {!loading && !items.length && !error ? (

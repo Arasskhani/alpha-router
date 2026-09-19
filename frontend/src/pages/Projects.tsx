@@ -204,7 +204,7 @@ export default function ProjectsPage() {
               Public projects are readable by every authenticated user. Only make a project public if its content and resources are safe to share organization-wide.
             </p>
           ) : null}
-          {create.error ? <p className="form-error">{create.error}</p> : null}
+          {create.error ? <p className="form-error" role="alert">{create.error}</p> : null}
           <div className="dialog-actions">
             <button type="submit" className="btn btn-primary" disabled={create.busy || !create.name.trim()}>
               {create.busy ? "Creating…" : "Create"}

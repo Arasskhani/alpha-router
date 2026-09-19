@@ -767,7 +767,7 @@ export default function Users() {
   return (
     <AdminPage title="Users">
       {flash && <p className="alert alert-success">{flash}</p>}
-      {err && <p className="alert alert-error">{err}</p>}
+      {err && <p className="alert alert-error" role="alert">{err}</p>}
       <ListTruncatedBanner bounds={usersBounds} noun="accounts" />
       {filterGroupId ? (
         <p className="alert card" style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>

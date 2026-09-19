@@ -220,7 +220,7 @@ export default function AdminLogs() {
         </div>
       </div>
 
-      {error ? <p className="alert alert-error">{error}</p> : null}
+      {error ? <p className="alert alert-error" role="alert">{error}</p> : null}
 
       <div className="table-wrap table-wrap--api-logs" ref={tableScrollRef}>
         <table className="card data-table data-table--api-logs">

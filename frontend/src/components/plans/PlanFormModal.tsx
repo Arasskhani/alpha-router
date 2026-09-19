@@ -98,7 +98,7 @@ export default function PlanFormModal({ open, mode, initial, onClose, onSubmit }
           onChange={(e) => setForm((f) => ({ ...f, monthly_budget_usd: Number(e.target.value) }))}
           required
         />
-        {err && <p className="alert alert-error">{err}</p>}
+        {err && <p className="alert alert-error" role="alert">{err}</p>}
         <div className="dialog-actions">
           <button type="submit" className="btn" disabled={saving}>
             {saving ? savingLabel : submitLabel}

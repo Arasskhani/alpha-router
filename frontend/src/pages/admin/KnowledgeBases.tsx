@@ -678,7 +678,7 @@ export default function KnowledgeBases() {
         </>
       }
     >
-      {error ? <div className="error">{error}</div> : null}
+      {error ? <div className="error" role="alert">{error}</div> : null}
       <ListTruncatedBanner bounds={bounds} noun="knowledge bases" />
       {flash ? <div className="success">{flash}</div> : null}
       <div className="knowledge-layout" aria-busy={loading}>
@@ -753,7 +753,9 @@ export default function KnowledgeBases() {
               </div>
 
               {publishedDocCount > 0 && !hasActiveIndex ? (
-                <div className="error">
+                // A standing notice, not a new failure: polite, so it is not
+                // shouted on every visit to the page.
+                <div className="error" role="status">
                   Approved documents are not searchable yet. Create a release and submit it for indexing
                   (embedding into Qdrant). Until an active index exists, Agents with fail-closed retrieval
                   will answer that no organizational evidence was found.

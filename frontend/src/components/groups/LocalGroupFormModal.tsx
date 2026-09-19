@@ -115,7 +115,7 @@ export default function LocalGroupFormModal({ open, mode, initial, plans, onClos
         <p className="muted-text" style={{ marginTop: "-0.35rem", marginBottom: "0.75rem" }}>
           Members with «From group» budget inherit this plan when assigned to the group.
         </p>
-        {err && <p className="alert alert-error">{err}</p>}
+        {err && <p className="alert alert-error" role="alert">{err}</p>}
         <div className="dialog-actions">
           <button type="submit" className="btn" disabled={saving}>
             {saving ? savingLabel : submitLabel}

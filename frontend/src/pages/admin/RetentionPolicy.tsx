@@ -302,7 +302,7 @@ export default function RetentionPolicy() {
         {serverTimezoneHint(scheduleTz)}
       </p>
       {flash && <p className="alert alert-success">{flash}</p>}
-      {error && <p className="alert alert-error">{error}</p>}
+      {error && <p className="alert alert-error" role="alert">{error}</p>}
 
       <div className="card">
         <h3>Media &amp; files — overview</h3>

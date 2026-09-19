@@ -206,7 +206,7 @@ export default function DeletedUsers() {
   return (
     <AdminPage title="Deleted Users">
       {flash && <p className="alert alert-success">{flash}</p>}
-      {err && <p className="alert alert-error">{err}</p>}
+      {err && <p className="alert alert-error" role="alert">{err}</p>}
       <ListTruncatedBanner bounds={bounds} noun="deleted accounts" />
       <p className="muted-text">
         Users removed from sync or deleted by an admin. They cannot sign in. Restoring an account brings back

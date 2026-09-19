@@ -126,7 +126,7 @@ export default function BulkModelAccessModal({ open, modelIds, onClose, onSaved 
           {summary && summary.private_count > 0 ? ` · ${summary.private_count} already private` : ""}
         </p>
         {loading ? <p className="muted-text">Loading current access…</p> : null}
-        {err ? <p className="alert alert-error">{err}</p> : null}
+        {err ? <p className="alert alert-error" role="alert">{err}</p> : null}
 
         <p className="muted-text model-access-form__hint">
           This list becomes the access for <strong>every</strong> selected model. Remove someone and

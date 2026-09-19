@@ -292,7 +292,7 @@ export default function ConnectionFormModal({ open, title, initial, onClose, onS
           />
           <span className="muted-text connection-form__hint">0 = manual sync only (Sync now in the table)</span>
         </label>
-        {err && <p className="alert alert-error">{err}</p>}
+        {err && <p className="alert alert-error" role="alert">{err}</p>}
         <div className="dialog-actions">
           <button type="submit" className="btn" disabled={saving}>
             {saving ? "Saving…" : "Save"}

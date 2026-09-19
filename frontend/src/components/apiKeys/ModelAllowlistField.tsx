@@ -88,7 +88,7 @@ export default function ModelAllowlistField({
   }
 
   if (err) {
-    return <p className="alert alert-error">{err}</p>;
+    return <p className="alert alert-error" role="alert">{err}</p>;
   }
 
   return (

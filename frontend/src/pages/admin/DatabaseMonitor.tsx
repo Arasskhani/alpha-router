@@ -119,9 +119,9 @@ export default function DatabaseMonitor() {
         Read-only monitoring for the Alpharouter PostgreSQL database and for CPU/RAM on the host (or container) running
         this API process. No queries or schema changes from this page.
       </p>
-      {error && <p className="alert alert-error">{error}</p>}
+      {error && <p className="alert alert-error" role="alert">{error}</p>}
       {data?.error && data.connected === false && (
-        <p className="alert alert-error">{data.error}</p>
+        <p className="alert alert-error" role="alert">{data.error}</p>
       )}
 
       {data && (

@@ -464,7 +464,7 @@ function GeneralPanel({
         </SettingsRow>
       </div>
 
-      {error && <p className="settings-error">{error}</p>}
+      {error && <p className="settings-error" role="alert">{error}</p>}
     </div>
   );
 }
@@ -543,7 +543,7 @@ function PersonalizationPanel() {
           No company, department, job title, or report-to is set on your account yet.
         </p>
       ) : null}
-      {error ? <p className="settings-error">{error}</p> : null}
+      {error ? <p className="settings-error" role="alert">{error}</p> : null}
     </div>
   );
 }
@@ -838,7 +838,7 @@ function MemoryPanel() {
         </SettingsRow>
       </div>
 
-      {error && <p className="settings-error">{error}</p>}
+      {error && <p className="settings-error" role="alert">{error}</p>}
       {message && <p className="settings-success">{message}</p>}
     </div>
   );
@@ -965,7 +965,7 @@ function DataControlPanel() {
         </SettingsRow>
       </div>
 
-      {error && <p className="settings-error">{error}</p>}
+      {error && <p className="settings-error" role="alert">{error}</p>}
       {message && <p className="settings-success">{message}</p>}
     </div>
   );
@@ -1103,7 +1103,7 @@ function SecurityPanel() {
   }
 
   if (loading) return <p className="muted">Loading security settings…</p>;
-  if (!status) return <p className="settings-error">{error || "Unable to load security settings."}</p>;
+  if (!status) return <p className="settings-error" role="alert">{error || "Unable to load security settings."}</p>;
 
   const localOnlyHint = "Managed by your identity provider.";
 
@@ -1285,7 +1285,7 @@ function SecurityPanel() {
         </SettingsRow>
       </div>
 
-      {error && <p className="settings-error">{error}</p>}
+      {error && <p className="settings-error" role="alert">{error}</p>}
       {message && <p className="settings-success">{message}</p>}
     </div>
   );

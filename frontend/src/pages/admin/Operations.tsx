@@ -293,7 +293,7 @@ export default function Operations() {
           )}
         </p>
       )}
-      {error && <p className="alert alert-error">{error}</p>}
+      {error && <p className="alert alert-error" role="alert">{error}</p>}
 
       {capacity && (
         <>

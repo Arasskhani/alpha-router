@@ -70,7 +70,7 @@ export default function ModelAccessModal({ open, modelId, modelLabel, onClose, o
       <form className="model-access-form" onSubmit={handleSubmit}>
         <p className="muted-text model-access-form__label">{modelLabel}</p>
         {loading ? <p className="muted-text">Loading…</p> : null}
-        {err ? <p className="alert alert-error">{err}</p> : null}
+        {err ? <p className="alert alert-error" role="alert">{err}</p> : null}
 
         <fieldset className="model-access-form__type" disabled={loading || saving}>
           <legend>Access type</legend>

@@ -6,7 +6,7 @@ import datetime
 import hashlib
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +26,7 @@ from app.models.knowledge import (
     KnowledgeIndexVersion,
     KnowledgeRelease,
 )
+from app.services.list_bounds import ADMIN_LIST_HARD_CAP, capped, mark_truncated, split_overflow
 from app.models.user import User
 from app.services.model_capabilities import model_kinds
 from app.services.knowledge_embedding_service import suggested_embedding_dimensions
@@ -235,14 +236,18 @@ def _base_response(
 
 @router.get("/bases")
 async def list_knowledge_bases(
+    response: Response = None,  # type: ignore[assignment]
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(require_agent_permission("knowledge.read")),
 ):
-    bases = [
-        knowledge_base
-        for knowledge_base in (await db.execute(select(KnowledgeBase).order_by(KnowledgeBase.name))).scalars().all()
-        if not is_purged_knowledge_base(knowledge_base)
-    ]
+    fetched, truncated = split_overflow(
+        (await db.execute(capped(select(KnowledgeBase).order_by(KnowledgeBase.name), cap=ADMIN_LIST_HARD_CAP)))
+        .scalars()
+        .all(),
+        cap=ADMIN_LIST_HARD_CAP,
+    )
+    mark_truncated(response, truncated, cap=ADMIN_LIST_HARD_CAP)
+    bases = [knowledge_base for knowledge_base in fetched if not is_purged_knowledge_base(knowledge_base)]
     if not bases:
         return []
     ids = [knowledge_base.id for knowledge_base in bases]

@@ -3,7 +3,7 @@
 import asyncio
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,7 @@ from app.api.admin import (
 from app.api.deps import get_bearer_token, require_groups, require_groups_write
 from app.database import get_db
 from app.models.budget import PlanAssignment
+from app.services.list_bounds import ADMIN_LIST_HARD_CAP, capped, mark_truncated, split_overflow
 from app.models.user import User, UserGroup, user_group_members
 from app.services.group_membership import live_member_ids_stmt
 from app.services import activity_service
@@ -65,6 +66,7 @@ async def _ensure_unique_local_group_name(db: AsyncSession, name: str, *, exclud
 async def list_groups(
     q: str | None = None,
     source: str | None = None,
+    response: Response = None,  # type: ignore[assignment]
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_groups),
 ):
@@ -74,21 +76,39 @@ async def list_groups(
     if q:
         like = f"%{q}%"
         stmt = stmt.where(or_(UserGroup.name.ilike(like), UserGroup.description.ilike(like)))
-    groups = (await db.execute(stmt)).scalars().all()
-    result = []
-    for g in groups:
-        pa = (await db.execute(select(PlanAssignment).where(PlanAssignment.group_id == g.id))).scalars().first()
-        result.append(
-            {
-                "id": g.id,
-                "name": g.name,
-                "description": g.description,
-                "source": g.source,
-                "external_id": g.external_id,
-                "plan_id": pa.plan_id if pa else None,
-            }
-        )
-    return result
+    # A directory sync creates one row per group it finds, and there is no
+    # ceiling on how many that is.
+    groups, truncated = split_overflow(
+        (await db.execute(capped(stmt, cap=ADMIN_LIST_HARD_CAP))).scalars().all(),
+        cap=ADMIN_LIST_HARD_CAP,
+    )
+    mark_truncated(response, truncated, cap=ADMIN_LIST_HARD_CAP)
+
+    # One query for every group's plan, not one query per group.
+    plan_by_group: dict[int, int] = {}
+    if groups:
+        rows = (
+            await db.execute(
+                select(PlanAssignment.group_id, PlanAssignment.plan_id).where(
+                    PlanAssignment.group_id.in_([g.id for g in groups])
+                )
+            )
+        ).all()
+        for group_id, plan_id in rows:
+            if group_id is not None:
+                plan_by_group.setdefault(int(group_id), plan_id)
+
+    return [
+        {
+            "id": g.id,
+            "name": g.name,
+            "description": g.description,
+            "source": g.source,
+            "external_id": g.external_id,
+            "plan_id": plan_by_group.get(g.id),
+        }
+        for g in groups
+    ]
 
 
 @router.post("")

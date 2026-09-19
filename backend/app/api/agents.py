@@ -21,6 +21,7 @@ from app.models.knowledge import (
     KnowledgeDocument,
     KnowledgeDocumentVersion,
 )
+from app.services.list_bounds import ADMIN_LIST_HARD_CAP
 from app.models.user import User
 from app.services.agent_handoff_service import (
     AgentHandoffConflict,
@@ -92,6 +93,7 @@ async def _catalog_rows(db: AsyncSession, user: User) -> list[tuple[Agent, Agent
             )
             .where(Agent.status == "active")
             .order_by(Agent.sort_order, Agent.name)
+            .limit(ADMIN_LIST_HARD_CAP)
         )
     ).all()
     subject = await resolve_resource_access_subject(db, user_id=user.id)

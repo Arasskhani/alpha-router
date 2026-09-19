@@ -162,3 +162,33 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
+
+/** The cap an administrative list endpoint applied, if it applied one. */
+export type ListBounds = { truncated: boolean; cap: number };
+
+export const NO_LIST_BOUNDS: ListBounds = { truncated: false, cap: 0 };
+
+/**
+ * Like `api`, but also reports whether the server left rows out.
+ *
+ * Several admin lists are capped rather than paged: an operator looking for
+ * somebody filters rather than scrolls, but a page that silently shows 2000 of
+ * 50000 rows tells them the other 48000 do not exist. The server always sets
+ * `X-List-Truncated`, so a missing header means an endpoint that has no cap -
+ * not a page that happens to fit.
+ */
+export async function apiList<T>(path: string, init?: RequestInit): Promise<{ data: T; bounds: ListBounds }> {
+  const headers = new Headers(init?.headers);
+  const res = await authFetch(path, { ...init, headers });
+  if (!res.ok) {
+    const err = new Error(await parseError(res)) as Error & { status: number };
+    err.status = res.status;
+    throw err;
+  }
+  const flag = res.headers.get("X-List-Truncated");
+  const cap = Number(res.headers.get("X-List-Cap") || 0);
+  return {
+    data: (res.status === 204 ? undefined : await res.json()) as T,
+    bounds: flag === "true" ? { truncated: true, cap: Number.isFinite(cap) ? cap : 0 } : NO_LIST_BOUNDS,
+  };
+}

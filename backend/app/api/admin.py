@@ -44,6 +44,7 @@ from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel, ModelToolCompatibilityEvent
 from app.models.user import User, UserGroup, UserRoleAssignment, user_group_members
 from app.services import activity_rollup_service, activity_service
+from app.services.list_bounds import ADMIN_LIST_HARD_CAP, capped, mark_truncated, split_overflow
 from app.services.model_capabilities import (
     model_catalog_meta,
     classification_dialect,
@@ -421,6 +422,7 @@ async def sync_models(conn_id: int, db: AsyncSession = Depends(get_db), _: User 
 @router.get("/models")
 async def list_admin_models(
     q: str | None = Query(None),
+    response: Response = None,  # type: ignore[assignment]
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_models),
 ):
@@ -438,7 +440,11 @@ async def list_admin_models(
                 func.lower(AIModel.display_name).like(like),
             )
         )
-    rows = (await db.execute(stmt)).scalars().all()
+    rows, truncated = split_overflow(
+        (await db.execute(capped(stmt, cap=ADMIN_LIST_HARD_CAP))).scalars().all(),
+        cap=ADMIN_LIST_HARD_CAP,
+    )
+    mark_truncated(response, truncated, cap=ADMIN_LIST_HARD_CAP)
     counts = await list_assignment_counts(db, [m.id for m in rows])
     compatibility = await compatibility_map_for_models(db, rows)
     system_defaults = await get_all_default_model_ids(db)
@@ -1505,7 +1511,10 @@ async def _list_admin_user_dicts(
     picker: bool,
     plan_id: int | None,
     no_plan: bool,
-) -> list[dict]:
+    cap: int | None = None,
+) -> tuple[list[dict], bool]:
+    """``(rows, whether the cap cut the list short)``."""
+
     from app.services.presence_service import online_user_ids
 
     if picker and user_id is not None:
@@ -1528,7 +1537,12 @@ async def _list_admin_user_dicts(
             no_plan=False if picker else no_plan,
             active_only=True,
         )
+        if cap is not None:
+            stmt = capped(stmt, cap=cap)
         users = list((await db.execute(stmt)).scalars().all())
+    truncated = False
+    if cap is not None:
+        users, truncated = split_overflow(users, cap=cap)
     # One Redis MGET. Narrow the list here so the plan/group/budget batches below
     # only run for rows that survive the filter. ``None`` means presence is
     # unavailable, in which case the filter is ignored rather than returning an
@@ -1605,7 +1619,7 @@ async def _list_admin_user_dicts(
             "online": (None if online_ids is None else (u.id in online_ids and bool(u.is_active))),
         }
         for u in users
-    ]
+    ], truncated
 
 
 @router.get("/users")
@@ -1623,13 +1637,15 @@ async def list_users(
     user_id: int | None = Query(None),
     online: bool | None = Query(None, description="Keep only users online right now"),
     picker: bool = Query(False, description="Owner picker: search-only, no full list"),
+    response: Response = None,  # type: ignore[assignment]
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_users),
 ):
     if plan_id is not None and no_plan:
         raise HTTPException(400, detail="Specify only one of plan_id or no_plan")
-    return await _list_admin_user_dicts(
+    rows, truncated = await _list_admin_user_dicts(
         db,
+        cap=ADMIN_LIST_HARD_CAP,
         q=q,
         username=username,
         email=email,
@@ -1644,6 +1660,8 @@ async def list_users(
         plan_id=plan_id,
         no_plan=no_plan,
     )
+    mark_truncated(response, truncated, cap=ADMIN_LIST_HARD_CAP)
+    return rows
 
 
 @router.get("/users/export")
@@ -1664,7 +1682,10 @@ async def export_users(
 ):
     if plan_id is not None and no_plan:
         raise HTTPException(400, detail="Specify only one of plan_id or no_plan")
-    rows = await _list_admin_user_dicts(
+    # Deliberately uncapped: truncating an export silently is worse than a slow
+    # one, and "give me everything" is what the button says. Streaming it in
+    # batches is the follow-up; a LIMIT here is not.
+    rows, _truncated = await _list_admin_user_dicts(
         db,
         q=q,
         username=username,
@@ -1699,6 +1720,7 @@ async def list_deleted_users(
     job_title: str | None = Query(None),
     role: str | None = Query(None),
     is_active: bool | None = Query(None),
+    response: Response = None,  # type: ignore[assignment]
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_deleted_users),
 ):
@@ -1716,7 +1738,12 @@ async def list_deleted_users(
         deleted_only=True,
         active_only=False,
     )
-    users = (await db.execute(stmt)).scalars().all()
+    # The list nothing trims: every account ever deleted stays here.
+    users, truncated = split_overflow(
+        (await db.execute(capped(stmt, cap=ADMIN_LIST_HARD_CAP))).scalars().all(),
+        cap=ADMIN_LIST_HARD_CAP,
+    )
+    mark_truncated(response, truncated, cap=ADMIN_LIST_HARD_CAP)
     user_ids = [u.id for u in users]
     plan_map: dict[int, tuple[int | None, str | None]] = {}
     if user_ids:
@@ -2651,14 +2678,27 @@ async def bulk_permanently_delete_users(
 
 
 @router.get("/user-api-keys")
-async def list_user_api_keys(db: AsyncSession = Depends(get_db), _: User = Depends(require_users)):
+async def list_user_api_keys(
+    response: Response = None,  # type: ignore[assignment]
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_users),
+):
     from app.models.api_key import UserApiKey
 
-    rows = (
-        await db.execute(
-            select(UserApiKey, User).join(User, UserApiKey.user_id == User.id).order_by(UserApiKey.created_at.desc())
-        )
-    ).all()
+    rows, truncated = split_overflow(
+        (
+            await db.execute(
+                capped(
+                    select(UserApiKey, User)
+                    .join(User, UserApiKey.user_id == User.id)
+                    .order_by(UserApiKey.created_at.desc()),
+                    cap=ADMIN_LIST_HARD_CAP,
+                )
+            )
+        ).all(),
+        cap=ADMIN_LIST_HARD_CAP,
+    )
+    mark_truncated(response, truncated, cap=ADMIN_LIST_HARD_CAP)
     roles_map = await get_roles_map(db, [u.id for _, u in rows])
     return [
         {

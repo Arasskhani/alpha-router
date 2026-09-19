@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import AdminPage from "../../components/AdminPage";
 import Modal from "../../components/Modal";
+import ListTruncatedBanner from "../../components/ListTruncatedBanner";
 import RowActionsMenu, { RowAction } from "../../components/RowActionsMenu";
-import { api } from "../../api";
+import { api, apiList, NO_LIST_BOUNDS, type ListBounds } from "../../api";
 import { useConfirm } from "../../context/ConfirmContext";
 import { USAGE_AND_ACTIVITY_LABEL } from "../../lib/usageActivityLabel";
 
@@ -25,12 +26,16 @@ export default function DeletedUsers() {
   const [flash, setFlash] = useState("");
   const [err, setErr] = useState("");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [bounds, setBounds] = useState<ListBounds>(NO_LIST_BOUNDS);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
 
   const load = () => {
-    api<DeletedUser[]>("/api/admin/deleted-users")
-      .then(setUsers)
+    apiList<DeletedUser[]>("/api/admin/deleted-users")
+      .then(({ data, bounds }) => {
+        setUsers(data);
+        setBounds(bounds);
+      })
       .catch((e) => setErr(String(e)));
   };
 
@@ -202,6 +207,7 @@ export default function DeletedUsers() {
     <AdminPage title="Deleted Users">
       {flash && <p className="alert alert-success">{flash}</p>}
       {err && <p className="alert alert-error">{err}</p>}
+      <ListTruncatedBanner bounds={bounds} noun="deleted accounts" />
       <p className="muted-text">
         Users removed from sync or deleted by an admin. They cannot sign in. Restoring an account brings back
         the groups, plan and access it had. Data is kept until permanently deleted.

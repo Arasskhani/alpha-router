@@ -7,7 +7,8 @@ import LocalGroupFormModal, {
 } from "../../components/groups/LocalGroupFormModal";
 import Modal from "../../components/Modal";
 import RowActionsMenu, { RowAction } from "../../components/RowActionsMenu";
-import { api } from "../../api";
+import { api, apiList, NO_LIST_BOUNDS, type ListBounds } from "../../api";
+import ListTruncatedBanner from "../../components/ListTruncatedBanner";
 import { useDebounced } from "../../hooks/useDebounced";
 import { useConfirm } from "../../context/ConfirmContext";
 import { USAGE_AND_ACTIVITY_LABEL } from "../../lib/usageActivityLabel";
@@ -30,6 +31,7 @@ export default function Groups() {
   const [source, setSource] = useState("");
   const [flash, setFlash] = useState("");
   const [err, setErr] = useState("");
+  const [bounds, setBounds] = useState<ListBounds>(NO_LIST_BOUNDS);
   const [createOpen, setCreateOpen] = useState(false);
   const [editGroup, setEditGroup] = useState<LocalGroupInitial | null>(null);
   const [budgetGroup, setBudgetGroup] = useState<Group | null>(null);
@@ -44,7 +46,12 @@ export default function Groups() {
     const q = new URLSearchParams();
     if (debounced.trim()) q.set("q", debounced.trim());
     if (source) q.set("source", source);
-    api<Group[]>(`/api/admin/groups?${q}`).then(setGroups).catch((e) => setErr(String(e)));
+    apiList<Group[]>(`/api/admin/groups?${q}`)
+      .then(({ data, bounds }) => {
+        setGroups(data);
+        setBounds(bounds);
+      })
+      .catch((e) => setErr(String(e)));
     api<Plan[]>("/api/admin/plans").then((p) => setPlans(p.map((x) => ({ id: x.id, name: x.name })))).catch(() => {});
   };
 
@@ -284,6 +291,7 @@ export default function Groups() {
     <AdminPage title="Groups">
       {flash && <p className="alert alert-success">{flash}</p>}
       {err && <p className="alert alert-error">{err}</p>}
+      <ListTruncatedBanner bounds={bounds} noun="groups" />
       <div className="search-bar">
         <input placeholder="Search groups…" value={search} onChange={(e) => setSearch(e.target.value)} />
         <select value={source} onChange={(e) => setSource(e.target.value)}>

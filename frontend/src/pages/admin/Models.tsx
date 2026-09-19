@@ -12,7 +12,8 @@ import BulkModelAccessModal from "../../components/models/BulkModelAccessModal";
 import SetDefaultModelModal, {
   type DefaultKind,
 } from "../../components/models/SetDefaultModelModal";
-import { api } from "../../api";
+import { api, apiList, NO_LIST_BOUNDS, type ListBounds } from "../../api";
+import ListTruncatedBanner from "../../components/ListTruncatedBanner";
 import { useConfirm } from "../../context/ConfirmContext";
 import { useDebounced } from "../../hooks/useDebounced";
 import { BROWSER_EVENT_NAMES, STORAGE_KEYS } from "../../lib/brand";
@@ -61,6 +62,7 @@ export default function Models() {
   const [accessModelId, setAccessModelId] = useState<number | null>(null);
   const [compatModelId, setCompatModelId] = useState<number | null>(null);
   const [msg, setMsg] = useState("");
+  const [bounds, setBounds] = useState<ListBounds>(NO_LIST_BOUNDS);
   const [defaultKinds, setDefaultKinds] = useState<DefaultKind[]>([]);
   const [systemDefaults, setSystemDefaults] = useState<Record<string, number | null>>({});
   const [defaultMenuOpen, setDefaultMenuOpen] = useState(false);
@@ -70,7 +72,9 @@ export default function Models() {
   const debouncedSearch = useDebounced(search, 280);
 
   async function loadModels() {
-    return api<CatalogModel[]>("/api/admin/models", { cache: "no-store" });
+    const { data, bounds } = await apiList<CatalogModel[]>("/api/admin/models", { cache: "no-store" });
+    setBounds(bounds);
+    return data;
   }
 
   async function loadSystemDefaults() {
@@ -398,6 +402,7 @@ export default function Models() {
           Pricing per 1K tokens from provider (read-only). Descriptions load from provider catalog after sync.
         </p>
         {msg && <p className="alert alert-success">{msg}</p>}
+        <ListTruncatedBanner bounds={bounds} noun="models" />
 
         <p style={{ color: "var(--muted)", fontSize: "0.85rem" }}>
           {models.length} model(s) shown

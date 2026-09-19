@@ -1,11 +1,12 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { api, authFetch, formatApiError, getCachedSession } from "../../api";
+import { api, apiList, authFetch, formatApiError, getCachedSession, NO_LIST_BOUNDS, type ListBounds } from "../../api";
 import { useDebounced } from "../../hooks/useDebounced";
 import AdminPage from "../../components/AdminPage";
 import CreateLocalUserModal, { type CreateLocalUserValues } from "../../components/users/CreateLocalUserModal";
 import Modal from "../../components/Modal";
 import RoleMultiSelect from "../../components/RoleMultiSelect";
+import ListTruncatedBanner from "../../components/ListTruncatedBanner";
 import RowActionsMenu, { RowAction } from "../../components/RowActionsMenu";
 import { useConfirm } from "../../context/ConfirmContext";
 import { USAGE_AND_ACTIVITY_LABEL } from "../../lib/usageActivityLabel";
@@ -201,6 +202,7 @@ export default function Users() {
   const filterGroupId = searchParams.get("group_id") || "";
   const filterGroupName = searchParams.get("group_name") || "";
   const [users, setUsers] = useState<U[]>([]);
+  const [usersBounds, setUsersBounds] = useState<ListBounds>(NO_LIST_BOUNDS);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [groups, setGroups] = useState<GroupOption[]>([]);
   const [filterUser, setFilterUser] = useState("");
@@ -261,8 +263,9 @@ export default function Users() {
   async function loadUsers() {
     const seq = ++usersLoadSeq.current;
     try {
-      const rows = await api<U[]>(`/api/admin/users${buildUsersQuery()}`);
+      const { data: rows, bounds } = await apiList<U[]>(`/api/admin/users${buildUsersQuery()}`);
       if (seq !== usersLoadSeq.current) return;
+      setUsersBounds(bounds);
       const nextUsers = rows.map((u) => {
         const roles = (u.roles?.length ? u.roles : [u.role]).map(normalizeRole);
         return { ...u, roles, role: normalizeRole(u.role) };
@@ -765,6 +768,7 @@ export default function Users() {
     <AdminPage title="Users">
       {flash && <p className="alert alert-success">{flash}</p>}
       {err && <p className="alert alert-error">{err}</p>}
+      <ListTruncatedBanner bounds={usersBounds} noun="accounts" />
       {filterGroupId ? (
         <p className="alert card" style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
           <span>

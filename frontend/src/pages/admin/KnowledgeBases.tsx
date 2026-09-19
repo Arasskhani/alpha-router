@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api } from "../../api";
+import { api, apiList, NO_LIST_BOUNDS, type ListBounds } from "../../api";
+import ListTruncatedBanner from "../../components/ListTruncatedBanner";
 import AdminPage from "../../components/AdminPage";
 import ResourceAccessEditor from "../../components/admin/ResourceAccessEditor";
 import SearchableModelSelect from "../../components/admin/SearchableModelSelect";
@@ -25,6 +26,7 @@ export default function KnowledgeBases() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [bounds, setBounds] = useState<ListBounds>(NO_LIST_BOUNDS);
   const [flash, setFlash] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
@@ -46,8 +48,9 @@ export default function KnowledgeBases() {
     setLoading(true);
     setError("");
     try {
-      const rows = await api<KnowledgeBaseRecord[]>("/api/admin/knowledge/bases");
+      const { data: rows, bounds } = await apiList<KnowledgeBaseRecord[]>("/api/admin/knowledge/bases");
       setBases(rows);
+      setBounds(bounds);
       setSelectedId((current) =>
         current && rows.some((row) => row.id === current) ? current : rows[0]?.id || "",
       );
@@ -676,6 +679,7 @@ export default function KnowledgeBases() {
       }
     >
       {error ? <div className="error">{error}</div> : null}
+      <ListTruncatedBanner bounds={bounds} noun="knowledge bases" />
       {flash ? <div className="success">{flash}</div> : null}
       <div className="knowledge-layout" aria-busy={loading}>
         <aside className="knowledge-list">

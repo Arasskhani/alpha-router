@@ -1563,6 +1563,14 @@ table th {
   padding: 0.45rem 0.55rem;
   white-space: nowrap;
 }
+/* Long admin tables scroll; the header stays where the eye expects it. The
+   background is needed or rows show through the header as they pass. */
+table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+}
 table td {
   padding: 0.5rem 0.55rem;
   border-top: 1px solid var(--border);
@@ -5499,7 +5507,7 @@ table.data-table--api-logs {
 }
 
 .markdown-body code:not(.alpha-router-code-block__code):not(.language-python):not(.hljs) {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.88em;
   padding: 0.12em 0.35em;
   border-radius: 4px;
@@ -5552,7 +5560,7 @@ table.data-table--api-logs {
 }
 
 .markdown-body .md-inline-code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.88em;
   padding: 0.12em 0.35em;
   border-radius: 4px;
@@ -5591,7 +5599,7 @@ table.data-table--api-logs {
 }
 
 .alpha-router-code-block__lang {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.68rem;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -14301,7 +14309,7 @@ button.app-toast:hover {
   width: 100%;
   margin-top: 0.45rem;
   resize: vertical;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.68rem;
 }
 

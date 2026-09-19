@@ -8,6 +8,7 @@
 # install the printed value came out two characters longer than the real one,
 # so the operator was locked out of a brand-new deployment and had to read
 # .env by hand. .env is the source of truth and is what must be shown.
+# shellcheck disable=SC2034 # values are read inside the check() eval strings
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

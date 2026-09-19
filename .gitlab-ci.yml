@@ -165,9 +165,13 @@ scripts-tests:
     - *always-on-default
     - changes:
         - scripts/**/*
+        - deploy/**/*.sh
         - .gitlab-ci.yml
   script:
-    - apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends bash openssl python3 >/dev/null
+    - apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends bash openssl python3 shellcheck >/dev/null
+    # The scripts carried shellcheck directives long before anything ran
+    # shellcheck on them. Warning level and up; -x follows the sourced libs.
+    - shellcheck -S warning -x scripts/*.sh scripts/lib/*.sh scripts/tests/*.sh deploy/edge/entrypoint.sh deploy/seaweedfs/entrypoint.sh
     - for t in scripts/tests/test-*.sh; do echo "== $t"; bash "$t"; done
 
 frontend-sources:

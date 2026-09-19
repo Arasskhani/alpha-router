@@ -7,6 +7,7 @@
 #     pre-release tags are ignored;
 #   * upgrading such a pinned checkout moves to the next release and never
 #     fast-forwards onto the tip of main.
+# shellcheck disable=SC2034 # values are read inside the check() eval strings
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

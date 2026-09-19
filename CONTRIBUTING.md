@@ -96,7 +96,9 @@ nothing is silently dropped.
 | tsc / vitest / build | `npm run typecheck && npm test && npm run build` | Types first, then behaviour, then the bundle. |
 | knip | `cd frontend && npm run knip` | Remove the unused export/type/dependency, or use it. Do not add it to an ignore list. |
 | frontend sources | `bash scripts/check-frontend-sources.sh` | Never commit compiled `.js` next to `.ts/.tsx` — Vite would bundle the stale copy. |
+| shellcheck | `shellcheck -S warning -x scripts/*.sh scripts/lib/*.sh scripts/tests/*.sh deploy/*/entrypoint.sh` | Fix the finding. A `# shellcheck disable=` needs a reason on the same line; the harnesses disable SC2034 file-wide because their values are read inside `check()` eval strings. |
 | shell harnesses | `for t in scripts/tests/test-*.sh; do bash "$t"; done` | Install/upgrade scripts are tested with mocked docker; keep it that way. |
+| licences | `python scripts/check-licences.py python backend/requirements.lock` (and the sandbox sets, and `node frontend`) | A weak-copyleft or unknown licence must be named in `NOTICE`; strong copyleft is refused outright. Metadata that misstates a licence goes in `scripts/licence-overrides.json` with a reason. |
 | dependency audit | `pip-audit`, `npm audit`, Trivy on images | Bump the dependency. Runtime Python versions live in `backend/requirements.lock` (hashed, regenerated with `uv pip compile`, see the file header); direct dependencies in `requirements.txt`. |
 
 ## Dependencies

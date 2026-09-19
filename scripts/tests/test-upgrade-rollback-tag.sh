@@ -6,6 +6,7 @@
 #
 # Real bash, fake docker: assert every upgrade mode tags :prev before the stack
 # is started.
+# shellcheck disable=SC2034 # values are read inside the check() eval strings
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

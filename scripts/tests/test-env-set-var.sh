@@ -6,6 +6,7 @@
 # escape sequences. Any secret or path containing a backslash was silently
 # stored as something else, and a "\n" truncated the value and injected a bogus
 # line into .env.
+# shellcheck disable=SC2034 # values are read inside the check() eval strings
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

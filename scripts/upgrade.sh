@@ -30,10 +30,14 @@ source "$SCRIPT_DIR/lib/stack.sh"
 
 FROM_SOURCE=1
 FROM_REGISTRY=0
+# shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
 USE_REGISTRY_COMPOSE=0
+# shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
 DEPLOY_MODE=""
+# shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
 UPGRADE=1
 PREFLIGHT_ONLY=0
+# shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
 SKIP_BUILD=0
 SKIP_GIT=0
 IMAGE_TAG=""
@@ -64,6 +68,7 @@ Options:
   --preflight-only      Checks + .env merge only; no compose up
 
 Environment:
+  # shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
   MIN_DISK_GB=30
   HEALTH_TIMEOUT_SEC=900
   SKIP_BACKUP=1         Skip the pre-upgrade snapshot (scripts/backup.sh --consistent)
@@ -80,23 +85,28 @@ parse_args() {
       --from-source)
         FROM_SOURCE=1
         FROM_REGISTRY=0
+        # shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
         USE_REGISTRY_COMPOSE=0
         ;;
       --from-registry)
         FROM_SOURCE=0
         FROM_REGISTRY=1
+        # shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
         USE_REGISTRY_COMPOSE=1
         ;;
       --dev)
+        # shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
         DEPLOY_MODE=dev
         ;;
       --prod)
+        # shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
         DEPLOY_MODE=prod
         ;;
       --preflight-only)
         PREFLIGHT_ONLY=1
         ;;
       --skip-build)
+        # shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
         SKIP_BUILD=1
         ;;
       --skip-git)
@@ -135,11 +145,13 @@ main() {
   assert_no_volume_wipe
 
   if [ -z "$DEPLOY_MODE" ]; then
+    # shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
     DEPLOY_MODE="$(deploy_mode_from_env)"
     log "Deploy mode from .env: $DEPLOY_MODE"
   fi
 
   if [ "$FROM_REGISTRY" -eq 1 ]; then
+    # shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
     MIN_DISK_GB="$MIN_DISK_GB_REGISTRY"
   fi
 

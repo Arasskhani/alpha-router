@@ -5,6 +5,7 @@
 # workflow.rules is what makes the release path real; this keeps it there.
 #
 # No yaml parser in the harness image: grep the two facts.
+# shellcheck disable=SC2034 # values are read inside the check() eval strings
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

@@ -7,6 +7,7 @@
 # commit-msg hook, a breaking change, and a tag range that spans a rewritten
 # history - which this repository has had, and which is why the previous tag is
 # chosen by version order rather than by walking ancestry.
+# shellcheck disable=SC2034 # values are read inside the check() eval strings
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

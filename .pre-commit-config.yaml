@@ -55,6 +55,15 @@ repos:
         pass_filenames: false
         files: ^frontend/(src/.*\.(ts|tsx)|tsconfig\.json)$
 
+      - id: shellcheck
+        # Same invocation as the scripts-tests CI job. Needs shellcheck on PATH
+        # (apt install shellcheck / brew install shellcheck).
+        name: shellcheck (scripts)
+        entry: shellcheck -S warning -x
+        language: system
+        types: [shell]
+        files: ^(scripts/.*\.sh|deploy/.*/entrypoint\.sh)$
+
       - id: frontend-sources
         name: no compiled .js twins under frontend/src
         entry: bash scripts/check-frontend-sources.sh

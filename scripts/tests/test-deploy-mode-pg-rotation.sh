@@ -2,6 +2,7 @@
 # Unit harness for rotate_postgres_password (scripts/lib/deploy-mode.sh).
 # docker/compose are replaced by shell functions; nothing touches a real host.
 # Run: bash scripts/tests/test-deploy-mode-pg-rotation.sh
+# shellcheck disable=SC2034 # values are read inside the check() eval strings
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

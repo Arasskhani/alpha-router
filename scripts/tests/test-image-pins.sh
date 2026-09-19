@@ -9,6 +9,7 @@
 # the git version, stamped at build time. CI runner images are out of scope -
 # they are not deployed - but the PostgreSQL the tests run against must be the
 # PostgreSQL the product ships with, so that one is held equal to compose.
+# shellcheck disable=SC2034 # values are read inside the check() eval strings
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

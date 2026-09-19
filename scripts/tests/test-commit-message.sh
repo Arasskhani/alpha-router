@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # The commit-msg hook accepts our history and rejects the classic mistakes.
+# shellcheck disable=SC2034 # values are read inside the check() eval strings
 set -euo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT

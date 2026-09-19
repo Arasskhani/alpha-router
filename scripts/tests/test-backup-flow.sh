@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Control-flow harness for scripts/backup.sh with a fake docker binary:
 # verifies snapshot layout, MANIFEST, consistent-mode stop/start and pruning.
+# shellcheck disable=SC2034 # values are read inside the check() eval strings
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

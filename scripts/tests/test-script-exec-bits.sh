@@ -10,6 +10,7 @@
 #
 # Sourced libraries (scripts/lib/*.sh) and the harnesses CI runs as `bash <file>`
 # are deliberately left non-executable: they are not entry points.
+# shellcheck disable=SC2034 # values are read inside the check() eval strings
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

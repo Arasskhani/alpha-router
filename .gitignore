@@ -82,6 +82,14 @@ backups/
 _phase*/
 Claude outputs/
 *.bundle
+*.patch
+*.diff
+*.zip
+# Reports and plans handed over with a change set. They are written at the
+# repository root, so the rule is anchored there and a source file named
+# alpharouter-*.md deeper in the tree is unaffected. Anything here that does
+# belong in the history goes in with `git add -f`.
+/alpharouter-*.md
 # Throwaway self-signed cert/key written while testing the edge container.
 # A pair once reached a commit this way (94e273c, removed in 068776a) and
 # a private key cannot be un-published once it is pushed.

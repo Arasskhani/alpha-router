@@ -8,7 +8,7 @@ import ApiKeyInspectButtons from "../../components/apiKeys/ApiKeyInspectButtons"
 import Modal from "../../components/Modal";
 import RowActionsMenu from "../../components/RowActionsMenu";
 import { useConfirm } from "../../context/ConfirmContext";
-import { formatLocalDate, formatLocalDateTime } from "../../lib/dateTime";
+import { formatLocalDate, formatLocalDateTime, parseApiDateTime } from "../../lib/dateTime";
 import { USAGE_AND_ACTIVITY_LABEL } from "../../lib/usageActivityLabel";
 
 type KeysListResponse = {
@@ -492,7 +492,8 @@ export default function AdminApiKeys() {
                     ? Math.max(
                         1,
                         Math.round(
-                          (new Date(editKey.expires_at).getTime() - new Date(editKey.created_at).getTime()) /
+                          ((parseApiDateTime(editKey.expires_at)?.getTime() ?? 0) -
+                            (parseApiDateTime(editKey.created_at)?.getTime() ?? 0)) /
                             86400000,
                         ),
                       )

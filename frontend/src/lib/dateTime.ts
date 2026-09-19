@@ -14,8 +14,12 @@ const LOCAL_DATE: Intl.DateTimeFormatOptions = {
   day: "numeric",
 };
 
-/** Parse API datetimes stored as naive UTC (ISO without timezone suffix). */
-function parseApiDateTime(iso: string | null | undefined): Date | null {
+/** Parse API datetimes stored as naive UTC (ISO without timezone suffix).
+ *
+ * `new Date("2026-09-19T10:00:00")` reads a naive string as *local* time, so
+ * every timestamp the API sends would shift by the browser's UTC offset. Use
+ * this, not the constructor, for anything that came from the server. */
+export function parseApiDateTime(iso: string | null | undefined): Date | null {
   if (!iso) return null;
   const trimmed = iso.trim();
   if (!trimmed) return null;

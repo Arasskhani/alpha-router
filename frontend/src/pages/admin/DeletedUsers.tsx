@@ -5,6 +5,7 @@ import Modal from "../../components/Modal";
 import ListTruncatedBanner from "../../components/ListTruncatedBanner";
 import RowActionsMenu, { RowAction } from "../../components/RowActionsMenu";
 import { api, apiList, NO_LIST_BOUNDS, type ListBounds } from "../../api";
+import { formatLocalDateTime } from "../../lib/dateTime";
 import { useConfirm } from "../../context/ConfirmContext";
 import { USAGE_AND_ACTIVITY_LABEL } from "../../lib/usageActivityLabel";
 
@@ -255,8 +256,8 @@ export default function DeletedUsers() {
                 <td>
                   <span className={prov(u.auth_provider)}>{u.auth_provider}</span>
                 </td>
-                <td>{u.deleted_at ? new Date(u.deleted_at).toLocaleString() : "—"}</td>
-                <td>{u.last_login_at ? new Date(u.last_login_at).toLocaleString() : "—"}</td>
+                <td>{formatLocalDateTime(u.deleted_at)}</td>
+                <td>{formatLocalDateTime(u.last_login_at)}</td>
                 <td className="col-actions">
                   <RowActionsMenu actions={rowActions(u)} />
                 </td>

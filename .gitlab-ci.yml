@@ -3,9 +3,6 @@ stages:
   - audit
   - publish
 
-variables:
-  SEAWEEDFS_IMAGE: "chrislusf/seaweedfs:4.40"
-
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -284,19 +281,31 @@ licences:
     - cd frontend && npm ci --ignore-scripts --no-audit --no-fund > /dev/null && cd ..
     - python scripts/check-licences.py node frontend
 
-# Fail on CRITICAL/HIGH findings in the pinned SeaweedFS image (deploy/seaweedfs/VERSION).
-object-storage-image-audit:
+# Fail on fixable CRITICAL/HIGH findings in every third-party image compose
+# deploys - PostgreSQL, PgBouncer, Redis, ClamAV, Qdrant, SeaweedFS - not only
+# SeaweedFS. The list is read from docker-compose.yml so a version bump is
+# scanned without anybody remembering to edit this job; our own images are
+# scanned at build time in publish-images.
+third-party-image-audit:
   stage: audit
   image:
     name: aquasec/trivy:0.62.1
     entrypoint: [""]
   rules:
+    - *always-on-default
     - changes:
         - docker-compose.yml
-        - deploy/seaweedfs/**/*
         - .gitlab-ci.yml
   script:
-    - trivy image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed "$SEAWEEDFS_IMAGE"
+    - |
+      images="$(grep -oE '^\s*image:\s*\S+' docker-compose.yml | sed -E 's/^\s*image:\s*//' | grep -v '^alpha-router' | sort -u)"
+      echo "scanning:"; echo "$images"
+      status=0
+      for img in $images; do
+        echo "== $img"
+        trivy image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed "$img" || status=1
+      done
+      exit $status
   allow_failure: false
 
 # Build and push Alpharouter images to the GitLab Container Registry.

@@ -45,6 +45,11 @@ export default function UserOwnerSelect({ value, onChange, disabled, inputId }: 
   useEffect(() => {
     if (!open) return;
     const term = query.trim();
+    // The debounce only stops a request from *starting*. Once one is in flight
+    // a newer query's answer can arrive before it, and the older, slower
+    // response would then replace the newer list. `stale` is flipped by the
+    // cleanup of this effect, i.e. the moment the query changes again.
+    let stale = false;
     const t = window.setTimeout(() => {
       setLoading(true);
       setLoadError("");
@@ -52,14 +57,22 @@ export default function UserOwnerSelect({ value, onChange, disabled, inputId }: 
       if (term.length >= MIN_SEARCH) qs.set("q", term);
       const suffix = qs.size ? `?${qs}` : "";
       api<OwnerUser[]>(`${OWNER_USERS_PATH}${suffix}`)
-        .then(setUsers)
+        .then((rows) => {
+          if (!stale) setUsers(rows);
+        })
         .catch((err) => {
+          if (stale) return;
           setUsers([]);
           setLoadError(String(err));
         })
-        .finally(() => setLoading(false));
+        .finally(() => {
+          if (!stale) setLoading(false);
+        });
     }, 200);
-    return () => window.clearTimeout(t);
+    return () => {
+      stale = true;
+      window.clearTimeout(t);
+    };
   }, [query, open]);
 
   useEffect(() => {

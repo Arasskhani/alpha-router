@@ -331,13 +331,24 @@ export default function ActivityView({
     }
     setLoading(true);
     setErr("");
+    // Switching period or filter while a load is in flight: the older, slower
+    // response must not land on top of the newer one.
+    let stale = false;
     api<ActivityPayload>(fetchPath)
       .then((payload) => {
+        if (stale) return;
         setData(payload);
         onDataLoaded?.(payload);
       })
-      .catch((e) => setErr(String(e)))
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (!stale) setErr(String(e));
+      })
+      .finally(() => {
+        if (!stale) setLoading(false);
+      });
+    return () => {
+      stale = true;
+    };
   }, [fetchPath, scope, userId, groupId, apiKeyId, connectionId, agentId, projectId, onDataLoaded]);
 
   useEffect(() => {

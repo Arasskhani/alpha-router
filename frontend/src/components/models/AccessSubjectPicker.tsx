@@ -62,13 +62,22 @@ export default function AccessSubjectPicker({
       setUserHits([]);
       return;
     }
+    // A slower answer to an older query must not replace a newer list.
+    let stale = false;
     const t = window.setTimeout(() => {
       const qs = new URLSearchParams({ picker: "true", q: term });
       api<AccessUser[]>(`/api/admin/users?${qs}`)
-        .then(setUserHits)
-        .catch(() => setUserHits([]));
+        .then((rows) => {
+          if (!stale) setUserHits(rows);
+        })
+        .catch(() => {
+          if (!stale) setUserHits([]);
+        });
     }, 200);
-    return () => window.clearTimeout(t);
+    return () => {
+      stale = true;
+      window.clearTimeout(t);
+    };
   }, [userQuery]);
 
   const groupHits = useMemo(() => {

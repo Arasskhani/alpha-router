@@ -40,11 +40,10 @@ from app.models.budget import BudgetPlan, PlanAssignment
 from app.models.connection import Connection
 from app.models.cost_accounting import UsageEvent
 from app.models.media import MediaAsset
-from app.models.agent_runtime import AgentRun
 from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel, ModelToolCompatibilityEvent
 from app.models.user import User, UserGroup, UserRoleAssignment, user_group_members
-from app.services import activity_service
+from app.services import activity_rollup_service, activity_service
 from app.services.model_capabilities import (
     model_catalog_meta,
     classification_dialect,
@@ -2826,48 +2825,27 @@ async def _fetch_logs_since(
     agent_id: str | None = None,
     project_id: str | None = None,
 ) -> list[RequestLog]:
-    q = select(RequestLog).where(RequestLog.request_time >= since)
-    if user_id is not None:
-        q = q.where(RequestLog.user_id == user_id)
-    elif user_ids is not None:
-        if not user_ids:
-            return []
-        q = q.where(RequestLog.user_id.in_(user_ids))
-    if alpha_router_api_key_id is not None:
-        q = q.where(RequestLog.alpha_router_api_key_id == alpha_router_api_key_id)
-    if user_api_key_id is not None:
-        if user_api_key_id < 0:
-            return []
-        q = q.where(RequestLog.user_api_key_id == user_api_key_id)
-    if connection_id is not None:
-        model_ids = (
-            (await db.execute(select(AIModel.external_id).where(AIModel.connection_id == connection_id)))
-            .scalars()
-            .all()
-        )
-        if not model_ids:
-            return []
-        q = q.where(RequestLog.model_id.in_(list(model_ids)))
-    if agent_id is not None:
-        q = q.where(
-            or_(
-                RequestLog.id.in_(
-                    select(AgentRun.request_log_id).where(
-                        AgentRun.agent_id == agent_id,
-                        AgentRun.request_log_id.is_not(None),
-                    )
-                ),
-                RequestLog.usage_operation_id.in_(
-                    select(AgentRun.usage_operation_id).where(
-                        AgentRun.agent_id == agent_id,
-                        AgentRun.usage_operation_id.is_not(None),
-                    )
-                ),
-            )
-        )
-    if project_id is not None:
-        q = q.where(RequestLog.project_id == project_id)
-    return (await db.execute(q.order_by(RequestLog.request_time.asc()))).scalars().all()
+    """The rows themselves, for the parts of the dashboard that need each one.
+
+    The scope is translated by ``activity_rollup_service`` so this and the
+    daily rollup cannot drift into disagreeing about what a dashboard covers.
+    """
+
+    conditions = await activity_rollup_service.scope_conditions(
+        db,
+        since,
+        user_id=user_id,
+        user_ids=user_ids,
+        alpha_router_api_key_id=alpha_router_api_key_id,
+        user_api_key_id=user_api_key_id,
+        connection_id=connection_id,
+        agent_id=agent_id,
+        project_id=project_id,
+    )
+    if conditions is None:
+        return []
+    statement = select(RequestLog).where(*conditions).order_by(RequestLog.request_time.asc())
+    return (await db.execute(statement)).scalars().all()
 
 
 def _activity_query_filters(
@@ -2978,13 +2956,32 @@ async def _load_activity_context(
     connection_id: int | None = None,
     agent_id: str | None = None,
     project_id: str | None = None,
-) -> tuple[list, list, list, list, datetime, datetime, list, list, datetime]:
+) -> tuple[list, list, dict, list, datetime, datetime, list, list, datetime]:
     now = datetime.utcnow()
     prompts_period = prompts_period or period
     since, prev_since = _period_prev_since(period, now)
     since_prompts, prev_since_prompts = _period_prev_since(prompts_period, now)
     heatmap_since = now - timedelta(days=activity_service.HEATMAP_DAYS)
-    since_all = min(prev_since, prev_since_prompts, heatmap_since, since, since_prompts)
+    # The heatmap's year is *not* in this window any more. It used to be, which
+    # is why "last 15 minutes" read a year of request_logs into memory; the
+    # heatmap needs three numbers per day and the database can count them.
+    since_all = min(prev_since, prev_since_prompts, since, since_prompts)
+
+    scope = {
+        "user_id": user_id,
+        "user_ids": user_ids,
+        "alpha_router_api_key_id": alpha_router_api_key_id,
+        "connection_id": connection_id,
+        "agent_id": agent_id,
+        "project_id": project_id,
+    }
+    heatmap_daily = await activity_rollup_service.daily_activity_metrics(
+        db,
+        since=heatmap_since,
+        tz_mode=timezone if timezone in ("local", "utc") else "local",
+        scope=scope,
+        filters=filters,
+    )
 
     all_rows = await _fetch_logs_since(
         db,
@@ -3011,15 +3008,10 @@ async def _load_activity_context(
         for r in activity_service.apply_activity_filters(all_rows, **filters)
         if prev_since_prompts <= (r.request_time or now) < since_prompts
     ]
-    heatmap_rows = [
-        r
-        for r in activity_service.apply_activity_filters(all_rows, **filters)
-        if (r.request_time or now) >= heatmap_since
-    ]
     return (
         filtered,
         prev_rows,
-        heatmap_rows,
+        heatmap_daily,
         options_rows,
         since,
         now,
@@ -3051,7 +3043,7 @@ async def _build_scoped_activity(
     (
         rows,
         prev_rows,
-        heatmap_rows,
+        heatmap_daily,
         options_rows,
         since,
         now,
@@ -3081,7 +3073,7 @@ async def _build_scoped_activity(
         timezone=timezone,
         now=now,
         prev_rows=prev_rows,
-        heatmap_rows=heatmap_rows,
+        heatmap_daily=heatmap_daily,
         api_key_meta=api_key_meta,
         explore=explore,
     )
@@ -3093,7 +3085,7 @@ async def _build_scoped_activity(
         timezone=timezone,
         now=now,
         prev_rows=prompts_prev_rows,
-        heatmap_rows=heatmap_rows,
+        heatmap_daily=heatmap_daily,
     )
     return payload, options, prompts_card
 
@@ -3119,7 +3111,7 @@ async def _prepare_activity_export(
     (
         rows,
         prev_rows,
-        heatmap_rows,
+        heatmap_daily,
         _,
         since,
         now,
@@ -3148,7 +3140,7 @@ async def _prepare_activity_export(
         timezone=timezone,
         now=now,
         prev_rows=prev_rows,
-        heatmap_rows=heatmap_rows,
+        heatmap_daily=heatmap_daily,
     )
     prompts_card = activity_service.build_prompts_card(
         prompts_rows,
@@ -3158,7 +3150,7 @@ async def _prepare_activity_export(
         timezone=timezone,
         now=now,
         prev_rows=prompts_prev_rows,
-        heatmap_rows=heatmap_rows,
+        heatmap_daily=heatmap_daily,
     )
     return rows, payload, prompts_card, filters, since, now
 

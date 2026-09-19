@@ -297,13 +297,17 @@ def _models_meta_from_stats(
 def _build_insights(
     rows: list[RequestLog],
     prev_rows: list[RequestLog],
-    heatmap_rows: list[RequestLog],
+    heatmap_daily: dict[str, dict[str, float]],
     *,
     period: str,
     since: datetime,
     now: datetime,
     tz_mode: str,
 ) -> dict[str, Any]:
+    """``heatmap_daily`` is day -> totals; the caller decides whether SQL or
+    Python produced it. Reading a year of rows to count them here is what made
+    every Activity view a one-year scan."""
+
     cur_requests = len(rows)
     cur_tokens = sum((r.prompt_tokens or 0) + (r.completion_tokens or 0) for r in rows)
     cur_spend = sum(float(r.total_cost_usd or 0) for r in rows)
@@ -312,7 +316,6 @@ def _build_insights(
     prev_tokens = sum((r.prompt_tokens or 0) + (r.completion_tokens or 0) for r in prev_rows)
     prev_spend = sum(float(r.total_cost_usd or 0) for r in prev_rows)
 
-    heatmap_daily = _aggregate_daily_metrics(heatmap_rows, tz_mode)
     streak = _streak_days(heatmap_daily, now, tz_mode, "requests")
 
     heatmap_days = _build_heatmap(heatmap_daily, tz_mode, now)
@@ -1275,6 +1278,7 @@ def build_prompts_card(
     now: datetime | None = None,
     prev_rows: list[RequestLog] | None = None,
     heatmap_rows: list[RequestLog] | None = None,
+    heatmap_daily: dict[str, dict[str, float]] | None = None,
 ) -> dict[str, Any]:
     """Prompts hero card: chart + footer metrics for an independent time range."""
     payload = build_activity_payload(
@@ -1286,6 +1290,7 @@ def build_prompts_card(
         now=now,
         prev_rows=prev_rows,
         heatmap_rows=heatmap_rows,
+        heatmap_daily=heatmap_daily,
     )
     ins = payload["insights"]
     return {
@@ -1310,6 +1315,7 @@ def build_activity_payload(
     now: datetime | None = None,
     prev_rows: list[RequestLog] | None = None,
     heatmap_rows: list[RequestLog] | None = None,
+    heatmap_daily: dict[str, dict[str, float]] | None = None,
     api_key_meta: dict[str, dict[str, Any]] | None = None,
     explore: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -1403,10 +1409,15 @@ def build_activity_payload(
         model_only[mk]["requests"] += 1
         model_only[mk]["tokens"] += float((r.prompt_tokens or 0) + (r.completion_tokens or 0))
 
+    daily = (
+        heatmap_daily
+        if heatmap_daily is not None
+        else _aggregate_daily_metrics(heatmap_rows if heatmap_rows is not None else rows, tz_mode)
+    )
     insights = _build_insights(
         rows,
         prev_rows or [],
-        heatmap_rows if heatmap_rows is not None else rows,
+        daily,
         period=period,
         since=since,
         now=now,

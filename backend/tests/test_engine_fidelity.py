@@ -29,9 +29,16 @@ from app.models.video import VideoGenerationJob
 
 #: Files under tests/ that build their own SQLite engine instead of using the
 #: ``engine`` fixture. Lower this number when you convert one; never raise it.
-MAX_SELF_BUILT_SQLITE_ENGINES = 131
+MAX_SELF_BUILT_SQLITE_ENGINES = 130
 
 _ENGINE_LITERAL = re.compile(r'create_async_engine\(\s*"sqlite\+aiosqlite:///:memory:"')
+
+#: Assertions of the form ``"some string" in inspect.getsource(fn)``. They pass
+#: whenever the string is present, so a refactor that keeps the string and
+#: breaks the behaviour is green. Each one is replaced with a behavioural test
+#: as its file is touched; the number may only shrink.
+MAX_SOURCE_ASSERTIONS = 46
+_SOURCE_ASSERTION = re.compile(r"inspect\.getsource\(")
 
 
 async def test_the_test_engine_enforces_foreign_keys(db_session):
@@ -94,4 +101,21 @@ def test_self_built_sqlite_engines_do_not_multiply():
         f"{MAX_SELF_BUILT_SQLITE_ENGINES}. Use the shared `engine`/`db_session` "
         "fixture in new tests; it enforces foreign keys and honours "
         "TEST_DATABASE_URL."
+    )
+
+
+def test_source_string_assertions_do_not_multiply():
+    """``"x" in inspect.getsource(fn)`` passes when the text is there, not when
+    the behaviour is. Replace one with a real test whenever you touch its file."""
+
+    tests_dir = pathlib.Path(__file__).resolve().parent
+    here = pathlib.Path(__file__).resolve()
+    total = 0
+    for path in sorted(tests_dir.rglob("test_*.py")):
+        if path.resolve() == here:
+            continue
+        total += len(_SOURCE_ASSERTION.findall(path.read_text(encoding="utf-8")))
+    assert total <= MAX_SOURCE_ASSERTIONS, (
+        f"{total} inspect.getsource assertions under tests/, was {MAX_SOURCE_ASSERTIONS}. "
+        "Write a test that fails when the behaviour is reverted, not when a string is renamed."
     )

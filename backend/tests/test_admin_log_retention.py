@@ -15,9 +15,8 @@ import json
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import Base
 from app.models.security import SecurityAuditEvent
 from app.models.user import User
 from app.services.admin_log_retention_service import (
@@ -34,14 +33,24 @@ from app.services.security_audit import log_security_event
 
 
 @pytest.fixture
-async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    async with factory() as session:
-        yield session
-    await engine.dispose()
+async def db(db_session):
+    """The shared test engine (see conftest), under the name this file grew up with."""
+    return db_session
+
+
+@pytest.fixture(autouse=True)
+def no_object_storage(monkeypatch):
+    """Permanent deletion purges the account's media; there is no bucket here."""
+
+    def _purge(_slug, _user_id=None, **_kwargs) -> int:
+        return 0
+
+    monkeypatch.setattr("app.services.user_account_cleanup_service.oss.purge_user_cdn_objects", _purge)
+
+    async def _unlink(_db, _path) -> None:
+        return None
+
+    monkeypatch.setattr("app.services.user_media_service.unlink_storage_if_unreferenced", _unlink)
 
 
 async def _admin(db: AsyncSession, username: str = "root") -> User:
@@ -193,52 +202,143 @@ class TestPurge:
         assert result["details_redacted"] == 0 and result["events_deleted"] == 0
 
 
-def test_changing_the_window_is_itself_audited():
+class _Request:
+    client = type("C", (), {"host": "203.0.113.9"})()
+    headers: dict[str, str] = {}
+
+
+async def _audit_rows(db: AsyncSession, action: str) -> list[SecurityAuditEvent]:
+    return list(
+        (await db.execute(select(SecurityAuditEvent).where(SecurityAuditEvent.action == action))).scalars().all()
+    )
+
+
+async def test_changing_the_window_is_itself_audited(db):
     """A retention change destroys evidence later; it has to leave a record."""
-    import inspect
+    from app.api.admin import AdminLogRetentionSettingsPatch, patch_admin_log_retention_settings
 
-    from app.api import admin
+    admin = await _admin(db, "retention_admin")
+    await db.commit()
 
-    source = inspect.getsource(admin)
-    assert 'action="admin_log_retention_changed"' in source
+    await patch_admin_log_retention_settings(
+        AdminLogRetentionSettingsPatch(detail_retention_days=30, event_retention_days=400),
+        _Request(),
+        db,
+        admin,
+    )
+
+    rows = await _audit_rows(db, "admin_log_retention_changed")
+    assert len(rows) == 1
+    assert rows[0].actor_username == "retention_admin"
+    assert rows[0].actor_ip == "203.0.113.9"
+    detail = json.loads(rows[0].detail_json)
+    assert detail.get("detail_retention_days") == 30 or "30" in rows[0].detail_json
 
 
-def test_saving_a_window_does_not_purge_immediately():
+async def test_saving_a_window_does_not_purge_immediately(db):
     """Unlike the raw-payload window next door. Shortening this one destroys
     audit evidence, so it must not happen as a side effect of pressing Save."""
-    import inspect
+    from app.api.admin import AdminLogRetentionSettingsPatch, patch_admin_log_retention_settings
 
-    from app.api import admin
+    admin = await _admin(db, "hasty_admin")
+    old = await _event(db, days_old=800)
+    await db.commit()
 
-    handler = inspect.getsource(admin.patch_admin_log_retention_settings)
-    assert "purge_expired_admin_logs" not in handler
+    # A window far shorter than the row's age. If Save purged, this row would go.
+    await patch_admin_log_retention_settings(
+        AdminLogRetentionSettingsPatch(detail_retention_days=7, event_retention_days=7),
+        _Request(),
+        db,
+        admin,
+    )
+
+    survivor = await db.get(SecurityAuditEvent, old.id)
+    assert survivor is not None, "pressing Save destroyed audit evidence"
+    assert survivor.detail_redacted_at is None
 
 
-def test_the_retention_run_records_itself_where_it_cannot_prune():
-    import inspect
-
+async def test_the_retention_run_records_itself_where_it_cannot_prune(db, session_factory, monkeypatch):
+    """A retention pass that destroys evidence leaves evidence that it ran, in
+    the governance chain - a trail this job never touches."""
+    from app.models.governance import GovernanceAuditEvent
     from app.services import scheduler
 
-    source = inspect.getsource(scheduler.job_admin_log_retention)
-    assert "governance.retention.admin_logs.purged" in source
+    await _event(db, days_old=800)
+    await set_admin_log_retention(db, detail_retention_days=7, event_retention_days=30)
+    await db.commit()
+
+    monkeypatch.setattr(scheduler, "AsyncSessionLocal", session_factory)
+
+    await scheduler.job_admin_log_retention()
+
+    recorded = (
+        (
+            await db.execute(
+                select(GovernanceAuditEvent).where(
+                    GovernanceAuditEvent.event_type == "governance.retention.admin_logs.purged"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(recorded) == 1
+    assert recorded[0].payload_json["events_deleted"] == 1
 
 
-def test_permanent_deletion_is_audited_before_the_row_disappears():
-    """Reading username/email off a deleted instance is not reliable, so the
-    record is written first, in the same transaction."""
-    import inspect
+async def test_permanent_deletion_is_audited_before_the_row_disappears(db):
+    """The record must carry the deleted account's *name*. permanently_delete_user
+    tombstones the row - username and email are gone afterwards - so the audit
+    row has to be written first, in the same transaction."""
+    from app.api.admin import permanently_delete_user_endpoint
+    from app.services.user_role_service import set_user_roles
 
-    from app.api import admin
+    admin = await _admin(db, "the_deleter")
+    await set_user_roles(db, admin, ["super_admin"])
+    victim = await _admin(db, "soon_gone")
+    victim.deleted_at = datetime.datetime.utcnow()
+    await db.commit()
 
-    handler = inspect.getsource(admin.permanently_delete_user_endpoint)
-    assert handler.index("_audit_user_action") < handler.index("await permanently_delete_user(")
+    await permanently_delete_user_endpoint(victim.id, _Request(), db, admin)
+
+    rows = await _audit_rows(db, "user_permanently_deleted")
+    assert len(rows) == 1
+    detail = json.loads(rows[0].detail_json)
+    assert detail["username"] == "soon_gone", "the record names an account that no longer has a name"
+    purged = await db.get(User, victim.id)
+    assert purged.username != "soon_gone", "and the row itself was tombstoned"
 
 
-def test_account_takeover_paths_are_audited():
-    import inspect
+async def test_account_takeover_paths_are_audited(db):
+    """Resetting a password, removing a second factor and bulk permanent
+    deletion are account-takeover shaped however legitimate; each leaves a row."""
+    from app.api.admin import (
+        ResetPasswordIn,
+        UsersPermanentDeleteIn,
+        admin_disable_user_2fa,
+        bulk_permanently_delete_users,
+        reset_local_user_password,
+    )
+    from app.services.user_role_service import set_user_roles
 
-    from app.api import admin
+    admin = await _admin(db, "root_operator")
+    await set_user_roles(db, admin, ["super_admin"])
+    target = await _admin(db, "the_target")
+    target.totp_enabled = True
+    target.totp_secret_encrypted = "enc"
+    doomed = await _admin(db, "bulk_doomed")
+    doomed.deleted_at = datetime.datetime.utcnow()
+    await db.commit()
 
-    source = inspect.getsource(admin)
+    await reset_local_user_password(
+        target.id, ResetPasswordIn(password="a-long-enough-password"), _Request(), db, admin
+    )
+    await admin_disable_user_2fa(target.id, _Request(), db, admin)
+    await bulk_permanently_delete_users(UsersPermanentDeleteIn(user_ids=[doomed.id]), _Request(), db, admin)
+
     for action in ("user_password_reset", "user_2fa_disabled", "users_permanently_deleted"):
-        assert f'action="{action}"' in source
+        rows = await _audit_rows(db, action)
+        assert len(rows) == 1, f"{action} left no audit row"
+        assert rows[0].actor_username == "root_operator"
+    reset_detail = json.loads((await _audit_rows(db, "user_password_reset"))[0].detail_json)
+    assert "password" not in json.dumps(reset_detail).lower() or reset_detail.get("sessions_revoked") is True

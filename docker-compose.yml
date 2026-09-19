@@ -72,7 +72,7 @@ services:
 
   redis:
     logging: *default-logging
-    image: redis:7-alpine
+    image: redis:7.2-alpine
     restart: unless-stopped
     # Require authentication when REDIS_PASSWORD is set; empty (default) keeps
     # legacy no-auth behavior for existing single-box deployments. When set,

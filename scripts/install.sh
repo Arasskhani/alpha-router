@@ -112,6 +112,9 @@ if ! script_in_repo; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Kept for the re-run hint in require_root, which cannot see the script's own arguments.
+SCRIPT_ARGS=("$@")
+export SCRIPT_ARGS
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 # shellcheck source=lib/preflight.sh
@@ -131,10 +134,14 @@ source "$SCRIPT_DIR/lib/ubuntu-prereqs.sh"
 
 FROM_SOURCE=1
 FROM_REGISTRY=0
+# shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
 USE_REGISTRY_COMPOSE=0
+# shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
 DEPLOY_MODE=prod
+# shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
 UPGRADE=0
 PREFLIGHT_ONLY=0
+# shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
 SKIP_BUILD=0
 IMAGE_TAG=""
 
@@ -172,6 +179,7 @@ Environment:
   ALPHAROUTER_HOME=/opt/alpha-router
   ALPHAROUTER_GIT_URL=https://github.com/Arasskhani/alpha-router.git
   ALPHAROUTER_GIT_REF=main
+  # shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
   MIN_DISK_GB=30
   HEALTH_TIMEOUT_SEC=900
 EOF
@@ -183,17 +191,21 @@ parse_args() {
       --from-source)
         FROM_SOURCE=1
         FROM_REGISTRY=0
+        # shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
         USE_REGISTRY_COMPOSE=0
         ;;
       --from-registry)
         FROM_SOURCE=0
         FROM_REGISTRY=1
+        # shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
         USE_REGISTRY_COMPOSE=1
         ;;
       --dev)
+        # shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
         DEPLOY_MODE=dev
         ;;
       --prod)
+        # shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
         DEPLOY_MODE=prod
         ;;
       --upgrade)
@@ -203,6 +215,7 @@ parse_args() {
         PREFLIGHT_ONLY=1
         ;;
       --skip-build)
+        # shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
         SKIP_BUILD=1
         ;;
       --image-tag)
@@ -231,6 +244,7 @@ main() {
   cd "$ROOT_DIR"
 
   if [ "$FROM_REGISTRY" -eq 1 ]; then
+    # shellcheck disable=SC2034 # read by the sourced scripts/lib/*.sh
     MIN_DISK_GB="$MIN_DISK_GB_REGISTRY"
   fi
 

@@ -5,7 +5,10 @@ require_root() {
   if [ "$(id -u)" -eq 0 ]; then
     return 0
   fi
-  die "This step needs root (apt / Docker). Re-run with: sudo $0 $*"
+  # ${SCRIPT_ARGS[*]} rather than $*: inside a function $* is the function's
+  # own arguments, which are none, so the hint used to drop the flags the
+  # operator had typed.
+  die "This step needs root (apt / Docker). Re-run with: sudo $0 ${SCRIPT_ARGS[*]:-}"
 }
 
 require_ubuntu() {

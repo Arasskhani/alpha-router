@@ -51,6 +51,12 @@ _GLOBAL_ZSET = f"{_KEY_PREFIX}:global"
 _SUBJECT_ZSET_PREFIX = f"{_KEY_PREFIX}:subject:"
 _LEASE_KEY_PREFIX = f"{_KEY_PREFIX}:lease:"
 _POLICY_HASH = f"{_KEY_PREFIX}:policy"
+#: Monotonic count of turns refused for want of capacity. The process-local
+#: counter beside it (``code_interpreter_capacity_rejected``) is per worker
+#: and resets on restart, so it cannot answer "were we short of capacity
+#: yesterday". This one is shared by every worker and outlives them, and the
+#: hourly snapshot turns it into the series the Operations page charts.
+_REJECTED_COUNTER = f"{_KEY_PREFIX}:rejected_total"
 _SETTING_GLOBAL_MAX = "code_interpreter_capacity_global_max"
 _SETTING_PER_SUBJECT_MAX = "code_interpreter_capacity_per_subject_max"
 _SETTING_RETRY_AFTER = "code_interpreter_capacity_retry_after_seconds"
@@ -400,6 +406,10 @@ async def acquire_code_interpreter_turn(
     if status == 1:
         return CapacityPermit(lease_id=lease, subject=subject, expires_at=expiry)
     increment("code_interpreter_capacity_rejected")
+    try:
+        await client.incr(_REJECTED_COUNTER)
+    except Exception:  # noqa: BLE001 -- a lost count must never turn a 429 into a 500
+        logger.debug("Could not record a Code Interpreter capacity rejection", exc_info=True)
     raise _busy_exception(retry_after)
 
 
@@ -599,3 +609,20 @@ async def set_code_interpreter_capacity_policy(
         "hard_global_max": normalized["hard_global_max"],
         "enabled": normalized["enabled"],
     }
+
+
+async def code_interpreter_rejected_total() -> int | None:
+    """Turns refused for want of capacity since this counter last started.
+
+    ``None`` when Redis cannot be read: the snapshot stores nothing rather than
+    a zero, because "no rejections" and "could not tell" are different answers
+    and a chart that conflates them is worse than one with a gap.
+    """
+    try:
+        raw = await _redis_client().get(_REJECTED_COUNTER)
+    except Exception:  # noqa: BLE001 -- diagnostics must not raise
+        return None
+    try:
+        return max(0, int(raw or 0))
+    except (TypeError, ValueError):
+        return None

@@ -55,3 +55,12 @@ class SystemMetricSnapshot(Base):
     process_rss_bytes = Column(Integer, nullable=True)
     db_ping_ms = Column(Float, nullable=True)
     db_size_bytes = Column(Integer, nullable=True)
+    #: Code Interpreter turn leases held at the moment of the snapshot. A gauge,
+    #: averaged per bucket like the CPU and memory series beside it.
+    code_interpreter_active = Column(Integer, nullable=True)
+    #: Cumulative turns refused for want of capacity, read from the shared Redis
+    #: counter. Stored as the running total rather than a per-interval count so
+    #: a missed snapshot loses resolution instead of losing the rejections; the
+    #: chart differences consecutive rows. NULL means Redis could not be read,
+    #: which is not the same as zero.
+    code_interpreter_rejected_total = Column(Integer, nullable=True)

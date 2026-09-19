@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from pathlib import Path
@@ -12,6 +13,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 # Alpharouter application tables (read-only row counts for admins).
 TABLE_LABELS: list[tuple[str, str]] = [
@@ -169,6 +172,8 @@ async def collect_snapshot_metrics(db: AsyncSession) -> dict[str, Any]:
         "process_rss_bytes": None,
         "db_ping_ms": None,
         "db_size_bytes": None,
+        "code_interpreter_active": None,
+        "code_interpreter_rejected_total": None,
     }
     try:
         out["db_ping_ms"] = await _ping_ms(db)
@@ -188,6 +193,33 @@ async def collect_snapshot_metrics(db: AsyncSession) -> dict[str, Any]:
     if system.get("available") and system.get("process"):
         out["process_cpu_percent"] = system["process"].get("cpu_percent")
         out["process_rss_bytes"] = system["process"].get("memory_rss_bytes")
+    out.update(await _code_interpreter_capacity_metrics())
+    return out
+
+
+async def _code_interpreter_capacity_metrics() -> dict[str, Any]:
+    """Leases held now, and rejections so far, or nothing at all.
+
+    Both readings come from Redis. When it cannot be reached the keys stay
+    ``None``: the snapshot is a record of what was observed, and writing a zero
+    for "could not tell" would draw a quiet hour on the chart where there was
+    an outage.
+    """
+    from app.services.code_interpreter_capacity_service import (
+        code_interpreter_capacity_stats,
+        code_interpreter_rejected_total,
+    )
+
+    out: dict[str, Any] = {
+        "code_interpreter_active": None,
+        "code_interpreter_rejected_total": None,
+    }
+    try:
+        stats = await code_interpreter_capacity_stats()
+        out["code_interpreter_active"] = int(stats["active"])
+    except Exception:  # noqa: BLE001 -- the snapshot must survive a Redis outage
+        logger.debug("Code Interpreter capacity unavailable for this snapshot", exc_info=True)
+    out["code_interpreter_rejected_total"] = await code_interpreter_rejected_total()
     return out
 
 

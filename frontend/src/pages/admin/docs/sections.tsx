@@ -1237,9 +1237,12 @@ export const docSections: DocSection[] = [
             <strong>Model experience</strong> — slow requests, P95, slowest models table (links into API Logs).
           </li>
           <li>
-            <strong>Code Interpreter capacity</strong> — active/available turn leases, global and per-user ceilings,
-            broker job counts, and editable operational limits. The environment ceiling remains a hard upper bound;
-            rejection and cancellation counters are exposed by observability.
+            <strong>Code Interpreter</strong> — turns running and turns refused over the window, beside a live panel
+            with leases held, capacity available and broker job counts. The chart is the number to set a ceiling
+            from: utilisation at the moment the page loaded says nothing about this morning&apos;s peak. Availability
+            is reported against whichever of the two ceilings is binding, and the panel says so when they disagree.
+            The limits themselves are edited on <a href="#admin-code-interpreter">Code Interpreter</a>, not here — a
+            page that refreshes itself every hour is no place for a half-filled form.
           </li>
           <li>
             <strong>Version</strong> — the build this host is running, on the line under the heading. Hover it to see

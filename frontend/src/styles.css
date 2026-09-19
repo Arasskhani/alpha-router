@@ -3699,6 +3699,20 @@ table.data-table--api-logs {
   font-size: 0.85rem;
 }
 
+/* The two admission gates disagreeing is the one state on this card that
+   deserves the eye: the operational limit shown beside it is not the one
+   being enforced. */
+.operations-capacity-mismatch {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.operations-capacity-mismatch code {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
 /* Code Interpreter settings. The switch reads as one statement — state on the
    left, the act on the right — rather than a form field pretending to be one. */
 .code-interpreter-switch {

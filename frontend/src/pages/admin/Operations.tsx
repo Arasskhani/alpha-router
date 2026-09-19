@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import AdminPage from "../../components/AdminPage";
 import OperationsMetricCard, { type OpsSegment } from "../../components/operations/OperationsMetricCard";
@@ -8,7 +8,6 @@ import OperationsTimeRangeMenu, {
   type OpsRangeKey,
 } from "../../components/operations/OperationsTimeRangeMenu";
 import { api } from "../../api";
-import { useReadOnly } from "../../context/ReadOnlyContext";
 import { formatLocalDateTime } from "../../lib/dateTime";
 
 type OpsFooter = {
@@ -50,6 +49,7 @@ type DashboardPayload = {
     slow_requests: OpsCard;
     p95_vs_prior: OpsCard;
     models_p95: OpsCard;
+    code_interpreter: OpsCard;
   };
   model_experience: {
     slow_request_threshold_ms: number;
@@ -73,6 +73,16 @@ type CodeInterpreterCapacityPayload = {
     available: number;
     limit: number;
     utilization_percent: number;
+  };
+  /** The ceiling a turn actually meets, across both admission gates. */
+  effective: {
+    max_concurrent_turns: number;
+    available: number;
+    utilization_percent: number;
+    limited_by: "app" | "broker" | "both";
+    mismatch: boolean;
+    app_max_concurrent_turns: number;
+    broker_max_concurrent: number | null;
   };
   broker: {
     status: string;
@@ -138,14 +148,9 @@ function OpsCardView({
 }
 
 export default function Operations() {
-  const readOnly = useReadOnly();
   const [data, setData] = useState<DashboardPayload | null>(null);
   const [capacity, setCapacity] = useState<CodeInterpreterCapacityPayload | null>(null);
   const [build, setBuild] = useState<{ version: string; revision: string } | null>(null);
-  const [capacityMax, setCapacityMax] = useState(200);
-  const [capacityPerSubject, setCapacityPerSubject] = useState(2);
-  const [capacityRetryAfter, setCapacityRetryAfter] = useState(30);
-  const [savingCapacity, setSavingCapacity] = useState(false);
   const [rangeKey, setRangeKey] = useState<OpsRangeKey>(DEFAULT_OPS_RANGE);
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
@@ -158,9 +163,6 @@ export default function Operations() {
         "/api/admin/operations/code-interpreter-capacity",
       );
       setCapacity(payload);
-      setCapacityMax(payload.settings.max_concurrent_turns);
-      setCapacityPerSubject(payload.settings.max_per_subject);
-      setCapacityRetryAfter(payload.settings.retry_after_seconds);
     } catch (e) {
       setError(String(e));
     }
@@ -207,40 +209,6 @@ export default function Operations() {
       if (intervalRef.current) window.clearInterval(intervalRef.current);
     };
   }, [load, loadCapacity, rangeKey]);
-
-  async function saveCapacity(e: FormEvent) {
-    e.preventDefault();
-    const hardMax = capacity?.settings.hard_max_concurrent_turns ?? 200;
-    const nextMax = Math.max(1, Math.min(hardMax, Math.round(Number(capacityMax) || 1)));
-    const nextPerSubject = Math.max(
-      1,
-      Math.min(nextMax, Math.round(Number(capacityPerSubject) || 1)),
-    );
-    const nextRetry = Math.max(1, Math.min(300, Math.round(Number(capacityRetryAfter) || 1)));
-    setSavingCapacity(true);
-    setError("");
-    try {
-      const payload = await api<CodeInterpreterCapacityPayload>(
-        "/api/admin/operations/code-interpreter-capacity",
-        {
-          method: "PATCH",
-          body: JSON.stringify({
-            max_concurrent_turns: nextMax,
-            max_per_subject: nextPerSubject,
-            retry_after_seconds: nextRetry,
-          }),
-        },
-      );
-      setCapacity(payload);
-      setCapacityMax(payload.settings.max_concurrent_turns);
-      setCapacityPerSubject(payload.settings.max_per_subject);
-      setCapacityRetryAfter(payload.settings.retry_after_seconds);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setSavingCapacity(false);
-    }
-  }
 
   const c = data?.cards;
 
@@ -295,77 +263,6 @@ export default function Operations() {
       )}
       {error && <p className="alert alert-error" role="alert">{error}</p>}
 
-      {capacity && (
-        <>
-          <h3 className="operations-section-title">Code Interpreter capacity</h3>
-          <div className="card operations-capacity-card">
-            <div className="operations-capacity-summary">
-              <span>
-                <strong>{capacity.runtime.active}</strong> active
-              </span>
-              <span>
-                <strong>{capacity.runtime.available}</strong> available
-              </span>
-              <span>
-                <strong>{capacity.runtime.utilization_percent.toFixed(1)}%</strong> utilized
-              </span>
-              <span>
-                <strong>
-                  {capacity.broker.status === "ok" ? capacity.broker.active_jobs ?? 0 : "—"}
-                </strong>{" "}
-                broker jobs
-              </span>
-            </div>
-            <div className="operations-capacity-track" aria-label="Code Interpreter capacity utilization">
-              <span style={{ width: `${Math.min(100, capacity.runtime.utilization_percent)}%` }} />
-            </div>
-            <form className="operations-capacity-form" onSubmit={saveCapacity}>
-              <label>
-                Concurrent turns
-                <input
-                  type="number"
-                  min={1}
-                  max={capacity.settings.hard_max_concurrent_turns}
-                  value={capacityMax}
-                  onChange={(e) => setCapacityMax(Number(e.target.value))}
-                  disabled={readOnly || savingCapacity}
-                />
-              </label>
-              <label>
-                Per user / API key
-                <input
-                  type="number"
-                  min={1}
-                  max={capacityMax}
-                  value={capacityPerSubject}
-                  onChange={(e) => setCapacityPerSubject(Number(e.target.value))}
-                  disabled={readOnly || savingCapacity}
-                />
-              </label>
-              <label>
-                Retry-After (seconds)
-                <input
-                  type="number"
-                  min={1}
-                  max={300}
-                  value={capacityRetryAfter}
-                  onChange={(e) => setCapacityRetryAfter(Number(e.target.value))}
-                  disabled={readOnly || savingCapacity}
-                />
-              </label>
-              <button className="btn btn-primary" disabled={readOnly || savingCapacity}>
-                {savingCapacity ? "Saving…" : "Save capacity"}
-              </button>
-            </form>
-            <p className="muted-text">
-              Environment hard ceiling: {capacity.settings.hard_max_concurrent_turns} turns · lease TTL{" "}
-              {capacity.settings.lease_ttl_seconds}s · heartbeat {capacity.settings.heartbeat_seconds}s.
-              Requests above the operational limit are rejected immediately with HTTP 429.
-            </p>
-          </div>
-        </>
-      )}
-
       {c && (
         <>
           <h3 className="operations-section-title">Infrastructure</h3>
@@ -403,6 +300,58 @@ export default function Operations() {
               formatValue={(v) => formatCount(v)}
               footer={formatFooter(c.throughput.footer)}
             />
+          </div>
+
+          <h3 className="operations-section-title">Code Interpreter</h3>
+          <p className="muted-text operations-section-lead">
+            Turns running and turns refused over the window. The number to set the ceiling from is the peak, not
+            what is running at this second.{" "}
+            <Link to="/admin/code-interpreter">Limits and workspace settings</Link>.
+          </p>
+          <div className="activity-metrics-grid operations-metrics-grid">
+            <OpsCardView
+              card={c.code_interpreter}
+              formatValue={(v) => formatCount(v)}
+              footer={formatFooter(c.code_interpreter.footer)}
+            />
+            {capacity && (
+              <div className="card operations-capacity-card">
+                <div className="operations-capacity-summary">
+                  <span>
+                    <strong>{capacity.runtime.active}</strong> active
+                  </span>
+                  <span>
+                    <strong>{capacity.effective.available}</strong> available
+                  </span>
+                  <span>
+                    <strong>{capacity.effective.utilization_percent.toFixed(1)}%</strong> utilized
+                  </span>
+                  <span>
+                    <strong>
+                      {capacity.broker.status === "ok" ? (capacity.broker.active_jobs ?? 0) : "—"}
+                    </strong>{" "}
+                    broker jobs
+                  </span>
+                </div>
+                <div className="operations-capacity-track" aria-label="Code Interpreter capacity utilization">
+                  <span style={{ width: `${Math.min(100, capacity.effective.utilization_percent)}%` }} />
+                </div>
+                {capacity.effective.mismatch ? (
+                  <p className="alert alert-warning operations-capacity-mismatch">
+                    Two ceilings disagree, and the smaller one decides:{" "}
+                    <strong>{capacity.effective.max_concurrent_turns}</strong> concurrent turns. The operational
+                    limit is {capacity.effective.app_max_concurrent_turns}; the broker is built with{" "}
+                    <code>SANDBOX_MAX_CONCURRENT={capacity.effective.broker_max_concurrent}</code>, which only a
+                    redeploy changes.
+                  </p>
+                ) : null}
+                <p className="muted-text">
+                  Limits: {capacity.settings.max_concurrent_turns} concurrent ·{" "}
+                  {capacity.settings.max_per_subject} per user · Retry-After {capacity.settings.retry_after_seconds}s
+                  · <Link to="/admin/code-interpreter">edit</Link>
+                </p>
+              </div>
+            )}
           </div>
 
           <h3 className="operations-section-title">Model experience</h3>

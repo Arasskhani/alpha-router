@@ -426,6 +426,8 @@ async def record_system_snapshot(db: AsyncSession) -> SystemMetricSnapshot:
         process_rss_bytes=metrics.get("process_rss_bytes"),
         db_ping_ms=metrics.get("db_ping_ms"),
         db_size_bytes=metrics.get("db_size_bytes"),
+        code_interpreter_active=metrics.get("code_interpreter_active"),
+        code_interpreter_rejected_total=metrics.get("code_interpreter_rejected_total"),
     )
     db.add(row)
     await db.commit()
@@ -496,6 +498,87 @@ def _build_snapshot_chart(
     return chart_rows, segments
 
 
+def _build_capacity_chart(
+    snapshots: list[SystemMetricSnapshot],
+    *,
+    tr: OpsTimeRange,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, int]:
+    """Code Interpreter leases held, and turns refused, over the window.
+
+    Two series of different kinds, which is why this does not go through
+    ``_build_snapshot_chart``. ``code_interpreter_active`` is a gauge and is
+    averaged per bucket like CPU. ``code_interpreter_rejected_total`` is a
+    running total, and averaging a counter is meaningless - the bucket value is
+    the rise across it, measured from the last reading before the bucket so no
+    rejection falls between two buckets.
+
+    A counter that goes backwards means Redis was restarted or flushed. The
+    step is clamped at zero rather than drawn as a negative spike: the count
+    before the restart is genuinely lost, and inventing it would be worse.
+
+    Returns (rows, segments, peak_active, rejected_in_window).
+    """
+    in_window = [s for s in snapshots if s.recorded_at is not None and tr.since <= _naive_utc(s.recorded_at) < tr.until]
+    by_bucket: dict[str, list[SystemMetricSnapshot]] = defaultdict(list)
+    for s in in_window:
+        by_bucket[_bucket_key_ts(_naive_utc(s.recorded_at), tr.bucket_seconds)].append(s)
+
+    # Last cumulative reading strictly before the window, so the first bucket
+    # counts the rejections that happened inside it rather than since boot.
+    carried: int | None = None
+    for s in snapshots:
+        if s.recorded_at is None or s.code_interpreter_rejected_total is None:
+            continue
+        if _naive_utc(s.recorded_at) < tr.since:
+            carried = int(s.code_interpreter_rejected_total)
+
+    rows: list[dict[str, Any]] = []
+    peak_active = 0
+    rejected_total = 0
+    active_samples: list[float] = []
+    for start in _bucket_starts(tr):
+        bucket = sorted(
+            by_bucket.get(_bucket_key_ts(start, tr.bucket_seconds), []),
+            key=lambda row: _naive_utc(row.recorded_at),
+        )
+        actives = [float(r.code_interpreter_active) for r in bucket if r.code_interpreter_active is not None]
+        active_samples.extend(actives)
+        peak_active = max(peak_active, int(max(actives)) if actives else 0)
+
+        counters = [
+            int(r.code_interpreter_rejected_total) for r in bucket if r.code_interpreter_rejected_total is not None
+        ]
+        rejected = 0
+        if counters:
+            last = counters[-1]
+            rejected = max(0, last - carried) if carried is not None else 0
+            carried = last
+        rejected_total += rejected
+        rows.append(
+            {
+                "label": _bucket_label_ts(start, tr.bucket_seconds),
+                "code_interpreter_active": round(_avg(actives), 2),
+                "code_interpreter_rejected": rejected,
+            }
+        )
+
+    segments = [
+        {
+            "key": "code_interpreter_active",
+            "label": "Turns running",
+            "color": OPS_COLORS["host"],
+            "value": round(_avg(active_samples), 2),
+        },
+        {
+            "key": "code_interpreter_rejected",
+            "label": "Refused (429)",
+            "color": OPS_COLORS["ping"],
+            "value": rejected_total,
+        },
+    ]
+    return rows, segments, peak_active, rejected_total
+
+
 async def get_operations_dashboard(
     db: AsyncSession,
     *,
@@ -546,6 +629,21 @@ async def get_operations_dashboard(
         tr=tr,
         fields=(("db_ping_ms", "DB ping"),),
     )
+    # The capacity series needs the reading before the window to turn the
+    # running rejection total into a per-bucket count, so it is charted from a
+    # query of its own rather than the window-bounded ``snapshots`` above.
+    capacity_history = (
+        (
+            await db.execute(
+                select(SystemMetricSnapshot)
+                .where(SystemMetricSnapshot.recorded_at < tr.until)
+                .order_by(SystemMetricSnapshot.recorded_at.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    ci_chart, ci_segments, ci_peak, ci_rejected = _build_capacity_chart(capacity_history, tr=tr)
 
     host_cpu = float(latest.host_cpu_percent or 0) if latest else 0
     host_mem = float(latest.host_memory_percent or 0) if latest else 0
@@ -588,6 +686,14 @@ async def get_operations_dashboard(
                 "segments": ping_segments,
                 "chart": ping_chart,
                 "footer": {"label": "DB size", "value": db_size},
+            },
+            "code_interpreter": {
+                "title": "Code Interpreter",
+                "total": ci_peak,
+                "unit": "peak turns",
+                "segments": ci_segments,
+                "chart": ci_chart,
+                "footer": {"label": f"Refused ({tr.period_short})", "value": ci_rejected, "suffix": ""},
             },
             "errors": traffic["errors"],
             "latency": traffic["latency"],

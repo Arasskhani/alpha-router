@@ -215,10 +215,14 @@ backend-audit:
     - changes:
         - backend/requirements.txt
         - backend/requirements.lock
+        - sandbox/requirements.txt
+        - sandbox-broker/requirements.txt
         - .gitlab-ci.yml
   script:
     - python -m pip install --no-cache-dir pip-audit
-    - pip-audit --no-deps -r backend/requirements.lock -f json -o pip-audit.json || audit_status=$?
+    # All three images, not only the API: the sandbox runs user-supplied code
+    # against numpy/pandas/reportlab, which is the set most worth auditing.
+    - pip-audit --no-deps -r backend/requirements.lock -r sandbox/requirements.txt -r sandbox-broker/requirements.txt -f json -o pip-audit.json || audit_status=$?
     - test -f pip-audit.json
     - cat pip-audit.json
     - |

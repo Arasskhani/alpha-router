@@ -12,7 +12,7 @@ RUN apt-get update \
 # Data libraries commonly used by the interpreter. Kept small on purpose;
 # every version (transitive ones included) is pinned in requirements.txt.
 COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt && rm /tmp/requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements.txt && rm /tmp/requirements.txt
 
 # Runner lives at a fixed path; workspace is a writable tmpfs at runtime.
 COPY runner.py /opt/runner.py

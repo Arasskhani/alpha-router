@@ -1,6 +1,7 @@
 """Monthly budget resolution, usage aggregation, and calendar reset."""
 
 import datetime
+import logging
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +10,8 @@ from app.models.budget import BudgetPlan, PlanAssignment
 from app.models.cost_accounting import LedgerEntry
 from app.models.logging import RequestLog
 from app.models.user import User, user_group_members
+
+logger = logging.getLogger("app.services.budget")
 
 NO_PLAN_BUDGET_DETAIL = (
     "No budget plan is assigned to your account. "
@@ -301,27 +304,104 @@ async def ensure_budget_period(db: AsyncSession, user: User) -> None:
     await db.flush()
 
 
+#: Users per transaction in the monthly reset. Small enough that the locks
+#: ``release_open_holds_for_subject`` takes are held briefly, large enough that
+#: a big directory is not thousands of round trips.
+MONTHLY_RESET_BATCH_SIZE = 500
+
+
+def _apply_period_reset(user: User, *, period_start: datetime.datetime, monthly_budget: float) -> None:
+    user.budget_used_usd = 0.0
+    user.budget_reserved_usd = 0.0
+    user.budget_period_start = period_start
+    user.monthly_budget_usd = monthly_budget
+
+
+async def _reset_batch_individually(
+    db: AsyncSession,
+    user_ids: list[int],
+    *,
+    period_start: datetime.datetime,
+) -> int:
+    """Retry a failed batch one user at a time, so one bad row costs one user.
+
+    The batch has already been rolled back, so every user in it is unreset.
+    Whatever made it fail is almost always one row; the other 499 should not
+    wait a month for the next run.
+    """
+
+    from app.services import budget_reservation_service as reservations
+
+    reset = 0
+    for user_id in user_ids:
+        user = await db.get(User, user_id)
+        if user is None:
+            continue
+        try:
+            await reservations.release_open_holds_for_subject(db, reservations.SUBJECT_USER, user_id)
+            _apply_period_reset(
+                user,
+                period_start=period_start,
+                monthly_budget=await resolve_monthly_budget(db, user),
+            )
+            await db.commit()
+            reset += 1
+        except Exception:
+            await db.rollback()
+            logger.exception("Monthly budget reset failed for user %s", user_id)
+    return reset
+
+
 async def reset_all_monthly_budgets(db: AsyncSession) -> int:
     """Called at 00:05 UTC on the 1st of each month by the scheduler.
 
     No ``now.day != 1`` guard: the cron trigger (UTC, with misfire grace) is
     the authority on *when*. The guard used to turn a run that fired a few
     minutes late - or fired in a non-UTC server zone - into a silent no-op.
+
+    Done in committed batches, keyset by id. It used to load every user and
+    commit once at the end, which meant one transaction holding a lock on
+    every user row for the length of the run, and - worse - nobody reset if
+    anything raised. A user whose ``budget_used_usd`` was not cleared is over
+    budget for the whole month, and the next attempt is thirty days away.
     """
     now = datetime.datetime.utcnow()
-    from app.services.budget_reservation_service import (
-        SUBJECT_USER,
-        release_open_holds_for_subject,
-    )
+    period_start = datetime.datetime(now.year, now.month, 1)
 
-    users = (await db.execute(select(User))).scalars().all()
+    from app.services import budget_reservation_service as reservations
+
     count = 0
-    for u in users:
-        await release_open_holds_for_subject(db, SUBJECT_USER, int(u.id))
-        u.budget_used_usd = 0.0
-        u.budget_reserved_usd = 0.0
-        u.budget_period_start = datetime.datetime(now.year, now.month, 1)
-        u.monthly_budget_usd = await resolve_monthly_budget(db, u)
-        count += 1
-    await db.commit()
+    last_id = 0
+    while True:
+        users = (
+            (await db.execute(select(User).where(User.id > last_id).order_by(User.id).limit(MONTHLY_RESET_BATCH_SIZE)))
+            .scalars()
+            .all()
+        )
+        if not users:
+            break
+        batch_ids = [int(user.id) for user in users]
+        last_id = batch_ids[-1]
+
+        try:
+            # One set of queries for the whole batch instead of three or four
+            # per user.
+            budgets = await resolve_monthly_budgets_batch(db, list(users))
+            for user in users:
+                await reservations.release_open_holds_for_subject(db, reservations.SUBJECT_USER, int(user.id))
+                _apply_period_reset(
+                    user,
+                    period_start=period_start,
+                    monthly_budget=float(budgets.get(int(user.id), 0.0)),
+                )
+            await db.commit()
+            count += len(users)
+        except Exception:
+            await db.rollback()
+            logger.exception("Monthly budget reset batch failed; retrying it one user at a time")
+            count += await _reset_batch_individually(db, batch_ids, period_start=period_start)
+
+        if len(users) < MONTHLY_RESET_BATCH_SIZE:
+            break
+
     return count

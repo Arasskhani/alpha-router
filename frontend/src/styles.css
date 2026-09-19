@@ -3699,6 +3699,35 @@ table.data-table--api-logs {
   font-size: 0.85rem;
 }
 
+/* Code Interpreter settings. The switch reads as one statement — state on the
+   left, the act on the right — rather than a form field pretending to be one. */
+.code-interpreter-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+}
+
+.code-interpreter-switch p {
+  margin: 0.25rem 0 0;
+  max-width: 60ch;
+}
+
+.code-interpreter-form {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+}
+
+.code-interpreter-form label {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 10rem;
+  font-size: 0.85rem;
+}
+
 .operations-slow-models h3 {
   margin-top: 0;
 }

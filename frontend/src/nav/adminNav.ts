@@ -20,6 +20,7 @@ export const adminNavSections: NavSection[] = [
     items: [
       { to: "/admin", label: "Dashboard", menuKey: "dashboard" },
       { to: "/admin/operations", label: "Operations", menuKey: "operations" },
+      { to: "/admin/code-interpreter", label: "Code Interpreter", menuKey: "operations" },
       { to: "/admin/database", label: "Database", menuKey: "database" },
     ],
   },

@@ -187,7 +187,7 @@ MENU_PATH_PREFIXES: dict[MenuKey, tuple[str, ...]] = {
         "/admin/logs",
         "/admin/admin-logs",
     ),
-    "operations": ("/admin/operations", "/admin/debug"),
+    "operations": ("/admin/operations", "/admin/debug", "/admin/code-interpreter"),
     "database": ("/admin/database",),
     "agents": (
         "/admin/agents",

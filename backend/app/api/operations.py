@@ -1,6 +1,6 @@
 """Admin Operations dashboard (replaces legacy Debug latency UI)."""
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -174,3 +174,125 @@ async def patch_code_interpreter_capacity(
     policy = await sync_code_interpreter_capacity_policy(db)
     runtime = await code_interpreter_capacity_stats()
     return _capacity_payload(policy, runtime, await _sandbox_broker_capacity())
+
+class CodeInterpreterWorkspacePatch(BaseModel):
+    """The two limits that bound what a turn may carry into the sandbox."""
+
+    max_workspace_files: int = Field(ge=1, le=1000)
+    max_workspace_total_mb: int = Field(ge=1, le=1024)
+
+
+async def _code_interpreter_settings_payload(db: AsyncSession) -> dict:
+    """Everything that governs Code Interpreter, in one answer.
+
+    The three families were spread over three pages and two permissions: the
+    concurrency policy on Operations, the workspace limits on Storage
+    Management, and the deployment ceilings nowhere at all. An operator tuning
+    this feature had to know which page held which half.
+    """
+    from app.config import get_settings
+    from app.services.code_interpreter_capacity_service import (
+        code_interpreter_capacity_stats,
+        get_code_interpreter_capacity_policy,
+    )
+    from app.services.transfer_limits_service import get_transfer_limits
+
+    settings = get_settings()
+    policy = await get_code_interpreter_capacity_policy(db)
+    limits = await get_transfer_limits(db)
+    broker = await _sandbox_broker_capacity()
+    try:
+        runtime = await code_interpreter_capacity_stats()
+    except Exception:  # noqa: BLE001 -- the settings page must open during a Redis outage
+        runtime = {"active": 0, "limit": policy["global_max"], "available": policy["global_max"]}
+
+    return {
+        "policy": {
+            "enabled": bool(policy["enabled"]),
+            "max_concurrent_turns": policy["global_max"],
+            "max_per_subject": policy["per_subject_max"],
+            "retry_after_seconds": policy["retry_after_seconds"],
+        },
+        "workspace": {
+            "max_workspace_files": int(limits["max_code_interpreter_workspace_files"]),
+            "max_workspace_total_mb": int(limits["max_code_interpreter_workspace_total_mb"]),
+        },
+        #: Read-only here on purpose: each one is fixed when the containers are
+        #: built, and naming the variable is the only useful thing this page can
+        #: say about it.
+        "deployment": {
+            "hard_max_concurrent_turns": {
+                "value": policy["hard_global_max"],
+                "env": "CODE_INTERPRETER_CAPACITY_GLOBAL_MAX",
+            },
+            "lease_ttl_seconds": {
+                "value": policy["lease_ttl_seconds"],
+                "env": "CODE_INTERPRETER_CAPACITY_LEASE_TTL_SECONDS",
+            },
+            "heartbeat_seconds": {
+                "value": policy["heartbeat_seconds"],
+                "env": "CODE_INTERPRETER_CAPACITY_HEARTBEAT_SECONDS",
+            },
+            "execution_timeout_seconds": {
+                "value": int(settings.code_sandbox_timeout_seconds or 20),
+                "env": "CODE_SANDBOX_TIMEOUT_SECONDS",
+            },
+            "broker_max_concurrent": {
+                "value": broker.get("max_concurrent") if broker.get("status") == "ok" else None,
+                "env": "SANDBOX_MAX_CONCURRENT",
+            },
+        },
+        "effective": _effective_capacity(policy, runtime, broker),
+        "broker": broker,
+    }
+
+
+@router.get("/code-interpreter-settings")
+async def get_code_interpreter_settings(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_operations),
+) -> dict:
+    return await _code_interpreter_settings_payload(db)
+
+
+@router.patch("/code-interpreter-workspace")
+async def patch_code_interpreter_workspace(
+    body: CodeInterpreterWorkspacePatch,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_operations_write),
+) -> dict:
+    """The workspace ceilings, from the page that owns Code Interpreter.
+
+    The same two values are still writable from Storage Management, which is
+    where they used to live alone; both paths clamp through
+    ``set_transfer_limits`` and both are audited, so whichever an operator uses
+    the trail reads the same.
+    """
+    from app.services.client_ip import resolve_client_ip
+    from app.services.security_audit import log_security_event
+    from app.services.transfer_limits_service import get_transfer_limits, set_transfer_limits
+
+    before = await get_transfer_limits(db)
+    try:
+        after = await set_transfer_limits(
+            db,
+            max_code_interpreter_workspace_files=body.max_workspace_files,
+            max_code_interpreter_workspace_total_mb=body.max_workspace_total_mb,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    keys = ("max_code_interpreter_workspace_files", "max_code_interpreter_workspace_total_mb")
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=resolve_client_ip(request),
+        action="code_interpreter_workspace_changed",
+        resource_type="code_interpreter",
+        detail={
+            "before": {key: before.get(key) for key in keys},
+            "after": {key: after.get(key) for key in keys},
+        },
+    )
+    await db.commit()
+    return await _code_interpreter_settings_payload(db)

@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import AdminPage from "../../components/AdminPage";
 import { api } from "../../api";
 import { useConfirm } from "../../context/ConfirmContext";
@@ -385,6 +386,11 @@ export default function StorageManagement() {
           files in one message. Maximum files per upload is how many files a user may select at once. Code Interpreter
           workspace limits cover files from the whole conversation turn. ZIP download is the combined size of selected
           Media files.
+        </p>
+        <p className="muted-text">
+          The two Code Interpreter workspace limits below also appear on{" "}
+          <Link to="/admin/code-interpreter">Code Interpreter</Link>, beside the concurrency limits they work with.
+          They are one setting seen from two places; saving in either changes the same value.
         </p>
 
         <label htmlFor="max-upload-file-mb">Maximum upload size (MB)</label>

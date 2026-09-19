@@ -2551,9 +2551,9 @@ export const docSections: DocSection[] = [
         <h3>The administrator name is a copy, not a join</h3>
         <p>
           Each row stores the administrator&apos;s username and email as they were at the time of the action, alongside
-          the user id. The foreign key is <code>ON DELETE SET NULL</code> and permanently deleting a user really does
-          remove the row, so a trail that only referenced the id used to anonymise every action that person had ever
-          taken the moment their account was deleted — the entry survived, but the answer to &ldquo;who&rdquo; did not.
+          the user id. Permanently deleting an account empties its row rather than removing it — four append-only audit
+          tables reference it — but the name and address are cleared, so a trail that only referenced the id would still
+          lose the answer to &ldquo;who&rdquo; the moment the account was purged.
           Rows written before this page shipped carry only the id. For those the name is looked up live against the
           account — including a soft-deleted one, so a disabled administrator is still named — and only a{" "}
           <em>permanently</em> deleted account leaves nothing but the id to show. Filtering by an administrator matches
@@ -2561,12 +2561,19 @@ export const docSections: DocSection[] = [
         </p>
         <h3>What is and is not in the trail</h3>
         <p>
-          The trail covers the actions that were instrumented as security-sensitive: TLS certificate upload, activation
-          and deletion; admin IP allowlist changes; connection and gateway API key deletion; model access changes;
-          password resets and administrative 2FA disable; permanent user deletion, singly and in bulk; clearing all
-          media or all request logs; retention window changes; and rejected SAML responses. It is not a record of every
-          administrative change — plans, groups, auth providers and SMTP settings, among others, are not yet
-          instrumented.
+          The trail covers the actions that were instrumented as security-sensitive: <strong>role and privilege
+          changes</strong>, recorded with the roles held before and after; <strong>sign-ins</strong> — success, failure
+          with the reason, and logout, each with the resolved client address; TLS certificate upload, activation and
+          deletion; admin IP allowlist changes; connection and gateway API key deletion; model access changes; password
+          resets and administrative 2FA disable; user soft delete, restore and permanent deletion, singly and in bulk;
+          clearing all media or all request logs; retention window changes; and rejected SAML responses.
+        </p>
+        <p>
+          It is <strong>not</strong> a record of every administrative change, and the page does not pretend otherwise:
+          plans, groups, identity-provider configuration and SMTP settings, among others, are not yet instrumented.
+          Several domains also keep their own separate trails — Agents, Knowledge, governance and projects each write
+          to their own append-only table, readable on their own pages — so this page is the security trail rather than
+          a single union of everything the platform records.
         </p>
         <Warn>
           Read the absence of an entry as &ldquo;this action is not instrumented&rdquo;, not as &ldquo;this did not

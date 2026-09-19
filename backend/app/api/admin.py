@@ -1305,10 +1305,26 @@ def _apply_user_list_filters(
                 PlanAssignment.plan_id == plan_id,
             )
         )
+        # A department plan applies only when no group the user belongs to
+        # carries a plan - the same precedence resolve_inherited_plans_batch
+        # applies. Without this clause the query said "matches" for a user
+        # whose group gives them B and whose department gives A, and a Python
+        # pass had to take the row back out afterwards.
+        any_group_plan = exists(
+            select(user_group_members.c.user_id).where(
+                user_group_members.c.user_id == User.id,
+                exists(
+                    select(PlanAssignment.id).where(
+                        PlanAssignment.group_id == user_group_members.c.group_id,
+                        PlanAssignment.plan_id.isnot(None),
+                    )
+                ),
+            )
+        )
         stmt = stmt.where(
             or_(
                 direct_assigned,
-                and_(~has_user_plan_row, or_(inherit_via_group, inherit_via_department)),
+                and_(~has_user_plan_row, or_(inherit_via_group, and_(~any_group_plan, inherit_via_department))),
             )
         )
     elif no_plan:
@@ -1403,27 +1419,6 @@ def _effective_plan_id(user_id: int, plan_state: dict[int, dict], inherited_plan
     inherited = inherited_plans.get(user_id) or {}
     plan_id = inherited.get("inherited_plan_id")
     return int(plan_id) if plan_id is not None else None
-
-
-def _filter_users_by_effective_plan(
-    users: list[User],
-    *,
-    plan_state: dict[int, dict],
-    inherited_plans: dict[int, dict],
-    plan_id: int | None,
-    no_plan: bool,
-) -> list[User]:
-    if plan_id is None and not no_plan:
-        return users
-    matched: list[User] = []
-    for user in users:
-        effective_id = _effective_plan_id(user.id, plan_state, inherited_plans)
-        if no_plan:
-            if effective_id is None:
-                matched.append(user)
-        elif effective_id == plan_id:
-            matched.append(user)
-    return matched
 
 
 def _admin_user_export_plan_name(row: dict) -> str:
@@ -1589,15 +1584,10 @@ async def _list_admin_user_dicts(
     from app.services.budget_service import resolve_inherited_plans_batch, resolve_monthly_budgets_batch
 
     inherited_plans = await resolve_inherited_plans_batch(db, users)
-    if not picker and (plan_id is not None or no_plan):
-        users = _filter_users_by_effective_plan(
-            users,
-            plan_state=plan_state,
-            inherited_plans=inherited_plans,
-            plan_id=plan_id,
-            no_plan=no_plan,
-        )
-        user_ids = [u.id for u in users]
+    # The plan filter is decided entirely by the query (_apply_user_list_filters);
+    # test_user_plan_filter_is_sql.py holds the predicate equal to the resolver
+    # over every combination, so nothing is filtered here and a page from the
+    # query is a whole page.
     groups_map: dict[int, list[str]] = {uid: [] for uid in user_ids}
     if user_ids:
         group_rows = (

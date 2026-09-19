@@ -2,6 +2,7 @@
 
 import asyncio
 import csv
+from collections.abc import AsyncIterator
 import io
 from datetime import date, datetime, timedelta
 from typing import Literal
@@ -1446,29 +1447,36 @@ def _admin_user_export_plan_source(row: dict) -> str:
     return "none"
 
 
-def _admin_users_to_csv_bytes(rows: list[dict]) -> bytes:
-    columns = [
-        "Username",
-        "Display Name",
-        "Email",
-        "Groups",
-        "Department",
-        "Office",
-        "Job Title",
-        "Company",
-        "Report To",
-        "Auth",
-        "Roles",
-        "User Plan",
-        "Plan Source",
-        "Budget Used USD",
-        "Monthly Budget USD",
-        "Status",
-        "Last Login At",
-    ]
+_ADMIN_USER_CSV_COLUMNS = [
+    "Username",
+    "Display Name",
+    "Email",
+    "Groups",
+    "Department",
+    "Office",
+    "Job Title",
+    "Company",
+    "Report To",
+    "Auth",
+    "Roles",
+    "User Plan",
+    "Plan Source",
+    "Budget Used USD",
+    "Monthly Budget USD",
+    "Status",
+    "Last Login At",
+]
+
+
+def _admin_users_csv_header() -> str:
     buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=columns, lineterminator="\n")
-    writer.writeheader()
+    csv.DictWriter(buffer, fieldnames=_ADMIN_USER_CSV_COLUMNS, lineterminator="\n").writeheader()
+    return buffer.getvalue()
+
+
+def _admin_users_csv_rows(rows: list[dict]) -> str:
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=_ADMIN_USER_CSV_COLUMNS, lineterminator="\n")
     for row in rows:
         roles = row.get("roles") or []
         writer.writerow(
@@ -1492,7 +1500,16 @@ def _admin_users_to_csv_bytes(rows: list[dict]) -> bytes:
                 "Last Login At": row.get("last_login_at") or "",
             }
         )
-    return ("\ufeff" + buffer.getvalue()).encode("utf-8")
+    return buffer.getvalue()
+
+
+def _admin_users_to_csv_bytes(rows: list[dict]) -> bytes:
+    return ("\ufeff" + _admin_users_csv_header() + _admin_users_csv_rows(rows)).encode("utf-8")
+
+
+#: Users per page when the export streams. Each page is one SQL window plus the
+#: batched plan/group/role lookups for those users only.
+USERS_EXPORT_PAGE_SIZE = 500
 
 
 async def _list_admin_user_dicts(
@@ -1512,8 +1529,18 @@ async def _list_admin_user_dicts(
     plan_id: int | None,
     no_plan: bool,
     cap: int | None = None,
+    after_username: str | None = None,
+    page_size: int | None = None,
+    cursor: dict | None = None,
 ) -> tuple[list[dict], bool]:
-    """``(rows, whether the cap cut the list short)``."""
+    """``(rows, whether the cap cut the list short)``.
+
+    With ``page_size`` the query is a keyset window on ``username`` (unique,
+    indexed, and the list's sort order) starting after ``after_username``;
+    ``cursor`` is filled with the last username fetched and how many rows the
+    window returned before the Python-side filters, so a caller can walk the
+    whole table page by page - the export does.
+    """
 
     from app.services.presence_service import online_user_ids
 
@@ -1539,7 +1566,14 @@ async def _list_admin_user_dicts(
         )
         if cap is not None:
             stmt = capped(stmt, cap=cap)
+        if page_size is not None:
+            if after_username is not None:
+                stmt = stmt.where(User.username > after_username)
+            stmt = stmt.limit(page_size)
         users = list((await db.execute(stmt)).scalars().all())
+    if cursor is not None:
+        cursor["raw_count"] = len(users)
+        cursor["last_username"] = users[-1].username if users else after_username
     truncated = False
     if cap is not None:
         users, truncated = split_overflow(users, cap=cap)
@@ -1682,30 +1716,49 @@ async def export_users(
 ):
     if plan_id is not None and no_plan:
         raise HTTPException(400, detail="Specify only one of plan_id or no_plan")
-    # Deliberately uncapped: truncating an export silently is worse than a slow
-    # one, and "give me everything" is what the button says. Streaming it in
-    # batches is the follow-up; a LIMIT here is not.
-    rows, _truncated = await _list_admin_user_dicts(
-        db,
-        q=q,
-        username=username,
-        email=email,
-        department=department,
-        job_title=job_title,
-        role=role,
-        is_active=is_active,
-        group_id=group_id,
-        user_id=None,
-        online=online,
-        picker=False,
-        plan_id=plan_id,
-        no_plan=no_plan,
-    )
-    content = _admin_users_to_csv_bytes(rows)
+
+    # Uncapped - "give me everything" is what the button says - but streamed:
+    # one page of users at a time through the same builder the list uses, so
+    # the whole directory is never held in memory as dicts plus a CSV string.
+    # The client sees the first rows while the last are still being read.
+    async def pages() -> AsyncIterator[bytes]:
+        yield ("\ufeff" + _admin_users_csv_header()).encode("utf-8")
+        after: str | None = None
+        while True:
+            cursor: dict[str, object] = {}
+            rows, _ = await _list_admin_user_dicts(
+                db,
+                q=q,
+                username=username,
+                email=email,
+                department=department,
+                job_title=job_title,
+                role=role,
+                is_active=is_active,
+                group_id=group_id,
+                user_id=None,
+                online=online,
+                picker=False,
+                plan_id=plan_id,
+                no_plan=no_plan,
+                after_username=after,
+                page_size=USERS_EXPORT_PAGE_SIZE,
+                cursor=cursor,
+            )
+            if rows:
+                yield _admin_users_csv_rows(rows).encode("utf-8")
+            raw_count = cursor.get("raw_count")
+            if not isinstance(raw_count, int) or raw_count < USERS_EXPORT_PAGE_SIZE:
+                break
+            last = cursor.get("last_username")
+            after = last if isinstance(last, str) else None
+            if after is None:
+                break
+
     stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     filename = f"alpharouter-users-{stamp}.csv"
-    return Response(
-        content=content,
+    return StreamingResponse(
+        pages(),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

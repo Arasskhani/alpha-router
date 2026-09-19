@@ -142,3 +142,14 @@ async def client(session_factory: async_sessionmaker[AsyncSession]):
             yield c
     finally:
         fastapi_app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.fixture(autouse=True)
+def _clear_process_caches():
+    """Module-level caches are global state; no test may inherit another's."""
+
+    from app.api import admin_logs
+
+    admin_logs.reset_filter_options_cache()
+    yield
+    admin_logs.reset_filter_options_cache()

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import time
 from collections.abc import Sequence
 from typing import Any
 
@@ -181,12 +182,36 @@ async def list_admin_logs(
     }
 
 
+#: How long the filter panel's answer is reused. The values behind it are a
+#: handful of action names, resource types and administrator names, and they
+#: change when somebody is given a role - not between two clicks. Without this
+#: every open of the panel is four DISTINCT scans of the whole audit table.
+FILTER_OPTIONS_CACHE_TTL_SECONDS = 60
+
+_filter_options_cache: tuple[float, dict[str, list[str]]] | None = None
+
+
+def reset_filter_options_cache() -> None:
+    """Drop the cached panel. Called by tests; harmless in production."""
+
+    global _filter_options_cache
+    _filter_options_cache = None
+
+
 @router.get("/filter-options")
 async def admin_log_filter_options(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_api_logs),
 ) -> dict[str, list[str]]:
     """Distinct values for the comboboxes, so an operator picks rather than guesses."""
+    global _filter_options_cache
+
+    now = time.monotonic()
+    if _filter_options_cache is not None:
+        cached_at, cached = _filter_options_cache
+        if now - cached_at < FILTER_OPTIONS_CACHE_TTL_SECONDS:
+            return cached
+
     actions = (
         (await db.execute(select(SecurityAuditEvent.action).distinct().order_by(SecurityAuditEvent.action)))
         .scalars()
@@ -233,8 +258,10 @@ async def admin_log_filter_options(
         .scalars()
         .all()
     )
-    return {
+    options = {
         "actions": [a for a in actions if a],
         "resource_types": [r for r in resources if r],
         "actors": sorted({a for a in [*recorded, *legacy] if a}),
     }
+    _filter_options_cache = (now, options)
+    return options

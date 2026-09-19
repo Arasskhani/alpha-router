@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
@@ -192,47 +192,91 @@ async def append_governance_audit_event(
     return event
 
 
+#: Events read per round trip when verifying the chain. The chain is
+#: append-only by design and nothing ever trims it, so the table only grows:
+#: reading it whole put the endpoint's memory cost on a curve with no ceiling.
+#: The walk must stay in order - each hash covers its predecessor - but in
+#: order does not mean all at once.
+CHAIN_VERIFY_BATCH_SIZE = 1000
+
+_CHAIN_COLUMNS = (
+    GovernanceAuditEvent.id,
+    GovernanceAuditEvent.event_type,
+    GovernanceAuditEvent.resource_type,
+    GovernanceAuditEvent.resource_id,
+    GovernanceAuditEvent.actor_user_id,
+    GovernanceAuditEvent.outcome,
+    GovernanceAuditEvent.payload_json,
+    GovernanceAuditEvent.previous_event_hash,
+    GovernanceAuditEvent.event_hash,
+    GovernanceAuditEvent.created_at,
+)
+
+
 async def verify_governance_audit_chain(
     db: AsyncSession,
 ) -> AuditChainVerification:
-    rows = (
-        (
-            await db.execute(
-                select(GovernanceAuditEvent).order_by(
-                    GovernanceAuditEvent.created_at,
-                    GovernanceAuditEvent.id,
+    """Walk the whole chain in bounded pages, hashing each event against the last."""
+
+    event_count = int((await db.execute(select(func.count()).select_from(GovernanceAuditEvent))).scalar_one() or 0)
+
+    previous_hash: str | None = None
+    cursor: tuple[datetime.datetime, str] | None = None
+    while True:
+        # Keyset, not OFFSET: the ordering columns are indexed and the cost of
+        # page n does not grow with n.
+        statement = (
+            select(*_CHAIN_COLUMNS)
+            .order_by(GovernanceAuditEvent.created_at, GovernanceAuditEvent.id)
+            .limit(CHAIN_VERIFY_BATCH_SIZE)
+        )
+        if cursor is not None:
+            last_created_at, last_id = cursor
+            # Spelled out rather than as a row comparison: SQLite and
+            # PostgreSQL both understand this form.
+            statement = statement.where(
+                or_(
+                    GovernanceAuditEvent.created_at > last_created_at,
+                    and_(
+                        GovernanceAuditEvent.created_at == last_created_at,
+                        GovernanceAuditEvent.id > last_id,
+                    ),
                 )
             )
-        )
-        .scalars()
-        .all()
-    )
-    previous_hash: str | None = None
-    for row in rows:
-        expected = hashlib.sha256(
-            _canonical_event_payload(
-                event_id=row.id,
-                event_type=row.event_type,
-                resource_type=row.resource_type,
-                resource_id=row.resource_id,
-                actor_user_id=row.actor_user_id,
-                outcome=row.outcome,
-                payload=dict(row.payload_json or {}),
-                previous_event_hash=previous_hash,
-                created_at=row.created_at,
-            )
-        ).hexdigest()
-        if row.previous_event_hash != previous_hash or row.event_hash != expected:
-            return AuditChainVerification(
-                valid=False,
-                event_count=len(rows),
-                first_invalid_event_id=row.id,
-                head_hash=previous_hash,
-            )
-        previous_hash = row.event_hash
+        rows = (await db.execute(statement)).all()
+        if not rows:
+            break
+
+        for row in rows:
+            expected = hashlib.sha256(
+                _canonical_event_payload(
+                    event_id=row.id,
+                    event_type=row.event_type,
+                    resource_type=row.resource_type,
+                    resource_id=row.resource_id,
+                    actor_user_id=row.actor_user_id,
+                    outcome=row.outcome,
+                    payload=dict(row.payload_json or {}),
+                    previous_event_hash=previous_hash,
+                    created_at=row.created_at,
+                )
+            ).hexdigest()
+            if row.previous_event_hash != previous_hash or row.event_hash != expected:
+                return AuditChainVerification(
+                    valid=False,
+                    event_count=event_count,
+                    first_invalid_event_id=row.id,
+                    head_hash=previous_hash,
+                )
+            previous_hash = row.event_hash
+
+        if len(rows) < CHAIN_VERIFY_BATCH_SIZE:
+            break
+        cursor = (rows[-1].created_at, rows[-1].id)
+
     return AuditChainVerification(
         valid=True,
-        event_count=len(rows),
+        event_count=event_count,
         first_invalid_event_id=None,
         head_hash=previous_hash,
     )

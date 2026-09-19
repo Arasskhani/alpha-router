@@ -123,9 +123,7 @@ def test_the_session_settings_are_issued_inside_alembic_s_own_transaction():
         if isinstance(node, ast.Attribute) and node.attr == "exec_driver_sql"
     }
     everywhere = {
-        node.lineno
-        for node in ast.walk(function)
-        if isinstance(node, ast.Attribute) and node.attr == "exec_driver_sql"
+        node.lineno for node in ast.walk(function) if isinstance(node, ast.Attribute) and node.attr == "exec_driver_sql"
     }
     assert everywhere, "no session settings are applied at all"
     assert everywhere == inside, "a statement runs before alembic opens its transaction"

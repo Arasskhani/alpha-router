@@ -135,6 +135,51 @@ async def record_knowledge_audit(
     return event
 
 
+async def _existing_version_for_digest(
+    db: AsyncSession,
+    *,
+    knowledge_base_id: str,
+    canonical: str,
+    digest: str,
+) -> KnowledgeDocumentVersion | None:
+    """The version these exact bytes were already stored as, if there is one."""
+
+    return (
+        (
+            await db.execute(
+                select(KnowledgeDocumentVersion)
+                .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeDocumentVersion.document_id)
+                .where(
+                    KnowledgeDocument.knowledge_base_id == knowledge_base_id,
+                    KnowledgeDocument.canonical_key == canonical,
+                    KnowledgeDocumentVersion.sha256 == digest,
+                )
+                .order_by(KnowledgeDocumentVersion.version_number.desc())
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+
+async def _duplicate_submission(db: AsyncSession, version: KnowledgeDocumentVersion) -> DocumentSubmission:
+    document = await db.get(KnowledgeDocument, version.document_id)
+    job = (
+        await db.execute(
+            select(IngestionJob)
+            .where(
+                IngestionJob.document_version_id == version.id,
+                IngestionJob.job_type == DOCUMENT_PROCESS_JOB,
+            )
+            .order_by(IngestionJob.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    assert document is not None
+    return DocumentSubmission(document, version, job, True)
+
+
 async def submit_document_bytes(
     db: AsyncSession,
     *,
@@ -168,6 +213,29 @@ async def submit_document_bytes(
     )
     digest = plaintext_sha256(data)
     canonical = _safe_canonical_key(canonical_key or safe_name)
+
+    # Before anything expensive: these exact bytes may already be stored.
+    already = await _existing_version_for_digest(
+        db, knowledge_base_id=knowledge_base_id, canonical=canonical, digest=digest
+    )
+    if already is not None:
+        return await _duplicate_submission(db, already)
+
+    # Encrypt and upload *before* taking the lock. The lock serialises version
+    # numbering - three quick statements - and used to be held across the whole
+    # upload as well, together with a row lock on the document and this
+    # connection: hundreds of megabytes over a network that can stall, with
+    # every other writer to this canonical key waiting behind it.
+    version_id = str(uuid.uuid4())
+    storage_key = _quarantine_key(knowledge_base_id, version_id)
+    store = object_store or default_knowledge_object_store()
+    encrypted = await asyncio.to_thread(
+        encrypt_bytes,
+        data,
+        associated_data=_object_aad(version_id),
+    )
+    await store.put(storage_key, encrypted)
+
     if db.get_bind().dialect.name == "postgresql":
         lock_digest = hashlib.sha256(f"{knowledge_base_id}\0{canonical}".encode()).digest()
         lock_key = int.from_bytes(lock_digest[:8], "big", signed=True)
@@ -175,6 +243,22 @@ async def submit_document_bytes(
             sql_text("SELECT pg_advisory_xact_lock(:lock_key)"),
             {"lock_key": lock_key},
         )
+
+    # Authoritative, now that nobody else can be numbering a version for this
+    # key. Uploading first means a lost race leaves bytes nothing references,
+    # so hand them to the purge job rather than to the storage bill.
+    already = await _existing_version_for_digest(
+        db, knowledge_base_id=knowledge_base_id, canonical=canonical, digest=digest
+    )
+    if already is not None:
+        await _schedule_purge(
+            db,
+            knowledge_base_id=knowledge_base_id,
+            document_version_id=None,
+            storage_key=storage_key,
+            purpose="orphaned_upload",
+        )
+        return await _duplicate_submission(db, already)
 
     document = (
         await db.execute(
@@ -185,27 +269,6 @@ async def submit_document_bytes(
         )
     ).scalar_one_or_none()
     if document is not None:
-        existing = (
-            await db.execute(
-                select(KnowledgeDocumentVersion).where(
-                    KnowledgeDocumentVersion.document_id == document.id,
-                    KnowledgeDocumentVersion.sha256 == digest,
-                )
-            )
-        ).scalar_one_or_none()
-        if existing is not None:
-            job = (
-                await db.execute(
-                    select(IngestionJob)
-                    .where(
-                        IngestionJob.document_version_id == existing.id,
-                        IngestionJob.job_type == DOCUMENT_PROCESS_JOB,
-                    )
-                    .order_by(IngestionJob.created_at.desc())
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
-            return DocumentSubmission(document, existing, job, True)
         document_statement = select(KnowledgeDocument).where(KnowledgeDocument.id == document.id)
         if db.get_bind().dialect.name == "postgresql":
             document_statement = document_statement.with_for_update()
@@ -235,8 +298,6 @@ async def submit_document_bytes(
         )
         + 1
     )
-    version_id = str(uuid.uuid4())
-    storage_key = _quarantine_key(knowledge_base_id, version_id)
     metadata = {
         "validation": {
             "detected_format": validation.format_name,
@@ -270,14 +331,6 @@ async def submit_document_bytes(
     db.add(version)
     await db.flush()
 
-    store = object_store or default_knowledge_object_store()
-    encrypted = await asyncio.to_thread(
-        encrypt_bytes,
-        data,
-        associated_data=_object_aad(version_id),
-    )
-    await store.put(storage_key, encrypted)
-
     job = await enqueue_knowledge_job(
         db,
         knowledge_base_id=knowledge_base_id,
@@ -306,7 +359,7 @@ async def _schedule_purge(
     db: AsyncSession,
     *,
     knowledge_base_id: str,
-    document_version_id: str,
+    document_version_id: str | None,
     storage_key: str,
     purpose: str,
 ) -> None:

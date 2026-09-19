@@ -247,6 +247,31 @@ async def job_chat_retention_cleanup():
             logger.exception("Chat retention cleanup failed")
 
 
+async def job_request_log_retention():
+    """Trim ``request_logs`` to its retention window.
+
+    The only table in the product that never had a retention job, and the one
+    that grows fastest - one row per API call. Without this the API Logs page
+    gets slower forever and the database grows without bound on an installation
+    nobody is watching.
+    """
+
+    async with AsyncSessionLocal() as db:
+        from app.services.request_log_retention_service import purge_expired_request_logs
+
+        try:
+            result = await purge_expired_request_logs(db)
+            if result["rows_deleted"]:
+                logger.info(
+                    "Request log retention: %s rows deleted (>%sd)",
+                    result["rows_deleted"],
+                    result["retention_days"],
+                )
+        except Exception:
+            await db.rollback()
+            logger.exception("Request log retention failed")
+
+
 async def job_admin_log_retention():
     """Apply the administrative audit trail's two retention windows.
 
@@ -473,6 +498,19 @@ def start_scheduler():
         minute=25,
         timezone=get_server_timezone(),
         id="admin_log_retention",
+    )
+    # After the admin log pass, and out of hours: this is the biggest table in
+    # the product and the first run on an installation that has never had
+    # retention will have a lot to remove.
+    scheduler.add_job(
+        job_request_log_retention,
+        "cron",
+        hour=4,
+        minute=45,
+        timezone=get_server_timezone(),
+        id="request_log_retention",
+        max_instances=1,
+        coalesce=True,
     )
     scheduler.add_job(
         job_user_memory_maintenance,

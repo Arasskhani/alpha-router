@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
 import AdminPage from "../../components/AdminPage";
+import Tabs from "../../components/Tabs";
 import {
   agentStatusTone,
   humanAgentStatus,
@@ -233,33 +234,46 @@ export default function AgentEvaluations() {
           </div>
         </section>
       ) : null}
-      <div className="agent-filter-tabs" role="tablist">
-        {(["readiness", "datasets", "runs"] as const).map((value) => (
-          <button key={value} type="button" className={view === value ? "is-active" : ""} onClick={() => setView(value)}>
-            {humanAgentStatus(value)}
-            <span>{value === "readiness" ? items.length : value === "datasets" ? datasets.length : runs.length}</span>
-          </button>
-        ))}
-      </div>
+      <Tabs
+        className="agent-filter-tabs"
+        idBase="evaluations-view"
+        ariaLabel="Evaluation views"
+        items={(["readiness", "datasets", "runs"] as const).map((value) => ({
+          id: value,
+          label: (
+            <>
+              {humanAgentStatus(value)}
+              <span>{value === "readiness" ? items.length : value === "datasets" ? datasets.length : runs.length}</span>
+            </>
+          ),
+        }))}
+        value={view}
+        onChange={setView}
+        tabClassName={(_id, active) => (active ? "is-active" : "")}
+      />
       {view === "readiness" ? (
         <>
-      <div className="agent-filter-tabs" role="tablist">
-        {(["all", "ready", "attention"] as const).map((value) => (
-          <button
-            key={value}
-            type="button"
-            className={filter === value ? "is-active" : ""}
-            onClick={() => setFilter(value)}
-          >
-            {humanAgentStatus(value)}
-            <span>
-              {value === "all"
-                ? items.length
-                : items.filter((item) => value === "ready" ? item.ready : !item.ready).length}
-            </span>
-          </button>
-        ))}
-      </div>
+      <Tabs
+        className="agent-filter-tabs"
+        idBase="evaluations-filter"
+        ariaLabel="Readiness filter"
+        items={(["all", "ready", "attention"] as const).map((value) => ({
+          id: value,
+          label: (
+            <>
+              {humanAgentStatus(value)}
+              <span>
+                {value === "all"
+                  ? items.length
+                  : items.filter((item) => value === "ready" ? item.ready : !item.ready).length}
+              </span>
+            </>
+          ),
+        }))}
+        value={filter}
+        onChange={setFilter}
+        tabClassName={(_id, active) => (active ? "is-active" : "")}
+      />
       <div className="table-wrap" aria-busy={loading}>
         <table>
           <thead>

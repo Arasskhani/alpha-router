@@ -3,6 +3,7 @@ import AdminPage from "../../components/AdminPage";
 import { api } from "../../api";
 import { useConfirm } from "../../context/ConfirmContext";
 import { useAdminWriteLock } from "../../lib/adminWriteLock";
+import Tabs, { TabPanel } from "../../components/Tabs";
 import { userHasSuperAdminAccess, type SessionRbac } from "../../lib/rbac";
 import {
   canEnableEnforce,
@@ -308,17 +309,19 @@ export default function SecuritySettings() {
         </p>
       )}
 
-      <div className="tabs">
-        <button type="button" className={`tab ${tab === "https" ? "active" : ""}`} onClick={() => setTab("https")}>
-          HTTPS
-        </button>
-        <button type="button" className={`tab ${tab === "ip" ? "active" : ""}`} onClick={() => setTab("ip")}>
-          Admin IP Restrictions
-        </button>
-      </div>
+      <Tabs
+        idBase="security"
+        ariaLabel="Security settings"
+        items={[
+          { id: "https", label: "HTTPS" },
+          { id: "ip", label: "Admin IP Restrictions" },
+        ]}
+        value={tab}
+        onChange={setTab}
+      />
 
       {tab === "https" && (
-        <>
+        <TabPanel idBase="security" id="https">
           <form className="card" onSubmit={uploadCertificate}>
             <h3 style={{ marginTop: 0 }}>Upload certificate</h3>
             <p className="muted-text">PEM (certificate + key, optional chain) or PKCS#12 (.pfx / .p12).</p>
@@ -453,11 +456,11 @@ export default function SecuritySettings() {
               </button>
             </div>
           </form>
-        </>
+        </TabPanel>
       )}
 
       {tab === "ip" && allowlist && (
-        <>
+        <TabPanel idBase="security" id="ip">
           {allowlist.kill_switch && (
             <p className="alert-warning">
               <code>ADMIN_IP_RESTRICTION_DISABLED</code> is set. The allowlist is not enforced.
@@ -548,7 +551,7 @@ export default function SecuritySettings() {
           <p className="muted-text">
             Break-glass: <code>docker compose exec alpha-router python -m app.security_breakglass --disable-admin-ip-restriction</code>
           </p>
-        </>
+        </TabPanel>
       )}
     </AdminPage>
   );

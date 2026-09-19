@@ -3,6 +3,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import AdminPage from "../../components/AdminPage";
 import { api } from "../../api";
 import { useConfirm } from "../../context/ConfirmContext";
+import Tabs, { TabPanel } from "../../components/Tabs";
 
 const LDAPS_PORT = 636;
 const SAML_METADATA_MAX_BYTES = 1024 * 1024;
@@ -402,27 +403,20 @@ export default function Authentication() {
       )}
       {msg && <p className="card">{msg}</p>}
 
-      <div className="tabs">
-        <button type="button" className={`tab ${tab === "ldap" ? "active" : ""}`} onClick={() => setTab("ldap")}>
-          Active Directory
-        </button>
-        <button
-          type="button"
-          className={`tab ${tab === "saml" ? "active" : ""}`}
-          onClick={() => setTab("saml")}
-        >
-          SAML
-        </button>
-        <button
-          type="button"
-          className={`tab ${tab === "oidc" ? "active" : ""}`}
-          onClick={() => setTab("oidc")}
-        >
-          OIDC
-        </button>
-      </div>
+      <Tabs
+        idBase="auth"
+        ariaLabel="Identity providers"
+        items={[
+          { id: "ldap", label: "Active Directory" },
+          { id: "saml", label: "SAML" },
+          { id: "oidc", label: "OIDC" },
+        ]}
+        value={tab}
+        onChange={setTab}
+      />
 
       {tab === "ldap" && (
+        <TabPanel idBase="auth" id="ldap">
         <form className="card" onSubmit={saveLdap}>
           <label>
             <input
@@ -584,9 +578,11 @@ export default function Authentication() {
             </button>
           </div>
         </form>
+        </TabPanel>
       )}
 
       {tab === "saml" && (
+        <TabPanel idBase="auth" id="saml">
         <form className="card" onSubmit={(e) => void saveSaml(e)}>
           <p className="muted-text" style={{ marginTop: 0 }}>
             Alpharouter is a SAML 2.0 Service Provider. Users are created or updated on first successful SSO login (no
@@ -730,9 +726,11 @@ export default function Authentication() {
             </button>
           </div>
         </form>
+        </TabPanel>
       )}
 
       {tab === "oidc" && (
+        <TabPanel idBase="auth" id="oidc">
         <form className="card" onSubmit={saveOidc}>
           <p className="muted-text">
             Generic OpenID Connect (Authorization Code + PKCE). Users are created or updated on first successful SSO
@@ -836,6 +834,7 @@ export default function Authentication() {
             </button>
           </div>
         </form>
+        </TabPanel>
       )}
     </AdminPage>
   );

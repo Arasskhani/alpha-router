@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
 import AdminPage from "../../components/AdminPage";
+import Tabs from "../../components/Tabs";
 import { useConfirm } from "../../context/ConfirmContext";
 import {
   agentStatusTone,
@@ -134,19 +135,23 @@ export default function AgentApprovals() {
       </p>
       {error ? <div className="error" role="alert">{error}</div> : null}
       {flash ? <div className="success">{flash}</div> : null}
-      <div className="agent-filter-tabs" role="tablist">
-        {filters.map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            className={filter === value ? "is-active" : ""}
-            onClick={() => setFilter(value)}
-          >
-            {label}
-            <span>{value === "all" ? items.length : items.filter((item) => item.kind === value).length}</span>
-          </button>
-        ))}
-      </div>
+      <Tabs
+        className="agent-filter-tabs"
+        idBase="approvals"
+        ariaLabel="Approval kinds"
+        items={filters.map(([value, label]) => ({
+          id: value,
+          label: (
+            <>
+              {label}
+              <span>{value === "all" ? items.length : items.filter((item) => item.kind === value).length}</span>
+            </>
+          ),
+        }))}
+        value={filter as (typeof filters)[number][0]}
+        onChange={setFilter}
+        tabClassName={(_id, active) => (active ? "is-active" : "")}
+      />
       <div className="approval-grid" aria-busy={loading}>
         {visible.map((item) => (
           <article className="approval-card" key={`${item.kind}-${item.id}`}>

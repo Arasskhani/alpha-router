@@ -471,7 +471,7 @@ export default function Authentication() {
             </span>
           </label>
 
-          <div className="card" style={{ marginTop: 12, background: "var(--surface-2, transparent)" }}>
+          <div className="card" style={{ marginTop: 12, background: "var(--surface-2)" }}>
             <h3 style={{ marginTop: 0 }}>LDAPS certificate on the directory server</h3>
             <p className="muted-text" style={{ marginTop: 0 }}>
               Alpharouter connects with LDAPS only. Issue a TLS certificate whose subject or SAN matches the

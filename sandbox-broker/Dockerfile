@@ -8,7 +8,14 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 ARG DOCKER_CLI_VERSION=27.3.1
+# sha256 of docker-${DOCKER_CLI_VERSION}.tgz for x86_64. TLS proves who served
+# the tarball, not what is in it; every other binary these images install is
+# hash-verified, and this one now is too. Bumping the version means bumping
+# this; the build refuses a mismatch rather than installing what the mirror
+# served.
+ARG DOCKER_CLI_SHA256=9b4f6fe406e50f9085ee474c451e2bb5adb119a03591f467922d3b4e2ddf31d3
 RUN curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz" -o /tmp/docker.tgz \
+    && echo "${DOCKER_CLI_SHA256}  /tmp/docker.tgz" | sha256sum -c - \
     && tar -xzf /tmp/docker.tgz -C /tmp \
     && mv /tmp/docker/docker /usr/local/bin/docker \
     && chmod +x /usr/local/bin/docker \

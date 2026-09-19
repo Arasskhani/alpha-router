@@ -501,6 +501,62 @@ async def ensure_user_chat_prefs(db: AsyncSession, user_id: int) -> UserChatPref
     return row
 
 
+#: Rows per statement in the startup backfill.
+CHAT_PREFS_BACKFILL_BATCH_SIZE = 5000
+
+
+async def backfill_user_chat_prefs(db: AsyncSession, *, batch_size: int | None = None) -> int:
+    """Create the missing ``user_chat_prefs`` rows in bulk. Returns how many.
+
+    Startup used to call :func:`ensure_user_chat_prefs` once per user, in every
+    uvicorn worker. The row is created on demand anyway - at login, and by
+    every reader of the prefs - so the startup pass is a backfill, and a
+    backfill is a statement, not a loop.
+
+    Committed per batch: this runs while the process is starting and the first
+    requests are already arriving, so it must not hold a long write transaction.
+    """
+
+    import json as _json
+
+    limit = int(batch_size or CHAT_PREFS_BACKFILL_BATCH_SIZE)
+    prefs_json = _json.dumps(_default_prefs())
+    now = dt.datetime.utcnow()
+    dialect = db.bind.dialect.name if db.bind else "postgresql"
+    if dialect == "postgresql":
+        statement = text(
+            """
+            INSERT INTO user_chat_prefs (user_id, prefs, updated_at)
+            SELECT u.id, CAST(:prefs AS JSONB), :now
+            FROM users u
+            WHERE NOT EXISTS (SELECT 1 FROM user_chat_prefs p WHERE p.user_id = u.id)
+            LIMIT :limit
+            ON CONFLICT (user_id) DO NOTHING
+            """
+        )
+    else:
+        statement = text(
+            """
+            INSERT OR IGNORE INTO user_chat_prefs (user_id, prefs, updated_at)
+            SELECT u.id, :prefs, :now
+            FROM users u
+            WHERE NOT EXISTS (SELECT 1 FROM user_chat_prefs p WHERE p.user_id = u.id)
+            LIMIT :limit
+            """
+        )
+
+    created = 0
+    while True:
+        result = await db.execute(statement, {"prefs": prefs_json, "now": now, "limit": limit})
+        inserted = int(result.rowcount or 0)
+        created += inserted
+        if inserted:
+            await db.commit()
+        if inserted < limit:
+            break
+    return created
+
+
 async def ensure_user_chat_store(db: AsyncSession, user_id: int) -> UserChatPrefs:
     """Backward-compatible alias for callers that ensured a chat store row."""
     return await ensure_user_chat_prefs(db, user_id)

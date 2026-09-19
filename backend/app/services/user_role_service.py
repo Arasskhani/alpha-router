@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, false, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User, UserRoleAssignment
@@ -124,6 +124,38 @@ async def count_active_full_administrators(db: AsyncSession) -> int:
         if user_id is not None:
             by_user.setdefault(int(user_id), []).append(slug)
     return sum(1 for slugs in by_user.values() if user_has_super_admin_access(slugs))
+
+
+async def ensure_bootstrap_admin_roles(db: AsyncSession, *, admin_username: str) -> int:
+    """Run ``ensure_super_admin_roles`` over the accounts it can actually change.
+
+    Startup used to run it over every user, in every uvicorn worker: one query
+    for that user's role assignments, per user, per worker. Nothing in
+    ``ensure_super_admin_roles`` can change an account that is neither the
+    bootstrap one nor carrying a legacy admin slug, so those two are the whole
+    candidate set - a handful of rows on any installation.
+
+    Returns the number of accounts examined.
+    """
+
+    legacy = {FULL_ADMIN_SLUG, LEGACY_ADMIN_SLUG}
+    # Normalisation happens in Python, so match on the raw slugs that normalise
+    # to a legacy one rather than guessing at their spelling in SQL. The
+    # distinct set is tiny - one row per role in use.
+    stored_slugs = (await db.execute(select(UserRoleAssignment.role_slug).distinct())).scalars().all()
+    legacy_slugs = [slug for slug in stored_slugs if normalize_role_slug(slug) in legacy]
+
+    holds_legacy_slug = (
+        User.id.in_(select(UserRoleAssignment.user_id).where(UserRoleAssignment.role_slug.in_(legacy_slugs)))
+        if legacy_slugs
+        else false()
+    )
+    candidates = (
+        (await db.execute(select(User).where(or_(User.username == admin_username, holds_legacy_slug)))).scalars().all()
+    )
+    for candidate in candidates:
+        await ensure_super_admin_roles(db, candidate, admin_username=admin_username)
+    return len(candidates)
 
 
 async def ensure_super_admin_roles(db: AsyncSession, user: User, *, admin_username: str) -> None:

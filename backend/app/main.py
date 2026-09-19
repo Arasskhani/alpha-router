@@ -94,7 +94,6 @@ from app.services.scheduler import (
 from app.services.csrf_protection import development_origins as _development_origins
 from app.services.scheduler_leader import SchedulerLeader, install_leader
 from app.services.security_headers import SecurityHeadersMiddleware
-from app.services.user_chat_storage_service import ensure_user_chat_store
 from app.services.video_job_service import start_video_worker, stop_video_worker
 
 settings = get_settings()
@@ -615,11 +614,23 @@ async def lifespan(app: FastAPI):
 
     async with AsyncSessionLocal() as db:
         await asyncio.to_thread(oss.ensure_bucket)
-        from app.services.user_role_service import ensure_super_admin_roles
+        from app.services.user_chat_storage_service import backfill_user_chat_prefs
+        from app.services.user_role_service import ensure_bootstrap_admin_roles
 
-        for row in (await db.execute(select(User))).scalars().all():
-            await ensure_super_admin_roles(db, row, admin_username=settings.admin_username)
-            await ensure_user_chat_store(db, row.id)  # ensures user_chat_prefs row
+        # This used to be a loop over every user - one role query and one
+        # chat-prefs upsert each - and every uvicorn worker ran it. Startup
+        # therefore cost O(users x workers) round trips against a database
+        # that is also serving the first requests.
+        #
+        # An advisory lock for the role pass, as the bootstrap block above uses:
+        # it writes, and the workers reach it together. The prefs backfill does
+        # not need one - it is an anti-join with ON CONFLICT DO NOTHING, so a
+        # worker that loses the race finds nothing left to insert.
+        if db.get_bind().dialect.name == "postgresql":
+            await db.execute(text("SELECT pg_advisory_xact_lock(56023115)"))
+        await ensure_bootstrap_admin_roles(db, admin_username=settings.admin_username)
+        await db.commit()
+        await backfill_user_chat_prefs(db)
         await db.commit()
 
     async with AsyncSessionLocal() as db:

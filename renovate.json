@@ -18,7 +18,7 @@
     {
       "description": "Security-sensitive Python packages are never auto-merged.",
       "matchManagers": ["pip_requirements"],
-      "matchPackageNames": ["python3-saml", "cryptography", "python-jose", "ldap3", "passlib", "bcrypt"],
+      "matchPackageNames": ["python3-saml", "cryptography", "python-jose", "ldap3", "bcrypt"],
       "automerge": false
     },
     {

@@ -19,8 +19,9 @@ redis>=5.2.0
 qdrant-client>=1.19.0
 psutil>=6.1.0
 apscheduler>=3.10.4
-passlib[bcrypt]>=1.7.4
-bcrypt==4.0.1
+# Used directly (no passlib): passlib 1.7.4 is unmaintained, broke on bcrypt>=4.1
+# and imports the stdlib crypt module that Python 3.13 removed.
+bcrypt>=4.1
 python-jose[cryptography]>=3.3.0
 cryptography>=41.0.0
 pyotp>=2.9.0

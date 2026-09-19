@@ -1,25 +1,52 @@
 """Password hashing, API key generation, and JWT helpers."""
 
 import hashlib
+import re
 import secrets
 from datetime import datetime, timedelta
 
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from app.branding import API_KEY_PREFIX
 from app.config import get_settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 settings = get_settings()
+
+#: bcrypt work factor. The same 12 passlib used, so new hashes cost what the
+#: stored ones cost and look the same ($2b$12$...).
+BCRYPT_ROUNDS = 12
+
+#: bcrypt reads at most 72 bytes of the password. passlib truncated silently;
+#: so does this, so a passphrase set before the swap keeps working after it.
+_BCRYPT_MAX_BYTES = 72
+
+#: What a bcrypt hash looks like. Checked before the library sees the value:
+#: bcrypt 4.0 *panicked* (a BaseException, not an Exception) on a malformed
+#: hash with a valid prefix, and a corrupted column must never take a worker
+#: down.
+_BCRYPT_HASH = re.compile(r"^\$2[abxy]\$\d{2}\$[./A-Za-z0-9]{53}$")
+
+
+def _password_bytes(password: str) -> bytes:
+    return password.encode("utf-8")[:_BCRYPT_MAX_BYTES]
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(_password_bytes(password), bcrypt.gensalt(BCRYPT_ROUNDS)).decode("ascii")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    """False for a wrong password *and* for a stored value that is not a bcrypt
+    hash. passlib raised UnknownHashError on the latter, which turned a
+    corrupted or blanked column into a 500 on the login form."""
+
+    if not hashed or not _BCRYPT_HASH.match(hashed):
+        return False
+    try:
+        return bcrypt.checkpw(_password_bytes(plain), hashed.encode("ascii"))
+    except (ValueError, TypeError):
+        return False
 
 
 def create_access_token(

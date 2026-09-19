@@ -68,6 +68,14 @@ def run_migrations_offline() -> None:
 #: of hours. ``migrate.py`` already retries on an OperationalError.
 MIGRATION_LOCK_TIMEOUT_MS = int(os.getenv("ALEMBIC_LOCK_TIMEOUT_MS", "8000"))
 
+#: Longest a single migration statement may run, in milliseconds. Off by
+#: default, and deliberately: unlike a lock wait, a migration legitimately
+#: works for a long time - a table rewrite on a large ``request_logs`` is
+#: minutes of honest effort, and killing it half way is worse than letting it
+#: finish. An operator who upgrades inside a fixed maintenance window can set
+#: ALEMBIC_STATEMENT_TIMEOUT_MS to bound it; 0 is PostgreSQL's "no limit".
+MIGRATION_STATEMENT_TIMEOUT_MS = int(os.getenv("ALEMBIC_STATEMENT_TIMEOUT_MS", "0"))
+
 
 def _run_sync_migrations(connection: Connection) -> None:
     _configure(connection)
@@ -78,6 +86,8 @@ def _run_sync_migrations(connection: Connection) -> None:
         # migrations appear to run and nothing is written.
         if connection.dialect.name == "postgresql":
             connection.exec_driver_sql(f"SET LOCAL lock_timeout = {MIGRATION_LOCK_TIMEOUT_MS}")
+            if MIGRATION_STATEMENT_TIMEOUT_MS > 0:
+                connection.exec_driver_sql(f"SET LOCAL statement_timeout = {MIGRATION_STATEMENT_TIMEOUT_MS}")
         context.run_migrations()
 
 

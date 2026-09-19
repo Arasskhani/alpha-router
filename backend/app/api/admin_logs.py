@@ -9,6 +9,12 @@ product could not keep.
 Filters are deliberately the four an investigation actually starts from - a
 date range, a person, a kind of action, and a kind of resource - and each one
 is backed by an index added alongside this module.
+
+The page first read the security trail alone. The product writes seven more
+(agents, tools, knowledge, governance, projects, API keys, connections), each
+to its own table, and an investigation should not have to know which. They
+are read through :mod:`app.services.admin_log_union`, one normalised shape
+over all of them; ``source`` picks a trail or ``all``.
 """
 
 from __future__ import annotations
@@ -17,16 +23,16 @@ import datetime
 import json
 import time
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Protocol
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_api_logs
 from app.database import get_db
-from app.models.security import SecurityAuditEvent
 from app.models.user import User
+from app.services import admin_log_union
 
 router = APIRouter(prefix="/api/admin/admin-logs", tags=["admin-logs"])
 
@@ -50,19 +56,40 @@ def _parse_date(value: str | None, *, end_of_day: bool = False) -> datetime.date
     return parsed.replace(hour=23, minute=59, second=59) if end_of_day else parsed
 
 
-async def _resolve_legacy_actors(
-    db: AsyncSession, events: Sequence[SecurityAuditEvent]
-) -> dict[int, tuple[str, str | None]]:
-    """Names for the actors of rows written before the identity columns existed.
+class _AuditRecord(Protocol):
+    """What a row of the normalised union looks like to this module.
 
-    Those rows carry only ``actor_user_id``, so the trail showed "User #2" where
-    it should show a person. The account is usually still there - ``users`` also
-    holds soft-deleted accounts, and only a permanent delete removes the row -
-    so the name can be looked up and shown.
+    Both a ``Row`` from :func:`app.services.admin_log_union.union_for` and any
+    object carrying the same attributes satisfy it.
+    """
+
+    source: str
+    id: str
+    created_at: datetime.datetime | None
+    actor_user_id: int | None
+    actor_username: str | None
+    actor_email: str | None
+    actor_ip: str | None
+    action: str
+    resource_type: str | None
+    resource_id: str | None
+    detail: str | None
+    outcome: str | None
+    detail_redacted_at: datetime.datetime | None
+
+
+async def _resolve_legacy_actors(db: AsyncSession, events: Sequence[Any]) -> dict[int, tuple[str, str | None]]:
+    """Names for the actors of rows that carry only ``actor_user_id``.
+
+    Security rows written before the identity columns existed, and every row
+    of the other trails (none of which stores a copy of the name), would
+    otherwise show "User #2" where the page should show a person. The account
+    is usually still there - ``users`` also holds soft-deleted accounts, and
+    only a permanent delete removes the row - so the name can be looked up.
 
     This is a best-effort lookup, not the stored copy: it reads the account's
     name *now*, and it stops working once the account is permanently deleted.
-    Events written from here on carry their own copy and never depend on it.
+    Security events written from here on carry their own copy.
     """
     ids = {e.actor_user_id for e in events if e.actor_username is None and e.actor_user_id is not None}
     if not ids:
@@ -71,17 +98,23 @@ async def _resolve_legacy_actors(
     return {int(uid): (username, email) for uid, username, email in rows}
 
 
-def _row(event: SecurityAuditEvent, resolved: dict[int, tuple[str, str | None]]) -> dict[str, Any]:
+def _parse_detail(raw: str | None) -> Any:
+    if raw is None:
+        return None
     try:
-        detail = json.loads(event.detail_json) if event.detail_json else None
+        return json.loads(raw)
     except (TypeError, ValueError):
         # A row written by an older or hand-edited path should still be listed;
         # showing the raw string beats dropping the event from the trail.
-        detail = {"_unparsed": event.detail_json}
+        return {"_unparsed": raw}
+
+
+def _row(event: _AuditRecord, resolved: dict[int, tuple[str, str | None]]) -> dict[str, Any]:
     # The copy on the row wins: it is what was true at the time, and it survives
-    # the account being deleted. The live lookup only fills rows that predate it.
+    # the account being deleted. The live lookup only fills rows without one.
     fallback = resolved.get(event.actor_user_id) if event.actor_user_id is not None else None
     return {
+        "source": event.source,
         "id": event.id,
         "created_at": event.created_at.isoformat() if event.created_at else None,
         "actor_user_id": event.actor_user_id,
@@ -94,45 +127,17 @@ def _row(event: SecurityAuditEvent, resolved: dict[int, tuple[str, str | None]])
         "action": event.action,
         "resource_type": event.resource_type,
         "resource_id": event.resource_id,
-        "detail": detail,
+        "detail": _parse_detail(event.detail),
+        "outcome": event.outcome,
         "detail_redacted_at": event.detail_redacted_at.isoformat() if event.detail_redacted_at else None,
     }
 
 
-def _apply_filters(
-    stmt,
-    *,
-    actor: str | None,
-    action: str | None,
-    resource_type: str | None,
-    start: datetime.datetime | None,
-    end: datetime.datetime | None,
-):
-    if actor:
-        term = actor.strip()
-        if term:
-            # The list resolves legacy rows to a live name, so filtering has to
-            # find them by that name as well - otherwise typing the name the
-            # table just showed you makes those rows disappear.
-            legacy = select(User.id).where(User.username.ilike(f"%{term}%"))
-            stmt = stmt.where(
-                or_(
-                    SecurityAuditEvent.actor_username.ilike(f"%{term}%"),
-                    and_(
-                        SecurityAuditEvent.actor_username.is_(None),
-                        SecurityAuditEvent.actor_user_id.in_(legacy),
-                    ),
-                )
-            )
-    if action:
-        stmt = stmt.where(SecurityAuditEvent.action == action.strip())
-    if resource_type:
-        stmt = stmt.where(SecurityAuditEvent.resource_type == resource_type.strip())
-    if start:
-        stmt = stmt.where(SecurityAuditEvent.created_at >= start)
-    if end:
-        stmt = stmt.where(SecurityAuditEvent.created_at <= end)
-    return stmt
+def _sources_or_400(source: str | None) -> list[str]:
+    try:
+        return admin_log_union.source_keys(source)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Unknown audit source '{source}'.") from exc
 
 
 @router.get("")
@@ -146,9 +151,17 @@ async def list_admin_logs(
     resource_type: str | None = Query(default=None, max_length=64),
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
+    source: str | None = Query(default=None, max_length=32),
 ) -> dict[str, Any]:
-    stmt = _apply_filters(
-        select(SecurityAuditEvent),
+    """One page of the audit trail(s) named by ``source``.
+
+    ``source`` is a trail key from :data:`app.services.admin_log_union.SOURCES`
+    or ``all``. Left out, it is the security trail alone - exactly what the
+    endpoint returned before the other trails were wired in.
+    """
+    audit = admin_log_union.union_for(_sources_or_400(source))
+    stmt = admin_log_union.apply_filters(
+        audit,
         actor=actor,
         action=action,
         resource_type=resource_type,
@@ -159,18 +172,10 @@ async def list_admin_logs(
     # the microsecond, and a paged view that orders only by time can repeat or
     # skip a row between pages.
     rows = (
-        (
-            await db.execute(
-                stmt.order_by(SecurityAuditEvent.created_at.desc(), SecurityAuditEvent.id.desc())
-                .offset(offset)
-                .limit(limit + 1)
-            )
-        )
-        .scalars()
-        .all()
-    )
+        await db.execute(stmt.order_by(audit.c.created_at.desc(), audit.c.id.desc()).offset(offset).limit(limit + 1))
+    ).all()
     # One extra row is fetched purely to answer "is there a next page" without
-    # a second COUNT over a table that has no bound on its size.
+    # a second COUNT over tables that have no bound on their size.
     has_more = len(rows) > limit
     page = rows[:limit]
     resolved = await _resolve_legacy_actors(db, page)
@@ -185,61 +190,48 @@ async def list_admin_logs(
 #: How long the filter panel's answer is reused. The values behind it are a
 #: handful of action names, resource types and administrator names, and they
 #: change when somebody is given a role - not between two clicks. Without this
-#: every open of the panel is four DISTINCT scans of the whole audit table.
+#: every open of the panel is four DISTINCT scans of every audit table.
 FILTER_OPTIONS_CACHE_TTL_SECONDS = 60
 
-_filter_options_cache: tuple[float, dict[str, list[str]]] | None = None
+_filter_options_cache: dict[tuple[str, ...], tuple[float, dict[str, list[str]]]] = {}
 
 
 def reset_filter_options_cache() -> None:
-    """Drop the cached panel. Called by tests; harmless in production."""
+    """Drop the cached panels. Called by tests; harmless in production."""
 
-    global _filter_options_cache
-    _filter_options_cache = None
+    _filter_options_cache.clear()
 
 
 @router.get("/filter-options")
 async def admin_log_filter_options(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_api_logs),
+    source: str | None = Query(default=None, max_length=32),
 ) -> dict[str, list[str]]:
-    """Distinct values for the comboboxes, so an operator picks rather than guesses."""
-    global _filter_options_cache
+    """Distinct values for the comboboxes, so an operator picks rather than guesses.
 
+    Scoped to the same ``source`` as the list, so the panel never offers an
+    action the trail on screen cannot contain.
+    """
+    keys = tuple(_sources_or_400(source))
     now = time.monotonic()
-    if _filter_options_cache is not None:
-        cached_at, cached = _filter_options_cache
-        if now - cached_at < FILTER_OPTIONS_CACHE_TTL_SECONDS:
-            return cached
+    cached = _filter_options_cache.get(keys)
+    if cached is not None and now - cached[0] < FILTER_OPTIONS_CACHE_TTL_SECONDS:
+        return cached[1]
 
-    actions = (
-        (await db.execute(select(SecurityAuditEvent.action).distinct().order_by(SecurityAuditEvent.action)))
-        .scalars()
-        .all()
-    )
+    audit = admin_log_union.union_for(list(keys))
+    actions = (await db.execute(select(audit.c.action).distinct().order_by(audit.c.action))).scalars().all()
     resources = (
-        (
-            await db.execute(
-                select(SecurityAuditEvent.resource_type).distinct().order_by(SecurityAuditEvent.resource_type)
-            )
-        )
-        .scalars()
-        .all()
+        (await db.execute(select(audit.c.resource_type).distinct().order_by(audit.c.resource_type))).scalars().all()
     )
     recorded = (
-        (
-            await db.execute(
-                select(SecurityAuditEvent.actor_username)
-                .where(SecurityAuditEvent.actor_username.isnot(None))
-                .distinct()
-            )
-        )
+        (await db.execute(select(audit.c.actor_username).where(audit.c.actor_username.isnot(None)).distinct()))
         .scalars()
         .all()
     )
-    # Rows that predate the identity columns name their actor only by id, and
-    # the list resolves those to a live name. Offer those names here too, or the
-    # combobox omits exactly the administrators the operator can see on screen.
+    # Rows that name their actor only by id are resolved to a live name in the
+    # list. Offer those names here too, or the combobox omits exactly the
+    # administrators the operator can see on screen.
     legacy = (
         (
             await db.execute(
@@ -247,9 +239,8 @@ async def admin_log_filter_options(
                 .distinct()
                 .where(
                     User.id.in_(
-                        select(SecurityAuditEvent.actor_user_id).where(
-                            SecurityAuditEvent.actor_username.is_(None),
-                            SecurityAuditEvent.actor_user_id.isnot(None),
+                        select(audit.c.actor_user_id).where(
+                            audit.c.actor_username.is_(None), audit.c.actor_user_id.isnot(None)
                         )
                     )
                 )
@@ -259,9 +250,10 @@ async def admin_log_filter_options(
         .all()
     )
     options = {
+        "sources": list(keys),
         "actions": [a for a in actions if a],
         "resource_types": [r for r in resources if r],
         "actors": sorted({a for a in [*recorded, *legacy] if a}),
     }
-    _filter_options_cache = (now, options)
+    _filter_options_cache[keys] = (now, options)
     return options

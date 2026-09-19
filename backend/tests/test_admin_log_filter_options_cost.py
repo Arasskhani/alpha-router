@@ -62,11 +62,11 @@ async def test_the_second_open_does_not_touch_the_table(db_session, seeded_optio
     await seeded_options()
 
     first = _CountingSession(db_session)
-    warm = await admin_log_filter_options(db=first, _=None)
+    warm = await admin_log_filter_options(db=first, _=None, source=None)
     assert first.executions >= 1
 
     second = _CountingSession(db_session)
-    cached = await admin_log_filter_options(db=second, _=None)
+    cached = await admin_log_filter_options(db=second, _=None, source=None)
 
     assert cached == warm
     assert second.executions == 0, f"the cached panel still ran {second.executions} statements"
@@ -74,14 +74,14 @@ async def test_the_second_open_does_not_touch_the_table(db_session, seeded_optio
 
 async def test_the_cache_expires(db_session, seeded_options, monkeypatch):
     await seeded_options()
-    await admin_log_filter_options(db=db_session, _=None)
+    await admin_log_filter_options(db=db_session, _=None, source=None)
 
     db_session.add(_event(action="api_key_created", resource_type="api_key", actor_username="carol"))
     await db_session.commit()
 
     monkeypatch.setattr(admin_logs, "FILTER_OPTIONS_CACHE_TTL_SECONDS", 0)
     admin_logs.reset_filter_options_cache()
-    fresh = await admin_log_filter_options(db=db_session, _=None)
+    fresh = await admin_log_filter_options(db=db_session, _=None, source=None)
 
     assert "carol" in fresh["actors"]
     assert "api_key_created" in fresh["actions"]
@@ -90,7 +90,7 @@ async def test_the_cache_expires(db_session, seeded_options, monkeypatch):
 async def test_the_answer_is_still_right(db_session, seeded_options):
     await seeded_options()
 
-    options = await admin_log_filter_options(db=db_session, _=None)
+    options = await admin_log_filter_options(db=db_session, _=None, source=None)
 
     assert options["actions"] == ["model_access_changed", "user_roles_changed"]
     assert options["resource_types"] == ["model", "user"]
@@ -109,7 +109,7 @@ async def test_a_write_does_not_have_to_wait_for_the_cache(db_session, seeded_op
     """The cache is read-through and never blocks a writer."""
 
     await seeded_options()
-    await admin_log_filter_options(db=db_session, _=None)
+    await admin_log_filter_options(db=db_session, _=None, source=None)
 
     db_session.add(_event(action="later_action"))
     await db_session.commit()

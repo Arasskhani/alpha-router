@@ -9,14 +9,16 @@ from __future__ import annotations
 
 import datetime
 import json
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.api.admin_logs import _apply_filters, _parse_date, _resolve_legacy_actors, _row
+from app.api.admin_logs import _parse_date, _resolve_legacy_actors, _row
 from app.database import Base
 from app.models.security import SecurityAuditEvent
 from app.models.user import User
+from app.services import admin_log_union
 
 
 @pytest.fixture
@@ -44,18 +46,35 @@ def _event(**kw) -> SecurityAuditEvent:
     return SecurityAuditEvent(**defaults)
 
 
-async def _rows(db, **filters):
-    from sqlalchemy import select
+def _record(event: SecurityAuditEvent) -> SimpleNamespace:
+    """The event as the union projects it: one row with the normalised columns."""
+    return SimpleNamespace(
+        source="security",
+        id=str(event.id) if event.id is not None else "1",
+        created_at=event.created_at,
+        actor_user_id=event.actor_user_id,
+        actor_username=event.actor_username,
+        actor_email=event.actor_email,
+        actor_ip=event.actor_ip,
+        action=event.action,
+        resource_type=event.resource_type,
+        resource_id=event.resource_id,
+        detail=event.detail_json,
+        outcome=None,
+        detail_redacted_at=event.detail_redacted_at,
+    )
 
-    stmt = _apply_filters(
-        select(SecurityAuditEvent),
+
+async def _rows(db, **filters):
+    stmt = admin_log_union.apply_filters(
+        admin_log_union.union_for(["security"]),
         actor=filters.get("actor"),
         action=filters.get("action"),
         resource_type=filters.get("resource_type"),
         start=filters.get("start"),
         end=filters.get("end"),
     )
-    return (await db.execute(stmt)).scalars().all()
+    return (await db.execute(stmt)).all()
 
 
 class TestDateParsing:
@@ -116,28 +135,28 @@ class TestFilters:
 
 class TestSerialisation:
     def test_detail_comes_back_as_an_object(self):
-        assert _row(_event(), {})["detail"] == {"https_port": 443}
+        assert _row(_record(_event()), {})["detail"] == {"https_port": 443}
 
     def test_a_row_whose_detail_will_not_parse_is_still_listed(self):
         """Dropping an event from the trail because one column is malformed
         would be the worst possible failure mode for an audit view."""
-        out = _row(_event(detail_json="{not json"), {})
+        out = _row(_record(_event(detail_json="{not json")), {})
         assert out["detail"] == {"_unparsed": "{not json"}
 
     def test_a_redacted_row_says_so(self):
         """So the operator can tell 'nothing was recorded' from 'it aged out'."""
-        out = _row(_event(detail_json=None, detail_redacted_at=datetime.datetime(2026, 9, 15, 4, 25)), {})
+        out = _row(_record(_event(detail_json=None, detail_redacted_at=datetime.datetime(2026, 9, 15, 4, 25))), {})
         assert out["detail"] is None
         assert out["detail_redacted_at"] == "2026-09-15T04:25:00"
 
     def test_timestamps_are_naive_utc_with_no_suffix(self):
         """The frontend appends Z itself; a mixed wire format across the admin
         API is how a viewer ends up 3.5 hours out in Tehran."""
-        assert _row(_event(), {})["created_at"] == "2026-09-10T12:00:00"
-        assert not _row(_event(), {})["created_at"].endswith("Z")
+        assert _row(_record(_event()), {})["created_at"] == "2026-09-10T12:00:00"
+        assert not _row(_record(_event()), {})["created_at"].endswith("Z")
 
     def test_the_actor_name_is_served_from_the_row(self):
-        out = _row(_event(actor_user_id=None, actor_username="alice"), {})
+        out = _row(_record(_event(actor_user_id=None, actor_username="alice")), {})
         assert out["actor_username"] == "alice"
         assert out["actor_resolved_live"] is False
 
@@ -164,7 +183,7 @@ class TestLegacyActorNames:
         await db.commit()
 
         resolved = await _resolve_legacy_actors(db, [event])
-        out = _row(event, resolved)
+        out = _row(_record(event), resolved)
         assert out["actor_username"] == "bob"
         assert out["actor_email"] == "bob@test"
         assert out["actor_resolved_live"] is True
@@ -178,7 +197,7 @@ class TestLegacyActorNames:
         await db.commit()
 
         resolved = await _resolve_legacy_actors(db, [event])
-        assert _row(event, resolved)["actor_username"] == "bob"
+        assert _row(_record(event), resolved)["actor_username"] == "bob"
 
     async def test_a_permanently_deleted_actor_has_no_name_to_find(self, db):
         """Honest, not clever: the name was never recorded and the account is
@@ -188,7 +207,7 @@ class TestLegacyActorNames:
         await db.commit()
 
         resolved = await _resolve_legacy_actors(db, [event])
-        out = _row(event, resolved)
+        out = _row(_record(event), resolved)
         assert out["actor_username"] is None
         assert out["actor_resolved_live"] is False
 
@@ -200,7 +219,7 @@ class TestLegacyActorNames:
         await db.commit()
 
         resolved = await _resolve_legacy_actors(db, [event])
-        out = _row(event, resolved)
+        out = _row(_record(event), resolved)
         assert out["actor_username"] == "bob"
         assert out["actor_resolved_live"] is False
 
@@ -260,7 +279,7 @@ class TestLegacyActorNames:
         )
         await db.commit()
 
-        options = await admin_log_filter_options(db=db, _=None)
+        options = await admin_log_filter_options(db=db, _=None, source=None)
         assert options["actors"] == ["alice", "bob"]
 
     async def test_the_combobox_does_not_list_an_actor_twice(self, db):
@@ -275,7 +294,7 @@ class TestLegacyActorNames:
         )
         await db.commit()
 
-        assert (await admin_log_filter_options(db=db, _=None))["actors"] == ["bob"]
+        assert (await admin_log_filter_options(db=db, _=None, source=None))["actors"] == ["bob"]
 
 
 def test_the_viewer_is_gated_on_an_existing_menu():
@@ -304,4 +323,4 @@ def test_paging_orders_by_id_as_well_as_time():
     from app.api import admin_logs
 
     source = inspect.getsource(admin_logs.list_admin_logs)
-    assert "SecurityAuditEvent.id.desc()" in source
+    assert "audit.c.id.desc()" in source

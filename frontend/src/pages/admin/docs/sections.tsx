@@ -2519,8 +2519,10 @@ export const docSections: DocSection[] = [
       <>
         <h2>Admin Logs</h2>
         <p>
-          Path: <code>/admin/admin-logs</code>. The administrative audit trail: who took a security-sensitive action,
-          when, from which IP, against which resource, and what the action recorded about itself.
+          Path: <code>/admin/admin-logs</code>. The administrative audit trails in one view: who took an action, when,
+          from which IP, against which resource, and what the action recorded about itself — across the security
+          trail and the seven domain trails (Agents, Agent tools, Knowledge, Governance, Projects, API keys, Provider
+          connections). The <strong>Trail</strong> picker narrows the view to one of them; the default is all.
         </p>
         <Note>
           Not the same thing as <a href="#admin-logs">API Logs</a>, despite the neighbouring names. API Logs answers
@@ -2529,12 +2531,13 @@ export const docSections: DocSection[] = [
         </Note>
         <ul>
           <li>
-            Columns: time (in your browser&apos;s timezone), administrator, source IP, action, resource, and whether
-            detail was recorded. Click a row for the full detail.
+            Columns: time (in your browser&apos;s timezone), trail, administrator, source IP, action (with the outcome
+            where a trail records one), resource, and whether detail was recorded. Click a row for the full detail.
           </li>
           <li>
-            Filters: administrator, action, resource type and a date range. The three comboboxes are populated from the
-            values actually present in the trail, so an empty list means nothing of that kind has been recorded yet.
+            Filters: trail, administrator, action, resource type and a date range. The three comboboxes are populated
+            from the values actually present in the selected trail(s), so an empty list means nothing of that kind
+            has been recorded yet.
             Filters apply on <strong>Filter</strong>, not on every keystroke — the same contract as API Logs.
           </li>
           <li>
@@ -2550,12 +2553,12 @@ export const docSections: DocSection[] = [
         </ul>
         <h3>The administrator name is a copy, not a join</h3>
         <p>
-          Each row stores the administrator&apos;s username and email as they were at the time of the action, alongside
-          the user id. Permanently deleting an account empties its row rather than removing it — four append-only audit
+          Each security row stores the administrator&apos;s username and email as they were at the time of the action,
+          alongside the user id. Permanently deleting an account empties its row rather than removing it — four append-only audit
           tables reference it — but the name and address are cleared, so a trail that only referenced the id would still
           lose the answer to &ldquo;who&rdquo; the moment the account was purged.
-          Rows written before this page shipped carry only the id. For those the name is looked up live against the
-          account — including a soft-deleted one, so a disabled administrator is still named — and only a{" "}
+          Security rows written before this page shipped, and every row of the seven domain trails, carry only the
+          id. For those the name is looked up live against the account — including a soft-deleted one, so a disabled administrator is still named — and only a{" "}
           <em>permanently</em> deleted account leaves nothing but the id to show. Filtering by an administrator matches
           both kinds of row, so a name you can read in the table is always a name you can filter by.
         </p>
@@ -2571,9 +2574,10 @@ export const docSections: DocSection[] = [
         <p>
           It is <strong>not</strong> a record of every administrative change, and the page does not pretend otherwise:
           plans, groups, identity-provider configuration and SMTP settings, among others, are not yet instrumented.
-          Several domains also keep their own separate trails — Agents, Knowledge, governance and projects each write
-          to their own append-only table, readable on their own pages — so this page is the security trail rather than
-          a single union of everything the platform records.
+          The seven domain trails each keep their own append-only table (the governance chain is hash-linked and is
+          never written to by this page); the view reads them through one normalised projection and never writes to
+          any of them. Only the security trail is subject to the retention windows below — the domain trails keep
+          their own rules on their own pages.
         </p>
         <Warn>
           Read the absence of an entry as &ldquo;this action is not instrumented&rdquo;, not as &ldquo;this did not
@@ -2595,14 +2599,17 @@ export const docSections: DocSection[] = [
         <h3>API</h3>
         <ul>
           <li>
-            <code>GET /api/admin/admin-logs</code> — <code>limit</code> (≤500), <code>offset</code>,{" "}
-            <code>actor</code>, <code>action</code>, <code>resource_type</code>, <code>start_date</code>,{" "}
-            <code>end_date</code> (<code>YYYY-MM-DD</code>). Returns <code>items</code>, <code>limit</code>,{" "}
-            <code>offset</code> and <code>has_more</code>.
+            <code>GET /api/admin/admin-logs</code> — <code>source</code> (<code>all</code>, or one of{" "}
+            <code>security</code>, <code>agents</code>, <code>tools</code>, <code>knowledge</code>,{" "}
+            <code>governance</code>, <code>projects</code>, <code>api_keys</code>, <code>connections</code>; omitted
+            means <code>security</code>, so earlier callers see what they always saw), <code>limit</code> (≤500),{" "}
+            <code>offset</code>, <code>actor</code>, <code>action</code>, <code>resource_type</code>,{" "}
+            <code>start_date</code>, <code>end_date</code> (<code>YYYY-MM-DD</code>). Returns <code>items</code>{" "}
+            (each with its <code>source</code>), <code>limit</code>, <code>offset</code> and <code>has_more</code>.
           </li>
           <li>
             <code>GET /api/admin/admin-logs/filter-options</code> — the distinct actions, resource types and
-            administrators behind the comboboxes.
+            administrators behind the comboboxes, scoped by the same <code>source</code>.
           </li>
           <li>
             <code>PATCH /api/admin/storage/admin-log-settings</code> — the two retention windows.

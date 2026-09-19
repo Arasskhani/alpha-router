@@ -9,7 +9,8 @@ import { attachDragScroll } from "../../lib/dragScroll";
 import { messageDirectionForText } from "../../lib/textDirection";
 
 type AdminLogEvent = {
-  id: number;
+  source: AuditSource;
+  id: string;
   created_at: string | null;
   actor_user_id: number | null;
   actor_username: string | null;
@@ -18,7 +19,8 @@ type AdminLogEvent = {
   action: string;
   resource_type: string;
   resource_id: string | null;
-  detail: Record<string, unknown> | null;
+  detail: Record<string, unknown> | unknown[] | null;
+  outcome: string | null;
   detail_redacted_at: string | null;
 };
 
@@ -30,12 +32,45 @@ type ListResponse = {
 };
 
 type FilterOptions = {
+  sources: string[];
   actions: string[];
   resource_types: string[];
   actors: string[];
 };
 
 const PAGE_SIZE = 100;
+
+/**
+ * The trails the server can read, in the order the picker lists them. The keys
+ * are those of `app.services.admin_log_union.SOURCES`; the labels are the
+ * words the rest of the admin panel already uses for each domain.
+ */
+export const AUDIT_SOURCES = [
+  ["all", "All trails"],
+  ["security", "Security settings"],
+  ["agents", "Agents"],
+  ["tools", "Agent tools"],
+  ["knowledge", "Knowledge"],
+  ["governance", "Governance"],
+  ["projects", "Projects"],
+  ["api_keys", "API keys"],
+  ["connections", "Provider connections"],
+] as const;
+
+type AuditSource = (typeof AUDIT_SOURCES)[number][0];
+
+const SOURCE_LABEL: Record<string, string> = Object.fromEntries(AUDIT_SOURCES);
+
+export function sourceLabel(source: string): string {
+  return SOURCE_LABEL[source] ?? source;
+}
+
+/** A detail is worth a "View" when it carries anything at all. */
+export function hasDetail(detail: AdminLogEvent["detail"]): boolean {
+  if (detail == null) return false;
+  if (Array.isArray(detail)) return detail.length > 0;
+  return Object.keys(detail).length > 0;
+}
 
 /** "tls_activate" reads as machine output; "Tls activate" reads as an event. */
 function humanAction(value: string): string {
@@ -72,21 +107,24 @@ export default function AdminLogs() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const [source, setSource] = useState<AuditSource>("all");
   const [actor, setActor] = useState("");
   const [action, setAction] = useState("");
   const [resourceType, setResourceType] = useState("");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
 
-  const [options, setOptions] = useState<FilterOptions>({ actions: [], resource_types: [], actors: [] });
-  const [optionsLoaded, setOptionsLoaded] = useState(false);
+  const [options, setOptions] = useState<FilterOptions>({ sources: [], actions: [], resource_types: [], actors: [] });
+  // The comboboxes are scoped to the trail on screen, so remember which trail
+  // the loaded options belong to rather than a bare "loaded" flag.
+  const [optionsFor, setOptionsFor] = useState<AuditSource | null>(null);
   const [selected, setSelected] = useState<AdminLogEvent | null>(null);
 
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
 
   const buildQuery = useCallback(
     (nextOffset: number) => {
-      const q = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(nextOffset) });
+      const q = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(nextOffset), source });
       if (actor.trim()) q.set("actor", actor.trim());
       if (action.trim()) q.set("action", action.trim());
       if (resourceType.trim()) q.set("resource_type", resourceType.trim());
@@ -94,7 +132,7 @@ export default function AdminLogs() {
       if (end) q.set("end_date", end);
       return q;
     },
-    [actor, action, resourceType, start, end],
+    [source, actor, action, resourceType, start, end],
   );
 
   const load = useCallback(
@@ -133,16 +171,17 @@ export default function AdminLogs() {
   }, []);
 
   async function loadOptions() {
-    if (optionsLoaded) return;
+    if (optionsFor === source) return;
     try {
-      setOptions(await api<FilterOptions>("/api/admin/admin-logs/filter-options"));
-      setOptionsLoaded(true);
+      setOptions(await api<FilterOptions>(`/api/admin/admin-logs/filter-options?source=${source}`));
+      setOptionsFor(source);
     } catch {
       /* the combobox still accepts free text */
     }
   }
 
   function clearFilters() {
+    setSource("all");
     setActor("");
     setAction("");
     setResourceType("");
@@ -160,13 +199,26 @@ export default function AdminLogs() {
       }
     >
       <p className="muted-text">
-        Administrative actions recorded with who took them, from where, and what changed. Entries are kept
-        under the windows set on <strong>Retention Policy</strong>; older entries keep the action but lose
-        their detail.
+        Administrative actions recorded with who took them, from where, and what changed — across every trail the
+        platform keeps: security settings, agents, tools, knowledge, governance, projects, API keys and provider
+        connections. Security entries are kept under the windows set on <strong>Retention Policy</strong>; older
+        entries keep the action but lose their detail.
       </p>
 
       <div className="card api-logs-toolbar">
         <div className="api-logs-toolbar__main">
+          <select
+            className="api-logs-toolbar__date"
+            aria-label="Audit trail"
+            value={source}
+            onChange={(e) => setSource(e.target.value as AuditSource)}
+          >
+            {AUDIT_SOURCES.map(([key, label]) => (
+              <option key={key} value={key}>
+                {label}
+              </option>
+            ))}
+          </select>
           <LogFilterCombobox
             value={actor}
             onChange={setActor}
@@ -227,6 +279,7 @@ export default function AdminLogs() {
           <thead>
             <tr>
               <th className="api-log-col--time">Time</th>
+              <th className="api-log-col--secondary">Trail</th>
               <th className="api-log-col--user">Administrator</th>
               <th className="api-log-col--secondary">IP</th>
               <th className="api-log-col--model">Action</th>
@@ -237,7 +290,7 @@ export default function AdminLogs() {
           <tbody>
             {items.map((event) => (
               <tr
-                key={event.id}
+                key={`${event.source}:${event.id}`}
                 className="api-logs-row--clickable"
                 role="button"
                 tabIndex={0}
@@ -250,13 +303,19 @@ export default function AdminLogs() {
                 }}
               >
                 <td className="api-log-col--time">{formatLocalDateTime(event.created_at)}</td>
+                <td className="api-log-col--secondary">{sourceLabel(event.source)}</td>
                 {/* Directory-sourced names can be Persian; the machine columns
                     beside them must stay LTR or the bidi run mangles them. */}
                 <td className="api-log-col--user" dir={messageDirectionForText(actorLabel(event))}>
                   {actorLabel(event)}
                 </td>
                 <td className="api-log-col--secondary">{event.actor_ip || "—"}</td>
-                <td className="api-log-col--model">{humanAction(event.action)}</td>
+                <td className="api-log-col--model">
+                  {humanAction(event.action)}
+                  {event.outcome && event.outcome !== "success" ? (
+                    <span className="muted-text"> · {event.outcome}</span>
+                  ) : null}
+                </td>
                 <td className="api-log-col--secondary">
                   {event.resource_type}
                   {event.resource_id ? ` #${event.resource_id}` : ""}
@@ -264,7 +323,7 @@ export default function AdminLogs() {
                 <td className="api-log-col--secondary">
                   {event.detail_redacted_at ? (
                     <span className="muted-text">Aged out</span>
-                  ) : event.detail && Object.keys(event.detail).length ? (
+                  ) : hasDetail(event.detail) ? (
                     "View"
                   ) : (
                     "—"
@@ -274,7 +333,7 @@ export default function AdminLogs() {
             ))}
             {!items.length && !loading ? (
               <tr>
-                <td colSpan={6} className="muted-text">
+                <td colSpan={7} className="muted-text">
                   No administrative events match these filters.
                 </td>
               </tr>
@@ -306,8 +365,9 @@ export default function AdminLogs() {
         {selected ? (
           <div className="model-access-form">
             <p className="muted-text">
-              {formatLocalDateTime(selected.created_at)} · {humanAction(selected.action)} ·{" "}
-              {selected.resource_type}
+              {sourceLabel(selected.source)} · {formatLocalDateTime(selected.created_at)} ·{" "}
+              {humanAction(selected.action)}
+              {selected.outcome ? ` (${selected.outcome})` : ""} · {selected.resource_type}
               {selected.resource_id ? ` #${selected.resource_id}` : ""}
             </p>
             <p>
@@ -320,7 +380,7 @@ export default function AdminLogs() {
                 The detail for this event was cleared by the retention policy on{" "}
                 {formatLocalDateTime(selected.detail_redacted_at)}. The action itself is kept.
               </p>
-            ) : selected.detail && Object.keys(selected.detail).length ? (
+            ) : hasDetail(selected.detail) ? (
               <pre className="admin-log-detail">{JSON.stringify(selected.detail, null, 2)}</pre>
             ) : (
               <p className="muted-text">No detail was recorded for this event.</p>

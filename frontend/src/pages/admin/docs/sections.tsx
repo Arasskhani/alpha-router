@@ -316,6 +316,15 @@ export const docSections: DocSection[] = [
           Admin → Operations to the highest stage that passes latency, memory, cancellation, and soak-test gates. See{" "}
           <a href="#architecture">Architecture &amp; services</a> for the request path and broker trust boundary.
         </Warn>
+        <Warn>
+          <strong>Two ceilings guard concurrency, and the smaller one decides.</strong> The application admits turns
+          through a leased semaphore in Redis, capped by <code>CODE_INTERPRETER_CAPACITY_GLOBAL_MAX</code> and
+          tunable at runtime. The broker holds a semaphore of its own, fixed at deploy by{" "}
+          <code>SANDBOX_MAX_CONCURRENT</code>. Nothing ties the two numbers together: raise the operational limit
+          above the broker&apos;s and the extra turns are admitted by the application and then refused by the broker,
+          with a different error. Set both, and keep them equal unless you mean otherwise — Operations says which one
+          is binding.
+        </Warn>
       </>
     ),
   },

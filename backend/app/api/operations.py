@@ -19,6 +19,44 @@ class CodeInterpreterCapacityPatch(BaseModel):
     retry_after_seconds: int = Field(ge=1, le=300)
 
 
+def _effective_capacity(policy: dict, runtime: dict, broker: dict) -> dict:
+    """The ceiling a turn actually meets, across both admission gates.
+
+    Two independent semaphores guard the same resource. The application holds a
+    leased semaphore in Redis (``CODE_INTERPRETER_CAPACITY_GLOBAL_MAX``, tunable
+    at runtime from this page); the broker holds an ``asyncio.Semaphore`` of its
+    own (``SANDBOX_MAX_CONCURRENT``, fixed at deploy). Nothing ties the two
+    numbers together, so the smaller one decides - and a page that reports only
+    the application's ceiling tells the operator "200 available" while the
+    broker is refusing everything past 50.
+    """
+    app_limit = int(runtime["limit"])
+    broker_limit: int | None = None
+    if broker.get("status") == "ok" and broker.get("max_concurrent") is not None:
+        broker_limit = int(broker["max_concurrent"])
+    limit = app_limit if broker_limit is None else min(app_limit, broker_limit)
+    if broker_limit is None:
+        limited_by = "app"
+    elif broker_limit < app_limit:
+        limited_by = "broker"
+    elif broker_limit > app_limit:
+        limited_by = "app"
+    else:
+        limited_by = "both"
+    active = int(runtime["active"])
+    return {
+        "max_concurrent_turns": limit,
+        "available": max(0, limit - active),
+        "utilization_percent": round((active / max(1, limit)) * 100, 1),
+        "limited_by": limited_by,
+        #: True when the two gates disagree, which is the state worth showing:
+        #: the operational limit on this page is not the one being enforced.
+        "mismatch": broker_limit is not None and broker_limit != app_limit,
+        "app_max_concurrent_turns": app_limit,
+        "broker_max_concurrent": broker_limit,
+    }
+
+
 def _capacity_payload(policy: dict, runtime: dict, broker: dict) -> dict:
     return {
         "settings": {
@@ -38,6 +76,7 @@ def _capacity_payload(policy: dict, runtime: dict, broker: dict) -> dict:
                 1,
             ),
         },
+        "effective": _effective_capacity(policy, runtime, broker),
         "broker": broker,
     }
 

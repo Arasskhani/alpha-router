@@ -430,12 +430,15 @@ async def publish_agent_version(
 
     await validate_agent_tool_bindings(db, version)
     await assert_agent_version_evaluation_gate(db, version)
-    if (
-        not allow_same_actor
-        and version.created_by_user_id is not None
-        and int(version.created_by_user_id) == int(actor_user_id)
-    ):
+    self_publish = version.created_by_user_id is not None and int(version.created_by_user_id) == int(actor_user_id)
+    if not allow_same_actor and self_publish:
         raise ValueError("Maker-checker violation: creator cannot publish this Agent version")
+    # A Super Admin publishing their own version is break-glass: the separation
+    # of duties was deliberately set aside. The audit row used to be identical
+    # to a properly two-person one, and "the control was bypassed" is the single
+    # fact the trail has to carry for a separation-of-duties control to mean
+    # anything.
+    break_glass = bool(allow_same_actor and self_publish)
     agent = await db.get(Agent, version.agent_id)
     if agent is None:
         raise ValueError("Agent no longer exists")
@@ -461,7 +464,11 @@ async def publish_agent_version(
         agent_id=agent.id,
         agent_version_id=version.id,
         actor_user_id=actor_user_id,
-        payload={"version_number": version.version_number},
+        payload={
+            "version_number": version.version_number,
+            "maker_checker": "break_glass" if break_glass else "two_person",
+            "created_by_user_id": version.created_by_user_id,
+        },
     )
     return version
 

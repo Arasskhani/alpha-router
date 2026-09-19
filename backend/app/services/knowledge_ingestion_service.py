@@ -555,8 +555,12 @@ async def approve_document_version(
     version = (await db.execute(statement)).scalar_one_or_none()
     if version is None or version.status != "review":
         raise ValueError("Document version is not awaiting review")
-    if not allow_self_review and version.uploaded_by_user_id == reviewer_user_id:
+    self_review = version.uploaded_by_user_id == reviewer_user_id
+    if not allow_self_review and self_review:
         raise ValueError("Maker-checker policy requires a different reviewer")
+    # See publish_agent_version: an approval that set the two-person rule aside
+    # must not be indistinguishable from one that honoured it.
+    break_glass = bool(allow_self_review and self_review)
     safety_status = dict(version.metadata_json or {}).get("prompt_injection_scan", {}).get("status")
     if safety_status == "blocked" and not allow_safety_override:
         raise ValueError("Blocked prompt-injection findings require an explicit override")
@@ -573,6 +577,7 @@ async def approve_document_version(
             "reviewer_user_id": reviewer_user_id,
             "reason": normalized_reason[:2000],
             "safety_override": bool(allow_safety_override),
+            "maker_checker": "break_glass" if break_glass else "two_person",
         },
     }
     document = await db.get(KnowledgeDocument, version.document_id)
@@ -592,6 +597,8 @@ async def approve_document_version(
             "document_version_id": version.id,
             "safety_override": bool(allow_safety_override),
             "status": version.status,
+            "maker_checker": "break_glass" if break_glass else "two_person",
+            "uploaded_by_user_id": version.uploaded_by_user_id,
         },
     )
     return version

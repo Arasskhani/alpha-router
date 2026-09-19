@@ -55,6 +55,10 @@ STATUS_PARTIAL = "partial"
 
 SUBJECT_USER = "user"
 SUBJECT_ALPHA_ROUTER_KEY = "alpha_router_key"
+#: Spend the platform itself incurs - a knowledge-index build, say - which no
+#: user or API key asked for and no budget should be charged for. It has no
+#: ``subject_id``; the row exists so the money is visible, not attributed.
+SUBJECT_PLATFORM = "platform"
 
 # These providers expose the charge in their normalized response usage. For
 # other providers, LiteLLM may populate ``usage.cost`` itself; that must remain
@@ -1557,13 +1561,22 @@ async def persist_usage_operation(
     success: bool,
     idempotency_key: str | None = None,
     metadata: dict[str, Any] | None = None,
+    subject_type: str | None = None,
 ) -> AccountingSummary:
-    """Persist immutable usage details and signed ledger debits."""
+    """Persist immutable usage details and signed ledger debits.
+
+    ``subject_type`` only matters when neither a user nor an API key is the
+    subject; it lets platform-incurred spend say so (:data:`SUBJECT_PLATFORM`)
+    rather than being filed under no subject at all.
+    """
 
     for event in events:
         await _apply_configured_pricing(db, event)
     summary = summarize_pending_events(events)
-    subject_type, subject_id = _subject(user_id, alpha_router_api_key_id)
+    resolved_subject_type, subject_id = _subject(user_id, alpha_router_api_key_id)
+    if resolved_subject_type is None and subject_type:
+        resolved_subject_type = subject_type
+    subject_type = resolved_subject_type
     operation_key = (
         str(idempotency_key)[:200]
         if idempotency_key

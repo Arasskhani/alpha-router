@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import math
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -19,8 +21,61 @@ from app.services.llm_providers import (
     litellm_model_for_provider,
     resolve_litellm_provider,
 )
+from app.services.metered_usage_service import finish_metered_usage, start_metered_usage
 from app.services.model_capabilities import model_kinds
 from app.services.secret_crypto import decrypt_secret
+
+
+@dataclass(frozen=True)
+class EmbeddingMeteringSubject:
+    """Who an embedding call is recorded against.
+
+    Embedding calls cost money and, until this existed, none of them was
+    written to the usage ledger. The backend is shared by index builds,
+    retrieval and memory, and each of those knows something different about
+    who is asking, so the subject is set by the caller - through
+    :func:`metered_embeddings` - rather than guessed here. With no subject in
+    scope the backend behaves as it always did: it embeds and records nothing.
+    """
+
+    operation_name: str
+    source: str
+    client_app: str
+    platform: bool = False
+    user_id: int | None = None
+    alpha_router_api_key_id: int | None = None
+    username: str | None = None
+
+
+#: A knowledge-index build spans every document in a release, published by
+#: one administrator on behalf of everybody the base is shared with. There is
+#: no user whose budget that spend belongs to, so it is the platform's own -
+#: recorded and priced, held against nobody.
+PLATFORM_INDEXING_SUBJECT = EmbeddingMeteringSubject(
+    operation_name="knowledge_index_embed",
+    source="knowledge",
+    client_app="knowledge_index",
+    platform=True,
+)
+
+_metering_subject: ContextVar[EmbeddingMeteringSubject | None] = ContextVar(
+    "knowledge_embedding_metering_subject", default=None
+)
+
+
+@contextlib.contextmanager
+def metered_embeddings(subject: EmbeddingMeteringSubject) -> Iterator[None]:
+    """Record every embedding call made inside the block against ``subject``."""
+
+    token = _metering_subject.set(subject)
+    try:
+        yield
+    finally:
+        _metering_subject.reset(token)
+
+
+def current_metering_subject() -> EmbeddingMeteringSubject | None:
+    return _metering_subject.get()
 
 
 def suggested_embedding_dimensions(external_id: str) -> int:
@@ -183,7 +238,38 @@ class CatalogKnowledgeEmbeddingBackend:
         litellm_provider = resolve_litellm_provider(resolved.provider_type)
         if litellm_provider:
             kwargs["custom_llm_provider"] = litellm_provider
-        response = await aembedding(**kwargs)
+        subject = _metering_subject.get()
+        metered = (
+            await start_metered_usage(
+                user_id=subject.user_id,
+                alpha_router_api_key_id=subject.alpha_router_api_key_id,
+                username=subject.username,
+                provider_type=resolved.provider_type,
+                service_type="embeddings",
+                operation_name=subject.operation_name,
+                model_id=resolved.catalog_model.external_id or model,
+                connection_id=resolved.catalog_model.connection_id,
+                source=subject.source,
+                client_app=subject.client_app,
+                metadata={"inputs": len(bounded), "dimensions": dimensions},
+                platform=subject.platform,
+                pricing_model=resolved.catalog_model,
+            )
+            if subject is not None
+            else None
+        )
+        try:
+            response = await aembedding(**kwargs)
+        except Exception as exc:
+            if metered is not None:
+                await finish_metered_usage(
+                    metered, success=False, quantity=None, unit=None, error_message=str(exc)[:2000] or "embed failed"
+                )
+            raise
+        if metered is not None:
+            # The ledger gets the provider's own token count from the response;
+            # nothing about the vectors is retained.
+            await finish_metered_usage(metered, response=response, success=True)
         return _response_vectors(
             response,
             expected=len(bounded),

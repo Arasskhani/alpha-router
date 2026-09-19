@@ -2744,6 +2744,13 @@ export const docSections: DocSection[] = [
             Web search/fetch requests; metered units such as request, credit, second, character, or image are supported
           </li>
           <li>User API key traffic on <code>/v1</code> and gateway key traffic against the key’s credit limit</li>
+          <li>
+            <strong>Knowledge index builds</strong>, recorded against the platform itself: the rows carry the username{" "}
+            <code>platform</code>, no user or key, source <code>knowledge</code> and app <code>knowledge_index</code>.
+            A build spans every document in a release on behalf of everyone the base is shared with, so the spend is
+            made visible and priced from the embedding model&apos;s catalog rate without being charged to anybody&apos;s
+            budget. Filter API Logs by user <code>platform</code> to see what indexing costs.
+          </li>
         </ul>
         <Note>
           Provider errors can still be billable. Failed attempts are retained as events; when the provider exposes no

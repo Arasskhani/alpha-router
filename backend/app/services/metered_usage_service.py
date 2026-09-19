@@ -14,16 +14,23 @@ from typing import Any
 from app.services.observability import increment
 from app.services.usage_logging_service import log_usage
 from app.database import AsyncSessionLocal
+from app.models.model_catalog import AIModel
 from app.models.user import User
 from app.services.budget_reservation_service import (
     reservation_hold_usd,
     reserve,
 )
 from app.services.usage_accounting_service import (
+    SUBJECT_PLATFORM,
     capture_usage_event,
 )
 
 logger = logging.getLogger(__name__)
+
+#: The ``username`` column of a platform-incurred row. Reports group by that
+#: column, so the platform's own spend shows up under one name instead of
+#: being scattered across "user-None".
+PLATFORM_USERNAME = "platform"
 
 
 @dataclass(slots=True)
@@ -42,6 +49,11 @@ class MeteredUsageCall:
     source: str = "alpha_router_tool"
     client_app: str = "chat_tool"
     metadata: dict[str, Any] = field(default_factory=dict)
+    #: Set for platform-incurred calls (no user, no key, no budget hold).
+    subject_type: str | None = None
+    #: The catalog row whose pricing prices the call. Left ``None`` the quote
+    #: falls back to the provider's or LiteLLM's own figure.
+    pricing_model: AIModel | None = None
 
 
 async def start_metered_usage(
@@ -60,12 +72,41 @@ async def start_metered_usage(
     client_app: str = "chat_tool",
     metadata: dict[str, Any] | None = None,
     reserve_budget: bool = True,
+    platform: bool = False,
+    pricing_model: AIModel | None = None,
 ) -> MeteredUsageCall:
-    """Reserve a conservative hold before one external metered call."""
+    """Reserve a conservative hold before one external metered call.
+
+    ``platform=True`` names the platform itself as the subject: the call is
+    recorded and priced so the spend is visible, but nobody's budget is held
+    or charged, because nobody asked for it. A user or key and ``platform``
+    together is a contradiction and is refused.
+    """
 
     call_id = str(uuid.uuid4())
     reservation_id: str | None = None
     resolved_username = (username or "").strip()
+    if platform:
+        if user_id is not None or alpha_router_api_key_id is not None:
+            raise ValueError("A platform-incurred call cannot also name a user or API key")
+        return MeteredUsageCall(
+            id=call_id,
+            user_id=None,
+            alpha_router_api_key_id=None,
+            connection_id=connection_id,
+            username=PLATFORM_USERNAME,
+            provider_type=(provider_type or "unknown").strip().lower() or "unknown",
+            service_type=(service_type or "tool").strip().lower() or "tool",
+            operation_name=(operation_name or "tool_call").strip()[:64] or "tool_call",
+            model_id=(model_id or operation_name or "unknown").strip()[:512] or "unknown",
+            budget_reservation_id=None,
+            started_at=datetime.datetime.utcnow(),
+            source=source[:32],
+            client_app=client_app[:128],
+            metadata=dict(metadata or {}),
+            subject_type=SUBJECT_PLATFORM,
+            pricing_model=pricing_model,
+        )
     if user_id is None and alpha_router_api_key_id is None:
         raise ValueError("A user or Alpharouter API-key subject is required")
     async with AsyncSessionLocal() as db:
@@ -110,6 +151,7 @@ async def start_metered_usage(
         source=source[:32],
         client_app=client_app[:128],
         metadata=dict(metadata or {}),
+        pricing_model=pricing_model,
     )
 
 
@@ -127,7 +169,7 @@ async def finish_metered_usage(
     completed_at = datetime.datetime.utcnow()
     event = capture_usage_event(
         response,
-        ai_model=None,
+        ai_model=call.pricing_model,
         provider_type=call.provider_type,
         service_type=call.service_type,
         operation_name=call.operation_name,
@@ -140,7 +182,7 @@ async def finish_metered_usage(
         error_message=error_message,
         idempotency_key=f"metered:{call.id}:event",
     )
-    event.connection_id = call.connection_id
+    event.connection_id = call.connection_id or getattr(call.pricing_model, "connection_id", None)
 
     async def _persist() -> bool:
         for attempt in range(3):
@@ -170,6 +212,7 @@ async def finish_metered_usage(
                         usage_events=[event],
                         operation_type=call.operation_name,
                         operation_idempotency_key=f"metered:{call.id}",
+                        subject_type=call.subject_type,
                     )
                     await db.commit()
                 return True

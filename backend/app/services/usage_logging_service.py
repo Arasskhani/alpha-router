@@ -81,6 +81,7 @@ async def log_usage(
     http_status: int | None = None,
     correlation_id: str | None = None,
     provider_job_id: str | None = None,
+    subject_type: str | None = None,
 ) -> int | None:
     events = list(usage_events or [])
     if not events:
@@ -135,6 +136,7 @@ async def log_usage(
         success=success,
         idempotency_key=operation_idempotency_key,
         metadata={"model_id": model_id},
+        subject_type=subject_type,
     )
     if not accounting.created:
         await db.delete(log_row)

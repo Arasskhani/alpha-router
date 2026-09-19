@@ -25,7 +25,11 @@ from app.services.knowledge_crypto_service import (
     chunk_plaintext_hash,
     decrypt_text,
 )
-from app.services.knowledge_embedding_service import KnowledgeEmbeddingBackend
+from app.services.knowledge_embedding_service import (
+    PLATFORM_INDEXING_SUBJECT,
+    KnowledgeEmbeddingBackend,
+    metered_embeddings,
+)
 from app.services.knowledge_publisher_service import activate_release_after_index
 from app.services.knowledge_sparse_service import (
     SparseEncodingProfile,
@@ -213,13 +217,16 @@ async def build_and_activate_knowledge_index(  # noqa: C901 -- Phase 4 split; co
             if chunk_plaintext_hash(int(chunk.chunk_index), plaintext) != chunk.content_hash:
                 raise ValueError("Knowledge chunk integrity verification failed")
             plaintexts.append(plaintext)
-        vectors = await embedding_backend.embed(
-            db,
-            provider=index_version.embedding_provider,
-            model=index_version.embedding_model,
-            dimensions=index_version.embedding_dimensions,
-            texts=plaintexts,
-        )
+        # Index builds are the platform's own spend: recorded and priced so
+        # the money is visible, charged to nobody's budget.
+        with metered_embeddings(PLATFORM_INDEXING_SUBJECT):
+            vectors = await embedding_backend.embed(
+                db,
+                provider=index_version.embedding_provider,
+                model=index_version.embedding_model,
+                dimensions=index_version.embedding_dimensions,
+                texts=plaintexts,
+            )
         if len(vectors) != len(chunk_batch):
             raise ValueError("Knowledge embedding backend returned an invalid batch")
 

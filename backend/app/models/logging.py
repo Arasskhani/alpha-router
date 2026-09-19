@@ -1,7 +1,7 @@
 """Per-request API logs for admin and user dashboards."""
 
 import datetime
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import relationship
 
 from app.database import Base, MoneyUSD
@@ -15,6 +15,11 @@ class RequestLog(Base):
             "budget_reservation_id",
             unique=True,
         ),
+        # "this user's calls, newest first" is the query API Logs runs. Two
+        # single-column indexes answer it badly: one is used, the rest is
+        # filtered and sorted. This is the largest and fastest-growing table in
+        # the product, so that difference is the page's whole cost.
+        Index("ix_request_logs_user_time", "user_id", text("request_time DESC")),
     )
 
     id = Column(Integer, primary_key=True)

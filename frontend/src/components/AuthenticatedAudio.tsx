@@ -1,9 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import {
-  fetchAuthenticatedMediaObjectUrl,
-  isAlphaRouterMediaFileUrl,
-} from "../lib/mediaUrl";
-import { safeBrowserUrl } from "../lib/browserUrlPolicy";
+import { useRef, useState } from "react";
+import { useAuthenticatedMediaSource } from "../hooks/useAuthenticatedMediaSource";
 
 type Props = {
   url: string;
@@ -26,51 +22,11 @@ function formatDuration(seconds: number): string {
 }
 
 export default function AuthenticatedAudio({ url, className, title, meta }: Props) {
-  const [src, setSrc] = useState<string | null>(() =>
-    url && !isAlphaRouterMediaFileUrl(url) ? safeBrowserUrl(url, "media") : null,
-  );
-  const [failed, setFailed] = useState(false);
+  const { src, failed } = useAuthenticatedMediaSource(url, "media");
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(meta?.durationSeconds ?? 0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-
-  useEffect(() => {
-    if (!url) {
-      setSrc(null);
-      setFailed(false);
-      return;
-    }
-    if (!isAlphaRouterMediaFileUrl(url)) {
-      const safeUrl = safeBrowserUrl(url, "media");
-      setSrc(safeUrl);
-      setFailed(!safeUrl);
-      return;
-    }
-
-    let objectUrl: string | null = null;
-    let cancelled = false;
-    setSrc(null);
-    setFailed(false);
-
-    void (async () => {
-      try {
-        objectUrl = await fetchAuthenticatedMediaObjectUrl(url);
-        if (cancelled) {
-          URL.revokeObjectURL(objectUrl);
-          return;
-        }
-        setSrc(objectUrl);
-      } catch {
-        if (!cancelled) setFailed(true);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [url]);
 
   const togglePlay = () => {
     const audio = audioRef.current;

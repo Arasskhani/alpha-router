@@ -74,5 +74,11 @@ def downgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name != "postgresql":
         return
+    # Guarded the same way the upgrade is. An installation older than any one of
+    # these tables upgrades fine and then cannot roll back, which is precisely
+    # when a rollback is being attempted.
+    tables = set(sa.inspect(bind).get_table_names())
     for table, column in _MONEY + _PRICE:
+        if table not in tables:
+            continue
         op.execute(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE DOUBLE PRECISION USING {column}::double precision")

@@ -2635,7 +2635,11 @@ table.data-table--api-logs {
   gap: 0.35rem;
   transition: background 0.15s ease;
 }
-.btn:hover { background: var(--accent-hover); }
+.btn:hover:not(:disabled) { background: var(--accent-hover); }
+.btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
 .btn-ghost {
   background: transparent;
   color: var(--muted);

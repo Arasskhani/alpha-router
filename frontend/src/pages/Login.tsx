@@ -126,6 +126,7 @@ export default function Login() {
   const [totpCode, setTotpCode] = useState("");
   const [pendingToken, setPendingToken] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const [shakeFields, setShakeFields] = useState(false);
   const [methods, setMethods] = useState({ ldap: false, saml: false, oidc: false });
   const nav = useNavigate();
@@ -187,6 +188,10 @@ export default function Login() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    // A second click while the first request is out sends a second login
+    // (or a second 2FA code, which the server counts as another attempt).
+    if (submitting) return;
+    setSubmitting(true);
     setError("");
     try {
       if (pendingToken) {
@@ -252,6 +257,8 @@ export default function Login() {
       }
       setError(msg || "Login failed");
       triggerCredentialShake();
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -368,9 +375,9 @@ export default function Login() {
                   </button>
                 </>
               )}
-              {error && <p className="login-form__error">{error}</p>}
-              <button className="btn login-form__submit" type="submit">
-                {pendingToken ? "Verify" : "Continue"}
+              {error && <p className="login-form__error" role="alert">{error}</p>}
+              <button className="btn login-form__submit" type="submit" disabled={submitting} aria-busy={submitting}>
+                {submitting ? "Signing in…" : pendingToken ? "Verify" : "Continue"}
               </button>
             </form>
 

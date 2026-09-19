@@ -1,0 +1,7 @@
+{
+  "_comment": "Packages whose published metadata misstates their licence. Each entry names the licence actually granted by the LICENSE file in the distribution, and why the metadata is wrong. check-licences.py uses the override instead of the metadata; keep this list short and every entry justified.",
+  "qrcode": {
+    "licence": "BSD-3-Clause",
+    "reason": "LICENSE in the wheel is the BSD 3-clause text (Copyright 2011 Lincoln Loop) and METADATA says 'License: BSD'; the package also carries a stray 'License :: Other/Proprietary License' classifier, which is a metadata error, not a term."
+  }
+}

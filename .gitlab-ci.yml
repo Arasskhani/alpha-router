@@ -232,6 +232,43 @@ backend-audit:
     paths:
       - pip-audit.json
 
+# NOTICE claims that everything it does not name is permissively licensed.
+# Check the claim against what is actually installed - all three Python sets
+# and the frontend's production dependencies - so a copyleft or
+# source-available package cannot arrive with an ordinary bump and sit
+# unnoticed. Strong copyleft fails regardless of NOTICE; weak copyleft and
+# unknowns fail unless NOTICE names them. See scripts/check-licences.py.
+licences:
+  stage: audit
+  image: python:3.12-slim
+  rules:
+    - *always-on-default
+    - changes:
+        - backend/requirements.txt
+        - backend/requirements.lock
+        - sandbox/requirements.txt
+        - sandbox-broker/requirements.txt
+        - frontend/package-lock.json
+        - NOTICE
+        - scripts/check-licences.py
+        - scripts/licence-overrides.json
+        - .gitlab-ci.yml
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends nodejs npm > /dev/null
+  script:
+    # One environment per image, exactly as each image is built: the sandbox
+    # pins an older numpy/pandas than the API, and a shared install would
+    # silently check one against the other's versions.
+    - |
+      for set in backend/requirements.lock sandbox/requirements.txt sandbox-broker/requirements.txt; do
+        python -m venv "/tmp/venv-$(dirname "$set")"
+        "/tmp/venv-$(dirname "$set")/bin/pip" install --no-cache-dir -q $( [ "$set" = backend/requirements.lock ] && echo --require-hashes ) -r "$set"
+        "/tmp/venv-$(dirname "$set")/bin/pip" install --no-cache-dir -q pip-licenses
+        "/tmp/venv-$(dirname "$set")/bin/python" scripts/check-licences.py python "$set"
+      done
+    - cd frontend && npm ci --ignore-scripts --no-audit --no-fund > /dev/null && cd ..
+    - python scripts/check-licences.py node frontend
+
 # Fail on CRITICAL/HIGH findings in the pinned SeaweedFS image (deploy/seaweedfs/VERSION).
 object-storage-image-audit:
   stage: audit

@@ -648,10 +648,22 @@ async def get_model_code_interpreter_compatibility(
 async def put_model_code_interpreter_compatibility(
     model_id: int,
     body: ModelCompatibilityOverrideIn,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     actor: User = Depends(require_models_write),
 ):
-    """Pin or release the automatic Code Interpreter compatibility decision."""
+    """Pin or release the automatic Code Interpreter compatibility decision.
+
+    Recorded twice, on purpose. The compatibility table keeps an evidence row
+    beside the probe results it overrides, because the scoring needs to know a
+    human overruled it. That row names the administrator only inside a sentence
+    and carries no user id, so it cannot be filtered or joined - which is what
+    an audit trail is for. The security event added here is the one Admin Logs
+    can search by actor, and it says which model and which way.
+    """
+    from app.services.client_ip import resolve_client_ip
+    from app.services.security_audit import log_security_event
+
     model = await db.get(AIModel, model_id)
     if not model:
         raise HTTPException(404)
@@ -661,6 +673,7 @@ async def put_model_code_interpreter_compatibility(
         external_model_id=model.external_id,
         model_id=model.id,
     )
+    previous = row.manual_override
     try:
         await set_manual_override(
             db,
@@ -670,6 +683,20 @@ async def put_model_code_interpreter_compatibility(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if previous != row.manual_override:
+        await log_security_event(
+            db,
+            actor=actor,
+            actor_ip=resolve_client_ip(request),
+            action="code_interpreter_compatibility_override",
+            resource_type="model",
+            resource_id=str(model.id),
+            detail={
+                "model": model.external_id,
+                "before": previous or "auto",
+                "after": row.manual_override or "auto",
+            },
+        )
     await db.commit()
     return {
         "ok": True,
@@ -3844,12 +3871,45 @@ async def get_storage_overview(db: AsyncSession = Depends(get_db), _: User = Dep
     return stats
 
 
+async def _storage_settings_audit_view(db: AsyncSession) -> dict[str, object]:
+    """Every value ``patch_storage_settings`` can change, in one flat mapping.
+
+    The three services behind that endpoint each expose their own getter and
+    none of them covers the others, so a "before" built from any single one
+    silently reports ``None`` for the fields the operator actually changed.
+    """
+    from app.services.project_media_service import get_project_media_quota_gb
+    from app.services.transfer_limits_service import get_transfer_limits
+    from app.services.user_media_service import get_user_media_quota_gb
+
+    view: dict[str, object] = dict(await get_storage_settings(db))
+    view["user_media_quota_gb"] = await get_user_media_quota_gb(db)
+    view["project_media_quota_gb"] = await get_project_media_quota_gb(db)
+    view.update(await get_transfer_limits(db))
+    return view
+
+
 @router.patch("/storage/settings")
 async def patch_storage_settings(
     body: StorageSettingsPatch,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_storage_write),
+    admin: User = Depends(require_storage_write),
 ):
+    """Retention, quotas and transfer ceilings for stored media and chat files.
+
+    Audited on the fields that decide how much of the platform a caller may
+    consume: the media quotas and the transfer/workspace ceilings. Both are
+    levers on shared capacity - lowering the Code Interpreter workspace limits
+    changes what every user may send into a sandbox - and until now neither
+    left a trace. The schedule fields beside them are recorded too, because a
+    single event describing the whole save is easier to read than four.
+    """
+    from app.services.client_ip import resolve_client_ip
+    from app.services.security_audit import log_security_event
+
+    requested = {key: value for key, value in body.model_dump().items() if value is not None}
+    before = await _storage_settings_audit_view(db)
     settings = await set_storage_settings(
         db,
         retention_days=body.retention_days,
@@ -3911,6 +3971,24 @@ async def patch_storage_settings(
                 "reason": "sync_failed",
                 "error": str(exc),
             }
+    if requested:
+        # The stored view, not the request body: a value the service clamped is
+        # what actually took effect, and that is what the trail has to say.
+        after = await _storage_settings_audit_view(db)
+        changed = {key: after[key] for key in requested if key in after}
+        await log_security_event(
+            db,
+            actor=admin,
+            actor_ip=resolve_client_ip(request),
+            action="storage_settings_changed",
+            resource_type="storage_settings",
+            detail={
+                "requested": requested,
+                "before": {key: before.get(key) for key in changed},
+                "after": changed,
+            },
+        )
+        await db.commit()
     await refresh_storage_cleanup_schedule()
     payload: dict = {"ok": True, "settings": settings}
     if edge_sync is not None:

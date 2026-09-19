@@ -13,6 +13,12 @@ from app.services.operations_service import get_operations_dashboard
 router = APIRouter(prefix="/api/admin/operations", tags=["operations"])
 
 
+#: The policy keys worth recording in the audit trail. The environment
+#: ceilings alongside them cannot be changed by this endpoint, so writing
+#: them into every event would be noise.
+_AUDITED_CAPACITY_KEYS = ("global_max", "per_subject_max", "retry_after_seconds", "enabled")
+
+
 class CodeInterpreterCapacityPatch(BaseModel):
     max_concurrent_turns: int | None = Field(default=None, ge=1)
     max_per_subject: int | None = Field(default=None, ge=1)
@@ -154,15 +160,28 @@ async def get_code_interpreter_capacity(
 @router.patch("/code-interpreter-capacity")
 async def patch_code_interpreter_capacity(
     body: CodeInterpreterCapacityPatch,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_operations_write),
+    admin: User = Depends(require_operations_write),
 ):
+    """Change the operational admission limits for Code Interpreter.
+
+    Audited. These three numbers decide whether the platform runs code at all:
+    setting the global ceiling to 1 takes Code Interpreter away from everyone,
+    and raising it past what the hardware can carry is a resource-exhaustion
+    lever. Either is a security-relevant administrative act, so it lands in the
+    trail with the values before and after, like every other one.
+    """
+    from app.services.client_ip import resolve_client_ip
     from app.services.code_interpreter_capacity_service import (
         code_interpreter_capacity_stats,
+        get_code_interpreter_capacity_policy,
         set_code_interpreter_capacity_policy,
         sync_code_interpreter_capacity_policy,
     )
+    from app.services.security_audit import log_security_event
 
+    before = await get_code_interpreter_capacity_policy(db)
     await set_code_interpreter_capacity_policy(
         db,
         global_max=body.max_concurrent_turns,
@@ -170,10 +189,29 @@ async def patch_code_interpreter_capacity(
         retry_after_seconds=body.retry_after_seconds,
         enabled=body.enabled,
     )
+    after = await get_code_interpreter_capacity_policy(db)
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=resolve_client_ip(request),
+        action=(
+            "code_interpreter_disabled"
+            if before["enabled"] and not after["enabled"]
+            else "code_interpreter_enabled"
+            if not before["enabled"] and after["enabled"]
+            else "code_interpreter_capacity_changed"
+        ),
+        resource_type="code_interpreter",
+        detail={
+            "before": {key: before[key] for key in _AUDITED_CAPACITY_KEYS},
+            "after": {key: after[key] for key in _AUDITED_CAPACITY_KEYS},
+        },
+    )
     await db.commit()
     policy = await sync_code_interpreter_capacity_policy(db)
     runtime = await code_interpreter_capacity_stats()
     return _capacity_payload(policy, runtime, await _sandbox_broker_capacity())
+
 
 class CodeInterpreterWorkspacePatch(BaseModel):
     """The two limits that bound what a turn may carry into the sandbox."""

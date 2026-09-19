@@ -129,3 +129,62 @@ def test_the_route_is_reachable_for_the_operations_menu():
     from app.services.rbac import MENU_PATH_PREFIXES
 
     assert "/admin/code-interpreter" in MENU_PATH_PREFIXES["operations"]
+
+
+class TestCompatibilityOverrideIsAudited:
+    """Pinning a model's Code Interpreter compatibility is an administrative act.
+
+    It was already recorded as an evidence row on the compatibility table, but
+    that row names the administrator inside a sentence and carries no user id,
+    so "which models did this person pin" had no answer. The security event
+    alongside it does, and it reaches Admin Logs like every other change.
+    """
+
+    async def _model(self, db):
+        from app.models.connection import Connection
+        from app.models.model_catalog import AIModel
+        from app.services.secret_crypto import encrypt_secret
+
+        connection = Connection(
+            name="openai", provider_type="openai", api_key_encrypted=encrypt_secret("sk-test"), is_active=True
+        )
+        db.add(connection)
+        await db.flush()
+        model = AIModel(
+            connection_id=connection.id, external_id="openai/gpt-4o", provider_type="openai", is_enabled=True
+        )
+        db.add(model)
+        await db.flush()
+        return model
+
+    async def _put(self, db, admin, model, override):
+        from app.api.admin import ModelCompatibilityOverrideIn, put_model_code_interpreter_compatibility
+
+        return await put_model_code_interpreter_compatibility(
+            model_id=model.id,
+            body=ModelCompatibilityOverrideIn(override=override),
+            request=_Request(),
+            db=db,
+            actor=admin,
+        )
+
+    async def test_pinning_and_releasing_are_both_recorded(self, db_session, admin):
+        model = await self._model(db_session)
+        await self._put(db_session, admin, model, "incompatible")
+        await self._put(db_session, admin, model, "auto")
+
+        events = (await db_session.execute(select(SecurityAuditEvent).order_by(SecurityAuditEvent.id))).scalars().all()
+        assert [e.action for e in events] == ["code_interpreter_compatibility_override"] * 2
+        assert events[0].resource_type == "model"
+        assert events[0].resource_id == str(model.id)
+        assert events[0].actor_username == admin.username
+        first = json.loads(events[0].detail_json)
+        assert (first["before"], first["after"]) == ("auto", "incompatible")
+        assert json.loads(events[1].detail_json)["after"] == "auto"
+
+    async def test_saving_the_same_value_twice_does_not_pad_the_trail(self, db_session, admin):
+        model = await self._model(db_session)
+        await self._put(db_session, admin, model, "compatible")
+        await self._put(db_session, admin, model, "compatible")
+        events = (await db_session.execute(select(SecurityAuditEvent))).scalars().all()
+        assert len(events) == 1

@@ -6,7 +6,7 @@
   "labels": ["dependencies"],
   "lockFileMaintenance": { "enabled": true, "schedule": ["before 6am on the first day of the month"] },
   "pip_requirements": {
-    "managerFilePatterns": ["/^backend/requirements(-dev)?\\.txt$/", "/^sandbox(-broker)?/requirements\\.in$/"]
+    "managerFilePatterns": ["/^backend/requirements\\.txt$/", "/^backend/requirements-dev\\.in$/", "/^sandbox(-broker)?/requirements\\.in$/"]
   },
   "packageRules": [
     {

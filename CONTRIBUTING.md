@@ -10,7 +10,8 @@ work with it instead of around it.
 ```bash
 # Backend tooling (same pins as CI)
 python -m venv .venv && . .venv/bin/activate
-pip install -r backend/requirements.lock -r backend/requirements-dev.txt
+pip install --require-hashes -r backend/requirements.lock
+pip install --require-hashes -r backend/requirements-dev.txt
 
 # Frontend tooling
 cd frontend && npm ci && cd ..
@@ -103,9 +104,13 @@ nothing is silently dropped.
 - Python runtime: edit `backend/requirements.txt`, regenerate
   `backend/requirements.lock` (command in its header), commit both. The Docker
   image and CI install only from the lock.
-- Python tooling: `backend/requirements-dev.txt`, exact pins.
+- Python tooling: edit `backend/requirements-dev.in`, regenerate
+  `backend/requirements-dev.txt` (command in its header, compiled under the
+  runtime lock as a constraint so the two never disagree about a shared
+  package), commit both. Every transitive version is pinned and hashed.
 - Sandbox / broker images: `sandbox/requirements.in` →
-  `sandbox/requirements.txt` (same for `sandbox-broker/`).
+  `sandbox/requirements.txt` (same for `sandbox-broker/`), hashed; the images
+  install with `--require-hashes`.
 - Frontend: `npm install <pkg>` updates `package-lock.json`; CI uses `npm ci`.
 - Renovate (`renovate.json`) opens weekly update MRs and pins base-image digests.
 

@@ -7,7 +7,7 @@
     "prebuild": "node scripts/generate-persian-fonts.mjs",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
-    "lint": "eslint . --max-warnings 286",
+    "lint": "eslint . --max-warnings 184",
     "lint:strict": "eslint . --max-warnings 0",
     "knip": "knip",
     "test": "vitest run",

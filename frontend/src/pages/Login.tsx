@@ -350,6 +350,7 @@ export default function Login() {
                     inputMode="numeric"
                     className="login-form__input"
                     placeholder="123456"
+                    // eslint-disable-next-line jsx-a11y/no-autofocus -- the 2FA step the user just reached by submitting a password; the code field is the only control
                     autoFocus
                     aria-invalid={shakeFields || !!error}
                   />

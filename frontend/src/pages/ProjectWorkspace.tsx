@@ -475,6 +475,7 @@ function ProjectActionsMenu({
         >
           <label className="form-field">
             <span>Name</span>
+            {/* eslint-disable-next-line jsx-a11y/no-autofocus -- a dialog the user just opened; the dialog pattern moves focus into it */}
             <input type="text" value={name} onChange={(e) => setName(e.target.value)} maxLength={255} required autoFocus />
           </label>
           <label className="form-field">
@@ -1816,6 +1817,7 @@ function MembersTab({
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            // eslint-disable-next-line jsx-a11y/no-autofocus -- a dialog the user just opened; the dialog pattern moves focus into it
             autoFocus
             placeholder="Type a username…"
           />

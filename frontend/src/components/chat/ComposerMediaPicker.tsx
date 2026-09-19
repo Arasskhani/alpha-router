@@ -143,6 +143,7 @@ export default function ComposerMediaPicker({
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search files"
           aria-label="Search media"
+          // eslint-disable-next-line jsx-a11y/no-autofocus -- a picker the user just opened; focus belongs in its search field
           autoFocus
         />
       </label>

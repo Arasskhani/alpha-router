@@ -3435,6 +3435,7 @@ export default function ChatPanel({
               value={renamingTitle}
               onChange={(e) => setRenamingTitle(e.target.value)}
               onBlur={commitRenameSession}
+              // eslint-disable-next-line jsx-a11y/no-autofocus -- an inline rename the user just started; focus belongs in the field
               autoFocus
             />
           </form>
@@ -6307,6 +6308,7 @@ export default function ChatPanel({
                           value={renamingFolderName}
                           onChange={(e) => setRenamingFolderName(e.target.value)}
                           onBlur={commitRenameFolder}
+                          // eslint-disable-next-line jsx-a11y/no-autofocus -- an inline rename the user just started; focus belongs in the field
                           autoFocus
                         />
                       </form>

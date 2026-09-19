@@ -45,6 +45,7 @@ export default function MoveToFolderModal({
           placeholder="Search folders…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          // eslint-disable-next-line jsx-a11y/no-autofocus -- a dialog the user just opened; the dialog pattern moves focus into it
           autoFocus
           aria-label="Search folders"
         />

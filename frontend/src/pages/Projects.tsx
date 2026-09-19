@@ -177,6 +177,7 @@ export default function ProjectsPage() {
               onChange={(e) => setCreate((s) => ({ ...s, name: e.target.value }))}
               maxLength={255}
               required
+              // eslint-disable-next-line jsx-a11y/no-autofocus -- a dialog the user just opened; the dialog pattern moves focus into it
               autoFocus
             />
           </label>

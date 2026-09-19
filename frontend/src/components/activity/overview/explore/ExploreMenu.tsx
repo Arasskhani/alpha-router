@@ -88,6 +88,7 @@ export default function ExploreMenu({
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 placeholder={searchPlaceholder}
+                // eslint-disable-next-line jsx-a11y/no-autofocus -- a search menu the user just opened; focus belongs in its field
                 autoFocus
               />
               <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden>

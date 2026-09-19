@@ -87,6 +87,7 @@ export default function ConfirmModal({
                 type="text"
                 value={promptValue}
                 onChange={(e) => setPromptValue(e.target.value)}
+                // eslint-disable-next-line jsx-a11y/no-autofocus -- a dialog the user just opened; the dialog pattern moves focus into it
                 autoFocus
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !confirmDisabled) {
@@ -103,6 +104,7 @@ export default function ConfirmModal({
               className={danger ? "btn btn-danger" : "btn"}
               onClick={() => onConfirm(promptLabel ? trimmed : undefined)}
               disabled={confirmDisabled}
+              // eslint-disable-next-line jsx-a11y/no-autofocus -- a dialog the user just opened; the dialog pattern moves focus into it
               autoFocus={!promptLabel}
             >
               {confirmLabel}

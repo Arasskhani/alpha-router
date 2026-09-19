@@ -28,8 +28,9 @@ export default tseslint.config(
       "react-hooks/purity": "warn",
       "react-hooks/immutability": "warn",
       "react-hooks/exhaustive-deps": "warn",
-      // a11y: 91 unlabeled controls and 12 autofocus uses pre-date the gate;
-      // warnings until each screen is revisited. New code should not add any.
+      // a11y: every label is paired and every autofocus justified in place
+      // (see scripts/codemods/pair-labels.py). What is left as warnings is the
+      // interaction-role set below; the budget in package.json only goes down.
       // depth 3: label > span > strong > text is how this codebase writes a
       // wrapped checkbox/radio caption; the default of 2 misreads it as unlabelled.
       "jsx-a11y/label-has-associated-control": ["warn", { depth: 3 }],

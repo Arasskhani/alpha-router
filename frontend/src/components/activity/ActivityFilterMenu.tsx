@@ -236,6 +236,7 @@ export default function ActivityFilterMenu({
                   value={valueQuery}
                   onChange={(e) => setValueQuery(e.target.value)}
                   aria-label={searchPlaceholder}
+                  // eslint-disable-next-line jsx-a11y/no-autofocus -- a search menu the user just opened; focus belongs in its field
                   autoFocus
                   autoComplete="off"
                   spellCheck={false}

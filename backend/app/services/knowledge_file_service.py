@@ -271,39 +271,40 @@ def _ocr_pdf_page_text(
     settings,
     ocr_document_holder: list,
 ) -> str:
-    """Render one PDF page and OCR it with memory-conscious fallbacks."""
+    """Render one PDF page and OCR it with memory-conscious fallbacks.
+
+    The rasteriser is PDFium (``pypdfium2``, BSD-3 / Apache-2.0). It replaced
+    PyMuPDF, which is AGPL or a commercial Artifex licence, and which this
+    module used for exactly this one job: a grayscale bitmap of a page at a
+    chosen DPI for ``pytesseract`` to read. Text extraction was always
+    ``pypdf``. Measured before the swap on Latin, Persian and mixed scans:
+    identical OCR text, identical peak memory, a few tens of milliseconds more
+    per page against a multi-second tesseract pass.
+    """
     import gc
 
-    import pymupdf
+    import pypdfium2 as pdfium
     import pytesseract
-    from PIL import Image
 
     last_error: Exception | None = None
     for attempt, dpi in enumerate(_ocr_dpi_candidates(settings.knowledge_ocr_dpi)):
-        # Re-open periodically / after failures so MuPDF caches do not accumulate.
+        # Re-open periodically / after failures so renderer caches do not accumulate.
         if ocr_document_holder[0] is None or attempt > 0:
             if ocr_document_holder[0] is not None:
                 ocr_document_holder[0].close()
                 ocr_document_holder[0] = None
                 gc.collect()
-            ocr_document_holder[0] = pymupdf.open(stream=data, filetype="pdf")
+            ocr_document_holder[0] = pdfium.PdfDocument(data)
+        page = None
+        bitmap = None
         try:
-            ocr_page = ocr_document_holder[0].load_page(page_number - 1)
-            pixmap = ocr_page.get_pixmap(
-                matrix=pymupdf.Matrix(dpi / 72, dpi / 72),
-                colorspace=pymupdf.csGRAY,
-                alpha=False,
-            )
-            try:
-                if pixmap.width * pixmap.height > 30_000_000:
-                    raise UnsafeDocumentError("PDF page is too large for safe OCR")
-                image = Image.frombytes(
-                    "L",
-                    (pixmap.width, pixmap.height),
-                    pixmap.samples,
-                )
-            finally:
-                pixmap = None
+            page = ocr_document_holder[0][page_number - 1]
+            width, height = page.get_size()
+            scale = dpi / 72
+            if (width * scale) * (height * scale) > 30_000_000:
+                raise UnsafeDocumentError("PDF page is too large for safe OCR")
+            bitmap = page.render(scale=scale, grayscale=True)
+            image = bitmap.to_pil().convert("L")
             try:
                 ocr_text = pytesseract.image_to_string(
                     image,
@@ -324,6 +325,11 @@ def _ocr_pdf_page_text(
                 ocr_document_holder[0].close()
                 ocr_document_holder[0] = None
             gc.collect()
+        finally:
+            if bitmap is not None:
+                bitmap.close()
+            if page is not None:
+                page.close()
     detail = ""
     if last_error is not None:
         detail = f": {type(last_error).__name__}: {last_error}"

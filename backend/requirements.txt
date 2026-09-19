@@ -42,5 +42,5 @@ boto3>=1.35.0
 Pillow>=11.0.0
 pypdf>=5.1.0
 python-pptx>=1.0.2
-PyMuPDF==1.28.2
+pypdfium2>=5.0.0
 pytesseract==0.3.13

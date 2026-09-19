@@ -75,14 +75,21 @@ def test_knowledge_encryption_authenticates_context_and_ciphertext():
         decrypt_bytes(tampered, associated_data="version:1")
 
 
+def _blank_scan_pdf() -> bytes:
+    """A one-page PDF with no text layer - what a scanner produces."""
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=595, height=842)
+    buffer = BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
 def test_scanned_pdf_uses_bounded_ocr(monkeypatch):
-    import pymupdf
     import pytesseract
 
-    pdf = pymupdf.open()
-    pdf.new_page(width=595, height=842)
-    data = pdf.tobytes()
-    pdf.close()
+    data = _blank_scan_pdf()
     monkeypatch.setattr(
         pytesseract,
         "image_to_string",
@@ -102,24 +109,21 @@ def test_scanned_pdf_uses_bounded_ocr(monkeypatch):
 
 
 def test_pdf_ocr_retries_after_transient_render_failure(monkeypatch):
-    import pymupdf
+    import pypdfium2 as pdfium
     import pytesseract
 
-    pdf = pymupdf.open()
-    pdf.new_page(width=595, height=842)
-    data = pdf.tobytes()
-    pdf.close()
+    data = _blank_scan_pdf()
 
-    original_get_pixmap = pymupdf.Page.get_pixmap
+    original_render = pdfium.PdfPage.render
     calls = {"count": 0}
 
-    def flaky_get_pixmap(self, *args, **kwargs):
+    def flaky_render(self, *args, **kwargs):
         calls["count"] += 1
         if calls["count"] == 1:
-            raise pymupdf.mupdf.FzErrorSystem("malloc (32633128 bytes) failed")
-        return original_get_pixmap(self, *args, **kwargs)
+            raise MemoryError("bitmap allocation failed")
+        return original_render(self, *args, **kwargs)
 
-    monkeypatch.setattr(pymupdf.Page, "get_pixmap", flaky_get_pixmap)
+    monkeypatch.setattr(pdfium.PdfPage, "render", flaky_render)
     monkeypatch.setattr(
         pytesseract,
         "image_to_string",

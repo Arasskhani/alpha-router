@@ -12,7 +12,7 @@ x-logging: &default-logging
 services:
   postgres:
     logging: *default-logging
-    image: postgres:16-alpine
+    image: postgres:16.13-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-alpha_router}

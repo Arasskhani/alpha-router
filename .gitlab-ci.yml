@@ -80,7 +80,7 @@ backend-tests-postgres:
   image: python:3.12-slim
   <<: *backend-rules
   services:
-    - name: postgres:16-alpine
+    - name: postgres:16.13-alpine
       alias: postgres
   variables:
     POSTGRES_USER: alpha_router
@@ -102,7 +102,7 @@ backend-postgres-canary:
   image: python:3.12-slim
   <<: *backend-rules
   services:
-    - name: postgres:16-alpine
+    - name: postgres:16.13-alpine
       alias: postgres
   variables:
     POSTGRES_USER: alpha_router

@@ -38,6 +38,11 @@ async def job_sync_all_models():
     now = datetime.utcnow()
     async with AsyncSessionLocal() as db:
         conns = (await db.execute(select(Connection).where(Connection.sync_enabled == True))).scalars().all()  # noqa: E712
+        # Decide what is due from plain values first. A rollback below expires
+        # every loaded instance, and reading an expired attribute lazy-loads,
+        # which an async session cannot do outside an await - so the loop
+        # must not touch the ORM objects after the first failure.
+        due = []
         for c in conns:
             if not c.is_active:
                 continue
@@ -46,13 +51,30 @@ async def job_sync_all_models():
                 elapsed_h = (now - c.last_sync_at).total_seconds() / 3600.0
                 if elapsed_h < hours:
                     continue
-            await sync_connection_with_flash(db, c, decrypt_secret(c.api_key_encrypted))
-        await db.commit()
+            due.append((int(c.id), str(c.name)))
+        for connection_id, label in due:
+            # One provider being down must not stop the others from syncing,
+            # and must leave a line that names it.
+            try:
+                connection = await db.get(Connection, connection_id)
+                if connection is None:
+                    continue
+                await sync_connection_with_flash(db, connection, decrypt_secret(connection.api_key_encrypted))
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                logger.exception("Model sync failed for connection %s (id=%s)", label, connection_id)
 
 
 async def job_reset_budgets():
     async with AsyncSessionLocal() as db:
-        await reset_all_monthly_budgets(db)
+        try:
+            count = await reset_all_monthly_budgets(db)
+            await db.commit()
+            logger.info("Monthly budget reset: %s users", count)
+        except Exception:
+            await db.rollback()
+            logger.exception("Monthly budget reset failed")
 
 
 async def job_expire_budget_reservations():
@@ -61,13 +83,18 @@ async def job_expire_budget_reservations():
         reconcile_drifted_reserved_counters,
     )
 
+    repaired = 0
     async with AsyncSessionLocal() as db:
-        await expire_stale_reservations(db)
-        # Expiry only closes rows. A reserved counter that drifted above the rows
-        # behind it has nothing to expire, so repair those too — otherwise the
-        # gap keeps consuming budget until period rollover.
-        repaired = await reconcile_drifted_reserved_counters(db)
-        await db.commit()
+        try:
+            await expire_stale_reservations(db)
+            # Expiry only closes rows. A reserved counter that drifted above the rows
+            # behind it has nothing to expire, so repair those too — otherwise the
+            # gap keeps consuming budget until period rollover.
+            repaired = await reconcile_drifted_reserved_counters(db)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            logger.exception("Budget reservation expiry failed")
     if repaired:
         logger.warning("Repaired drifted reserved budget counters for %s subject(s)", repaired)
 
@@ -162,26 +189,47 @@ async def job_user_media_cleanup():
             .scalars()
             .all()
         )
-        for prefs in prefs_rows:
-            if not user_media_cleanup_due(prefs, now):
-                continue
-            await purge_user_media_older_than(db, prefs.user_id, int(prefs.cleanup_retention_days or 30))
-            prefs.last_cleanup_at = now
-        await db.commit()
+        # Plain values first: a rollback expires the loaded rows, and reading
+        # an expired attribute afterwards lazy-loads, which cannot happen here.
+        due = [
+            (int(prefs.user_id), int(prefs.cleanup_retention_days or 30))
+            for prefs in prefs_rows
+            if user_media_cleanup_due(prefs, now)
+        ]
+        for user_id, days in due:
+            # One user's storage failing must not stop everyone else's cleanup.
+            try:
+                await purge_user_media_older_than(db, user_id, days)
+                row = await db.get(UserMediaPreferences, user_id)
+                if row is not None:
+                    row.last_cleanup_at = now
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                logger.exception("User media cleanup failed for user %s", user_id)
 
 
 async def job_system_metrics_snapshot():
     async with AsyncSessionLocal() as db:
-        await record_system_snapshot(db)
-        await prune_old_snapshots(db)
+        try:
+            await record_system_snapshot(db)
+            await prune_old_snapshots(db)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            logger.exception("System metrics snapshot failed")
 
 
 async def job_chat_stats_reconcile():
     async with AsyncSessionLocal() as db:
         from app.services.user_chat_storage_service import reconcile_session_message_stats
 
-        await reconcile_session_message_stats(db)
-        await db.commit()
+        try:
+            await reconcile_session_message_stats(db)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            logger.exception("Chat statistics reconcile failed")
 
 
 async def job_model_tool_compatibility():

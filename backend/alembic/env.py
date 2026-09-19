@@ -61,9 +61,23 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+#: Longest a migration will wait for a lock before giving up, in milliseconds.
+#: A migration that takes ACCESS EXCLUSIVE on a busy table and waits forever
+#: queues every query behind it - the table is unavailable for as long as the
+#: wait lasts, which is worse than the migration failing and being retried out
+#: of hours. ``migrate.py`` already retries on an OperationalError.
+MIGRATION_LOCK_TIMEOUT_MS = int(os.getenv("ALEMBIC_LOCK_TIMEOUT_MS", "8000"))
+
+
 def _run_sync_migrations(connection: Connection) -> None:
     _configure(connection)
     with context.begin_transaction():
+        # Inside the transaction alembic manages, not before it: a statement on
+        # this connection beforehand opens an implicit transaction, and then
+        # alembic's own becomes a nested no-op that never commits - the
+        # migrations appear to run and nothing is written.
+        if connection.dialect.name == "postgresql":
+            connection.exec_driver_sql(f"SET LOCAL lock_timeout = {MIGRATION_LOCK_TIMEOUT_MS}")
         context.run_migrations()
 
 

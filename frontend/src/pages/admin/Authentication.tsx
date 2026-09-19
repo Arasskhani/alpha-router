@@ -280,15 +280,16 @@ export default function Authentication() {
         <p className="muted-text" style={{ marginTop: 0 }}>
           Automatically sync users and groups on a daily schedule. Manual sync remains available.
         </p>
-        <label className="auth-sync-schedule__row">
+        <div className="auth-sync-schedule__row">
           <button
+            aria-label="Enable scheduled sync"
             type="button"
             className={`alpha-router-toggle${enabled ? " on" : ""}`}
             aria-pressed={enabled}
             onClick={() => onChange({ enabled: !enabled })}
           />
           <span>Enable scheduled sync</span>
-        </label>
+        </div>
         <div className="auth-sync-schedule__time">
           <label>
             Hour (0–23)

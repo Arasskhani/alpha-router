@@ -116,8 +116,8 @@ export default function AssignPlanModal({
   return (
     <Modal open={open} title="Assign plan" onClose={onClose}>
       <form onSubmit={handleSubmit}>
-        <label>Plan</label>
-        <select
+        <label htmlFor="assign-plan-modal-plan">Plan</label>
+        <select id="assign-plan-modal-plan"
           className="input-block"
           value={planId}
           onChange={(e) => setPlanId(e.target.value)}
@@ -136,8 +136,8 @@ export default function AssignPlanModal({
           </p>
         ) : null}
 
-        <label>Assign to</label>
-        <select
+        <label htmlFor="assign-plan-modal-assign-to">Assign to</label>
+        <select id="assign-plan-modal-assign-to"
           className="input-block"
           value={target}
           onChange={(e) => setTarget(e.target.value as AssignPlanTarget)}
@@ -149,8 +149,8 @@ export default function AssignPlanModal({
 
         {target === "group" ? (
           <>
-            <label>Group</label>
-            <select
+            <label htmlFor="assign-plan-modal-group">Group</label>
+            <select id="assign-plan-modal-group"
               className="input-block"
               value={groupId}
               onChange={(e) => setGroupId(e.target.value)}
@@ -170,8 +170,8 @@ export default function AssignPlanModal({
 
         {target === "user" ? (
           <>
-            <label>User</label>
-            <UserOwnerSelect value={userId} onChange={(u) => setUserId(u?.id ?? null)} />
+            <label htmlFor="assign-plan-modal-user">User</label>
+            <UserOwnerSelect inputId="assign-plan-modal-user" value={userId} onChange={(u) => setUserId(u?.id ?? null)} />
             <p className="muted-text" style={{ marginTop: "-0.35rem", marginBottom: "0.75rem" }}>
               Assigns the plan directly to the user, overriding group and department inheritance.
             </p>
@@ -180,8 +180,8 @@ export default function AssignPlanModal({
 
         {target === "department" ? (
           <>
-            <label>Department</label>
-            <select
+            <label htmlFor="assign-plan-modal-department">Department</label>
+            <select id="assign-plan-modal-department"
               className="input-block"
               value={departmentKey}
               onChange={(e) => setDepartmentKey(e.target.value)}
@@ -202,8 +202,8 @@ export default function AssignPlanModal({
             </select>
             {departmentKey === DEPARTMENT_OTHER ? (
               <>
-                <label>Department name</label>
-                <input
+                <label htmlFor="assign-plan-modal-department-name">Department name</label>
+                <input id="assign-plan-modal-department-name"
                   className="input-block"
                   value={departmentOther}
                   onChange={(e) => setDepartmentOther(e.target.value)}

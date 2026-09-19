@@ -111,16 +111,16 @@ export default function CreateLocalUserModal({ open, roles, plans, onClose, onSu
   return (
     <Modal open={open} title="Create local user" onClose={onClose}>
       <form onSubmit={handleSubmit}>
-        <label>Username</label>
-        <input
+        <label htmlFor="create-local-user-modal-username">Username</label>
+        <input id="create-local-user-modal-username"
           className="input-block"
           value={form.username}
           onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
           autoComplete="off"
           required
         />
-        <label>Email</label>
-        <input
+        <label htmlFor="create-local-user-modal-email">Email</label>
+        <input id="create-local-user-modal-email"
           type="email"
           className="input-block"
           value={form.email}
@@ -128,8 +128,8 @@ export default function CreateLocalUserModal({ open, roles, plans, onClose, onSu
           autoComplete="off"
           required
         />
-        <label>Password</label>
-        <input
+        <label htmlFor="create-local-user-modal-password">Password</label>
+        <input id="create-local-user-modal-password"
           type="password"
           className="input-block"
           value={form.password}
@@ -137,52 +137,52 @@ export default function CreateLocalUserModal({ open, roles, plans, onClose, onSu
           autoComplete="new-password"
           required
         />
-        <label>Display name</label>
-        <input
+        <label htmlFor="create-local-user-modal-display-name">Display name</label>
+        <input id="create-local-user-modal-display-name"
           className="input-block"
           value={form.display_name}
           onChange={(e) => setForm((f) => ({ ...f, display_name: e.target.value }))}
         />
-        <label>Company</label>
-        <input
+        <label htmlFor="create-local-user-modal-company">Company</label>
+        <input id="create-local-user-modal-company"
           className="input-block"
           value={form.company}
           onChange={(e) => setForm((f) => ({ ...f, company: e.target.value }))}
         />
-        <label>Department</label>
-        <input
+        <label htmlFor="create-local-user-modal-department">Department</label>
+        <input id="create-local-user-modal-department"
           className="input-block"
           value={form.department}
           onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))}
         />
-        <label>Office</label>
-        <input
+        <label htmlFor="create-local-user-modal-office">Office</label>
+        <input id="create-local-user-modal-office"
           className="input-block"
           value={form.office}
           onChange={(e) => setForm((f) => ({ ...f, office: e.target.value }))}
         />
-        <label>Job title</label>
-        <input
+        <label htmlFor="create-local-user-modal-job-title">Job title</label>
+        <input id="create-local-user-modal-job-title"
           className="input-block"
           value={form.job_title}
           onChange={(e) => setForm((f) => ({ ...f, job_title: e.target.value }))}
         />
-        <label>Report to</label>
-        <input
+        <label htmlFor="create-local-user-modal-report-to">Report to</label>
+        <input id="create-local-user-modal-report-to"
           className="input-block"
           value={form.reporting_to}
           onChange={(e) => setForm((f) => ({ ...f, reporting_to: e.target.value }))}
         />
-        <label>Role</label>
-        <select
+        <label htmlFor="create-local-user-modal-role">Role</label>
+        <select id="create-local-user-modal-role"
           className="input-block"
           value={form.role}
           onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
         >
           {roleOptions}
         </select>
-        <label>Group</label>
-        <select
+        <label htmlFor="create-local-user-modal-group">Group</label>
+        <select id="create-local-user-modal-group"
           className="input-block"
           value={form.group_id ?? ""}
           onChange={(e) =>
@@ -212,8 +212,8 @@ export default function CreateLocalUserModal({ open, roles, plans, onClose, onSu
             Only local groups are listed. LDAP membership is managed by directory sync; SAML users are provisioned on login.
           </p>
         )}
-        <label>Budget plan</label>
-        <select
+        <label htmlFor="create-local-user-modal-budget-plan">Budget plan</label>
+        <select id="create-local-user-modal-budget-plan"
           className="input-block"
           value={form.budget_plan}
           onChange={(e) => setForm((f) => ({ ...f, budget_plan: e.target.value }))}

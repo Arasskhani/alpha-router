@@ -81,15 +81,15 @@ export default function PlanFormModal({ open, mode, initial, onClose, onSubmit }
             Plan · <strong>{initial.name}</strong>
           </p>
         ) : null}
-        <label>Plan name</label>
-        <input
+        <label htmlFor="plan-form-modal-plan-name">Plan name</label>
+        <input id="plan-form-modal-plan-name"
           className="input-block"
           value={form.name}
           onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
           required
         />
-        <label>Monthly budget (USD)</label>
-        <input
+        <label htmlFor="plan-form-modal-monthly-budget-usd">Monthly budget (USD)</label>
+        <input id="plan-form-modal-monthly-budget-usd"
           type="number"
           step="0.01"
           min={0}

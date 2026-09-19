@@ -399,8 +399,8 @@ export default function Groups() {
               Assign a budget plan to <strong>{budgetGroup.name}</strong>. Updates Plans assignments for this group and
               all members.
             </p>
-            <label>Budget plan</label>
-            <select
+            <label htmlFor="groups-budget-plan">Budget plan</label>
+            <select id="groups-budget-plan"
               className="input-block"
               value={budgetPlanId}
               onChange={(e) => setBudgetPlanId(e.target.value)}
@@ -426,8 +426,8 @@ export default function Groups() {
 
       <Modal open={bulkOpen} title={`Bulk Edit (${selectedIds.length} groups)`} onClose={() => !bulkBusy && setBulkOpen(false)}>
         <p className="muted-text">Apply an action to all selected groups.</p>
-        <label>Budget plan (optional)</label>
-        <select className="input-block" value={bulkPlanId} onChange={(e) => setBulkPlanId(e.target.value)}>
+        <label htmlFor="groups-budget-plan-optional">Budget plan (optional)</label>
+        <select id="groups-budget-plan-optional" className="input-block" value={bulkPlanId} onChange={(e) => setBulkPlanId(e.target.value)}>
           <option value="">Select plan for bulk assign…</option>
           {plans.map((p) => (
             <option key={p.id} value={String(p.id)}>

@@ -222,9 +222,10 @@ export default function ExploreChartCard({ explore, controls, onChange, onDownlo
         {menuOpen ? (
           <div className="explore-chart__menu card">
             <div className="explore-chart__menu-section">
-              <label className="explore-chart__toggle">
+              <div className="explore-chart__toggle">
                 <span>Show &quot;Other&quot;</span>
                 <button
+                  aria-label={'Show "Other"'}
                   type="button"
                   role="switch"
                   aria-checked={controls.showOther}
@@ -233,10 +234,11 @@ export default function ExploreChartCard({ explore, controls, onChange, onDownlo
                 >
                   <span className="explore-switch__thumb" />
                 </button>
-              </label>
-              <label className="explore-chart__toggle">
+              </div>
+              <div className="explore-chart__toggle">
                 <span>Cumulative sum</span>
                 <button
+                  aria-label="Cumulative sum"
                   type="button"
                   role="switch"
                   aria-checked={controls.cumulative}
@@ -245,7 +247,7 @@ export default function ExploreChartCard({ explore, controls, onChange, onDownlo
                 >
                   <span className="explore-switch__thumb" />
                 </button>
-              </label>
+              </div>
               <div className="explore-chart__type-row">
                 <span>Chart type</span>
                 <div className="explore-chart__type-group" role="group" aria-label="Chart type">

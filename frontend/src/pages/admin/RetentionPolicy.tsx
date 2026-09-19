@@ -321,8 +321,8 @@ export default function RetentionPolicy() {
 
       <form className="card" onSubmit={saveMediaSettings}>
         <h3>Media &amp; files — retention</h3>
-        <label>Keep files for (days)</label>
-        <input
+        <label htmlFor="retention-policy-keep-files-for-days">Keep files for (days)</label>
+        <input id="retention-policy-keep-files-for-days"
           type="number"
           min={1}
           className="input-block"
@@ -330,9 +330,10 @@ export default function RetentionPolicy() {
           onChange={(e) => setRetentionDays(Number(e.target.value || 1))}
         />
         <h3 style={{ marginTop: "1rem" }}>Scheduled cleanup</h3>
-        <label className="alpha-router-tool-row" style={{ marginBottom: "0.65rem" }}>
+        <div className="alpha-router-tool-row" style={{ marginBottom: "0.65rem" }}>
           <span>Enable daily cleanup job</span>
           <button
+            aria-label="Enable daily cleanup job"
             type="button"
             className={`alpha-router-toggle${scheduleEnabled ? " on" : ""}`}
             onClick={() => setScheduleEnabled((v) => !v)}
@@ -340,11 +341,11 @@ export default function RetentionPolicy() {
           >
             <span className="alpha-router-toggle-knob" />
           </button>
-        </label>
+        </div>
         <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
           <div style={{ minWidth: 120 }}>
-            <label>Hour</label>
-            <input
+            <label htmlFor="retention-policy-hour">Hour</label>
+            <input id="retention-policy-hour"
               type="number"
               min={0}
               max={23}
@@ -355,8 +356,8 @@ export default function RetentionPolicy() {
             />
           </div>
           <div style={{ minWidth: 120 }}>
-            <label>Minute</label>
-            <input
+            <label htmlFor="retention-policy-minute">Minute</label>
+            <input id="retention-policy-minute"
               type="number"
               min={0}
               max={59}
@@ -394,9 +395,10 @@ export default function RetentionPolicy() {
 
       <form className="card" onSubmit={saveChatSettings}>
         <h3>Chat history — retention</h3>
-        <label className="alpha-router-tool-row" style={{ marginBottom: "0.65rem" }}>
+        <div className="alpha-router-tool-row" style={{ marginBottom: "0.65rem" }}>
           <span>Enable chat retention policy</span>
           <button
+            aria-label="Enable chat retention policy"
             type="button"
             className={`alpha-router-toggle${chatRetentionEnabled ? " on" : ""}`}
             onClick={() => setChatRetentionEnabled((v) => !v)}
@@ -404,9 +406,9 @@ export default function RetentionPolicy() {
           >
             <span className="alpha-router-toggle-knob" />
           </button>
-        </label>
-        <label>Keep chat messages for (days)</label>
-        <input
+        </div>
+        <label htmlFor="retention-policy-keep-chat-messages-for-days">Keep chat messages for (days)</label>
+        <input id="retention-policy-keep-chat-messages-for-days"
           type="number"
           min={1}
           className="input-block"
@@ -415,9 +417,10 @@ export default function RetentionPolicy() {
           disabled={!chatRetentionEnabled}
         />
         <h3 style={{ marginTop: "1rem" }}>Scheduled cleanup</h3>
-        <label className="alpha-router-tool-row" style={{ marginBottom: "0.65rem" }}>
+        <div className="alpha-router-tool-row" style={{ marginBottom: "0.65rem" }}>
           <span>Enable daily message cleanup job</span>
           <button
+            aria-label="Enable daily message cleanup job"
             type="button"
             className={`alpha-router-toggle${chatScheduleEnabled ? " on" : ""}`}
             onClick={() => setChatScheduleEnabled((v) => !v)}
@@ -426,11 +429,11 @@ export default function RetentionPolicy() {
           >
             <span className="alpha-router-toggle-knob" />
           </button>
-        </label>
+        </div>
         <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
           <div style={{ minWidth: 120 }}>
-            <label>Hour</label>
-            <input
+            <label htmlFor="retention-policy-hour-2">Hour</label>
+            <input id="retention-policy-hour-2"
               type="number"
               min={0}
               max={23}
@@ -441,8 +444,8 @@ export default function RetentionPolicy() {
             />
           </div>
           <div style={{ minWidth: 120 }}>
-            <label>Minute</label>
-            <input
+            <label htmlFor="retention-policy-minute-2">Minute</label>
+            <input id="retention-policy-minute-2"
               type="number"
               min={0}
               max={59}

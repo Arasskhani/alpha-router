@@ -533,6 +533,7 @@ export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProp
                 checked={selected.has(m.id)}
                 onChange={() => toggleSelect(m.id)}
               />
+              <span className="sr-only">Select this item</span>
             </label>
             <button
               type="button"

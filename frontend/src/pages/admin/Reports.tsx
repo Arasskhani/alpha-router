@@ -254,8 +254,9 @@ export default function Reports() {
       case "user":
         return (
           <div key={name}>
-            <label>User (optional)</label>
+            <label htmlFor="reports-user-optional">User (optional)</label>
             <UserOwnerSelect
+              inputId="reports-user-optional"
               value={params.user_id}
               onChange={(u) => setParams((p) => ({ ...p, user_id: u?.id ?? null }))}
             />
@@ -264,8 +265,8 @@ export default function Reports() {
       case "plan":
         return (
           <div key={name}>
-            <label>Plan{selected?.id === "plan_usage" ? " *" : " (optional)"}</label>
-            <select
+            <label htmlFor="reports-plan">Plan{selected?.id === "plan_usage" ? " *" : " (optional)"}</label>
+            <select id="reports-plan"
               className="input-block"
               value={params.plan_id}
               onChange={(e) => setParams((p) => ({ ...p, plan_id: e.target.value }))}
@@ -282,8 +283,8 @@ export default function Reports() {
       case "department":
         return (
           <div key={name}>
-            <label>Department</label>
-            <select className="input-block" value={params.department} onChange={(e) => setParams((p) => ({ ...p, department: e.target.value }))}>
+            <label htmlFor="reports-department">Department</label>
+            <select id="reports-department" className="input-block" value={params.department} onChange={(e) => setParams((p) => ({ ...p, department: e.target.value }))}>
               <option value="">Select department…</option>
               {options.departments.map((d) => (
                 <option key={d} value={d}>{d}</option>
@@ -294,8 +295,8 @@ export default function Reports() {
       case "office":
         return (
           <div key={name}>
-            <label>Office (optional)</label>
-            <select className="input-block" value={params.office} onChange={(e) => setParams((p) => ({ ...p, office: e.target.value }))}>
+            <label htmlFor="reports-office-optional">Office (optional)</label>
+            <select id="reports-office-optional" className="input-block" value={params.office} onChange={(e) => setParams((p) => ({ ...p, office: e.target.value }))}>
               <option value="">All offices</option>
               {options.offices.map((o) => (
                 <option key={o} value={o}>{o}</option>
@@ -306,8 +307,8 @@ export default function Reports() {
       case "group":
         return (
           <div key={name}>
-            <label>Group</label>
-            <select className="input-block" value={params.group_id} onChange={(e) => setParams((p) => ({ ...p, group_id: e.target.value }))}>
+            <label htmlFor="reports-group">Group</label>
+            <select id="reports-group" className="input-block" value={params.group_id} onChange={(e) => setParams((p) => ({ ...p, group_id: e.target.value }))}>
               <option value="">Select group…</option>
               {options.groups.map((g) => (
                 <option key={g.id} value={String(g.id)}>{g.name} ({g.source})</option>
@@ -318,8 +319,8 @@ export default function Reports() {
       case "alpha_router_api_key":
         return (
           <div key={name}>
-            <label>API key (optional)</label>
-            <select
+            <label htmlFor="reports-api-key-optional">API key (optional)</label>
+            <select id="reports-api-key-optional"
               className="input-block"
               value={params.alpha_router_api_key_id}
               onChange={(e) => setParams((p) => ({ ...p, alpha_router_api_key_id: e.target.value }))}
@@ -334,8 +335,8 @@ export default function Reports() {
       case "agent":
         return (
           <div key={name}>
-            <label>Agent (optional)</label>
-            <select
+            <label htmlFor="reports-agent-optional">Agent (optional)</label>
+            <select id="reports-agent-optional"
               className="input-block"
               value={params.agent_id}
               onChange={(e) => setParams((p) => ({ ...p, agent_id: e.target.value }))}
@@ -352,8 +353,8 @@ export default function Reports() {
       case "project":
         return (
           <div key={name}>
-            <label>Project *</label>
-            <select
+            <label htmlFor="reports-project">Project *</label>
+            <select id="reports-project"
               className="input-block"
               value={params.project_id}
               onChange={(e) => setParams((p) => ({ ...p, project_id: e.target.value }))}
@@ -371,8 +372,8 @@ export default function Reports() {
       case "app":
         return (
           <div key={name}>
-            <label>Application (optional)</label>
-            <select className="input-block" value={params.app} onChange={(e) => setParams((p) => ({ ...p, app: e.target.value }))}>
+            <label htmlFor="reports-application-optional">Application (optional)</label>
+            <select id="reports-application-optional" className="input-block" value={params.app} onChange={(e) => setParams((p) => ({ ...p, app: e.target.value }))}>
               <option value="">All apps</option>
               {options.apps.map((a) => (
                 <option key={a} value={a}>{a}</option>
@@ -383,8 +384,8 @@ export default function Reports() {
       case "model":
         return (
           <div key={name}>
-            <label>Model (optional)</label>
-            <select className="input-block" value={params.model_id} onChange={(e) => setParams((p) => ({ ...p, model_id: e.target.value }))}>
+            <label htmlFor="reports-model-optional">Model (optional)</label>
+            <select id="reports-model-optional" className="input-block" value={params.model_id} onChange={(e) => setParams((p) => ({ ...p, model_id: e.target.value }))}>
               <option value="">All models</option>
               {options.models.map((m) => (
                 <option key={m} value={m}>{m}</option>
@@ -395,8 +396,8 @@ export default function Reports() {
       case "provider":
         return (
           <div key={name}>
-            <label>Provider (optional)</label>
-            <select className="input-block" value={params.provider} onChange={(e) => setParams((p) => ({ ...p, provider: e.target.value }))}>
+            <label htmlFor="reports-provider-optional">Provider (optional)</label>
+            <select id="reports-provider-optional" className="input-block" value={params.provider} onChange={(e) => setParams((p) => ({ ...p, provider: e.target.value }))}>
               <option value="">All providers</option>
               {options.providers.map((p) => (
                 <option key={p} value={p}>{p}</option>
@@ -407,36 +408,36 @@ export default function Reports() {
       case "top_n":
         return (
           <div key={name}>
-            <label>Top N</label>
-            <input type="number" min={1} max={100} className="input-block" value={params.top_n} onChange={(e) => setParams((p) => ({ ...p, top_n: Number(e.target.value) }))} />
+            <label htmlFor="reports-top-n">Top N</label>
+            <input id="reports-top-n" type="number" min={1} max={100} className="input-block" value={params.top_n} onChange={(e) => setParams((p) => ({ ...p, top_n: Number(e.target.value) }))} />
           </div>
         );
       case "threshold_pct":
         return (
           <div key={name}>
-            <label>Threshold (%)</label>
-            <input type="number" min={1} max={100} className="input-block" value={params.threshold_pct} onChange={(e) => setParams((p) => ({ ...p, threshold_pct: Number(e.target.value) }))} />
+            <label htmlFor="reports-threshold">Threshold (%)</label>
+            <input id="reports-threshold" type="number" min={1} max={100} className="input-block" value={params.threshold_pct} onChange={(e) => setParams((p) => ({ ...p, threshold_pct: Number(e.target.value) }))} />
           </div>
         );
       case "latency_ms":
         return (
           <div key={name}>
-            <label>Slow threshold (ms)</label>
-            <input type="number" min={1} className="input-block" value={params.latency_ms} onChange={(e) => setParams((p) => ({ ...p, latency_ms: Number(e.target.value) }))} />
+            <label htmlFor="reports-slow-threshold-ms">Slow threshold (ms)</label>
+            <input id="reports-slow-threshold-ms" type="number" min={1} className="input-block" value={params.latency_ms} onChange={(e) => setParams((p) => ({ ...p, latency_ms: Number(e.target.value) }))} />
           </div>
         );
       case "inactive_days":
         return (
           <div key={name}>
-            <label>Inactive days</label>
-            <input type="number" min={1} max={365} className="input-block" value={params.inactive_days} onChange={(e) => setParams((p) => ({ ...p, inactive_days: Number(e.target.value) }))} />
+            <label htmlFor="reports-inactive-days">Inactive days</label>
+            <input id="reports-inactive-days" type="number" min={1} max={365} className="input-block" value={params.inactive_days} onChange={(e) => setParams((p) => ({ ...p, inactive_days: Number(e.target.value) }))} />
           </div>
         );
       case "auth_provider":
         return (
           <div key={name}>
-            <label>Auth provider (optional)</label>
-            <select className="input-block" value={params.auth_provider} onChange={(e) => setParams((p) => ({ ...p, auth_provider: e.target.value }))}>
+            <label htmlFor="reports-auth-provider-optional">Auth provider (optional)</label>
+            <select id="reports-auth-provider-optional" className="input-block" value={params.auth_provider} onChange={(e) => setParams((p) => ({ ...p, auth_provider: e.target.value }))}>
               <option value="">All</option>
               {options.auth_providers.map((a) => (
                 <option key={a} value={a}>{a}</option>
@@ -447,8 +448,8 @@ export default function Reports() {
       case "group_by":
         return (
           <div key={name}>
-            <label>Group by</label>
-            <select className="input-block" value={params.group_by} onChange={(e) => setParams((p) => ({ ...p, group_by: e.target.value }))}>
+            <label htmlFor="reports-group-by">Group by</label>
+            <select id="reports-group-by" className="input-block" value={params.group_by} onChange={(e) => setParams((p) => ({ ...p, group_by: e.target.value }))}>
               {options.group_by_options.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
@@ -501,8 +502,8 @@ export default function Reports() {
 
               {selected.needs_date ? (
                 <>
-                  <label>Period preset</label>
-                  <select className="input-block" value={datePreset} onChange={(e) => onPresetChange(e.target.value)}>
+                  <label htmlFor="reports-period-preset">Period preset</label>
+                  <select id="reports-period-preset" className="input-block" value={datePreset} onChange={(e) => onPresetChange(e.target.value)}>
                     {DATE_PRESETS.map((p) => (
                       <option key={p.value} value={p.value}>{p.label}</option>
                     ))}
@@ -514,15 +515,15 @@ export default function Reports() {
                   ) : null}
                   {datePreset === "custom" ? (
                     <>
-                      <label>Start date</label>
-                      <input
+                      <label htmlFor="reports-start-date">Start date</label>
+                      <input id="reports-start-date"
                         type="date"
                         className="input-block"
                         value={start}
                         onChange={(e) => setStart(e.target.value)}
                       />
-                      <label>End date</label>
-                      <input
+                      <label htmlFor="reports-end-date">End date</label>
+                      <input id="reports-end-date"
                         type="date"
                         className="input-block"
                         value={end}
@@ -537,8 +538,8 @@ export default function Reports() {
 
               {selected.params.map((p) => renderParam(p))}
 
-              <label>Export format</label>
-              <select className="input-block" value={format} onChange={(e) => setFormat(e.target.value)}>
+              <label htmlFor="reports-export-format">Export format</label>
+              <select id="reports-export-format" className="input-block" value={format} onChange={(e) => setFormat(e.target.value)}>
                 <option value="csv">CSV</option>
                 <option value="xls">Excel</option>
                 <option value="pdf">PDF</option>

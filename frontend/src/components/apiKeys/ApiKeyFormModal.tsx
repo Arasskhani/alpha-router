@@ -96,9 +96,10 @@ export default function ApiKeyFormModal({ open, title, initial, onClose, onSubmi
   return (
     <Modal open={open} title={title} onClose={onClose} headerActions={headerActions}>
       <form className="api-key-form" onSubmit={handleSubmit}>
-        <label className="api-key-form__label">
+        <label className="api-key-form__label" htmlFor="api-key-form-owner">
           Owner
           <UserOwnerSelect
+            inputId="api-key-form-owner"
             value={form.owner_user_id || null}
             onChange={(u: OwnerUser | null) =>
               setForm((f) => ({ ...f, owner_user_id: u?.id ?? 0 }))

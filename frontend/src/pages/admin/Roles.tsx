@@ -215,10 +215,10 @@ export default function Roles() {
               <li key={role.slug}>{role.name}</li>
             ))}
           </ul>
-          <label className="form-label" style={{ marginTop: "1rem" }}>
+          <label className="form-label" style={{ marginTop: "1rem" }} htmlFor="roles-users">
             Users
           </label>
-          <input
+          <input id="roles-users"
             type="search"
             className="input-block"
             placeholder="Filter users…"

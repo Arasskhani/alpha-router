@@ -12,12 +12,14 @@ type Props = {
   value: number | null;
   onChange: (user: OwnerUser | null) => void;
   disabled?: boolean;
+  /** id for the search field, so a <label htmlFor> can name it. */
+  inputId?: string;
 };
 
 const OWNER_USERS_PATH = "/api/admin/api-keys/owner-users";
 const MIN_SEARCH = 2;
 
-export default function UserOwnerSelect({ value, onChange, disabled }: Props) {
+export default function UserOwnerSelect({ value, onChange, disabled, inputId }: Props) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [users, setUsers] = useState<OwnerUser[]>([]);
@@ -94,6 +96,7 @@ export default function UserOwnerSelect({ value, onChange, disabled }: Props) {
   return (
     <div className="user-owner-select" ref={ref}>
       <input
+        id={inputId}
         type="search"
         className="input-block user-owner-select__input"
         disabled={disabled}

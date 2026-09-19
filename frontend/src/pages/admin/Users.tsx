@@ -825,36 +825,36 @@ export default function Users() {
 
       <div className="users-filter-panel card">
         <div>
-          <label>User</label>
-          <input
+          <label htmlFor="users-user">User</label>
+          <input id="users-user"
             placeholder="Username or display name"
             value={filterUser}
             onChange={(e) => setFilterUser(e.target.value)}
           />
         </div>
         <div>
-          <label>Email</label>
-          <input placeholder="Email" value={filterEmail} onChange={(e) => setFilterEmail(e.target.value)} />
+          <label htmlFor="users-email">Email</label>
+          <input id="users-email" placeholder="Email" value={filterEmail} onChange={(e) => setFilterEmail(e.target.value)} />
         </div>
         <div>
-          <label>Department</label>
-          <input
+          <label htmlFor="users-department">Department</label>
+          <input id="users-department"
             placeholder="Department"
             value={filterDepartment}
             onChange={(e) => setFilterDepartment(e.target.value)}
           />
         </div>
         <div>
-          <label>Job title</label>
-          <input
+          <label htmlFor="users-job-title">Job title</label>
+          <input id="users-job-title"
             placeholder="Job title"
             value={filterJobTitle}
             onChange={(e) => setFilterJobTitle(e.target.value)}
           />
         </div>
         <div>
-          <label>Role</label>
-          <select value={filterRole} onChange={(e) => setFilterRole(e.target.value)}>
+          <label htmlFor="users-role">Role</label>
+          <select id="users-role" value={filterRole} onChange={(e) => setFilterRole(e.target.value)}>
             <option value="">All roles</option>
             {roleCatalog.map((role) => (
               <option key={role.slug} value={role.slug}>
@@ -864,8 +864,8 @@ export default function Users() {
           </select>
         </div>
         <div>
-          <label>Group</label>
-          <select value={filterGroupId} onChange={(e) => setGroupFilter(e.target.value, groups.find((g) => String(g.id) === e.target.value)?.name || "")}>
+          <label htmlFor="users-group">Group</label>
+          <select id="users-group" value={filterGroupId} onChange={(e) => setGroupFilter(e.target.value, groups.find((g) => String(g.id) === e.target.value)?.name || "")}>
             <option value="">All groups</option>
             {groups.map((g) => (
               <option key={g.id} value={String(g.id)}>
@@ -875,8 +875,8 @@ export default function Users() {
           </select>
         </div>
         <div>
-          <label>User Plan</label>
-          <select value={filterPlan} onChange={(e) => setFilterPlan(e.target.value)}>
+          <label htmlFor="users-user-plan">User Plan</label>
+          <select id="users-user-plan" value={filterPlan} onChange={(e) => setFilterPlan(e.target.value)}>
             <option value="">All plans</option>
             <option value="__none__">No Plan</option>
             {plans.map((p) => (
@@ -1026,45 +1026,45 @@ export default function Users() {
                 login; you can override them here.
               </p>
             )}
-            <label>Display name</label>
-            <input
+            <label htmlFor="users-display-name">Display name</label>
+            <input id="users-display-name"
               className="input-block"
               value={editForm.display_name}
               onChange={(e) => setEditForm({ ...editForm, display_name: e.target.value })}
             />
-            <label>Email</label>
-            <input
+            <label htmlFor="users-email-2">Email</label>
+            <input id="users-email-2"
               type="email"
               className="input-block"
               value={editForm.email}
               onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
             />
-            <label>Company</label>
-            <input
+            <label htmlFor="users-company">Company</label>
+            <input id="users-company"
               className="input-block"
               value={editForm.company}
               onChange={(e) => setEditForm({ ...editForm, company: e.target.value })}
             />
-            <label>Department</label>
-            <input
+            <label htmlFor="users-department-2">Department</label>
+            <input id="users-department-2"
               className="input-block"
               value={editForm.department}
               onChange={(e) => setEditForm({ ...editForm, department: e.target.value })}
             />
-            <label>Office</label>
-            <input
+            <label htmlFor="users-office">Office</label>
+            <input id="users-office"
               className="input-block"
               value={editForm.office}
               onChange={(e) => setEditForm({ ...editForm, office: e.target.value })}
             />
-            <label>Job title</label>
-            <input
+            <label htmlFor="users-job-title-2">Job title</label>
+            <input id="users-job-title-2"
               className="input-block"
               value={editForm.job_title}
               onChange={(e) => setEditForm({ ...editForm, job_title: e.target.value })}
             />
-            <label>Report to</label>
-            <input
+            <label htmlFor="users-report-to">Report to</label>
+            <input id="users-report-to"
               className="input-block"
               value={editForm.reporting_to}
               onChange={(e) => setEditForm({ ...editForm, reporting_to: e.target.value })}
@@ -1073,16 +1073,16 @@ export default function Users() {
               <>
                 <h4 style={{ marginTop: "1.25rem" }}>Reset password</h4>
                 <p className="muted-text">Leave blank to keep the current password.</p>
-                <label>New password</label>
-                <input
+                <label htmlFor="users-new-password">New password</label>
+                <input id="users-new-password"
                   type="password"
                   className="input-block"
                   autoComplete="new-password"
                   value={editForm.new_password}
                   onChange={(e) => setEditForm({ ...editForm, new_password: e.target.value })}
                 />
-                <label>Confirm password</label>
-                <input
+                <label htmlFor="users-confirm-password">Confirm password</label>
+                <input id="users-confirm-password"
                   type="password"
                   className="input-block"
                   autoComplete="new-password"
@@ -1144,8 +1144,8 @@ export default function Users() {
           <p className="muted-text">
             Choose a group to add this user to. Groups they already belong to are hidden.
           </p>
-          <label>Group</label>
-          <select
+          <label htmlFor="users-group-2">Group</label>
+          <select id="users-group-2"
             className="input-block"
             value={addToGroupId}
             onChange={(e) => setAddToGroupId(e.target.value)}
@@ -1191,8 +1191,8 @@ export default function Users() {
             Apply one or more changes to the selected users. Use status filter (Active Users / Deactive Users) first to narrow the
             list, then select rows and apply bulk actions.
           </p>
-          <label>Group</label>
-          <select
+          <label htmlFor="users-group-3">Group</label>
+          <select id="users-group-3"
             className="input-block"
             value={bulkGroupId}
             onChange={(e) => setBulkGroupId(e.target.value)}
@@ -1204,8 +1204,8 @@ export default function Users() {
               </option>
             ))}
           </select>
-          <label>Group membership</label>
-          <select
+          <label htmlFor="users-group-membership">Group membership</label>
+          <select id="users-group-membership"
             className="input-block"
             value={bulkGroupAction}
             onChange={(e) => setBulkGroupAction(e.target.value as BulkGroupAction)}
@@ -1215,8 +1215,8 @@ export default function Users() {
             <option value="add">Add to group</option>
             <option value="remove">Remove from group</option>
           </select>
-          <label>Account status</label>
-          <select
+          <label htmlFor="users-account-status">Account status</label>
+          <select id="users-account-status"
             className="input-block"
             value={bulkStatusAction}
             onChange={(e) => setBulkStatusAction(e.target.value as BulkStatusAction)}
@@ -1225,8 +1225,8 @@ export default function Users() {
             <option value="enable">Active</option>
             <option value="disable">Deactive</option>
           </select>
-          <label>User Plan</label>
-          <select
+          <label htmlFor="users-user-plan-2">User Plan</label>
+          <select id="users-user-plan-2"
             className="input-block"
             value={bulkPlanChoice}
             onChange={(e) => setBulkPlanChoice(e.target.value)}
@@ -1238,15 +1238,15 @@ export default function Users() {
               <option key={p.id} value={String(p.id)}>{p.name}</option>
             ))}
           </select>
-          <label>Department</label>
-          <input
+          <label htmlFor="users-department-3">Department</label>
+          <input id="users-department-3"
             className="input-block"
             value={bulkDepartment}
             onChange={(e) => setBulkDepartment(e.target.value)}
             placeholder="No change"
           />
-          <label>Office</label>
-          <input
+          <label htmlFor="users-office-2">Office</label>
+          <input id="users-office-2"
             className="input-block"
             value={bulkOffice}
             onChange={(e) => setBulkOffice(e.target.value)}

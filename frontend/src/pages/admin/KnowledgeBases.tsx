@@ -767,9 +767,10 @@ export default function KnowledgeBases() {
                     <p>Agents retrieve only from an active indexed release, not from uploaded/approved files alone.</p>
                   </div>
                 </div>
-                <label className="knowledge-embed-picker">
+                <label className="knowledge-embed-picker" htmlFor="knowledge-embedding-model">
                   Embedding model for indexing
                   <SearchableModelSelect
+                    id="knowledge-embedding-model"
                     ariaLabel="Embedding model for indexing"
                     value={selectedEmbeddingId}
                     disabled={busy || embeddingModels.length === 0}

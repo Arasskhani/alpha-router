@@ -85,22 +85,22 @@ export default function LocalGroupFormModal({ open, mode, initial, plans, onClos
             Local group · <strong>{initial.name}</strong>
           </p>
         ) : null}
-        <label>Name</label>
-        <input
+        <label htmlFor="local-group-form-modal-name">Name</label>
+        <input id="local-group-form-modal-name"
           className="input-block"
           value={form.name}
           onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
           required
         />
-        <label>Description</label>
-        <textarea
+        <label htmlFor="local-group-form-modal-description">Description</label>
+        <textarea id="local-group-form-modal-description"
           className="input-block"
           rows={3}
           value={form.description}
           onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
         />
-        <label>Budget plan</label>
-        <select
+        <label htmlFor="local-group-form-modal-budget-plan">Budget plan</label>
+        <select id="local-group-form-modal-budget-plan"
           className="input-block"
           value={form.budget_plan}
           onChange={(e) => setForm((f) => ({ ...f, budget_plan: e.target.value }))}

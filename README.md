@@ -462,9 +462,16 @@ with it. That is the whole obligation.
 **Third-party components.** MIT covers this code, not the stack it runs on. A
 deployment also runs PostgreSQL, Redis, Qdrant, SeaweedFS, nginx, ClamAV and
 the dependencies declared in `requirements.txt` and `package.json`. Each keeps
-its own licence and some are copyleft — ClamAV is GPL. They run as their own
-processes and containers rather than being linked into Alpharouter, so
-operating the stack puts no licence obligation on code you write against it.
+its own licence. The copyleft ones fall in two groups. ClamAV (GPL) runs as
+its own container and is never linked into Alpharouter. Two libraries under
+the *Lesser* GPL — `ldap3` in the API and `python-bidi` in the code sandbox —
+are linked in, unmodified; the LGPL permits that provided the licence text
+ships and the source is named, which [NOTICE](NOTICE) and the `licenses/`
+directory do. Redis is pinned to the 7.2 line because later releases are not
+open-source licensed. The full inventory, with every licence text, is in
+`NOTICE`; a CI job checks it against the installed dependencies on every
+pipeline. Operating the stack puts no licence obligation on code you write
+against it.
 
 **Your data.** Prompts, uploaded documents, and the images, video and audio
 generated through the platform belong to your organization. Alpharouter claims

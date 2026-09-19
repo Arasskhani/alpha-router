@@ -11,3 +11,56 @@ trademarks of Majid Arasskhani. See TRADEMARK.md.
 The MIT License does not grant permission to use these marks, except as
 required for reasonable and customary use in describing the origin of the
 Work and reproducing the contents of this NOTICE file.
+
+Third-party components
+----------------------
+Alpharouter is distributed together with, or runs alongside, the following
+components that are not under the MIT License. Their licence texts are in the
+licenses/ directory; nothing here narrows the terms of those licences.
+
+Linked in the API process (backend/requirements.lock)
+
+  ldap3            LGPL-3.0-or-later    licenses/LGPL-3.0.txt, licenses/GPL-3.0.txt
+                   Used unmodified for LDAP/Active Directory authentication.
+                   Source: https://github.com/cannatag/ldap3 (the version in
+                   requirements.lock).
+  certifi          MPL-2.0              licenses/MPL-2.0.txt
+                   Mozilla's CA bundle, used unmodified.
+  tqdm             MPL-2.0 AND MIT      licenses/MPL-2.0.txt
+                   Progress bars, pulled in by a dependency; used unmodified.
+
+Linked in the code-interpreter sandbox image (sandbox/requirements.txt)
+
+  python-bidi      LGPL-3.0             licenses/LGPL-3.0.txt, licenses/GPL-3.0.txt
+                   Unicode bidirectional text for Persian/Arabic output; used
+                   unmodified. Source: https://github.com/MeirKriheli/python-bidi
+
+Separate processes and containers (never linked into Alpharouter)
+
+  ClamAV           GPL-2.0              runs in its own container (clamav/clamav);
+                                        Alpharouter talks to it over a socket.
+  Tesseract OCR    Apache-2.0           system package in the API image.
+  Chromium (Playwright)                 BSD-3-Clause and others; bundled by
+                                        Playwright in the API image for rendering.
+  PostgreSQL       PostgreSQL License   separate container.
+  Redis 7.2        BSD-3-Clause         separate container. Pinned to the 7.2
+                                        line deliberately: later releases are not
+                                        BSD-licensed.
+  Qdrant           Apache-2.0           separate container.
+  SeaweedFS        Apache-2.0           separate container.
+  PgBouncer        ISC                  separate container.
+
+Fonts
+
+  Vazirmatn and Vazir   SIL Open Font License 1.1   licenses/OFL-1.1-Vazirmatn.txt
+                   Copyright 2015 The Vazirmatn Project Authors
+                   (https://github.com/rastikerdar/vazirmatn). Served to the
+                   browser from frontend/public/fonts; not modified.
+  DejaVu           Bitstream Vera / Arev licence     fonts-dejavu-core in the
+                   sandbox image.
+
+Everything else in requirements.lock, sandbox/requirements.txt,
+sandbox-broker/requirements.txt and frontend/package-lock.json is under MIT,
+BSD, Apache-2.0, ISC, PSF or an equivalent permissive licence. The CI job
+`licences` checks that claim on every pipeline and fails when a dependency
+under any other licence appears without being named here.

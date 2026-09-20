@@ -19,6 +19,7 @@ from app.api import (
     admin_agent_evaluations,
     admin_agent_governance,
     admin_agents,
+    admin_chat_tools,
     admin_knowledge,
     admin_logs,
     admin_memory,
@@ -773,6 +774,7 @@ if settings.agents_platform_enabled:
     app.include_router(admin_agent_governance.router)
     app.include_router(admin_agents.router)
     app.include_router(admin_knowledge.router)
+app.include_router(admin_chat_tools.router)
 app.include_router(admin_logs.router)
 app.include_router(admin_memory.router)
 if settings.agents_platform_enabled:

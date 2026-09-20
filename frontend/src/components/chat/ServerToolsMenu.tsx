@@ -7,6 +7,7 @@ import {
   videoDurationChoices,
 } from "../../lib/chatTools";
 import { chatToolAllowed, loadChatToolPermissions } from "../../lib/chatToolPermissions";
+import ChatToolIcon from "../ChatToolIcon";
 import {
   DEFAULT_CUSTOM_ASPECT_RATIO,
   IMAGE_ASPECT_PRESETS,
@@ -236,12 +237,7 @@ export default function ServerToolsMenu({
       <header className="alpha-router-server-tools-menu__head">Chat Tools</header>
 
       <ToolRow
-        icon={
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <circle cx="12" cy="12" r="9" />
-            <path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" />
-          </svg>
-        }
+        icon={<ChatToolIcon name="globe" />}
         toolKey={CHAT_TOOL_KEY_BY_FIELD.webSearch}
         title="Web Search"
         description="Fresh web results"
@@ -250,12 +246,7 @@ export default function ServerToolsMenu({
       />
 
       <ToolRow
-        icon={
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-          </svg>
-        }
+        icon={<ChatToolIcon name="link" />}
         toolKey={CHAT_TOOL_KEY_BY_FIELD.webFetch}
         title="Web Fetch"
         description="Read links in your message"
@@ -264,13 +255,7 @@ export default function ServerToolsMenu({
       />
 
       <ToolRow
-        icon={
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <rect x="3" y="5" width="18" height="14" rx="2" />
-            <circle cx="8.5" cy="11" r="1.5" />
-            <path d="m21 15-5-5L5 21" />
-          </svg>
-        }
+        icon={<ChatToolIcon name="image" />}
         toolKey={CHAT_TOOL_KEY_BY_FIELD.imageGeneration}
         title="Image Generation"
         description="Create or edit images from text"
@@ -352,12 +337,7 @@ export default function ServerToolsMenu({
       ) : null}
 
       <ToolRow
-        icon={
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <rect x="3" y="6" width="14" height="12" rx="2" />
-            <path d="m17 10 4-2v8l-4-2z" />
-          </svg>
-        }
+        icon={<ChatToolIcon name="video" />}
         toolKey={CHAT_TOOL_KEY_BY_FIELD.videoGeneration}
         title="Video Generation"
         description="Create videos from text or an image"
@@ -443,13 +423,7 @@ export default function ServerToolsMenu({
       ) : null}
 
       <ToolRow
-        icon={
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <path d="M11 5 6 9H2v6h4l5 4V5z" />
-            <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-            <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-          </svg>
-        }
+        icon={<ChatToolIcon name="speaker" />}
         toolKey={CHAT_TOOL_KEY_BY_FIELD.speechGeneration}
         title="Text to Speech"
         description="Generate audio from text"
@@ -506,12 +480,7 @@ export default function ServerToolsMenu({
       ) : null}
 
       <ToolRow
-        icon={
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <polyline points="16 18 22 12 16 6" />
-            <polyline points="8 6 2 12 8 18" />
-          </svg>
-        }
+        icon={<ChatToolIcon name="terminal" />}
         toolKey={CHAT_TOOL_KEY_BY_FIELD.codeInterpreter}
         title="Code Interpreter"
         description="Run Python on data & math"
@@ -521,12 +490,7 @@ export default function ServerToolsMenu({
 
       {allowPrivateMode ? (
       <ToolRow
-        icon={
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <path d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5z" />
-            <circle cx="12" cy="14" r="1.5" />
-          </svg>
-        }
+        icon={<ChatToolIcon name="lock" />}
         toolKey="private_mode"
         title="Private Mode"
         description={

@@ -16324,3 +16324,37 @@ p.error,
   text-align: right;
   max-width: 22rem;
 }
+
+/* Chat Tools — one row per registered tool, with its access at a glance. */
+.chat-tools-table__tool {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+.chat-tools-table__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--muted);
+}
+.chat-tools-table__tool p {
+  margin: 0.15rem 0 0;
+  font-size: 0.8rem;
+}
+.chat-tools-table__actions {
+  text-align: right;
+  white-space: nowrap;
+}
+.chat-tools-table .badge-open {
+  color: #059669;
+  background: color-mix(in srgb, #059669 12%, var(--surface));
+}
+.chat-tools-table .badge-restricted {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}

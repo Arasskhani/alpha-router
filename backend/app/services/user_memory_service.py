@@ -774,8 +774,23 @@ async def _lexical_rows(db: AsyncSession, user_id: int, query: str, *, limit: in
     )
 
 
+def _observe_fallback(reason: str) -> None:
+    try:
+        from app.services.observability import observe_memory_retrieval_fallback
+
+        observe_memory_retrieval_fallback(reason)
+    except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
+        pass
+
+
 async def _semantic_rows(
-    db: AsyncSession, user_id: int, query: str, *, limit: int, threshold: float
+    db: AsyncSession,
+    user_id: int,
+    query: str,
+    *,
+    limit: int,
+    threshold: float,
+    settings: dict | None = None,
 ) -> list[UserMemory]:
     if limit <= 0 or not query.strip():
         return []
@@ -786,7 +801,7 @@ async def _semantic_rows(
     from app.services.memory_vector_service import KIND_MEMORY, MemoryVectorService
 
     try:
-        vectors = await embed_memory_texts(db, [query[:1000]])
+        vectors = await embed_memory_texts(db, [query[:1000]], settings=settings)
     except MemoryEmbeddingUnavailable:
         return []
     if not vectors:
@@ -873,24 +888,24 @@ async def retrieve_memories(
         if item_limit == 0:
             return []
         char_limit = int(settings.get("inject_max_chars") or MAX_INJECT_CHARS)
+        # Outside the timeout on purpose. The budget exists for the vector
+        # store and the embedding provider, the two things that can hang; a
+        # plain indexed read of the user's own rows is not what it is for, and
+        # widening the timeout to cover it would only mean cancelling more
+        # database work mid-statement.
         core = await _core_rows(db, user_id, limit=int(settings.get("core_items") or 6))
 
-        async def _hybrid() -> tuple[list[UserMemory], list[UserMemory]]:
-            q = (query or "").strip()
-            semantic = await _semantic_rows(
+        async def _semantic() -> list[UserMemory]:
+            return await _semantic_rows(
                 db,
                 user_id,
-                q,
+                (query or "").strip(),
                 limit=int(settings.get("semantic_top_k") or 8),
                 threshold=float(settings.get("min_similarity") or 0.25),
+                # Already loaded above. Re-reading them here would put the
+                # whole settings table back inside the cancellable region.
+                settings=settings,
             )
-            lexical = await _lexical_rows(
-                db,
-                user_id,
-                q,
-                limit=int(settings.get("lexical_top_k") or 6),
-            )
-            return semantic, lexical
 
         timeout = max(0.05, int(settings.get("retrieval_timeout_ms") or 600) / 1000.0)
         import asyncio
@@ -900,18 +915,30 @@ async def retrieve_memories(
             if not q:
                 fused = await _recency_rows(db, user_id, limit=item_limit)
             else:
-                semantic, lexical = await asyncio.wait_for(_hybrid(), timeout=timeout)
+                # Lexical first, and outside the budget. It is an indexed read
+                # of this user's own rows on the caller's session: it cannot
+                # hang on anything the timeout is meant to protect against, and
+                # cancelling it mid-statement leaves that session unusable for
+                # the rest of the chat turn — budget settlement and persistence
+                # included. Only the semantic leg talks to an embedding
+                # provider and a vector store, so only the semantic leg is on
+                # the clock.
+                lexical = await _lexical_rows(db, user_id, q, limit=int(settings.get("lexical_top_k") or 6))
+                try:
+                    semantic = await asyncio.wait_for(_semantic(), timeout=timeout)
+                except Exception:  # noqa: BLE001 -- logged; an external dependency is allowed to be slow
+                    # A slow vector store now costs the semantic leg, not the
+                    # whole lookup: the lexical hits are already in hand and
+                    # are a better answer than falling back to recency.
+                    logger.warning("Memory semantic retrieval failed user_id=%s", user_id)
+                    _observe_fallback("timeout_or_error")
+                    semantic = []
                 fused = _rrf_fuse(semantic, lexical)
                 if not fused:
                     fused = await _recency_rows(db, user_id, limit=item_limit)
         except Exception:  # noqa: BLE001 -- logged; expected failure of an external dependency
             logger.warning("Memory retrieval hybrid path failed user_id=%s", user_id)
-            try:
-                from app.services.observability import observe_memory_retrieval_fallback
-
-                observe_memory_retrieval_fallback("timeout_or_error")
-            except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
-                pass
+            _observe_fallback("timeout_or_error")
             fused = await _recency_rows(db, user_id, limit=item_limit)
 
         seen: set[str] = set()

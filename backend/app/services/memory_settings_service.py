@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.connection import Connection
@@ -164,11 +165,21 @@ def model_supports_embeddings(model: AIModel) -> bool:
 
 
 async def _load_raw(db: AsyncSession) -> dict[str, str]:
-    rows = {}
-    for key, default in SETTING_KEYS.items():
-        row = await db.get(SystemSetting, key)
-        rows[key] = row.value if row is not None and row.value is not None else default
-    return rows
+    """Read every memory setting in one statement.
+
+    This used to be ``db.get`` per key. The identity map caches rows it finds
+    but has nothing to cache for a key that does not exist, and most of these
+    keys are never written — a default deployment stores a handful and leaves
+    the rest implicit. So the loop issued around thirty SELECTs every call,
+    and retrieval calls it twice per chat turn, the second time from inside a
+    600ms cancellable region.
+    """
+
+    stored = {
+        row.key: row.value
+        for row in (await db.execute(select(SystemSetting).where(SystemSetting.key.in_(SETTING_KEYS)))).scalars()
+    }
+    return {key: stored.get(key) or default for key, default in SETTING_KEYS.items()}
 
 
 def parse_memory_settings(raw: dict[str, str]) -> dict[str, Any]:

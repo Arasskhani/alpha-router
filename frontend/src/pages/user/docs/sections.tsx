@@ -681,13 +681,13 @@ export const userManualSections: DocSection[] = [
       <>
         <h2>Memory</h2>
         <p>
-          Personalization and Memory are two additive context layers for non-private chats (they never replace session
+          Work profile and Memory are two additive context layers for non-private chats (they never replace session
           messages):
         </p>
         <ul>
           <li>
-            <strong>Account profile</strong> — directory fields from your user record (Company, Department, Job title,
-            Report to). Read-only in Settings → Personalization; managed by admins or directory sync.
+            <strong>Work profile</strong> — directory fields from your user record (Company, Department, Job title,
+            Manager). Read-only in Settings → Work profile; managed by admins or directory sync.
           </li>
           <li>
             <strong>Automatic memory</strong> — durable facts learned from your non-private chats (preferences,
@@ -1034,10 +1034,10 @@ export const userManualSections: DocSection[] = [
           </li>
           <li>Theme: light, dark, or system</li>
         </ul>
-        <h3>Personalization</h3>
+        <h3>Work profile</h3>
         <ul>
           <li>
-            View read-only account profile fields (Company, Department, Job title, Report to) used in non-private chats
+            View read-only directory fields (Company, Department, Job title, Manager) used in non-private chats
           </li>
         </ul>
         <h3>Memory</h3>

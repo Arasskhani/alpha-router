@@ -34,7 +34,7 @@ import Modal from "./Modal";
 import PersonalApiKeyPanel from "./PersonalApiKeyPanel";
 import ThemeSegmentedControl from "./ThemeSegmentedControl";
 
-type TabId = "general" | "personalization" | "memory" | "data-control" | "security" | "api-keys";
+type TabId = "general" | "work-profile" | "memory" | "data-control" | "security" | "api-keys";
 
 type SecurityStatus = {
   auth_provider: string;
@@ -59,7 +59,7 @@ type ImportResult = {
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "general", label: "General" },
-  { id: "personalization", label: "Personalization" },
+  { id: "work-profile", label: "Work profile" },
   { id: "memory", label: "Memory" },
   { id: "data-control", label: "Data Control" },
   { id: "security", label: "Security" },
@@ -109,7 +109,7 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange }: P
           {tab === "general" && (
             <GeneralPanel theme={theme} setTheme={onThemeChange} />
           )}
-          {tab === "personalization" && <PersonalizationPanel />}
+          {tab === "work-profile" && <WorkProfilePanel />}
           {tab === "memory" && <MemoryPanel />}
           {tab === "data-control" && <DataControlPanel />}
           {tab === "security" && <SecurityPanel />}
@@ -483,7 +483,7 @@ function relativeTime(ms: number | null | undefined): string {
   return `${months}mo ago`;
 }
 
-function PersonalizationPanel() {
+function WorkProfilePanel() {
   const [profile, setProfile] = useState<WorkProfile>(EMPTY_WORK_PROFILE);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -508,7 +508,7 @@ function PersonalizationPanel() {
     };
   }, []);
 
-  if (loading) return <p className="muted">Loading personalization…</p>;
+  if (loading) return <p className="muted">Loading your work profile…</p>;
 
   const hasProfile = !!(
     profile.company || profile.department || profile.job_title || profile.reporting_to
@@ -516,28 +516,29 @@ function PersonalizationPanel() {
 
   return (
     <div className="settings-section">
-      <h2>Personalization</h2>
+      <h2>Work profile</h2>
       <p className="settings-section-desc">
-        Read-only directory fields from your account. They are added alongside chat history in non-private chats and
-        never replace it. Private chats never receive this context.
+        Where you sit in the organization, read from your account&apos;s user properties and kept by your
+        administrator. These are added alongside chat history in non-private chats and never replace it. Private chats
+        never receive them.
       </p>
       <div className="settings-list">
-        <SettingsRow title="Company" hint="From User Properties">
+        <SettingsRow title="Company">
           <span className="settings-row__readonly">{profile.company || "—"}</span>
         </SettingsRow>
-        <SettingsRow title="Department" hint="From User Properties">
+        <SettingsRow title="Department">
           <span className="settings-row__readonly">{profile.department || "—"}</span>
         </SettingsRow>
-        <SettingsRow title="Job title" hint="From User Properties">
+        <SettingsRow title="Job title">
           <span className="settings-row__readonly">{profile.job_title || "—"}</span>
         </SettingsRow>
-        <SettingsRow title="Report to" hint="From User Properties">
+        <SettingsRow title="Manager">
           <span className="settings-row__readonly">{profile.reporting_to || "—"}</span>
         </SettingsRow>
       </div>
       {!hasProfile ? (
         <p className="muted" style={{ marginTop: "0.45rem" }}>
-          No company, department, job title, or report-to is set on your account yet.
+          No company, department, job title, or manager is set on your account yet.
         </p>
       ) : null}
       {error ? <p className="settings-error" role="alert">{error}</p> : null}

@@ -704,10 +704,15 @@ export const userManualSections: DocSection[] = [
             <strong>Automatically learn new things about me</strong> (on by default) — extract new facts after a
             conversation. Turn this off to stop learning while still using existing memories.
           </li>
+          <li>
+            <strong>Use my memories in apps with my API key</strong> (off by default) — your personal API key can be
+            used from an editor, a script, or a service someone else runs. Turn this on only if you want those
+            requests to receive your memories too. Nothing is ever learned from them either way.
+          </li>
           <li>Private mode chats do not receive profile context or memories, and are never mined.</li>
           <li>
-            You can disable, delete, or export memories. Deleting a fact also prevents it from being learned again from
-            old chats. Delete-all does the same for every fact.
+            You can disable, delete, or export memories. Deleting a fact also prevents it from being learned again
+            from old chats, and that block survives a later delete-all.
           </li>
         </ul>
         <Note>

@@ -23,6 +23,7 @@ type UserMemoriesPayload = {
   offset?: number;
   auto_capture?: boolean;
   memory_enabled?: boolean;
+  memory_outside_chat?: boolean;
   feature_enabled?: boolean;
   extraction_configured?: boolean;
 };
@@ -35,6 +36,7 @@ export async function fetchUserMemoriesBundle(opts?: {
   total: number;
   auto_capture: boolean;
   memory_enabled: boolean;
+  memory_outside_chat: boolean;
   feature_enabled: boolean;
   extraction_configured: boolean;
 }> {
@@ -48,6 +50,7 @@ export async function fetchUserMemoriesBundle(opts?: {
     total: typeof data.total === "number" ? data.total : 0,
     auto_capture: data.auto_capture !== false,
     memory_enabled: data.memory_enabled !== false,
+    memory_outside_chat: data.memory_outside_chat === true,
     feature_enabled: data.feature_enabled !== false,
     extraction_configured: data.extraction_configured !== false,
   };

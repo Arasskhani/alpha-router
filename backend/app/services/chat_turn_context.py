@@ -398,6 +398,7 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
                         messages,
                         user_id=user_id,
                         private_mode=private_mode,
+                        via_api_key=alpha_router_api_key_id is not None,
                         query=extract_query_text(messages),
                         injected_ids=injected_memory_ids,
                     )

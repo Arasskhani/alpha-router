@@ -167,6 +167,11 @@ def _default_prefs() -> dict[str, Any]:
         # When true, enabled user memories are injected into non-private completions.
         "memory_enabled": True,
         "memory_auto_capture": True,
+        # Off by default. A personal API key can sit in an IDE, a cron script
+        # or a service the whole team calls; injecting the owner's personal
+        # facts there is a different decision from using them in their own
+        # browser chat, so it is made separately and opted into.
+        "memory_outside_chat": False,
     }
 
 
@@ -267,6 +272,8 @@ def _normalize_prefs(raw: dict[str, Any] | None) -> dict[str, Any]:
         base["memory_enabled"] = _coerce_bool(raw.get("memory_enabled"), default=True)
     if "memory_auto_capture" in raw:
         base["memory_auto_capture"] = _coerce_bool(raw.get("memory_auto_capture"), default=True)
+    if "memory_outside_chat" in raw:
+        base["memory_outside_chat"] = _coerce_bool(raw.get("memory_outside_chat"), default=False)
     return base
 
 

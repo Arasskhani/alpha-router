@@ -550,6 +550,7 @@ function MemoryPanel() {
   const { confirm } = useConfirm();
   const [memoryEnabled, setMemoryEnabled] = useState(true);
   const [autoCapture, setAutoCapture] = useState(true);
+  const [outsideChat, setOutsideChat] = useState(false);
   const [memories, setMemories] = useState<UserMemory[]>([]);
   const [featureEnabled, setFeatureEnabled] = useState(true);
   const [extractionConfigured, setExtractionConfigured] = useState(true);
@@ -565,6 +566,7 @@ function MemoryPanel() {
     ]);
     setMemoryEnabled(prefs.memory_enabled !== false);
     setAutoCapture(prefs.memory_auto_capture !== false);
+    setOutsideChat(prefs.memory_outside_chat === true);
     setMemories(bundle.memories);
     setFeatureEnabled(bundle.feature_enabled);
     setExtractionConfigured(bundle.extraction_configured);
@@ -611,6 +613,26 @@ function MemoryPanel() {
       setAutoCapture(checked);
       window.dispatchEvent(new CustomEvent(BROWSER_EVENT_NAMES.userPrefsSaved));
       setMessage(checked ? "New memories can be learned from chat." : "Automatic learning is off.");
+    } catch (err) {
+      setError(formatApiError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onToggleOutsideChat(checked: boolean) {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await saveUserPrefs({ memory_outside_chat: checked });
+      setOutsideChat(checked);
+      window.dispatchEvent(new CustomEvent(BROWSER_EVENT_NAMES.userPrefsSaved));
+      setMessage(
+        checked
+          ? "Apps using your API key can see your memories."
+          : "Your memories stay in Alpha Router.",
+      );
     } catch (err) {
       setError(formatApiError(err));
     } finally {
@@ -760,6 +782,21 @@ function MemoryPanel() {
             disabled={busy}
             label="Automatically learn new things about me"
             onToggle={() => void onToggleCapture(!autoCapture)}
+          />
+        </SettingsRow>
+        <SettingsRow
+          title="Use my memories in apps with my API key"
+          hint={
+            memoryEnabled
+              ? "Off by default. Turn this on only if you want the app your personal API key is in — an editor, a script, a service — to receive these facts too. Nothing is ever learned there."
+              : "Turn on “Use my memories in chat” first."
+          }
+        >
+          <SettingsToggle
+            on={memoryEnabled && outsideChat}
+            disabled={busy || !memoryEnabled}
+            label="Use my memories in apps with my API key"
+            onToggle={() => void onToggleOutsideChat(!outsideChat)}
           />
         </SettingsRow>
       </div>

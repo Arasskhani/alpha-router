@@ -54,6 +54,8 @@ export type UserPrefs = {
   memory_enabled: boolean;
   /** When true, new durable facts may be learned from non-private chats. */
   memory_auto_capture: boolean;
+  /** Opt-in: also inject memories into turns made with a personal API key. */
+  memory_outside_chat: boolean;
 };
 
 export type UserChatsPayload = {
@@ -149,6 +151,7 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
   const replyNotifySound = coercePrefsBool(raw?.reply_notify_sound, true);
   const memoryEnabled = coercePrefsBool(raw?.memory_enabled, true);
   const memoryAutoCapture = coercePrefsBool(raw?.memory_auto_capture, true);
+  const memoryOutsideChat = coercePrefsBool(raw?.memory_outside_chat, false);
   return {
     default_model: model,
     theme,
@@ -160,6 +163,7 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
     reply_notify_sound: replyNotifySound,
     memory_enabled: memoryEnabled,
     memory_auto_capture: memoryAutoCapture,
+    memory_outside_chat: memoryOutsideChat,
   };
 }
 

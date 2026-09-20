@@ -1013,6 +1013,7 @@ async def augment_messages_with_memory(
     *,
     user_id: int | None,
     private_mode: bool = False,
+    via_api_key: bool = False,
     query: str | None = None,
     max_items: int | None = None,
     injected_ids: list[str] | None = None,
@@ -1020,6 +1021,18 @@ async def augment_messages_with_memory(
     """Prepend/merge memory system context. Never mutates non-system turns."""
     if user_id is None or private_mode:
         return messages
+    if via_api_key:
+        # The turn arrived on a personal API key, so the "chat" is whatever the
+        # key was pasted into: an editor, a cron script, a service the whole
+        # team calls. Using someone's durable personal facts there — health and
+        # financial ones included, when the admin allows those categories — is
+        # a separate decision from using them in their own browser chat, and
+        # only they can make it. Nothing is learned on this path either way:
+        # gateway turns are never persisted as a chat session, so no extraction
+        # is ever scheduled from one.
+        prefs = await load_user_prefs(db, user_id)
+        if not prefs.get("memory_outside_chat", False):
+            return messages
     resolved_query = query if query is not None else extract_query_text(messages)
     facts = await retrieve_memories(db, user_id, query=resolved_query, max_items=max_items)
     if not facts:

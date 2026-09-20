@@ -77,6 +77,7 @@ class TestMemoryStandsOnItsOwn:
             "offset",
             "auto_capture",
             "memory_enabled",
+            "memory_outside_chat",
             "feature_enabled",
             "extraction_configured",
         }

@@ -58,6 +58,7 @@ async def get_user_memories(
         "offset": offset,
         "auto_capture": bool(prefs.get("memory_auto_capture", True)),
         "memory_enabled": bool(prefs.get("memory_enabled", True)),
+        "memory_outside_chat": bool(prefs.get("memory_outside_chat", False)),
         "feature_enabled": bool(settings.get("feature_enabled", True)),
         "extraction_configured": bool(settings.get("extraction_model_id")),
     }

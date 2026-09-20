@@ -235,3 +235,29 @@ class TestToolsWithAnEndpointOfTheirOwn:
         _sign_in(client, user)
         resp = await client.post("/api/images/generate", json={"model": "m", "prompt": "a cat"}, headers=_CSRF_HEADER)
         assert resp.status_code != 403
+
+
+class TestTheEndpointTheComposerReads:
+    async def test_it_lists_every_registered_tool_with_a_verdict(self, client, db_session, user):
+        from app.services.chat_tool_registry import CHAT_TOOLS
+
+        _sign_in(client, user)
+        resp = await client.get("/api/chat/tools")
+        assert resp.status_code == 200
+        rows = resp.json()
+        assert [row["key"] for row in rows] == [spec.key for spec in CHAT_TOOLS]
+        assert all(row["permitted"] for row in rows)
+        assert {"key", "title", "description", "icon", "permitted"} == set(rows[0])
+
+    async def test_a_restricted_tool_comes_back_not_permitted(self, client, db_session, user):
+        await set_chat_tool_access(db_session, "code_interpreter", access_type="private", grants=[])
+        await db_session.commit()
+
+        _sign_in(client, user)
+        rows = (await client.get("/api/chat/tools")).json()
+        verdict = {row["key"]: row["permitted"] for row in rows}
+        assert verdict["code_interpreter"] is False
+        assert verdict["web_search"] is True
+
+    async def test_signing_in_is_required(self, client):
+        assert (await client.get("/api/chat/tools")).status_code in (401, 403)

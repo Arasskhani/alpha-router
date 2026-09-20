@@ -1,6 +1,12 @@
 import { useEffect, useLayoutEffect, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { DEFAULT_CHAT_TOOLS, type ChatToolsState, videoDurationChoices } from "../../lib/chatTools";
+import {
+  CHAT_TOOL_KEY_BY_FIELD,
+  DEFAULT_CHAT_TOOLS,
+  type ChatToolsState,
+  videoDurationChoices,
+} from "../../lib/chatTools";
+import { chatToolAllowed, loadChatToolPermissions } from "../../lib/chatToolPermissions";
 import {
   DEFAULT_CUSTOM_ASPECT_RATIO,
   IMAGE_ASPECT_PRESETS,
@@ -63,7 +69,16 @@ function Toggle({
   );
 }
 
+/**
+ * One tool in the menu.
+ *
+ * `toolKey` is the registry key this row asks the server for. A row whose
+ * tool the account has not been given renders nothing at all: a disabled
+ * toggle invites the question "why", and the answer — an administrator's
+ * policy — is not something the chat window can usefully explain.
+ */
 function ToolRow({
+  toolKey,
   icon,
   title,
   description,
@@ -72,6 +87,7 @@ function ToolRow({
   disabled = false,
   disabledTitle,
 }: {
+  toolKey: string;
   icon: React.ReactNode;
   title: string;
   description: string;
@@ -80,6 +96,7 @@ function ToolRow({
   disabled?: boolean;
   disabledTitle?: string;
 }) {
+  if (!chatToolAllowed(toolKey)) return null;
   return (
     <div
       className={`alpha-router-server-tool${disabled ? " is-disabled" : ""}`}
@@ -120,10 +137,27 @@ export default function ServerToolsMenu({
 }: Props) {
   const [pos, setPos] = useState<{ left: number; bottom: number } | null>(null);
   const [customAspectDraft, setCustomAspectDraft] = useState(tools.imageCustomAspectRatio);
+  // Bumped when the permission answer arrives, because the answer itself lives
+  // in a module (normalizeChatTools needs it from outside React) and changing
+  // it does not re-render anything on its own.
+  const [permissionsAt, setPermissionsAt] = useState(0);
 
   useEffect(() => {
     if (open) setCustomAspectDraft(tools.imageCustomAspectRatio);
   }, [open, tools.imageCustomAspectRatio]);
+
+  useEffect(() => {
+    // Re-read on every open: an administrator granting or revoking a tool
+    // should reach a tab that has been sitting there all afternoon.
+    if (!open) return;
+    let cancelled = false;
+    void loadChatToolPermissions().then(() => {
+      if (!cancelled) setPermissionsAt(Date.now());
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -194,6 +228,7 @@ export default function ServerToolsMenu({
       className="alpha-router-server-tools-menu"
       role="menu"
       aria-label="Chat Tools"
+      data-permissions-at={permissionsAt}
       style={{ left: pos.left, bottom: pos.bottom, width: Math.min(MENU_WIDTH, window.innerWidth - 16) }}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
@@ -207,6 +242,7 @@ export default function ServerToolsMenu({
             <path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" />
           </svg>
         }
+        toolKey={CHAT_TOOL_KEY_BY_FIELD.webSearch}
         title="Web Search"
         description="Fresh web results"
         on={tools.webSearch}
@@ -220,6 +256,7 @@ export default function ServerToolsMenu({
             <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
           </svg>
         }
+        toolKey={CHAT_TOOL_KEY_BY_FIELD.webFetch}
         title="Web Fetch"
         description="Read links in your message"
         on={tools.webFetch}
@@ -234,6 +271,7 @@ export default function ServerToolsMenu({
             <path d="m21 15-5-5L5 21" />
           </svg>
         }
+        toolKey={CHAT_TOOL_KEY_BY_FIELD.imageGeneration}
         title="Image Generation"
         description="Create or edit images from text"
         on={tools.imageGeneration}
@@ -320,6 +358,7 @@ export default function ServerToolsMenu({
             <path d="m17 10 4-2v8l-4-2z" />
           </svg>
         }
+        toolKey={CHAT_TOOL_KEY_BY_FIELD.videoGeneration}
         title="Video Generation"
         description="Create videos from text or an image"
         on={tools.videoGeneration}
@@ -411,6 +450,7 @@ export default function ServerToolsMenu({
             <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
           </svg>
         }
+        toolKey={CHAT_TOOL_KEY_BY_FIELD.speechGeneration}
         title="Text to Speech"
         description="Generate audio from text"
         on={tools.speechGeneration}
@@ -472,6 +512,7 @@ export default function ServerToolsMenu({
             <polyline points="8 6 2 12 8 18" />
           </svg>
         }
+        toolKey={CHAT_TOOL_KEY_BY_FIELD.codeInterpreter}
         title="Code Interpreter"
         description="Run Python on data & math"
         on={tools.codeInterpreter}
@@ -486,6 +527,7 @@ export default function ServerToolsMenu({
             <circle cx="12" cy="14" r="1.5" />
           </svg>
         }
+        toolKey="private_mode"
         title="Private Mode"
         description={
           privateMode

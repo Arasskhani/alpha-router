@@ -327,8 +327,10 @@ export async function runBackgroundVideoGeneration(args: {
       const text = await res.text();
       let detail = text;
       try {
-        const j = JSON.parse(text) as { detail?: string };
-        if (j.detail) detail = j.detail;
+        const j = JSON.parse(text) as { detail?: string | { message?: string } };
+        // A structured refusal carries a code and a sentence in `detail`.
+        if (typeof j.detail === "string") detail = j.detail;
+        else if (j.detail?.message) detail = j.detail.message;
       } catch {
         /* ignore */
       }

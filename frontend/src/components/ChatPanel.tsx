@@ -118,7 +118,8 @@ import {
 } from "../lib/replyReadyNotify";
 import { checkBudgetNotice, presentBudgetNotice } from "../lib/budgetNotice";
 import { getSessionUser, isPlatformFeatureEnabled, isSessionActive, logout } from "../lib/session";
-import { copyFreshChatTools, anyChatToolEnabled, isAllowedVideoDuration, toolsToApiPayload, type ChatToolsState } from "../lib/chatTools";
+import { copyFreshChatTools, anyChatToolEnabled, isAllowedVideoDuration, normalizeChatTools, toolsToApiPayload, type ChatToolsState } from "../lib/chatTools";
+import { loadChatToolPermissions } from "../lib/chatToolPermissions";
 import MediaViewerModal from "./MediaViewerModal";
 import ChatAttachmentMessage from "./chat/ChatAttachmentMessage";
 import PromptQueue from "./chat/PromptQueue";
@@ -846,6 +847,15 @@ export default function ChatPanel({
 
   useEffect(() => {
     return onChatLeaderChange(setIsLeaderTab);
+  }, []);
+
+  useEffect(() => {
+    // Which tools this account may use. Loaded once at startup so a session
+    // restored from the server does not arrive with a revoked tool switched
+    // on; re-read whenever the tools menu is opened.
+    void loadChatToolPermissions().then(() => {
+      setChatTools((prev) => normalizeChatTools(prev));
+    });
   }, []);
 
   useEffect(() => {
@@ -3901,6 +3911,15 @@ export default function ChatPanel({
   }
 
   function friendlyTurnError(err: unknown): string {
+    if (err instanceof ChatCompletionApiError && err.code === "tool_not_permitted") {
+      // The toggle was on, the server said no. Re-read the verdicts and switch
+      // off whatever is no longer granted, so the next turn is not refused for
+      // the same reason and the menu stops offering it.
+      void loadChatToolPermissions().then(() => {
+        setChatTools((prev) => normalizeChatTools(prev));
+      });
+      return err.message;
+    }
     if (
       err instanceof ChatCompletionApiError
       && err.code === "code_interpreter_capacity_busy"

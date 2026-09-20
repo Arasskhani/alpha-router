@@ -102,7 +102,9 @@ from app.services.project_media_service import (
     ProjectMediaValidationError,
     persist_scoped_chat_media,
 )
-from app.services.chat_tool_access_service import assert_tool_for_user
+from app.services.chat_tool_access_service import assert_tool_for_user, permitted_tool_keys
+from app.services.chat_tool_registry import CHAT_TOOLS
+from app.services.resource_access_service import resolve_resource_access_subject
 from app.services.transcription_service import transcribe_audio_bytes
 from app.services.user_chat_storage_service import load_user_prefs
 
@@ -263,6 +265,31 @@ class MediaStoreIn(BaseModel):
     prompt: str | None = None
     chat_session_id: str | None = None
     metadata: dict | None = None
+
+
+@router.get("/tools")
+async def chat_tools(
+    user: User = Depends(require_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """The chat tools this account may use.
+
+    The composer draws its menu from this rather than from a list baked into
+    the client, so a tool added to the registry appears without a frontend
+    change and a tool an administrator has restricted does not appear at all.
+    """
+    subject = await resolve_resource_access_subject(db, user_id=user.id)
+    permitted = await permitted_tool_keys(db, subject)
+    return [
+        {
+            "key": spec.key,
+            "title": spec.title,
+            "description": spec.description,
+            "icon": spec.icon,
+            "permitted": spec.key in permitted,
+        }
+        for spec in CHAT_TOOLS
+    ]
 
 
 @router.post("/session-title")

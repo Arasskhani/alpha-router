@@ -1,3 +1,4 @@
+import { chatToolAllowed } from "./chatToolPermissions";
 import {
   DEFAULT_CUSTOM_ASPECT_RATIO,
   DEFAULT_IMAGE_ASPECT_PRESET,
@@ -53,6 +54,21 @@ const FRESH_CHAT_TOOLS: ChatToolsState = {
   speechSpeed: 1.0,
   codeInterpreter: false,
 };
+
+/**
+ * The registered tool each toggle asks the server for.
+ *
+ * Keys are the wire names in `app/services/chat_tool_registry.py`; a toggle
+ * missing from this map is a toggle no administrator can restrict.
+ */
+export const CHAT_TOOL_KEY_BY_FIELD = {
+  webSearch: "web_search",
+  webFetch: "web_fetch",
+  imageGeneration: "image_generation",
+  videoGeneration: "video_generation",
+  speechGeneration: "speech_generation",
+  codeInterpreter: "code_interpreter",
+} as const satisfies Partial<Record<keyof ChatToolsState, string>>;
 
 export function copyFreshChatTools(): ChatToolsState {
   return { ...FRESH_CHAT_TOOLS };
@@ -155,7 +171,7 @@ export function normalizeChatTools(raw?: Partial<ChatToolsState> | null): ChatTo
     imageGeneration = false;
   }
 
-  return {
+  const state: ChatToolsState = {
     webSearch: raw.webSearch ?? FRESH_CHAT_TOOLS.webSearch,
     webSearchDepth: normalizeDepth(raw.webSearchDepth),
     webFetch: raw.webFetch ?? FRESH_CHAT_TOOLS.webFetch,
@@ -175,6 +191,15 @@ export function normalizeChatTools(raw?: Partial<ChatToolsState> | null): ChatTo
     speechSpeed: normalizeSpeechSpeed(raw.speechSpeed),
     codeInterpreter: raw.codeInterpreter ?? FRESH_CHAT_TOOLS.codeInterpreter,
   };
+
+  // A chat's toggles are stored with the session on the server, and a project
+  // chat's row is shared, so a tool switched on before it was restricted (or
+  // by somebody who still has it) comes back on. Clamping here covers every
+  // path that loads a session, rather than each of them remembering to.
+  for (const [field, key] of Object.entries(CHAT_TOOL_KEY_BY_FIELD)) {
+    if (!chatToolAllowed(key)) state[field as keyof typeof CHAT_TOOL_KEY_BY_FIELD] = false;
+  }
+  return state;
 }
 export function toolsToApiPayload(state: ChatToolsState) {
   return {

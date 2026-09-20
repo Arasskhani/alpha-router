@@ -162,6 +162,10 @@ export function buildStoppedSpeechMessages(
 function parseApiError(raw: string, status: number): string {
   try {
     const j = JSON.parse(raw);
+    // A structured refusal (a tool the account has not been given, a capacity
+    // limit) puts a code and a sentence in `detail`; rendering the object
+    // itself would show the user "[object Object]".
+    if (j.detail && typeof j.detail === "object") return j.detail.message || raw;
     return j.detail || j.message || raw;
   } catch {
     return humanizeGatewayError(raw, status);

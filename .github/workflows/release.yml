@@ -6,7 +6,10 @@
 #
 # Notes come from the Conventional Commits between this tag and the previous
 # release (scripts/release-notes.py). Re-pushing a tag, or re-running this
-# workflow, rewrites that release's notes rather than failing or duplicating.
+# workflow, rewrites that release's notes rather than failing or duplicating,
+# and publishes it - a release whose tag was deleted is left behind as a draft,
+# and re-pushing the tag has to bring it back rather than quietly update a
+# draft nobody can see.
 #
 # This does not run the test suite - CI lives in .gitlab-ci.yml. It publishes
 # notes for a tag somebody chose to create; it is not a quality gate.
@@ -53,8 +56,14 @@ jobs:
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
           if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Release $tag exists; replacing its notes."
-            gh release edit "$tag" --title "$tag" --notes-file release-notes.md
+            echo "Release $tag exists; replacing its notes and publishing it."
+            # --draft=false because the release that already exists is often a
+            # draft: deleting a tag on the remote does not delete its release,
+            # it demotes it. Re-pushing the tag would then rewrite the notes of
+            # a draft and leave it a draft, with nothing saying why the release
+            # never appeared. Pushing a version tag ends in a published
+            # release, whatever state the old one was left in.
+            gh release edit "$tag" --title "$tag" --notes-file release-notes.md --draft=false
           else
             echo "Creating release $tag."
             # --verify-tag: publish only for a tag that really exists, so a

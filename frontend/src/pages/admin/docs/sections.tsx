@@ -1054,7 +1054,7 @@ export const docSections: DocSection[] = [
             </tr>
             <tr>
               <td>Overview</td>
-              <td>Dashboard, Operations, Database</td>
+              <td>Dashboard, Operations, Code Interpreter, Database</td>
             </tr>
             <tr>
               <td>Agents &amp; Knowledge</td>

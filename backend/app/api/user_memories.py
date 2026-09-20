@@ -21,7 +21,6 @@ from app.services.user_memory_service import (
     list_memories,
     update_memory,
 )
-from app.services.user_profile_context_service import profile_payload
 
 router = APIRouter(prefix="/api/user/memories", tags=["user-memories"])
 
@@ -46,8 +45,10 @@ async def get_user_memories(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_read_db),
 ) -> dict[str, Any]:
+    # Memory only. The directory fields this used to return as "profile" are
+    # a separate feature with a separate screen, and served by
+    # GET /api/user/work-profile; returning them here coupled the two.
     items, total = await list_memories(db, user.id, include_disabled=True, limit=limit, offset=offset)
-    fresh = await db.get(User, user.id)
     prefs = await load_user_prefs(db, user.id)
     settings = await get_memory_settings(db)
     return {
@@ -55,7 +56,6 @@ async def get_user_memories(
         "total": total,
         "limit": limit,
         "offset": offset,
-        "profile": profile_payload(fresh or user),
         "auto_capture": bool(prefs.get("memory_auto_capture", True)),
         "memory_enabled": bool(prefs.get("memory_enabled", True)),
         "feature_enabled": bool(settings.get("feature_enabled", True)),

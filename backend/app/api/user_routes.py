@@ -54,6 +54,25 @@ async def list_user_keys(user: User = Depends(get_current_user), db: AsyncSessio
     return [_serialize_user_key(k, base_url=base) for k in rows]
 
 
+@router.get("/work-profile")
+async def user_work_profile(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str | None]:
+    """The directory fields this account carries into non-private chats.
+
+    These used to be read from ``GET /api/user/memories``, which meant the
+    Work profile tab could not open unless the memory feature answered: it
+    listed memories, loaded memory preferences and read the memory settings,
+    and threw all three away. Two unrelated features, one request. They are
+    separate now, and each fails on its own.
+    """
+    from app.services.user_profile_context_service import profile_payload
+
+    fresh = await db.get(User, user.id)
+    return profile_payload(fresh or user)
+
+
 @router.get("/budget")
 async def user_budget(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     from app.services.budget_notice_service import pending_budget_notice

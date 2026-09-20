@@ -16,23 +16,11 @@ export type UserMemory = {
   last_used_at?: number | null;
 };
 
-export type UserProfileContext = {
-  company: string | null;
-  department: string | null;
-  job_title: string | null;
-  reporting_to: string | null;
-};
-
-function trimOrNull(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
 type UserMemoriesPayload = {
   memories: UserMemory[];
   total: number;
   limit?: number;
   offset?: number;
-  profile?: UserProfileContext;
   auto_capture?: boolean;
   memory_enabled?: boolean;
   feature_enabled?: boolean;
@@ -44,7 +32,6 @@ export async function fetchUserMemoriesBundle(opts?: {
   offset?: number;
 }): Promise<{
   memories: UserMemory[];
-  profile: UserProfileContext;
   total: number;
   auto_capture: boolean;
   memory_enabled: boolean;
@@ -63,12 +50,6 @@ export async function fetchUserMemoriesBundle(opts?: {
     memory_enabled: data.memory_enabled !== false,
     feature_enabled: data.feature_enabled !== false,
     extraction_configured: data.extraction_configured !== false,
-    profile: {
-      company: trimOrNull(data.profile?.company),
-      department: trimOrNull(data.profile?.department),
-      job_title: trimOrNull(data.profile?.job_title),
-      reporting_to: trimOrNull(data.profile?.reporting_to),
-    },
   };
 }
 

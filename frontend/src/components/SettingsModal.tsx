@@ -27,8 +27,8 @@ import {
   fetchUserMemoriesBundle,
   updateUserMemory,
   type UserMemory,
-  type UserProfileContext,
 } from "../lib/userMemories";
+import { EMPTY_WORK_PROFILE, fetchWorkProfile, type WorkProfile } from "../lib/workProfile";
 import { useConfirm } from "../context/ConfirmContext";
 import Modal from "./Modal";
 import PersonalApiKeyPanel from "./PersonalApiKeyPanel";
@@ -484,12 +484,7 @@ function relativeTime(ms: number | null | undefined): string {
 }
 
 function PersonalizationPanel() {
-  const [profile, setProfile] = useState<UserProfileContext>({
-    company: null,
-    department: null,
-    job_title: null,
-    reporting_to: null,
-  });
+  const [profile, setProfile] = useState<WorkProfile>(EMPTY_WORK_PROFILE);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -497,9 +492,11 @@ function PersonalizationPanel() {
     let cancelled = false;
     (async () => {
       try {
-        const bundle = await fetchUserMemoriesBundle({ limit: 1, offset: 0 });
+        // Its own endpoint: this screen has nothing to do with Memory and
+        // must not go dark when the memory feature does.
+        const loaded = await fetchWorkProfile();
         if (cancelled) return;
-        setProfile(bundle.profile);
+        setProfile(loaded);
       } catch (err) {
         if (!cancelled) setError(formatApiError(err));
       } finally {

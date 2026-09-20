@@ -13,11 +13,10 @@ import datetime as dt
 import json
 import uuid
 
+import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.models  # noqa: F401
-from app.database import Base
 from app.models.chat import (
     ChatMessage,
     ChatSession,
@@ -36,13 +35,6 @@ from app.services.user_chat_storage_service import save_user_prefs
 from app.services.user_memory_service import create_memory, delete_all_memories, delete_memory
 
 
-async def _session_factory():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False), engine
-
-
 async def _completer(_payload: dict) -> str:
     return json.dumps(
         {
@@ -59,15 +51,18 @@ async def _completer(_payload: dict) -> str:
     )
 
 
-async def _seed(db: AsyncSession) -> tuple[User, ChatSession, UserMemoryJob]:
+@pytest.fixture
+async def seeded(db_session: AsyncSession) -> tuple[User, ChatSession, UserMemoryJob]:
+    """A user mid-conversation with one extraction job claimed and running."""
+
     user = User(
         username="gatekeeper",
         email="gate@alpha-router.local",
         hashed_password="x",
         auth_provider="local",
     )
-    db.add(user)
-    await db.flush()
+    db_session.add(user)
+    await db_session.flush()
     session = ChatSession(
         id="sess-gate",
         user_id=user.id,
@@ -75,11 +70,12 @@ async def _seed(db: AsyncSession) -> tuple[User, ChatSession, UserMemoryJob]:
         model_id="m",
         private_mode=False,
     )
-    db.add(session)
-    db.add(SystemSetting(key="memory_extraction_model_id", value="1"))
+    db_session.add(session)
+    db_session.add(SystemSetting(key="memory_extraction_model_id", value="1"))
+    await db_session.flush()
     now = dt.datetime.utcnow()
     for sequence, (role, content) in enumerate([("user", "I live in Tehran."), ("assistant", "Noted.")], start=1):
-        db.add(
+        db_session.add(
             ChatMessage(
                 id=str(uuid.uuid4()),
                 session_id=session.id,
@@ -102,8 +98,8 @@ async def _seed(db: AsyncSession) -> tuple[User, ChatSession, UserMemoryJob]:
         created_at=now,
         updated_at=now,
     )
-    db.add(job)
-    await db.commit()
+    db_session.add(job)
+    await db_session.commit()
     return user, session, job
 
 
@@ -112,115 +108,99 @@ async def _alive(db: AsyncSession, user_id: int) -> list[str]:
     return [row.content for row in rows]
 
 
-async def test_queued_job_still_extracts_while_auto_capture_is_on() -> None:
-    factory, engine = await _session_factory()
-    async with factory() as db:
-        user, _session, job = await _seed(db)
-        await handle_memory_extraction(db, job, completer=_completer)
-        await db.commit()
-        assert await _alive(db, user.id) == ["User lives in Tehran"]
-        assert job.extracted_sequence == 2
-    await engine.dispose()
+async def test_queued_job_still_extracts_while_auto_capture_is_on(db_session, seeded) -> None:
+    user, _session, job = seeded
+    await handle_memory_extraction(db_session, job, completer=_completer)
+    await db_session.commit()
+    assert await _alive(db_session, user.id) == ["User lives in Tehran"]
+    assert job.extracted_sequence == 2
 
 
-async def test_job_queued_before_opting_out_writes_nothing() -> None:
+async def test_job_queued_before_opting_out_writes_nothing(db_session, seeded) -> None:
     """The switch moved after the job was enqueued; the job must respect it."""
-    factory, engine = await _session_factory()
-    async with factory() as db:
-        user, _session, job = await _seed(db)
-        await save_user_prefs(db, user.id, {"memory_auto_capture": False})
-        await db.commit()
+    user, _session, job = seeded
+    await save_user_prefs(db_session, user.id, {"memory_auto_capture": False})
+    await db_session.commit()
 
-        await handle_memory_extraction(db, job, completer=_completer)
-        await db.commit()
+    await handle_memory_extraction(db_session, job, completer=_completer)
+    await db_session.commit()
 
-        assert await _alive(db, user.id) == []
-        # The window is claimed rather than left open: turning the switch back
-        # on must not retroactively mine the turns spoken while it was off.
-        assert job.extracted_sequence == 2
-    await engine.dispose()
+    assert await _alive(db_session, user.id) == []
+    # The window is claimed rather than left open: turning the switch back on
+    # must not retroactively mine the turns spoken while it was off.
+    assert job.extracted_sequence == 2
 
 
-async def test_turning_the_switch_back_on_does_not_mine_the_opted_out_window() -> None:
-    factory, engine = await _session_factory()
-    async with factory() as db:
-        user, session, job = await _seed(db)
-        await save_user_prefs(db, user.id, {"memory_auto_capture": False})
-        await db.commit()
-        await handle_memory_extraction(db, job, completer=_completer)
-        await db.commit()
+async def test_turning_the_switch_back_on_does_not_mine_the_opted_out_window(db_session, seeded) -> None:
+    user, _session, job = seeded
+    await save_user_prefs(db_session, user.id, {"memory_auto_capture": False})
+    await db_session.commit()
+    await handle_memory_extraction(db_session, job, completer=_completer)
+    await db_session.commit()
 
-        await save_user_prefs(db, user.id, {"memory_auto_capture": True})
-        job.status = "running"
-        job.updated_at = dt.datetime.utcnow()
-        await db.commit()
+    await save_user_prefs(db_session, user.id, {"memory_auto_capture": True})
+    job.status = "running"
+    job.updated_at = dt.datetime.utcnow()
+    await db_session.commit()
 
-        # Same watermark, nothing new said: min_new keeps it inert.
-        await handle_memory_extraction(db, job, completer=_completer)
-        await db.commit()
-        assert await _alive(db, user.id) == []
-        assert session.id == "sess-gate"
-    await engine.dispose()
+    # Same watermark, nothing new said: min_new keeps it inert.
+    await handle_memory_extraction(db_session, job, completer=_completer)
+    await db_session.commit()
+    assert await _alive(db_session, user.id) == []
 
 
-async def test_delete_all_during_a_claimed_job_wins() -> None:
+async def test_delete_all_during_a_claimed_job_wins(db_session, session_factory, seeded) -> None:
     """The person emptied the list while this job was already extracting."""
-    factory, engine = await _session_factory()
-    async with factory() as db:
-        user, _session, job = await _seed(db)
+    user, _session, job = seeded
 
-        async def _slow_completer(payload: dict) -> str:
-            # Stand in for the model call: a second connection runs delete-all
-            # and commits while this job holds its window.
-            async with factory() as other:
-                await delete_all_memories(other, user.id)
-                await other.commit()
-            return await _completer(payload)
+    async def _slow_completer(payload: dict) -> str:
+        # Stand in for the model call: another connection runs delete-all and
+        # commits while this job holds its window.
+        async with session_factory() as other:
+            await delete_all_memories(other, user.id)
+            await other.commit()
+        return await _completer(payload)
 
-        await handle_memory_extraction(db, job, completer=_slow_completer)
-        await db.commit()
+    await handle_memory_extraction(db_session, job, completer=_slow_completer)
+    await db_session.commit()
 
-        assert await _alive(db, user.id) == []
-    await engine.dispose()
+    assert await _alive(db_session, user.id) == []
 
 
-async def test_delete_all_keeps_earlier_one_by_one_suppressions() -> None:
+async def test_delete_all_keeps_earlier_one_by_one_suppressions(db_session, seeded) -> None:
     """Emptying the list must not revoke every "never learn this again"."""
-    factory, engine = await _session_factory()
-    async with factory() as db:
-        user, _session, _job = await _seed(db)
-        payload, created = await create_memory(db, user.id, "User lives in Tehran", origin="auto")
-        assert created
-        await delete_memory(db, user.id, payload["id"])
-        await db.commit()
+    user, _session, _job = seeded
+    payload, created = await create_memory(db_session, user.id, "User lives in Tehran", origin="auto")
+    assert created
+    await delete_memory(db_session, user.id, payload["id"])
+    await db_session.commit()
 
-        await delete_all_memories(db, user.id)
-        await db.commit()
+    await delete_all_memories(db_session, user.id)
+    await db_session.commit()
 
-        suppressions = (
-            (await db.execute(select(UserMemorySuppression).where(UserMemorySuppression.user_id == user.id)))
-            .scalars()
-            .all()
-        )
-        assert len(suppressions) == 1
+    suppressions = (
+        (await db_session.execute(select(UserMemorySuppression).where(UserMemorySuppression.user_id == user.id)))
+        .scalars()
+        .all()
+    )
+    assert len(suppressions) == 1
 
-        # And the block still bites: the same fact does not come back.
-        result = await apply_memory_operations(
-            db,
-            user_id=user.id,
-            session_id=None,
-            operations=[
-                MemoryOperation(
-                    op="add",
-                    content="User lives in Tehran",
-                    category="identity",
-                    confidence=0.9,
-                    salience=0.8,
-                )
-            ],
-        )
-        await db.commit()
-        assert result.added == 0
-        assert result.skipped == 1
-        assert await _alive(db, user.id) == []
-    await engine.dispose()
+    # And the block still bites: the same fact does not come back.
+    result = await apply_memory_operations(
+        db_session,
+        user_id=user.id,
+        session_id=None,
+        operations=[
+            MemoryOperation(
+                op="add",
+                content="User lives in Tehran",
+                category="identity",
+                confidence=0.9,
+                salience=0.8,
+            )
+        ],
+    )
+    await db_session.commit()
+    assert result.added == 0
+    assert result.skipped == 1
+    assert await _alive(db_session, user.id) == []

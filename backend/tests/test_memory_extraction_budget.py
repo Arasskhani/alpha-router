@@ -16,11 +16,10 @@ import datetime as dt
 import json
 import uuid
 
+import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.models  # noqa: F401
-from app.database import Base
 from app.models.chat import ChatMessage, ChatSession, UserMemory, UserMemoryJob
 from app.models.cost_accounting import UsageOperation
 from app.models.system import SystemSetting
@@ -30,13 +29,6 @@ from app.services.memory_extraction_service import (
     extraction_spend_this_month,
     handle_memory_extraction,
 )
-
-
-async def _session_factory():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False), engine
 
 
 async def _completer(_payload: dict) -> str:
@@ -55,6 +47,16 @@ def _spend(amount: float, *, operation_type: str = "memory_extract", when: dt.da
     )
 
 
+@pytest.fixture
+def seed(db_session: AsyncSession):
+    """A claimed job plus whatever monthly cap the test wants in force."""
+
+    async def _make(cap: str) -> tuple[User, UserMemoryJob]:
+        return await _seed(db_session, cap=cap)
+
+    return _make
+
+
 async def _seed(db: AsyncSession, *, cap: str) -> tuple[User, UserMemoryJob]:
     user = User(username="payer", email="pay@alpha-router.local", hashed_password="x", auth_provider="local")
     db.add(user)
@@ -63,6 +65,7 @@ async def _seed(db: AsyncSession, *, cap: str) -> tuple[User, UserMemoryJob]:
     db.add(session)
     db.add(SystemSetting(key="memory_extraction_model_id", value="1"))
     db.add(SystemSetting(key="memory_extract_monthly_budget_usd", value=cap))
+    await db.flush()
     now = dt.datetime.utcnow()
     for sequence, (role, content) in enumerate([("user", "I live in Tehran."), ("assistant", "Noted.")], start=1):
         db.add(
@@ -98,65 +101,53 @@ async def _memories(db: AsyncSession, user_id: int) -> list[str]:
     return [row.content for row in rows]
 
 
-async def test_no_cap_means_no_cap() -> None:
-    factory, engine = await _session_factory()
-    async with factory() as db:
-        user, job = await _seed(db, cap="0")
-        db.add(_spend(9_999))
-        await db.commit()
-        exhausted, _spent, _cap = await extraction_budget_exhausted(db)
-        assert exhausted is False
-        await handle_memory_extraction(db, job, completer=_completer)
-        await db.commit()
-        assert await _memories(db, user.id) == ["User lives in Tehran"]
-    await engine.dispose()
+async def test_no_cap_means_no_cap(db_session, seed) -> None:
+    user, job = await seed("0")
+    db_session.add(_spend(9_999))
+    await db_session.commit()
+    exhausted, _spent, _cap = await extraction_budget_exhausted(db_session)
+    assert exhausted is False
+    await handle_memory_extraction(db_session, job, completer=_completer)
+    await db_session.commit()
+    assert await _memories(db_session, user.id) == ["User lives in Tehran"]
 
 
-async def test_extraction_stops_once_the_month_is_spent() -> None:
-    factory, engine = await _session_factory()
-    async with factory() as db:
-        user, job = await _seed(db, cap="5")
-        db.add(_spend(5.25))
-        await db.commit()
+async def test_extraction_stops_once_the_month_is_spent(db_session, seed) -> None:
+    user, job = await seed("5")
+    db_session.add(_spend(5.25))
+    await db_session.commit()
 
-        await handle_memory_extraction(db, job, completer=_completer)
-        await db.commit()
+    await handle_memory_extraction(db_session, job, completer=_completer)
+    await db_session.commit()
 
-        assert await _memories(db, user.id) == []
-        # Skipped, not dropped: the window is still open for next month.
-        assert job.extracted_sequence == 0
-    await engine.dispose()
+    assert await _memories(db_session, user.id) == []
+    # Skipped, not dropped: the window is still open for next month.
+    assert job.extracted_sequence == 0
 
 
-async def test_the_two_scopes_share_one_figure() -> None:
-    factory, engine = await _session_factory()
-    async with factory() as db:
-        user, job = await _seed(db, cap="5")
-        db.add(_spend(3, operation_type="memory_extract"))
-        db.add(_spend(3, operation_type="project_memory_extract"))
-        await db.commit()
+async def test_the_two_scopes_share_one_figure(db_session, seed) -> None:
+    user, job = await seed("5")
+    db_session.add(_spend(3, operation_type="memory_extract"))
+    db_session.add(_spend(3, operation_type="project_memory_extract"))
+    await db_session.commit()
 
-        exhausted, spent, cap = await extraction_budget_exhausted(db)
-        assert exhausted is True
-        assert spent == 6.0
-        assert cap == 5.0
+    exhausted, spent, cap = await extraction_budget_exhausted(db_session)
+    assert exhausted is True
+    assert spent == 6.0
+    assert cap == 5.0
 
-        await handle_memory_extraction(db, job, completer=_completer)
-        await db.commit()
-        assert await _memories(db, user.id) == []
-    await engine.dispose()
+    await handle_memory_extraction(db_session, job, completer=_completer)
+    await db_session.commit()
+    assert await _memories(db_session, user.id) == []
 
 
-async def test_last_month_does_not_count_against_this_one() -> None:
-    factory, engine = await _session_factory()
-    async with factory() as db:
-        user, job = await _seed(db, cap="5")
-        first_of_month = dt.datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        db.add(_spend(50, when=first_of_month - dt.timedelta(days=1)))
-        await db.commit()
+async def test_last_month_does_not_count_against_this_one(db_session, seed) -> None:
+    user, job = await seed("5")
+    first_of_month = dt.datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    db_session.add(_spend(50, when=first_of_month - dt.timedelta(days=1)))
+    await db_session.commit()
 
-        assert await extraction_spend_this_month(db) == 0.0
-        await handle_memory_extraction(db, job, completer=_completer)
-        await db.commit()
-        assert await _memories(db, user.id) == ["User lives in Tehran"]
-    await engine.dispose()
+    assert await extraction_spend_this_month(db_session) == 0.0
+    await handle_memory_extraction(db_session, job, completer=_completer)
+    await db_session.commit()
+    assert await _memories(db_session, user.id) == ["User lives in Tehran"]

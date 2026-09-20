@@ -51,6 +51,7 @@ PROJECT_DENIED_CATEGORIES = frozenset({"health", "financial", "personal", "famil
 SETTING_KEYS = {
     "memory_feature_enabled": "true",
     "memory_extraction_model_id": "",
+    "memory_extract_monthly_budget_usd": "0",
     "memory_embedding_model": "",
     "memory_embedding_dimensions": "",
     "memory_extract_debounce_seconds": "30",
@@ -202,6 +203,10 @@ def parse_memory_settings(raw: dict[str, str]) -> dict[str, Any]:
         "extract_debounce_seconds": _as_int(raw.get("memory_extract_debounce_seconds"), 30, minimum=5, maximum=3600),
         "extract_max_wait_seconds": _as_int(raw.get("memory_extract_max_wait_seconds"), 600, minimum=30, maximum=7200),
         "extract_min_new_messages": _as_int(raw.get("memory_extract_min_new_messages"), 2, minimum=1, maximum=20),
+        # 0 = uncapped. Covers both scopes: it is one line item on the bill.
+        "extract_monthly_budget_usd": _as_float(
+            raw.get("memory_extract_monthly_budget_usd"), 0.0, minimum=0.0, maximum=1_000_000.0
+        ),
         "max_per_user": _as_int(raw.get("memory_max_per_user"), 200, minimum=10, maximum=500),
         "inject_max_items": _as_int(raw.get("memory_inject_max_items"), 12, minimum=1, maximum=50),
         "inject_max_chars": _as_int(raw.get("memory_inject_max_chars"), 2500, minimum=200, maximum=8000),
@@ -317,6 +322,7 @@ def _raw_from_values(values: dict[str, Any]) -> dict[str, str]:
         "memory_extract_debounce_seconds": str(values["extract_debounce_seconds"]),
         "memory_extract_max_wait_seconds": str(values["extract_max_wait_seconds"]),
         "memory_extract_min_new_messages": str(values["extract_min_new_messages"]),
+        "memory_extract_monthly_budget_usd": str(values["extract_monthly_budget_usd"]),
         "memory_max_per_user": str(values["max_per_user"]),
         "memory_inject_max_items": str(values["inject_max_items"]),
         "memory_inject_max_chars": str(values["inject_max_chars"]),
@@ -355,6 +361,7 @@ async def update_memory_settings(db: AsyncSession, updates: dict[str, Any]) -> d
         "extract_debounce_seconds": "memory_extract_debounce_seconds",
         "extract_max_wait_seconds": "memory_extract_max_wait_seconds",
         "extract_min_new_messages": "memory_extract_min_new_messages",
+        "extract_monthly_budget_usd": "memory_extract_monthly_budget_usd",
         "max_per_user": "memory_max_per_user",
         "inject_max_items": "memory_inject_max_items",
         "inject_max_chars": "memory_inject_max_chars",

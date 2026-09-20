@@ -29,6 +29,7 @@ const SETTINGS = {
   extract_debounce_seconds: 30,
   extract_max_wait_seconds: 600,
   extract_min_new_messages: 2,
+  extract_monthly_budget_usd: 0,
   max_per_user: 200,
   inject_max_items: 12,
   inject_max_chars: 2500,
@@ -61,6 +62,7 @@ const STATS = {
   dead_letter_count: 0,
   oldest_pending_job_age_seconds: null,
   extraction_cost_usd_30d: 0,
+  extraction_cost_usd_mtd: 0,
   jobs_by_status: {},
   project_learned_memories: 0,
   project_manual_memories: 0,
@@ -70,10 +72,10 @@ const STATS = {
   project_jobs_by_status: {},
 };
 
-function answerWith(overrides: Record<string, unknown> = {}) {
+function answerWith(overrides: Record<string, unknown> = {}, statOverrides: Record<string, unknown> = {}) {
   vi.mocked(api).mockImplementation(async (path: string) => {
     if (path.includes("/memory/settings")) return { ...SETTINGS, ...overrides };
-    if (path.includes("/memory/stats")) return STATS;
+    if (path.includes("/memory/stats")) return { ...STATS, ...statOverrides };
     if (path.includes("/admin/models")) {
       return [{ id: 7, external_id: "gpt-x", display_name: "GPT X", provider: "openai", enabled: true, kinds: ["text"] }];
     }
@@ -129,5 +131,35 @@ describe("the admin Memory page", () => {
     answerWith({ feature_enabled: false });
     await render();
     expect(warning()).toBeNull();
+  });
+});
+
+describe("the extraction spend cap", () => {
+  it("offers the cap before anything else on the page", async () => {
+    answerWith({ extraction_model_id: 7 });
+    await render();
+    const sections = [...host.querySelectorAll("section")];
+    expect(sections[0]?.getAttribute("aria-label")).toBe("Cost control");
+    expect(sections[0]?.textContent).toContain("Monthly extraction budget");
+  });
+
+  it("explains that zero is not a limit", async () => {
+    answerWith({ extraction_model_id: 7, extract_monthly_budget_usd: 0 });
+    await render();
+    expect(host.textContent).toContain("0 means no limit");
+    expect(host.querySelector(".alert-warning")).toBeNull();
+  });
+
+  it("shows what has been spent against the cap", async () => {
+    answerWith({ extraction_model_id: 7, extract_monthly_budget_usd: 20 }, { extraction_cost_usd_mtd: 4.5 });
+    await render();
+    expect(host.textContent).toContain("$4.50 of $20.00 used this month");
+    expect(host.querySelector(".alert-warning")).toBeNull();
+  });
+
+  it("says extraction has stopped once the cap is reached", async () => {
+    answerWith({ extraction_model_id: 7, extract_monthly_budget_usd: 20 }, { extraction_cost_usd_mtd: 21 });
+    await render();
+    expect(host.querySelector(".alert-warning")?.textContent).toContain("Extraction is paused");
   });
 });

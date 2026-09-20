@@ -8204,6 +8204,11 @@ table.data-table--api-logs {
   margin: -0.15rem 0 0.85rem;
 }
 
+/* The first section on the page: what this feature is allowed to spend. */
+.memory-admin__budget {
+  margin-bottom: 1.1rem;
+}
+
 .memory-admin__status {
   display: grid;
   grid-template-columns: 1fr 1fr;

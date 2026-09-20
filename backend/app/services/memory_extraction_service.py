@@ -731,6 +731,49 @@ async def extract_memory_operations(
             raise ExtractionParseError(str(exc)) from exc
 
 
+MONTHLY_BUDGET_OPERATION_TYPES = ("memory_extract", "project_memory_extract")
+
+
+async def extraction_budget_exhausted(db: AsyncSession) -> tuple[bool, float, float]:
+    """(exhausted, spent this month, cap). A cap of 0 means uncapped.
+
+    Extraction is the one place Alpha Router spends a provider's money without
+    a person waiting on the answer, and it does it without reserving budget on
+    purpose: a background job that starts refusing to run is worse than one
+    that costs a little. That reasoning holds for one user's turn and stops
+    holding across a whole deployment, where a bad month is only visible after
+    it is billed. Both scopes count against one figure because they are one
+    line item to the person paying.
+    """
+
+    settings = await get_memory_settings(db)
+    cap = float(settings.get("extract_monthly_budget_usd") or 0.0)
+    if cap <= 0:
+        return False, 0.0, 0.0
+    spent = await extraction_spend_this_month(db)
+    return spent >= cap, spent, cap
+
+
+async def extraction_spend_this_month(db: AsyncSession) -> float:
+    """Month-to-date extraction spend, UTC, matching the budget period."""
+
+    from sqlalchemy import func
+
+    from app.models.cost_accounting import UsageOperation
+
+    now = dt.datetime.utcnow()
+    month_start = dt.datetime(now.year, now.month, 1)
+    total = (
+        await db.execute(
+            select(func.coalesce(func.sum(UsageOperation.total_cost_usd), 0)).where(
+                UsageOperation.operation_type.in_(MONTHLY_BUDGET_OPERATION_TYPES),
+                UsageOperation.started_at >= month_start,
+            )
+        )
+    ).scalar_one()
+    return float(total or 0.0)
+
+
 async def _watermark_moved(db: AsyncSession, job: Any, *, window_from: int) -> bool:
     """True when another transaction advanced this job's watermark mid-flight.
 
@@ -776,6 +819,19 @@ async def handle_memory_extraction(db: AsyncSession, job, *, completer: Any | No
     # way (handle_project_memory_extraction -> load_project_memory_flags).
     from app.services.user_chat_storage_service import load_user_prefs
 
+    exhausted, spent, cap = await extraction_budget_exhausted(db)
+    if exhausted:
+        # Leave extracted_sequence where it is: the window stays open and is
+        # mined once the month turns over or the cap is raised. Advancing it
+        # here would drop those turns for good, which is a strange thing for a
+        # spending limit to do.
+        logger.warning(
+            "memory extraction skipped, monthly budget reached spent=%.4f cap=%.4f job_id=%s",
+            spent,
+            cap,
+            job.id,
+        )
+        return
     prefs = await load_user_prefs(db, job.user_id)
     if not prefs.get("memory_auto_capture", True):
         # Claim the window anyway: it was read under a permission the user has

@@ -34,6 +34,7 @@ class MemorySettingsPatch(BaseModel):
     extract_debounce_seconds: int | None = Field(default=None, ge=5, le=3600)
     extract_max_wait_seconds: int | None = Field(default=None, ge=30, le=7200)
     extract_min_new_messages: int | None = Field(default=None, ge=1, le=20)
+    extract_monthly_budget_usd: float | None = Field(default=None, ge=0, le=1_000_000)
     max_per_user: int | None = Field(default=None, ge=10, le=500)
     inject_max_items: int | None = Field(default=None, ge=1, le=50)
     inject_max_chars: int | None = Field(default=None, ge=200, le=8000)
@@ -145,6 +146,10 @@ async def get_stats(
             )
         )
     ).scalar_one()
+    from app.services.memory_extraction_service import extraction_spend_this_month
+
+    # Month to date, both scopes, on the same clock the cap uses.
+    extract_cost_mtd = await extraction_spend_this_month(db)
     project_total = int(
         (
             await db.execute(
@@ -204,6 +209,7 @@ async def get_stats(
         "dead_letter_count": dead,
         "embedding_backlog": backlog,
         "extraction_cost_usd_30d": float(extract_cost or 0),
+        "extraction_cost_usd_mtd": float(extract_cost_mtd or 0),
         "retrieval_p95_seconds": None,
         "project_learned_memories": project_total,
         "project_manual_memories": project_manual,

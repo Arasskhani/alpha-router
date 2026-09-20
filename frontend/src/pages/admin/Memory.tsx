@@ -18,6 +18,7 @@ type MemorySettings = {
   extract_debounce_seconds: number;
   extract_max_wait_seconds: number;
   extract_min_new_messages: number;
+  extract_monthly_budget_usd: number;
   max_per_user: number;
   inject_max_items: number;
   inject_max_chars: number;
@@ -51,6 +52,7 @@ type MemoryStats = {
   dead_letter_count: number;
   embedding_backlog: number;
   extraction_cost_usd_30d: number;
+  extraction_cost_usd_mtd: number;
   project_learned_memories: number;
   project_manual_memories: number;
   project_jobs_by_status: Record<string, number>;
@@ -327,6 +329,9 @@ export default function MemoryAdmin() {
 
   /** Switched on, but with no model to extract with: on paper, not in fact. */
   const inert = settings.feature_enabled && !settings.extraction_model_id;
+  const cap = settings.extract_monthly_budget_usd || 0;
+  const capped = cap > 0;
+  const spentThisMonth = stats?.extraction_cost_usd_mtd ?? 0;
 
   return (
     <AdminPage title="Memory" actions={saveBar}>
@@ -348,6 +353,40 @@ export default function MemoryAdmin() {
         ) : null}
         {flash ? <p className="alert alert-success">{flash}</p> : null}
         {error ? <p className="alert alert-error" role="alert">{error}</p> : null}
+
+        <section className="settings-section memory-admin__budget" aria-label="Cost control">
+          <h2>Cost control</h2>
+          <p className="settings-section-desc">
+            Extraction is the only thing here that spends money, and it spends it in the background with nobody
+            waiting on the answer. It is billed as a system operation and is never held against a user&rsquo;s budget,
+            so nothing else stops it. This is what stops it.
+          </p>
+          <div className="settings-list">
+            <FieldRow
+              title="Monthly extraction budget"
+              hint={
+                capped
+                  ? `${formatUsd(spentThisMonth)} of ${formatUsd(cap)} used this month. At the cap, extraction pauses and resumes on the 1st; the conversations it skipped stay queued rather than being dropped.`
+                  : "0 means no limit. Set a figure to pause extraction for the rest of the month once it is reached."
+              }
+            >
+              <NumberInput
+                id="memory-extract-monthly-budget-usd"
+                value={settings.extract_monthly_budget_usd}
+                step="1"
+                min={0}
+                disabled={readOnly}
+                onChange={(n) => patch({ extract_monthly_budget_usd: n })}
+              />
+            </FieldRow>
+          </div>
+          {capped && spentThisMonth >= cap ? (
+            <p className="alert alert-warning" role="status">
+              <strong>Extraction is paused.</strong> The monthly budget is spent. Nothing new is being learned in
+              either scope until the 1st, or until you raise the figure above.
+            </p>
+          ) : null}
+        </section>
 
         <section className="memory-admin__status" aria-label="Memory health">
           <div>

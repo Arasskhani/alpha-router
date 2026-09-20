@@ -30,6 +30,7 @@ from app.services.memory_extraction_service import (
     _first_json_object,
     _watermark_moved,
     contains_secret,
+    extraction_budget_exhausted,
     looks_like_injection,
 )
 from app.services.memory_settings_service import (
@@ -678,6 +679,17 @@ async def handle_project_memory_extraction(db: AsyncSession, job, *, completer: 
         return
     memory_enabled, auto_capture = await load_project_memory_flags(db, job.project_id)
     if not memory_enabled or not auto_capture:
+        return
+    exhausted, spent, cap = await extraction_budget_exhausted(db)
+    if exhausted:
+        # Same figure as the personal scope: one line item, one cap. The window
+        # stays open for next month rather than being dropped.
+        logger.warning(
+            "project memory extraction skipped, monthly budget reached spent=%.4f cap=%.4f job_id=%s",
+            spent,
+            cap,
+            job.id,
+        )
         return
     min_new = int(settings.get("project_extract_min_new_messages") or 2)
     window_from = int(job.extracted_sequence or 0)

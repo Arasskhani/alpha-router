@@ -2128,6 +2128,11 @@ export const docSections: DocSection[] = [
             (no surprise cost on upgrade). Cost is recorded as a system operation, not against the user budget.
           </li>
           <li>
+            <strong>Monthly extraction budget</strong> — the only ceiling on that cost, since no user budget applies.
+            0 is uncapped. Once month-to-date spend across both scopes reaches the figure, extraction pauses until
+            the 1st; queued conversations keep their place rather than being discarded.
+          </li>
+          <li>
             <strong>Embedding model</strong> — <code>provider:external_id</code>. Dimensions are filled from the selected
             model and stay editable if you need a smaller size. Clearing the model turns off vector search (PostgreSQL
             recency/lexical only). Changing the model or dimensions requires a rebuild.

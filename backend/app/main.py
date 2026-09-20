@@ -767,7 +767,8 @@ app.include_router(auth.router)
 app.include_router(gateway.router)
 app.include_router(admin.router)
 if settings.agents_platform_enabled:
-    # Preview feature (Phase 4.5): mounted only when explicitly enabled.
+    # On by default; a deployment that does not use the Agent platform can turn
+    # it off, and then these are not mounted at all rather than guarded.
     app.include_router(admin_agent_evaluations.router)
     app.include_router(admin_agent_governance.router)
     app.include_router(admin_agents.router)

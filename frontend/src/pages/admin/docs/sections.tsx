@@ -1529,6 +1529,24 @@ export const docSections: DocSection[] = [
           version, curate a Knowledge Base and evaluation set, complete approvals, then publish.
           No application code change is required.
         </Note>
+        <h3>Leaving the platform out of a deployment</h3>
+        <p>
+          <code>AGENTS_PLATFORM_ENABLED</code> in <code>.env</code> is <strong>on by default</strong>. Set it to{" "}
+          <code>false</code> only for a deployment that does not use Agents at all. Off means off everywhere rather
+          than merely hidden: the agent, knowledge, tool-registry, evaluation and governance routers are never
+          mounted (their paths answer <code>404</code>, not <code>403</code>), a chat request carrying agent fields
+          is refused at preflight, and this whole sidebar section disappears — for every role, Super Admin included,
+          because there is nothing behind it to open. The <code>knowledge_scheduler</code> service still runs its
+          workers either way.
+        </p>
+        <Warn>
+          Because the section disappears rather than greying out, a missing feature and a missing permission look
+          identical from the sidebar. If an administrator reports that Agents &amp; Knowledge is not there, check
+          this setting before looking at their role:{" "}
+          <code>docker compose exec alpha-router printenv AGENTS_PLATFORM_ENABLED</code>. Changing it in{" "}
+          <code>.env</code> and restarting the application containers is enough — no rebuild — and the operator
+          needs to reload the page so the session is read again.
+        </Warn>
       </>
     ),
   },

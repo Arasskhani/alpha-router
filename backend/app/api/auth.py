@@ -96,7 +96,7 @@ async def auth_session(user: User = Depends(get_current_user), db: AsyncSession 
         "is_active": bool(user.is_active),
         "auth_provider": user.auth_provider or "local",
         **session_payload_for_slugs(slugs),
-        # Feature flags the UI needs to hide preview sections (Phase 4.5).
+        # Feature switches the UI needs to hide a section a deployment left out.
         "features": {"agents_platform": bool(settings.agents_platform_enabled)},
     }
 

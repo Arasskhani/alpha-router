@@ -34,7 +34,7 @@ export const adminNavSections: NavSection[] = [
     ],
   },
   {
-    title: "Agents & Knowledge (preview)",
+    title: "Agents & Knowledge",
     categoryKey: "agents_knowledge",
     items: [
       { to: "/admin/agents", label: "Overview", menuKey: "agents" },

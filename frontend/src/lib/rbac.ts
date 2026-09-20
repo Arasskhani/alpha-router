@@ -28,14 +28,20 @@ export type SessionRbac = {
   features?: { agents_platform?: boolean } | null;
 };
 
-/** Menus that belong to preview features and disappear when the feature is off. */
-const PREVIEW_FEATURE_MENUS: Record<string, MenuKey> = { agents_platform: "agents" };
+/**
+ * Menus a deployment can leave out entirely, and the server switch that says so.
+ *
+ * Not preview gating: these are shipped features whose routers a deployment may
+ * choose not to mount. When the switch is off the server does not serve them,
+ * so showing the menu would offer a door with nothing behind it.
+ */
+const OPTIONAL_FEATURE_MENUS: Record<string, MenuKey> = { agents_platform: "agents" };
 
 function disabledPreviewMenus(session: SessionRbac | null): Set<MenuKey> {
   const off = new Set<MenuKey>();
   const features = session?.features;
   if (!features) return off;
-  for (const [feature, menu] of Object.entries(PREVIEW_FEATURE_MENUS)) {
+  for (const [feature, menu] of Object.entries(OPTIONAL_FEATURE_MENUS)) {
     if ((features as Record<string, boolean | undefined>)[feature] === false) off.add(menu);
   }
   return off;

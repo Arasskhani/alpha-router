@@ -23,6 +23,7 @@ from app.models.system import SystemSetting
 from app.models.user import User
 from app.services.memory_extraction_service import handle_memory_extraction
 from app.services.user_chat_storage_service import save_user_prefs
+from app.services.user_memory_service import delete_all_memories
 
 
 async def _session_factory():
@@ -149,4 +150,25 @@ async def test_turning_the_switch_back_on_does_not_mine_the_opted_out_window() -
         await db.commit()
         assert await _alive(db, user.id) == []
         assert session.id == "sess-gate"
+    await engine.dispose()
+
+
+async def test_delete_all_during_a_claimed_job_wins() -> None:
+    """The person emptied the list while this job was already extracting."""
+    factory, engine = await _session_factory()
+    async with factory() as db:
+        user, _session, job = await _seed(db)
+
+        async def _slow_completer(payload: dict) -> str:
+            # Stand in for the model call: a second connection runs delete-all
+            # and commits while this job holds its window.
+            async with factory() as other:
+                await delete_all_memories(other, user.id)
+                await other.commit()
+            return await _completer(payload)
+
+        await handle_memory_extraction(db, job, completer=_slow_completer)
+        await db.commit()
+
+        assert await _alive(db, user.id) == []
     await engine.dispose()

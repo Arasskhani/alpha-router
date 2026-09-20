@@ -731,6 +731,25 @@ async def extract_memory_operations(
             raise ExtractionParseError(str(exc)) from exc
 
 
+async def _watermark_moved(db: AsyncSession, job: Any, *, window_from: int) -> bool:
+    """True when another transaction advanced this job's watermark mid-flight.
+
+    Extraction reads its window, then waits on a model for up to
+    ``EXTRACT_TIMEOUT`` twice over. "Delete all my memories" advances every one
+    of the user's (or project's) watermarks in that gap, but it can only close
+    jobs that are still pending or retrying — a claimed job keeps running with
+    the window it already holds. Re-reading the committed value is what turns
+    that into a no-op instead of a resurrection.
+
+    A column select rather than ``refresh``: it bypasses the identity map, and
+    a deleted row comes back as None instead of raising.
+    """
+
+    model = type(job)
+    live = (await db.execute(select(model.extracted_sequence).where(model.id == job.id))).scalar_one_or_none()
+    return live is None or int(live) != window_from
+
+
 async def handle_memory_extraction(db: AsyncSession, job, *, completer: Any | None = None) -> None:
     from app.models.chat import UserMemoryJob
     from app.services.memory_settings_service import get_memory_settings
@@ -764,14 +783,15 @@ async def handle_memory_extraction(db: AsyncSession, job, *, completer: Any | No
         job.extracted_sequence = int(job.watermark_sequence or 0)
         return
     min_new = int(settings.get("extract_min_new_messages") or 2)
-    new_count = int(job.watermark_sequence or 0) - int(job.extracted_sequence or 0)
+    window_from = int(job.extracted_sequence or 0)
+    new_count = int(job.watermark_sequence or 0) - window_from
     if new_count < min_new:
         return
     window = await build_extraction_window(
         db,
         user_id=job.user_id,
         session_id=job.session_id,
-        from_sequence=int(job.extracted_sequence or 0) + 1,
+        from_sequence=window_from + 1,
         to_sequence=int(job.watermark_sequence or 0),
     )
     if not window.turns:
@@ -781,6 +801,17 @@ async def handle_memory_extraction(db: AsyncSession, job, *, completer: Any | No
         None,
     )
     operations = await extract_memory_operations(db, window=window, completer=completer)
+    if await _watermark_moved(db, job, window_from=window_from):
+        # "Delete all my memories" ran while the extraction model was thinking.
+        # reset_watermarks_for_user only closes pending and retry jobs, so this
+        # one — already claimed and running — kept its window and would write
+        # fresh memories seconds after the person emptied the list.
+        logger.info(
+            "memory extraction abandoned, watermark moved under it user_id=%s job_id=%s",
+            job.user_id,
+            job.id,
+        )
+        return
     result = await apply_memory_operations(
         db,
         user_id=job.user_id,

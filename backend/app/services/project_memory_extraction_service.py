@@ -28,6 +28,7 @@ from app.services.memory_extraction_service import (
     ExtractionParseError,
     _completion_text,
     _first_json_object,
+    _watermark_moved,
     contains_secret,
     looks_like_injection,
 )
@@ -679,20 +680,30 @@ async def handle_project_memory_extraction(db: AsyncSession, job, *, completer: 
     if not memory_enabled or not auto_capture:
         return
     min_new = int(settings.get("project_extract_min_new_messages") or 2)
-    new_count = int(job.watermark_sequence or 0) - int(job.extracted_sequence or 0)
+    window_from = int(job.extracted_sequence or 0)
+    new_count = int(job.watermark_sequence or 0) - window_from
     if new_count < min_new:
         return
     window = await build_project_extraction_window(
         db,
         project_id=job.project_id,
         session_id=job.session_id,
-        from_sequence=int(job.extracted_sequence or 0) + 1,
+        from_sequence=window_from + 1,
         to_sequence=int(job.watermark_sequence or 0),
     )
     if not window.turns:
         return
     last_member_turn = next((turn for turn in reversed(window.turns) if turn.role == "user"), None)
     operations, dropped = await extract_project_memory_operations(db, window=window, completer=completer)
+    if await _watermark_moved(db, job, window_from=window_from):
+        # A project reset ran while the extraction model was thinking; the same
+        # race as the personal scope, and the same answer.
+        logger.info(
+            "project memory extraction abandoned, watermark moved under it project_id=%s job_id=%s",
+            job.project_id,
+            job.id,
+        )
+        return
     result = await apply_project_memory_operations(
         db,
         project_id=job.project_id,

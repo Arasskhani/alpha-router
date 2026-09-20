@@ -24,6 +24,7 @@ MenuKey = Literal[
     "api_logs",
     "operations",
     "database",
+    "chat_tools",
     "agents",
     "admin_guide",
     "user_manual",
@@ -34,6 +35,7 @@ MenuKey = Literal[
 CategoryKey = Literal[
     "overview",
     "models_api",
+    "chat_experience",
     "people_access",
     "integrations",
     "data_reports",
@@ -78,6 +80,7 @@ MENU_DEFINITIONS: tuple[tuple[MenuKey, str, CategoryKey], ...] = (
     ("connections", "Connections", "models_api"),
     ("models", "Models", "models_api"),
     ("api_keys", "API Keys", "models_api"),
+    ("chat_tools", "Chat Tools", "chat_experience"),
     ("roles", "Roles", "people_access"),
     ("users", "Users", "people_access"),
     ("deleted_users", "Deleted Users", "people_access"),
@@ -159,6 +162,7 @@ MENU_GROUP_KEYS: dict[MenuKey, CategoryKey] = {m[0]: m[2] for m in MENU_DEFINITI
 CATEGORY_LABELS: dict[CategoryKey, str] = {
     "overview": "Overview",
     "models_api": "Models & API",
+    "chat_experience": "Chat experience",
     "people_access": "People & access",
     "integrations": "Integrations",
     "data_reports": "Data & reports",
@@ -187,8 +191,11 @@ MENU_PATH_PREFIXES: dict[MenuKey, tuple[str, ...]] = {
         "/admin/logs",
         "/admin/admin-logs",
     ),
-    "operations": ("/admin/operations", "/admin/debug", "/admin/code-interpreter"),
+    "operations": ("/admin/operations", "/admin/debug"),
     "database": ("/admin/database",),
+    # The Chat experience section: who may use each chat tool, and how the one
+    # tool with settings of its own behaves.
+    "chat_tools": ("/admin/chat-tools", "/admin/code-interpreter"),
     "agents": (
         "/admin/agents",
         "/admin/knowledge",

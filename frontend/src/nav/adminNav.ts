@@ -20,7 +20,6 @@ export const adminNavSections: NavSection[] = [
     items: [
       { to: "/admin", label: "Dashboard", menuKey: "dashboard" },
       { to: "/admin/operations", label: "Operations", menuKey: "operations" },
-      { to: "/admin/code-interpreter", label: "Code Interpreter", menuKey: "operations" },
       { to: "/admin/database", label: "Database", menuKey: "database" },
     ],
   },
@@ -31,6 +30,14 @@ export const adminNavSections: NavSection[] = [
       { to: "/admin/connections", label: "Connections", menuKey: "connections" },
       { to: "/admin/models", label: "Models", menuKey: "models" },
       { to: "/admin/api-keys", label: "API Keys", menuKey: "api_keys" },
+    ],
+  },
+  {
+    title: "Chat experience",
+    categoryKey: "chat_experience",
+    items: [
+      { to: "/admin/chat-tools", label: "Chat Tools", menuKey: "chat_tools" },
+      { to: "/admin/code-interpreter", label: "Code Interpreter", menuKey: "chat_tools" },
     ],
   },
   {

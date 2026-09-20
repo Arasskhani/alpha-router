@@ -1,6 +1,7 @@
 export type CategoryKey =
   | "overview"
   | "models_api"
+  | "chat_experience"
   | "people_access"
   | "security"
   | "integrations"
@@ -45,6 +46,8 @@ export type MenuKey =
   | "operations"
 
   | "database"
+
+  | "chat_tools"
 
   | "agents"
 

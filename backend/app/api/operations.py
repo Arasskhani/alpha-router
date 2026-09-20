@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_operations, require_operations_write
+from app.api.deps import (
+    require_chat_tools,
+    require_chat_tools_write,
+    require_operations,
+    require_operations_write,
+)
 from app.database import get_db
 from app.models.user import User
 from app.services.observability import snapshot
@@ -162,7 +167,7 @@ async def patch_code_interpreter_capacity(
     body: CodeInterpreterCapacityPatch,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require_operations_write),
+    admin: User = Depends(require_chat_tools_write),
 ):
     """Change the operational admission limits for Code Interpreter.
 
@@ -288,7 +293,7 @@ async def _code_interpreter_settings_payload(db: AsyncSession) -> dict:
 @router.get("/code-interpreter-settings")
 async def get_code_interpreter_settings(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_operations),
+    _: User = Depends(require_chat_tools),
 ) -> dict:
     return await _code_interpreter_settings_payload(db)
 
@@ -298,7 +303,7 @@ async def patch_code_interpreter_workspace(
     body: CodeInterpreterWorkspacePatch,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require_operations_write),
+    admin: User = Depends(require_chat_tools_write),
 ) -> dict:
     """The workspace ceilings, from the page that owns Code Interpreter.
 

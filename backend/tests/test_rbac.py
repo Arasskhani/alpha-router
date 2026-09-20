@@ -223,6 +223,28 @@ def test_operations_and_database_live_under_overview():
     assert "database" in overview
 
 
+def test_chat_experience_owns_both_of_its_pages():
+    """Chat Tools and Code Interpreter answer the same question - how a chat
+    tool behaves for this organization's users - so they sit in one section
+    under one permission. Code Interpreter used to live under Overview with
+    the Operations dashboard, which grouped it by where its endpoints happen
+    to be rather than by what an operator goes there to do."""
+    assert CATEGORY_LABELS["chat_experience"] == "Chat experience"
+    assert MENU_GROUP_KEYS["chat_tools"] == "chat_experience"
+    assert MENUS_BY_CATEGORY["chat_experience"] == ("chat_tools",)
+    assert path_to_menu("/admin/chat-tools") == "chat_tools"
+    assert path_to_menu("/admin/code-interpreter") == "chat_tools"
+    assert can_access_menu(SUPER_ADMIN_SLUG, "chat_tools")
+    assert not can_access_menu(API_KEY_ADMIN_SLUG, "chat_tools")
+
+
+def test_the_chat_monitoring_prefix_does_not_claim_the_chat_tools_page():
+    """`/admin/chat` and `/admin/chat-tools` share nine characters and belong
+    to different menus. Matching is segment-aware; this says so."""
+    assert path_to_menu("/admin/chat") == "chat"
+    assert path_to_menu("/admin/chat/session-1") == "chat"
+
+
 def test_security_category_and_settings_menu():
     assert CATEGORY_LABELS["security"] == "Security"
     assert MENU_GROUP_KEYS["security_settings"] == "security"

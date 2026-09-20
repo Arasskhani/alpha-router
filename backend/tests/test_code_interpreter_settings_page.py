@@ -125,10 +125,15 @@ async def test_the_same_limits_read_back_through_the_shared_service(db_session, 
     assert limits["max_code_interpreter_workspace_total_mb"] == 6
 
 
-def test_the_route_is_reachable_for_the_operations_menu():
+def test_the_route_belongs_to_the_chat_experience_menu():
+    """The page moved out of Overview: it answers "how should this chat tool
+    behave for my users", which is the Chat experience question, not an
+    operational one. The endpoints stayed where they are - under
+    ``/api/admin/operations`` - but they are guarded by the new menu."""
     from app.services.rbac import MENU_PATH_PREFIXES
 
-    assert "/admin/code-interpreter" in MENU_PATH_PREFIXES["operations"]
+    assert "/admin/code-interpreter" in MENU_PATH_PREFIXES["chat_tools"]
+    assert "/admin/code-interpreter" not in MENU_PATH_PREFIXES["operations"]
 
 
 class TestCompatibilityOverrideIsAudited:

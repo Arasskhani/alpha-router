@@ -92,7 +92,18 @@ describe("admin routes are claimed by a menu", () => {
     expect(mismatched).toEqual([]);
   });
 
-  it("puts the Code Interpreter page under operations, where its API lives", () => {
-    expect(pathToMenu("/admin/code-interpreter")).toBe("operations");
+  it("puts both Chat experience pages under the menu that owns them", () => {
+    // Code Interpreter started under `operations` because its endpoints live
+    // beside the Operations dashboard. That was the wrong owner: the page
+    // answers "how should this chat tool behave for my users", which is the
+    // question Chat Tools answers for every other tool.
+    expect(pathToMenu("/admin/chat-tools")).toBe("chat_tools");
+    expect(pathToMenu("/admin/code-interpreter")).toBe("chat_tools");
+  });
+
+  it("does not let the Chat monitoring prefix swallow the Chat Tools page", () => {
+    // `/admin/chat` is the `chat` menu. Prefix matching is segment-aware, and
+    // this is the test that says so out loud.
+    expect(pathToMenu("/admin/chat")).toBe("chat");
   });
 });

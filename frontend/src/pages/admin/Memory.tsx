@@ -325,13 +325,27 @@ export default function MemoryAdmin() {
     );
   }
 
+  /** Switched on, but with no model to extract with: on paper, not in fact. */
+  const inert = settings.feature_enabled && !settings.extraction_model_id;
+
   return (
     <AdminPage title="Memory" actions={saveBar}>
       <div className="memory-admin">
         <p className="muted-text memory-admin__lead">
           Automatic long-term memory for personal chat and shared project facts. Extraction uses the model below
-          (system cost). Until a model is selected, nothing is learned.
+          (system cost).
         </p>
+        {inert ? (
+          // The master switch reads "on" and the model reads "Not configured",
+          // which is a page that looks live and learns nothing. Users see a
+          // banner for this in their own Memory panel; the person who can
+          // actually fix it was the one not being told.
+          <p className="alert alert-warning" role="status">
+            <strong>Nothing is being learned.</strong> Automatic memory is on, but no extraction model is selected,
+            so every conversation is skipped. Existing memories are still injected and can still be managed. Pick an{" "}
+            <strong>Extraction model</strong> below to start.
+          </p>
+        ) : null}
         {flash ? <p className="alert alert-success">{flash}</p> : null}
         {error ? <p className="alert alert-error" role="alert">{error}</p> : null}
 

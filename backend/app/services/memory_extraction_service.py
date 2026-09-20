@@ -749,6 +749,20 @@ async def handle_memory_extraction(db: AsyncSession, job, *, completer: Any | No
     session = await db.get(ChatSession, job.session_id)
     if session is None or bool(session.private_mode) or is_member_channel(session):
         return
+    # Re-read the user's own switch. schedule_extraction checked it too, but a
+    # job is debounced for up to extract_max_wait_seconds and may be retried
+    # after that, so the person can turn automatic learning off while this job
+    # is already queued. Checking only at enqueue time means their opt-out is
+    # ignored for the rest of that window. The project twin re-checks the same
+    # way (handle_project_memory_extraction -> load_project_memory_flags).
+    from app.services.user_chat_storage_service import load_user_prefs
+
+    prefs = await load_user_prefs(db, job.user_id)
+    if not prefs.get("memory_auto_capture", True):
+        # Claim the window anyway: it was read under a permission the user has
+        # since withdrawn, and re-mining it later would leak the same turns.
+        job.extracted_sequence = int(job.watermark_sequence or 0)
+        return
     min_new = int(settings.get("extract_min_new_messages") or 2)
     new_count = int(job.watermark_sequence or 0) - int(job.extracted_sequence or 0)
     if new_count < min_new:

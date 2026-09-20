@@ -572,7 +572,8 @@ export const userManualSections: DocSection[] = [
         <h2>Chat Tools</h2>
         <p>
           Open the tools menu on the composer to enable capabilities for the current session. Availability depends on
-          your deployment and model.
+          your deployment and model, and on what your administrator has granted your account: a tool you have not
+          been given is not listed, and a chat that had it switched on before opens with it off.
         </p>
         <table className="docs-table">
           <thead>

@@ -1054,7 +1054,7 @@ export const docSections: DocSection[] = [
             </tr>
             <tr>
               <td>Overview</td>
-              <td>Dashboard, Operations, Code Interpreter, Database</td>
+              <td>Dashboard, Operations, Database</td>
             </tr>
             <tr>
               <td>Agents &amp; Knowledge</td>
@@ -1063,6 +1063,10 @@ export const docSections: DocSection[] = [
             <tr>
               <td>Models &amp; API</td>
               <td>Connections, Models, API Keys</td>
+            </tr>
+            <tr>
+              <td>Chat experience</td>
+              <td>Chat Tools, Code Interpreter</td>
             </tr>
             <tr>
               <td>People &amp; access</td>
@@ -1382,82 +1386,6 @@ export const docSections: DocSection[] = [
           pins the validated IP, and a proxy would hand the destination back to the proxy and defeat that check. Those
           hosts have to be reachable directly.
         </Note>
-      </>
-    ),
-  },
-  {
-    id: "admin-code-interpreter",
-    title: "Code Interpreter",
-    group: "Overview",
-    content: (
-      <>
-        <h2>Code Interpreter</h2>
-        <p>
-          Path: <code>/admin/code-interpreter</code>. Everything that governs code execution: whether it runs at all,
-          how much runs at once, and what a turn may carry into the sandbox. Live utilisation and the refusal history
-          are on <a href="#admin-operations">Operations</a>; per-model compatibility is on{" "}
-          <a href="#admin-models">Models</a>.
-        </p>
-        <Note>
-          These settings were previously split — concurrency on Operations, workspace limits on Storage Management,
-          and the deployment ceilings nowhere — under two different menu permissions. They are one feature and are
-          now edited in one place, under the <code>operations</code> menu permission. The two workspace fields remain
-          on <a href="#admin-storage-management">Storage Management</a> beside the other transfer ceilings; both write the same
-          setting.
-        </Note>
-        <h3>Availability</h3>
-        <p>
-          The off switch refuses new turns for everyone with <code>503</code> and a message that says an
-          administrator turned it off — not the <code>429</code> &ldquo;busy&rdquo; a full queue produces, because
-          waiting does not help. Turns already running keep their leases and finish: stopping admission is the
-          incident response, killing work in flight would be a second incident. The switch is stored in the database,
-          so a restart cannot quietly turn it back on, and both directions are recorded in{" "}
-          <a href="#admin-activity-logs">Admin Logs</a> under their own action names.
-        </p>
-        <h3>Concurrency</h3>
-        <ul>
-          <li>
-            <strong>Concurrent turns</strong> — the operational ceiling, clamped by{" "}
-            <code>CODE_INTERPRETER_CAPACITY_GLOBAL_MAX</code>. Requests above it are refused at once with{" "}
-            <code>429</code> and the Retry-After below. There is no queue.
-          </li>
-          <li>
-            <strong>Per user / API key</strong> — how many turns one subject may hold, so a single caller cannot take
-            the whole fleet.
-          </li>
-          <li>
-            <strong>Retry-After</strong> — the number of seconds the refusal asks the client to wait.
-          </li>
-        </ul>
-        <Warn>
-          The broker enforces a second ceiling of its own (<code>SANDBOX_MAX_CONCURRENT</code>, fixed at deploy) and
-          the smaller of the two decides. When they differ the page says which is binding and raising the other
-          changes nothing. See <a href="#requirements">Sizing the Code Interpreter fleet</a>.
-        </Warn>
-        <h3>Workspace</h3>
-        <p>
-          How many files a turn may carry into the sandbox and their total size. Files come from the whole
-          conversation turn, not one message. The broker applies its own much higher hard caps
-          (<code>SANDBOX_HARD_MAX_WORKSPACE_*</code>) as a DoS guard; these are the product limits.
-        </p>
-        <h3>Set at deploy</h3>
-        <p>
-          The last table lists the values this page cannot change, each with the environment variable that sets it —
-          the hard concurrency ceiling, the lease TTL and heartbeat, the execution timeout, and the broker&apos;s own
-          concurrency. Change them in <code>.env</code> and redeploy.
-        </p>
-        <Note>
-          <code>CODE_SANDBOX_TIMEOUT_SECONDS</code> is the wall-clock limit for one execution. It now travels with
-          the job to the broker, which clamps it to <code>SANDBOX_HARD_MAX_EXECUTION_SECONDS</code>. Before that it
-          only shaped the client&apos;s polling deadline while the real kill sat at a fixed 30 seconds, so raising it
-          appeared to do nothing.
-        </Note>
-        <h3>What is recorded</h3>
-        <p>
-          Every change on this page is written to the administrative audit trail with the values before and after:
-          the concurrency limits, the workspace limits, and the off switch. Pinning a model&apos;s compatibility on{" "}
-          <a href="#admin-models">Models</a> is recorded too.
-        </p>
       </>
     ),
   },
@@ -2046,6 +1974,142 @@ export const docSections: DocSection[] = [
     ),
   },
 
+  // ── Chat experience ───────────────────────────────────────────────────────
+  {
+    id: "admin-chat-tools",
+    title: "Chat Tools",
+    group: "Chat experience",
+    content: (
+      <>
+        <h2>Chat Tools</h2>
+        <p>
+          Path: <code>/admin/chat-tools</code>. Each tool the chat composer can offer — web search, web fetch, image,
+          video and speech generation, voice messages, Code Interpreter, Private Mode — and who in the organization
+          may use it.
+        </p>
+        <h3>How access is decided</h3>
+        <ul>
+          <li>
+            A tool is <strong>open</strong> until somebody restricts it. Nothing changes for anybody on upgrade.
+          </li>
+          <li>
+            Restrict one and it becomes available only to the users, groups, departments and roles granted it — the
+            same editor, and the same rules, as an Agent or a Knowledge Base.
+          </li>
+          <li>
+            A <strong>denial always wins</strong> over a grant, so the common case — leave it open, take it away from
+            one person or one group — is a single deny on an open tool.
+          </li>
+          <li>
+            There is no implicit exception for Super Admin. An administrator who wants a restricted tool grants it to
+            their own role, which leaves a record of the decision.
+          </li>
+        </ul>
+        <h3>Where it is enforced</h3>
+        <p>
+          On the server, not in the menu. A restricted tool is left out of the composer&apos;s menu and switched off
+          if a saved chat still has it on, but the refusal itself happens where the request arrives: inside the chat
+          turn for web search, web fetch, Code Interpreter and Private Mode — which covers the OpenAI-compatible
+          Gateway, where an API key is judged by the account that owns it — and at their own endpoints for image,
+          video and speech generation and voice messages. A turn that asks for a tool it has not been given is
+          refused with <code>403</code> and a message naming the tool.
+        </p>
+        <Note>
+          Agents are out of scope: an Agent&apos;s tools come from its own configuration, not from the composer, and
+          are governed in <a href="#agents-knowledge-overview">Agents &amp; Knowledge</a>.
+        </Note>
+        <h3>Adding a tool</h3>
+        <p>
+          The page lists what the server registry holds. A tool registered in the platform appears here with access
+          control already working — no upgrade step, no new permission and no database change. That is why the page
+          may show a tool this guide does not describe.
+        </p>
+        <h3>What is recorded</h3>
+        <p>
+          Every save is written to the administrative audit trail with the policy before and after, under the action{" "}
+          <code>chat_tool_access_changed</code>, and is visible in{" "}
+          <a href="#admin-activity-logs">Admin Logs</a>.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: "admin-code-interpreter",
+    title: "Code Interpreter",
+    group: "Chat experience",
+    content: (
+      <>
+        <h2>Code Interpreter</h2>
+        <p>
+          Path: <code>/admin/code-interpreter</code>. Everything that governs code execution: whether it runs at all,
+          how much runs at once, and what a turn may carry into the sandbox. Live utilisation and the refusal history
+          are on <a href="#admin-operations">Operations</a>; per-model compatibility is on{" "}
+          <a href="#admin-models">Models</a>.
+        </p>
+        <Note>
+          These settings were previously split — concurrency on Operations, workspace limits on Storage Management,
+          and the deployment ceilings nowhere — under two different menu permissions. They are one feature and are
+          now edited in one place, under the <code>chat_tools</code> menu permission that also covers{" "}
+          <a href="#admin-chat-tools">Chat Tools</a>. The two workspace fields remain on{" "}
+          <a href="#admin-storage-management">Storage Management</a> beside the other transfer ceilings; both write the
+          same setting.
+        </Note>
+        <h3>Availability</h3>
+        <p>
+          The off switch refuses new turns for everyone with <code>503</code> and a message that says an
+          administrator turned it off — not the <code>429</code> &ldquo;busy&rdquo; a full queue produces, because
+          waiting does not help. Turns already running keep their leases and finish: stopping admission is the
+          incident response, killing work in flight would be a second incident. The switch is stored in the database,
+          so a restart cannot quietly turn it back on, and both directions are recorded in{" "}
+          <a href="#admin-activity-logs">Admin Logs</a> under their own action names.
+        </p>
+        <h3>Concurrency</h3>
+        <ul>
+          <li>
+            <strong>Concurrent turns</strong> — the operational ceiling, clamped by{" "}
+            <code>CODE_INTERPRETER_CAPACITY_GLOBAL_MAX</code>. Requests above it are refused at once with{" "}
+            <code>429</code> and the Retry-After below. There is no queue.
+          </li>
+          <li>
+            <strong>Per user / API key</strong> — how many turns one subject may hold, so a single caller cannot take
+            the whole fleet.
+          </li>
+          <li>
+            <strong>Retry-After</strong> — the number of seconds the refusal asks the client to wait.
+          </li>
+        </ul>
+        <Warn>
+          The broker enforces a second ceiling of its own (<code>SANDBOX_MAX_CONCURRENT</code>, fixed at deploy) and
+          the smaller of the two decides. When they differ the page says which is binding and raising the other
+          changes nothing. See <a href="#requirements">Sizing the Code Interpreter fleet</a>.
+        </Warn>
+        <h3>Workspace</h3>
+        <p>
+          How many files a turn may carry into the sandbox and their total size. Files come from the whole
+          conversation turn, not one message. The broker applies its own much higher hard caps
+          (<code>SANDBOX_HARD_MAX_WORKSPACE_*</code>) as a DoS guard; these are the product limits.
+        </p>
+        <h3>Set at deploy</h3>
+        <p>
+          The last table lists the values this page cannot change, each with the environment variable that sets it —
+          the hard concurrency ceiling, the lease TTL and heartbeat, the execution timeout, and the broker&apos;s own
+          concurrency. Change them in <code>.env</code> and redeploy.
+        </p>
+        <Note>
+          <code>CODE_SANDBOX_TIMEOUT_SECONDS</code> is the wall-clock limit for one execution. It now travels with
+          the job to the broker, which clamps it to <code>SANDBOX_HARD_MAX_EXECUTION_SECONDS</code>. Before that it
+          only shaped the client&apos;s polling deadline while the real kill sat at a fixed 30 seconds, so raising it
+          appeared to do nothing.
+        </Note>
+        <h3>What is recorded</h3>
+        <p>
+          Every change on this page is written to the administrative audit trail with the values before and after:
+          the concurrency limits, the workspace limits, and the off switch. Pinning a model&apos;s compatibility on{" "}
+          <a href="#admin-models">Models</a> is recorded too.
+        </p>
+      </>
+    ),
+  },
   // ── People & access ───────────────────────────────────────────────────────
   {
     id: "admin-roles",

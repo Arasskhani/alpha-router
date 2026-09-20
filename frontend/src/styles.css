@@ -16402,6 +16402,11 @@ p.error,
 /* ── Named modal widths ────────────────────────────────────────────────────
    Feature-specific width variants keep being invented (there are eight). New
    dialogs pick one of these three instead. */
+/* Height from the content, for a dialog that holds a form rather than a page.
+   .modal-panel--settings fixes its height at 540px, which is right for the
+   tabbed Settings panel and wrong for everything that borrows its controls. */
+.modal-panel--fit { height: auto; }
+
 .modal-panel--sm { width: min(360px, calc(100vw - 2rem)); }
 .modal-panel--md { width: min(620px, calc(100vw - 2rem)); }
 .modal-panel--lg { width: min(880px, calc(100vw - 2rem)); }
@@ -16467,4 +16472,17 @@ p.error,
   .resource-access-editor__grant > .btn {
     flex-basis: 100%;
   }
+}
+
+/* The create-key dialog and the key it produces share one panel, so the form
+   step needs the same stacked layout the secret step already had. */
+.personal-api-key-created .settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+
+.personal-api-key-created .personal-api-key-field {
+  margin-top: 0.35rem;
 }

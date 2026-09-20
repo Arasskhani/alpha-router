@@ -20,6 +20,8 @@ type Budget = {
   remaining_usd: number | null;
 };
 
+const DEFAULT_KEY_NAME = "Personal API Key";
+
 type CreatedKey = {
   id: number;
   name: string;
@@ -124,8 +126,12 @@ export default function PersonalApiKeyPanel() {
   const [message, setMessage] = useState("");
   const [keys, setKeys] = useState<PersonalKey[]>([]);
   const [budget, setBudget] = useState<Budget | null>(null);
-  const [name, setName] = useState("Personal API Key");
+  const [name, setName] = useState(DEFAULT_KEY_NAME);
   const [created, setCreated] = useState<CreatedKey | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  // Kept apart from the panel's error: a failed create has to be readable in
+  // the dialog the person is looking at, not behind it.
+  const [createError, setCreateError] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -148,21 +154,38 @@ export default function PersonalApiKeyPanel() {
     void load();
   }, [load]);
 
+  function openCreateDialog() {
+    setName(DEFAULT_KEY_NAME);
+    setCreateError("");
+    setMessage("");
+    setCreateOpen(true);
+  }
+
+  /** Close the dialog in either of its two steps, and forget both. */
+  function closeCreateDialog() {
+    setCreateOpen(false);
+    setCreated(null);
+    setCreateError("");
+    setName(DEFAULT_KEY_NAME);
+  }
+
   async function onCreate(e: FormEvent) {
     e.preventDefault();
     setSaving(true);
-    setError("");
+    setCreateError("");
     setMessage("");
     try {
       const row = await api<CreatedKey>("/api/user/api-keys", {
         method: "POST",
-        body: JSON.stringify({ name: name.trim() || "Personal API Key" }),
+        body: JSON.stringify({ name: name.trim() || DEFAULT_KEY_NAME }),
       });
+      // The same dialog now shows the key: naming it and copying it are two
+      // steps of one act, and the secret is shown exactly once.
       setCreated(row);
       setMessage("Copy your API key now. It will not be shown again.");
       await load();
     } catch (err) {
-      setError(formatApiError(err));
+      setCreateError(formatApiError(err));
     } finally {
       setSaving(false);
     }
@@ -182,7 +205,7 @@ export default function PersonalApiKeyPanel() {
     try {
       await api(`/api/user/api-keys/${key.id}`, { method: "DELETE" });
       setMessage("API key revoked.");
-      setCreated(null);
+      closeCreateDialog();
       await load();
     } catch (err) {
       setError(formatApiError(err));
@@ -259,38 +282,36 @@ export default function PersonalApiKeyPanel() {
       ) : (
         <div className="settings-list">
           <div className="settings-row-block">
-            <form className="settings-inline-form personal-api-key-create" onSubmit={onCreate}>
-              <label className="settings-field">
-                <span className="settings-label">Key name</span>
-                <input
-                  className="settings-row__control"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  maxLength={128}
-                  disabled={!hasBudget || saving}
-                />
-              </label>
+            <div className="personal-api-key-create">
               {!hasBudget && (
                 <p className="settings-hint">
                   Ask an administrator to assign a monthly budget plan before creating a key.
                 </p>
               )}
-              <button type="submit" className="btn btn-sm btn-primary" disabled={!hasBudget || saving}>
-                {saving ? "Creating…" : "Create API key"}
+              <button
+                type="button"
+                className="btn btn-sm btn-primary"
+                disabled={!hasBudget || saving}
+                onClick={openCreateDialog}
+              >
+                Create API key
               </button>
-            </form>
+            </div>
           </div>
         </div>
       )}
 
       <Modal
-        open={!!created}
-        title="Your personal API key"
-        onClose={() => setCreated(null)}
-        panelClassName="modal-panel--settings"
+        open={createOpen}
+        title={created ? "Your personal API key" : "Create personal API key"}
+        onClose={closeCreateDialog}
+        panelClassName="modal-panel--settings modal-panel--fit"
         bodyClassName="personal-api-key-created-body"
+        // Once the secret is on screen it exists nowhere else; a stray click on
+        // the backdrop should not be how somebody loses it.
+        closeOnBackdrop={!created}
       >
-        {created && (
+        {created ? (
           <div className="personal-api-key-created">
             <p className="settings-hint">Copy this key now. You will not be able to view it again.</p>
             <SecretField label="API key" value={created.api_key} />
@@ -299,11 +320,44 @@ export default function PersonalApiKeyPanel() {
               curl {created.url}/models -H &quot;Authorization: Bearer {created.api_key.slice(0, 12)}…&quot;
             </p>
             <div className="settings-actions">
-              <button type="button" className="btn btn-sm btn-ghost" onClick={() => setCreated(null)}>
+              <button type="button" className="btn btn-sm btn-ghost" onClick={closeCreateDialog}>
                 Done
               </button>
             </div>
           </div>
+        ) : (
+          <form className="personal-api-key-created" onSubmit={onCreate}>
+            <p className="settings-hint">
+              Name it for where you will use it — a laptop, a script, an IDE — so you know what you are revoking
+              later.
+            </p>
+            <label className="settings-field personal-api-key-field">
+              <span className="settings-label">Key name</span>
+              <input
+                className="settings-row__control"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={128}
+                disabled={saving}
+              />
+            </label>
+            {createError && (
+              <p className="settings-error" role="alert">
+                {createError}
+              </p>
+            )}
+            <div className="settings-actions">
+              <button type="button" className="btn btn-sm btn-ghost" onClick={closeCreateDialog} disabled={saving}>
+                Cancel
+              </button>
+              {/* Not "Create API key" again: the button that opened this
+                  dialog is still behind it, and two identical labels on screen
+                  read as one control that moved. */}
+              <button type="submit" className="btn btn-sm btn-primary" disabled={saving}>
+                {saving ? "Creating…" : "Create key"}
+              </button>
+            </div>
+          </form>
         )}
       </Modal>
     </div>

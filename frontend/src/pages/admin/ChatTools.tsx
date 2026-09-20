@@ -192,6 +192,7 @@ export default function ChatTools() {
         open={editing !== null}
         title={editing ? `Access — ${editing.title}` : ""}
         onClose={() => setEditing(null)}
+        panelClassName="modal-panel--md"
       >
         {editing ? (
           <ResourceAccessEditor

@@ -15,6 +15,13 @@
   --control-pad-y: 0.3rem;
   --control-pad-x: 0.65rem;
   --control-font: 0.8125rem;
+  /* Form composition tokens. The control tokens above size the box; these size
+     what goes around it. Without them every form picked a label size by eye —
+     six rules, five different values — and a component that forgot to pick one
+     inherited the 16px body font. */
+  --label-font: 0.78rem;
+  --label-gap: 0.3rem;
+  --field-min: 9rem;
   --app-topbar-height: 40px;
   /* Near-solid ink wordmark (mint themes remap these to green) */
   --brand-grad-ink: #0f172a;
@@ -13957,15 +13964,6 @@ button.app-toast:hover {
   flex: 1 1 14rem;
 }
 
-.resource-access-form {
-  margin-top: 0.75rem;
-}
-
-.resource-access-form input,
-.resource-access-form select {
-  min-width: 8rem;
-}
-
 .agent-chip-list {
   display: flex;
   flex-wrap: wrap;
@@ -16357,4 +16355,116 @@ p.error,
 .chat-tools-table .badge-restricted {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+
+/* ── Form composition primitives ───────────────────────────────────────────
+   The control tokens size the box; these size what goes around it. Added as
+   new classes rather than by editing the shared .agent-* rules, so adopting
+   them changes only the component that opts in.
+
+   `.field` is a label above its control. `.field-row` is a row of them that
+   wraps. Together they replace the habit of writing a bare <label> and a
+   hand-picked font-size per page. */
+.field {
+  display: grid;
+  gap: var(--label-gap);
+  min-width: 0;
+  font-size: var(--label-font);
+  color: var(--muted);
+}
+
+/* The label is muted; what the user typed or chose is not. */
+.field > input,
+.field > select,
+.field > textarea {
+  color: var(--text);
+}
+
+.field-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.5rem;
+}
+
+.field-row > .field,
+.field-row > input,
+.field-row > select {
+  flex: 1 1 var(--field-min);
+  min-width: 0;
+}
+
+/* An action in a field row keeps its own width and never stretches. */
+.field-row > .btn {
+  flex: 0 0 auto;
+}
+
+/* ── Named modal widths ────────────────────────────────────────────────────
+   Feature-specific width variants keep being invented (there are eight). New
+   dialogs pick one of these three instead. */
+.modal-panel--sm { width: min(360px, calc(100vw - 2rem)); }
+.modal-panel--md { width: min(620px, calc(100vw - 2rem)); }
+.modal-panel--lg { width: min(880px, calc(100vw - 2rem)); }
+
+/* ── Access control editor ─────────────────────────────────────────────────
+   Used on Chat Tools, Agent Studio and Knowledge Bases. It borrowed the
+   .agent-section-card styles, which assume the wide column of an Agent page:
+   in a dialog the save button wrapped onto two lines and four controls broke
+   into a ragged 2x2. It now sizes itself from its own container, so it is the
+   same component whether it sits in a page or a 620px dialog. */
+.resource-access-editor {
+  container-type: inline-size;
+  margin-bottom: 0.85rem;
+  padding: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.resource-access-editor__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.resource-access-editor__head h3 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.resource-access-editor__head p {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+  font-size: var(--label-font);
+  line-height: 1.45;
+}
+
+/* The primary action of a card never wraps onto a second line. */
+.resource-access-editor__head .btn {
+  white-space: nowrap;
+}
+
+.resource-access-editor__visibility {
+  margin-top: 0.75rem;
+  max-width: 12rem;
+}
+
+.resource-access-editor__grant {
+  margin-top: 0.75rem;
+}
+
+/* Narrow enough that four controls on one line would each be unreadable. */
+@container (max-width: 34rem) {
+  .resource-access-editor__grant > .field {
+    flex-basis: calc(50% - 0.25rem);
+  }
+}
+
+/* Narrower than a phone in portrait: one control per line. */
+@container (max-width: 22rem) {
+  .resource-access-editor__grant > .field,
+  .resource-access-editor__grant > .btn {
+    flex-basis: 100%;
+  }
 }

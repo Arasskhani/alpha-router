@@ -93,6 +93,20 @@ describe("the Chat Tools page", () => {
     expect(document.body.textContent).toContain("Who can use Code Interpreter");
   });
 
+  it("opens that editor in a dialog wide enough for it", async () => {
+    // The default 480px panel wrapped the save button onto two lines and broke
+    // the four grant controls into a ragged 2x2.
+    vi.mocked(api).mockResolvedValueOnce([row()]);
+    await render();
+    vi.mocked(api).mockImplementation(async (path: string) =>
+      path.endsWith("/access") ? { access_type: "public", acl_version: 0, grants: [] } : [],
+    );
+    const manage = [...host.querySelectorAll("button")].find((b) => b.textContent === "Manage access");
+    await act(async () => manage?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(document.querySelector(".modal-panel--md")).not.toBeNull();
+  });
+
   it("reports a failed load instead of showing an empty table", async () => {
     vi.mocked(api).mockRejectedValueOnce(new Error("nope"));
     await render();

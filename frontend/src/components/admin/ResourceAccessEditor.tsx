@@ -146,8 +146,8 @@ export default function ResourceAccessEditor({
   }
 
   return (
-    <section className="agent-section-card">
-      <div className="agent-section-card__head">
+    <section className="resource-access-editor">
+      <div className="resource-access-editor__head">
         <div>
           <h3>{title}</h3>
           <p>
@@ -164,7 +164,7 @@ export default function ResourceAccessEditor({
         </button>
       </div>
 
-      <label>
+      <label className="field resource-access-editor__visibility">
         Visibility
         <select
           value={accessType}
@@ -176,70 +176,77 @@ export default function ResourceAccessEditor({
         </select>
       </label>
 
-      <form className="agent-inline-form resource-access-form" onSubmit={addGrant}>
-        <select
-          value={targetType}
-          disabled={disabled || loading}
-          onChange={(e) => {
-            setTargetType(e.target.value as AccessGrantInput["target_type"]);
-            setTarget("");
-          }}
-        >
-          <option value="group">Group</option>
-          <option value="role">Role</option>
-          <option value="department">Department</option>
-          <option value="user">User ID</option>
-        </select>
-        {targetType === "group" && groups.length > 0 ? (
+      <form className="field-row resource-access-editor__grant" onSubmit={addGrant}>
+        <label className="field">
+          Grant to
           <select
-            value={target}
+            value={targetType}
             disabled={disabled || loading}
-            onChange={(e) => setTarget(e.target.value)}
+            onChange={(e) => {
+              setTargetType(e.target.value as AccessGrantInput["target_type"]);
+              setTarget("");
+            }}
           >
-            <option value="">Select group…</option>
-            {groups.map((group) => (
-              <option key={group.id} value={String(group.id)}>
-                {group.name}
-              </option>
-            ))}
+            <option value="group">Group</option>
+            <option value="role">Role</option>
+            <option value="department">Department</option>
+            <option value="user">User ID</option>
           </select>
-        ) : null}
-        {targetType === "role" && roles.length > 0 ? (
+        </label>
+        <label className="field">
+          Target
+          {targetType === "group" && groups.length > 0 ? (
+            <select
+              value={target}
+              disabled={disabled || loading}
+              onChange={(e) => setTarget(e.target.value)}
+            >
+              <option value="">Select group…</option>
+              {groups.map((group) => (
+                <option key={group.id} value={String(group.id)}>
+                  {group.name}
+                </option>
+              ))}
+            </select>
+          ) : targetType === "role" && roles.length > 0 ? (
+            <select
+              value={target}
+              disabled={disabled || loading}
+              onChange={(e) => setTarget(e.target.value)}
+            >
+              <option value="">Select role…</option>
+              {roles.map((role) => (
+                <option key={role.slug} value={role.slug}>
+                  {role.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              value={target}
+              disabled={disabled || loading}
+              placeholder={
+                targetType === "user"
+                  ? "User id"
+                  : targetType === "department"
+                    ? "Department name"
+                    : "Target"
+              }
+              onChange={(e) => setTarget(e.target.value)}
+            />
+          )}
+        </label>
+        <label className="field">
+          Effect
           <select
-            value={target}
+            value={effect}
             disabled={disabled || loading}
-            onChange={(e) => setTarget(e.target.value)}
+            onChange={(e) => setEffect(e.target.value as "allow" | "deny")}
           >
-            <option value="">Select role…</option>
-            {roles.map((role) => (
-              <option key={role.slug} value={role.slug}>
-                {role.name}
-              </option>
-            ))}
+            <option value="allow">Allow</option>
+            <option value="deny">Deny</option>
           </select>
-        ) : null}
-        {targetType === "user" || targetType === "department" || (targetType === "group" && groups.length === 0) || (targetType === "role" && roles.length === 0) ? (
-          <input
-            value={target}
-            disabled={disabled || loading}
-            placeholder={
-              targetType === "user"
-                ? "User id"
-                : targetType === "department"
-                  ? "Department name"
-                  : "Target"
-            }
-            onChange={(e) => setTarget(e.target.value)}
-          />
-        ) : null}
-        <select
-          value={effect}
-          disabled={disabled || loading}
-          onChange={(e) => setEffect(e.target.value as "allow" | "deny")}
-        >
-          <option value="allow">Allow</option>
-          <option value="deny">Deny</option>
-        </select>
+        </label>
         <button type="submit" className="btn btn-ghost" disabled={disabled || loading || !target.trim()}>
           Add grant
         </button>

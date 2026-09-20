@@ -114,7 +114,7 @@ const MENU_PATH_PREFIXES: Record<MenuKey, string[]> = {
   storage: ["/admin/storage-management", "/admin/retention-policy", "/admin/memory", "/admin/storage"],
   reports: ["/admin/reports", "/admin/project-usage"],
   api_logs: ["/admin/logs", "/admin/admin-logs"],
-  operations: ["/admin/operations", "/admin/debug"],
+  operations: ["/admin/operations", "/admin/debug", "/admin/code-interpreter"],
   database: ["/admin/database"],
   agents: [
     "/admin/agents",

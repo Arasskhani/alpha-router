@@ -16486,3 +16486,11 @@ p.error,
 .personal-api-key-created .personal-api-key-field {
   margin-top: 0.35rem;
 }
+
+/* The once-only warning carries the weight in this dialog, so it reads at the
+   body size rather than the muted hint size everything else there uses. */
+.personal-api-key-created__warning {
+  margin: 0 0 0.6rem;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}

@@ -1074,7 +1074,11 @@ export const userManualSections: DocSection[] = [
         <ul>
           <li>Base URL: your Alpharouter <code>/v1</code> endpoint (shown after creation).</li>
           <li>Header: <code>Authorization: Bearer &lt;your-key&gt;</code></li>
-          <li>The plaintext key is shown once at creation — store it securely.</li>
+          <li>
+            The plaintext key is shown once at creation and is stored only as a hash, so nobody — not an
+            administrator, not the database — can read it back. Copy it into a password manager before closing the
+            dialog; if it is lost, the only way forward is to revoke it and update every tool that used it.
+          </li>
         </ul>
       </>
     ),

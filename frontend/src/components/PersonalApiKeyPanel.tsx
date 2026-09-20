@@ -69,13 +69,22 @@ function CopyIcon() {
   );
 }
 
-function CopyButton({ value, label }: { value: string; label: string }) {
+function CopyButton({
+  value,
+  label,
+  onCopied,
+}: {
+  value: string;
+  label: string;
+  onCopied?: () => void;
+}) {
   const [copied, setCopied] = useState(false);
 
   async function handleCopy() {
     const ok = await copyText(value);
     if (ok) {
       setCopied(true);
+      onCopied?.();
       window.setTimeout(() => setCopied(false), 2000);
     }
   }
@@ -97,10 +106,12 @@ function SecretField({
   label,
   value,
   showCopy = true,
+  onCopied,
 }: {
   label: string;
   value: string;
   showCopy?: boolean;
+  onCopied?: () => void;
 }) {
   return (
     <label className="settings-field personal-api-key-field">
@@ -112,7 +123,7 @@ function SecretField({
           className="settings-row__control mono personal-api-key-field__input"
           aria-label={label}
         />
-        {showCopy ? <CopyButton value={value} label={`Copy ${label}`} /> : null}
+        {showCopy ? <CopyButton value={value} label={`Copy ${label}`} onCopied={onCopied} /> : null}
       </div>
     </label>
   );
@@ -132,6 +143,9 @@ export default function PersonalApiKeyPanel() {
   // Kept apart from the panel's error: a failed create has to be readable in
   // the dialog the person is looking at, not behind it.
   const [createError, setCreateError] = useState("");
+  // The secret leaves this dialog once. Until it has been copied, closing is
+  // the wrong default, so the exit is held back rather than merely warned about.
+  const [keyCopied, setKeyCopied] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -158,6 +172,7 @@ export default function PersonalApiKeyPanel() {
     setName(DEFAULT_KEY_NAME);
     setCreateError("");
     setMessage("");
+    setKeyCopied(false);
     setCreateOpen(true);
   }
 
@@ -167,6 +182,30 @@ export default function PersonalApiKeyPanel() {
     setCreated(null);
     setCreateError("");
     setName(DEFAULT_KEY_NAME);
+    setKeyCopied(false);
+  }
+
+  /**
+   * Leaving the secret step without copying loses the key for good, so that
+   * exit asks first. Every other way out of the dialog closes as usual.
+   */
+  async function requestClose() {
+    if (created && !keyCopied) {
+      const ok = await confirm({
+        title: "Close without copying the key?",
+        message:
+          "This key is shown once. Close now and it cannot be recovered - you would have to revoke it and update every tool that uses it.",
+        confirmLabel: "Close anyway",
+        cancelLabel: "Keep it open",
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    closeCreateDialog();
+  }
+
+  async function copyKey(value: string) {
+    if (await copyText(value)) setKeyCopied(true);
   }
 
   async function onCreate(e: FormEvent) {
@@ -304,7 +343,7 @@ export default function PersonalApiKeyPanel() {
       <Modal
         open={createOpen}
         title={created ? "Your personal API key" : "Create personal API key"}
-        onClose={closeCreateDialog}
+        onClose={() => void requestClose()}
         panelClassName="modal-panel--settings modal-panel--fit"
         bodyClassName="personal-api-key-created-body"
         // Once the secret is on screen it exists nowhere else; a stray click on
@@ -313,14 +352,34 @@ export default function PersonalApiKeyPanel() {
       >
         {created ? (
           <div className="personal-api-key-created">
-            <p className="settings-hint">Copy this key now. You will not be able to view it again.</p>
-            <SecretField label="API key" value={created.api_key} />
-            <SecretField label="Base URL" value={created.url} />
+            <p className="alert alert-warning personal-api-key-created__warning" role="alert">
+              <strong>This key is shown once.</strong> Copy it into your password manager now — closing this
+              window is the last you will see of it. To get another you have to revoke this one and update
+              every tool that uses it.
+            </p>
+            <SecretField label="API key" value={created.api_key} onCopied={() => setKeyCopied(true)} />
+            <SecretField label="Base URL" value={created.url} showCopy={false} />
             <p className="settings-hint mono personal-api-key-created__curl">
               curl {created.url}/models -H &quot;Authorization: Bearer {created.api_key.slice(0, 12)}…&quot;
             </p>
+            {/* Copy is the primary action here, not Done. The old hierarchy had
+                the exit as the big button and the copy as a 14px icon, which is
+                how a key that is shown once gets lost. */}
             <div className="settings-actions">
-              <button type="button" className="btn btn-sm btn-ghost" onClick={closeCreateDialog}>
+              <button
+                type="button"
+                className="btn btn-sm btn-primary"
+                onClick={() => void copyKey(created.api_key)}
+              >
+                {keyCopied ? "Copied ✓" : "Copy key"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={() => void requestClose()}
+                disabled={!keyCopied}
+                title={keyCopied ? undefined : "Copy the key first — it cannot be shown again."}
+              >
                 Done
               </button>
             </div>
@@ -329,7 +388,8 @@ export default function PersonalApiKeyPanel() {
           <form className="personal-api-key-created" onSubmit={onCreate}>
             <p className="settings-hint">
               Name it for where you will use it — a laptop, a script, an IDE — so you know what you are revoking
-              later.
+              later. The key itself is shown <strong>once</strong>, right after it is created, so have somewhere
+              to put it.
             </p>
             <label className="settings-field personal-api-key-field">
               <span className="settings-label">Key name</span>

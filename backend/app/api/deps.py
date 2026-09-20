@@ -127,16 +127,38 @@ def _menu_requires(menu: MenuKey) -> tuple[Callable, Callable]:
     return require_rbac_menu(menu), require_rbac_menu(menu, write=True)
 
 
-async def require_role_catalog(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> User:
-    """Role list for Users / Roles admin screens — requires Users or Roles menu access."""
+#: Menus whose pages contain an access-control editor. Each of them has to be
+#: able to *read* the group and role directories to draw one, which is not the
+#: same as being allowed to manage groups or roles.
+ACL_EDITING_MENUS: tuple[MenuKey, ...] = ("users", "roles", "groups", "agents", "models", "chat_tools")
+
+
+async def require_acl_directory(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> User:
+    """Read the group and role directories, for any page that edits an ACL.
+
+    The ACL editor offers a list of groups and a list of roles to grant to. It
+    fetched both from endpoints gated on the Groups and Users menus, and
+    swallowed the 403 - so an administrator holding, say, only the Chat Tools
+    menu saw two empty dropdowns and no explanation, on Agent Studio and
+    Knowledge Bases as much as here.
+
+    Widening the read is the smaller evil: these are names and ids the grantee
+    is about to be shown anyway, and the alternative is handing every operator
+    who can grant anything the permission to manage groups.
+    """
     slugs = await get_user_role_slugs(db, user.id)
     if not user_is_admin_panel(slugs):
         raise _forbidden()
     if not user.is_active:
         raise _forbidden("User inactive")
-    if not (user_can_access_menu(slugs, "users") or user_can_access_menu(slugs, "roles")):
+    if not any(user_can_access_menu(slugs, menu) for menu in ACL_EDITING_MENUS):
         raise _forbidden("Insufficient permissions for this menu")
     return user
+
+
+async def require_role_catalog(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> User:
+    """The role catalog, for the Users and Roles screens and every ACL editor."""
+    return await require_acl_directory(user=user, db=db)
 
 
 require_dashboard, require_dashboard_write = _menu_requires("dashboard")

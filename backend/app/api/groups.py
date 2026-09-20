@@ -14,7 +14,12 @@ from app.api.admin import (
     _build_scoped_activity,
     activity_explore_opts,
 )
-from app.api.deps import get_bearer_token, require_groups, require_groups_write
+from app.api.deps import (
+    get_bearer_token,
+    require_acl_directory,
+    require_groups,
+    require_groups_write,
+)
 from app.database import get_db
 from app.models.budget import PlanAssignment
 from app.services.list_bounds import ADMIN_LIST_HARD_CAP, capped, mark_truncated, split_overflow
@@ -68,7 +73,9 @@ async def list_groups(
     source: str | None = None,
     response: Response = None,  # type: ignore[assignment]
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_groups),
+    # Reading the directory is not managing it: every page with an access
+    # editor needs this list to offer a group to grant to.
+    _: User = Depends(require_acl_directory),
 ):
     stmt = select(UserGroup).order_by(UserGroup.source, UserGroup.name)
     if source:

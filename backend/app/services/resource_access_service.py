@@ -406,7 +406,7 @@ async def filter_documents_for_subject(
     return allowed
 
 
-async def _validated_grants(
+async def validated_grants(
     db: AsyncSession,
     grants: Sequence[AccessGrant],
 ) -> list[dict[str, int | str | None]]:
@@ -468,7 +468,7 @@ async def set_agent_access(
     access = (access_type or "").strip().lower()
     if access not in VALID_ACCESS_TYPES:
         raise ValueError("access_type must be 'public' or 'private'")
-    rows = await _validated_grants(db, grants)
+    rows = await validated_grants(db, grants)
     await db.execute(delete(AgentAccessAssignment).where(AgentAccessAssignment.agent_id == agent.id))
     agent.access_type = access
     agent.acl_version = int(agent.acl_version or 0) + 1
@@ -494,7 +494,7 @@ async def set_knowledge_base_access(
     access = (access_type or "").strip().lower()
     if access not in VALID_ACCESS_TYPES:
         raise ValueError("access_type must be 'public' or 'private'")
-    rows = await _validated_grants(db, grants)
+    rows = await validated_grants(db, grants)
     await db.execute(
         delete(KnowledgeBaseAccessAssignment).where(
             KnowledgeBaseAccessAssignment.knowledge_base_id == knowledge_base.id
@@ -520,7 +520,7 @@ async def set_document_access(
     grants: Sequence[AccessGrant],
     assigned_by_user_id: int | None = None,
 ) -> None:
-    rows = await _validated_grants(db, grants)
+    rows = await validated_grants(db, grants)
     await db.execute(
         delete(KnowledgeDocumentAccessAssignment).where(KnowledgeDocumentAccessAssignment.document_id == document.id)
     )

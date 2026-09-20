@@ -41,6 +41,7 @@ from app.models.chat import (
     UserMemoryJob,
     UserMemorySuppression,
 )
+from app.models.chat_tool import ChatToolAccessAssignment, ChatToolPolicy
 from app.models.connection import Connection, ConnectionAuditLog
 from app.models.cost_accounting import (
     CostLineItem,
@@ -139,6 +140,8 @@ __all__ = [
     "ChatMessage",
     "ChatMessageFeedback",
     "ChatSession",
+    "ChatToolAccessAssignment",
+    "ChatToolPolicy",
     "Connection",
     "ConnectionAuditLog",
     "ConnectorSyncRun",

@@ -25,6 +25,7 @@ MenuKey = Literal[
     "operations",
     "database",
     "chat_tools",
+    "memory",
     "agents",
     "admin_guide",
     "user_manual",
@@ -81,6 +82,7 @@ MENU_DEFINITIONS: tuple[tuple[MenuKey, str, CategoryKey], ...] = (
     ("models", "Models", "models_api"),
     ("api_keys", "API Keys", "models_api"),
     ("chat_tools", "Chat Tools", "chat_experience"),
+    ("memory", "Memory", "chat_experience"),
     ("roles", "Roles", "people_access"),
     ("users", "Users", "people_access"),
     ("deleted_users", "Deleted Users", "people_access"),
@@ -185,7 +187,7 @@ MENU_PATH_PREFIXES: dict[MenuKey, tuple[str, ...]] = {
     "plans": ("/admin/plans",),
     "authentication": ("/admin/authentication",),
     "smtp": ("/admin/smtp",),
-    "storage": ("/admin/storage-management", "/admin/retention-policy", "/admin/memory", "/admin/storage"),
+    "storage": ("/admin/storage-management", "/admin/retention-policy", "/admin/storage"),
     "reports": ("/admin/reports", "/admin/project-usage"),
     "api_logs": (
         "/admin/logs",
@@ -193,9 +195,16 @@ MENU_PATH_PREFIXES: dict[MenuKey, tuple[str, ...]] = {
     ),
     "operations": ("/admin/operations", "/admin/debug"),
     "database": ("/admin/database",),
-    # The Chat experience section: who may use each chat tool, and how the one
-    # tool with settings of its own behaves.
+    # The Chat experience section: who may use each chat tool, how the one tool
+    # with settings of its own behaves, and what the assistant remembers. All
+    # three change what the model is handed on a turn, which is why Memory is
+    # here rather than under Data & reports with storage and the log viewers.
     "chat_tools": ("/admin/chat-tools", "/admin/code-interpreter"),
+    # Its own key rather than folded into chat_tools: picking the extraction
+    # model and purging a person's memories is a wider blast radius than
+    # editing a tool ACL, and the two should be separable the day either grows
+    # an assignable role.
+    "memory": ("/admin/memory",),
     "agents": (
         "/admin/agents",
         "/admin/knowledge",

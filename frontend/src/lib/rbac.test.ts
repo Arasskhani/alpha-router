@@ -24,6 +24,40 @@ describe("security settings nav", () => {
   });
 });
 
+describe("the nav and the permission map agree", () => {
+  /**
+   * Every admin nav row carries a menuKey for the permission check and a `to`
+   * for the router. When those two disagree the page still renders — for
+   * Super Admin, whose `menus` is null — while every scoped role is sent
+   * somewhere else entirely. Nothing in TypeScript ties them together, so a
+   * row moved between sections is exactly where they drift apart.
+   */
+  it("gives every row the menu its own path resolves to", () => {
+    for (const section of adminNavSections) {
+      for (const item of section.items) {
+        if (!item.menuKey) continue;
+        expect(pathToMenu(item.to), item.to).toBe(item.menuKey);
+        expect(menuCategory(item.menuKey), item.to).toBe(section.categoryKey);
+      }
+    }
+  });
+
+  it("files Memory with the chat experience rather than with storage", () => {
+    // What the model is handed on a turn, next to Chat Tools and Code
+    // Interpreter — not a third database page beside Storage Management.
+    expect(pathToMenu("/admin/memory")).toBe("memory");
+    expect(menuCategory("memory")).toBe("chat_experience");
+    const chat = adminNavSections.find((section) => section.categoryKey === "chat_experience");
+    expect(chat?.items.map((item) => item.to)).toEqual([
+      "/admin/chat-tools",
+      "/admin/code-interpreter",
+      "/admin/memory",
+    ]);
+    const data = adminNavSections.find((section) => section.categoryKey === "data_reports");
+    expect(data?.items.map((item) => item.to)).not.toContain("/admin/memory");
+  });
+});
+
 describe("Read Only Super Admin", () => {
   const role = "read_only_super_admin";
   const session = { username: "auditor", role, roles: [role], is_active: true, menus: null, categories: null };

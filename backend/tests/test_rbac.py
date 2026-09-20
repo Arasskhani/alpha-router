@@ -16,6 +16,7 @@ from app.services.rbac import (
     KNOWLEDGE_CURATOR_SLUG,
     KNOWLEDGE_PUBLISHER_SLUG,
     MENU_GROUP_KEYS,
+    MENU_PATH_PREFIXES,
     MENUS_BY_CATEGORY,
     READ_ONLY_FULL_ADMIN_SLUG,
     READ_ONLY_SUPER_ADMIN_SLUG,
@@ -231,11 +232,31 @@ def test_chat_experience_owns_both_of_its_pages():
     to be rather than by what an operator goes there to do."""
     assert CATEGORY_LABELS["chat_experience"] == "Chat experience"
     assert MENU_GROUP_KEYS["chat_tools"] == "chat_experience"
-    assert MENUS_BY_CATEGORY["chat_experience"] == ("chat_tools",)
+    assert MENUS_BY_CATEGORY["chat_experience"] == ("chat_tools", "memory")
     assert path_to_menu("/admin/chat-tools") == "chat_tools"
     assert path_to_menu("/admin/code-interpreter") == "chat_tools"
     assert can_access_menu(SUPER_ADMIN_SLUG, "chat_tools")
     assert not can_access_menu(API_KEY_ADMIN_SLUG, "chat_tools")
+
+
+def test_memory_sits_with_the_chat_experience_not_with_storage():
+    """Memory decides what the model is handed on a turn, which is the same
+    question as Chat Tools and Code Interpreter. It used to be a third row
+    under Data & reports next to Storage Management and Retention Policy,
+    grouped by the fact that it writes to a database rather than by what an
+    operator opens it to change.
+
+    It keeps a key of its own instead of joining chat_tools: choosing the
+    extraction model and purging one person's memories is a wider blast
+    radius than editing a tool ACL."""
+    assert MENU_GROUP_KEYS["memory"] == "chat_experience"
+    assert path_to_menu("/admin/memory") == "memory"
+    assert "/admin/memory" not in MENU_PATH_PREFIXES["storage"]
+    # The neighbours it left behind are unmoved.
+    assert path_to_menu("/admin/storage-management") == "storage"
+    assert path_to_menu("/admin/retention-policy") == "storage"
+    assert can_access_menu(SUPER_ADMIN_SLUG, "memory")
+    assert not can_access_menu(API_KEY_ADMIN_SLUG, "memory")
 
 
 def test_the_chat_monitoring_prefix_does_not_claim_the_chat_tools_page():

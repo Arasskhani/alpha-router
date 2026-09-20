@@ -2110,6 +2110,86 @@ export const docSections: DocSection[] = [
       </>
     ),
   },
+  {
+    id: "admin-memory",
+    title: "Memory",
+    group: "Chat experience",
+    content: (
+      <>
+        <h2>Automatic user memory</h2>
+        <p>
+          Path: <code>/admin/memory</code>. Long-term memory for user chat: a background extractor mines durable facts
+          after non-private turns, stores them in PostgreSQL (source of truth), and indexes IDs (never memory text) in
+          Qdrant for semantic recall.
+        </p>
+        <ul>
+          <li>
+            <strong>Extraction model</strong> — required. Until you pick an enabled text model, extraction is a no-op
+            (no surprise cost on upgrade). Cost is recorded as a system operation, not against the user budget.
+          </li>
+          <li>
+            <strong>Embedding model</strong> — <code>provider:external_id</code>. Dimensions are filled from the selected
+            model and stay editable if you need a smaller size. Clearing the model turns off vector search (PostgreSQL
+            recency/lexical only). Changing the model or dimensions requires a rebuild.
+          </li>
+          <li>
+            <strong>Sensitive categories</strong> — allow-list for storing classified facts (health, financial, …).
+            Empty list means sensitive facts are dropped.
+          </li>
+          <li>
+            <strong>Rebuild index</strong> — create a new Qdrant collection, re-embed every memory, swap the alias.
+            Use after changing the embedding model or if Qdrant was wiped.
+          </li>
+          <li>
+            Retention: per-fact <code>expires_at</code>, archive unused facts after the configured days, purge
+            already-soft-deleted rows after 30 days (configurable). Users can delete or export their memories.
+          </li>
+        </ul>
+        <h2>Automatic project memory</h2>
+        <p>
+          The same pipeline mines the <strong>Chat</strong> tab of projects into shared team memory. Facts belong to the
+          project, not to the member who happened to post, so every member sees them. Rooms (
+          <code>channel_kind=member</code>) and private chats are never mined.
+        </p>
+        <ul>
+          <li>
+            <strong>Project memory enabled</strong> — kill switch for the whole organization. Each project also has an{" "}
+            <em>Automatically learn from project chats</em> switch in its Settings tab (Owners only), on by default.
+          </li>
+          <li>
+            <strong>Personal memory is never used in project chats</strong>, in either direction: a project chat does
+            not read the requesting member's personal memory and does not write to it. Only project memory is injected.
+          </li>
+          <li>
+            <strong>Personal categories are hard-dropped</strong> in project scope —{" "}
+            <code>health</code>, <code>financial</code>, <code>personal</code>, <code>family</code>,{" "}
+            <code>identity</code> are discarded no matter what the sensitive-category allow-list above says, and that
+            cannot be widened from this page.
+          </li>
+          <li>
+            <strong>Retrieval</strong> — owner-authored (manual) facts are always injected as authoritative; learned
+            facts go through the same hybrid Qdrant + PostgreSQL search, tenant-filtered by project.
+          </li>
+          <li>
+            <strong>Cost</strong> — recorded as the system operation <code>project_memory_extract</code>, never against
+            a member's budget. It shows separately in the KPI row above.
+          </li>
+          <li>
+            <strong>Extraction and embedding models are shared</strong> with user memory; <strong>Rebuild index</strong>{" "}
+            re-embeds user and project facts together. Cross-project memory grants still share manual facts only.
+          </li>
+          <li>
+            Owners can delete a single learned fact or all of them from the project Settings tab. A deleted fact is
+            suppressed so the extractor does not re-learn it from the same chats.
+          </li>
+        </ul>
+        <Note>
+          Stats include oldest pending extraction job age — if the Knowledge worker is not running, jobs queue
+          harmlessly and chat is unaffected.
+        </Note>
+      </>
+    ),
+  },
   // ── People & access ───────────────────────────────────────────────────────
   {
     id: "admin-roles",
@@ -2432,86 +2512,6 @@ export const docSections: DocSection[] = [
         <Note>
           Users can also schedule personal media cleanup from the Media library; that schedule is separate from the
           global media retention settings here.
-        </Note>
-      </>
-    ),
-  },
-  {
-    id: "admin-memory",
-    title: "Memory",
-    group: "Data & reports",
-    content: (
-      <>
-        <h2>Automatic user memory</h2>
-        <p>
-          Path: <code>/admin/memory</code>. Long-term memory for user chat: a background extractor mines durable facts
-          after non-private turns, stores them in PostgreSQL (source of truth), and indexes IDs (never memory text) in
-          Qdrant for semantic recall.
-        </p>
-        <ul>
-          <li>
-            <strong>Extraction model</strong> — required. Until you pick an enabled text model, extraction is a no-op
-            (no surprise cost on upgrade). Cost is recorded as a system operation, not against the user budget.
-          </li>
-          <li>
-            <strong>Embedding model</strong> — <code>provider:external_id</code>. Dimensions are filled from the selected
-            model and stay editable if you need a smaller size. Clearing the model turns off vector search (PostgreSQL
-            recency/lexical only). Changing the model or dimensions requires a rebuild.
-          </li>
-          <li>
-            <strong>Sensitive categories</strong> — allow-list for storing classified facts (health, financial, …).
-            Empty list means sensitive facts are dropped.
-          </li>
-          <li>
-            <strong>Rebuild index</strong> — create a new Qdrant collection, re-embed every memory, swap the alias.
-            Use after changing the embedding model or if Qdrant was wiped.
-          </li>
-          <li>
-            Retention: per-fact <code>expires_at</code>, archive unused facts after the configured days, purge
-            already-soft-deleted rows after 30 days (configurable). Users can delete or export their memories.
-          </li>
-        </ul>
-        <h2>Automatic project memory</h2>
-        <p>
-          The same pipeline mines the <strong>Chat</strong> tab of projects into shared team memory. Facts belong to the
-          project, not to the member who happened to post, so every member sees them. Rooms (
-          <code>channel_kind=member</code>) and private chats are never mined.
-        </p>
-        <ul>
-          <li>
-            <strong>Project memory enabled</strong> — kill switch for the whole organization. Each project also has an{" "}
-            <em>Automatically learn from project chats</em> switch in its Settings tab (Owners only), on by default.
-          </li>
-          <li>
-            <strong>Personal memory is never used in project chats</strong>, in either direction: a project chat does
-            not read the requesting member's personal memory and does not write to it. Only project memory is injected.
-          </li>
-          <li>
-            <strong>Personal categories are hard-dropped</strong> in project scope —{" "}
-            <code>health</code>, <code>financial</code>, <code>personal</code>, <code>family</code>,{" "}
-            <code>identity</code> are discarded no matter what the sensitive-category allow-list above says, and that
-            cannot be widened from this page.
-          </li>
-          <li>
-            <strong>Retrieval</strong> — owner-authored (manual) facts are always injected as authoritative; learned
-            facts go through the same hybrid Qdrant + PostgreSQL search, tenant-filtered by project.
-          </li>
-          <li>
-            <strong>Cost</strong> — recorded as the system operation <code>project_memory_extract</code>, never against
-            a member's budget. It shows separately in the KPI row above.
-          </li>
-          <li>
-            <strong>Extraction and embedding models are shared</strong> with user memory; <strong>Rebuild index</strong>{" "}
-            re-embeds user and project facts together. Cross-project memory grants still share manual facts only.
-          </li>
-          <li>
-            Owners can delete a single learned fact or all of them from the project Settings tab. A deleted fact is
-            suppressed so the extractor does not re-learn it from the same chats.
-          </li>
-        </ul>
-        <Note>
-          Stats include oldest pending extraction job age — if the Knowledge worker is not running, jobs queue
-          harmlessly and chat is unaffected.
         </Note>
       </>
     ),

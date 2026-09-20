@@ -49,6 +49,8 @@ export type MenuKey =
 
   | "chat_tools"
 
+  | "memory"
+
   | "agents"
 
   | "admin_guide"

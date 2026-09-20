@@ -117,14 +117,15 @@ const MENU_PATH_PREFIXES: Record<MenuKey, string[]> = {
   plans: ["/admin/plans"],
   authentication: ["/admin/authentication"],
   smtp: ["/admin/smtp"],
-  storage: ["/admin/storage-management", "/admin/retention-policy", "/admin/memory", "/admin/storage"],
+  storage: ["/admin/storage-management", "/admin/retention-policy", "/admin/storage"],
   reports: ["/admin/reports", "/admin/project-usage"],
   api_logs: ["/admin/logs", "/admin/admin-logs"],
   operations: ["/admin/operations", "/admin/debug"],
   database: ["/admin/database"],
-  // The Chat experience section: who may use each chat tool, and how the one
-  // tool with settings of its own behaves.
+  // The Chat experience section: who may use each chat tool, how the one tool
+  // with settings of its own behaves, and what the assistant remembers.
   chat_tools: ["/admin/chat-tools", "/admin/code-interpreter"],
+  memory: ["/admin/memory"],
   agents: [
     "/admin/agents",
     "/admin/knowledge",
@@ -158,6 +159,7 @@ const MENU_TO_CATEGORY: Record<MenuKey, CategoryKey> = {
   operations: "overview",
   database: "overview",
   chat_tools: "chat_experience",
+  memory: "chat_experience",
   agents: "agents_knowledge",
   admin_guide: "developer",
   user_manual: "developer",

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_storage, require_storage_write
+from app.api.deps import require_memory, require_memory_write
 from app.database import get_db, get_read_db
 from app.models.chat import UserMemory, UserMemoryJob
 from app.models.cost_accounting import UsageOperation
@@ -62,7 +62,7 @@ class MemorySettingsPatch(BaseModel):
 @router.get("/settings")
 async def get_settings(
     db: AsyncSession = Depends(get_read_db),
-    _user: User = Depends(require_storage),
+    _user: User = Depends(require_memory),
 ) -> dict[str, Any]:
     return await get_memory_settings(db)
 
@@ -71,7 +71,7 @@ async def get_settings(
 async def patch_settings(
     body: MemorySettingsPatch,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(require_storage_write),
+    _user: User = Depends(require_memory_write),
 ) -> dict[str, Any]:
     updates = body.model_dump(exclude_unset=True)
     if not updates:
@@ -89,7 +89,7 @@ async def patch_settings(
 @router.get("/stats")
 async def get_stats(
     db: AsyncSession = Depends(get_read_db),
-    _user: User = Depends(require_storage),
+    _user: User = Depends(require_memory),
 ) -> dict[str, Any]:
     import datetime as dt
 
@@ -217,7 +217,7 @@ async def get_stats(
 @router.post("/reindex")
 async def post_reindex(
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(require_storage_write),
+    _user: User = Depends(require_memory_write),
 ) -> dict[str, Any]:
     try:
         result = await reindex_all_memories(db)
@@ -231,7 +231,7 @@ async def post_reindex(
 async def post_purge_user(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require_storage_write),
+    admin: User = Depends(require_memory_write),
 ) -> dict[str, Any]:
     target = await db.get(User, user_id)
     if target is None:

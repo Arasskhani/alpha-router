@@ -102,6 +102,7 @@ from app.services.project_media_service import (
     ProjectMediaValidationError,
     persist_scoped_chat_media,
 )
+from app.services.chat_tool_access_service import assert_tool_for_user
 from app.services.transcription_service import transcribe_audio_bytes
 from app.services.user_chat_storage_service import load_user_prefs
 
@@ -446,6 +447,7 @@ async def voice_message(
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a voice note, store it, and return transcript for chat."""
+    await assert_tool_for_user(db, "speech_to_text", user_id=user.id)
     await resolve_owned_chat_session(db, user=user, chat_session_id=chat_session_id)
     budget, usage = await get_user_budget_state(db, user)
     if blocked := budget_request_blocked(budget, usage):

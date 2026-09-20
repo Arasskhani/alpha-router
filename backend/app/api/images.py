@@ -69,6 +69,7 @@ from app.services.failure_details import CODE_CANCELLED, describe_failure, failu
 from app.services.image_billing_service import ImageBillingCapture, log_image_usage
 from app.services.image_attempt_service import image_attempt_outcome, record_image_attempt
 from app.services.chat_channel_guard import assert_session_allows_model_generation
+from app.services.chat_tool_access_service import assert_tool_for_user
 from app.services.project_billing_service import resolve_project_id_for_request
 from app.services.project_media_service import persist_scoped_chat_media
 from app.services.llm_providers import (
@@ -863,6 +864,7 @@ async def generate_image(  # noqa: C901 -- Phase 4 split; complexity must not gr
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await assert_tool_for_user(db, "image_generation", user_id=user.id)
     await assert_session_allows_model_generation(db, body.chat_session_id)
     await check_generation_rate_limit(
         "image",

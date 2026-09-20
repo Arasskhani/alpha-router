@@ -30,8 +30,9 @@ from app.services.resource_access_service import (
     VALID_ACCESS_TYPES,
     AccessGrant,
     ResourceAccessSubject,
-    validated_grants,
     evaluate_access,
+    resolve_resource_access_subject,
+    validated_grants,
 )
 
 #: What a refused tool answers with. The client matches on ``code`` to point
@@ -222,3 +223,27 @@ async def chat_tool_overview(db: AsyncSession) -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+async def assert_tool_for_user(
+    db: AsyncSession,
+    key: str,
+    *,
+    user_id: int | None,
+    alpha_router_api_key_id: int | None = None,
+    source: str | None = None,
+) -> None:
+    """One line for an endpoint that *is* a tool.
+
+    Web search and the sandbox are asked for inside a chat request and checked
+    there. Image, video and speech generation and voice dictation each arrive
+    at an endpoint of their own, and this is what those call.
+    """
+
+    subject = await resolve_resource_access_subject(
+        db,
+        user_id=user_id,
+        alpha_router_api_key_id=alpha_router_api_key_id,
+        source=source,
+    )
+    await assert_tools_permitted(db, subject, [key])

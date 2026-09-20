@@ -55,6 +55,8 @@ from app.services.budget_reservation_service import (
     reservation_key,
     reserve,
 )
+from app.services.chat_tool_access_service import assert_tools_permitted
+from app.services.chat_tool_registry import requested_tool_keys
 from app.services.chat_tools_service import (
     parse_tools_config,
 )
@@ -557,6 +559,7 @@ async def preflight_stream_chat(  # noqa: C901 -- Phase 4 split; complexity must
         resolve_access_subject,
         user_can_access_model,
     )
+    from app.services.resource_access_service import resolve_resource_access_subject
 
     await assert_session_allows_model_generation(db, str(body.get("chat_session_id") or "").strip() or None)
 
@@ -655,6 +658,23 @@ async def preflight_stream_chat(  # noqa: C901 -- Phase 4 split; complexity must
     )
     if not await user_can_access_model(db, ai_model, subject):
         raise HTTPException(status_code=404, detail=f"Model not enabled: {selected_model}")
+    # Both ways into a chat turn - the browser and the Gateway - come through
+    # here, so this is the one place a tool has to be checked. An agent turn
+    # composes its own tool set below and is not the caller's to ask for.
+    requested_tools = requested_tool_keys({} if agent_turn is not None else body)
+    if requested_tools:
+        # Only resolved when something was actually asked for: the ACL subject
+        # costs two queries and most turns use no tool at all.
+        await assert_tools_permitted(
+            db,
+            await resolve_resource_access_subject(
+                db,
+                user_id=user_id,
+                alpha_router_api_key_id=alpha_router_api_key_id,
+                source=source,
+            ),
+            requested_tools,
+        )
     tools = parse_tools_config({} if agent_turn is not None else body)
     workspace_files: dict[str, str] | None = None
     capacity_permit: CapacityPermit | None = None

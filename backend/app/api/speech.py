@@ -39,6 +39,7 @@ from app.services.storage_service import (
     store_media_from_blob,
 )
 from app.services.chat_channel_guard import assert_session_allows_model_generation
+from app.services.chat_tool_access_service import assert_tool_for_user
 from app.services.user_chat_storage_service import finalize_chat_session_speech
 
 router = APIRouter(prefix="/api/speech", tags=["speech"])
@@ -237,6 +238,7 @@ async def generate_speech(  # noqa: C901 -- Phase 4 split; complexity must not g
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    await assert_tool_for_user(db, "speech_generation", user_id=user.id)
     await assert_session_allows_model_generation(db, body.chat_session_id)
     settings = get_settings()
     await check_generation_rate_limit(

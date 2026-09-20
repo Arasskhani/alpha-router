@@ -46,6 +46,7 @@ from app.services.video_job_service import (
 from app.services import object_storage_service as oss
 from app.services.video_providers import get_video_adapter
 from app.services.chat_channel_guard import assert_session_allows_model_generation
+from app.services.chat_tool_access_service import assert_tool_for_user
 from app.services.project_billing_service import resolve_project_id_for_request
 
 router = APIRouter(prefix="/api/videos", tags=["videos"])
@@ -147,6 +148,7 @@ async def generate_video(
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await assert_tool_for_user(db, "video_generation", user_id=user.id)
     await assert_session_allows_model_generation(db, body.chat_session_id)
     settings = get_settings()
     prompt = strip_nul((body.prompt or "").strip())

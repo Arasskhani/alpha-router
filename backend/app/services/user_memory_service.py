@@ -525,7 +525,11 @@ async def delete_memory(
 
 async def delete_all_memories(db: AsyncSession, user_id: int, *, actor: str = "user") -> int:
     result = await db.execute(delete(UserMemory).where(UserMemory.user_id == user_id))
-    await db.execute(delete(UserMemorySuppression).where(UserMemorySuppression.user_id == user_id))
+    # Suppressions are deliberately kept. Each one is a separate decision the
+    # person made — "delete this and never learn it again" — and wiping them
+    # here turned the strongest privacy action in the panel into the one that
+    # quietly revoked every earlier privacy action. They expire on their own
+    # after suppression_days.
     removed = int(result.rowcount or 0)
     await record_memory_event(
         db,

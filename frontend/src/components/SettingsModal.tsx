@@ -690,7 +690,8 @@ function MemoryPanel() {
       title: "Delete all memories — step 2 of 3",
       message:
         "Alpha Router will stop using these facts in future chats. Deleted memories are blocked from being " +
-        "learned again from the same old conversations. This cannot be undone. Proceed?",
+        "learned again from the same old conversations, and anything you deleted one by one stays blocked. " +
+        "This cannot be undone. Proceed?",
       confirmLabel: "I understand — continue",
       cancelLabel: "Stop",
       danger: true,

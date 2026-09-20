@@ -18,12 +18,22 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 import app.models  # noqa: F401
 from app.database import Base
-from app.models.chat import ChatMessage, ChatSession, UserMemory, UserMemoryJob
+from app.models.chat import (
+    ChatMessage,
+    ChatSession,
+    UserMemory,
+    UserMemoryJob,
+    UserMemorySuppression,
+)
 from app.models.system import SystemSetting
 from app.models.user import User
-from app.services.memory_extraction_service import handle_memory_extraction
+from app.services.memory_extraction_service import (
+    MemoryOperation,
+    apply_memory_operations,
+    handle_memory_extraction,
+)
 from app.services.user_chat_storage_service import save_user_prefs
-from app.services.user_memory_service import delete_all_memories
+from app.services.user_memory_service import create_memory, delete_all_memories, delete_memory
 
 
 async def _session_factory():
@@ -170,5 +180,47 @@ async def test_delete_all_during_a_claimed_job_wins() -> None:
         await handle_memory_extraction(db, job, completer=_slow_completer)
         await db.commit()
 
+        assert await _alive(db, user.id) == []
+    await engine.dispose()
+
+
+async def test_delete_all_keeps_earlier_one_by_one_suppressions() -> None:
+    """Emptying the list must not revoke every "never learn this again"."""
+    factory, engine = await _session_factory()
+    async with factory() as db:
+        user, _session, _job = await _seed(db)
+        payload, created = await create_memory(db, user.id, "User lives in Tehran", origin="auto")
+        assert created
+        await delete_memory(db, user.id, payload["id"])
+        await db.commit()
+
+        await delete_all_memories(db, user.id)
+        await db.commit()
+
+        suppressions = (
+            (await db.execute(select(UserMemorySuppression).where(UserMemorySuppression.user_id == user.id)))
+            .scalars()
+            .all()
+        )
+        assert len(suppressions) == 1
+
+        # And the block still bites: the same fact does not come back.
+        result = await apply_memory_operations(
+            db,
+            user_id=user.id,
+            session_id=None,
+            operations=[
+                MemoryOperation(
+                    op="add",
+                    content="User lives in Tehran",
+                    category="identity",
+                    confidence=0.9,
+                    salience=0.8,
+                )
+            ],
+        )
+        await db.commit()
+        assert result.added == 0
+        assert result.skipped == 1
         assert await _alive(db, user.id) == []
     await engine.dispose()

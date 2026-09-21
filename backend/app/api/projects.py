@@ -18,10 +18,16 @@ from app.api.admin import (
 from app.api.deps import get_bearer_token, get_current_user, require_active_user
 from app.config import get_settings
 from app.database import get_db
+from app.models.project import Project
 from app.models.user import User
+from app.services import activity_service
 from app.services.attachment_policy import media_response_type_and_disposition
 from app.services.bounded_io import BoundedIOError, read_upload_bounded
-from app.services.upload_screening import UploadRejected, screen_upload
+from app.services.project_access_service import (
+    ProjectAccessError,
+    can_view_project_activity,
+    resolve_project_access,
+)
 from app.services.project_chat_service import (
     append_project_chat_message,
     create_project_chat_session,
@@ -40,24 +46,10 @@ from app.services.project_composer_pref_service import (
     get_project_chat_composer_prefs,
     upsert_project_chat_composer_prefs,
 )
-from app.services.project_room_service import (
-    append_project_room_message,
-    create_project_room,
-    create_room_handoff,
-    delete_project_room,
-    delete_project_room_message,
-    get_project_room,
-    list_project_room_messages,
-    list_project_rooms,
-    sync_project_rooms,
-    update_project_room_message,
-)
-from app.services.project_resource_service import (
-    ProjectResourceQuotaError,
-    delete_project_resource,
-    get_project_resource,
-    list_project_resources,
-    upload_project_resource,
+from app.services.project_config_service import (
+    get_active_config,
+    list_config_versions,
+    update_project_config,
 )
 from app.services.project_media_service import (
     ProjectMediaQuotaError,
@@ -69,18 +61,12 @@ from app.services.project_media_service import (
     read_project_media_bytes,
     upload_project_media,
 )
-from app.services.storage_service import media_input_limit
-from app.services.project_config_service import (
-    get_active_config,
-    list_config_versions,
-    update_project_config,
-)
 from app.services.project_memory_service import (
     ProjectMemoryLimitError,
     ProjectMemoryNotFoundError,
     ProjectMemoryValidationError,
-    create_project_memory,
     create_memory_grant,
+    create_project_memory,
     delete_all_auto_project_memories,
     delete_project_memory,
     export_project_memories,
@@ -89,10 +75,24 @@ from app.services.project_memory_service import (
     revoke_memory_grant,
     update_project_memory,
 )
-from app.services.project_access_service import (
-    ProjectAccessError,
-    can_view_project_activity,
-    resolve_project_access,
+from app.services.project_resource_service import (
+    ProjectResourceQuotaError,
+    delete_project_resource,
+    get_project_resource,
+    list_project_resources,
+    upload_project_resource,
+)
+from app.services.project_room_service import (
+    append_project_room_message,
+    create_project_room,
+    create_room_handoff,
+    delete_project_room,
+    delete_project_room_message,
+    get_project_room,
+    list_project_room_messages,
+    list_project_rooms,
+    sync_project_rooms,
+    update_project_room_message,
 )
 from app.services.project_service import (
     ProjectValidationError,
@@ -106,8 +106,8 @@ from app.services.project_service import (
     get_project_overview,
     hard_delete_project,
     leave_project,
-    list_invitations,
     list_invitable_users,
+    list_invitations,
     list_members,
     list_my_projects,
     list_public_projects,
@@ -118,9 +118,9 @@ from app.services.project_service import (
     update_member_role,
     update_project,
 )
+from app.services.storage_service import media_input_limit
+from app.services.upload_screening import UploadRejected, screen_upload
 from app.services.user_role_service import primary_role_for_user
-from app.services import activity_service
-from app.models.project import Project
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 

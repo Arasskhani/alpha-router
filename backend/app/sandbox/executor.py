@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 import uuid
 from dataclasses import dataclass
@@ -11,7 +12,6 @@ from typing import Any
 import httpx
 
 from app.sandbox.contracts import JobState
-import contextlib
 
 
 @dataclass(frozen=True)

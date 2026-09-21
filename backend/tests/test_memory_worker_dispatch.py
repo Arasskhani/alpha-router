@@ -150,8 +150,8 @@ async def _dispatch() -> None:
         "knowledge.job.ready",
     }
 
-    async def fake_extract(db, *, window, completer=None):
-        del db, window, completer
+    async def fake_extract(db, *, window, completer=None, billing=None):
+        del db, window, completer, billing
         return [
             MemoryOperation(
                 op="add",

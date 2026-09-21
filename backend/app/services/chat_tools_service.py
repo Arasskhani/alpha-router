@@ -8,9 +8,8 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.parse import urlparse
 
-
-from app.core.prompt_fences import RUNTIME_POLICY, untrusted_preamble, wrap_untrusted
 from app.branding import OUTBOUND_USER_AGENT
+from app.core.prompt_fences import RUNTIME_POLICY, untrusted_preamble, wrap_untrusted
 from app.services.failure_details import failure_message
 from app.services.metered_usage_service import (
     finish_metered_usage,

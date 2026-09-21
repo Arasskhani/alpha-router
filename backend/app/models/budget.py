@@ -1,6 +1,7 @@
 """Budget plans and assignments to users or groups."""
 
 import datetime
+
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 

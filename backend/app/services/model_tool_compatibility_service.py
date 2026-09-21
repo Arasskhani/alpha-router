@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import datetime
 import json
-from typing import Any
 from collections.abc import Iterable
+from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.model_catalog import (
     AIModel,

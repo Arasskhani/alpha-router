@@ -19,9 +19,9 @@ from app.config import get_settings
 from app.core.security import decode_access_token
 from app.database import AsyncSessionLocal
 from app.models.user import User
+from app.services.observability import increment
 from app.services.rbac import user_has_super_admin_access, user_has_super_read_only_access
 from app.services.user_role_service import get_user_role_slugs
-from app.services.observability import increment
 
 _DOCS_PATHS = frozenset(
     {

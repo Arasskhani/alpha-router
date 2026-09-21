@@ -22,19 +22,23 @@ from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
 from app.models.video import VideoGenerationJob
+from app.services import object_storage_service as oss
 from app.services.budget_reservation_service import (
     reservation_hold_usd,
     reservation_key,
     reserve,
 )
+from app.services.chat_channel_guard import assert_session_allows_model_generation
+from app.services.chat_tool_access_service import assert_tool_for_user
 from app.services.model_access_service import resolve_access_subject, user_can_access_model
 from app.services.model_capabilities import video_generation_capabilities
 from app.services.openrouter_video_service import (
     catalog_video_durations,
-    parse_video_duration,
     normalize_video_aspect_ratio,
     normalize_video_resolution,
+    parse_video_duration,
 )
+from app.services.project_billing_service import resolve_project_id_for_request
 from app.services.secret_crypto import decrypt_secret
 from app.services.video_job_service import (
     VideoJobAlreadyCompleted,
@@ -43,11 +47,7 @@ from app.services.video_job_service import (
     kick_video_job,
     serialize_job,
 )
-from app.services import object_storage_service as oss
 from app.services.video_providers import get_video_adapter
-from app.services.chat_channel_guard import assert_session_allows_model_generation
-from app.services.chat_tool_access_service import assert_tool_for_user
-from app.services.project_billing_service import resolve_project_id_for_request
 
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 

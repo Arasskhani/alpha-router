@@ -8,6 +8,9 @@ APP_SOURCE_LABELS: dict[str, str] = {
     "user_key": "User API Key",
     "alpha_router_chat": CHAT_CLIENT_APP,
     "gateway": "Platform API",
+    # Automatic memory extraction. Activity groups the App column by
+    # `source`, so without this the rows would read "System Memory".
+    "system_memory": "Memory",
 }
 
 

@@ -1,15 +1,14 @@
 """Generate short chat session titles (ChatGPT-style overview, not first prompt verbatim)."""
 
+import datetime
 import json
 import re
-import datetime
 
 from litellm import acompletion
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.branding import CHAT_CLIENT_APP
 from app.models.user import User
-from app.services.failure_details import failure_message
 from app.services.budget_service import budget_request_blocked, get_user_budget_state
 from app.services.chat_markers import (
     ATTACHMENT_MESSAGE_PREFIX,
@@ -19,9 +18,10 @@ from app.services.chat_markers import (
     VIDEO_MESSAGE_PREFIX,
     VIDEO_PENDING_MARKER,
 )
+from app.services.failure_details import failure_message
 from app.services.llm_providers import litellm_model_for_provider as _litellm_model_for_provider
-from app.services.provider_utils import _apply_litellm_provider_kwargs
 from app.services.model_resolution_service import resolve_model_and_key
+from app.services.provider_utils import _apply_litellm_provider_kwargs
 from app.services.usage_logging_service import reserve_auxiliary_llm_usage, settle_auxiliary_usage
 
 _TITLE_SYSTEM = (

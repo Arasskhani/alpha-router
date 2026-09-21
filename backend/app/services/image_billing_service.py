@@ -17,11 +17,11 @@ from app.services.provider_utils import (
     _usage_from_response,
     _usage_from_usage_obj,
 )
-from app.services.usage_logging_service import log_usage
 from app.services.usage_accounting_service import (
     PendingUsageEvent,
     capture_usage_event,
 )
+from app.services.usage_logging_service import log_usage
 
 
 @dataclass

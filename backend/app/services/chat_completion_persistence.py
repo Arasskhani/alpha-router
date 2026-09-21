@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 import uuid
@@ -25,7 +26,6 @@ from app.services.user_chat_storage_service import (
     update_chat_session,
     update_last_session_message,
 )
-import contextlib
 
 _STREAM_PERSIST_INTERVAL_SEC = 0.45
 _STREAM_PERSIST_MIN_CHARS = 64

@@ -11,8 +11,8 @@ from app.api.deps import get_current_user, require_active_user
 from app.database import get_db
 from app.models.user import User
 from app.services.user_media_service import (
-    _media_row_dict,
     MediaZipLimitError,
+    _media_row_dict,
     build_media_zip_file,
     delete_all_user_media,
     delete_user_media_ids,

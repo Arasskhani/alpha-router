@@ -21,7 +21,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.text_safety import strip_nul
 from app.models.media import MediaAsset
-from app.models.system import SystemSetting
 from app.models.project import (
     PROJECT_MEDIA_KIND_DOCUMENT,
     PROJECT_MEDIA_KIND_IMAGE,
@@ -30,6 +29,7 @@ from app.models.project import (
     PROJECT_MEDIA_KINDS,
     ProjectMediaAsset,
 )
+from app.models.system import SystemSetting
 from app.services.attachment_policy import coerce_safe_storage_mime
 from app.services.project_access_service import (
     append_project_audit,

@@ -108,8 +108,8 @@ async def _dispatch() -> None:
     messages = await read_new_messages(redis, consumer_name="worker-1")
     assert {message.event_type for message in messages} == {"project_memory.job.ready"}
 
-    async def fake_extract(db, *, window, completer=None):
-        del db, completer
+    async def fake_extract(db, *, window, completer=None, billing=None):
+        del db, completer, billing
         assert window.project_id == PROJ_ID
         return (
             [

@@ -11,12 +11,12 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
-    require_super_admin,
     get_current_user,
     require_active_user,
     require_api_keys,
     require_api_logs,
     require_api_logs_write,
+    require_super_admin,
 )
 from app.database import get_db
 from app.models.api_key import AlphaRouterApiKey, UserApiKey
@@ -35,21 +35,21 @@ from app.models.user import User
 from app.services.log_detail_retention_service import get_raw_payload_retention_days
 from app.services.log_export_service import (
     dataframe_to_csv_bytes,
-    resolve_operation_types,
     detail_rows_to_csv_bytes,
     request_log_detail_to_export_rows,
     request_logs_to_export_dataframe,
     resolve_log_export_maps,
+    resolve_operation_types,
 )
-from app.utils.display import format_app_source
 from app.services.rbac import user_can_access_menu, user_is_admin_panel
-from app.services.user_role_service import get_user_role_slugs
 from app.services.usage_accounting_service import (
     create_configured_pricing_snapshot,
     create_reconciliation_run,
     finish_reconciliation_run,
     reconcile_usage_event,
 )
+from app.services.user_role_service import get_user_role_slugs
+from app.utils.display import format_app_source
 
 router = APIRouter(prefix="/api", tags=["logs"])
 

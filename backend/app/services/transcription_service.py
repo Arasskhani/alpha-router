@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime
 import logging
 import os
@@ -17,22 +18,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.branding import CHAT_CLIENT_APP
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
-from app.services.failure_details import failure_message
 from app.services.budget_reservation_service import (
     reservation_hold_usd,
     reservation_key,
     reserve,
 )
-from app.services.system_default_models import get_default_model, model_supports_transcription
+from app.services.failure_details import failure_message
 from app.services.llm_providers import litellm_transcription_model
+from app.services.model_access_service import resolve_access_subject, user_can_access_model
 from app.services.openrouter_transcription_service import (
     OpenRouterTranscriptionError,
     transcribe_with_openrouter,
 )
-from app.services.model_access_service import resolve_access_subject, user_can_access_model
-from app.services.usage_logging_service import settle_auxiliary_usage
 from app.services.secret_crypto import decrypt_secret
-import contextlib
+from app.services.system_default_models import get_default_model, model_supports_transcription
+from app.services.usage_logging_service import settle_auxiliary_usage
 
 logger = logging.getLogger("app.services.transcription")
 

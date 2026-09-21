@@ -30,8 +30,8 @@ from sqlalchemy.orm import selectinload
 from app.config import get_settings
 from app.models.budget import PlanAssignment
 from app.models.user import User, UserGroup, UserRoleAssignment, user_group_members
-from app.services.rbac import user_has_super_admin_access
 from app.services.ldap_auth import fetch_ldap_groups, fetch_ldap_users
+from app.services.rbac import user_has_super_admin_access
 from app.services.user_lifecycle_service import prune_sync_user, restore_directory_user
 from app.services.username_norm import find_user_by_username_ci, normalize_username, username_taken_ci
 

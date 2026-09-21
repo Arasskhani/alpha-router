@@ -352,8 +352,8 @@ async def _run_project_memory_maintenance(
 async def reindex_all_memories(db: AsyncSession) -> dict[str, int]:
     from app.services.memory_embedding_service import memory_embedding_config
     from app.services.memory_vector_service import (
-        memory_collection_name,
         MemoryVectorService,
+        memory_collection_name,
     )
     from app.services.project_memory_service import index_project_memory_vector
     from app.services.user_memory_service import _index_memory_vector

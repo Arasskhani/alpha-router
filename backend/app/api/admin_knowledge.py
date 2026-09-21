@@ -15,7 +15,6 @@ from app.api.deps import require_agent_permission
 from app.config import get_settings
 from app.database import get_db
 from app.models.connection import Connection
-from app.models.model_catalog import AIModel
 from app.models.knowledge import (
     IngestionJob,
     KnowledgeBase,
@@ -26,10 +25,8 @@ from app.models.knowledge import (
     KnowledgeIndexVersion,
     KnowledgeRelease,
 )
-from app.services.list_bounds import ADMIN_LIST_HARD_CAP, capped, mark_truncated, split_overflow
+from app.models.model_catalog import AIModel
 from app.models.user import User
-from app.services.model_capabilities import model_kinds
-from app.services.knowledge_embedding_service import suggested_embedding_dimensions
 from app.services.agent_governance_service import append_governance_audit_event
 from app.services.bounded_io import BoundedIOError, read_upload_bounded
 from app.services.knowledge_connector_service import (
@@ -37,6 +34,11 @@ from app.services.knowledge_connector_service import (
     disable_connector,
     schedule_connector_sync,
     update_connector,
+)
+from app.services.knowledge_embedding_service import suggested_embedding_dimensions
+from app.services.knowledge_hard_delete_service import (
+    hard_delete_knowledge_base,
+    is_purged_knowledge_base,
 )
 from app.services.knowledge_ingestion_service import (
     approve_document_version,
@@ -54,18 +56,16 @@ from app.services.knowledge_retention_service import (
     purge_expired_knowledge_retention,
     schedule_document_purge,
 )
-from app.services.knowledge_hard_delete_service import (
-    hard_delete_knowledge_base,
-    is_purged_knowledge_base,
-)
+from app.services.list_bounds import ADMIN_LIST_HARD_CAP, capped, mark_truncated, split_overflow
+from app.services.model_capabilities import model_kinds
 from app.services.rbac import user_has_agent_permission
-from app.services.user_role_service import (
-    get_user_role_slugs,
-    user_bypasses_maker_checker,
-)
 from app.services.resource_access_service import (
     AccessGrant,
     set_knowledge_base_access,
+)
+from app.services.user_role_service import (
+    get_user_role_slugs,
+    user_bypasses_maker_checker,
 )
 
 router = APIRouter(

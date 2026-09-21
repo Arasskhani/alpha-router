@@ -30,9 +30,9 @@ from prometheus_client import (
     multiprocess,
 )
 from prometheus_client import Counter as PrometheusCounter
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.branding import LOGGER_NAMESPACE
-from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 _KNOWN_EVENTS = frozenset(
     {

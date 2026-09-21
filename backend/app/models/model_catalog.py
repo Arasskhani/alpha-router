@@ -1,6 +1,7 @@
 """AI models synced from providers — pricing is read-only from provider APIs."""
 
 import datetime
+
 from sqlalchemy import (
     Boolean,
     CheckConstraint,

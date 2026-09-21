@@ -10,6 +10,7 @@ from typing import Any
 from app.config import get_settings
 from app.services.ldap_config import (
     _escape_filter,
+    clean_bind_password,
     expand_ldap_config,
     extract_sam_from_bind_dn,
     format_bind_identity,
@@ -17,7 +18,6 @@ from app.services.ldap_config import (
     infer_domain,
     infer_netbios_domain,
     parse_sync_ous,
-    clean_bind_password,
 )
 
 _AD_USER_ATTRS = [
@@ -423,8 +423,8 @@ def _try_bind_ad(
         ALL,
         AUTO_BIND_NO_TLS,
         AUTO_BIND_TLS_BEFORE_BIND,
-        Connection,
         NTLM,
+        Connection,
         Server,
     )
 

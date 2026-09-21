@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.budget import BudgetPlan, PlanAssignment
 from app.models.user import User, UserGroup
-from app.services.group_membership import live_member_ids_stmt
 from app.services.budget_service import resolve_monthly_budget
+from app.services.group_membership import live_member_ids_stmt
 
 USER_PLAN_INHERIT = "inherit"
 USER_PLAN_NONE = "none"

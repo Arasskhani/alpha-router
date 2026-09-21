@@ -11,9 +11,12 @@ import httpx
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
+from app.core.constants import normalize_openrouter_base_url
 from app.models.connection import Connection
 from app.models.cost_accounting import ReconciliationRun, UsageEvent
 from app.models.model_catalog import AIModel
+from app.services.provider_http import build_provider_client
 from app.services.secret_crypto import decrypt_secret
 from app.services.usage_accounting_service import (
     create_reconciliation_run,
@@ -22,9 +25,6 @@ from app.services.usage_accounting_service import (
     quote_usage,
     reconcile_usage_event,
 )
-from app.core.constants import normalize_openrouter_base_url
-from app.config import get_settings
-from app.services.provider_http import build_provider_client
 
 logger = logging.getLogger("app.services.provider_reconciliation_service")
 

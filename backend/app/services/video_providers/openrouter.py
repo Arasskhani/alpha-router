@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-
 from typing import Any
 from urllib.parse import urlparse
 
+from app.core.constants import OPENROUTER_HOST
 from app.services.openrouter_video_service import (
     build_video_generation_payload,
     extract_job_ids,
@@ -23,7 +23,6 @@ from app.services.video_providers.contracts import (
     ProviderJobSnapshot,
     VideoUsage,
 )
-from app.core.constants import OPENROUTER_HOST
 
 
 def _error_text(response: dict[str, Any]) -> str | None:

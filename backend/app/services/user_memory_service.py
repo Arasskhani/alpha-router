@@ -10,14 +10,15 @@ import re
 import time
 import uuid
 from calendar import timegm
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
-from collections.abc import Sequence
 
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.constants import RRF_K
 from app.models.chat import (
     ChatSession,
     UserMemory,
@@ -33,7 +34,6 @@ from app.services.memory_settings_service import (
 )
 from app.services.user_chat_storage_service import load_user_prefs
 from app.utils.text_normalize import normalize_memory_text
-from app.core.constants import RRF_K
 
 logger = logging.getLogger(__name__)
 

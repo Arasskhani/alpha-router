@@ -7,15 +7,15 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import decode_access_token
 from app.config import get_settings
+from app.core.security import decode_access_token
 from app.database import get_db
 from app.models.user import User
 from app.services.rbac import (
     MenuKey,
     user_can_access_menu,
-    user_has_agent_permission,
     user_can_write_menu,
+    user_has_agent_permission,
     user_is_admin_panel,
 )
 from app.services.user_role_service import get_user_role_slugs

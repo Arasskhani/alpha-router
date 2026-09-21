@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime
 import logging
 from dataclasses import dataclass
@@ -36,7 +37,6 @@ from app.services.knowledge_queue import (
     read_new_messages,
     reclaim_stale_messages,
 )
-import contextlib
 
 logger = logging.getLogger(__name__)
 

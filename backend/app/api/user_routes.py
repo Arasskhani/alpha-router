@@ -12,10 +12,10 @@ from app.api.admin import (
     activity_explore_opts,
 )
 from app.api.deps import get_bearer_token, get_current_user, require_active_user
-from app.services import activity_service
 from app.database import get_db
 from app.models.api_key import UserApiKey
 from app.models.user import User
+from app.services import activity_service
 from app.services.user_api_key_service import (
     DEFAULT_PERSONAL_KEY_NAME,
     ensure_can_create_personal_key,

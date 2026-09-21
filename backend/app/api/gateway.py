@@ -16,7 +16,6 @@ from app.database import get_db
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
-from app.services.client_ip import resolve_client_ip
 from app.services.alpha_router_api_key_service import ensure_key_usable
 from app.services.api_key_connection_policy import (
     allowed_connection_ids_for_key,
@@ -26,6 +25,7 @@ from app.services.api_key_model_policy import (
     allowed_model_ids_for_key,
     filter_models_for_allowlist,
 )
+from app.services.client_ip import resolve_client_ip
 from app.services.model_access_service import (
     filter_models_for_subject,
     resolve_access_subject,

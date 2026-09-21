@@ -6,6 +6,7 @@ import datetime as dt
 import json
 import logging
 import re
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -37,6 +38,10 @@ PRE_WINDOW_MESSAGES = 4
 MAX_OPS = 5
 EXTRACT_MAX_TOKENS = 600
 EXTRACT_TIMEOUT = 30
+#: request_logs.source for extraction calls. Activity reads the App column
+#: from this field, so it is what puts "Memory" in the filter and the
+#: top-apps list rather than leaving the rows unlabelled.
+MEMORY_USAGE_SOURCE = "system_memory"
 
 _SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("api_key", re.compile(r"\b(?:sk|rk|pk|api)[-_]?[A-Za-z0-9]{16,}\b")),
@@ -622,6 +627,7 @@ async def extract_memory_operations(
     *,
     window: ExtractionWindow,
     completer: Any | None = None,
+    billing: ExtractionBilling | None = None,
 ) -> list[MemoryOperation]:
     settings = await get_memory_settings(db)
     model_id = settings.get("extraction_model_id")
@@ -652,10 +658,6 @@ async def extract_memory_operations(
         resolve_litellm_provider,
     )
     from app.services.model_resolution_service import resolve_model_and_key
-    from app.services.usage_accounting_service import (
-        capture_usage_event,
-        persist_usage_operation,
-    )
 
     ai_model, api_key, base_url, provider_type = await resolve_model_and_key(db, f"model::{int(model_id)}")
     if not ai_model or not api_key:
@@ -681,41 +683,33 @@ async def extract_memory_operations(
     if llm_provider:
         kwargs["custom_llm_provider"] = llm_provider
 
-    async def _call(call_kwargs: dict[str, Any]) -> str:
+    scope = billing or ExtractionBilling(
+        user_id=window.user_id,
+        username="",
+        project_id=None,
+        subject_type=None,
+        key_prefix=f"memory-extract:adhoc:{uuid.uuid4()}",
+        operation_type="memory_extract",
+    )
+
+    async def _call(call_kwargs: dict[str, Any], *, phase: str) -> str:
+        started_at = dt.datetime.utcnow()
         response = await acompletion(**call_kwargs)
-        try:
-            event = capture_usage_event(
-                response,
-                ai_model=ai_model,
-                provider_type=provider_type or ai_model.provider_type,
-                service_type="chat",
-                operation_name="memory_extract",
-                model_id=ai_model.external_id,
-            )
-            await persist_usage_operation(
-                db,
-                events=[event],
-                # Attributed to the person whose memory is being extracted. It
-                # used to be None, so this spend appeared in no report and
-                # against no subject - real money the Guide says "every provider
-                # attempt counts" for. No budget reservation goes with it: the
-                # point is that the cost is visible, not that a background job
-                # can start refusing to run.
-                user_id=window.user_id,
-                alpha_router_api_key_id=None,
-                budget_reservation_id=None,
-                request_log_id=None,
-                operation_type="memory_extract",
-                source="system_memory",
-                client_app="memory_extractor",
-                success=True,
-            )
-        except Exception:
-            logger.exception("Failed to record memory extraction usage")
-        return _completion_text(response)
+        text = _completion_text(response)
+        await record_extraction_usage(
+            billing=scope,
+            ai_model=ai_model,
+            provider_type=provider_type or ai_model.provider_type,
+            response=response,
+            prompt=call_kwargs.get("messages"),
+            completion=text,
+            started_at=started_at,
+            phase=phase,
+        )
+        return text
 
     try:
-        return parse_operations(await _call(kwargs))
+        return parse_operations(await _call(kwargs, phase="primary"))
     except ExtractionParseError:
         repair_kwargs = dict(kwargs)
         repair_kwargs["messages"] = [
@@ -726,7 +720,7 @@ async def extract_memory_operations(
             },
         ]
         try:
-            return parse_operations(await _call(repair_kwargs))
+            return parse_operations(await _call(repair_kwargs, phase="repair"))
         except Exception as exc:
             raise ExtractionParseError(str(exc)) from exc
 
@@ -774,6 +768,106 @@ async def extraction_spend_this_month(db: AsyncSession) -> float:
     return float(total or 0.0)
 
 
+@dataclass(frozen=True)
+class ExtractionBilling:
+    """Who an extraction call's spend belongs to, and how to key it.
+
+    Personal extraction names the person it was run for. Project extraction
+    names the project and nobody else: the window is written by several
+    members and charging the last one to speak would be arbitrary.
+
+    ``key_prefix`` carries the job id and attempt so a retry — a real second
+    call to a real provider — is recorded as a second row rather than being
+    swallowed as a duplicate of the first.
+    """
+
+    user_id: int | None
+    username: str
+    project_id: str | None
+    subject_type: str | None
+    key_prefix: str
+    operation_type: str
+    client_app: str = "Memory"
+
+    @staticmethod
+    def for_user(job: Any, username: str) -> ExtractionBilling:
+        return ExtractionBilling(
+            user_id=int(job.user_id),
+            username=username,
+            project_id=None,
+            subject_type=None,
+            key_prefix=f"memory-extract:{job.id}:{int(job.attempt_count or 0)}",
+            operation_type="memory_extract",
+        )
+
+    @staticmethod
+    def for_project(job: Any) -> ExtractionBilling:
+        from app.services.metered_usage_service import PLATFORM_USERNAME
+        from app.services.usage_accounting_service import SUBJECT_PLATFORM
+
+        return ExtractionBilling(
+            user_id=None,
+            username=PLATFORM_USERNAME,
+            project_id=str(job.project_id),
+            subject_type=SUBJECT_PLATFORM,
+            key_prefix=f"project-memory-extract:{job.id}:{int(job.attempt_count or 0)}",
+            operation_type="project_memory_extract",
+        )
+
+
+async def record_extraction_usage(
+    *,
+    billing: ExtractionBilling,
+    ai_model: Any,
+    provider_type: str | None,
+    response: Any,
+    prompt: Any,
+    completion: str,
+    started_at: dt.datetime,
+    phase: str,
+) -> None:
+    """Write one extraction call to the same ledger every other call uses.
+
+    It used to call ``persist_usage_operation`` directly, on the worker's own
+    session and with ``request_log_id=None``. Two consequences. The row was
+    invisible to Activity, Reports and the dashboard, which all read
+    ``request_logs``. And an ``ExtractionParseError`` — raised only *after* two
+    paid calls — rolled the worker's transaction back and took the record of
+    that money with it.
+
+    ``charge_budget=False``: the spend is the person's to see, not to pay for.
+    Nobody asks for an extraction, and a background job that empties someone's
+    allowance would make memory a tax on talking.
+    """
+
+    from app.services.usage_logging_service import settle_auxiliary_usage
+
+    try:
+        await settle_auxiliary_usage(
+            user_id=billing.user_id,
+            username=billing.username,
+            ai_model=ai_model,
+            provider_type=provider_type,
+            model_id=getattr(ai_model, "external_id", "") or "unknown",
+            response=response,
+            prompt=prompt,
+            completion=completion,
+            operation_name=billing.operation_type,
+            client_app=billing.client_app,
+            budget_reservation_id=None,
+            success=True,
+            service_type="chat",
+            started_at=started_at,
+            source=MEMORY_USAGE_SOURCE,
+            project_id=billing.project_id,
+            subject_type=billing.subject_type,
+            charge_budget=False,
+            idempotency_key=f"{billing.key_prefix}:{phase}",
+        )
+    except Exception:
+        logger.exception("Failed to record memory extraction usage key=%s", billing.key_prefix)
+
+
 async def _watermark_moved(db: AsyncSession, job: Any, *, window_from: int) -> bool:
     """True when another transaction advanced this job's watermark mid-flight.
 
@@ -794,9 +888,10 @@ async def _watermark_moved(db: AsyncSession, job: Any, *, window_from: int) -> b
 
 
 async def handle_memory_extraction(db: AsyncSession, job, *, completer: Any | None = None) -> None:
-    from app.models.chat import UserMemoryJob
-    from app.services.memory_settings_service import get_memory_settings
     from app.config import get_settings
+    from app.models.chat import UserMemoryJob
+    from app.models.user import User
+    from app.services.memory_settings_service import get_memory_settings
 
     if not isinstance(job, UserMemoryJob):
         raise TypeError("Expected UserMemoryJob")
@@ -856,7 +951,13 @@ async def handle_memory_extraction(db: AsyncSession, job, *, completer: Any | No
         (turn.message_id for turn in reversed(window.turns) if turn.role == "user"),
         None,
     )
-    operations = await extract_memory_operations(db, window=window, completer=completer)
+    username = (await db.execute(select(User.username).where(User.id == job.user_id))).scalar_one_or_none() or ""
+    operations = await extract_memory_operations(
+        db,
+        window=window,
+        completer=completer,
+        billing=ExtractionBilling.for_user(job, str(username)),
+    )
     if await _watermark_moved(db, job, window_from=window_from):
         # "Delete all my memories" ran while the extraction model was thinking.
         # reset_watermarks_for_user only closes pending and retry jobs, so this

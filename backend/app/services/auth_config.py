@@ -8,7 +8,8 @@ from app.config import get_settings
 from app.models.auth_provider import AuthProviderConfig
 from app.services.ldap_config import expand_ldap_config
 from app.services.oidc_client import default_oidc_config
-from app.services.saml_sp import default_saml_config, public_view as saml_public_view
+from app.services.saml_sp import default_saml_config
+from app.services.saml_sp import public_view as saml_public_view
 from app.services.secret_crypto import decrypt_secret, encrypt_secret
 
 settings = get_settings()

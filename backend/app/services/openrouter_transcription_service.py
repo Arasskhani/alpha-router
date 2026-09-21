@@ -23,11 +23,11 @@ import base64
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.core.constants import normalize_openrouter_base_url
 from app.services.openrouter_image_service import (
     build_openrouter_headers,
     post_openrouter_json,
 )
-from app.core.constants import normalize_openrouter_base_url
 
 #: Formats the OpenRouter transcription endpoint documents.
 _SUPPORTED_FORMATS = {"wav", "mp3", "flac", "m4a", "ogg", "webm", "aac", "mp4", "mpeg", "mpga"}

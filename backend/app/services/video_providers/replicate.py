@@ -12,6 +12,8 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from app.config import get_settings
+from app.services.provider_http import get_provider_rest_client, provider_connect_timeout
 from app.services.video_providers.contracts import (
     NormalizedVideoRequest,
     ProviderAssetRef,
@@ -19,8 +21,6 @@ from app.services.video_providers.contracts import (
     ProviderJobSnapshot,
     VideoUsage,
 )
-from app.config import get_settings
-from app.services.provider_http import get_provider_rest_client, provider_connect_timeout
 
 
 class ReplicateVideoAdapter:

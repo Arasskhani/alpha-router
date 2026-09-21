@@ -5,8 +5,8 @@ from __future__ import annotations
 import ipaddress
 import socket
 import struct
-from pathlib import Path
 from collections.abc import Iterable
+from pathlib import Path
 
 from fastapi import Request
 

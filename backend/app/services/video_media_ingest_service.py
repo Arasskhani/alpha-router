@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from urllib.parse import urljoin, urlparse
 
-
 from app.services.bounded_io import decode_data_url_bounded
 from app.services.ssrf_guard import assert_response_target_safe, assert_url_safe, safe_client
 from app.services.storage_service import video_output_limit

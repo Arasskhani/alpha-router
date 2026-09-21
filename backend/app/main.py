@@ -69,10 +69,11 @@ from app.legacy_brand_denylist import (
 )
 from app.models.user import User
 from app.services import object_storage_service as oss
-from app.services.auth_sync_scheduler import refresh_auth_sync_schedules
 from app.services.admin_ip_guard import AdminIpGuardMiddleware
+from app.services.auth_sync_scheduler import refresh_auth_sync_schedules
 from app.services.bounded_io import RequestBodyLimitMiddleware
 from app.services.csrf_protection import CsrfProtectionMiddleware
+from app.services.csrf_protection import development_origins as _development_origins
 from app.services.docs_guard import OpenApiDocsGuardMiddleware
 from app.services.observability import (
     ObservabilityMiddleware,
@@ -92,7 +93,6 @@ from app.services.scheduler import (
     start_scheduler,
     stop_scheduler,
 )
-from app.services.csrf_protection import development_origins as _development_origins
 from app.services.scheduler_leader import SchedulerLeader, install_leader
 from app.services.security_headers import SecurityHeadersMiddleware
 from app.services.video_job_service import start_video_worker, stop_video_worker

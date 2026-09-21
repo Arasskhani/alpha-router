@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import datetime
+import hashlib
 import uuid
 
 from fastapi import HTTPException
@@ -15,13 +15,13 @@ from app.models.api_key import AlphaRouterApiKey
 from app.models.budget_reservation import BudgetReservation
 from app.models.model_catalog import AIModel
 from app.models.user import User
-from app.services.observability import increment, observe_budget_reserved_drift
+from app.services.alpha_router_api_key_service import ensure_key_usable
 from app.services.budget_service import (
     BUDGET_EXCEEDED_DETAIL,
     NO_PLAN_BUDGET_DETAIL,
     ensure_budget_period,
 )
-from app.services.alpha_router_api_key_service import ensure_key_usable
+from app.services.observability import increment, observe_budget_reserved_drift
 
 SUBJECT_USER = "user"
 SUBJECT_ALPHA_ROUTER_KEY = "alpha_router_key"

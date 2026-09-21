@@ -20,21 +20,21 @@ from app.database import AsyncSessionLocal
 from app.models.model_catalog import AIModel
 from app.models.user import User
 from app.models.video import VideoGenerationJob
+from app.services.failure_details import CODE_CONNECT, CODE_TIMEOUT, describe_failure
+from app.services.observability import correlation_scope, increment
 from app.services.openrouter_video_service import (
-    parse_video_duration,
     normalize_video_aspect_ratio,
     normalize_video_resolution,
+    parse_video_duration,
 )
-from app.services.video_providers import NormalizedVideoRequest, ProviderJobRef, get_video_adapter
+from app.services.project_media_service import collect_personal_media_ids, persist_scoped_chat_media
 from app.services.storage_service import (
     media_content_hash,
     media_public_url,
 )
 from app.services.user_chat_storage_service import finalize_chat_session_video
-from app.services.project_media_service import collect_personal_media_ids, persist_scoped_chat_media
 from app.services.video_billing_service import VideoBillingCapture, log_video_usage
-from app.services.failure_details import CODE_CONNECT, CODE_TIMEOUT, describe_failure
-from app.services.observability import correlation_scope, increment
+from app.services.video_providers import NormalizedVideoRequest, ProviderJobRef, get_video_adapter
 
 _LOG = logging.getLogger("alpha_router.video_jobs")
 _ACTIVE_TASKS: dict[str, asyncio.Task] = {}
@@ -219,8 +219,8 @@ async def create_video_job(
     reference_storage_path = None
     reference_image_mime = None
     if reference_image:
-        from app.services.bounded_io import decode_data_url_bounded
         from app.services import object_storage_service as oss
+        from app.services.bounded_io import decode_data_url_bounded
 
         reference_bytes, reference_image_mime = decode_data_url_bounded(
             reference_image,

@@ -22,11 +22,11 @@ from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
-from app.services.client_ip import resolve_client_ip
-from app.services.agent_run_service import finalize_agent_run
-from app.services.budget_notice_service import budget_notice_after_settlement
 from app.services.agent_chat_integration_service import PreparedAgentTurn
+from app.services.agent_run_service import finalize_agent_run
 from app.services.agent_runtime_service import AgentCompletionReview
+from app.services.budget_notice_service import budget_notice_after_settlement
+from app.services.client_ip import resolve_client_ip
 from app.services.code_interpreter_capacity_service import CapacityPermit, release_code_interpreter_turn
 from app.services.observability import increment
 from app.services.usage_accounting_service import PendingUsageEvent

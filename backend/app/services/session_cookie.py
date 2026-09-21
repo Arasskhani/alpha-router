@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import secrets
 import ipaddress
+import secrets
 from urllib.parse import urlsplit
 
 from fastapi import Request, Response
 
 from app.config import get_settings
-
 
 _PRIVATE_HTTP_NETWORKS = (
     ipaddress.ip_network("10.0.0.0/8"),

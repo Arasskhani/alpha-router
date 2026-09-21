@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import signal
@@ -19,7 +20,6 @@ from app.services.knowledge_file_service import (
     UnsafeDocumentError,
     ValidatedDocument,
 )
-import contextlib
 
 
 class ParserSandboxError(RuntimeError):

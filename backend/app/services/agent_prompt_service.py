@@ -7,8 +7,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from app.core.prompt_fences import RUNTIME_POLICY, wrap_untrusted
 from app.config import get_settings
+from app.core.prompt_fences import RUNTIME_POLICY, wrap_untrusted
 from app.models.agent import Agent, AgentVersion
 from app.services.agent_policy_service import ResolvedAgentPolicies
 from app.services.knowledge_citation_service import (

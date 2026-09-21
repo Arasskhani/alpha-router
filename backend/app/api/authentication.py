@@ -11,7 +11,8 @@ from app.api.deps import require_authentication, require_authentication_write
 from app.database import get_db
 from app.models.auth_provider import AuthProviderConfig
 from app.models.user import User
-from app.services.auth_config import get_provider_config, save_provider_config, decrypt_provider_config
+from app.services.auth_config import decrypt_provider_config, get_provider_config, save_provider_config
+from app.services.auth_sync_scheduler import refresh_auth_sync_schedules
 from app.services.ldap_auth import test_ldap_connection
 from app.services.ldap_config import (
     LDAPS_PORT,
@@ -21,18 +22,21 @@ from app.services.ldap_config import (
     simple_public_view,
 )
 from app.services.ldap_sync import sync_ldap_directory
-from app.services.auth_sync_scheduler import refresh_auth_sync_schedules
 from app.services.oidc_client import (
     DEFAULT_SCOPES,
-    public_view as oidc_public_view,
     validate_oidc_config,
+)
+from app.services.oidc_client import (
+    public_view as oidc_public_view,
 )
 from app.services.saml_sp import (
     DEFAULT_ATTR_DISPLAY_NAME,
     DEFAULT_ATTR_EMAIL,
     DEFAULT_ATTR_USERNAME,
-    public_view as saml_public_view,
     validate_saml_config,
+)
+from app.services.saml_sp import (
+    public_view as saml_public_view,
 )
 
 router = APIRouter(prefix="/api/admin/authentication", tags=["authentication"])

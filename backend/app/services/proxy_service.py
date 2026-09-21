@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import effective_redis_url, get_settings
+from app.core.constants import normalize_openrouter_base_url
 from app.core.language_detect import detect_prompt_language
 from app.database import AsyncSessionLocal
 from app.models.chat import ChatSession
@@ -60,6 +61,11 @@ from app.services.chat_tool_registry import requested_tool_keys
 from app.services.chat_tools_service import (
     parse_tools_config,
 )
+from app.services.chat_turn_context import (
+    NonGeneratingReply,
+    _adaptive_openrouter_extra_body,
+    build_turn_context,
+)
 from app.services.code_interpreter_capacity_service import (
     CapacityPermit,
     acquire_code_interpreter_turn,
@@ -80,10 +86,20 @@ from app.services.code_interpreter_service import (
     run_python_sandbox,
     workspace_files_from_messages,
 )
+from app.services.code_interpreter_turn import (
+    CodeInterpreterLoop,
+    describe_code_step,
+    run_sandbox_until_stopped,
+)
+from app.services.failure_details import describe_failure, failure_message
 from app.services.llm_providers import (
     litellm_model_for_provider,
     normalize_model_id,
     resolve_litellm_provider,
+)
+from app.services.model_resolution_service import (  # noqa: F401 -- re-exported for api.chat / api.gateway
+    assert_model_supports_text_chat,
+    resolve_model_and_key,
 )
 from app.services.model_tool_compatibility_service import (
     assert_code_interpreter_model_available,
@@ -96,14 +112,8 @@ from app.services.private_mode_service import (
     resolve_private_mode,
 )
 from app.services.prompt_cache_service import apply_prompt_cache_breakpoints
-from app.services.storage_service import media_public_url, store_generated_blob
-from app.services.usage_accounting_service import (
-    PendingUsageEvent,
-    capture_usage_event,
-)
-from app.core.constants import normalize_openrouter_base_url
-from app.services.failure_details import describe_failure, failure_message
 from app.services.provider_http import build_provider_client
+from app.services.provider_stream import NonStreamRetry, ProviderAttempt, estimate_tokens
 from app.services.provider_utils import (  # noqa: F401 -- re-exported under the historical names
     _apply_litellm_provider_kwargs,
     _close_upstream_stream,
@@ -124,27 +134,19 @@ from app.services.provider_utils import (  # noqa: F401 -- re-exported under the
     _usage_from_stream_wrapper,
     _usage_from_usage_obj,
 )
-from app.services.model_resolution_service import (  # noqa: F401 -- re-exported for api.chat / api.gateway
-    assert_model_supports_text_chat,
-    resolve_model_and_key,
-)
-from app.services.code_interpreter_turn import (
-    CodeInterpreterLoop,
-    describe_code_step,
-    run_sandbox_until_stopped,
-)
-from app.services.provider_stream import NonStreamRetry, ProviderAttempt, estimate_tokens
 from app.services.rate_limit import check_generation_rate_limit, generation_subject
-from app.services.chat_turn_context import (
-    NonGeneratingReply,
-    _adaptive_openrouter_extra_body,
-    build_turn_context,
-)
+from app.services.storage_service import media_public_url, store_generated_blob
 from app.services.turn_settlement import (
     TurnIdentity,
     TurnOutcome,
-    agent_citation_metadata as _agent_citation_metadata,
     settle_turn,
+)
+from app.services.turn_settlement import (
+    agent_citation_metadata as _agent_citation_metadata,
+)
+from app.services.usage_accounting_service import (
+    PendingUsageEvent,
+    capture_usage_event,
 )
 from app.services.usage_logging_service import (  # noqa: F401 -- re-exported for api.chat / api.gateway
     log_usage,
@@ -552,9 +554,9 @@ async def preflight_stream_chat(  # noqa: C901 -- Phase 4 split; complexity must
     client_app: str | None = None,
 ) -> ResolvedStreamContext:
     """Validate budget/key/model while the request DB session is still open."""
-    from app.services.chat_channel_guard import assert_session_allows_model_generation
     from app.services.api_key_connection_policy import allowed_connection_ids_for_key
     from app.services.api_key_model_policy import allowed_model_ids_for_key
+    from app.services.chat_channel_guard import assert_session_allows_model_generation
     from app.services.model_access_service import (
         resolve_access_subject,
         user_can_access_model,

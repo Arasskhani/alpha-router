@@ -1,6 +1,7 @@
 """Alpharouter gateway keys (admin) and per-user keys."""
 
 import datetime
+
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Table, Text
 from sqlalchemy.orm import relationship
 

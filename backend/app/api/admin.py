@@ -2,8 +2,8 @@
 
 import asyncio
 import csv
-from collections.abc import AsyncIterator
 import io
+from collections.abc import AsyncIterator
 from datetime import date, datetime, timedelta
 from typing import Literal
 
@@ -22,6 +22,8 @@ from app.api.deps import (
     require_connections_write,
     require_dashboard,
     require_database,
+    require_deleted_users,
+    require_deleted_users_write,
     require_models,
     require_models_write,
     require_reports,
@@ -31,8 +33,6 @@ from app.api.deps import (
     require_super_admin,
     require_users,
     require_users_write,
-    require_deleted_users,
-    require_deleted_users_write,
 )
 from app.core.security import generate_api_key, hash_password
 from app.database import get_db
@@ -40,74 +40,12 @@ from app.models.api_key import AlphaRouterApiKey
 from app.models.budget import BudgetPlan, PlanAssignment
 from app.models.connection import Connection
 from app.models.cost_accounting import UsageEvent
-from app.models.media import MediaAsset
 from app.models.logging import RequestLog
+from app.models.media import MediaAsset
 from app.models.model_catalog import AIModel, ModelToolCompatibilityEvent
 from app.models.user import User, UserGroup, UserRoleAssignment, user_group_members
 from app.services import activity_rollup_service, activity_service
-from app.services.list_bounds import ADMIN_LIST_HARD_CAP, capped, mark_truncated, split_overflow
-from app.services.model_capabilities import (
-    model_catalog_meta,
-    classification_dialect,
-    classification_source,
-    model_kinds,
-    model_media_flags,
-    video_generation_capabilities,
-)
-from app.services.model_access_service import (
-    bulk_set_model_access,
-    get_model_access_detail,
-    summarize_access_for_models,
-    list_assignment_counts,
-    set_model_access,
-)
-from app.services.code_interpreter_probe_service import probe_model_compatibility
-from app.services.model_tool_compatibility_service import (
-    compatibility_map_for_models,
-    compatibility_payload,
-    get_compatibility,
-    get_or_create_compatibility,
-    is_auto_router_model_id,
-    is_code_interpreter_candidate,
-    set_manual_override,
-)
-from app.services.system_default_models import (
-    DEFAULT_MODEL_KIND_KEYS,
-    DEFAULT_MODEL_KINDS,
-    SystemDefaultModelError,
-    clear_default_model,
-    clear_defaults_if_ids,
-    drop_unusable_defaults,
-    get_all_default_model_ids,
-    get_default_model_id,
-    set_default_model,
-)
-
-
-from app.services.model_sync import (
-    disable_models_for_connection,
-    enable_models_for_connection,
-    set_model_admin_enabled,
-    sync_connection_models,
-    sync_connection_with_flash,
-)
-from app.services.secret_crypto import decrypt_secret, encrypt_secret, mask_secret
-from app.services.log_export_service import request_logs_to_export_dataframe, resolve_log_export_maps
 from app.services.activity_pdf_service import ActivityPdfError, render_activity_page_pdf
-from app.services.reports_service import export_activity_logs_workbook
-from app.services.scheduler import refresh_chat_retention_cleanup_schedule, refresh_storage_cleanup_schedule
-from app.services.db_monitor_service import collect_database_monitor
-from app.services.client_ip import resolve_client_ip
-from app.services.security_audit import log_security_event
-from app.services.connection_audit import (
-    connection_snapshot,
-    fetch_connection_changelog,
-    log_connection_created,
-    log_connection_deleted,
-    log_connection_status,
-    log_connection_updated,
-    touch_connection_modified,
-)
 from app.services.alpha_router_api_key_audit import (
     fetch_api_key_changelog,
     log_api_key_created,
@@ -134,8 +72,57 @@ from app.services.api_key_model_policy import (
     model_policy_label,
     replace_key_allowed_models,
 )
-from app.services.smtp_service import SmtpNotConfiguredError, SmtpSendError, send_email
-from app.services.username_norm import normalize_username, username_taken_ci
+from app.services.client_ip import resolve_client_ip
+from app.services.code_interpreter_probe_service import probe_model_compatibility
+from app.services.connection_audit import (
+    connection_snapshot,
+    fetch_connection_changelog,
+    log_connection_created,
+    log_connection_deleted,
+    log_connection_status,
+    log_connection_updated,
+    touch_connection_modified,
+)
+from app.services.db_monitor_service import collect_database_monitor
+from app.services.list_bounds import ADMIN_LIST_HARD_CAP, capped, mark_truncated, split_overflow
+from app.services.log_export_service import request_logs_to_export_dataframe, resolve_log_export_maps
+from app.services.model_access_service import (
+    bulk_set_model_access,
+    get_model_access_detail,
+    list_assignment_counts,
+    set_model_access,
+    summarize_access_for_models,
+)
+from app.services.model_capabilities import (
+    classification_dialect,
+    classification_source,
+    model_catalog_meta,
+    model_kinds,
+    model_media_flags,
+    video_generation_capabilities,
+)
+from app.services.model_sync import (
+    disable_models_for_connection,
+    enable_models_for_connection,
+    set_model_admin_enabled,
+    sync_connection_models,
+    sync_connection_with_flash,
+)
+from app.services.model_tool_compatibility_service import (
+    compatibility_map_for_models,
+    compatibility_payload,
+    get_compatibility,
+    get_or_create_compatibility,
+    is_auto_router_model_id,
+    is_code_interpreter_candidate,
+    set_manual_override,
+)
+from app.services.project_media_service import (
+    count_projects_over_media_quota,
+    get_project_media_quota_bytes,
+    get_project_media_quota_gb,
+    set_project_media_quota_gb,
+)
 from app.services.rbac import (
     USER_SLUG,
     actor_may_assign_roles,
@@ -146,22 +133,28 @@ from app.services.rbac import (
     primary_role_slug,
     user_has_super_admin_access,
 )
-from app.services.user_role_service import (
-    count_active_full_administrators,
-    get_roles_map,
-    get_user_role_slugs,
-    primary_role_for_user,
-    set_user_roles,
-    user_has_full_administrator,
-)
-
-
+from app.services.reports_service import export_activity_logs_workbook
+from app.services.scheduler import refresh_chat_retention_cleanup_schedule, refresh_storage_cleanup_schedule
+from app.services.secret_crypto import decrypt_secret, encrypt_secret, mask_secret
+from app.services.security_audit import log_security_event
+from app.services.smtp_service import SmtpNotConfiguredError, SmtpSendError, send_email
 from app.services.storage_service import (
     clear_all_media,
     get_storage_settings,
     purge_expired_media,
     set_storage_settings,
     storage_stats,
+)
+from app.services.system_default_models import (
+    DEFAULT_MODEL_KIND_KEYS,
+    DEFAULT_MODEL_KINDS,
+    SystemDefaultModelError,
+    clear_default_model,
+    clear_defaults_if_ids,
+    drop_unusable_defaults,
+    get_all_default_model_ids,
+    get_default_model_id,
+    set_default_model,
 )
 from app.services.user_media_service import (
     MediaZipLimitError,
@@ -179,12 +172,15 @@ from app.services.user_media_service import (
     stream_media_zip,
     user_media_quota_summary,
 )
-from app.services.project_media_service import (
-    count_projects_over_media_quota,
-    get_project_media_quota_bytes,
-    get_project_media_quota_gb,
-    set_project_media_quota_gb,
+from app.services.user_role_service import (
+    count_active_full_administrators,
+    get_roles_map,
+    get_user_role_slugs,
+    primary_role_for_user,
+    set_user_roles,
+    user_has_full_administrator,
 )
+from app.services.username_norm import normalize_username, username_taken_ci
 
 
 async def clear_global_default_if_ids(db: AsyncSession, model_ids) -> None:
@@ -2905,8 +2901,8 @@ class UserPlanIn(BaseModel):
 
 @router.post("/users/{user_id}/budget-reset")
 async def reset_user_budget(user_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(require_users_write)):
-    from app.services.budget_service import resolve_monthly_budget
     from app.models.budget_reservation import BudgetReservation
+    from app.services.budget_service import resolve_monthly_budget
 
     user = await db.get(User, user_id)
     if not user:

@@ -39,6 +39,7 @@ from app.models.knowledge import (
     KnowledgeRelease,
 )
 from app.models.user import User
+from app.services import activity_service
 from app.services.agent_definition_service import (
     create_agent,
     create_agent_version,
@@ -61,10 +62,9 @@ from app.services.agent_tool_registry_service import (
     submit_agent_tool_version,
     update_agent_tool_draft,
 )
-from app.services.resource_access_service import AccessGrant, set_agent_access
 from app.services.knowledge_retention_service import LIVE_KNOWLEDGE_DOCUMENT_STATUSES
+from app.services.resource_access_service import AccessGrant, set_agent_access
 from app.services.user_role_service import primary_role_for_user, user_bypasses_maker_checker
-from app.services import activity_service
 
 router = APIRouter(prefix="/api/admin/agents", tags=["admin-agents"])
 

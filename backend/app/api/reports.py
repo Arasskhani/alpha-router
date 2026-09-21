@@ -19,8 +19,8 @@ from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel
 from app.models.system import ReportSchedule
 from app.models.user import User
-from app.services.agent_definition_service import is_purged_agent
 from app.services import reports_service
+from app.services.agent_definition_service import is_purged_agent
 from app.services.reports_catalog import CATEGORY_LABELS, REPORT_CATALOG
 
 router = APIRouter(prefix="/api/admin/reports", tags=["reports"])

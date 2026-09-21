@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -25,6 +26,7 @@ from app.services.memory_extraction_service import (
     MAX_OPS,
     MAX_WINDOW_CHARS,
     PRE_WINDOW_MESSAGES,
+    ExtractionBilling,
     ExtractionParseError,
     _completion_text,
     _first_json_object,
@@ -32,12 +34,14 @@ from app.services.memory_extraction_service import (
     contains_secret,
     extraction_budget_exhausted,
     looks_like_injection,
+    record_extraction_usage,
 )
 from app.services.memory_settings_service import (
     PROJECT_DENIED_CATEGORIES,
     PROJECT_MEMORY_CATEGORIES,
     get_memory_settings,
 )
+from app.services.metered_usage_service import PLATFORM_USERNAME
 from app.services.project_memory_service import (
     NEAR_DUPE_THRESHOLD,
     SOURCE_MANUAL,
@@ -51,6 +55,7 @@ from app.services.project_memory_service import (
     record_project_memory_event,
     sync_project_vector_enabled,
 )
+from app.services.usage_accounting_service import SUBJECT_PLATFORM
 from app.services.user_memory_service import extract_message_text
 
 logger = logging.getLogger(__name__)
@@ -560,6 +565,7 @@ async def extract_project_memory_operations(
     *,
     window: ProjectExtractionWindow,
     completer: Any | None = None,
+    billing: ExtractionBilling | None = None,
 ) -> tuple[list[ProjectMemoryOperation], int]:
     settings = await get_memory_settings(db)
     model_id = settings.get("extraction_model_id")
@@ -590,10 +596,6 @@ async def extract_project_memory_operations(
         resolve_litellm_provider,
     )
     from app.services.model_resolution_service import resolve_model_and_key
-    from app.services.usage_accounting_service import (
-        capture_usage_event,
-        persist_usage_operation,
-    )
 
     ai_model, api_key, base_url, provider_type = await resolve_model_and_key(db, f"model::{int(model_id)}")
     if not ai_model or not api_key:
@@ -619,41 +621,39 @@ async def extract_project_memory_operations(
     if llm_provider:
         kwargs["custom_llm_provider"] = llm_provider
 
-    async def _call(call_kwargs: dict[str, Any]) -> str:
+    # System cost: never billed to the member who happened to post last.
+    scope = billing or ExtractionBilling(
+        user_id=None,
+        username=PLATFORM_USERNAME,
+        project_id=str(window.project_id),
+        subject_type=SUBJECT_PLATFORM,
+        key_prefix=f"project-memory-extract:adhoc:{uuid.uuid4()}",
+        operation_type="project_memory_extract",
+    )
+
+    async def _call(call_kwargs: dict[str, Any], *, phase: str) -> str:
+        started_at = dt.datetime.utcnow()
         response = await acompletion(**call_kwargs)
-        try:
-            event = capture_usage_event(
-                response,
-                ai_model=ai_model,
-                provider_type=provider_type or ai_model.provider_type,
-                service_type="chat",
-                operation_name="project_memory_extract",
-                model_id=ai_model.external_id,
-            )
-            # System cost: never billed to the member who happened to post last.
-            await persist_usage_operation(
-                db,
-                events=[event],
-                user_id=None,
-                alpha_router_api_key_id=None,
-                budget_reservation_id=None,
-                request_log_id=None,
-                operation_type="project_memory_extract",
-                source="system_memory",
-                client_app="memory_extractor",
-                success=True,
-            )
-        except Exception:
-            logger.exception("Failed to record project memory extraction usage")
-        return _completion_text(response)
+        text = _completion_text(response)
+        await record_extraction_usage(
+            billing=scope,
+            ai_model=ai_model,
+            provider_type=provider_type or ai_model.provider_type,
+            response=response,
+            prompt=call_kwargs.get("messages"),
+            completion=text,
+            started_at=started_at,
+            phase=phase,
+        )
+        return text
 
     try:
-        return parse_project_operations(await _call(kwargs))
+        return parse_project_operations(await _call(kwargs, phase="primary"))
     except ExtractionParseError:
         repair_kwargs = dict(kwargs)
         repair_kwargs["messages"] = [*messages, {"role": "user", "content": repair_nudge}]
         try:
-            return parse_project_operations(await _call(repair_kwargs))
+            return parse_project_operations(await _call(repair_kwargs, phase="repair"))
         except Exception as exc:
             raise ExtractionParseError(str(exc)) from exc
 
@@ -706,7 +706,12 @@ async def handle_project_memory_extraction(db: AsyncSession, job, *, completer: 
     if not window.turns:
         return
     last_member_turn = next((turn for turn in reversed(window.turns) if turn.role == "user"), None)
-    operations, dropped = await extract_project_memory_operations(db, window=window, completer=completer)
+    operations, dropped = await extract_project_memory_operations(
+        db,
+        window=window,
+        completer=completer,
+        billing=ExtractionBilling.for_project(job),
+    )
     if await _watermark_moved(db, job, window_from=window_from):
         # A project reset ran while the extraction model was thinking; the same
         # race as the personal scope, and the same answer.

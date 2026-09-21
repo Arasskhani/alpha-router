@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
+import contextlib
 import re
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 
+from app.config import get_settings
+from app.core.constants import OPENROUTER_HOST, normalize_openrouter_base_url
 from app.services.openrouter_image_service import build_openrouter_headers
 from app.services.provider_http import get_provider_rest_client, provider_connect_timeout
-from app.core.constants import OPENROUTER_HOST, normalize_openrouter_base_url
-from app.config import get_settings
-import contextlib
-
 
 ALLOWED_VIDEO_RESOLUTIONS = frozenset({"480p", "720p", "1080p", "1K", "2K", "4K"})
 ALLOWED_VIDEO_ASPECT_RATIOS = frozenset({"16:9", "9:16", "1:1", "3:2", "2:3", "4:3", "3:4", "21:9"})

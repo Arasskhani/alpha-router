@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import calendar
+import contextlib
 import datetime as dt
 import json
 import logging
@@ -14,8 +15,8 @@ from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.text_safety import strip_nul
 from app.config import get_settings
+from app.core.text_safety import strip_nul
 from app.models.chat import (
     ChatFolder,
     ChatMessage,
@@ -36,7 +37,6 @@ from app.services.private_mode_service import (
     PrivateModePersistenceError,
     assert_session_persistence_allowed,
 )
-import contextlib
 
 logger = logging.getLogger(__name__)
 settings = get_settings()

@@ -14,22 +14,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_active_user
 from app.config import get_settings
-from app.services.client_ip import resolve_client_ip
-from app.services.rate_limit import check_generation_rate_limit, generation_subject
 from app.database import AsyncSessionLocal, get_db
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
-from app.services.model_access_service import resolve_access_subject, user_can_access_model
 from app.services.budget_reservation_service import (
     reservation_hold_usd,
     reservation_key,
     reserve,
 )
-from app.services.llm_providers import external_id_lookup_candidates, normalize_model_id
-from app.services.model_capabilities import speech_generation_capabilities
-from app.services.secret_crypto import decrypt_secret
+from app.services.chat_channel_guard import assert_session_allows_model_generation
+from app.services.chat_tool_access_service import assert_tool_for_user
+from app.services.client_ip import resolve_client_ip
 from app.services.failure_details import CODE_CANCELLED, CODE_TIMEOUT, describe_failure
+from app.services.llm_providers import external_id_lookup_candidates, normalize_model_id
+from app.services.model_access_service import resolve_access_subject, user_can_access_model
+from app.services.model_capabilities import speech_generation_capabilities
+from app.services.rate_limit import check_generation_rate_limit, generation_subject
+from app.services.secret_crypto import decrypt_secret
 from app.services.speech_billing_service import SpeechBillingCapture, log_speech_usage
 from app.services.speech_providers import NormalizedSpeechRequest, get_speech_adapter
 from app.services.speech_providers.contracts import SpeechProviderError
@@ -38,8 +40,6 @@ from app.services.storage_service import (
     media_public_url,
     store_media_from_blob,
 )
-from app.services.chat_channel_guard import assert_session_allows_model_generation
-from app.services.chat_tool_access_service import assert_tool_for_user
 from app.services.user_chat_storage_service import finalize_chat_session_speech
 
 router = APIRouter(prefix="/api/speech", tags=["speech"])

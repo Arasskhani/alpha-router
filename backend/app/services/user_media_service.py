@@ -9,9 +9,9 @@ import tempfile
 import time
 import zipfile
 from collections import defaultdict
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
-from collections.abc import AsyncIterator
 
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession

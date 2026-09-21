@@ -17,8 +17,8 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
-from typing import Any
 from dataclasses import dataclass, field
+from typing import Any
 
 from app.services.code_interpreter_service import (
     SandboxExecutionResult,

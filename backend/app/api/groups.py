@@ -22,12 +22,12 @@ from app.api.deps import (
 )
 from app.database import get_db
 from app.models.budget import PlanAssignment
-from app.services.list_bounds import ADMIN_LIST_HARD_CAP, capped, mark_truncated, split_overflow
 from app.models.user import User, UserGroup, user_group_members
-from app.services.group_membership import live_member_ids_stmt
 from app.services import activity_service
 from app.services.auth_config import get_provider_config
+from app.services.group_membership import live_member_ids_stmt
 from app.services.ldap_auth import fetch_ldap_groups
+from app.services.list_bounds import ADMIN_LIST_HARD_CAP, capped, mark_truncated, split_overflow
 from app.services.rbac import user_is_admin_panel
 from app.services.user_role_service import get_roles_map, primary_role_for_user
 

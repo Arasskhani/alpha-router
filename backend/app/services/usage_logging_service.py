@@ -27,7 +27,8 @@ from app.services.budget_reservation_service import (
     reserve,
     settle,
 )
-from app.services.observability import correlation_id as current_correlation_id, increment
+from app.services.observability import correlation_id as current_correlation_id
+from app.services.observability import increment
 from app.services.provider_utils import extract_prompt_text, sanitize_cost_usd
 from app.services.usage_accounting_service import (
     PendingUsageEvent,
@@ -82,7 +83,16 @@ async def log_usage(
     correlation_id: str | None = None,
     provider_job_id: str | None = None,
     subject_type: str | None = None,
+    charge_budget: bool = True,
 ) -> int | None:
+    """Write the request log and the usage rows behind one provider call.
+
+    ``charge_budget=False`` records the spend against ``user_id`` without
+    moving their budget. It exists for work the platform does on someone's
+    behalf that they did not ask for and cannot decline at the moment it
+    happens — memory extraction is the case — where the cost must be visible
+    and attributable but must not consume the allowance they spend on chat.
+    """
     events = list(usage_events or [])
     if not events:
         events = [
@@ -170,7 +180,7 @@ async def log_usage(
         key = await db.get(AlphaRouterApiKey, alpha_router_api_key_id)
         if key:
             await record_key_usage(db, key, total_cost_usd)
-    elif not settled and user_id and total_cost_usd > 0:
+    elif not settled and user_id and total_cost_usd > 0 and charge_budget:
         await _apply_cost_to_user(db, user_id, total_cost_usd)
     from app.services.user_api_key_service import touch_user_key_last_used
 
@@ -220,7 +230,7 @@ async def reserve_auxiliary_llm_usage(
 
 async def settle_auxiliary_usage(
     *,
-    user_id: int,
+    user_id: int | None,
     username: str,
     ai_model: AIModel | None,
     provider_type: str | None,
@@ -237,8 +247,26 @@ async def settle_auxiliary_usage(
     quantity: float | None = None,
     unit: str | None = None,
     started_at: datetime.datetime | None = None,
+    source: str = "alpha_router_chat",
+    project_id: str | None = None,
+    subject_type: str | None = None,
+    charge_budget: bool = True,
+    idempotency_key: str | None = None,
 ) -> None:
-    """Persist one non-stream helper call without coupling it to route state."""
+    """Persist one non-stream helper call without coupling it to route state.
+
+    Its own session and three attempts, because the caller's transaction is not
+    a safe place to keep a record of money that has already left: a helper call
+    that succeeds and is then rolled back by an unrelated failure downstream is
+    spend that happened and was never written down.
+
+    The defaults describe a helper inside a chat turn. A caller that is not one
+    overrides ``source`` (which is what the App column groups by), passes
+    ``project_id`` or ``subject_type`` to say who it belongs to, sets
+    ``charge_budget=False`` when the person did not ask for the call, and
+    supplies its own ``idempotency_key`` when it has a more durable identity
+    than a budget hold.
+    """
 
     event = capture_usage_event(
         response,
@@ -276,7 +304,7 @@ async def settle_auxiliary_usage(
                         extract_prompt_text(prompt) if isinstance(prompt, list) else str(prompt or "")
                     ),
                     source_ip=None,
-                    source="alpha_router_chat",
+                    source=source,
                     success=success,
                     error_message=error_message,
                     client_app=client_app,
@@ -284,8 +312,12 @@ async def settle_auxiliary_usage(
                     usage_events=[event],
                     operation_type=operation_name,
                     operation_idempotency_key=(
-                        f"aux:{budget_reservation_id}" if budget_reservation_id else f"aux:{event.idempotency_key}"
+                        idempotency_key
+                        or (f"aux:{budget_reservation_id}" if budget_reservation_id else f"aux:{event.idempotency_key}")
                     ),
+                    project_id=project_id,
+                    subject_type=subject_type,
+                    charge_budget=charge_budget,
                 )
                 await log_db.commit()
             return

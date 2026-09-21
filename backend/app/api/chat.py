@@ -26,9 +26,7 @@ from app.database import AsyncSessionLocal, get_db
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
-from app.services.chat_session_access import resolve_owned_chat_session
 from app.services.attachment_extract import processed_attachment_payload_async
-from app.services.upload_screening import UploadRejected, screen_upload
 from app.services.attachment_from_media_service import attachments_from_existing_media
 from app.services.attachment_policy import (
     AttachmentPolicyError,
@@ -51,7 +49,10 @@ from app.services.chat_export_service import (
     build_pdf_content_disposition,
     render_chat_pdf,
 )
+from app.services.chat_session_access import resolve_owned_chat_session
 from app.services.chat_title_service import generate_chat_title
+from app.services.chat_tool_access_service import assert_tool_for_user, permitted_tool_keys
+from app.services.chat_tool_registry import CHAT_TOOLS
 from app.services.chat_xlsx_service import ChatExportError as XlsxExportError
 from app.services.chat_xlsx_service import render_chat_xlsx
 from app.services.image_prompt_service import (
@@ -65,7 +66,6 @@ from app.services.media_authorization_service import (
     MediaAccessAction,
     load_authorized_media_asset,
 )
-from app.services.system_default_models import get_all_default_model_ids
 from app.services.model_access_service import (
     filter_models_for_subject,
     resolve_access_subject,
@@ -84,11 +84,16 @@ from app.services.model_tool_compatibility_service import (
     is_auto_router_model_id,
     is_code_interpreter_candidate,
 )
+from app.services.project_media_service import (
+    ProjectMediaValidationError,
+    persist_scoped_chat_media,
+)
 from app.services.proxy_service import (
     STREAM_SSE_HEADERS,
     preflight_stream_chat,
     stream_chat,
 )
+from app.services.resource_access_service import resolve_resource_access_subject
 from app.services.storage_service import (
     list_user_media,
     media_public_url,
@@ -98,14 +103,9 @@ from app.services.storage_service import (
     store_generated_media,
     unlink_storage_if_unreferenced,
 )
-from app.services.project_media_service import (
-    ProjectMediaValidationError,
-    persist_scoped_chat_media,
-)
-from app.services.chat_tool_access_service import assert_tool_for_user, permitted_tool_keys
-from app.services.chat_tool_registry import CHAT_TOOLS
-from app.services.resource_access_service import resolve_resource_access_subject
+from app.services.system_default_models import get_all_default_model_ids
 from app.services.transcription_service import transcribe_audio_bytes
+from app.services.upload_screening import UploadRejected, screen_upload
 from app.services.user_chat_storage_service import load_user_prefs
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])

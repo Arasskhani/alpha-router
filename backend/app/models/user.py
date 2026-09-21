@@ -1,6 +1,7 @@
 """User accounts, RBAC, and directory profile fields."""
 
 import datetime
+
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Table, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship

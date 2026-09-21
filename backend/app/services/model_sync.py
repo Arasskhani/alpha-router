@@ -7,13 +7,13 @@ from datetime import datetime
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.constants import normalize_openrouter_base_url
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.services.model_capabilities import image_id_looks_generative
 from app.services.model_tool_compatibility_service import ensure_model_compatibility_rows
-from app.services.video_catalog_service import normalize_video_capabilities
 from app.services.provider_http import get_provider_rest_client
-from app.core.constants import normalize_openrouter_base_url
+from app.services.video_catalog_service import normalize_video_capabilities
 
 logger = logging.getLogger("app.services.model_sync")
 

@@ -21,7 +21,6 @@ from app.models.knowledge import (
     KnowledgeDocument,
     KnowledgeDocumentVersion,
 )
-from app.services.list_bounds import ADMIN_LIST_HARD_CAP
 from app.models.user import User
 from app.services.agent_handoff_service import (
     AgentHandoffConflict,
@@ -36,6 +35,7 @@ from app.services.agent_policy_service import (
 )
 from app.services.knowledge_crypto_service import decrypt_bytes
 from app.services.knowledge_object_store import default_knowledge_object_store
+from app.services.list_bounds import ADMIN_LIST_HARD_CAP
 from app.services.object_storage_service import ObjectNotFoundError
 from app.services.resource_access_service import (
     filter_agents_for_subject,

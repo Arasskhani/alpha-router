@@ -1,23 +1,23 @@
 """Background jobs: model sync, monthly budget reset, scheduled reports."""
 
 import logging
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 
-from app.database import AsyncSessionLocal
 from app.config import get_settings
+from app.database import AsyncSessionLocal
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
+from app.models.user_media_prefs import UserMediaPreferences
 from app.services.budget_service import reset_all_monthly_budgets
 from app.services.model_sync import sync_connection_with_flash
-from app.services.secret_crypto import decrypt_secret
 from app.services.operations_service import prune_old_snapshots, record_system_snapshot
 from app.services.schedule_timezone import get_server_timezone
+from app.services.secret_crypto import decrypt_secret
 from app.services.storage_service import get_storage_settings, purge_expired_media
 from app.services.user_media_service import purge_user_media_older_than
-from app.models.user_media_prefs import UserMediaPreferences
 
 # misfire_grace_time: APScheduler's default is 1 second. After a leader
 # hand-over (the new leader starts its scheduler seconds after the old one

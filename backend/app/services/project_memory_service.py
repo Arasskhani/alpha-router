@@ -20,8 +20,8 @@ import re
 import time
 import uuid
 from calendar import timegm
-from dataclasses import dataclass
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import func, or_, select, update
@@ -32,11 +32,11 @@ from app.core.prompt_fences import wrap_untrusted
 from app.models.chat import ChatSession
 from app.models.project import (
     Project,
+    ProjectMember,
     ProjectMemory,
     ProjectMemoryEvent,
     ProjectMemoryGrant,
     ProjectMemorySuppression,
-    ProjectMember,
 )
 from app.services.memory_settings_service import (
     PROJECT_MEMORY_CATEGORIES,

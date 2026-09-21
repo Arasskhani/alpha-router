@@ -4,27 +4,26 @@ import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
-from fastapi.responses import RedirectResponse, Response as RawResponse
+from fastapi.responses import RedirectResponse
+from fastapi.responses import Response as RawResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_current_user
 from app.config import get_settings
 from app.core.security import create_access_token, verify_password
-from app.api.deps import get_current_user
 from app.database import get_db
 from app.models.user import User
-from app.services.rbac import primary_role_slug, session_payload_for_slugs
-from app.services.user_role_service import get_user_role_slugs
 from app.services.auth_config import get_provider_config
+from app.services.auth_exchange import consume_code, generate_code, store_token
+from app.services.auth_urls import validate_frontend_url
 from app.services.ldap_auth import (
     LDAP_UNAVAILABLE_MESSAGE,
     LdapUnavailableError,
     authenticate_ldap_sync,
     map_ldap_profile,
 )
-from app.services.auth_exchange import consume_code, generate_code, store_token
-from app.services.auth_urls import validate_frontend_url
 from app.services.oidc_client import (
     STATE_COOKIE_NAME,
     build_authorize_url,
@@ -40,6 +39,7 @@ from app.services.oidc_client import (
     validate_issuer_url,
     verify_state_cookie,
 )
+from app.services.rbac import primary_role_slug, session_payload_for_slugs
 from app.services.saml_sp import (
     login_redirect_url,
     logout_redirect_url,
@@ -53,10 +53,11 @@ from app.services.saml_state import (
     register_assertion,
     remember_authn_request,
 )
-from app.services.user_chat_storage_service import ensure_user_chat_store
-from app.services.username_norm import find_user_by_username_ci, normalize_username
-from app.services.user_lifecycle_service import record_user_login
 from app.services.session_cookie import clear_session_cookies, new_csrf_token, set_session_cookies
+from app.services.user_chat_storage_service import ensure_user_chat_store
+from app.services.user_lifecycle_service import record_user_login
+from app.services.user_role_service import get_user_role_slugs
+from app.services.username_norm import find_user_by_username_ci, normalize_username
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 settings = get_settings()
@@ -208,9 +209,8 @@ async def login_local(
     db: AsyncSession = Depends(get_db),
 ):
     username = body.username.strip()
-    from app.services.rate_limit import check_login_rate_limit
-
     from app.services.client_ip import resolve_client_ip
+    from app.services.rate_limit import check_login_rate_limit
 
     source_ip = resolve_client_ip(request)
     await check_login_rate_limit(normalize_username(username) or username, source_ip)
@@ -284,6 +284,7 @@ async def login_2fa(
     db: AsyncSession = Depends(get_db),
 ):
     """Complete local login after password when TOTP is enabled."""
+    from app.services.client_ip import resolve_client_ip
     from app.services.rate_limit import check_rate_limit
     from app.services.totp_service import (
         consume_backup_code,
@@ -291,8 +292,6 @@ async def login_2fa(
         verify_totp_code,
     )
     from app.services.twofa_pending import consume_pending
-
-    from app.services.client_ip import resolve_client_ip
 
     source_ip = resolve_client_ip(request)
     await check_rate_limit(

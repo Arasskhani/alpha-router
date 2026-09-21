@@ -19,25 +19,35 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_active_user
+from app.config import get_settings
+from app.core.constants import normalize_openrouter_base_url
 from app.database import AsyncSessionLocal, get_db
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
-from app.services.client_ip import resolve_client_ip
-from app.services.secret_crypto import decrypt_secret
-from app.services.image_model_resolver import (
-    is_image_model_failover_error,
-    list_auto_router_image_candidates,
-)
-from app.services.model_access_service import resolve_access_subject, user_can_access_model
 from app.services.budget_reservation_service import (
     reservation_hold_usd,
     reservation_key,
     reserve,
 )
-from app.config import get_settings
-from app.services.rate_limit import check_generation_rate_limit, generation_subject
+from app.services.chat_channel_guard import assert_session_allows_model_generation
+from app.services.chat_tool_access_service import assert_tool_for_user
+from app.services.client_ip import resolve_client_ip
+from app.services.failure_details import CODE_CANCELLED, describe_failure, failure_message
+from app.services.image_attempt_service import image_attempt_outcome, record_image_attempt
+from app.services.image_billing_service import ImageBillingCapture, log_image_usage
+from app.services.image_model_resolver import (
+    is_image_model_failover_error,
+    list_auto_router_image_candidates,
+)
+from app.services.llm_providers import (
+    external_id_lookup_candidates,
+    litellm_model_for_provider,
+    normalize_model_id,
+    resolve_litellm_provider,
+)
 from app.services.media_authorization_service import MediaAccessAction, load_authorized_media_asset
+from app.services.model_access_service import resolve_access_subject, user_can_access_model
 from app.services.openrouter_image_service import (
     OPENROUTER_EMPTY_IMAGE_RETRY_DELAYS_SEC,
     OPENROUTER_IMAGE_ENDPOINT_PATHS,
@@ -57,29 +67,19 @@ from app.services.openrouter_image_service import (
     optimize_openrouter_image_model,
     post_openrouter_json,
     prefer_openrouter_images_generations,
+    prepare_image_generation_prompt,
 )
+from app.services.project_billing_service import resolve_project_id_for_request
+from app.services.project_media_service import persist_scoped_chat_media
+from app.services.rate_limit import check_generation_rate_limit, generation_subject
+from app.services.secret_crypto import decrypt_secret
 from app.services.storage_service import (
-    media_input_limit,
     media_content_hash,
+    media_input_limit,
     read_media_bytes,
     resolve_media_blob,
 )
 from app.services.user_chat_storage_service import finalize_chat_session_image
-from app.services.failure_details import CODE_CANCELLED, describe_failure, failure_message
-from app.services.image_billing_service import ImageBillingCapture, log_image_usage
-from app.services.image_attempt_service import image_attempt_outcome, record_image_attempt
-from app.services.chat_channel_guard import assert_session_allows_model_generation
-from app.services.chat_tool_access_service import assert_tool_for_user
-from app.services.project_billing_service import resolve_project_id_for_request
-from app.services.project_media_service import persist_scoped_chat_media
-from app.services.llm_providers import (
-    external_id_lookup_candidates,
-    litellm_model_for_provider,
-    normalize_model_id,
-    resolve_litellm_provider,
-)
-from app.services.openrouter_image_service import prepare_image_generation_prompt
-from app.core.constants import normalize_openrouter_base_url
 
 router = APIRouter(prefix="/api/images", tags=["images"])
 _ALPHA_ROUTER_MEDIA_PATH = re.compile(r"/api/chat/media/(\d+)/file/?(?:\?.*)?$")

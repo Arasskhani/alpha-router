@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from app.core.redis_client import get_redis
 from app.config import get_settings
+from app.core.redis_client import get_redis
 from app.services.observability import increment
 
 _KEY_PREFIX = "presence:user:"

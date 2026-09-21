@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-
-import anyio
 import datetime
 import logging
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.services.observability import increment
-from app.services.usage_logging_service import log_usage
+import anyio
+
 from app.database import AsyncSessionLocal
 from app.models.model_catalog import AIModel
 from app.models.user import User
@@ -20,10 +18,12 @@ from app.services.budget_reservation_service import (
     reservation_hold_usd,
     reserve,
 )
+from app.services.observability import increment
 from app.services.usage_accounting_service import (
     SUBJECT_PLATFORM,
     capture_usage_event,
 )
+from app.services.usage_logging_service import log_usage
 
 logger = logging.getLogger(__name__)
 

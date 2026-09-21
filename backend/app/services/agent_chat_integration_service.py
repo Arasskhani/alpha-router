@@ -21,9 +21,9 @@ from app.services.knowledge_embedding_service import (
 )
 from app.services.knowledge_rerank_service import DeterministicKnowledgeReranker
 from app.services.model_access_service import resolve_access_subject
+from app.services.project_turn_planner import augment_messages_with_project_context
 from app.services.qdrant_service import QdrantVectorService
 from app.services.resource_access_service import resolve_resource_access_subject
-from app.services.project_turn_planner import augment_messages_with_project_context
 from app.services.user_chat_storage_service import (
     _owned_or_project_session,
     create_chat_session,

@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.config import get_settings
+from app.core.constants import normalize_openrouter_base_url
 from app.services.openrouter_image_service import (
     build_openrouter_headers,
     get_openrouter_http_client,
@@ -21,8 +23,6 @@ from app.services.speech_providers.contracts import (
     SpeechProviderError,
 )
 from app.services.storage_service import audio_output_limit
-from app.core.constants import normalize_openrouter_base_url
-from app.config import get_settings
 
 _FORMAT_TO_MIME: dict[str, str] = {
     "mp3": "audio/mpeg",

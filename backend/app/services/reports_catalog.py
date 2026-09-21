@@ -53,6 +53,27 @@ REPORT_CATALOG: list[dict[str, Any]] = [
         "params": [],
     },
     {
+        "id": "memory_cost_by_user",
+        "category": "budget",
+        "title": "Memory cost by user",
+        "description": (
+            "What automatic memory spent extracting facts for each person, and its share of their spend. "
+            "Recorded against the user but never charged to their plan."
+        ),
+        "needs_date": True,
+        "params": ["user", "top_n"],
+    },
+    {
+        "id": "memory_cost_summary",
+        "category": "budget",
+        "title": "Memory cost summary",
+        "description": (
+            "Daily extraction spend, personal and project, against the organization total for the same day."
+        ),
+        "needs_date": True,
+        "params": [],
+    },
+    {
         "id": "users_near_budget_limit",
         "category": "budget",
         "title": "Users near budget limit",

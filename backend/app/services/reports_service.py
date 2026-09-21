@@ -20,6 +20,7 @@ from app.models.model_catalog import AIModel
 from app.models.user import User, UserGroup, user_group_members
 from app.services.group_membership import live_member_ids_for_groups_stmt, live_member_ids_stmt
 from app.services.plan_assignment_service import USER_PLAN_NONE, get_user_direct_assignment, user_plan_mode
+from app.utils.display import MEMORY_USAGE_SOURCE
 
 
 def _p95(values: list[float]) -> float:
@@ -308,6 +309,117 @@ async def report_office_usage(
     if df.empty:
         return df
     return df.sort_values("cost_usd", ascending=False).reset_index(drop=True)
+
+
+async def report_memory_cost_by_user(
+    db: AsyncSession,
+    start: datetime | None,
+    end: datetime | None,
+    user_id: int | None,
+    top_n: int,
+) -> pd.DataFrame:
+    """Extraction spend per person, and what fraction of them it is.
+
+    Two shares, because on their own neither answers the question an operator
+    brings here. "Of their spend" says whether memory is a rounding error for
+    this person or a third of their bill. "Of memory spend" says whether one
+    account is responsible for the line item.
+    """
+
+    memory_only = _apply_log_filters(
+        select(
+            RequestLog.user_id,
+            RequestLog.username,
+            func.count(),
+            func.sum(RequestLog.prompt_tokens),
+            func.sum(RequestLog.completion_tokens),
+            func.sum(RequestLog.total_cost_usd),
+        ).where(RequestLog.source == MEMORY_USAGE_SOURCE),
+        start=start,
+        end=end,
+        user_ids=[user_id] if user_id else None,
+    ).group_by(RequestLog.user_id, RequestLog.username)
+    rows = (await db.execute(memory_only)).all()
+    if not rows:
+        return pd.DataFrame()
+
+    # Their whole bill over the same window, for the denominator.
+    totals_q = _apply_log_filters(
+        select(RequestLog.user_id, func.sum(RequestLog.total_cost_usd)),
+        start=start,
+        end=end,
+        user_ids=[int(r[0]) for r in rows if r[0] is not None] or None,
+    ).group_by(RequestLog.user_id)
+    all_spend = {uid: float(total or 0) for uid, total in (await db.execute(totals_q)).all()}
+    memory_total = sum(float(r[5] or 0) for r in rows)
+
+    records = []
+    for uid, username, count, prompt, completion, cost in rows:
+        spend = float(cost or 0)
+        theirs = all_spend.get(uid, 0.0)
+        records.append(
+            {
+                "username": username or "—",
+                "extractions": int(count or 0),
+                "prompt_tokens": int(prompt or 0),
+                "completion_tokens": int(completion or 0),
+                "cost_usd": round(spend, 4),
+                "pct_of_their_spend": round(spend / theirs * 100.0, 2) if theirs > 0 else 0.0,
+                "pct_of_memory_spend": round(spend / memory_total * 100.0, 2) if memory_total > 0 else 0.0,
+            }
+        )
+    records.sort(key=lambda row: row["cost_usd"], reverse=True)
+    return pd.DataFrame(records[: max(1, int(top_n))])
+
+
+async def report_memory_cost_summary(db: AsyncSession, start: datetime | None, end: datetime | None) -> pd.DataFrame:
+    """Extraction spend per day, split by scope, against the day's total.
+
+    Personal and project are separated because they answer to different
+    switches: one is a per-user preference, the other a per-project setting.
+    An operator deciding what to turn off needs to know which is costing.
+    """
+
+    day = func.date(RequestLog.request_time)
+    memory_q = _apply_log_filters(
+        select(
+            day,
+            RequestLog.project_id.is_(None),
+            func.count(),
+            func.sum(RequestLog.total_cost_usd),
+        ).where(RequestLog.source == MEMORY_USAGE_SOURCE),
+        start=start,
+        end=end,
+    ).group_by(day, RequestLog.project_id.is_(None))
+    org_q = _apply_log_filters(
+        select(day, func.sum(RequestLog.total_cost_usd)),
+        start=start,
+        end=end,
+    ).group_by(day)
+
+    org_by_day = {str(d): float(total or 0) for d, total in (await db.execute(org_q)).all()}
+    per_day: dict[str, dict[str, float]] = {}
+    for d, is_personal, count, cost in (await db.execute(memory_q)).all():
+        entry = per_day.setdefault(str(d), {"extractions": 0.0, "personal": 0.0, "project": 0.0})
+        entry["extractions"] += int(count or 0)
+        entry["personal" if is_personal else "project"] += float(cost or 0)
+
+    records = []
+    for date_key in sorted(per_day):
+        entry = per_day[date_key]
+        total = entry["personal"] + entry["project"]
+        org = org_by_day.get(date_key, 0.0)
+        records.append(
+            {
+                "date": date_key,
+                "extractions": int(entry["extractions"]),
+                "personal_usd": round(entry["personal"], 4),
+                "project_usd": round(entry["project"], 4),
+                "total_usd": round(total, 4),
+                "pct_of_org_spend": round(total / org * 100.0, 2) if org > 0 else 0.0,
+            }
+        )
+    return pd.DataFrame(records)
 
 
 async def report_top_users_by_spend(db: AsyncSession, start: datetime, end: datetime, top_n: int) -> pd.DataFrame:
@@ -1070,6 +1182,10 @@ async def build_report(db: AsyncSession, report_type: str, params: dict[str, Any
         return await report_plan_usage(db, int(params["plan_id"]), start, end)
     if report_type == "org_cost_summary":
         return await report_org_cost_summary(db, start, end)
+    if report_type == "memory_cost_by_user":
+        return await report_memory_cost_by_user(db, start, end, params.get("user_id"), int(params.get("top_n") or 10))
+    if report_type == "memory_cost_summary":
+        return await report_memory_cost_summary(db, start, end)
     if report_type == "users_near_budget_limit":
         return await report_users_near_budget_limit(db, float(params.get("threshold_pct") or 80))
     if report_type == "users_without_budget":

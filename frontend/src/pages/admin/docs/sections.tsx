@@ -2534,6 +2534,18 @@ export const docSections: DocSection[] = [
           thresholds, …). <strong>Agent usage</strong> sums chat-turn spend, turns, and tokens from Agent runs for a date range;
           the Agent filter is optional (all Agents when empty). Knowledge ingest cost is excluded.
         </p>
+        <h3>Memory cost reports</h3>
+        <p>
+          Under Budget &amp; cost: <strong>Memory cost by user</strong> shows what automatic memory spent
+          extracting facts for each person, with two shares — of that person&apos;s own spend, and of the
+          organization&apos;s memory spend. <strong>Memory cost summary</strong> gives the same money per day,
+          split into personal and project scope, against the day&apos;s organization total.
+        </p>
+        <p>
+          These figures appear in <strong>User budget usage</strong> and <strong>Organization cost summary</strong>
+          too, because they are real provider spend. They are recorded against the user but never charged to their
+          plan, so a person&apos;s report total can exceed the amount taken from their budget. The gap is memory.
+        </p>
         <h3>Project reports</h3>
         <p>
           Under the Projects category: <strong>All projects usage</strong> has no project picker (organization-wide).

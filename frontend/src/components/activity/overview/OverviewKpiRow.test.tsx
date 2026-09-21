@@ -17,9 +17,10 @@ vi.mock("recharts", () => ({
   YAxis: () => null,
 }));
 
+import type { OverviewKpi } from "../types";
 import OverviewKpiRow from "./OverviewKpiRow";
 
-const kpi = (value: number) => ({ value, change_pct: 4.2, sparkline: [1, 2, 3] });
+const kpi = (value: number): OverviewKpi => ({ value, change_pct: 4.2, sparkline: [1, 2, 3] });
 
 const KPIS = {
   spend: kpi(18.42),

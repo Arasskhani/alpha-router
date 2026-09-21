@@ -9255,6 +9255,12 @@ body.activity-pdf-export .activity-page {
   font-size: 0.68rem;
 }
 
+/* One line under "vs prev period"; only the Memory card carries one. */
+.overview-kpi-card__note {
+  margin: 0.1rem 0 0;
+  font-size: 0.68rem;
+}
+
 .overview-kpi-card__spark {
   width: 42%;
   min-width: 64px;

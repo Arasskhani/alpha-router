@@ -201,6 +201,8 @@ export type ActivityOverview = {
     tokens: OverviewKpi;
     cache_hit_rate: OverviewKpi;
     blended_per_1m: OverviewKpi;
+    /** Automatic memory extraction. Part of `spend`, not additional to it. */
+    memory_spend: OverviewKpi;
   };
   top_users: OverviewListItem[];
   top_apps: OverviewListItem[];

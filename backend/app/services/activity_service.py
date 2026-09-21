@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 
 from app.models.logging import RequestLog
-from app.utils.display import format_app_source
+from app.utils.display import MEMORY_USAGE_SOURCE, format_app_source
 
 ACTIVITY_CHART_COLORS = [
     "#14b8a6",
@@ -369,6 +369,12 @@ def _client_app_key(row: RequestLog) -> str:
     if name:
         return name
     return format_app_source((row.source or "unknown").strip() or "unknown")
+
+
+def _is_memory_row(row: RequestLog) -> bool:
+    """Automatic memory extraction, by the source every other reader groups on."""
+
+    return (row.source or "").strip().lower() == MEMORY_USAGE_SOURCE
 
 
 def _kpi_dict(value: float, prev: float, sparkline: list[float]) -> dict[str, Any]:
@@ -1066,6 +1072,8 @@ def _build_overview(
     cur_prompt = 0.0
     cur_completion = 0.0
     cur_cached = 0.0
+    cur_memory = 0.0
+    memory_by_b: dict[str, float] = defaultdict(float)
 
     for r in rows:
         spend = float(r.total_cost_usd or 0)
@@ -1081,6 +1089,9 @@ def _build_overview(
         ak = _client_app_key(r)
 
         cur_spend += spend
+        if _is_memory_row(r):
+            cur_memory += spend
+            memory_by_b[bkey] += spend
         cur_prompt += prompt
         cur_completion += completion
         cur_cached += cached
@@ -1116,8 +1127,10 @@ def _build_overview(
         prev_cached += min(c, p) if p > 0 else 0.0
     prev_cache_rate = (prev_cached / prev_prompt * 100.0) if prev_prompt > 0 else 0.0
     prev_blended = (prev_spend / prev_tokens * 1_000_000.0) if prev_tokens > 0 else 0.0
+    prev_memory = sum(float(r.total_cost_usd or 0) for r in prev_rows if _is_memory_row(r))
 
     spark_spend = [spend_by_b.get(k, 0.0) for k in bucket_keys]
+    spark_memory = [memory_by_b.get(k, 0.0) for k in bucket_keys]
     spark_req = [req_by_b.get(k, 0.0) for k in bucket_keys]
     spark_tok = [tok_by_b.get(k, 0.0) for k in bucket_keys]
     spark_cache: list[float] = []
@@ -1224,6 +1237,10 @@ def _build_overview(
             "tokens": _kpi_dict(cur_tokens, prev_tokens, spark_tok),
             "cache_hit_rate": _kpi_dict(cur_cache_rate, prev_cache_rate, spark_cache),
             "blended_per_1m": _kpi_dict(cur_blended, prev_blended, spark_blended),
+            # Part of total spend, not additional to it. It earns a card of its
+            # own because nobody asks for it: it is the one line here that is
+            # spent on someone's behalf rather than by them.
+            "memory_spend": _kpi_dict(cur_memory, prev_memory, spark_memory),
         },
         "top_users": _top_list(user_tokens),
         "top_apps": _top_list(app_tokens),

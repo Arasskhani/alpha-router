@@ -5,7 +5,7 @@ import type { ActivityOverview, OverviewKpi } from "../types";
 
 type KpiKey = keyof ActivityOverview["kpis"];
 
-const KPI_META: { key: KpiKey; title: string; format: (v: number) => string }[] = [
+const KPI_META: { key: KpiKey; title: string; format: (v: number) => string; note?: string }[] = [
   { key: "spend", title: "Total spend", format: formatSpend },
   { key: "requests", title: "Requests", format: formatRequests },
   { key: "tokens", title: "Token volume", format: formatTokens },
@@ -19,6 +19,14 @@ const KPI_META: { key: KpiKey; title: string; format: (v: number) => string }[] 
     title: "Blended $/1M",
     format: (v) => `$${v.toFixed(2)}`,
   },
+  {
+    key: "memory_spend",
+    title: "Memory",
+    format: formatSpend,
+    // The only card here for money nobody asked to spend. Without the note it
+    // reads as a charge, and the budget bar below will not agree with it.
+    note: "Not charged to your plan",
+  },
 ];
 
 type Props = {
@@ -29,10 +37,12 @@ function OverviewKpiCard({
   title,
   format,
   kpi,
+  note,
 }: {
   title: string;
   format: (v: number) => string;
   kpi: OverviewKpi;
+  note?: string;
 }) {
   const change = kpi.change_pct;
   const down = change != null && change < 0;
@@ -57,6 +67,7 @@ function OverviewKpiCard({
             <p className="overview-kpi-card__change muted-text">—</p>
           )}
           <p className="overview-kpi-card__vs muted-text">vs prev period</p>
+          {note ? <p className="overview-kpi-card__note muted-text">{note}</p> : null}
         </div>
         <div className="overview-kpi-card__spark">
           <ResponsiveContainer width="100%" height={44}>
@@ -87,6 +98,7 @@ export default function OverviewKpiRow({ kpis }: Props) {
           title={meta.title}
           format={meta.format}
           kpi={kpis[meta.key]}
+          note={meta.note}
         />
       ))}
     </div>

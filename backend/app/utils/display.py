@@ -2,15 +2,19 @@
 
 from app.branding import CHAT_CLIENT_APP, PRODUCT_NAME
 
+#: ``request_logs.source`` for automatic memory extraction. Activity, the
+#: app filter and the reports all group on this field, so the constant and
+#: its label belong together rather than in the service that writes it.
+MEMORY_USAGE_SOURCE = "system_memory"
+
 APP_SOURCE_LABELS: dict[str, str] = {
     "openwebui": "Open WebUI",
     "alpha_router_key": f"{PRODUCT_NAME} API Key",
     "user_key": "User API Key",
     "alpha_router_chat": CHAT_CLIENT_APP,
     "gateway": "Platform API",
-    # Automatic memory extraction. Activity groups the App column by
-    # `source`, so without this the rows would read "System Memory".
-    "system_memory": "Memory",
+    # Without this the rows would read "System Memory".
+    MEMORY_USAGE_SOURCE: "Memory",
 }
 
 

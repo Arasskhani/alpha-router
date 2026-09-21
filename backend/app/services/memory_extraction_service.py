@@ -29,6 +29,7 @@ from app.services.user_memory_service import (
     record_memory_event,
     update_memory,
 )
+from app.utils.display import MEMORY_USAGE_SOURCE
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +39,6 @@ PRE_WINDOW_MESSAGES = 4
 MAX_OPS = 5
 EXTRACT_MAX_TOKENS = 600
 EXTRACT_TIMEOUT = 30
-#: request_logs.source for extraction calls. Activity reads the App column
-#: from this field, so it is what puts "Memory" in the filter and the
-#: top-apps list rather than leaving the rows unlabelled.
-MEMORY_USAGE_SOURCE = "system_memory"
 
 _SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("api_key", re.compile(r"\b(?:sk|rk|pk|api)[-_]?[A-Za-z0-9]{16,}\b")),

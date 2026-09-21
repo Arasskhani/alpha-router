@@ -9,6 +9,7 @@ is it being spent on, and what is it costing the organization day by day.
 from __future__ import annotations
 
 import datetime as dt
+import re
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -177,3 +178,20 @@ async def test_both_reports_are_in_the_catalog_under_budget(db_session) -> None:
     # Only ParamKinds the Reports page already renders, so no frontend change.
     assert set(entries["memory_cost_by_user"]["params"]) <= {"user", "top_n"}
     assert entries["memory_cost_summary"]["params"] == []
+
+
+def test_the_admin_memory_page_links_to_reports_that_exist() -> None:
+    """The Cost control section deep-links into Reports with ?report=<id>.
+
+    The two ends live in different languages and nothing checks them at build
+    time. A renamed report id fails silently: the link opens the catalog and
+    the reader concludes the report was never built.
+    """
+    from pathlib import Path
+
+    from app.services.reports_catalog import REPORT_IDS
+
+    page = Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages" / "admin" / "Memory.tsx"
+    linked = set(re.findall(r"/admin/reports\?report=([a-z0-9_]+)", page.read_text(encoding="utf-8")))
+    assert linked, "the Cost control links are gone; delete this test with them"
+    assert linked <= REPORT_IDS, f"linked to reports that do not exist: {sorted(linked - REPORT_IDS)}"

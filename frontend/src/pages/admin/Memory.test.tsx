@@ -163,3 +163,22 @@ describe("the extraction spend cap", () => {
     expect(host.querySelector(".alert-warning")?.textContent).toContain("Extraction is paused");
   });
 });
+
+describe("the links out of Cost control", () => {
+  it("offers both reports, with the report preselected in the link", async () => {
+    answerWith({ extraction_model_id: 7 });
+    await render();
+    const links = [...host.querySelectorAll(".memory-admin__budget-links a")];
+    expect(links.map((a) => a.getAttribute("href"))).toEqual([
+      "/admin/reports?report=memory_cost_by_user",
+      "/admin/reports?report=memory_cost_summary",
+    ]);
+  });
+
+  it("keeps them beside the figure that raises the question", async () => {
+    answerWith({ extraction_model_id: 7 });
+    await render();
+    const costControl = host.querySelector('section[aria-label="Cost control"]');
+    expect(costControl?.querySelector(".memory-admin__budget-links")).not.toBeNull();
+  });
+});

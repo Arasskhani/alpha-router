@@ -8209,6 +8209,24 @@ table.data-table--api-logs {
   margin-bottom: 1.1rem;
 }
 
+.memory-admin__budget-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: 0.55rem 0 0;
+  font-size: 0.85rem;
+}
+
+.memory-admin__budget-links a {
+  color: var(--accent);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.memory-admin__budget-links a:hover {
+  text-decoration: underline;
+}
+
 .memory-admin__status {
   display: grid;
   grid-template-columns: 1fr 1fr;

@@ -1,4 +1,6 @@
 import { FormEvent, type ReactNode, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+
 import AdminPage from "../../components/AdminPage";
 import { api } from "../../api";
 import { useConfirm } from "../../context/ConfirmContext";
@@ -380,6 +382,12 @@ export default function MemoryAdmin() {
               />
             </FieldRow>
           </div>
+          <p className="memory-admin__budget-links">
+            {/* The page states a number and stops. These answer the two
+                questions that number raises, in the place it raises them. */}
+            <Link to="/admin/reports?report=memory_cost_by_user">Spend by user →</Link>
+            <Link to="/admin/reports?report=memory_cost_summary">Daily trend →</Link>
+          </p>
           {capped && spentThisMonth >= cap ? (
             <p className="alert alert-warning" role="status">
               <strong>Extraction is paused.</strong> The monthly budget is spent. Nothing new is being learned in

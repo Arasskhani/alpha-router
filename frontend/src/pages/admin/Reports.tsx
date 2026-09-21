@@ -125,6 +125,13 @@ export default function Reports() {
       const d = applyPreset("30");
       setStart(d.start);
       setEnd(d.end);
+      // ?report=<id> lets a page that raises a cost question hand the reader
+      // straight to the report that answers it. An unknown id is ignored
+      // rather than erroring: a stale bookmark should open the catalog.
+      const wanted = new URLSearchParams(window.location.search).get("report");
+      if (wanted && data.reports.some((report) => report.id === wanted)) {
+        setSelectedId(wanted);
+      }
     });
     void api<ReportOptions>("/api/admin/reports/options").then(setOptions).catch(() => {});
   }, []);

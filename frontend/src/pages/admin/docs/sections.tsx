@@ -1082,7 +1082,7 @@ export const docSections: DocSection[] = [
             </tr>
             <tr>
               <td>Data &amp; reports</td>
-              <td>Storage Management, Retention Policy, Memory, Reports, Projects, API Logs, Admin Logs</td>
+              <td>Storage Management, Retention Policy, Memory, Reports, Projects, API Logs, Admin Logs, Sign-in Activity</td>
             </tr>
             <tr>
               <td>Developer</td>
@@ -2816,6 +2816,103 @@ export const docSections: DocSection[] = [
           </li>
           <li>
             <code>PATCH /api/admin/storage/admin-log-settings</code> — the two retention windows.
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    id: "admin-sign-in-activity",
+    title: "Sign-in Activity",
+    group: "Data & reports",
+    content: (
+      <>
+        <h2>Sign-in Activity</h2>
+        <p>
+          Path: <code>/admin/sign-in-activity</code>. Every sign-in, failed attempt, sign-out and revoked session,
+          with the account it concerns, the time, the address it came from, the method (local, LDAP, SAML, OIDC), the
+          outcome and — when it failed — the reason, as a stable code plus the provider&apos;s own message when one
+          was recorded. This is the page for &ldquo;who signed in from where&rdquo;, &ldquo;how many failed attempts
+          did this account see last night&rdquo; and &ldquo;which accounts did this address try&rdquo;.
+        </p>
+        <Note>
+          Reach a single account&apos;s history from <a href="#admin-users">Users</a> → row actions →{" "}
+          <strong>Sign-in activity</strong>. The page opens filtered to that account
+          (<code>?user=&lt;id&gt;</code>) with an <strong>Open user</strong> link back.
+        </Note>
+        <ul>
+          <li>
+            Columns: time (in your browser&apos;s timezone), user, event, outcome, method, IP, reason. The outcome
+            badge is green for a sign-in that worked, red for one that did not (including a rate-limited attempt), and
+            grey for a sign-out or revocation, which is neither. Click a row for every recorded fact, including the
+            user agent, session id and correlation id, and the account as it is <em>now</em> beside the name as it
+            was then.
+          </li>
+          <li>
+            Events: <strong>Signed in</strong>, <strong>Sign-in failed</strong> (with a reason such as wrong password,
+            no such account, account deactivated, two-factor code rejected, directory unreachable, SAML/OIDC
+            rejected), <strong>Rate limited</strong>, <strong>Signed out</strong>, and{" "}
+            <strong>Sessions revoked</strong> — a sign-out the person did not perform, caused by a password change,
+            an administrator&apos;s password reset, two-factor being disabled, or the account being deactivated or
+            deleted. Rows imported from the earlier audit trail are marked <em>imported</em>; their reason may read
+            &ldquo;not recorded&rdquo; where retention had already cleared it.
+          </li>
+          <li>
+            A sign-out in this product ends <em>every</em> session for the account, on every device, so the page never
+            pairs a sign-in with a sign-out as a duration — that number would be fiction.
+          </li>
+          <li>
+            Accounts that sign in through SAML or OIDC sign out at the identity provider. That sign-out is recorded in
+            the provider&apos;s own log, not here; the detail view says so for those accounts.
+          </li>
+          <li>
+            Filters: username prefix, event, outcome, reason, method, IP address and a date range; they apply on{" "}
+            <strong>Filter</strong>. The combobox values are the fixed catalogue the server records, not a scan of the
+            table. Paging is <strong>Previous</strong>/<strong>Next</strong> over 100 rows, newest first.
+          </li>
+          <li>
+            <strong>Export CSV</strong> downloads the rows the current filters show — UTF-8 with a byte-order mark so
+            spreadsheets open it correctly, capped at 50,000 rows with a notice when the cap was hit. Because the
+            file holds usernames and addresses, every export is written to <a href="#admin-activity-logs">Admin Logs</a>{" "}
+            as <code>sign_in_activity_exported</code> with the filter and the row count.
+          </li>
+          <li>
+            Retention: one window over the whole row (default 365 days, floor 90), set on{" "}
+            <a href="#admin-retention">Retention Policy</a>. Nothing on a sign-in event is cleared early.
+          </li>
+          <li>
+            Access: Super Admin and Read Only Super Admin. The menu has its own permission key
+            (<code>sign_in_activity</code>) rather than sharing <code>api_logs</code>, because sign-in history is
+            personal data about every account. Sign-in rows also appear in Admin Logs under the{" "}
+            <em>Sign-in activity</em> trail so a single timeline still shows them.
+          </li>
+        </ul>
+        <h3>Where the address comes from</h3>
+        <p>
+          The IP is the client address the platform resolved for the request: the connecting address, or the
+          forwarded address when the connection came through a proxy listed in <code>TRUSTED_PROXY_CIDRS</code>. If
+          every row shows the same address, that is the reverse proxy — add its network to the trusted list.
+        </p>
+        <h3>API</h3>
+        <ul>
+          <li>
+            <code>GET /api/admin/sign-in-activity</code> — <code>limit</code> (≤500), <code>offset</code>,{" "}
+            <code>user_id</code>, <code>username</code> (prefix), <code>event_type</code>, <code>outcome</code>,{" "}
+            <code>reason_code</code>, <code>auth_method</code>, <code>ip</code>, <code>start_date</code>,{" "}
+            <code>end_date</code> (<code>YYYY-MM-DD</code>). An unknown catalogue value is a 400.
+          </li>
+          <li>
+            <code>GET /api/admin/sign-in-activity/{"{id}"}</code> — one event with the account as it is now.
+          </li>
+          <li>
+            <code>GET /api/admin/sign-in-activity/filter-options</code> — the catalogue behind the comboboxes.
+          </li>
+          <li>
+            <code>GET /api/admin/sign-in-activity/export.csv</code> — the same filters; <code>X-Truncated</code> and{" "}
+            <code>X-Row-Count</code> headers.
+          </li>
+          <li>
+            <code>PATCH /api/admin/storage/sign-in-activity-settings</code> — the retention window.
           </li>
         </ul>
       </>

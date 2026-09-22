@@ -10,6 +10,7 @@ import ListTruncatedBanner from "../../components/ListTruncatedBanner";
 import RowActionsMenu, { RowAction } from "../../components/RowActionsMenu";
 import { useConfirm } from "../../context/ConfirmContext";
 import { USAGE_AND_ACTIVITY_LABEL } from "../../lib/usageActivityLabel";
+import { signInActivityPathForUser } from "../../lib/signInActivity";
 import {
   PRESENCE_REFRESH_INTERVAL_MS,
   presenceAvailableFromUserRows,
@@ -608,6 +609,10 @@ export default function Users() {
       {
         label: "User Storage",
         onClick: () => navigate(`/admin/users/${u.id}/media`),
+      },
+      {
+        label: "Sign-in activity",
+        onClick: () => navigate(signInActivityPathForUser(u.id)),
       },
       { label: "Edit user", onClick: () => openEditUser(u) },
       {

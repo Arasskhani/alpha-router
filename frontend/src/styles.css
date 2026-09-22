@@ -8161,6 +8161,21 @@ table.data-table--api-logs {
   color: #92400e;
   background: #fffbeb;
 }
+.alert-info {
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+}
+/* A button that reads as a link, for an action inside a sentence. */
+.btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
 [data-scheme="dark"] .alert-warning {
   border-color: color-mix(in srgb, #f59e0b 55%, var(--border));
   color: #fbbf24;
@@ -15609,6 +15624,33 @@ p.error,
 .status-badge--revoked {
   color: #b91c1c;
   background: #fef2f2;
+}
+
+/* A sign-out or a revocation is neither a success nor a failure of a sign-in. */
+.status-badge--neutral {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--text) 6%, var(--surface));
+}
+
+/* Sign-in Activity: the facts of one event, label beside value. */
+.sign-in-event-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.4rem 1rem;
+  margin: 0.75rem 0 0;
+}
+.sign-in-event-facts dt {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.sign-in-event-facts dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sign-in-event-facts__mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
 }
 
 .project-media-toolbar {

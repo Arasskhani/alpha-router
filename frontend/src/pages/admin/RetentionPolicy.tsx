@@ -618,7 +618,7 @@ export default function RetentionPolicy() {
       <form className="card" onSubmit={saveSignInActivitySettings}>
         <h3>Sign-in activity — who signed in, from where</h3>
         <p className="muted-text" style={{ marginTop: 0 }}>
-          The events behind Sign-in Activity: every sign-in, failed
+          The events behind <Link to="/admin/sign-in-activity">Sign-in Activity</Link>: every sign-in, failed
           attempt, sign-out and revoked session, with the address it came from and the reason it failed. Every
           column is a short fact and none of it is cleared early — the reason a sign-in failed is kept exactly as
           long as the fact that it did. A row is kept whole until the window passes.

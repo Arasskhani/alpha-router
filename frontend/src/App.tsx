@@ -24,6 +24,7 @@ const AdminUserMedia = lazy(() => import("./pages/admin/AdminUserMedia"));
 const Reports = lazy(() => import("./pages/admin/Reports"));
 const ApiLogs = lazy(() => import("./pages/admin/ApiLogs"));
 const AdminLogs = lazy(() => import("./pages/admin/AdminLogs"));
+const SignInActivity = lazy(() => import("./pages/admin/SignInActivity"));
 const Operations = lazy(() => import("./pages/admin/Operations"));
 const CodeInterpreter = lazy(() => import("./pages/admin/CodeInterpreter"));
 const ChatTools = lazy(() => import("./pages/admin/ChatTools"));
@@ -141,6 +142,7 @@ export default function App() {
         <Route path="project-usage" element={<ProjectUsage />} />
         <Route path="logs" element={<ApiLogs />} />
         <Route path="admin-logs" element={<AdminLogs />} />
+        <Route path="sign-in-activity" element={<SignInActivity />} />
         <Route path="operations" element={<Operations />} />
         <Route path="debug" element={<Operations />} />
         <Route path="chat-tools" element={<ChatTools />} />

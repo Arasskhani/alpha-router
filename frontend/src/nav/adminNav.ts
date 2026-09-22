@@ -90,6 +90,7 @@ export const adminNavSections: NavSection[] = [
       { to: "/admin/project-usage", label: "Projects", menuKey: "reports" },
       { to: "/admin/logs", label: "API Logs", menuKey: "api_logs" },
       { to: "/admin/admin-logs", label: "Admin Logs", menuKey: "api_logs" },
+      { to: "/admin/sign-in-activity", label: "Sign-in Activity", menuKey: "sign_in_activity" },
     ],
   },
   {

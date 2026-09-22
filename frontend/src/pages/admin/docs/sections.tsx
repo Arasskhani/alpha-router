@@ -625,6 +625,10 @@ export const docSections: DocSection[] = [
           <li>
             <a href="#hardening">Production hardening checklist</a>
           </li>
+          <li>
+            <a href="#admin-storage-management">Upload file types</a> — which extensions users may upload, and the
+            checks (bytes-must-match-name, download-only delivery, ClamAV) that hold regardless of the list.
+          </li>
         </ul>
       </>
     ),
@@ -2445,6 +2449,26 @@ export const docSections: DocSection[] = [
             Code Interpreter workspace limits: maximum files per turn and maximum extracted-text size. The product
             limit can support 100 or more small files, while a higher broker hard ceiling still protects against
             pathological zero-byte file counts and payload abuse.
+          </li>
+          <li>
+            <strong>File types</strong> — which extensions users may upload as chat attachments and into project
+            libraries. Two modes: <em>block the listed types</em> (everything else is allowed; the default) or{" "}
+            <em>allow only the listed types</em>. Each list is shown as chips; every entry, including every shipped
+            default, can be removed with its ×, and <strong>Add file type</strong> opens a popup that takes several
+            extensions at once (commas, spaces or new lines; the dot is optional) and previews each as accepted,
+            already listed or invalid before anything changes. Nothing is applied until{" "}
+            <strong>Save file type policy</strong>; <strong>Restore defaults</strong> puts both lists and the mode
+            back after a confirm. Every save and reset is recorded in Admin Logs as{" "}
+            <code>upload_file_type_policy_changed</code>. Some protections do not depend on the lists at all: a
+            file&apos;s bytes must match its name (an executable is refused under any name, HTML or SVG content is
+            refused behind an image, video or audio name), unrecognised files are always served as downloads, and every
+            upload is scanned by ClamAV.
+            <br />
+            <code>.svg</code> and <code>.html</code> are blocked by default because, served inline, they are a
+            script-execution vector: a browser runs whatever script such a file carries, in the platform&apos;s own
+            origin. Removing them from the blocklist lets people store those files in the library and attach them to
+            chats; it does not make the platform render them — they are still delivered as downloads, never opened in
+            the page.
           </li>
         </ul>
         <Note>

@@ -593,6 +593,31 @@ async def get_attachment_limits(
     return transfer_limits_public_view(await get_transfer_limits(db))
 
 
+@router.get("/attachment-policy")
+async def attachment_policy(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_active_user),
+) -> dict[str, object]:
+    """What the composer may offer, so a refusal is explained before the upload.
+
+    The server decides; this only lets the UI say "not allowed" at once
+    instead of after the bytes have travelled. Both lists are returned so the
+    picker can explain either mode. Limits come from Transfer size limits.
+    """
+    from app.services.transfer_limits_service import get_transfer_limits
+    from app.services.upload_file_policy import load_policy
+
+    policy = await load_policy(db)
+    transfer = await get_transfer_limits(db)
+    return {
+        "mode": policy.mode,
+        "blocked": sorted(policy.blocked),
+        "allowed": sorted(policy.allowed),
+        "max_attachments": int(transfer["max_chat_attachments_count"]),
+        "max_upload_mb": int(transfer["max_upload_file_mb"]),
+    }
+
+
 @router.post("/attachments/process")
 async def process_attachments(
     files: list[UploadFile] = File(...),

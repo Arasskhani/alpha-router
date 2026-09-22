@@ -16622,3 +16622,136 @@ p.error,
   font-size: 0.78rem;
   line-height: 1.5;
 }
+
+/* ── Storage Management: file types card ── */
+.file-types-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.25rem;
+  margin: 0.75rem 0 0.9rem;
+  padding: 0;
+  border: none;
+}
+.file-types-mode legend {
+  padding: 0;
+  margin-bottom: 0.3rem;
+}
+.file-types-mode label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.file-types-mode input[type="radio"] {
+  margin: 0;
+}
+
+.file-types-list-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.file-types-list-head .file-types-add {
+  margin-left: auto;
+}
+
+.file-types-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  list-style: none;
+  margin: 0 0 0.6rem;
+  padding: 0;
+}
+.file-types-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.15rem 0.3rem 0.15rem 0.6rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+.file-types-chip__name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.file-types-chip__default {
+  font-size: 0.62rem;
+  line-height: 1.2;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.35rem;
+}
+.file-types-chip__remove {
+  background: none;
+  border: none;
+  padding: 0 0.25rem;
+  font: inherit;
+  font-size: 0.95rem;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 999px;
+}
+.file-types-chip__remove:hover:not(:disabled) {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.file-types-chip__remove:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+/* Read-only chips (the inactive list) have no × and read a little quieter. */
+.file-types-other .file-types-chip {
+  padding-right: 0.6rem;
+  color: var(--muted);
+}
+
+.file-types-toggle-other {
+  font-size: 0.85rem;
+}
+.file-types-other {
+  margin-top: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+}
+.file-types-dirty {
+  margin-top: 0.6rem;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.file-types-add-preview {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.6rem;
+}
+.file-types-add-preview__item {
+  font-size: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.15rem 0.5rem;
+}
+.file-types-add-preview__item.is-ok {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+.file-types-add-preview__item.is-invalid {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+}

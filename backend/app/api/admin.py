@@ -157,6 +157,7 @@ from app.services.system_default_models import (
     get_default_model_id,
     set_default_model,
 )
+from app.services.upload_file_policy import Policy as UploadFilePolicy
 from app.services.user_media_service import (
     MediaZipLimitError,
     _media_row_dict,
@@ -3885,6 +3886,13 @@ async def get_storage_overview(db: AsyncSession = Depends(get_db), _: User = Dep
 
     # Sign-in history: the fifth. One window, no redaction — see the service.
     stats["sign_in_activity"] = await get_auth_event_retention(db)
+
+    from app.services.upload_file_policy import load_policy
+
+    # Which file types may enter the platform. Read past the per-process cache:
+    # an administrator who has just saved (possibly on another worker) must
+    # see what is stored, not a copy up to a minute old.
+    stats["file_types"] = (await load_policy(db, use_cache=False)).as_dict()
     quota_gb = await get_user_media_quota_gb(db)
     stats["settings"]["user_media_quota_gb"] = quota_gb
     stats["settings"]["user_media_quota_bytes"] = await get_user_media_quota_bytes(db)
@@ -4144,6 +4152,108 @@ async def patch_sign_in_activity_retention_settings(
     )
     await db.commit()
     return {"ok": True, "sign_in_activity": saved}
+
+
+class FileTypePolicyIn(BaseModel):
+    """The whole policy at once: one mode and both lists, as the page shows them.
+
+    The list cap matches ``upload_file_policy.MAX_LIST_ENTRIES`` so an
+    oversized request is refused at the schema rather than after normalising
+    hundreds of entries.
+    """
+
+    mode: str
+    blocked: list[str] = Field(default_factory=list, max_length=500)
+    allowed: list[str] = Field(default_factory=list, max_length=500)
+
+
+def _file_type_policy_diff(before: UploadFilePolicy, after: UploadFilePolicy) -> dict[str, object]:
+    """What changed between two policies, as sorted lists of extensions.
+
+    The audit trail records the difference rather than both lists in full: a
+    list may hold hundreds of entries, and an auditor reading the trail wants
+    to see "``exe`` was removed", not to compare two 300-line arrays by eye.
+    """
+    return {
+        "mode_before": before.mode,
+        "mode_after": after.mode,
+        "blocked_added": sorted(after.blocked - before.blocked),
+        "blocked_removed": sorted(before.blocked - after.blocked),
+        "allowed_added": sorted(after.allowed - before.allowed),
+        "allowed_removed": sorted(before.allowed - after.allowed),
+    }
+
+
+@router.put("/storage/file-type-policy")
+async def put_file_type_policy(
+    body: FileTypePolicyIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_storage_write),
+):
+    """Replace the upload file-type policy: the mode and both extension lists.
+
+    Saving is audited because these lists decide what may enter the platform
+    at all. Taking ``exe`` off the blocklist, or switching from allowlist to
+    blocklist mode, widens what every user can upload and hand to a model or
+    a sandbox; that is a security-relevant act and must be attributable to a
+    person, an address and a moment. The event carries the diff rather than
+    the lists themselves - see ``_file_type_policy_diff``.
+
+    Validation errors from the service become a 400 with the service's
+    message, which names the offending entries, so the operator can fix the
+    field instead of guessing which of many entries was wrong.
+    """
+    from app.services.client_ip import resolve_client_ip
+    from app.services.security_audit import log_security_event
+    from app.services.upload_file_policy import load_policy, save_policy
+
+    before = await load_policy(db, use_cache=False)
+    try:
+        saved = await save_policy(db, mode=body.mode, blocked=body.blocked, allowed=body.allowed)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=resolve_client_ip(request),
+        action="upload_file_type_policy_changed",
+        resource_type="upload_policy",
+        detail=_file_type_policy_diff(before, saved),
+    )
+    await db.commit()
+    return {"ok": True, "file_types": saved.as_dict()}
+
+
+@router.post("/storage/file-type-policy/reset")
+async def reset_file_type_policy(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_storage_write),
+):
+    """Bring back the lists the product shipped with, in blocklist mode.
+
+    Audited for the same reason as saving: restoring the defaults re-blocks
+    whatever an operator had unblocked and re-admits whatever they had added
+    to the blocklist, so it changes what may enter the platform. The diff
+    shows exactly which entries came back and which went.
+    """
+    from app.services.client_ip import resolve_client_ip
+    from app.services.security_audit import log_security_event
+    from app.services.upload_file_policy import load_policy, reset_policy
+
+    before = await load_policy(db, use_cache=False)
+    saved = await reset_policy(db)
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=resolve_client_ip(request),
+        action="upload_file_type_policy_reset",
+        resource_type="upload_policy",
+        detail=_file_type_policy_diff(before, saved),
+    )
+    await db.commit()
+    return {"ok": True, "file_types": saved.as_dict()}
 
 
 @router.patch("/storage/chat-settings")

@@ -20,6 +20,7 @@ describe("audit trail picker", () => {
       "projects",
       "api_keys",
       "connections",
+      "authentication",
     ]);
   });
 

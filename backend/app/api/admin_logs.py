@@ -10,9 +10,10 @@ Filters are deliberately the four an investigation actually starts from - a
 date range, a person, a kind of action, and a kind of resource - and each one
 is backed by an index added alongside this module.
 
-The page first read the security trail alone. The product writes seven more
-(agents, tools, knowledge, governance, projects, API keys, connections), each
-to its own table, and an investigation should not have to know which. They
+The page first read the security trail alone. The product writes eight more
+(agents, tools, knowledge, governance, projects, API keys, connections, and
+sign-ins), each to its own table, and an investigation should not have to
+know which. They
 are read through :mod:`app.services.admin_log_union`, one normalised shape
 over all of them; ``source`` picks a trail or ``all``.
 """

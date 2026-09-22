@@ -55,6 +55,7 @@ export const AUDIT_SOURCES = [
   ["projects", "Projects"],
   ["api_keys", "API keys"],
   ["connections", "Provider connections"],
+  ["authentication", "Sign-in activity"],
 ] as const;
 
 type AuditSource = (typeof AUDIT_SOURCES)[number][0];

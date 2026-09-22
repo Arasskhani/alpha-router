@@ -22,6 +22,7 @@ from app.core.security import hash_password
 from app.models.agent import AgentAuditEvent
 from app.models.agent_tool import AgentToolAuditEvent
 from app.models.api_key import AlphaRouterApiKey, AlphaRouterApiKeyAuditLog
+from app.models.auth_event import AuthEvent
 from app.models.connection import Connection, ConnectionAuditLog
 from app.models.governance import GovernanceAuditEvent
 from app.models.knowledge import KnowledgeAuditEvent
@@ -112,6 +113,18 @@ async def _seed(db_session) -> User:
                 changes_json='[{"field":"model"}]',
                 created_at=_at(8),
             ),
+            AuthEvent(
+                occurred_at=_at(9),
+                user_id=actor.id,
+                username="auditor",
+                event_type="login_failed",
+                outcome="failure",
+                reason_code="bad_password",
+                reason_detail='Provider said "no"',
+                auth_method="ldap",
+                ip="203.0.113.7",
+                session_id=None,
+            ),
         ]
     )
     await db_session.commit()
@@ -135,15 +148,25 @@ def _args(db, **overrides):
     return base
 
 
-async def test_all_eight_trails_appear_in_one_list_newest_first(db_session):
+async def test_all_nine_trails_appear_in_one_list_newest_first(db_session):
     await _seed(db_session)
 
     result = await list_admin_logs(**_args(db_session))
 
     sources = [row["source"] for row in result["items"]]
-    assert sources == ["connections", "api_keys", "projects", "governance", "knowledge", "tools", "agents", "security"]
+    assert sources == [
+        "authentication",
+        "connections",
+        "api_keys",
+        "projects",
+        "governance",
+        "knowledge",
+        "tools",
+        "agents",
+        "security",
+    ]
     actions = [row["action"] for row in result["items"]]
-    assert actions[0] == "updated" and actions[-1] == "tls_activate"
+    assert actions[0] == "login_failed" and actions[-1] == "tls_activate"
 
 
 async def test_every_row_names_its_actor_even_where_the_table_stores_only_an_id(db_session):
@@ -152,13 +175,16 @@ async def test_every_row_names_its_actor_even_where_the_table_stores_only_an_id(
     result = await list_admin_logs(**_args(db_session))
 
     assert {row["actor_username"] for row in result["items"]} == {"auditor"}
-    assert all(row["actor_resolved_live"] is (row["source"] != "security") for row in result["items"])
+    # The security and sign-in trails store a copy of the name; the rest name only an id.
+    assert all(
+        row["actor_resolved_live"] is (row["source"] not in ("security", "authentication")) for row in result["items"]
+    )
 
 
 async def test_the_actor_filter_reaches_every_trail(db_session):
     await _seed(db_session)
     result = await list_admin_logs(**_args(db_session, actor="audit"))
-    assert len(result["items"]) == 8
+    assert len(result["items"]) == 9
     none = await list_admin_logs(**_args(db_session, actor="somebody-else"))
     assert none["items"] == []
 
@@ -184,7 +210,7 @@ async def test_paging_across_sources_neither_repeats_nor_skips(db_session):
         page = await list_admin_logs(**_args(db_session, limit=3, offset=offset))
         seen.extend(f"{row['source']}:{row['id']}" for row in page["items"])
         assert page["has_more"] is (offset < 6)
-    assert len(seen) == 8 and len(set(seen)) == 8
+    assert len(seen) == 9 and len(set(seen)) == 9
 
 
 async def test_the_resource_type_is_the_kind_of_thing_each_trail_is_about(db_session):
@@ -201,7 +227,7 @@ async def test_the_resource_type_is_the_kind_of_thing_each_trail_is_about(db_ses
 async def test_the_date_range_applies_to_the_union(db_session):
     await _seed(db_session)
     result = await list_admin_logs(**_args(db_session, start_date="2026-09-19", end_date="2026-09-19"))
-    assert len(result["items"]) == 8
+    assert len(result["items"]) == 9
     none = await list_admin_logs(**_args(db_session, start_date="2026-09-20"))
     assert none["items"] == []
 
@@ -217,3 +243,38 @@ async def test_filter_options_cover_every_trail_when_asked_for_all(db_session):
     assert "connection" in options["resource_types"]
     assert options["actors"] == ["auditor"]
     assert set(options["sources"]) >= {"security", "agents", "knowledge", "governance"}
+
+
+async def test_sign_ins_are_still_in_the_trail_after_moving_tables(db_session):
+    """Before ``auth_events`` existed, sign-ins were security rows with
+    ``resource_type='authentication'``. The move must not make them vanish
+    from this page: same resource type, the account as the actor, the typed
+    columns folded into the detail — with a quote in the provider message
+    escaped by the database, not by string concatenation."""
+    await _seed(db_session)
+
+    only = await list_admin_logs(**_args(db_session, source="authentication"))
+    assert len(only["items"]) == 1
+    row = only["items"][0]
+    assert row["source"] == "authentication"
+    assert row["action"] == "login_failed"
+    assert row["outcome"] == "failure"
+    assert row["resource_type"] == "authentication"
+    assert row["actor_username"] == "auditor"
+    assert row["actor_ip"] == "203.0.113.7"
+    assert row["actor_resolved_live"] is False
+    assert row["detail"]["reason_code"] == "bad_password"
+    assert row["detail"]["reason_detail"] == 'Provider said "no"'
+    assert row["detail"]["auth_method"] == "ldap"
+    assert not row["detail"]["backfilled"]
+
+    by_type = await list_admin_logs(**_args(db_session, resource_type="authentication"))
+    assert [r["source"] for r in by_type["items"]] == ["authentication"]
+
+
+async def test_the_filter_panel_offers_sign_in_actions_and_the_account(db_session):
+    await _seed(db_session)
+    options = await admin_log_filter_options(db=db_session, _=None, source="authentication")
+    assert options["actions"] == ["login_failed"]
+    assert options["resource_types"] == ["authentication"]
+    assert options["actors"] == ["auditor"]

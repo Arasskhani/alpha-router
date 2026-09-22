@@ -2716,8 +2716,16 @@ export const docSections: DocSection[] = [
         <p>
           Path: <code>/admin/admin-logs</code>. The administrative audit trails in one view: who took an action, when,
           from which IP, against which resource, and what the action recorded about itself — across the security
-          trail and the seven domain trails (Agents, Agent tools, Knowledge, Governance, Projects, API keys, Provider
-          connections). The <strong>Trail</strong> picker narrows the view to one of them; the default is all.
+          trail, the seven domain trails (Agents, Agent tools, Knowledge, Governance, Projects, API keys, Provider
+          connections) and Sign-in activity. The <strong>Trail</strong> picker narrows the view to one of them; the
+          default is all.
+        </p>
+        <p>
+          Sign-in rows appear here so that &ldquo;everything that happened&rdquo; still includes who signed in, but
+          the <strong>administrator</strong> column on those rows is the account the sign-in concerns — the person
+          who signed in, or the name someone failed to sign in as — and the detail carries the reason, method and
+          scope. Filtering by outcome, reason or address, and exporting, is what the dedicated Sign-in Activity page
+          is for.
         </p>
         <Note>
           Not the same thing as <a href="#admin-logs">API Logs</a>, despite the neighbouring names. API Logs answers
@@ -2796,8 +2804,8 @@ export const docSections: DocSection[] = [
           <li>
             <code>GET /api/admin/admin-logs</code> — <code>source</code> (<code>all</code>, or one of{" "}
             <code>security</code>, <code>agents</code>, <code>tools</code>, <code>knowledge</code>,{" "}
-            <code>governance</code>, <code>projects</code>, <code>api_keys</code>, <code>connections</code>; omitted
-            means <code>security</code>, so earlier callers see what they always saw), <code>limit</code> (≤500),{" "}
+            <code>governance</code>, <code>projects</code>, <code>api_keys</code>, <code>connections</code>,{" "}
+            <code>authentication</code>; omitted means <code>security</code>, so earlier callers see what they always saw), <code>limit</code> (≤500),{" "}
             <code>offset</code>, <code>actor</code>, <code>action</code>, <code>resource_type</code>,{" "}
             <code>start_date</code>, <code>end_date</code> (<code>YYYY-MM-DD</code>). Returns <code>items</code>{" "}
             (each with its <code>source</code>), <code>limit</code>, <code>offset</code> and <code>has_more</code>.

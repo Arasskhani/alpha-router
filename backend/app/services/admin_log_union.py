@@ -1,4 +1,4 @@
-"""One shape over the product's eight administrative audit trails.
+"""One shape over the product's nine administrative audit trails.
 
 Each trail keeps its own table, with its own reasons: the governance chain is
 hash-linked and append-only, the agent and knowledge trails are guarded by
@@ -8,6 +8,13 @@ projection - source, time, actor, action, resource, detail - so the Admin Logs
 page can show an investigation everything that happened, in one order.
 
 Adding a trail is one more entry in ``SOURCES``.
+
+The ninth, ``authentication``, is the one that was here before under another
+name: sign-ins used to be three ``action`` values in the security trail, and
+when they moved to ``auth_events`` this page would have silently stopped
+showing them. They are read back in here so "everything that happened" still
+includes who signed in, and the Sign-in Activity page is where the typed
+columns are filtered and exported.
 """
 
 from __future__ import annotations
@@ -16,9 +23,12 @@ import datetime
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import Select, String, Text, and_, cast, literal, null, or_, select, union_all
+from sqlalchemy import Select, String, Text, and_, cast, literal, literal_column, null, or_, select, union_all
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.sql.functions import GenericFunction
 
 from app.models.agent import AgentAuditEvent
+from app.models.auth_event import AuthEvent
 from app.models.agent_tool import AgentToolAuditEvent
 from app.models.api_key import AlphaRouterApiKeyAuditLog
 from app.models.connection import ConnectionAuditLog
@@ -46,6 +56,35 @@ COLUMNS = (
 )
 
 
+class json_detail(GenericFunction):  # noqa: N801 -- a SQL function, named like one
+    """``{"k": v, ...}`` as JSON text, built by the database from typed columns.
+
+    ``auth_events`` stores facts in columns rather than a detail blob, which is
+    the point of that table; the union wants one text column. Every database
+    this product runs on has a JSON constructor that escapes correctly - they
+    just disagree on its name - so this compiles to each. Building the string
+    with ``||`` would not escape a quote in a provider message.
+    """
+
+    type = Text()
+    inherit_cache = True
+
+
+@compiles(json_detail, "sqlite")
+def _json_detail_sqlite(element, compiler, **kw):
+    return f"json_object({compiler.process(element.clauses, **kw)})"
+
+
+@compiles(json_detail, "postgresql")
+def _json_detail_postgresql(element, compiler, **kw):
+    return f"jsonb_build_object({compiler.process(element.clauses, **kw)})::text"
+
+
+@compiles(json_detail)
+def _json_detail_default(element, compiler, **kw):
+    return f"json_object({compiler.process(element.clauses, **kw)})"
+
+
 @dataclass(frozen=True)
 class Source:
     key: str
@@ -60,14 +99,18 @@ class Source:
     actor_ip: Any = None
     outcome: Any = None
     detail_redacted_at: Any = None
+    #: Overrides for tables whose time and actor columns are not named
+    #: ``created_at`` / ``actor_user_id``.
+    created_at: Any = None
+    actor_user_id: Any = None
 
     def select(self) -> Select:
         m = self.model
         return select(
             literal(self.key).label("source"),
             cast(m.id, String).label("id"),
-            m.created_at.label("created_at"),
-            m.actor_user_id.label("actor_user_id"),
+            (self.created_at if self.created_at is not None else m.created_at).label("created_at"),
+            (self.actor_user_id if self.actor_user_id is not None else m.actor_user_id).label("actor_user_id"),
             (self.actor_username if self.actor_username is not None else null()).label("actor_username"),
             (self.actor_email if self.actor_email is not None else null()).label("actor_email"),
             (self.actor_ip if self.actor_ip is not None else null()).label("actor_ip"),
@@ -162,6 +205,37 @@ SOURCES: dict[str, Source] = {
             resource_type=literal("connection"),
             resource_id=ConnectionAuditLog.connection_id,
             detail=ConnectionAuditLog.changes_json,
+        ),
+        # The "actor" of a sign-in row is the account it concerns - the person
+        # who signed in, or the name someone failed to sign in as. The same
+        # ``resource_type`` the legacy security rows carried, so an operator's
+        # saved filter for "authentication" keeps finding these.
+        Source(
+            key="authentication",
+            label="Sign-in activity",
+            model=AuthEvent,
+            action=AuthEvent.event_type,
+            resource_type=literal("authentication"),
+            resource_id=AuthEvent.session_id,
+            detail=json_detail(
+                literal_column("'reason_code'"),
+                AuthEvent.reason_code,
+                literal_column("'reason_detail'"),
+                AuthEvent.reason_detail,
+                literal_column("'auth_method'"),
+                AuthEvent.auth_method,
+                literal_column("'scope'"),
+                AuthEvent.scope,
+                literal_column("'user_agent'"),
+                AuthEvent.user_agent,
+                literal_column("'backfilled'"),
+                AuthEvent.backfilled,
+            ),
+            actor_username=AuthEvent.username,
+            actor_ip=AuthEvent.ip,
+            outcome=AuthEvent.outcome,
+            created_at=AuthEvent.occurred_at,
+            actor_user_id=AuthEvent.user_id,
         ),
     )
 }

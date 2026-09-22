@@ -165,6 +165,7 @@ import {
 } from "../lib/voiceInput";
 import { wavFromRecording } from "../lib/audioWav";
 import { fetchAttachmentPolicy } from "../lib/attachmentPolicy";
+import { useFileDrop } from "../hooks/useFileDrop";
 import {
   attachmentMessage,
   buildApiMessageContentAsync,
@@ -5994,6 +5995,18 @@ export default function ChatPanel({
     await processPendingAttachmentFiles(Array.from(list));
   }
 
+  // Files dropped anywhere on the chat pane go through the same path as the
+  // picker and paste. Disabled while a sidebar chat is being dragged (that
+  // drag has its own targets), for read-only accounts, and while a reply is
+  // streaming — attaching mid-reply would land the file on the wrong turn.
+  const fileDrop = useFileDrop({
+    enabled: !readOnly && !draggingSessionId,
+    isBusy: () => !!(activeId && isLocalTurnInFlight(activeId)),
+    remainingSlots: Math.max(0, maxAttachments - pendingAttachments.length),
+    onFiles: (files) => void processPendingAttachmentFiles(files),
+    onReject: (message) => setChatError(message),
+  });
+
   async function processPendingMediaIds(mediaIds: number[]) {
     const ids = [...new Set(mediaIds.filter((id) => Number.isInteger(id) && id > 0))];
     if (!ids.length) return;
@@ -6522,7 +6535,20 @@ export default function ChatPanel({
       {mainOverride ? (
         <div className="project-main-override">{mainOverride}</div>
       ) : (
-      <section className={`alpha-router-main${activePrivateMode ? " alpha-router-main--private" : ""}`}>
+      <section
+        className={`alpha-router-main${activePrivateMode ? " alpha-router-main--private" : ""}${fileDrop.active ? " is-file-drop-target" : ""}`}
+        {...fileDrop.handlers}
+      >
+        {fileDrop.active ? (
+          <div className="alpha-router-drop-overlay" aria-hidden="true">
+            <div className="alpha-router-drop-overlay__card">
+              <strong>Drop files to attach</strong>
+              <span>
+                Up to {maxAttachments} file{maxAttachments === 1 ? "" : "s"} per message · {maxUploadFileMb} MB each
+              </span>
+            </div>
+          </div>
+        ) : null}
         {projectBanner}
         {activePrivateMode ? <PrivateModeStrip /> : null}
         {accountReadOnly && <ReadOnlyBanner className="readonly-account-banner--chat" />}

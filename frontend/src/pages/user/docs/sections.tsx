@@ -444,7 +444,9 @@ export const userManualSections: DocSection[] = [
         <p>
           The paperclip opens an attach menu: upload a file, take a screenshot of a tab or window and crop it, or
           pick items from your Media library (project Media in a project chat). Files already in Media are attached by
-          reference — they are not stored a second time.
+          reference — they are not stored a second time. You can also <strong>drag files from your desktop and drop
+          them anywhere on the chat</strong>: an overlay appears while you hover, and the drop goes through the same
+          checks as the picker. Folders cannot be dropped, and a drop is refused while a reply is still streaming.
         </p>
         <ul>
           <li>

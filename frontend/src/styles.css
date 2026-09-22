@@ -16778,3 +16778,39 @@ p.error,
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+/* ── Chat: drop files anywhere on the pane ── */
+.alpha-router-main.is-file-drop-target > :not(.alpha-router-drop-overlay) {
+  pointer-events: none;
+}
+.alpha-router-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: color-mix(in srgb, var(--accent) 10%, var(--alpha-router-main-bg));
+  outline: 2px dashed color-mix(in srgb, var(--accent) 70%, var(--border));
+  outline-offset: -10px;
+  border-radius: 12px;
+  pointer-events: none;
+}
+.alpha-router-drop-overlay__card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 1rem 1.5rem;
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+  font-size: 1rem;
+}
+.alpha-router-drop-overlay__card span {
+  font-size: 0.85rem;
+  color: var(--muted);
+}

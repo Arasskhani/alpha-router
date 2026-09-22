@@ -17,7 +17,7 @@ import uuid
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from app.branding import PRODUCT_NAME
 from app.sandbox.contracts import (
@@ -134,11 +134,26 @@ app = FastAPI(
 )
 
 
+def _decoded_b64_size(value: str) -> int:
+    """Byte length of a padded standard-base64 string without materializing it.
+
+    The limits below are on the bytes the runner will write, never on the
+    encoded length, and a 64 MiB decode just to measure it would double the
+    request's peak memory. ``validate_files_b64`` already proved the string is
+    well-formed, so arithmetic on length and padding is exact.
+    """
+    stripped = value.rstrip("=")
+    return (len(stripped) * 3) // 4
+
+
 class ExecuteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     code: str = Field(min_length=1, max_length=MAX_CODE_CHARS)
     files: dict[str, str] = Field(default_factory=dict)
+    # Binary channel; see JobSubmitRequest.files_b64 for why this is a second
+    # map. Values are standard base64 (RFC 4648, padded) of the file bytes.
+    files_b64: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("files")
     @classmethod
@@ -156,6 +171,46 @@ class ExecuteRequest(BaseModel):
         if total > MAX_TOTAL_FILE_BYTES:
             raise ValueError("Workspace files exceed total size limit")
         return files
+
+    @field_validator("files_b64")
+    @classmethod
+    def validate_files_b64(cls, files_b64: dict[str, str]) -> dict[str, str]:
+        if len(files_b64) > HARD_MAX_WORKSPACE_FILES:
+            raise ValueError("Workspace file count exceeds the hard limit")
+        total = 0
+        for name, encoded in files_b64.items():
+            if not is_safe_filename(name):
+                raise ValueError("Invalid workspace filename")
+            try:
+                decoded = base64.b64decode(encoded, validate=True)
+            except (ValueError, TypeError, binascii.Error) as exc:
+                raise ValueError("Invalid base64 workspace file") from exc
+            size = len(decoded)
+            if size > MAX_FILE_BYTES:
+                raise ValueError("Workspace file exceeds size limit")
+            total += size
+        if total > MAX_TOTAL_FILE_BYTES:
+            raise ValueError("Workspace files exceed total size limit")
+        return files_b64
+
+    @model_validator(mode="after")
+    def validate_workspace_combined(self) -> ExecuteRequest:
+        """Apply the count and total-byte ceilings across both maps.
+
+        Each per-field validator keeps its own limit so an old caller sending
+        only ``files`` sees unchanged behaviour; this pass is what stops a
+        caller from doubling the workspace by splitting it across channels.
+        """
+        duplicates = set(self.files) & set(self.files_b64)
+        if duplicates:
+            raise ValueError("duplicate workspace filename")
+        if len(self.files) + len(self.files_b64) > HARD_MAX_WORKSPACE_FILES:
+            raise ValueError("Workspace file count exceeds the hard limit")
+        total = sum(len(content.encode("utf-8")) for content in self.files.values())
+        total += sum(_decoded_b64_size(encoded) for encoded in self.files_b64.values())
+        if total > MAX_TOTAL_FILE_BYTES:
+            raise ValueError("Workspace files exceed total size limit")
+        return self
 
 
 def _validate_artifact_content(name: str, content: bytes) -> None:
@@ -412,10 +467,12 @@ async def _run_container(
     timeout_seconds: int | None = None,
 ) -> dict[str, object]:
     container_name = f"alpha-router-sandbox-{uuid.uuid4().hex}"
-    payload = json.dumps(
-        {"code": body.code, "files": body.files},
-        ensure_ascii=False,
-    ).encode("utf-8")
+    stdin_payload: dict[str, object] = {"code": body.code, "files": body.files}
+    # Only add the binary channel when it carries something, so a run without
+    # binaries hands an older runner image the exact bytes it received before.
+    if body.files_b64:
+        stdin_payload["files_b64"] = body.files_b64
+    payload = json.dumps(stdin_payload, ensure_ascii=False).encode("utf-8")
     args = [
         "docker",
         "run",
@@ -726,7 +783,7 @@ async def submit_job(body: JobSubmitRequest):
     # Reuse the legacy ExecuteRequest validators as the single source of truth
     # for workspace file limits and code sizing.
     try:
-        request = ExecuteRequest(code=body.code, files=body.files)
+        request = ExecuteRequest(code=body.code, files=body.files, files_b64=body.files_b64)
     except ValidationError:
         return _error_json(422, ErrorCode.INVALID_REQUEST, "Invalid job request")
 

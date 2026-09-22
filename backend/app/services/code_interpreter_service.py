@@ -12,12 +12,16 @@ import os
 import re
 import sys
 import tempfile
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import httpx
+from fastapi import HTTPException
 
 from app.branding import PRODUCT_NAME
+from app.models.media import MediaAsset
 from app.sandbox.filenames import (
     MAX_FILENAME_BYTES,
     is_safe_filename,
@@ -25,10 +29,23 @@ from app.sandbox.filenames import (
     scrub_filename_chars,
 )
 from app.services.chat_markers import ATTACHMENT_MESSAGE_PREFIX
+from app.services.project_media_service import read_project_media_bytes
+from app.services.storage_service import format_size, read_media_bytes
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.models.user import User
+
+#: Sandbox workspace: text attachments are ``str`` (written UTF-8), binary
+#: attachments are ``bytes`` (written verbatim, sent to the broker as base64).
+WorkspaceFiles = dict[str, str | bytes]
 
 PYTHON_BLOCK_RE = re.compile(r"```(?:python|py)\s*\n([\s\S]*?)```", re.IGNORECASE)
 ATTACH_PREFIX = ATTACHMENT_MESSAGE_PREFIX
 FILE_SECTION_RE = re.compile(r"---\s+([^\n]+?)\s+---\n", re.MULTILINE)
+_PERSONAL_MEDIA_URL_RE = re.compile(r"^/api/chat/media/(\d+)/file(?:[?#].*)?$")
+_PROJECT_MEDIA_URL_RE = re.compile(r"^/api/projects/([^/?#]+)/media/(\d+)/download(?:[?#].*)?$")
 MAX_CODE_OUTPUT_CHARS = 50_000
 MAX_WORKSPACE_FILE_BYTES = 512_000
 DEFAULT_MAX_WORKSPACE_FILES = 500
@@ -114,7 +131,7 @@ class WorkspaceFile:
     name: str
     size_bytes: int
     sha256: str
-    content: str
+    content: str | bytes
 
 
 @dataclass(frozen=True)
@@ -122,7 +139,7 @@ class WorkspaceManifest:
     files: tuple[WorkspaceFile, ...]
     total_bytes: int
 
-    def as_files_dict(self) -> dict[str, str]:
+    def as_files_dict(self) -> WorkspaceFiles:
         return {item.name: item.content for item in self.files}
 
 
@@ -201,7 +218,7 @@ def code_interpreter_system_message() -> str:
     return CODE_INTERPRETER_SYSTEM
 
 
-def code_interpreter_nudge_message(workspace_files: dict[str, str] | None = None) -> str:
+def code_interpreter_nudge_message(workspace_files: WorkspaceFiles | None = None) -> str:
     files = workspace_files or {}
     if not files:
         return CODE_INTERPRETER_NUDGE
@@ -209,18 +226,47 @@ def code_interpreter_nudge_message(workspace_files: dict[str, str] | None = None
     return f"{CODE_INTERPRETER_NUDGE}\n\n{inventory}"
 
 
-def code_interpreter_workspace_message(workspace_files: dict[str, str]) -> str:
-    """Tell the model the exact sanitized filenames available in the sandbox CWD."""
+def workspace_content_size(content: str | bytes) -> int:
+    """Size as written to the sandbox: bytes verbatim, text as UTF-8."""
+    if isinstance(content, bytes):
+        return len(content)
+    return len(content.encode("utf-8"))
+
+
+def code_interpreter_workspace_message(
+    workspace_files: WorkspaceFiles,
+    *,
+    notes: list[str] | None = None,
+) -> str:
+    """Tell the model the exact sanitized filenames available in the sandbox CWD.
+
+    ``notes`` names attachments that were deliberately left out (too large,
+    not readable by this user), so the model explains the gap instead of
+    guessing that the file is there under another name.
+    """
     if not workspace_files:
         return ""
     lines = [
         "These attachment files are already in the sandbox working directory. "
         f"There are {len(workspace_files)} files. Use these exact filenames (do not invent names):",
     ]
+    has_binary = False
     for name in sorted(workspace_files):
-        size = len(workspace_files[name].encode("utf-8"))
-        lines.append(f"- {name} ({size} bytes)")
+        content = workspace_files[name]
+        size = workspace_content_size(content)
+        if isinstance(content, bytes):
+            has_binary = True
+            lines.append(f"- {name} ({size} bytes) (binary)")
+        else:
+            lines.append(f"- {name} ({size} bytes)")
+    if has_binary:
+        lines.append(
+            "Files marked (binary) are the original uploaded bytes: open them in binary mode (open(name, 'rb'))."
+        )
     lines.append("Example: df = pd.read_csv('filename.csv'); print(df.head()); print(df.describe()).")
+    if notes:
+        lines.append("Not copied:")
+        lines.extend(f"- {note}" for note in notes)
     return "\n".join(lines)
 
 
@@ -265,18 +311,19 @@ def _bounded_stem(stem: str, *, suffix: str) -> str:
     return trimmed or "data"
 
 
-def sanitize_workspace_filename(name: str, *, used: set[str] | None = None) -> str:
+def sanitize_workspace_filename(name: str, *, used: set[str] | None = None, binary: bool = False) -> str:
     """Normalize an attachment name for the sandbox while keeping its script.
 
     Persian, Arabic, Cyrillic and CJK names survive intact so the model can refer
     to the file the user actually uploaded; only characters the sandbox filename
     policy rejects are folded away. Spreadsheet uploads always end in ``.csv``
-    because they are converted to CSV text before they reach the sandbox.
+    because they are converted to CSV text before they reach the sandbox; a
+    ``binary`` file keeps its real extension because its bytes are untouched.
     """
     raw = normalize_filename(Path(name or "").name) or "data.txt"
     suffix = Path(raw).suffix.lower()
     stem = normalize_filename(Path(raw).stem) or "data"
-    if suffix in _SPREADSHEET_EXTENSIONS:
+    if suffix in _SPREADSHEET_EXTENSIONS and not binary:
         suffix = ".csv"
     elif suffix not in _ALLOWED_TEXT_SUFFIXES:
         if re.fullmatch(r"\.[A-Za-z0-9]{1,8}", suffix or ""):
@@ -374,8 +421,8 @@ def build_workspace_manifest(  # noqa: C901 -- Phase 4 split; complexity must no
                         name = str(att.get("name") or "data.txt")
                         # A ``file`` (unknown format, e.g. an unblocked ``.py``)
                         # carries text when its bytes were text; it reaches the
-                        # sandbox like a document. Binary files have no text
-                        # and are not carried yet.
+                        # sandbox like a document. Binary files have no text;
+                        # ``hydrate_binary_workspace_files`` adds their bytes.
                         if att.get("kind") in ("document", "file") and att.get("text"):
                             add_file(name, str(att["text"]))
                 continue
@@ -409,7 +456,7 @@ def workspace_files_from_messages(
     max_files: int = DEFAULT_MAX_WORKSPACE_FILES,
     max_total_bytes: int = DEFAULT_MAX_WORKSPACE_TOTAL_BYTES,
     max_file_bytes: int = MAX_WORKSPACE_FILE_BYTES,
-) -> dict[str, str]:
+) -> WorkspaceFiles:
     """Compatibility wrapper returning the manifest as broker workspace files."""
     return build_workspace_manifest(
         messages,
@@ -417,6 +464,145 @@ def workspace_files_from_messages(
         max_total_bytes=max_total_bytes,
         max_file_bytes=max_file_bytes,
     ).as_files_dict()
+
+
+def _iter_chat_attachments(messages: list[dict]) -> Iterator[dict]:
+    """Yield every attachment payload carried by ``ATTACH_PREFIX`` messages."""
+    for msg in messages:
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if not isinstance(content, str) or not content.startswith(ATTACH_PREFIX):
+            continue
+        try:
+            payload = json.loads(content[len(ATTACH_PREFIX) :])
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        for att in payload.get("attachments") or []:
+            if isinstance(att, dict):
+                yield att
+
+
+def _is_binary_attachment(att: dict) -> bool:
+    """A document/file whose extraction yielded no text to put in the prompt.
+
+    ``text == ""`` without the ``binary`` flag means extraction ran and found
+    nothing (an empty text file), which is not a reason to ship bytes.
+    """
+    if att.get("kind") not in ("document", "file"):
+        return False
+    text = att.get("text")
+    if text:
+        return False
+    return text is None or bool(att.get("binary"))
+
+
+async def _read_attachment_bytes(
+    db: AsyncSession,
+    *,
+    user: User,
+    url: str,
+) -> bytes | None:
+    """Resolve an attachment URL to its stored bytes, or ``None`` when not ours.
+
+    Only the two internal media URL shapes are honoured. A personal asset must
+    belong to the requesting user: a shared history can carry another
+    person's attachment, and that is not this user's to read. Project media
+    goes through the membership check the download endpoint uses.
+    """
+    personal = _PERSONAL_MEDIA_URL_RE.match(url)
+    if personal:
+        asset = await db.get(MediaAsset, int(personal.group(1)))
+        if asset is None or asset.user_id != user.id:
+            return None
+        try:
+            return await read_media_bytes(asset)
+        except FileNotFoundError:
+            return None
+    project = _PROJECT_MEDIA_URL_RE.match(url)
+    if project:
+        try:
+            loaded = await read_project_media_bytes(
+                db,
+                project_id=project.group(1),
+                media_id=int(project.group(2)),
+                user=user,
+            )
+        except (HTTPException, FileNotFoundError):
+            return None
+        return None if loaded is None else loaded[1]
+    return None
+
+
+async def hydrate_binary_workspace_files(  # noqa: C901 -- one limit check per skip reason
+    db: AsyncSession,
+    *,
+    user: User,
+    messages: list[dict],
+    files: WorkspaceFiles,
+    max_files: int,
+    max_total_bytes: int,
+    max_file_bytes: int = MAX_WORKSPACE_FILE_BYTES,
+) -> tuple[WorkspaceFiles, list[str]]:
+    """Add the bytes of text-less attachments to a text workspace.
+
+    Only attachments without extracted text get their original bytes. A PDF
+    that parsed to text stays text under its own name: shipping the original
+    too would collide on that one name, and today's prompts and tests rely on
+    the text being what the model reads. Carrying originals for parseable
+    documents is a separate decision.
+
+    Limits are enforced by skipping, not raising. Text overflow turns the
+    turn into a 413 because the text is already in the prompt; a binary the
+    user merely wants available must not take the whole turn down, so the
+    file is left out and the reason is returned as a note for the model.
+    """
+    result: WorkspaceFiles = dict(files)
+    used_names = set(result)
+    total_bytes = sum(workspace_content_size(content) for content in result.values())
+    notes: list[str] = []
+
+    for att in _iter_chat_attachments(messages):
+        if not _is_binary_attachment(att):
+            continue
+        url = att.get("url")
+        if not isinstance(url, str) or not (_PERSONAL_MEDIA_URL_RE.match(url) or _PROJECT_MEDIA_URL_RE.match(url)):
+            continue
+        name = str(att.get("name") or "data.bin")
+        if len(result) + 1 > max_files:
+            notes.append(f"{name} was not copied into the workspace: the workspace is limited to {max_files} files.")
+            continue
+        declared = att.get("size_bytes")
+        declared_size = declared if isinstance(declared, int) and not isinstance(declared, bool) else None
+        # The declared size lets an oversized upload be refused without
+        # fetching it; the read result is still checked afterwards.
+        if declared_size is not None and declared_size > max_file_bytes:
+            notes.append(
+                f"{name} ({format_size(declared_size)}) was not copied into the workspace: "
+                f"the per-file limit is {format_size(max_file_bytes)}."
+            )
+            continue
+        blob = await _read_attachment_bytes(db, user=user, url=url)
+        if blob is None:
+            notes.append(f"{name} was not copied into the workspace: it is not available to your account.")
+            continue
+        size = len(blob)
+        if size > max_file_bytes:
+            notes.append(
+                f"{name} ({format_size(size)}) was not copied into the workspace: "
+                f"the per-file limit is {format_size(max_file_bytes)}."
+            )
+            continue
+        if total_bytes + size > max_total_bytes:
+            notes.append(
+                f"{name} ({format_size(size)}) was not copied into the workspace: "
+                f"it would exceed the {format_size(max_total_bytes)} total workspace limit."
+            )
+            continue
+        safe = sanitize_workspace_filename(name, used=used_names, binary=True)
+        result[safe] = blob
+        total_bytes += size
+    return result, notes
 
 
 def _format_execution_result(stdout: str, stderr: str, exit_code: int) -> str:
@@ -621,7 +807,7 @@ _PRELUDE = (
 
 async def run_python_sandbox(
     code: str,
-    workspace_files: dict[str, str] | None = None,
+    workspace_files: Mapping[str, str | bytes] | None = None,
 ) -> SandboxExecutionResult:
     """Execute user code and return bounded output plus validated artifacts.
 
@@ -629,7 +815,7 @@ async def run_python_sandbox(
     available only through an explicit development-only opt-in.
     """
     validate_python_code(code)
-    workspace_files = workspace_files or {}
+    files: WorkspaceFiles = dict(workspace_files or {})
 
     from app.config import get_settings
 
@@ -638,21 +824,26 @@ async def run_python_sandbox(
     if broker_url:
         if len((settings.code_sandbox_broker_token or "").strip()) < 32:
             return _error_result("Code interpreter error: sandbox broker authentication is not configured.")
-        return await _run_via_broker(code, workspace_files, settings, broker_url)
+        return await _run_via_broker(code, files, settings, broker_url)
     if (settings.code_sandbox_image or "").strip():
         return _error_result("Code interpreter error: legacy sandbox image configuration requires the sandbox broker.")
     if settings.environment == "development" and settings.allow_insecure_code_subprocess:
-        return await _run_in_subprocess(code, workspace_files)
+        return await _run_in_subprocess(code, files)
     return _error_result("Code interpreter error: sandbox broker is required.")
 
 
 async def _run_via_broker(
     code: str,
-    workspace_files: dict[str, str],
+    workspace_files: WorkspaceFiles,
     settings,
     broker_url: str,
 ) -> SandboxExecutionResult:
-    """Submit and poll an explicit broker job; cancellation deletes the job."""
+    """Submit and poll an explicit broker job; cancellation deletes the job.
+
+    Binary files travel as base64 in a separate ``files_b64`` mapping. The
+    keyword is only passed when there is something in it, so an executor that
+    predates the parameter keeps working for text-only runs.
+    """
     from app.sandbox.executor import (
         DockerBrokerSandboxExecutor,
         SandboxExecutorError,
@@ -666,10 +857,19 @@ async def _run_via_broker(
         token=token,
         execution_timeout_seconds=timeout,
     )
+    text_files: dict[str, str] = {}
+    files_b64: dict[str, str] = {}
+    for name, content in workspace_files.items():
+        if isinstance(content, bytes):
+            files_b64[name] = base64.b64encode(content).decode("ascii")
+        else:
+            text_files[name] = content
+    execute_kwargs: dict[str, Any] = {"files_b64": files_b64} if files_b64 else {}
     try:
         result = await executor.execute(
             _PRELUDE + code + "\n",
-            workspace_files,
+            text_files,
+            **execute_kwargs,
         )
     except httpx.RequestError:
         return _error_result("Code interpreter error: sandbox broker unavailable.")
@@ -723,14 +923,17 @@ async def _run_via_broker(
 
 async def _run_in_subprocess(
     code: str,
-    workspace_files: dict[str, str],
+    workspace_files: WorkspaceFiles,
 ) -> SandboxExecutionResult:
     """Legacy in-process execution (no container). Retained for dev/no-docker setups."""
     with tempfile.TemporaryDirectory(prefix="alpha-router-code-") as tmp:
         root = Path(tmp)
         for name, content in workspace_files.items():
             path = root / Path(name).name
-            path.write_text(content, encoding="utf-8")
+            if isinstance(content, bytes):
+                path.write_bytes(content)
+            else:
+                path.write_text(content, encoding="utf-8")
 
         script = root / "alpha_router_user_code.py"
         script.write_text(_PRELUDE + code + "\n", encoding="utf-8")

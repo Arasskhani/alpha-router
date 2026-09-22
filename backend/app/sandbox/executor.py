@@ -73,22 +73,29 @@ class DockerBrokerSandboxExecutor:
         code: str,
         files: dict[str, str],
         *,
+        files_b64: dict[str, str] | None = None,
         job_id: str | None = None,
     ) -> dict[str, Any]:
         resolved_job_id = job_id or uuid.uuid4().hex
+        submit_body: dict[str, Any] = {
+            "job_id": resolved_job_id,
+            "code": code,
+            "files": files,
+            # The broker clamps this to its own hard ceiling; sending it
+            # is what makes CODE_SANDBOX_TIMEOUT_SECONDS mean the thing
+            # its name promises rather than only shaping the poll loop.
+            "timeout_seconds": self.execution_timeout_seconds,
+        }
+        # A broker built before the binary channel rejects unknown keys, so the
+        # key is sent only when there are bytes to carry; text-only runs keep
+        # the wire format they had.
+        if files_b64:
+            submit_body["files_b64"] = files_b64
         timeout = httpx.Timeout(max(self.execution_timeout_seconds + 20, 45))
         async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
             submit = await client.post(
                 f"{self.base_url}/v1/jobs",
-                json={
-                    "job_id": resolved_job_id,
-                    "code": code,
-                    "files": files,
-                    # The broker clamps this to its own hard ceiling; sending it
-                    # is what makes CODE_SANDBOX_TIMEOUT_SECONDS mean the thing
-                    # its name promises rather than only shaping the poll loop.
-                    "timeout_seconds": self.execution_timeout_seconds,
-                },
+                json=submit_body,
                 headers=self._headers,
             )
             if submit.status_code != 202:

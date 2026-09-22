@@ -72,3 +72,21 @@ def test_submit_request_validates_optional_job_id() -> None:
 def test_submit_request_requires_nonempty_code() -> None:
     with pytest.raises(ValidationError):
         JobSubmitRequest(code="")
+
+
+def test_submit_request_files_b64_defaults_to_empty_and_round_trips() -> None:
+    assert JobSubmitRequest(code="x").files_b64 == {}
+
+    request = JobSubmitRequest(code="x", files_b64={"a.bin": "AQID"})
+    assert request.files_b64 == {"a.bin": "AQID"}
+    assert request.files == {}
+
+    dumped = request.model_dump()
+    assert dumped["files_b64"] == {"a.bin": "AQID"}
+    assert JobSubmitRequest.model_validate(dumped) == request
+    assert JobSubmitRequest.model_validate_json(request.model_dump_json()).files_b64 == {"a.bin": "AQID"}
+
+
+def test_submit_request_with_files_b64_still_rejects_unknown_fields() -> None:
+    with pytest.raises(ValidationError):
+        JobSubmitRequest(code="x", files_b64={"a.bin": "AQID"}, files_raw={"a.bin": "x"})

@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app import sandbox_broker as broker
 
@@ -352,6 +353,112 @@ async def test_broker_hardcodes_container_security_policy() -> None:
     assert process is not None
     payload = json.loads(process.stdin.data)
     assert set(payload) == {"code", "files"}
+
+
+def _b64(data: bytes) -> str:
+    return base64.b64encode(data).decode("ascii")
+
+
+def test_broker_accepts_valid_base64_binary_workspace_files() -> None:
+    blob = bytes(range(256))
+    request = broker.ExecuteRequest(code="print(1)", files_b64={"blob.bin": _b64(blob)})
+    assert request.files_b64 == {"blob.bin": _b64(blob)}
+    assert request.files == {}
+
+
+@pytest.mark.parametrize("encoded", ["not base64!", "AQ", "AQ==ID", "AQID\n"])
+def test_broker_rejects_invalid_base64_binary_workspace_files(encoded: str) -> None:
+    with pytest.raises(ValidationError, match="Invalid base64 workspace file"):
+        broker.ExecuteRequest(code="print(1)", files_b64={"blob.bin": encoded})
+
+
+@pytest.mark.parametrize("filename", ["../secret", "a/b.bin", ".hidden.bin", "report‮fdp.bin"])
+def test_broker_rejects_unsafe_binary_workspace_filenames(filename: str) -> None:
+    with pytest.raises(ValidationError, match="Invalid workspace filename"):
+        broker.ExecuteRequest(code="print(1)", files_b64={filename: "AQID"})
+
+
+def test_broker_limits_binary_workspace_file_by_decoded_size() -> None:
+    with patch.object(broker, "MAX_FILE_BYTES", 10):
+        # 10 decoded bytes is 16 base64 characters: the limit is on the bytes,
+        # not on the encoded string, so this must pass.
+        assert broker.ExecuteRequest(code="print(1)", files_b64={"ok.bin": _b64(b"x" * 10)}).files_b64
+        with pytest.raises(ValidationError, match="Workspace file exceeds size limit"):
+            broker.ExecuteRequest(code="print(1)", files_b64={"big.bin": _b64(b"x" * 11)})
+
+
+def test_broker_total_size_limit_spans_text_and_binary_files() -> None:
+    with patch.object(broker, "MAX_TOTAL_FILE_BYTES", 100), patch.object(broker, "MAX_FILE_BYTES", 100):
+        text_part = {"text.txt": "x" * 60}
+        binary_part = {"blob.bin": _b64(b"\x00" * 60)}
+        assert broker.ExecuteRequest(code="print(1)", files=text_part).files == text_part
+        assert broker.ExecuteRequest(code="print(1)", files_b64=binary_part).files_b64 == binary_part
+        with pytest.raises(ValidationError, match="Workspace files exceed total size limit"):
+            broker.ExecuteRequest(code="print(1)", files=text_part, files_b64=binary_part)
+
+
+def test_broker_file_count_limit_spans_text_and_binary_files() -> None:
+    with patch.object(broker, "HARD_MAX_WORKSPACE_FILES", 10):
+        text_part = {f"t{i}.txt": "x" for i in range(6)}
+        binary_part = {f"b{i}.bin": "AQID" for i in range(6)}
+        assert len(broker.ExecuteRequest(code="print(1)", files=text_part).files) == 6
+        assert len(broker.ExecuteRequest(code="print(1)", files_b64=binary_part).files_b64) == 6
+        with pytest.raises(ValidationError, match="Workspace file count exceeds the hard limit"):
+            broker.ExecuteRequest(code="print(1)", files=text_part, files_b64=binary_part)
+
+
+def test_broker_rejects_same_filename_in_text_and_binary_maps() -> None:
+    with pytest.raises(ValidationError, match="duplicate workspace filename"):
+        broker.ExecuteRequest(code="print(1)", files={"data.csv": "a,b"}, files_b64={"data.csv": "AQID"})
+
+
+def test_broker_legacy_execute_accepts_and_validates_files_b64() -> None:
+    result = {"stdout": "", "stderr": "", "exit_code": 0}
+    headers = {"Authorization": f"Bearer {TOKEN}"}
+    with (
+        patch.dict(os.environ, {"SANDBOX_BROKER_TOKEN": TOKEN}),
+        patch.object(broker, "_run_container", AsyncMock(return_value=result)) as run,
+    ):
+        ok = _client().post("/v1/execute", json={"code": "print(1)", "files_b64": {"a.bin": "AQID"}}, headers=headers)
+        bad = _client().post("/v1/execute", json={"code": "print(1)", "files_b64": {"a.bin": "!!"}}, headers=headers)
+    assert ok.status_code == 200
+    assert run.await_args.args[0].files_b64 == {"a.bin": "AQID"}
+    assert bad.status_code == 422
+
+
+async def _captured_stdin_payload(request: broker.ExecuteRequest) -> bytes:
+    envelope = json.dumps({"stdout": "ok", "stderr": "", "exit_code": 0}).encode()
+    process = None
+
+    async def fake_spawn(*args, **kwargs):
+        nonlocal process
+        del args, kwargs
+        process = _Process(envelope)
+        return process
+
+    with patch.object(asyncio, "create_subprocess_exec", fake_spawn):
+        await broker._run_container(request)
+    assert process is not None
+    return process.stdin.data
+
+
+async def test_broker_stdin_payload_carries_files_b64_verbatim() -> None:
+    encoded = _b64(bytes(range(256)))
+    raw = await _captured_stdin_payload(
+        broker.ExecuteRequest(code="print(1)", files={"a.txt": "hi"}, files_b64={"blob.bin": encoded})
+    )
+    payload = json.loads(raw)
+    assert set(payload) == {"code", "files", "files_b64"}
+    assert payload["files_b64"] == {"blob.bin": encoded}
+    assert payload["files"] == {"a.txt": "hi"}
+
+
+async def test_broker_stdin_payload_is_byte_identical_without_binaries() -> None:
+    raw = await _captured_stdin_payload(broker.ExecuteRequest(code="print(1)", files={"a.txt": "hi"}))
+    # The exact bytes an older runner image received before the binary channel
+    # existed; any new key would break that guarantee.
+    assert raw == json.dumps({"code": "print(1)", "files": {"a.txt": "hi"}}, ensure_ascii=False).encode("utf-8")
+    assert b"files_b64" not in raw
 
 
 async def test_broker_force_removes_container_after_unexpected_io_failure() -> None:

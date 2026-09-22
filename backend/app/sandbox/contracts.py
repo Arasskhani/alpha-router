@@ -119,6 +119,14 @@ class JobSubmitRequest(BaseModel):
     job_id: str | None = None
     code: str = Field(min_length=1)
     files: dict[str, str] = Field(default_factory=dict)
+    #: Binary workspace files as standard base64 (RFC 4648, padded) of the raw
+    #: bytes, keyed by filename. This is a second map rather than a tagged value
+    #: inside ``files`` on purpose: ``files`` is text end to end (the broker
+    #: sizes it with ``len(content.encode())`` and the runner writes it with
+    #: ``encoding="utf-8"``), so every existing validator stays honest without
+    #: learning a new shape, and a runner that predates this field simply
+    #: ignores a key it does not know instead of misinterpreting a marker.
+    files_b64: dict[str, str] = Field(default_factory=dict)
     #: How long the caller is willing to let this execution run. Advisory: the
     #: broker clamps it to its own hard ceiling, because a client asking for an
     #: hour is exactly the request that ceiling exists to refuse. Omitted, the

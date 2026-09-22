@@ -9,6 +9,7 @@ the container flags in the caller). It is intentionally dependency-light.
 """
 
 import base64
+import binascii
 import contextlib
 import hashlib
 import io
@@ -219,6 +220,7 @@ def main() -> None:
 
     code = str(payload.get("code") or "")
     files = payload.get("files") or {}
+    files_b64 = payload.get("files_b64") or {}
 
     try:
         os.makedirs(WORKDIR, exist_ok=True)
@@ -237,6 +239,26 @@ def main() -> None:
             try:
                 with open(os.path.join(WORKDIR, safe), "w", encoding="utf-8") as fh:
                     fh.write(str(content))
+            except Exception:  # noqa: BLE001
+                pass
+    if isinstance(files_b64, dict):
+        for name, encoded in files_b64.items():
+            safe = _normalize_filename(os.path.basename(str(name)))
+            # Text wins over binary for a shared name: the broker rejects the
+            # duplicate upstream, this only keeps a hand-built payload from
+            # silently replacing what the text channel already wrote.
+            if not _is_safe_filename(safe) or safe in input_names:
+                continue
+            try:
+                content = base64.b64decode(str(encoded), validate=True)
+            except (ValueError, TypeError, binascii.Error):
+                # The broker already validated the encoding; a corrupt entry
+                # here must cost the run one missing file, not the whole run.
+                continue
+            input_names.add(safe)
+            try:
+                with open(os.path.join(WORKDIR, safe), "wb") as fh:
+                    fh.write(content)
             except Exception:  # noqa: BLE001
                 pass
 

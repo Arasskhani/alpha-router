@@ -10,7 +10,7 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import anyio
@@ -27,6 +27,7 @@ from app.core.language_detect import detect_prompt_language
 from app.database import AsyncSessionLocal
 from app.models.chat import ChatSession
 from app.models.model_catalog import AIModel
+from app.models.user import User
 from app.services.agent_chat_integration_service import (
     AgentRequestError,
     PreparedAgentTurn,
@@ -80,9 +81,11 @@ from app.services.code_interpreter_service import (
     MAX_CODE_ITERATIONS,
     SandboxArtifact,
     SandboxExecutionResult,
+    WorkspaceFiles,
     WorkspaceLimitError,
     code_interpreter_nudge_message,
     extract_last_python_block,
+    hydrate_binary_workspace_files,
     run_python_sandbox,
     workspace_files_from_messages,
 )
@@ -241,7 +244,10 @@ class ResolvedStreamContext:
     #: knowable in advance, so without a check the turn can outgrow what was
     #: reserved and the overspend is only noticed by the *next* request.
     budget_hold_usd: float | None = None
-    code_interpreter_workspace_files: dict[str, str] | None = None
+    code_interpreter_workspace_files: WorkspaceFiles | None = None
+    #: Why an attachment is missing from the workspace (too large, not this
+    #: user's); surfaced to the model with the inventory.
+    code_interpreter_workspace_notes: list[str] = field(default_factory=list)
     code_interpreter_capacity_permit: CapacityPermit | None = None
     agent_turn: PreparedAgentTurn | None = None
 
@@ -678,7 +684,8 @@ async def preflight_stream_chat(  # noqa: C901 -- Phase 4 split; complexity must
             requested_tools,
         )
     tools = parse_tools_config({} if agent_turn is not None else body)
-    workspace_files: dict[str, str] | None = None
+    workspace_files: WorkspaceFiles | None = None
+    workspace_notes: list[str] = []
     capacity_permit: CapacityPermit | None = None
     if tools.code_interpreter:
         await assert_code_interpreter_model_available(db, ai_model)
@@ -708,6 +715,20 @@ async def preflight_stream_chat(  # noqa: C901 -- Phase 4 split; complexity must
             )
         except WorkspaceLimitError as exc:
             raise HTTPException(status_code=413, detail=exc.api_detail()) from exc
+        # Attachments without extracted text (a PSD, a ZIP) reach the sandbox as
+        # bytes; reading them needs the user, so the Gateway path without one
+        # keeps a text-only workspace.
+        if user_id is not None:
+            user = await db.get(User, user_id)
+            if user is not None:
+                workspace_files, workspace_notes = await hydrate_binary_workspace_files(
+                    db,
+                    user=user,
+                    messages=list(body.get("messages") or []),
+                    files=workspace_files,
+                    max_files=max_workspace_files,
+                    max_total_bytes=max_workspace_bytes,
+                )
         capacity_subject = await _code_interpreter_capacity_subject(
             db,
             user_id=user_id,
@@ -755,6 +776,7 @@ async def preflight_stream_chat(  # noqa: C901 -- Phase 4 split; complexity must
         budget_reservation_id=hold.id if hold else None,
         budget_hold_usd=float(hold.reserved_usd) if hold is not None else None,
         code_interpreter_workspace_files=workspace_files,
+        code_interpreter_workspace_notes=workspace_notes,
         code_interpreter_capacity_permit=capacity_permit,
         agent_turn=agent_turn,
     )

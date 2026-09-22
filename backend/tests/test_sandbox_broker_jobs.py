@@ -1,6 +1,7 @@
 """Lifecycle tests for the additive sandbox broker job API."""
 
 import asyncio
+import base64
 import contextlib
 import json
 import os
@@ -112,6 +113,74 @@ async def test_submit_rejects_oversized_workspace_file_with_invalid_request() ->
 
     with _isolated():
         await run()
+
+
+async def test_submit_passes_files_b64_to_container_with_decoded_size_accounting() -> None:
+    async def run():
+        blob = bytes(range(256))
+        encoded = base64.b64encode(blob).decode("ascii")
+        result = {"stdout": "", "stderr": "", "exit_code": 0, "artifacts": []}
+        # 256 decoded bytes fit under a 300-byte ceiling even though the
+        # base64 string is 344 characters: accounting must be on decoded bytes.
+        with (
+            patch.object(broker, "MAX_FILE_BYTES", 300),
+            patch.object(broker, "MAX_TOTAL_FILE_BYTES", 300),
+            patch.object(broker, "_run_container", AsyncMock(return_value=result)) as run_container,
+        ):
+            resp = await broker.submit_job(
+                JobSubmitRequest(code="print(1)", files={"a.txt": "hi"}, files_b64={"blob.bin": encoded})
+            )
+            assert resp.status_code == 202
+            job_id = _body(resp)["job_id"]
+            await asyncio.wait_for(broker._jobs[job_id].task, 1)
+            assert _body(await broker.get_job(job_id))["state"] == "succeeded"
+        request = run_container.await_args.args[0]
+        assert isinstance(request, broker.ExecuteRequest)
+        assert request.files_b64 == {"blob.bin": encoded}
+        assert request.files == {"a.txt": "hi"}
+
+    with _isolated():
+        await run()
+
+
+async def test_submit_rejects_combined_workspace_over_total_and_duplicates() -> None:
+    async def run():
+        with patch.object(broker, "MAX_TOTAL_FILE_BYTES", 100), patch.object(broker, "MAX_FILE_BYTES", 100):
+            over_total = await broker.submit_job(
+                JobSubmitRequest(
+                    code="print(1)",
+                    files={"t.txt": "x" * 60},
+                    files_b64={"b.bin": base64.b64encode(b"y" * 60).decode("ascii")},
+                )
+            )
+        duplicate = await broker.submit_job(
+            JobSubmitRequest(code="print(1)", files={"same.bin": "x"}, files_b64={"same.bin": "AQID"})
+        )
+        bad_encoding = await broker.submit_job(JobSubmitRequest(code="print(1)", files_b64={"b.bin": "!!"}))
+        for resp in (over_total, duplicate, bad_encoding):
+            assert resp.status_code == 422
+            assert _body(resp)["error_code"] == "invalid_request"
+        assert broker._jobs == {}
+        assert broker._semaphore._value == 4
+
+    with _isolated():
+        await run()
+
+
+def test_jobs_endpoint_accepts_files_b64_over_http() -> None:
+    result = {"stdout": "", "stderr": "", "exit_code": 0, "artifacts": []}
+    with (
+        _isolated(),
+        patch.dict(os.environ, {"SANDBOX_BROKER_TOKEN": TOKEN}),
+        patch.object(broker, "_run_container", AsyncMock(return_value=result)),
+    ):
+        response = TestClient(broker.app).post(
+            "/v1/jobs",
+            json={"code": "print(1)", "files_b64": {"a.bin": "AQID"}},
+            headers={"Authorization": f"Bearer {TOKEN}"},
+        )
+    assert response.status_code == 202
+    assert response.json()["state"] in {"pending", "running", "succeeded"}
 
 
 async def test_no_capacity_returns_429_with_retry_after_and_error_code() -> None:

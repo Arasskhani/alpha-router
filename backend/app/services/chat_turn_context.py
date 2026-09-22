@@ -38,6 +38,7 @@ from app.services.code_interpreter_capacity_service import (
     release_code_interpreter_turn,
 )
 from app.services.code_interpreter_service import (
+    WorkspaceFiles,
     code_interpreter_workspace_message,
     workspace_files_from_messages,
 )
@@ -143,7 +144,7 @@ class TurnContext:
     provider_type: str
     provider: str
     model: str
-    workspace_files: dict[str, str]
+    workspace_files: WorkspaceFiles
     lease: CapacityLease
     persister: Any
     agent_turn: PreparedAgentTurn | None
@@ -427,7 +428,10 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
             else (workspace_files_from_messages(original_messages) if tools.code_interpreter else {})
         )
         if tools.code_interpreter and workspace_files:
-            inventory = code_interpreter_workspace_message(workspace_files)
+            inventory = code_interpreter_workspace_message(
+                workspace_files,
+                notes=getattr(resolved, "code_interpreter_workspace_notes", None),
+            )
             if inventory:
                 messages = list(messages)
                 if messages and messages[0].get("role") == "system" and isinstance(messages[0].get("content"), str):

@@ -2093,6 +2093,25 @@ export const docSections: DocSection[] = [
           conversation turn, not one message. The broker applies its own much higher hard caps
           (<code>SANDBOX_HARD_MAX_WORKSPACE_*</code>) as a DoS guard; these are the product limits.
         </p>
+        <p>
+          Two kinds of file reach the working directory. Documents the platform could read (PDF, Office, CSV, plain
+          text and anything else whose bytes were text) arrive as their <em>extracted text</em> under the original
+          name, as before. Attachments with no text to extract — a <code>.psd</code>, a <code>.sqlite</code>, a
+          <code>.parquet</code>, any format the operator has allowed that the platform cannot parse — arrive as their
+          <em>original bytes</em>, listed to the model as <code>(binary)</code> with a reminder to open them in{" "}
+          <code>&apos;rb&apos;</code> mode. The bytes are read from Media at the start of the turn, only for assets
+          the requesting user owns or may download through project membership; someone else&apos;s attachment in a
+          shared history is not copied. A binary that would break the per-file, total or count limit is left out
+          with a line in the inventory saying so, rather than failing the turn. Turns made through the OpenAI-compatible
+          gateway with an API key carry text files only.
+        </p>
+        <Note>
+          The binary channel (<code>files_b64</code>) is carried by the sandbox runner and the broker as well as the
+          application, so all three images must be from the same release. The default <code>upgrade.sh</code> rebuilds
+          them; do not upgrade this release with <code>--skip-build</code>, and registry deployments need the new
+          sandbox and sandbox-broker images published. An old broker refuses the new field with a 422 that the chat
+          reports as &ldquo;sandbox rejected the workspace payload&rdquo;.
+        </Note>
         <h3>Set at deploy</h3>
         <p>
           The last table lists the values this page cannot change, each with the environment variable that sets it —

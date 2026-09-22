@@ -22,6 +22,7 @@ from typing import Any
 
 from app.services.code_interpreter_service import (
     SandboxExecutionResult,
+    WorkspaceFiles,
     code_interpreter_error_hint,
     format_code_output_for_chat,
 )
@@ -80,9 +81,9 @@ def abandon_task(task: asyncio.Task) -> None:
 
 async def run_sandbox_until_stopped(
     code: str,
-    files: dict[str, str],
+    files: WorkspaceFiles,
     *,
-    sandbox_runner: Callable[[str, dict[str, str]], Coroutine[Any, Any, SandboxExecutionResult | str]],
+    sandbox_runner: Callable[[str, WorkspaceFiles], Coroutine[Any, Any, SandboxExecutionResult | str]],
     client_stopped: Callable[[], Awaitable[bool]],
 ) -> SandboxExecutionResult | str | None:
     """Run sandbox code, abandoning the wait as soon as the user stops.

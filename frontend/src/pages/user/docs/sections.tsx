@@ -462,13 +462,19 @@ export const userManualSections: DocSection[] = [
             supported.
           </li>
           <li>
-            Executables, archives, HTML/SVG, and other blocked types stay unavailable. Oversized files and the
-            per-message file count show an error before send (limits come from your administrator&apos;s Storage
-            settings).
+            <strong>Any other format</strong> your administrator allows can be attached too (by default everything
+            except executables, scripts, web pages and archives). Such a file is stored and offered as a download in
+            the thread; when it is text its contents are read for the model, otherwise the model is told the file&apos;s
+            name and size (and the Code Interpreter can open the bytes when that tool is enabled).
           </li>
           <li>
-            In Private Mode, Media attach works for images, audio/video, and plain-text files, processed locally. Some
-            Office/PDF types still need Private Mode off so the server can extract text.
+            The file picker no longer pre-filters by type: pick anything, and a file the platform refuses shows the
+            reason before send. Oversized files and the per-message file count show an error the same way (limits come
+            from your administrator&apos;s Storage settings).
+          </li>
+          <li>
+            In Private Mode nothing is uploaded, so only images, audio, video and text files can be attached — from
+            disk or from Media. Office/PDF and other binary types need Private Mode off so the server can process them.
           </li>
         </ul>
         <h3>Voice</h3>

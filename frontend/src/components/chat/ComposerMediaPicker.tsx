@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Modal from "../Modal";
 import AuthenticatedImage from "../AuthenticatedImage";
+import { fetchAttachmentPolicy, type AttachmentPolicy } from "../../lib/attachmentPolicy";
 import { formatMediaBytes } from "../../lib/mediaLibrary";
 import {
   attachSlotOverflowMessage,
@@ -76,13 +77,27 @@ export default function ComposerMediaPicker({
 
   const title = projectId ? "Attach from project Media" : "Attach from Media";
 
+  // The operator's file type policy, so the picker greys out what the
+  // server would refuse. Cached in the lib; null until it arrives.
+  const [policy, setPolicy] = useState<AttachmentPolicy | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void fetchAttachmentPolicy().then((p) => {
+      if (!cancelled) setPolicy(p);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
   const rows = useMemo(
     () =>
       items.map((item) => ({
         item,
-        eligibility: composerAttachEligibility(item, { privateMode }),
+        eligibility: composerAttachEligibility(item, { privateMode, policy }),
       })),
-    [items, privateMode],
+    [items, privateMode, policy],
   );
 
   function toggle(id: number, attachable: boolean) {

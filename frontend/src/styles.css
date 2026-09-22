@@ -16755,3 +16755,26 @@ p.error,
   border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
   background: color-mix(in srgb, var(--danger) 8%, var(--surface));
 }
+
+/* ── Chat attachments: file chips ── */
+/* A file the platform has no parser or player for sits in the document list
+   with a paperclip, its size and, when no text came out of it, "no preview". */
+.chat-attachment-file__icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+}
+
+.chat-attachment-file__meta {
+  flex-shrink: 0;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.alpha-router-attach-msg__download {
+  flex-shrink: 0;
+  font-size: 0.74rem;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

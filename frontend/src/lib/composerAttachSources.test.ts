@@ -69,13 +69,42 @@ describe("composerAttachEligibility", () => {
     });
   });
 
-  it("blocks SVG and other disallowed types", () => {
+  it("greys out what the operator's policy blocks, and says why", () => {
+    const policy = {
+      mode: "blocklist" as const,
+      blocked: new Set(["svg", "exe"]),
+      allowed: new Set<string>(),
+      maxAttachments: 5,
+      maxUploadMb: 25,
+    };
+    const verdict = composerAttachEligibility(
+      candidate({ kind: "image", fileName: "icon.svg", mimeType: "image/svg+xml" }),
+      { privateMode: false, policy },
+    );
+    expect(verdict.attachable).toBe(false);
+    expect(verdict.reason).toBe('File type ".svg" is not allowed on this platform.');
+    // An unknown format the policy does not block is a "file", attachable.
     expect(
-      composerAttachEligibility(
-        candidate({ kind: "image", fileName: "icon.svg", mimeType: "image/svg+xml" }),
-        { privateMode: false },
-      ).attachable,
-    ).toBe(false);
+      composerAttachEligibility(candidate({ kind: "document", fileName: "mockup.psd", mimeType: "" }), {
+        privateMode: false,
+        policy,
+      }),
+    ).toEqual({ attachable: true, reason: null, processedKind: "file" });
+  });
+
+  it("without a loaded policy leaves the decision to the server", () => {
+    // Only a name with no extension is refused client-side; a blocked type
+    // must not be hidden by a stale hard-coded list the operator cannot see.
+    expect(
+      composerAttachEligibility(candidate({ kind: "image", fileName: "icon.svg", mimeType: "image/svg+xml" }), {
+        privateMode: false,
+      }).attachable,
+    ).toBe(true);
+    expect(
+      composerAttachEligibility(candidate({ kind: "document", fileName: "README", mimeType: "" }), {
+        privateMode: false,
+      }),
+    ).toEqual({ attachable: false, reason: "Files must have an extension." });
   });
 
   it("in Private Mode allows images and plain text only", () => {

@@ -164,8 +164,8 @@ import {
   type VoiceLang,
 } from "../lib/voiceInput";
 import { wavFromRecording } from "../lib/audioWav";
+import { fetchAttachmentPolicy } from "../lib/attachmentPolicy";
 import {
-  ATTACHMENT_ACCEPT,
   attachmentMessage,
   buildApiMessageContentAsync,
   type ApiContentPart,
@@ -5946,15 +5946,17 @@ export default function ChatPanel({
     setAttachUploading(true);
     setChatError("");
     try {
+      // The operator's file-type policy (cached a minute); null means the server alone decides.
+      const policy = await fetchAttachmentPolicy();
       if (sid && sessionPrivateMode(sid)) {
-        const localAttachments = await processAttachmentFilesLocally(files);
+        const localAttachments = await processAttachmentFilesLocally(files, policy);
         setPendingAttachments((prev) => [...prev, ...localAttachments].slice(0, maxAttachments));
       } else {
         const uploadLimitBytes = Math.max(1, maxUploadFileMb) * 1024 * 1024;
         const totalLimitBytes = Math.max(uploadLimitBytes, maxChatAttachmentsTotalMb * 1024 * 1024);
         let totalBytes = 0;
         for (const file of files) {
-          validateAttachmentFile(file);
+          validateAttachmentFile(file, policy);
           if (file.size > uploadLimitBytes) {
             throw new Error(
               `“${file.name}” exceeds the maximum upload size (${maxUploadFileMb} MB).`,
@@ -7046,7 +7048,6 @@ export default function ChatPanel({
                 ref={fileInputRef}
                 type="file"
                 className="alpha-router-file-input"
-                accept={ATTACHMENT_ACCEPT}
                 multiple
                 onChange={(e) => void onAttachmentFilesSelected(e.target.files)}
                 tabIndex={-1}
@@ -7057,7 +7058,7 @@ export default function ChatPanel({
                   {pendingAttachments.map((a, idx) => (
                     <span key={`${a.url}-${idx}`} className="alpha-router-pending-attachment">
                       <span className="alpha-router-pending-attachment__name" title={a.name}>
-                        {a.kind === "image" ? "🖼" : a.kind === "video" ? "🎬" : a.kind === "audio" ? "🔊" : "📄"} {a.name}
+                        {a.kind === "image" ? "🖼" : a.kind === "video" ? "🎬" : a.kind === "audio" ? "🔊" : a.kind === "file" ? "📎" : "📄"} {a.name}
                       </span>
                       <button
                         type="button"

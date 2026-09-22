@@ -1,6 +1,7 @@
 import { api } from "../api";
+import { classifyFileName, type AttachmentKind, type AttachmentPolicy } from "./attachmentPolicy";
 import {
-  attachmentKindFromName,
+  PRIVATE_MODE_ATTACHMENT_MESSAGE,
   canProcessAttachmentLocally,
   type ProcessedAttachment,
 } from "./chatAttachments";
@@ -22,7 +23,7 @@ export type ComposerAttachMediaCandidate = {
 export type ComposerAttachEligibility = {
   attachable: boolean;
   reason: string | null;
-  processedKind?: "image" | "video" | "audio" | "document";
+  processedKind?: AttachmentKind;
 };
 
 export function normalizeUserMediaItem(item: MediaItem): ComposerAttachMediaCandidate {
@@ -49,21 +50,26 @@ export function normalizeProjectMediaItem(item: ProjectMediaItem): ComposerAttac
   };
 }
 
+/**
+ * Whether a Media library item may be attached, under the operator's policy.
+ *
+ * The same rules the upload path applies, so a file the operator has since
+ * blocked is greyed out in the picker with the reason, rather than refused by
+ * the server after the click. Without a loaded policy (`null`) only a name
+ * with no extension is refused here; the server still decides on attach.
+ */
 export function composerAttachEligibility(
   item: ComposerAttachMediaCandidate,
-  opts: { privateMode: boolean },
+  opts: { privateMode: boolean; policy?: AttachmentPolicy | null },
 ): ComposerAttachEligibility {
-  const processedKind = attachmentKindFromName(item.fileName);
-  if (!processedKind) {
-    return { attachable: false, reason: "This file type cannot be attached to chat." };
+  const verdict = classifyFileName(item.fileName, opts.policy ?? null);
+  if (!verdict.ok) {
+    return { attachable: false, reason: verdict.reason };
   }
   if (opts.privateMode && !canProcessAttachmentLocally(item.fileName)) {
-    return {
-      attachable: false,
-      reason: "Private Mode can only attach images, audio/video, or plain-text files from Media.",
-    };
+    return { attachable: false, reason: PRIVATE_MODE_ATTACHMENT_MESSAGE };
   }
-  return { attachable: true, reason: null, processedKind };
+  return { attachable: true, reason: null, processedKind: verdict.kind };
 }
 
 export function capAttachSelection(

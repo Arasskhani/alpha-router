@@ -5,16 +5,30 @@ import {
   ATTACHMENT_MESSAGE_PREFIX,
   AUDIO_MESSAGE_PREFIX,
 } from "./chatMarkers";
+import {
+  AUDIO_EXTENSIONS,
+  IMAGE_EXTENSIONS,
+  VIDEO_EXTENSIONS,
+  classifyFileName,
+  fileNameSuffixes,
+  formatFileSize,
+  type AttachmentKind,
+  type AttachmentPolicy,
+} from "./attachmentPolicy";
 
 export { ATTACHMENT_MESSAGE_PREFIX, AUDIO_MESSAGE_PREFIX } from "./chatMarkers";
 
 export type ProcessedAttachment = {
   name: string;
-  kind: "image" | "video" | "audio" | "document";
+  kind: AttachmentKind;
   mime_type: string;
   url: string;
   data_url?: string;
-  text?: string;
+  /** Extracted text; null when the server stored the bytes but found no text in them. */
+  text?: string | null;
+  size_bytes?: number;
+  /** True when no text could be extracted (the file is available for download and in the sandbox). */
+  binary?: boolean;
 };
 
 export type AttachmentMessagePayload = {
@@ -23,91 +37,42 @@ export type AttachmentMessagePayload = {
 };
 
 export const DEFAULT_MAX_ATTACHMENTS = 5;
-const BLOCKED_EXTENSIONS = new Set([
-  "apk", "app", "application", "asp", "aspx", "bat", "bin", "cab", "cmd", "com", "cpl", "crt",
-  "deb", "dll", "dmg", "exe", "gadget", "hta", "htm", "html", "inf", "ins", "iso", "jar", "js",
-  "jse", "jsp", "lnk", "mjs", "msc", "msi", "msp", "mst", "php", "pif", "ps1", "psm1", "py",
-  "pyc", "pyo", "pyw", "rb", "reg", "rpm", "scr", "sh", "svg", "svgz", "swf", "tar", "vb", "vbe",
-  "vbs", "ws", "wsc", "wsf", "wsh", "xhtml", "7z", "rar", "zip", "gz", "bz2", "xz", "z", "url",
-  "desktop", "torrent", "wasm", "elf", "so", "dylib", "sys", "drv", "ocx", "xht", "shtml", "mht",
-  "mhtml",
-]);
 
-const ALLOWED_IMAGE = new Set([
-  "jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff", "heic", "heif", "avif", "ico",
-]);
-
-const ALLOWED_VIDEO = new Set([
-  "mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "flv", "mpeg", "mpg", "mpe", "mp2", "m2v",
-  "3gp", "3g2", "ts", "m2ts", "mts", "ogv", "vob",
-]);
-
-const ALLOWED_AUDIO = new Set([
-  "mp3", "ogg", "oga", "opus", "wav", "flac", "aac", "m4a", "wma", "aiff", "aif", "aifc",
-  "mid", "midi", "weba", "amr", "caf",
-]);
-
-const ALLOWED_DOCUMENT = new Set([
-  "pdf", "doc", "docx", "xls", "xlsx", "xlsm", "csv", "tsv", "txt", "text", "md", "markdown",
-  "rtf", "odt", "ods", "odp", "ppt", "pptx", "json", "yaml", "yml", "xml", "log", "ini", "cfg",
-  "conf", "tex", "rst", "sql", "toml", "properties",
-]);
-
-const ALLOWED = new Set([
-  ...ALLOWED_IMAGE,
-  ...ALLOWED_VIDEO,
-  ...ALLOWED_AUDIO,
-  ...ALLOWED_DOCUMENT,
-]);
-
+/**
+ * Text formats the browser can read itself (Private Mode never uploads). The
+ * second group is source code: blocked by default, but read as text with the
+ * kind "file" once the operator unblocks it.
+ */
 const LOCAL_TEXT_EXTENSIONS = new Set([
   "txt", "text", "md", "markdown", "csv", "tsv", "json", "yaml", "yml", "xml", "log", "ini", "cfg", "conf", "tex", "rst", "sql", "toml", "properties",
+  "py", "js", "mjs", "cjs", "ts", "tsx", "jsx", "sh", "bash", "zsh", "ps1", "rb", "php", "pl", "java", "kt", "scala",
+  "c", "h", "cpp", "hpp", "cc", "cs", "go", "rs", "swift", "dart", "lua", "r", "css", "scss", "less", "env", "diff", "patch",
 ]);
 
-function fileExtensions(name: string): string[] {
-  const parts = name.toLowerCase().split(".");
-  if (parts.length < 2) return [];
-  return parts.slice(1);
-}
+export const PRIVATE_MODE_ATTACHMENT_MESSAGE =
+  "In Private Mode only images, audio, video and text files can be attached.";
 
-export function attachmentKindFromName(name: string): "image" | "video" | "audio" | "document" | null {
-  const parts = fileExtensions(name);
-  if (!parts.length) return null;
-  for (const ext of parts) {
-    if (BLOCKED_EXTENSIONS.has(ext)) return null;
-  }
-  const ext = parts[parts.length - 1];
-  if (ALLOWED_IMAGE.has(ext)) return "image";
-  if (ALLOWED_VIDEO.has(ext)) return "video";
-  if (ALLOWED_AUDIO.has(ext)) return "audio";
-  if (ALLOWED_DOCUMENT.has(ext)) return "document";
-  return null;
+/**
+ * The kind a name would be given, or null when the policy refuses it. Unknown
+ * formats are "file". Without a policy nothing but a missing extension refuses.
+ */
+export function attachmentKindFromName(name: string, policy: AttachmentPolicy | null = null): AttachmentKind | null {
+  const result = classifyFileName(name, policy);
+  return result.ok ? result.kind : null;
 }
 
 export function canProcessAttachmentLocally(name: string): boolean {
   const kind = attachmentKindFromName(name);
   if (kind === "image" || kind === "video" || kind === "audio") return true;
-  if (kind !== "document") return false;
-  const ext = fileExtensions(name).at(-1) || "";
+  if (kind !== "document" && kind !== "file") return false;
+  const ext = fileNameSuffixes(name).at(-1) || "";
   return LOCAL_TEXT_EXTENSIONS.has(ext);
 }
 
-export function validateAttachmentFile(file: File): void {
-  const parts = fileExtensions(file.name);
-  if (!parts.length) {
-    throw new Error("Files must have a recognized extension.");
-  }
-  for (const ext of parts) {
-    if (BLOCKED_EXTENSIONS.has(ext)) {
-      throw new Error(`File type ".${ext}" is not allowed for security reasons.`);
-    }
-  }
-  const ext = parts[parts.length - 1];
-  if (!ALLOWED.has(ext)) {
-    throw new Error(
-      `File type ".${ext}" is not supported. Use images, video, audio, or text documents.`,
-    );
-  }
+/** Client pre-check with the server's own wording; the server still decides on upload. */
+export function validateAttachmentFile(file: File, policy: AttachmentPolicy | null = null): void {
+  const result = classifyFileName(file.name, policy);
+  if (!result.ok) throw new Error(result.reason);
 }
 
 export function attachmentMessage(payload: AttachmentMessagePayload): string {
@@ -226,7 +191,7 @@ export function shouldRouteToImageGeneration(
   if (!imageGenerationEnabled) return false;
   const attach = readAttachmentMessage(userContent);
   if (attach) {
-    if (attach.attachments.some((a) => a.kind === "document" || a.kind === "video" || a.kind === "audio")) {
+    if (attach.attachments.some((a) => a.kind !== "image")) {
       return false;
     }
     const image = attach.attachments.find((a) => a.kind === "image");
@@ -245,13 +210,6 @@ export function shouldRouteToImageGeneration(
   return supportsTextToImage;
 }
 
-export const ATTACHMENT_ACCEPT = [
-  ...ALLOWED_IMAGE,
-  ...ALLOWED_VIDEO,
-  ...ALLOWED_AUDIO,
-  ...ALLOWED_DOCUMENT,
-].map((e) => `.${e}`).join(",");
-
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -262,13 +220,16 @@ function readFileAsDataUrl(file: File): Promise<string> {
 }
 
 /** Process attachments in the browser for Private Mode (no server upload). */
-export async function processAttachmentFilesLocally(files: File[]): Promise<ProcessedAttachment[]> {
+export async function processAttachmentFilesLocally(
+  files: File[],
+  policy: AttachmentPolicy | null = null,
+): Promise<ProcessedAttachment[]> {
   const out: ProcessedAttachment[] = [];
   for (const file of files) {
-    validateAttachmentFile(file);
-    const parts = file.name.toLowerCase().split(".");
-    const ext = parts[parts.length - 1] || "";
-    if (ALLOWED_IMAGE.has(ext)) {
+    const result = classifyFileName(file.name, policy);
+    if (!result.ok) throw new Error(result.reason);
+    const { ext, kind } = result;
+    if (IMAGE_EXTENSIONS.has(ext)) {
       const data_url = await readFileAsDataUrl(file);
       out.push({
         name: file.name,
@@ -276,35 +237,38 @@ export async function processAttachmentFilesLocally(files: File[]): Promise<Proc
         mime_type: file.type || `image/${ext}`,
         url: data_url,
         data_url,
+        size_bytes: file.size,
       });
       continue;
     }
-    if (ALLOWED_VIDEO.has(ext) || ALLOWED_AUDIO.has(ext)) {
+    if (VIDEO_EXTENSIONS.has(ext) || AUDIO_EXTENSIONS.has(ext)) {
       const data_url = await readFileAsDataUrl(file);
-      const kind = ALLOWED_VIDEO.has(ext) ? "video" : "audio";
+      const avKind = VIDEO_EXTENSIONS.has(ext) ? "video" : "audio";
       out.push({
         name: file.name,
-        kind,
-        mime_type: file.type || `${kind}/${ext}`,
+        kind: avKind,
+        mime_type: file.type || `${avKind}/${ext}`,
         url: data_url,
         data_url,
+        size_bytes: file.size,
       });
       continue;
     }
     if (LOCAL_TEXT_EXTENSIONS.has(ext)) {
+      // A text format the platform lists as a document, or an unblocked source
+      // file such as .py: both are read as text; the kind tells them apart.
       const text = await file.text();
       out.push({
         name: file.name,
-        kind: "document",
+        kind: kind === "document" ? "document" : "file",
         mime_type: file.type || "text/plain",
         url: "",
         text,
+        size_bytes: file.size,
       });
       continue;
     }
-    throw new Error(
-      `Private Mode: "${file.name}" cannot be processed locally. Use an image, audio/video, or plain-text file, or turn off Private Mode.`,
-    );
+    throw new Error(PRIVATE_MODE_ATTACHMENT_MESSAGE);
   }
   return out;
 }
@@ -409,6 +373,42 @@ function appendAvAttachmentNotes(
   return next;
 }
 
+function isTextBearingKind(a: ProcessedAttachment): boolean {
+  return a.kind === "document" || a.kind === "file";
+}
+
+/**
+ * What the model is told about documents and files: the extracted text when
+ * there is any, otherwise a note naming the file and its size.
+ */
+export function attachmentFileNotes(attachments: ProcessedAttachment[]): string[] {
+  const notes: string[] = [];
+  for (const a of attachments) {
+    if (!isTextBearingKind(a)) continue;
+    if (a.text) {
+      notes.push(`--- ${a.name} ---\n${a.text}`);
+      continue;
+    }
+    if (a.binary || a.text === null) {
+      const size = typeof a.size_bytes === "number" ? formatFileSize(a.size_bytes) : "";
+      const detail = size ? `${size}, binary` : "binary";
+      notes.push(
+        `[Attached file "${a.name}" (${detail}): no text was extracted. ` +
+          "It is available in the Code Interpreter workspace when that tool is enabled.]",
+      );
+    }
+  }
+  return notes;
+}
+
+function attachmentTextForModel(attach: AttachmentMessagePayload): string {
+  let text = attach.userText.trim();
+  for (const note of attachmentFileNotes(attach.attachments)) {
+    text += `${text ? "\n\n" : ""}${note}`;
+  }
+  return appendAvAttachmentNotes(text, attach.attachments);
+}
+
 export async function buildApiMessageContentAsync(
   content: string,
   visionModel?: VisionModel,
@@ -426,15 +426,8 @@ export async function buildApiMessageContentAsync(
   const attach = readAttachmentMessage(content);
   if (!attach) return content;
 
-  const docs = attach.attachments.filter((a) => a.kind === "document");
   const images = attach.attachments.filter((a) => a.kind === "image");
-  let text = attach.userText.trim();
-  for (const doc of docs) {
-    if (doc.text) {
-      text += `${text ? "\n\n" : ""}--- ${doc.name} ---\n${doc.text}`;
-    }
-  }
-  text = appendAvAttachmentNotes(text, attach.attachments);
+  let text = attachmentTextForModel(attach);
   if (!images.length) {
     return text || attachmentDisplayText(attach);
   }
@@ -474,15 +467,8 @@ export function buildApiMessageContent(
   const attach = readAttachmentMessage(content);
   if (!attach) return content;
 
-  const docs = attach.attachments.filter((a) => a.kind === "document");
   const images = attach.attachments.filter((a) => a.kind === "image");
-  let text = attach.userText.trim();
-  for (const doc of docs) {
-    if (doc.text) {
-      text += `${text ? "\n\n" : ""}--- ${doc.name} ---\n${doc.text}`;
-    }
-  }
-  text = appendAvAttachmentNotes(text, attach.attachments);
+  let text = attachmentTextForModel(attach);
   if (!images.length) {
     return text || attachmentDisplayText(attach);
   }

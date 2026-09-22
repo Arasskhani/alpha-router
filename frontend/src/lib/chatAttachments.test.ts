@@ -108,9 +108,11 @@ describe("attachmentKindFromName", () => {
     expect(attachmentKindFromName("notes.md")).toBe("document");
   });
 
-  it("rejects blocked and unknown types", () => {
-    expect(attachmentKindFromName("icon.svg")).toBeNull();
-    expect(attachmentKindFromName("setup.exe")).toBeNull();
+  it("gives unknown formats the kind \"file\" and leaves refusal to the policy", () => {
+    // Without a policy the client refuses nothing but a missing extension; the server decides.
+    expect(attachmentKindFromName("icon.svg")).toBe("file");
+    expect(attachmentKindFromName("setup.exe")).toBe("file");
+    expect(attachmentKindFromName("README")).toBeNull();
     expect(attachmentKindFromName("clip.mp4")).toBe("video");
     expect(attachmentKindFromName("song.mp3")).toBe("audio");
     expect(attachmentKindFromName("movie.mov")).toBe("video");

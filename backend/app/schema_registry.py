@@ -61,6 +61,7 @@ AGENT_PLATFORM_TABLE_NAMES: frozenset[str] = frozenset(
         "admin_ip_allowlist_entries",
         "tls_certificates",
         "security_audit_events",
+        "auth_events",
     }
 )
 

@@ -72,6 +72,7 @@ from app.services.api_key_model_policy import (
     model_policy_label,
     replace_key_allowed_models,
 )
+from app.services.auth_events_service import method_for, record_auth_event
 from app.services.client_ip import resolve_client_ip
 from app.services.code_interpreter_probe_service import probe_model_compatibility
 from app.services.connection_audit import (
@@ -2426,6 +2427,14 @@ async def patch_user(
         # an already-issued token. Re-enabling does not bump (no new token).
         if not body.is_active:
             user.token_version = int(user.token_version or 0) + 1
+            await record_auth_event(
+                event_type="session_revoked",
+                user=user,
+                reason_code="user_deactivated",
+                auth_method=method_for(user),
+                request=request,
+                db=db,
+            )
     from app.services.budget_service import resolve_monthly_budget
 
     user.monthly_budget_usd = await resolve_monthly_budget(db, user)
@@ -2466,6 +2475,16 @@ async def reset_local_user_password(
     await _audit_user_action(
         db, request, admin, action="user_password_reset", user=user, detail={"sessions_revoked": True}
     )
+    # And on the sign-in page the person's row reads "signed out everywhere
+    # by an administrator's reset", rather than a gap.
+    await record_auth_event(
+        event_type="session_revoked",
+        user=user,
+        reason_code="admin_password_reset",
+        auth_method=method_for(user),
+        request=request,
+        db=db,
+    )
     await db.commit()
     return {"ok": True}
 
@@ -2491,6 +2510,14 @@ async def admin_disable_user_2fa(
     user.totp_backup_codes_hashed = None
     # Force re-login after MFA recovery.
     user.token_version = int(user.token_version or 0) + 1
+    await record_auth_event(
+        event_type="session_revoked",
+        user=user,
+        reason_code="admin_2fa_disabled",
+        auth_method=method_for(user),
+        request=request,
+        db=db,
+    )
     # totp_service.audit() below writes a log line; a log line is not a trail
     # an operator can query later, and removing someone's second factor is
     # exactly what an investigation asks about.

@@ -11,9 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_active_user
 from app.branding import LOGGER_NAMESPACE
-from app.core.security import create_access_token, hash_password, verify_password
+from app.core.security import create_access_token, hash_password, session_id_from_request, verify_password
 from app.database import get_db
 from app.models.user import User
+from app.services.auth_events_service import method_for, record_auth_event
 from app.services.chat_import_export import (
     MAX_IMPORT_BYTES,
     ChatImportError,
@@ -144,6 +145,17 @@ async def change_password(
 
     user.hashed_password = hash_password(pwd)
     user.token_version = int(user.token_version or 0) + 1
+    # Every other device is signed out by this; the row says why. The session
+    # id is the one this request arrived on, before it is replaced below.
+    await record_auth_event(
+        event_type="session_revoked",
+        user=user,
+        reason_code="password_changed",
+        auth_method=method_for(user),
+        session_id=session_id_from_request(request),
+        request=request,
+        db=db,
+    )
     await db.commit()
     await db.refresh(user)
 

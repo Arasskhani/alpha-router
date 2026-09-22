@@ -12,10 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.config import get_settings
-from app.core.security import create_access_token, verify_password
+from app.core.security import create_access_token, session_id_from_request, verify_password
 from app.database import get_db
 from app.models.user import User
 from app.services.auth_config import get_provider_config
+from app.services.auth_events_service import method_for, record_auth_event
 from app.services.auth_exchange import consume_code, generate_code, store_token
 from app.services.auth_urls import validate_frontend_url
 from app.services.ldap_auth import (
@@ -112,9 +113,19 @@ async def logout_local(
     """Revoke all previously-issued JWTs for this user."""
     from app.services.presence_service import clear_presence
 
+    # Read before the cookie is cleared: this is the session the person
+    # signed out from. token_version ends every other one too, and the row
+    # says so (scope=all_sessions) rather than pretending otherwise.
+    session_id = session_id_from_request(request)
     user.token_version = int(user.token_version or 0) + 1
     await db.commit()
-    await _record_auth_event(request, action="logout", user=user)
+    await record_auth_event(
+        event_type="logout",
+        user=user,
+        auth_method=method_for(user),
+        session_id=session_id,
+        request=request,
+    )
     await clear_presence(user.id)
     clear_session_cookies(response, request=request)
     return {"ok": True}
@@ -132,49 +143,11 @@ async def auth_methods(db: AsyncSession = Depends(get_db)):
     }
 
 
-async def _record_auth_event(
-    request: Request,
-    *,
-    action: str,
-    user: User | None,
-    username: str | None = None,
-    detail: dict | None = None,
-) -> None:
-    """Write one authentication event to the security audit trail.
+def _jti(token: str) -> str | None:
+    from app.core.security import decode_access_token
 
-    There were none. No ``login_success``, no ``login_failed``, no ``logout`` -
-    the only trace of a successful sign-in was ``users.last_login_at``, which is
-    overwritten every time and carries no address. So the platform could not
-    answer "who signed in, from where, when", nor "is someone grinding this
-    account", from its own audit surface.
-
-    Written in its own session and committed immediately. A failed login raises,
-    and ``get_db`` rolls the request transaction back - which would take the
-    record of the failure with it, exactly when it matters most.
-    """
-
-    from app.database import AsyncSessionLocal
-    from app.services.client_ip import resolve_client_ip
-    from app.services.security_audit import log_security_event
-
-    payload = dict(detail or {})
-    if username and (user is None or username != user.username):
-        payload["username"] = str(username)[:255]
-    try:
-        async with AsyncSessionLocal() as audit_db:
-            actor = await audit_db.get(User, user.id) if user is not None else None
-            await log_security_event(
-                audit_db,
-                actor=actor,
-                actor_ip=resolve_client_ip(request),
-                action=action,
-                resource_type="authentication",
-                resource_id=str(user.id) if user is not None else None,
-                detail=payload or None,
-            )
-            await audit_db.commit()
-    except Exception:  # noqa: BLE001 -- an audit write must never break a login
-        logger.exception("Failed to record authentication event action=%s", action)
+    payload = decode_access_token(token)
+    return str(payload["jti"]) if payload and payload.get("jti") else None
 
 
 async def _token_response(
@@ -191,7 +164,13 @@ async def _token_response(
     primary = primary_role_slug(slugs)
     token = create_access_token(user.username, primary, token_version=user.token_version)
     set_session_cookies(response, access_token=token, request=request)
-    await _record_auth_event(request, action="login_success", user=user, detail={"provider": user.auth_provider})
+    await record_auth_event(
+        event_type="login_success",
+        user=user,
+        auth_method=method_for(user),
+        session_id=_jti(token),
+        request=request,
+    )
     settings = get_settings()
     body_token = token if settings.allow_legacy_bearer_auth else ""
     return TokenResponse(
@@ -213,11 +192,31 @@ async def login_local(
     from app.services.rate_limit import check_login_rate_limit
 
     source_ip = resolve_client_ip(request)
-    await check_login_rate_limit(normalize_username(username) or username, source_ip)
+    try:
+        await check_login_rate_limit(normalize_username(username) or username, source_ip)
+    except HTTPException as exc:
+        # The limiter raised before anything was looked up, so nothing else on
+        # this path will write a row. This is the attempt brute-force detection
+        # most needs to see, and it was the one that went unrecorded.
+        await record_auth_event(
+            event_type="login_rate_limited",
+            user=None,
+            username=username,
+            reason_code="rate_limited",
+            reason_detail=str(exc.detail)[:200] if exc.detail else None,
+            auth_method="local",
+            request=request,
+        )
+        raise
     user = await find_user_by_username_ci(db, username)
     if user and user.deleted_at is not None:
-        await _record_auth_event(
-            request, action="login_failed", user=None, username=username, detail={"reason": "deleted"}
+        await record_auth_event(
+            event_type="login_failed",
+            user=user,
+            username=username,
+            reason_code="account_deleted",
+            auth_method=method_for(user),
+            request=request,
         )
         raise HTTPException(status_code=401, detail="Account removed")
     if user and user.hashed_password:
@@ -230,8 +229,13 @@ async def login_local(
                 return await _two_factor_challenge(user)
             return await _token_response(db, user, response, request)
         if (user.auth_provider or "local") == "local":
-            await _record_auth_event(
-                request, action="login_failed", user=user, username=username, detail={"reason": "bad_password"}
+            await record_auth_event(
+                event_type="login_failed",
+                user=user,
+                username=username,
+                reason_code="bad_password",
+                auth_method="local",
+                request=request,
             )
             raise HTTPException(status_code=401, detail="Invalid username or password")
 
@@ -243,17 +247,48 @@ async def login_local(
                 asyncio.to_thread(authenticate_ldap_sync, username, body.password, ldap_cfg),
                 timeout=timeout,
             )
-        except TimeoutError as exc:
-            raise HTTPException(status_code=503, detail=LDAP_UNAVAILABLE_MESSAGE) from exc
-        except LdapUnavailableError as exc:
-            raise HTTPException(status_code=503, detail=str(exc) or LDAP_UNAVAILABLE_MESSAGE) from exc
+        except (TimeoutError, LdapUnavailableError) as exc:
+            # Not the person's fault, still a sign-in that did not happen. An
+            # operator looking at a run of these sees an outage, not an attack.
+            await record_auth_event(
+                event_type="login_failed",
+                user=user,
+                username=username,
+                reason_code="ldap_unavailable",
+                reason_detail=str(exc) or None,
+                auth_method="ldap",
+                request=request,
+            )
+            detail = (
+                LDAP_UNAVAILABLE_MESSAGE if isinstance(exc, TimeoutError) else (str(exc) or LDAP_UNAVAILABLE_MESSAGE)
+            )
+            raise HTTPException(status_code=503, detail=detail) from exc
         if profile:
             user = await _upsert_directory_user(db, profile, "ldap")
             if bool(user.totp_enabled):
                 return await _two_factor_challenge(user)
             return await _token_response(db, user, response, request)
+        # The directory was asked and said no.
+        await record_auth_event(
+            event_type="login_failed",
+            user=user,
+            username=username,
+            reason_code="ldap_rejected",
+            auth_method="ldap",
+            request=request,
+        )
+        raise HTTPException(status_code=401, detail="Invalid username or password")
 
-    await _record_auth_event(request, action="login_failed", user=user, username=username, detail={"reason": "unknown"})
+    # No local password matched and no directory to ask. The administrator
+    # sees which it was; the person sees the same message either way.
+    await record_auth_event(
+        event_type="login_failed",
+        user=user,
+        username=username,
+        reason_code="no_such_user" if user is None else "unknown",
+        auth_method=method_for(user) if user is not None else "local",
+        request=request,
+    )
     raise HTTPException(status_code=401, detail="Invalid username or password")
 
 
@@ -322,6 +357,13 @@ async def login_2fa(
             code,
         )
         if remaining is None:
+            await record_auth_event(
+                event_type="login_failed",
+                user=user,
+                reason_code="twofa_failed",
+                auth_method=method_for(user),
+                request=request,
+            )
             raise HTTPException(status_code=401, detail="Invalid authentication code")
         user.totp_backup_codes_hashed = remaining
         await db.commit()
@@ -410,6 +452,16 @@ async def saml_acs(
     await record_user_login(db, user)
     await db.commit()
     jwt_token = create_access_token(user.username, primary_role_slug(slugs), token_version=user.token_version)
+    # Recorded here, at the ACS, and not at /sso/exchange: this is where the
+    # assertion became an Alpharouter account, and the exchange that follows
+    # is a code swap the browser performs without user involvement.
+    await record_auth_event(
+        event_type="login_success",
+        user=user,
+        auth_method="saml",
+        session_id=_jti(jwt_token),
+        request=request,
+    )
     xchg_code = generate_code()
     await store_token(
         xchg_code,
@@ -428,7 +480,22 @@ async def saml_acs(
 
 
 async def _audit_saml_rejection(db: AsyncSession, request: Request, reason: str, ref: str | None) -> None:
-    """Record a refused SAML Response; never let bookkeeping mask the 401."""
+    """Record a refused SAML Response; never let bookkeeping mask the 401.
+
+    Two rows on purpose. ``saml_response_rejected`` in the security trail is
+    the protocol-level fact and predates the sign-in table; the ``login_failed``
+    row is what puts the attempt on the same page as every other failed
+    sign-in. The identity provider knows who it was; we do not, so ``user``
+    is None and ``reason_detail`` carries the protocol reason.
+    """
+    await record_auth_event(
+        event_type="login_failed",
+        user=None,
+        reason_code="saml_rejected",
+        reason_detail=reason,
+        auth_method="saml",
+        request=request,
+    )
     try:
         from app.services.client_ip import resolve_client_ip
         from app.services.security_audit import log_security_event
@@ -455,6 +522,14 @@ async def _sso_exchange(
     """Exchange a one-time SSO code for the Alpharouter session (keeps JWT out of the URL)."""
     payload = await consume_code(body.code)
     if not payload:
+        # A code that was already used, or guessed. There is no account to
+        # name; the address and the time are the whole story.
+        await record_auth_event(
+            event_type="login_failed",
+            user=None,
+            reason_code="sso_code_invalid",
+            request=request,
+        )
         raise HTTPException(status_code=401, detail="Invalid or expired login code")
     set_session_cookies(response, access_token=payload["token"], request=request)
     settings = get_settings()
@@ -511,6 +586,14 @@ async def oidc_callback(
     cookie_value = request.cookies.get(STATE_COOKIE_NAME)
     flow = verify_state_cookie(cookie_value, state or "")
     if flow is None or not code:
+        await record_auth_event(
+            event_type="login_failed",
+            user=None,
+            reason_code="oidc_rejected",
+            reason_detail="state cookie missing, expired or mismatched",
+            auth_method="oidc",
+            request=request,
+        )
         raise HTTPException(status_code=400, detail="Invalid or expired OIDC state")
     try:
         tokens = await asyncio.to_thread(exchange_code_for_tokens, cfg, code=code, code_verifier=flow.code_verifier)
@@ -527,8 +610,25 @@ async def oidc_callback(
             userinfo = await asyncio.to_thread(fetch_userinfo, cfg, access) or {}
         profile = build_profile_from_claims(cfg, claims, userinfo)
     except ValueError as exc:
+        await record_auth_event(
+            event_type="login_failed",
+            user=None,
+            reason_code="oidc_rejected",
+            reason_detail=str(exc),
+            auth_method="oidc",
+            request=request,
+        )
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except Exception as exc:
+        # The exception text may name a URL or a token; the row gets the class.
+        await record_auth_event(
+            event_type="login_failed",
+            user=None,
+            reason_code="oidc_rejected",
+            reason_detail=type(exc).__name__,
+            auth_method="oidc",
+            request=request,
+        )
         raise HTTPException(status_code=401, detail="OIDC authentication failed") from exc
 
     user = await _upsert_directory_user(db, profile, "oidc")
@@ -536,6 +636,13 @@ async def oidc_callback(
     await record_user_login(db, user)
     await db.commit()
     jwt_token = create_access_token(user.username, primary_role_slug(slugs), token_version=user.token_version)
+    await record_auth_event(
+        event_type="login_success",
+        user=user,
+        auth_method="oidc",
+        session_id=_jti(jwt_token),
+        request=request,
+    )
     xchg_code = generate_code()
     await store_token(
         xchg_code,

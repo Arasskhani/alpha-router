@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.budget import PlanAssignment
 from app.models.logging import RequestLog
 from app.models.user import User, UserRoleAssignment, user_group_members
+from app.services.auth_events_service import method_for, record_auth_event
 from app.services.user_account_cleanup_service import purge_user_account_data
 from app.services.user_role_service import count_active_full_administrators, user_has_full_administrator
 
@@ -41,6 +42,15 @@ async def soft_delete_user(db: AsyncSession, user: User) -> None:
     user.is_active = False
     # Sessions have to end now, not when the JWT expires.
     user.token_version = int(user.token_version or 0) + 1
+    # No request in hand — a directory prune reaches here too — so the row
+    # has no address, but it does say the sessions ended and why.
+    await record_auth_event(
+        event_type="session_revoked",
+        user=user,
+        reason_code="user_deleted",
+        auth_method=method_for(user),
+        db=db,
+    )
     await db.flush()
 
 
@@ -85,9 +95,17 @@ async def permanently_delete_user(db: AsyncSession, user: User) -> None:
     ``purged_at`` marks it, so neither user listing shows it again, and the
     username is released for re-use.
     """
-
     if await user_has_full_administrator(db, user.id) and await count_active_full_administrators(db) <= 1:
         raise ValueError("Cannot delete the last Full Administrator account")
+    # The fields are about to be emptied; the snapshot has to be taken now
+    # or the row would name nobody.
+    await record_auth_event(
+        event_type="session_revoked",
+        user=user,
+        reason_code="user_deleted",
+        auth_method=method_for(user),
+        db=db,
+    )
     from app.models.api_key import UserApiKey
 
     user_id = user.id

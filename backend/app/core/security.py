@@ -3,6 +3,7 @@
 import hashlib
 import re
 import secrets
+import uuid
 from datetime import datetime, timedelta
 
 import bcrypt
@@ -56,12 +57,29 @@ def create_access_token(
     *,
     token_version: int = 0,
 ) -> str:
-    payload = {"sub": subject, "role": role, "ver": int(token_version or 0)}
+    # jti: the session's own identity, so a sign-in row and the sign-out that
+    # ends it can be tied together. Tokens minted before this claim existed
+    # stay valid — decode_access_token requires nothing of the payload.
+    payload = {"sub": subject, "role": role, "ver": int(token_version or 0), "jti": str(uuid.uuid4())}
     if extra:
         payload.update(extra)
     expire = datetime.utcnow() + timedelta(minutes=settings.jwt_expire_minutes)
     payload["exp"] = expire
     return jwt.encode(payload, settings.secret_key, algorithm=settings.jwt_algorithm)
+
+
+def session_id_from_request(request) -> str | None:
+    """The ``jti`` of the session cookie on this request, if it carries one."""
+
+    try:
+        token = request.cookies.get(settings.session_cookie_name)
+    except Exception:  # noqa: BLE001 -- a request without cookies has no session
+        return None
+    if not token:
+        return None
+    payload = decode_access_token(token)
+    jti = payload.get("jti") if payload else None
+    return str(jti) if jti else None
 
 
 def decode_access_token(token: str) -> dict | None:

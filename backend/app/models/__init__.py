@@ -27,6 +27,7 @@ from app.models.api_key import (
     alpha_router_api_key_connections,
     alpha_router_api_key_models,
 )
+from app.models.auth_event import AuthEvent
 from app.models.auth_provider import AuthProviderConfig
 from app.models.budget import BudgetPlan, PlanAssignment
 from app.models.budget_reservation import BudgetReservation
@@ -141,6 +142,7 @@ __all__ = [
     "ChatMessageFeedback",
     "ChatSession",
     "ChatToolAccessAssignment",
+    "AuthEvent",
     "ChatToolPolicy",
     "Connection",
     "ConnectionAuditLog",

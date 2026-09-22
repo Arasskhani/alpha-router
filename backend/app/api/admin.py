@@ -3880,6 +3880,11 @@ async def get_storage_overview(db: AsyncSession = Depends(get_db), _: User = Dep
 
     # The administrative audit trail: the fourth thing this page governs.
     stats["admin_logs"] = await get_admin_log_retention(db)
+
+    from app.services.auth_event_retention_service import get_auth_event_retention
+
+    # Sign-in history: the fifth. One window, no redaction — see the service.
+    stats["sign_in_activity"] = await get_auth_event_retention(db)
     quota_gb = await get_user_media_quota_gb(db)
     stats["settings"]["user_media_quota_gb"] = quota_gb
     stats["settings"]["user_media_quota_bytes"] = await get_user_media_quota_bytes(db)
@@ -4104,6 +4109,41 @@ async def patch_admin_log_retention_settings(
     )
     await db.commit()
     return {"ok": True, "admin_logs": saved}
+
+
+class SignInActivityRetentionSettingsPatch(BaseModel):
+    retention_days: int = Field(ge=90, le=3650)
+
+
+@router.patch("/storage/sign-in-activity-settings")
+async def patch_sign_in_activity_retention_settings(
+    body: SignInActivityRetentionSettingsPatch,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_storage_write),
+):
+    """How long sign-in history is kept.
+
+    Same posture as the administrative trail beside it: saving does not purge,
+    the nightly job does, and the change is itself recorded — inside this
+    request's transaction, so the record falls under the new window.
+    """
+    from app.services.auth_event_retention_service import get_retention_days, set_auth_event_retention_days
+    from app.services.client_ip import resolve_client_ip
+    from app.services.security_audit import log_security_event
+
+    before = await get_retention_days(db)
+    saved = await set_auth_event_retention_days(db, body.retention_days)
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=resolve_client_ip(request),
+        action="sign_in_activity_retention_changed",
+        resource_type="auth_events",
+        detail={"retention_days": saved["retention_days"], "previous_retention_days": before},
+    )
+    await db.commit()
+    return {"ok": True, "sign_in_activity": saved}
 
 
 @router.patch("/storage/chat-settings")

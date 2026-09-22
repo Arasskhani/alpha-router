@@ -2486,6 +2486,13 @@ export const docSections: DocSection[] = [
             deleted only when the longer window passes. Detail cannot outlive the event, so a detail window longer
             than the event window is clamped down when you save, and the card warns before you do.
           </li>
+          <li>
+            <strong>Sign-in activity — who signed in, from where</strong> — one window over the events behind
+            Sign-in Activity (default 365 days, 90–3650). Nothing on a sign-in event is cleared early: the reason an
+            attempt failed is kept exactly as long as the fact that it did, and the whole row goes when the window
+            passes. The floor is 90 days because sign-in records are what an incident review asks for first. Saving
+            does not purge; the nightly job does, and the change is recorded in Admin Logs.
+          </li>
         </ul>
         <h3>Why the payload window is separate</h3>
         <p>

@@ -32,6 +32,16 @@ type RetentionOverview = {
   };
   api_logs?: ApiLogRetention;
   admin_logs?: AdminLogRetention;
+  sign_in_activity?: SignInActivityRetention;
+};
+
+type SignInActivityRetention = {
+  retention_days: number;
+  min_days: number;
+  max_days: number;
+  default_days: number;
+  stored_events: number;
+  expiring_events: number;
 };
 
 type AdminLogRetention = {
@@ -97,6 +107,8 @@ export default function RetentionPolicy() {
   const [adminLogDetailDays, setAdminLogDetailDays] = useState(90);
   const [adminLogEventDays, setAdminLogEventDays] = useState(365);
   const [savingAdminLogs, setSavingAdminLogs] = useState(false);
+  const [signInRetentionDays, setSignInRetentionDays] = useState(365);
+  const [savingSignIns, setSavingSignIns] = useState(false);
   const [apiLogRetentionDays, setApiLogRetentionDays] = useState(30);
 
   async function load() {
@@ -113,6 +125,7 @@ export default function RetentionPolicy() {
         setAdminLogDetailDays(data.admin_logs.detail_retention_days);
         setAdminLogEventDays(data.admin_logs.event_retention_days);
       }
+      if (data.sign_in_activity) setSignInRetentionDays(data.sign_in_activity.retention_days);
       const chat = data.chat?.settings;
       if (chat) {
         setChatRetentionEnabled(chat.retention_enabled);
@@ -200,6 +213,25 @@ export default function RetentionPolicy() {
       setError(String(e));
     } finally {
       setSavingAdminLogs(false);
+    }
+  }
+
+  async function saveSignInActivitySettings(e: FormEvent) {
+    e.preventDefault();
+    setSavingSignIns(true);
+    setError("");
+    setFlash("");
+    try {
+      await api("/api/admin/storage/sign-in-activity-settings", {
+        method: "PATCH",
+        body: JSON.stringify({ retention_days: signInRetentionDays }),
+      });
+      setFlash("Sign-in activity retention updated. The nightly job applies it.");
+      await load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSavingSignIns(false);
     }
   }
 
@@ -579,6 +611,43 @@ export default function RetentionPolicy() {
         <div className="dialog-actions">
           <button type="submit" className="btn" disabled={savingAdminLogs}>
             {savingAdminLogs ? "Saving…" : "Save admin log policy"}
+          </button>
+        </div>
+      </form>
+
+      <form className="card" onSubmit={saveSignInActivitySettings}>
+        <h3>Sign-in activity — who signed in, from where</h3>
+        <p className="muted-text" style={{ marginTop: 0 }}>
+          The events behind Sign-in Activity: every sign-in, failed
+          attempt, sign-out and revoked session, with the address it came from and the reason it failed. Every
+          column is a short fact and none of it is cleared early — the reason a sign-in failed is kept exactly as
+          long as the fact that it did. A row is kept whole until the window passes.
+        </p>
+        <label htmlFor="sign-in-retention-days">Keep sign-in events for (days)</label>
+        <input
+          id="sign-in-retention-days"
+          type="number"
+          min={stats?.sign_in_activity?.min_days ?? 90}
+          max={stats?.sign_in_activity?.max_days ?? 3650}
+          className="input-block"
+          value={signInRetentionDays}
+          onChange={(e) => setSignInRetentionDays(Number(e.target.value || 90))}
+        />
+        {stats?.sign_in_activity ? (
+          <p className="muted-text" style={{ marginTop: "0.75rem" }}>
+            {stats.sign_in_activity.stored_events.toLocaleString()} event(s) stored. The next nightly run will
+            delete {stats.sign_in_activity.expiring_events.toLocaleString()}.
+          </p>
+        ) : null}
+        <p className="muted-text">
+          The floor is {stats?.sign_in_activity?.min_days ?? 90} days: sign-in records are what an incident review
+          reaches for first, and the frameworks most installations are audited against expect at least a quarter of
+          them to be at hand. Saving does not purge immediately; the nightly job applies it, and the change is itself
+          recorded in Admin Logs.
+        </p>
+        <div className="dialog-actions">
+          <button type="submit" className="btn" disabled={savingSignIns}>
+            {savingSignIns ? "Saving…" : "Save sign-in activity policy"}
           </button>
         </div>
       </form>

@@ -363,6 +363,44 @@ async def job_admin_log_retention():
             logger.exception("Admin log retention run failed")
 
 
+async def job_auth_event_retention():
+    """Delete sign-in history past the window set on the Retention Policy page.
+
+    Recorded in the governance chain for the same reason the admin log pass
+    is: a job that removes evidence has to leave evidence that it ran.
+    """
+    async with AsyncSessionLocal() as db:
+        from app.services.auth_event_retention_service import purge_expired_auth_events
+
+        try:
+            result = await purge_expired_auth_events(db)
+            if result["events_deleted"]:
+                logger.info(
+                    "Sign-in activity retention: %s events deleted (>%sd)",
+                    result["events_deleted"],
+                    result["retention_days"],
+                )
+                try:
+                    from app.services.agent_governance_service import append_governance_audit_event
+
+                    await append_governance_audit_event(
+                        db,
+                        event_type="governance.retention.auth_events.purged",
+                        resource_type="auth_events",
+                        resource_id=None,
+                        actor_user_id=None,
+                        outcome="success",
+                        payload=dict(result),
+                    )
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    logger.exception("Sign-in activity retention ran but could not be recorded in the audit chain")
+        except Exception:
+            await db.rollback()
+            logger.exception("Sign-in activity retention run failed")
+
+
 async def job_raw_payload_retention():
     """Clear provider payloads past the window set on the API Logs page."""
     async with AsyncSessionLocal() as db:
@@ -546,6 +584,14 @@ def start_scheduler():
         minute=25,
         timezone=get_server_timezone(),
         id="admin_log_retention",
+    )
+    scheduler.add_job(
+        job_auth_event_retention,
+        "cron",
+        hour=4,
+        minute=35,
+        timezone=get_server_timezone(),
+        id="auth_event_retention",
     )
     # After the admin log pass, and out of hours: this is the biggest table in
     # the product and the first run on an installation that has never had

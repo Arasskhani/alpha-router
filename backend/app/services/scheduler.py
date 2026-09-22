@@ -435,6 +435,29 @@ async def job_tls_expiry_notice():
             logger.exception("TLS expiry notice job failed")
 
 
+async def job_sign_in_alerts():
+    """Raise the flag on sign-in failure patterns from the last quarter hour.
+
+    Reads auth_events, writes suspicious_sign_in_pattern to the trail and
+    e-mails Super Admins; locks nobody out. See sign_in_alert_service.
+    """
+    async with AsyncSessionLocal() as db:
+        from app.services.sign_in_alert_service import raise_alerts
+
+        try:
+            result = await raise_alerts(db)
+            if result["raised"]:
+                logger.info(
+                    "Sign-in alerts: %s raised, %s suppressed as repeats, %s e-mails sent",
+                    result["raised"],
+                    result["suppressed"],
+                    result["emails_sent"],
+                )
+        except Exception:
+            await db.rollback()
+            logger.exception("Sign-in alert job failed")
+
+
 async def job_purge_deleted_projects():
     async with AsyncSessionLocal() as db:
         from app.services.project_service import purge_expired_deleted_projects
@@ -636,6 +659,17 @@ def start_scheduler():
         minute=0,
         timezone=get_server_timezone(),
         id="tls_expiry_notice",
+        max_instances=1,
+        coalesce=True,
+    )
+    # Often enough that an attack is flagged while it is still running, and
+    # well inside the fifteen-minute window it reads, so nothing falls between
+    # two runs.
+    scheduler.add_job(
+        job_sign_in_alerts,
+        "interval",
+        minutes=5,
+        id="sign_in_alerts",
         max_instances=1,
         coalesce=True,
     )

@@ -2881,6 +2881,15 @@ export const docSections: DocSection[] = [
             <a href="#admin-retention">Retention Policy</a>. Nothing on a sign-in event is cleared early.
           </li>
           <li>
+            <strong>Alerts.</strong> Every five minutes the platform reads the last fifteen minutes of failures. Ten
+            or more failed attempts against one account name, or five or more distinct account names tried from one
+            address, write a <code>suspicious_sign_in_pattern</code> event to{" "}
+            <a href="#admin-activity-logs">Admin Logs</a> and e-mail every active Super Admin who has an address
+            (when SMTP is configured; without it the event is still recorded). Each pattern is raised at most once an
+            hour per account or address. <strong>Nobody is locked out</strong>: the login rate limiter already slows
+            the attacker, and a lockout would let anyone lock the real owner out with nothing but their username.
+          </li>
+          <li>
             Access: Super Admin and Read Only Super Admin. The menu has its own permission key
             (<code>sign_in_activity</code>) rather than sharing <code>api_logs</code>, because sign-in history is
             personal data about every account. Sign-in rows also appear in Admin Logs under the{" "}

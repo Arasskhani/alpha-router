@@ -43,6 +43,8 @@ export type MenuKey =
 
   | "api_logs"
 
+  | "sign_in_activity"
+
   | "operations"
 
   | "database"

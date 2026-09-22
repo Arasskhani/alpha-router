@@ -22,6 +22,7 @@ MenuKey = Literal[
     "storage",
     "reports",
     "api_logs",
+    "sign_in_activity",
     "operations",
     "database",
     "chat_tools",
@@ -93,6 +94,7 @@ MENU_DEFINITIONS: tuple[tuple[MenuKey, str, CategoryKey], ...] = (
     ("storage", "Storage", "data_reports"),
     ("reports", "Reports", "data_reports"),
     ("api_logs", "API Logs", "data_reports"),
+    ("sign_in_activity", "Sign-in Activity", "data_reports"),
     ("agents", "Agents & Knowledge", "agents_knowledge"),
     ("admin_guide", "Admin Guide", "developer"),
     ("user_manual", "User Manual", "developer"),
@@ -193,6 +195,11 @@ MENU_PATH_PREFIXES: dict[MenuKey, tuple[str, ...]] = {
         "/admin/logs",
         "/admin/admin-logs",
     ),
+    # Its own key rather than a third path under api_logs: sign-in history is
+    # personal data about every account (addresses, failed attempts), and the
+    # day a scoped role is wanted for it, it must be separable from the
+    # request and administrative logs.
+    "sign_in_activity": ("/admin/sign-in-activity",),
     "operations": ("/admin/operations", "/admin/debug"),
     "database": ("/admin/database",),
     # The Chat experience section: who may use each chat tool, how the one tool

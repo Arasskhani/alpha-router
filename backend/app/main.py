@@ -24,6 +24,7 @@ from app.api import (
     admin_logs,
     admin_memory,
     admin_security,
+    sign_in_activity,
     agents,
     auth,
     authentication,
@@ -776,6 +777,7 @@ if settings.agents_platform_enabled:
     app.include_router(admin_knowledge.router)
 app.include_router(admin_chat_tools.router)
 app.include_router(admin_logs.router)
+app.include_router(sign_in_activity.router)
 app.include_router(admin_memory.router)
 if settings.agents_platform_enabled:
     app.include_router(agents.router)

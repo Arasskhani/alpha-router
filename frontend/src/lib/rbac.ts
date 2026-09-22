@@ -120,6 +120,7 @@ const MENU_PATH_PREFIXES: Record<MenuKey, string[]> = {
   storage: ["/admin/storage-management", "/admin/retention-policy", "/admin/storage"],
   reports: ["/admin/reports", "/admin/project-usage"],
   api_logs: ["/admin/logs", "/admin/admin-logs"],
+  sign_in_activity: ["/admin/sign-in-activity"],
   operations: ["/admin/operations", "/admin/debug"],
   database: ["/admin/database"],
   // The Chat experience section: who may use each chat tool, how the one tool
@@ -156,6 +157,7 @@ const MENU_TO_CATEGORY: Record<MenuKey, CategoryKey> = {
   storage: "data_reports",
   reports: "data_reports",
   api_logs: "data_reports",
+  sign_in_activity: "data_reports",
   operations: "overview",
   database: "overview",
   chat_tools: "chat_experience",

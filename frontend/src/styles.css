@@ -15653,6 +15653,63 @@ p.error,
   font-size: 0.82rem;
 }
 
+/* Settings → Security → Recent sign-ins: the account's own history, in a dialog. */
+.recent-sign-ins__intro {
+  margin-top: 0;
+}
+.recent-sign-ins__failures {
+  margin-bottom: 0.75rem;
+}
+.recent-sign-ins__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: min(60vh, 32rem);
+  overflow-y: auto;
+}
+.recent-sign-ins__item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.75rem;
+  background: var(--surface);
+}
+.recent-sign-ins__item.is-current {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+}
+.recent-sign-ins__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.recent-sign-ins__time {
+  font-size: 0.85rem;
+  color: var(--text);
+}
+.recent-sign-ins__current {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--accent);
+  font-weight: 600;
+}
+.recent-sign-ins__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  margin-top: 0.3rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.recent-sign-ins__facts > span + span::before {
+  content: "·";
+  margin-right: 0.75rem;
+  opacity: 0.6;
+}
+
 .project-media-toolbar {
   display: flex;
   flex-wrap: wrap;

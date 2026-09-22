@@ -32,6 +32,7 @@ import { EMPTY_WORK_PROFILE, fetchWorkProfile, type WorkProfile } from "../lib/w
 import { useConfirm } from "../context/ConfirmContext";
 import Modal from "./Modal";
 import PersonalApiKeyPanel from "./PersonalApiKeyPanel";
+import RecentSignInsModal from "./RecentSignInsModal";
 import ThemeSegmentedControl from "./ThemeSegmentedControl";
 
 type TabId = "general" | "work-profile" | "memory" | "data-control" | "security" | "api-keys";
@@ -1026,6 +1027,7 @@ function SecurityPanel() {
   const [disablePassword, setDisablePassword] = useState("");
   const [disableCode, setDisableCode] = useState("");
   const [busy2fa, setBusy2fa] = useState(false);
+  const [signInsOpen, setSignInsOpen] = useState(false);
 
   async function refreshStatus() {
     const data = await api<SecurityStatus>("/api/user/settings/security");
@@ -1319,10 +1321,21 @@ function SecurityPanel() {
             </button>
           )}
         </SettingsRow>
+
+        <SettingsRow
+          title="Recent sign-ins"
+          hint="Where and when your account was signed in to, and any failed attempts"
+        >
+          <button type="button" className="settings-row__action" onClick={() => setSignInsOpen(true)}>
+            View
+          </button>
+        </SettingsRow>
       </div>
 
       {error && <p className="settings-error" role="alert">{error}</p>}
       {message && <p className="settings-success">{message}</p>}
+
+      <RecentSignInsModal open={signInsOpen} onClose={() => setSignInsOpen(false)} />
     </div>
   );
 }

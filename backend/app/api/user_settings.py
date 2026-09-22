@@ -9,10 +9,19 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import select
+
 from app.api.deps import get_current_user, require_active_user
 from app.branding import LOGGER_NAMESPACE
 from app.core.security import create_access_token, hash_password, session_id_from_request, verify_password
 from app.database import get_db
+from app.models.auth_event import (
+    EVENT_LOGIN_FAILED,
+    EVENT_LOGIN_RATE_LIMITED,
+    EVENT_LOGIN_SUCCESS,
+    EVENT_SESSION_REVOKED,
+    AuthEvent,
+)
 from app.models.user import User
 from app.services.auth_events_service import method_for, record_auth_event
 from app.services.chat_import_export import (
@@ -50,6 +59,68 @@ def _require_local(user: User) -> None:
             status_code=403,
             detail="This action is only available for local accounts",
         )
+
+
+#: What a person sees of their own history. Sign-outs are left out: the
+#: list exists so that "fifteen failed attempts last night from an address I
+#: do not know" is something the account's owner can notice, and a sign-out
+#: is neither a risk signal nor something they need reminding of.
+OWN_SIGN_IN_EVENT_TYPES: tuple[str, ...] = (
+    EVENT_LOGIN_SUCCESS,
+    EVENT_LOGIN_FAILED,
+    EVENT_LOGIN_RATE_LIMITED,
+    EVENT_SESSION_REVOKED,
+)
+OWN_SIGN_IN_LIMIT = 20
+
+
+@router.get("/sign-ins")
+async def recent_sign_ins(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """The caller's own recent sign-ins, and nobody else's.
+
+    No parameters, by design: there is nothing in this request that could be
+    pointed at another account. The rows are selected by the id of the
+    session's user, and only that.
+
+    The row that shows the caller's own current session is marked, so the list
+    reads as "this is you, here" against "this was someone, somewhere". The
+    provider's message behind a failure is not included; the code is what a
+    person needs, the message is for an administrator.
+    """
+    rows = (
+        (
+            await db.execute(
+                select(AuthEvent)
+                .where(AuthEvent.user_id == user.id, AuthEvent.event_type.in_(OWN_SIGN_IN_EVENT_TYPES))
+                .order_by(AuthEvent.occurred_at.desc(), AuthEvent.id.desc())
+                .limit(OWN_SIGN_IN_LIMIT)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    current = session_id_from_request(request)
+    return {
+        "auth_provider": user.auth_provider or "local",
+        "limit": OWN_SIGN_IN_LIMIT,
+        "items": [
+            {
+                "occurred_at": row.occurred_at.isoformat() if row.occurred_at else None,
+                "event_type": row.event_type,
+                "outcome": row.outcome,
+                "reason_code": row.reason_code,
+                "auth_method": row.auth_method,
+                "ip": row.ip,
+                "user_agent": row.user_agent,
+                "current_session": bool(current and row.session_id and row.session_id == current),
+            }
+            for row in rows
+        ],
+    }
 
 
 @router.get("/security")

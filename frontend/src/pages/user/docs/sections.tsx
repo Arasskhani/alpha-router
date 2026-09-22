@@ -1069,6 +1069,12 @@ export const userManualSections: DocSection[] = [
           <li>
             LDAP / SAML / OIDC accounts: password and 2FA are managed at your identity provider
           </li>
+          <li>
+            <strong>Recent sign-ins</strong> → <strong>View</strong> opens your last 20 sign-ins, failed attempts and
+            forced sign-outs, each with the time, the address it came from and the browser when known. The session
+            you are reading this in is marked. If you see attempts you did not make, change your password and tell
+            your administrator. For SAML / OIDC accounts, signing out is recorded by the identity provider, not here.
+          </li>
         </ul>
         <h3>API Key</h3>
         <p>

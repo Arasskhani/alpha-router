@@ -110,7 +110,7 @@ async def test_api_upload_media_success(monkeypatch):
             owner, _, _ = await _setup(db)
             item = await upload_project_media_endpoint(
                 project_id=PROJ,
-                file=_upload("pic.png", b"png-bytes", "image/png"),
+                file=_upload("pic.png", b"\x89PNG\r\n\x1a\n" + b"png-bytes", "image/png"),
                 kind="image",
                 source_model=None,
                 source_prompt=None,
@@ -140,7 +140,7 @@ async def test_api_list_media_pagination(monkeypatch):
             for i in range(5):
                 await upload_project_media_endpoint(
                     project_id=PROJ,
-                    file=_upload(f"f{i}.bin", f"body-{i}".encode()),
+                    file=_upload(f"f{i}.dat", f"body-{i}".encode()),
                     kind=None,
                     source_model=None,
                     source_prompt=None,
@@ -173,7 +173,7 @@ async def test_api_upload_media_viewer_403(monkeypatch):
             try:
                 await upload_project_media_endpoint(
                     project_id=PROJ,
-                    file=_upload("x.bin", b"x"),
+                    file=_upload("x.dat", b"x"),
                     kind=None,
                     source_model=None,
                     source_prompt=None,
@@ -224,7 +224,7 @@ async def test_api_delete_media_owner_success(monkeypatch):
             owner, contrib, _ = await _setup(db)
             item = await upload_project_media_endpoint(
                 project_id=PROJ,
-                file=_upload("c.bin", b"contrib-bytes"),
+                file=_upload("c.dat", b"contrib-bytes"),
                 kind=None,
                 source_model=None,
                 source_prompt=None,
@@ -251,7 +251,7 @@ async def test_api_delete_media_contributor_other_403(monkeypatch):
             owner, contrib, _ = await _setup(db)
             item = await upload_project_media_endpoint(
                 project_id=PROJ,
-                file=_upload("owner.bin", b"owner-bytes"),
+                file=_upload("owner.dat", b"owner-bytes"),
                 kind=None,
                 source_model=None,
                 source_prompt=None,

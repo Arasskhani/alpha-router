@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import io
 from typing import Any
 
@@ -11,12 +12,17 @@ import pandas as pd
 from app.core.text_safety import clean_extracted_text
 from app.services.attachment_policy import (
     ALLOWED_AUDIO_EXTENSIONS,
+    ALLOWED_DOCUMENT_EXTENSIONS,
     ALLOWED_IMAGE_EXTENSIONS,
     ALLOWED_VIDEO_EXTENSIONS,
     _extension,
 )
 
 _MAX_EXTRACT_CHARS = 120_000
+
+#: Share of decoded characters that must be printable (or whitespace) for a
+#: file of unknown type to be read as text. See ``is_probably_text``.
+_MIN_PRINTABLE_RATIO = 0.9
 
 
 def _truncate(text: str) -> str:
@@ -33,6 +39,71 @@ def _decode_text(raw: bytes) -> str:
         except UnicodeDecodeError:
             continue
     return raw.decode("utf-8", errors="replace")
+
+
+def is_probably_text(raw: bytes, *, sample: int = 65536) -> bool:
+    """True when the first ``sample`` bytes look like a text file a person wrote.
+
+    Used for attachments whose extension the platform has no parser for (kind
+    ``file``: ``.psd``, ``.parquet``, ``.sqlite``, ``.py`` if unblocked, ...).
+    Declared text documents (``.txt``, ``.md``, ``.json``) never come here;
+    they are decoded with replacement regardless, because the name already
+    promised text. This check exists so a binary file is *not* decoded into
+    thousands of tokens of replacement characters for the model.
+
+    Rules, and why each one:
+
+    * **Empty is not text.** There is nothing to show, and the caller has a
+      better message for a file with no content than an empty string.
+    * **Only the head is read.** Text files are text from the first byte; a
+      binary container that happens to start with an ASCII header (``8BPS``,
+      ``SQLite format 3``) is caught within the same head. Reading the whole
+      of a multi-megabyte upload would cost time for no better answer.
+    * **A UTF-16 BOM is honoured before anything else.** UTF-16 text is full
+      of NUL bytes, so it must be recognised by its BOM before the NUL rule
+      runs, and decoded as UTF-16 rather than UTF-8.
+    * **A NUL byte means binary.** No text encoding this product accepts
+      (UTF-8, or UTF-16 with a BOM, handled above) puts a NUL in text a person
+      wrote; nearly every binary format has them in its first few hundred
+      bytes. This alone rejects most executables, archives and media.
+    * **The bytes must be valid UTF-8** (a UTF-8 BOM is allowed). Random bytes
+      are almost never valid UTF-8 past a handful of characters. The decoder
+      is incremental so a multi-byte sequence cut at the sample boundary does
+      not count as invalid.
+    * **At least 90% of characters must be printable or whitespace.** Some
+      binary formats are pure ASCII by accident (short headers, base64
+      blobs) and a few text files carry stray control bytes (ANSI colour
+      codes in a log, form feeds). The ratio separates the two without
+      demanding perfection from either.
+    """
+
+    if not raw:
+        return False
+    head = bytes(raw[:sample])
+    truncated = len(raw) > len(head)
+
+    if head[:2] in (codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE):
+        encoding = "utf-16"
+        if truncated and len(head) % 2:
+            # Keep whole code units so a split unit is not read as garbage.
+            head = head[:-1]
+    else:
+        if b"\x00" in head:
+            return False
+        encoding = "utf-8-sig"
+
+    decoder = codecs.getincrementaldecoder(encoding)(errors="strict")
+    try:
+        text = decoder.decode(head, final=not truncated)
+    except UnicodeDecodeError:
+        return False
+    if not text:
+        # A lone BOM, or a head shorter than one multi-byte sequence. Nothing
+        # decoded means nothing to judge — and nothing worth showing.
+        return False
+
+    printable = sum(1 for ch in text if ch.isprintable() or ch.isspace())
+    return printable / len(text) >= _MIN_PRINTABLE_RATIO
 
 
 def _extract_pdf(raw: bytes) -> str:
@@ -86,7 +157,17 @@ def _extract_tabular(raw: bytes, ext: str) -> str:
     return _truncate(df.to_csv(index=False))
 
 
-def extract_document_text(raw: bytes, filename: str) -> str:
+def extract_document_text(raw: bytes, filename: str) -> str | None:
+    """Text of a document attachment, or ``None`` when the file is binary.
+
+    Known document formats go to their parser. Declared text extensions
+    (``ALLOWED_DOCUMENT_EXTENSIONS``: txt, md, json, ...) are decoded with
+    replacement whatever their bytes look like — the name promised text.
+    Anything else (kind ``file``) is decoded only when ``is_probably_text``
+    agrees; otherwise ``None`` tells the caller to hand the file to the model
+    by name and size instead of as replacement-character noise.
+    """
+
     ext = _extension(filename)
     if ext in ALLOWED_IMAGE_EXTENSIONS or ext in ALLOWED_VIDEO_EXTENSIONS or ext in ALLOWED_AUDIO_EXTENSIONS:
         raise ValueError("Not a document file.")
@@ -104,6 +185,8 @@ def extract_document_text(raw: bytes, filename: str) -> str:
             return _extract_tabular(raw, ext)
         if ext == "doc":
             return "(Legacy .doc files are not supported. Save as .docx and retry.)"
+        if ext not in ALLOWED_DOCUMENT_EXTENSIONS and not is_probably_text(raw):
+            return None
         return _truncate(_decode_text(raw)) or "(Empty file.)"
     except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
         return f"(Could not extract text from {filename}: {exc})"
@@ -161,13 +244,14 @@ def build_image_data_url(raw: bytes, mime_type: str, filename: str) -> str:
     return f"data:{mime};base64,{encoded}"
 
 
-async def extract_document_text_bounded(raw: bytes, filename: str) -> str:
+async def extract_document_text_bounded(raw: bytes, filename: str) -> str | None:
     """``extract_document_text`` off the event loop with a wall-clock ceiling.
 
     The parsers (pypdf, openpyxl, python-docx) are synchronous and CPU-bound;
     a crafted file can keep them busy for minutes. Running them inline would
     stall every other request on this worker, so they go to a thread and the
-    caller gets a placeholder if the ceiling is hit.
+    caller gets a placeholder if the ceiling is hit. ``None`` (binary file)
+    is passed through as is, never turned into the string ``"None"``.
     """
     from app.config import get_settings
 
@@ -178,16 +262,38 @@ async def extract_document_text_bounded(raw: bytes, filename: str) -> str:
         return f"(Text extraction from {filename} exceeded {timeout}s and was skipped.)"
 
 
+#: Kinds served as media: referenced by URL (and data URL for images), never
+#: text-extracted. Every other kind — ``document`` and ``file`` alike — has
+#: its text extracted when the bytes allow it.
+_MEDIA_KINDS: frozenset[str] = frozenset({"image", "video", "audio"})
+
+
 def _base_payload(*, filename: str, kind: str, mime_type: str, url: str, raw: bytes) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "name": filename,
         "kind": kind,
         "mime_type": mime_type,
         "url": url,
+        # Set for every kind: the UI shows it, and for a binary ``file`` it is
+        # all the model gets to know about the content besides the name.
+        "size_bytes": len(raw),
     }
     if kind == "image":
         payload["data_url"] = build_image_data_url(raw, mime_type, filename)
     return payload
+
+
+def _attach_text(payload: dict[str, Any], text: str | None) -> None:
+    """Record the extraction result: text, or the fact that there was none.
+
+    ``binary`` is set only when extraction found no text to show, so a
+    consumer that reads ``text`` alone still behaves; one that looks for
+    ``binary`` can describe the file by name and size instead.
+    """
+
+    payload["text"] = text
+    if text is None:
+        payload["binary"] = True
 
 
 def processed_attachment_payload(
@@ -200,8 +306,8 @@ def processed_attachment_payload(
 ) -> dict[str, Any]:
     """Synchronous variant (tests, tools). Request handlers use the async one."""
     payload = _base_payload(filename=filename, kind=kind, mime_type=mime_type, url=url, raw=raw)
-    if kind not in {"image", "video", "audio"}:
-        payload["text"] = extract_document_text(raw, filename)
+    if kind not in _MEDIA_KINDS:
+        _attach_text(payload, extract_document_text(raw, filename))
     return payload
 
 
@@ -214,7 +320,7 @@ async def processed_attachment_payload_async(
     raw: bytes,
 ) -> dict[str, Any]:
     payload = _base_payload(filename=filename, kind=kind, mime_type=mime_type, url=url, raw=raw)
-    if kind not in {"image", "video", "audio"}:
+    if kind not in _MEDIA_KINDS:
         # Binary media is referenced by URL only (no text extraction).
-        payload["text"] = await extract_document_text_bounded(raw, filename)
+        _attach_text(payload, await extract_document_text_bounded(raw, filename))
     return payload

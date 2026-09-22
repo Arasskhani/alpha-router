@@ -32,7 +32,6 @@ from app.services.attachment_policy import (
     AttachmentPolicyError,
     media_response_type_and_disposition,
     resolve_attachment_mime,
-    validate_attachment_filename,
     validate_attachment_size,
 )
 from app.services.bounded_io import BoundedIOError, clamp_limit, read_upload_bounded
@@ -105,6 +104,13 @@ from app.services.storage_service import (
 )
 from app.services.system_default_models import get_all_default_model_ids
 from app.services.transcription_service import transcribe_audio_bytes
+from app.services.upload_file_policy import (
+    KIND_DOCUMENT,
+    KIND_FILE,
+    check_content,
+    classify,
+    load_policy,
+)
 from app.services.upload_screening import UploadRejected, screen_upload
 from app.services.user_chat_storage_service import load_user_prefs
 
@@ -627,10 +633,16 @@ async def process_attachments(
         minimum=attachment_limit,
         maximum=2048 * 1024 * 1024,
     )
+    # The operator's upload policy, loaded once per request rather than once
+    # per file: it is the same answer for every file in one message.
+    upload_policy = await load_policy(db)
     for upload in files:
         filename = upload.filename or "attachment"
         try:
-            _, kind = validate_attachment_filename(filename)
+            # Name first, bytes second: a blocked name is refused before up to
+            # a gigabyte is read into memory. The content signature check
+            # needs the bytes, so it runs once they are in hand.
+            ext, kind = classify(filename, upload_policy)
             remaining = total_limit - total_bytes
             if remaining <= 0:
                 raise BoundedIOError(
@@ -641,6 +653,7 @@ async def process_attachments(
                 max_bytes=min(attachment_limit, remaining),
             )
             validate_attachment_size(len(raw), max_bytes=attachment_limit)
+            check_content(raw, ext=ext, kind=kind)
             total_bytes += len(raw)
         except BoundedIOError as exc:
             raise HTTPException(status_code=413, detail=str(exc)) from exc
@@ -658,12 +671,17 @@ async def process_attachments(
             kind=kind,
             client_mime=upload.content_type,
         )
+        # Media libraries know image|video|document|other. A ``file`` is stored
+        # as a document — served as a download with an extension-derived type,
+        # which is exactly what an unknown format must be — while the chat
+        # payload keeps ``file`` so the model and the UI describe it honestly.
+        storage_kind = KIND_DOCUMENT if kind == KIND_FILE else kind
         try:
             url = await persist_scoped_chat_media(
                 db,
                 user=user,
                 project_id=scoped_project_id,
-                kind=kind,
+                kind=storage_kind,
                 blob=raw,
                 mime=mime,
                 file_name=filename,

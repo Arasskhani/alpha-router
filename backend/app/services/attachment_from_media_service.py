@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +15,6 @@ from app.services.attachment_extract import extract_document_text_bounded
 from app.services.attachment_policy import (
     AttachmentPolicyError,
     resolve_attachment_mime,
-    validate_attachment_filename,
     validate_attachment_size,
 )
 from app.services.bounded_io import clamp_limit
@@ -24,6 +25,11 @@ from app.services.project_media_service import (
 )
 from app.services.storage_service import media_public_url, read_media_bytes
 from app.services.transfer_limits_service import get_transfer_limits
+from app.services.upload_file_policy import KIND_DOCUMENT, KIND_FILE, classify_name
+
+#: Kinds whose bytes are read for text. ``file`` is stored as a document and
+#: gets the same treatment: text when the bytes are text, nothing otherwise.
+_TEXT_KINDS: frozenset[str] = frozenset({KIND_DOCUMENT, KIND_FILE})
 
 
 def unique_positive_ids(ids: list[int]) -> list[int]:
@@ -117,15 +123,21 @@ def _payload(
     mime_type: str,
     url: str,
     text: str | None = None,
-) -> dict:
-    item = {
+) -> dict[str, Any]:
+    item: dict[str, Any] = {
         "name": filename,
         "kind": kind,
         "mime_type": mime_type,
         "url": url,
     }
-    if kind == "document" and text is not None:
-        item["text"] = text
+    if kind in _TEXT_KINDS:
+        # Same shape as a fresh upload (``attachment_extract._attach_text``):
+        # ``binary`` marks a file whose bytes held no text, so the model is
+        # given its name and size rather than replacement-character noise.
+        if text is not None:
+            item["text"] = text
+        else:
+            item["binary"] = True
     return item
 
 
@@ -139,8 +151,9 @@ async def attachments_from_existing_media(
 ) -> list[dict]:
     """Build ProcessedAttachment dicts from already-stored media.
 
-    Images are referenced by URL only. Documents are read for text extraction.
-    Nothing is written back to personal or project media storage.
+    Images are referenced by URL only. Documents and unknown files (kind
+    ``file``) are read for text extraction. Nothing is written back to
+    personal or project media storage.
     """
     ids = unique_positive_ids(media_ids)
     if not ids:
@@ -195,8 +208,12 @@ async def attachments_from_existing_media(
         filename = (row.file_name or "attachment").strip() or "attachment"
         mime = (row.mime_type or "").strip()
         _reject_video(kind=str(row.kind or ""), mime=mime)
+        # The stored row says ``document`` for anything that is not media; the
+        # name decides whether that is a document the platform can parse or a
+        # ``file`` it can only offer as text-if-text. Re-classifying also means
+        # an asset the operator has since blocked cannot be attached.
         try:
-            _, kind = validate_attachment_filename(filename)
+            _, kind = await classify_name(db, filename)
         except AttachmentPolicyError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -231,7 +248,7 @@ async def attachments_from_existing_media(
             client_mime=mime,
         )
         text: str | None = None
-        if kind == "document":
+        if kind in _TEXT_KINDS:
             if raw is None:
                 if scoped_project_id:
                     raw = await _read_project_bytes(

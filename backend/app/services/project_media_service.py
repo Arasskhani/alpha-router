@@ -37,6 +37,7 @@ from app.services.project_access_service import (
     require_capability,
 )
 from app.services.storage_service import _ext_from_mime, _sanitize_name, media_input_limit
+from app.services.upload_file_policy import KIND_FILE as UPLOAD_KIND_FILE
 
 _MAX_LIST_LIMIT = 200
 DEFAULT_PROJECT_MEDIA_QUOTA_BYTES = 1024 * 1024 * 1024  # 1 GiB per project
@@ -123,6 +124,11 @@ def _sha256_hex(blob: bytes) -> str:
 def _infer_kind(mime: str, kind: str | None) -> str:
     if kind:
         normalized = kind.strip().lower()
+        # The upload policy's ``file`` (a format the platform has no parser or
+        # player for) is a document to the library: stored, listed with the
+        # documents, always served as a download.
+        if normalized == UPLOAD_KIND_FILE:
+            normalized = PROJECT_MEDIA_KIND_DOCUMENT
         if normalized not in PROJECT_MEDIA_KINDS:
             raise ProjectMediaValidationError(f"Invalid media kind: {kind!r}")
         return normalized

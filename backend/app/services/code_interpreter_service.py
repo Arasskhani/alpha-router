@@ -372,7 +372,11 @@ def build_workspace_manifest(  # noqa: C901 -- Phase 4 split; complexity must no
                         if not isinstance(att, dict):
                             continue
                         name = str(att.get("name") or "data.txt")
-                        if att.get("kind") == "document" and att.get("text"):
+                        # A ``file`` (unknown format, e.g. an unblocked ``.py``)
+                        # carries text when its bytes were text; it reaches the
+                        # sandbox like a document. Binary files have no text
+                        # and are not carried yet.
+                        if att.get("kind") in ("document", "file") and att.get("text"):
                             add_file(name, str(att["text"]))
                 continue
             parts = FILE_SECTION_RE.split(content)

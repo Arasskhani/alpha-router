@@ -119,6 +119,7 @@ from app.services.project_service import (
     update_project,
 )
 from app.services.storage_service import media_input_limit
+from app.services.upload_file_policy import UploadPolicyError, check_content, classify, load_policy
 from app.services.upload_screening import UploadRejected, screen_upload
 from app.services.user_role_service import primary_role_for_user
 
@@ -1236,13 +1237,19 @@ async def upload_project_media_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     try:
+        # The same file type policy as chat attachments: a project library is a
+        # place other members download from, so a name the operator blocks
+        # never reaches storage, and the bytes must match the name.
+        upload_name = file.filename or "upload"
+        ext, policy_kind = classify(upload_name, await load_policy(db))
         data = await read_upload_bounded(file, max_bytes=media_input_limit())
-        await screen_upload(data, file.filename or "upload")
+        check_content(data, ext=ext, kind=policy_kind)
+        await screen_upload(data, upload_name)
         item = await upload_project_media(
             db,
             project_id=project_id,
             user=user,
-            file_name=file.filename or "upload",
+            file_name=upload_name,
             mime_type=file.content_type or "application/octet-stream",
             content_bytes=data,
             kind=kind,
@@ -1255,7 +1262,7 @@ async def upload_project_media_endpoint(
     except UploadRejected as exc:
         await db.rollback()
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    except (BoundedIOError, ProjectMediaValidationError) as exc:
+    except (BoundedIOError, ProjectMediaValidationError, UploadPolicyError) as exc:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except ProjectMediaQuotaError as exc:

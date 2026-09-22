@@ -350,7 +350,11 @@ class AttachmentPolicyError(ValueError):
 
 
 def validate_attachment_filename(filename: str) -> tuple[str, str]:
-    """Return (extension, kind) where kind is image|video|audio|document."""
+    """Return (extension, kind) where kind is image|video|audio|document.
+
+    Kept for callers outside request handling; request paths use the
+    operator-editable ``upload_file_policy.check_upload`` instead.
+    """
     if not filename or not filename.strip():
         raise AttachmentPolicyError("Missing file name.")
 
@@ -395,9 +399,17 @@ def resolve_attachment_mime(
     kind: str,
     client_mime: str | None = None,
 ) -> str:
-    """Derive a safe MIME for storage. Document uploads ignore client Content-Type."""
+    """Derive a safe MIME for storage. Document uploads ignore client Content-Type.
+
+    Kind ``file`` (a format the platform has no parser or player for) is a
+    document here: extension map only, never the client's type, and
+    ``application/octet-stream`` when the extension is unknown — so the file
+    is always served as an opaque download.
+    """
     ext = _extension(filename)
     kind_norm = (kind or "").strip().lower()
+    if kind_norm == "file":
+        kind_norm = "document"
     client = _normalize_mime(client_mime)
 
     if kind_norm == "image":

@@ -2022,6 +2022,14 @@ export const docSections: DocSection[] = [
           Agents are out of scope: an Agent&apos;s tools come from its own configuration, not from the composer, and
           are governed in <a href="#agents-knowledge-overview">Agents &amp; Knowledge</a>.
         </Note>
+        <h3>Voice messages and the recording</h3>
+        <p>
+          A voice message is transcribed and then discarded: the audio is held in memory for the length of the request,
+          screened, sent to the transcription model, and never written to Media or counted against the user&apos;s
+          quota. Earlier releases stored every dictation as an <code>audio</code> asset; those files remain in each
+          user&apos;s Media until the user deletes them or the Media retention window removes them. What the
+          transcription provider retains is governed by that provider&apos;s own policy, not by this platform.
+        </p>
         <h3>Adding a tool</h3>
         <p>
           The page lists what the server registry holds. A tool registered in the platform appears here with access

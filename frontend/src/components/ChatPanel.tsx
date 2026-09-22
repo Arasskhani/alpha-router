@@ -5688,12 +5688,8 @@ export default function ChatPanel({
     if (durationSeconds > 0) fd.append("duration_seconds", durationSeconds.toFixed(2));
     const res = await authFetch("/api/chat/voice", { method: "POST", body: fd });
     if (!res.ok) throw new Error(parseApiError(await res.text(), res.status).message);
-    const data = (await res.json()) as { transcript?: string; media_pending?: boolean; media_error?: string | null };
-    if (data.media_pending === false && data.media_error) {
-      // The transcript is fine; only the recording itself was not kept
-      // (media quota). Say so instead of silently dropping the audio.
-      setChatError(data.media_error);
-    }
+    // The server transcribes and discards the recording; the text is all there is.
+    const data = (await res.json()) as { transcript?: string };
     return (data.transcript || "").trim();
   }
 

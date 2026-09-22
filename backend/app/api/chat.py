@@ -5,7 +5,6 @@ import re
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -22,7 +21,7 @@ from starlette.background import BackgroundTask
 from app.api.deps import get_current_user, require_active_user
 from app.branding import CHAT_CLIENT_APP
 from app.config import get_settings
-from app.database import AsyncSessionLocal, get_db
+from app.database import get_db
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
@@ -98,7 +97,6 @@ from app.services.storage_service import (
     media_public_url,
     read_media_bytes,
     read_media_range,
-    store_generated_blob,
     store_generated_media,
     unlink_storage_if_unreferenced,
 )
@@ -423,55 +421,8 @@ async def chat_completions(
     )
 
 
-async def _store_voice_note(
-    *,
-    user_id: int,
-    username: str,
-    raw: bytes,
-    mime: str,
-    filename: str,
-    transcript: str,
-    chat_session_id: str | None,
-) -> None:
-    """Persist a voice note after its transcript has already been returned.
-
-    Storing the audio means a content hash, a quota check and an object-store
-    upload. None of that changes the transcript the caller is waiting on, so
-    keeping it in the request path only made every recording feel slow.
-
-    Runs on its own session because the request's session is closed once the
-    response is sent. Failures are logged and never surface: the transcript is
-    what was asked for, and it has already been delivered.
-    """
-    import logging
-
-    try:
-        async with AsyncSessionLocal() as store_db:
-            await store_generated_blob(
-                store_db,
-                user_id=user_id,
-                username=username,
-                kind="audio",
-                blob=raw,
-                mime=mime,
-                source_model=None,
-                source_prompt=transcript[:2000],
-                chat_session_id=chat_session_id,
-                file_name_hint=filename,
-                metadata={"transcript": transcript},
-            )
-            await store_db.commit()
-    except Exception:
-        logging.getLogger("app.api.chat").exception(
-            "Voice note storage failed after the transcript was returned "
-            "(user_id=%s); the transcript itself was delivered normally",
-            user_id,
-        )
-
-
 @router.post("/voice")
 async def voice_message(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     chat_session_id: str | None = Form(None),
     language: str | None = Form(None),
@@ -479,7 +430,18 @@ async def voice_message(
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload a voice note, store it, and return transcript for chat."""
+    """Transcribe a recording and return the text. The recording is not kept.
+
+    The audio lives only as long as this request: it is read into memory,
+    screened, handed to the transcription provider, and dropped when the
+    handler returns. It used to be written to the user's Media as well —
+    an ``audio`` asset per dictation, counted against their quota — although
+    nothing ever read it back: the response carried ``url: null`` from the
+    start and the composer takes only the text. Keeping a recording of a
+    person's voice that no feature uses is storage spent on a privacy
+    liability, so it is no longer stored. Recordings kept before this change
+    stay in Media until their owner or the retention policy removes them.
+    """
     await assert_tool_for_user(db, "speech_to_text", user_id=user.id)
     await resolve_owned_chat_session(db, user=user, chat_session_id=chat_session_id)
     budget, usage = await get_user_budget_state(db, user)
@@ -537,45 +499,16 @@ async def voice_message(
         logging.getLogger("app.api.chat").exception("Transcription failed")
         raise HTTPException(status_code=502, detail="Transcription failed. Please try again.") from exc
 
-    # The quota check is one cheap SUM; do it now so the caller learns *in
-    # the response* when the recording will not be kept, instead of getting
-    # media_pending=true for an upload that then fails silently in the
-    # background (B-36). The object-store write itself stays deferred.
-    from app.services.user_media_service import MediaQuotaExceededError, ensure_user_media_quota
-
-    media_pending = True
-    media_error: str | None = None
-    try:
-        await ensure_user_media_quota(db, int(user.id), len(raw))
-    except MediaQuotaExceededError as exc:
-        media_pending = False
-        media_error = (
-            f"Media storage quota exceeded ({exc.used_bytes + exc.incoming_bytes} of {exc.quota_bytes} bytes); "
-            "the recording was transcribed but not saved."
-        )
-    if media_pending:
-        # Identity primitives are captured now: the ORM user expires with the
-        # request session, and the storage task outlives it.
-        background_tasks.add_task(
-            _store_voice_note,
-            user_id=int(user.id),
-            username=str(user.username or ""),
-            raw=raw,
-            mime=mime,
-            filename=filename,
-            transcript=transcript,
-            chat_session_id=chat_session_id,
-        )
     return {
-        # The asset is written after this response, so its id and url are not
-        # known yet. They stay in the payload as nulls so the response shape is
-        # unchanged for any caller that reads them.
+        # Nothing is stored, so there is no asset to name. The keys stay so a
+        # client built against the older response (a tab left open across a
+        # deploy) keeps parsing it; ``media_pending`` is always false now.
         "id": None,
         "url": None,
         "transcript": transcript,
         "mime_type": mime,
-        "media_pending": media_pending,
-        "media_error": media_error,
+        "media_pending": False,
+        "media_error": None,
     }
 
 

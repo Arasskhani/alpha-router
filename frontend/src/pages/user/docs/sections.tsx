@@ -487,6 +487,11 @@ export const userManualSections: DocSection[] = [
             transcription matches your speech; Auto-detect lets the model decide.
           </li>
           <li>The transcript lands in the composer as-is; edit it there before sending.</li>
+          <li>
+            Your recording is sent to the server only to be turned into text and is not kept: nothing is written to
+            your Media and nothing counts against your storage quota. Recordings made before this behaviour changed
+            may still appear in Media as audio files; delete them there if you wish.
+          </li>
         </ul>
       </>
     ),

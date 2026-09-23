@@ -25,40 +25,56 @@ function monthLabel(date: Date) {
   return date.toLocaleString("en-US", { month: "short" });
 }
 
+type HeatmapWeek = { month?: string; cells: (HeatmapDay | null)[] };
+
+/**
+ * The heatmap's columns: one per week, Sunday first, each labelled with the
+ * month that starts in it. A label sits over its week only if the next one is
+ * at least two weeks on: the first, partial month often shows a single week
+ * before the next month's label, and the two were drawn on top of each other
+ * ("SepOct").
+ */
+export function heatmapWeeks(days: HeatmapDay[], timezone: TimezoneMode): HeatmapWeek[] {
+  if (!days.length) return [];
+
+  const first = new Date(`${days[0].date}T12:00:00`);
+  const last = new Date(`${days[days.length - 1].date}T12:00:00`);
+  const start = new Date(first);
+  start.setDate(start.getDate() - start.getDay());
+
+  const byDate = new Map(days.map((d) => [d.date, d]));
+  const grid: HeatmapWeek[] = [];
+  const cursor = new Date(start);
+  let lastMonth = "";
+
+  while (cursor <= last || cursor.getDay() !== 0) {
+    const weekCells: (HeatmapDay | null)[] = [];
+    let month: string | undefined;
+    for (let i = 0; i < 7; i += 1) {
+      const key = dateKeyForTimezone(cursor, timezone);
+      weekCells.push(byDate.get(key) ?? null);
+      const m = monthLabel(cursor);
+      if (m !== lastMonth) {
+        month = m;
+        lastMonth = m;
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    grid.push({ month, cells: weekCells });
+    if (cursor > last && cursor.getDay() === 0) break;
+  }
+  const labelled = grid.map((week, index) => (week.month ? index : -1)).filter((index) => index >= 0);
+  labelled.forEach((index, n) => {
+    const next = labelled[n + 1];
+    if (next !== undefined && next - index < 2) grid[index] = { ...grid[index], month: undefined };
+  });
+  return grid;
+}
+
 export default function ActivityHeatmap({ insights, metric, timezone, onMetricChange }: Props) {
   const days = insights.heatmap.days;
 
-  const weeks = useMemo(() => {
-    if (!days.length) return [] as { month?: string; cells: (HeatmapDay | null)[] }[];
-
-    const first = new Date(`${days[0].date}T12:00:00`);
-    const last = new Date(`${days[days.length - 1].date}T12:00:00`);
-    const start = new Date(first);
-    start.setDate(start.getDate() - start.getDay());
-
-    const byDate = new Map(days.map((d) => [d.date, d]));
-    const grid: { month?: string; cells: (HeatmapDay | null)[] }[] = [];
-    const cursor = new Date(start);
-    let lastMonth = "";
-
-    while (cursor <= last || cursor.getDay() !== 0) {
-      const weekCells: (HeatmapDay | null)[] = [];
-      let month: string | undefined;
-      for (let i = 0; i < 7; i += 1) {
-        const key = dateKeyForTimezone(cursor, timezone);
-        weekCells.push(byDate.get(key) ?? null);
-        const m = monthLabel(cursor);
-        if (m !== lastMonth) {
-          month = m;
-          lastMonth = m;
-        }
-        cursor.setDate(cursor.getDate() + 1);
-      }
-      grid.push({ month, cells: weekCells });
-      if (cursor > last && cursor.getDay() === 0) break;
-    }
-    return grid;
-  }, [days, timezone]);
+  const weeks = useMemo(() => heatmapWeeks(days, timezone), [days, timezone]);
 
   const sideStats = useMemo(() => {
     const s = insights.usage_stats[metric];

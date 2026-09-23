@@ -304,6 +304,28 @@ describe("the SMTP Server page", () => {
     expect(document.querySelector('.smtp-result[role="alert"]')?.textContent).toContain("choose STARTTLS");
   });
 
+  it("drops a test result once the values it describes change", async () => {
+    answer({
+      test: () => ({
+        ok: true,
+        security: "starttls",
+        tls_version: "TLSv1.3",
+        certificate_verified: true,
+        login_tested: true,
+      }),
+    });
+    await render();
+    await click(button("Test connection"));
+    expect(document.querySelector('.smtp-result[role="status"]')?.textContent).toContain("Login succeeded.");
+    await type(field("smtp-host"), "MAIL.example.com");
+    expect(document.querySelector(".smtp-result")).toBeNull();
+
+    await click(button("Test connection"));
+    expect(document.querySelector(".smtp-result")).not.toBeNull();
+    await choose(field<HTMLSelectElement>("smtp-security"), "ssl");
+    expect(document.querySelector(".smtp-result")).toBeNull();
+  });
+
   it("starts empty with STARTTLS on 587 when nothing is configured", async () => {
     answer({ saved: null });
     await render();
@@ -364,6 +386,15 @@ describe("Send test email to me", () => {
     await render();
     expect(button("Send test email to me")?.disabled).toBe(true);
     expect(document.getElementById("smtp-mail-hint")?.textContent).toContain("Save the settings first");
+  });
+
+  it("drops the result once the form is edited", async () => {
+    answer();
+    await render();
+    await click(button("Send test email to me"));
+    expect(document.querySelector(".smtp-mail-result")).not.toBeNull();
+    await type(field("smtp-from"), "alerts@example.com");
+    expect(document.querySelector(".smtp-mail-result")).toBeNull();
   });
 
   it("shows the server's explanation when the email could not be sent", async () => {

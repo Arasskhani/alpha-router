@@ -96,14 +96,21 @@ export default function SmtpServer() {
     };
   }, []);
 
+  /** Results describe the values they were made with; an edit makes them stale. */
+  function clearResults() {
+    setNotice(null);
+    setTestResult(null);
+    setMailNotice(null);
+  }
+
   function update(patch: Partial<Form>) {
     setForm((f) => ({ ...f, ...patch }));
-    setNotice(null);
+    clearResults();
   }
 
   function changeSecurity(next: SmtpSecurity) {
     setForm((f) => ({ ...f, security: next, port: portAfterSecurityChange(f.port, next) }));
-    setNotice(null);
+    clearResults();
   }
 
   const passwordSaved = saved?.password === PASSWORD_MASK;

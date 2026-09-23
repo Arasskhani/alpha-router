@@ -17263,6 +17263,14 @@ p.error,
   .topbar-selected-models {
     min-width: 0;
   }
+  /* The logo (the way home) and the profile button take a finger too. */
+  .app-topbar .topbar-brand {
+    min-width: 2.75rem;
+    justify-content: center;
+  }
+  .app-topbar .user-profile-trigger {
+    min-height: 2.75rem;
+  }
 
   /* The whole app is as tall as what can be seen: the visual viewport, which
      the iOS keyboard shrinks (useVisualViewportHeight), else 100dvh. */

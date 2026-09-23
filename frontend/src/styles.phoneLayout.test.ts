@@ -187,6 +187,17 @@ describe("the phone layout block", () => {
     expect(declarations(css, ".topbar-menu-btn")).toContain("display: none");
   });
 
+  it("gives the topbar's logo and profile button a finger's size", () => {
+    expect(declarations(phone.body, ".app-topbar .topbar-brand")).toContain("min-width: 2.75rem");
+    expect(declarations(phone.body, ".app-topbar .user-profile-trigger")).toContain("min-height: 2.75rem");
+    // A base rule of the same weight resets the logo's min-width; the phone rule comes after it.
+    expect(declarations(css.slice(0, phone.at), ".topbar-left .topbar-brand")).toContain("min-width: auto");
+    expect(outranks(".app-topbar .topbar-brand", ".topbar-left .topbar-brand")).toBe(false);
+    expect(phone.at).toBeGreaterThan(lastTopLevelRule(".topbar-left .topbar-brand"));
+    // The profile button fits in the phone's topbar.
+    expect(declarations(phone.body, ":root")).toContain("--app-topbar-height: 48px");
+  });
+
   it("lets tables in replies scroll rather than break numbers and words", () => {
     const table = declarations(phone.body, ".markdown-body table");
     expect(table).toContain("display: block");

@@ -18125,6 +18125,18 @@ p.error,
   .activity-metric-card__total--header {
     white-space: nowrap;
   }
+
+  /* Chat Tools cards: the tool's description stays regular under its name,
+     and the Manage access button needs no "Actions" label beside it. */
+  .chat-tools-table.data-table--cards td[data-card-role="title"] p {
+    font-weight: 400;
+  }
+  .chat-tools-table.data-table--cards td.chat-tools-table__actions::before {
+    content: none;
+  }
+  .chat-tools-table.data-table--cards td.chat-tools-table__actions {
+    justify-content: flex-end;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -461,6 +461,15 @@ describe("the phone layout block", () => {
     expect(phone.at).toBeGreaterThan(lastTopLevelRule(".activity-metric-card__head"));
   });
 
+  it("draws the Chat Tools cards with a plain description and an unlabelled Manage access", () => {
+    expect(declarations(phone.body, '.chat-tools-table.data-table--cards td[data-card-role="title"] p')).toContain(
+      "font-weight: 400",
+    );
+    const actionsLabel = ".chat-tools-table.data-table--cards td.chat-tools-table__actions::before";
+    expect(declarations(phone.body, actionsLabel)).toContain("content: none");
+    expect(outranks(actionsLabel, ".data-table.data-table--cards td::before")).toBe(true);
+  });
+
   it("fits the media cards and list rows", () => {
     // The picture opens the file in the grid views, so Open goes there.
     expect(

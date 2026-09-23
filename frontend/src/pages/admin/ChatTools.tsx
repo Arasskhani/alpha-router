@@ -7,6 +7,7 @@ import Modal from "../../components/Modal";
 import ResourceAccessEditor from "../../components/admin/ResourceAccessEditor";
 import { api, formatApiError } from "../../api";
 import { useReadOnly } from "../../context/ReadOnlyContext";
+import { useTableCards } from "../../hooks/useTableCards";
 
 type ChatToolRow = {
   key: string;
@@ -51,6 +52,8 @@ function when(value: string | null): string {
  * exception for Super Admin.
  */
 export default function ChatTools() {
+  // On a phone the tools are drawn as a list of cards (styles.css).
+  const tableCardsRef = useTableCards<HTMLTableElement>();
   const readOnly = useReadOnly();
   const [rows, setRows] = useState<ChatToolRow[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -128,7 +131,7 @@ export default function ChatTools() {
       ) : null}
 
       <div className="table-wrap">
-        <table className="table chat-tools-table">
+        <table ref={tableCardsRef} className="table data-table data-table--cards chat-tools-table">
           <thead>
             <tr>
               <th scope="col">Tool</th>

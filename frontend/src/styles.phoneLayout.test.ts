@@ -308,6 +308,22 @@ describe("the phone layout block", () => {
     expect(phone.body).not.toContain(".memory-admin__chips");
   });
 
+  it("makes tabs, filter chips and segments a finger tall", () => {
+    const strip =
+      ".tab,\n  .agent-filter-tabs > button,\n  .settings-nav-item,\n  .models-filter-chip,\n  .activity-tabs__btn,\n  .activity-segmented__btn";
+    expect(declarations(phone.body, strip)).toContain("min-height: 2.75rem");
+    const icons = declarations(phone.body, ".models-view-toggle__btn,\n  .theme-segment__btn");
+    expect(icons).toContain("min-width: 2.75rem");
+    expect(icons).toContain("min-height: 2.75rem");
+    expect(declarations(phone.body, ".project-tab")).toContain("min-height: 2.75rem");
+    // Base rules with the same weight set smaller sizes; the phone rules come after them.
+    expect(declarations(css.slice(0, phone.at), ".agent-filter-tabs > button")).toContain("min-height: 2rem");
+    expect(declarations(css.slice(0, phone.at), ".theme-segment__btn")).toContain("min-height: 30px");
+    for (const selector of [".agent-filter-tabs > button", ".theme-segment__btn", ".project-tab"]) {
+      expect(phone.at, selector).toBeGreaterThan(lastTopLevelRule(selector));
+    }
+  });
+
   it("folds list filters behind a button without changing the page's layout when open", () => {
     // The wrapper is there at every width (the fields must not be remounted
     // when the width crosses the breakpoint), so its rule is a base rule.

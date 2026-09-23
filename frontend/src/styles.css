@@ -17430,7 +17430,7 @@ p.error,
   }
   .project-tab {
     flex-shrink: 0;
-    min-height: 2.5rem;
+    min-height: 2.75rem;
     padding: 0.5rem 0.8rem;
     white-space: nowrap;
   }
@@ -17614,6 +17614,22 @@ p.error,
   .settings-nav > * {
     flex-shrink: 0;
     white-space: nowrap;
+  }
+  /* Tabs, filter chips and segments are a finger tall, like the buttons:
+     their strips scroll sideways, so that costs height, not a second row. */
+  .tab,
+  .agent-filter-tabs > button,
+  .settings-nav-item,
+  .models-filter-chip,
+  .activity-tabs__btn,
+  .activity-segmented__btn {
+    min-height: 2.75rem;
+  }
+  /* Segments that hold only an icon are as wide as they are tall. */
+  .models-view-toggle__btn,
+  .theme-segment__btn {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
   }
 
   /* List filters fold behind one button (FilterPanel). */

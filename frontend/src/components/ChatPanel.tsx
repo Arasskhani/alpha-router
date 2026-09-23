@@ -130,6 +130,7 @@ import ServerToolsMenu from "./chat/ServerToolsMenu";
 import ChatModelPickerModal from "./chat/ChatModelPickerModal";
 import ComposerAttachMenu from "./chat/ComposerAttachMenu";
 import ComposerMediaPicker from "./chat/ComposerMediaPicker";
+import { focusFieldOnBoxTap } from "./chat/composerFocus";
 import ScreenshotCropOverlay from "./chat/ScreenshotCropOverlay";
 import {
   ComposerAgentIcon,
@@ -7099,6 +7100,9 @@ export default function ChatPanel({
             ) : null}
             <div
               className={`alpha-router-composer-box${agentModeActive ? " is-agent-active" : ""}`}
+              onMouseDown={(event) => focusFieldOnBoxTap(event, textareaRef.current)}
+              onClick={(event) => focusFieldOnBoxTap(event, textareaRef.current)}
+              role="presentation"
             >
               <input
                 ref={fileInputRef}

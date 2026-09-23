@@ -433,6 +433,15 @@ describe("the phone layout block", () => {
     expect(reduced.some((b) => b.body.includes(".docs-sidebar.docs-sidebar--drawer"))).toBe(true);
   });
 
+  it("puts the activity KPI tiles two to a row, the sparkline under the figures", () => {
+    expect(declarations(phone.body, ".overview-kpi-row")).toContain("grid-template-columns: repeat(2, minmax(0, 1fr))");
+    expect(declarations(phone.body, ".overview-kpi-card__body")).toContain("flex-direction: column");
+    // The 900px block that makes them one column comes first.
+    const oneColumn = mediaBlocks("(max-width: 900px)").find((b) => b.body.includes(".overview-kpi-row"));
+    expect(oneColumn).toBeDefined();
+    expect(phone.at).toBeGreaterThan(oneColumn!.at);
+  });
+
   it("fits the media cards and list rows", () => {
     // The picture opens the file in the grid views, so Open goes there.
     expect(

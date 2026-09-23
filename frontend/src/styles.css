@@ -18037,6 +18037,25 @@ p.error,
     width: 7rem;
     min-width: 7rem;
   }
+
+  /* Activity KPI tiles: two to a row with the sparkline under the figures,
+     instead of six full-width tiles (730px) before the first chart. */
+  .overview-kpi-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.6rem;
+  }
+  .overview-kpi-card {
+    padding: 0.75rem 0.8rem;
+  }
+  .overview-kpi-card__body {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.35rem;
+  }
+  .overview-kpi-card__spark {
+    width: 100%;
+    min-width: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

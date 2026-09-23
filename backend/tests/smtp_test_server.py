@@ -43,6 +43,10 @@ class TlsMaterial:
     server_context: ssl.SSLContext
     #: A self-signed certificate for the same names that nothing trusts.
     self_signed_context: ssl.SSLContext
+    #: Signed by the CA, but only for mail.invalid.
+    wrong_name_context: ssl.SSLContext
+    #: Signed by the CA for localhost and 127.0.0.1, expired yesterday.
+    expired_context: ssl.SSLContext
 
 
 def _name(common_name: str) -> x509.Name:
@@ -67,20 +71,32 @@ def make_tls_material(directory: Path) -> TlsMaterial:
     now = datetime.datetime.now(datetime.UTC)
     names = x509.SubjectAlternativeName([x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))])
 
-    def certificate(subject: x509.Name, issuer: x509.Name, public_key, signer, *, ca: bool) -> x509.Certificate:
+    def certificate(
+        subject: x509.Name,
+        issuer: x509.Name,
+        public_key,
+        signer,
+        *,
+        ca: bool,
+        san: x509.SubjectAlternativeName = names,
+        expired: bool = False,
+    ) -> x509.Certificate:
+        start, end = now - datetime.timedelta(minutes=5), now + datetime.timedelta(days=1)
+        if expired:
+            start, end = now - datetime.timedelta(days=30), now - datetime.timedelta(days=1)
         builder = (
             x509.CertificateBuilder()
             .subject_name(subject)
             .issuer_name(issuer)
             .public_key(public_key)
             .serial_number(x509.random_serial_number())
-            .not_valid_before(now - datetime.timedelta(minutes=5))
-            .not_valid_after(now + datetime.timedelta(days=1))
+            .not_valid_before(start)
+            .not_valid_after(end)
         )
         if ca:
             builder = builder.add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
         else:
-            builder = builder.add_extension(names, critical=False)
+            builder = builder.add_extension(san, critical=False)
         return builder.sign(signer, hashes.SHA256())
 
     ca_key = ec.generate_private_key(ec.SECP256R1())
@@ -96,10 +112,25 @@ def make_tls_material(directory: Path) -> TlsMaterial:
     lone_key = ec.generate_private_key(ec.SECP256R1())
     lone_cert = certificate(_name("localhost"), _name("localhost"), lone_key.public_key(), lone_key, ca=False)
 
+    other_key = ec.generate_private_key(ec.SECP256R1())
+    other_cert = certificate(
+        _name("mail.invalid"),
+        ca_cert.subject,
+        other_key.public_key(),
+        ca_key,
+        ca=False,
+        san=x509.SubjectAlternativeName([x509.DNSName("mail.invalid")]),
+    )
+
+    old_key = ec.generate_private_key(ec.SECP256R1())
+    old_cert = certificate(_name("localhost"), ca_cert.subject, old_key.public_key(), ca_key, ca=False, expired=True)
+
     return TlsMaterial(
         ca_path=ca_path,
         server_context=_server_context(directory, "server", server_cert, server_key),
         self_signed_context=_server_context(directory, "self-signed", lone_cert, lone_key),
+        wrong_name_context=_server_context(directory, "wrong-name", other_cert, other_key),
+        expired_context=_server_context(directory, "expired", old_cert, old_key),
     )
 
 
@@ -126,6 +157,9 @@ class SmtpTestServer:
     * ``starttls``: plain greeting; STARTTLS offered unless ``advertise_starttls`` is False.
     * ``ssl``: TLS from the first byte.
     * ``plain``: never any TLS.
+
+    ``refuse_recipients`` get "554 ... Relay access denied" at RCPT, and
+    ``refuse_sender`` refuses every MAIL FROM, as a real server might.
     """
 
     mode: str = MODE_STARTTLS
@@ -133,6 +167,8 @@ class SmtpTestServer:
     advertise_starttls: bool = True
     username: str = "alpha"
     password: str = "s3cret"
+    refuse_recipients: frozenset[str] = frozenset()
+    refuse_sender: bool = False
     auth_attempts: list[AuthAttempt] = field(default_factory=list)
     messages: list[ReceivedMessage] = field(default_factory=list)
     #: Every command received, with whether it arrived encrypted.
@@ -269,13 +305,21 @@ class _Session:
         return line.split(":", 1)[1].strip().strip("<>").split(">")[0]
 
     async def _mail(self, line: str) -> bool:
-        self.mail_from = self._address(line)
+        sender = self._address(line)
+        if self.server.refuse_sender:
+            await self.reply(f"553 5.7.1 <{sender}>: Sender address rejected: not owned by user")
+            return True
+        self.mail_from = sender
         self.recipients = []
         await self.reply("250 OK")
         return True
 
     async def _rcpt(self, line: str) -> bool:
-        self.recipients.append(self._address(line))
+        recipient = self._address(line)
+        if recipient in self.server.refuse_recipients:
+            await self.reply(f"554 5.7.1 <{recipient}>: Relay access denied")
+            return True
+        self.recipients.append(recipient)
         await self.reply("250 OK")
         return True
 

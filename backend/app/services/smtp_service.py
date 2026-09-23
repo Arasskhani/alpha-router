@@ -25,6 +25,7 @@ on.
 from __future__ import annotations
 
 import asyncio
+import re
 import ssl
 from dataclasses import dataclass
 from email.message import EmailMessage
@@ -188,6 +189,49 @@ def _chain(exc: BaseException) -> list[BaseException]:
     return seen
 
 
+_VERIFY_FAILED = re.compile(r"certificate verify failed: ([^(\]]+)")
+
+#: OpenSSL's words for a certificate that no trusted authority signed - the
+#: case "Allow a self-signed certificate" exists for.
+_UNKNOWN_ISSUER = ("self-signed", "self signed", "issuer certificate", "unable to verify the first certificate")
+
+
+def _describe_certificate_failure(chain: list[BaseException], text: str, conn: SmtpConnection) -> str:
+    cert_error = next((e for e in chain if isinstance(e, ssl.SSLCertVerificationError)), None)
+    reason = (getattr(cert_error, "verify_message", "") or "").strip()
+    if not reason:
+        match = _VERIFY_FAILED.search(text)
+        reason = match.group(1).strip() if match else ""
+    reason = reason.rstrip(".")
+    lowered = reason.lower()
+    message = f"The certificate of {conn.host} could not be verified" + (f" ({reason})." if reason else ".")
+    if "mismatch" in lowered:
+        # A valid certificate for another name: switching verification off
+        # would hide the mistake, not fix it.
+        return message + " It was issued for another name: enter the server's name exactly as its certificate gives it."
+    if "expired" in lowered:
+        return message + " It has to be renewed on the mail server."
+    if "not yet valid" in lowered:
+        return message + " Check that the clocks of this server and of the mail server are right."
+    if not reason or any(words in lowered for words in _UNKNOWN_ISSUER):
+        return (
+            message + " If this server uses a self-signed certificate and you trust the network between you, "
+            "turn on “Allow a self-signed certificate”."
+        )
+    return message
+
+
+def _describe_refused_recipients(exc: aiosmtplib.SMTPRecipientsRefused, conn: SmtpConnection) -> str:
+    refused = "; ".join(f"{r.recipient} ({r.code} {r.message})" for r in exc.recipients)
+    message = f"{conn.host} refused to deliver to {refused}."
+    if "relay" in refused.lower():
+        message += (
+            " It does not relay mail for this sender: set a username and password it accepts, "
+            "or ask its administrator to allow relaying from this server."
+        )
+    return message
+
+
 def describe_smtp_error(exc: BaseException, conn: SmtpConnection) -> str:
     """A sentence that says what went wrong and what to change."""
 
@@ -195,14 +239,8 @@ def describe_smtp_error(exc: BaseException, conn: SmtpConnection) -> str:
     chain = _chain(exc)
     text = " ".join(str(e) for e in chain)
 
-    cert_error = next((e for e in chain if isinstance(e, ssl.SSLCertVerificationError)), None)
-    if cert_error is not None or "CERTIFICATE_VERIFY_FAILED" in text:
-        reason = getattr(cert_error, "verify_message", "") or ""
-        detail = f" ({reason})" if reason else ""
-        return (
-            f"The certificate of {conn.host} could not be verified{detail}. If this server uses a self-signed "
-            "certificate and you trust the network between you, turn on “Allow a self-signed certificate”."
-        )
+    if any(isinstance(e, ssl.SSLCertVerificationError) for e in chain) or "CERTIFICATE_VERIFY_FAILED" in text:
+        return _describe_certificate_failure(chain, text, conn)
 
     if "WRONG_VERSION_NUMBER" in text:
         if conn.security == SECURITY_SSL:
@@ -230,6 +268,18 @@ def describe_smtp_error(exc: BaseException, conn: SmtpConnection) -> str:
         if isinstance(exc, aiosmtplib.SMTPServerDisconnected):
             return f"{where} closed the connection unexpectedly.{hint}"
         return f"No answer from {where} within {int(TIMEOUT_SECONDS)} seconds.{hint}"
+
+    if isinstance(exc, aiosmtplib.SMTPRecipientsRefused):
+        return _describe_refused_recipients(exc, conn)
+
+    if isinstance(exc, aiosmtplib.SMTPSenderRefused):
+        return (
+            f"{conn.host} refused the From address {exc.sender} ({exc.code} {exc.message}). "
+            "Use an address this account may send as."
+        )
+
+    if isinstance(exc, aiosmtplib.SMTPDataError):
+        return f"{where} refused the message ({exc.code} {exc.message})."
 
     if isinstance(exc, aiosmtplib.SMTPResponseException):
         return f"{where} refused the request ({exc.code} {exc.message})."

@@ -177,6 +177,27 @@ class TestAgainstARealServer:
         assert message.startswith("The certificate of 127.0.0.1 could not be verified")
         assert "Allow a self-signed certificate" in message
 
+    async def test_a_certificate_for_another_name_is_not_excused_as_self_signed(self, tls):
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.wrong_name_context) as server:
+            conn = _conn(server, SECURITY_STARTTLS)
+            with pytest.raises(Exception) as caught:
+                await open_smtp(conn)
+        assert server.auth_attempts == []
+        message = describe_smtp_error(caught.value, conn)
+        assert message.startswith("The certificate of 127.0.0.1 could not be verified (IP address mismatch")
+        assert "It was issued for another name" in message
+        assert "Allow a self-signed certificate" not in message
+
+    async def test_an_expired_certificate_is_named_as_such(self, tls):
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.expired_context) as server:
+            conn = _conn(server, SECURITY_STARTTLS)
+            with pytest.raises(Exception) as caught:
+                await open_smtp(conn)
+        message = describe_smtp_error(caught.value, conn)
+        assert "(certificate has expired)" in message
+        assert "renewed on the mail server" in message
+        assert "Allow a self-signed certificate" not in message
+
     async def test_a_self_signed_certificate_is_accepted_when_verification_is_off(self, tls):
         async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.self_signed_context) as server:
             conn = _conn(server, SECURITY_STARTTLS, verify_certificate=False)
@@ -254,6 +275,27 @@ class TestSendEmail:
             await send_email(db_session, to_address="owner@example.com", subject="s", body_text="b")
         assert [m.tls for m in server.messages] == [True]
 
+    async def test_a_refused_recipient_is_named_with_the_server_s_reason(self, db_session, tls):
+        async with SmtpTestServer(
+            mode=MODE_STARTTLS, tls_context=tls.server_context, refuse_recipients=frozenset({"owner@elsewhere.example"})
+        ) as server:
+            await self._row(db_session, server, SECURITY_STARTTLS)
+            with pytest.raises(SmtpSendError) as caught:
+                await send_email(db_session, to_address="owner@elsewhere.example", subject="s", body_text="b")
+        assert str(caught.value).startswith(
+            "127.0.0.1 refused to deliver to owner@elsewhere.example (554 5.7.1 <owner@elsewhere.example>: "
+            "Relay access denied). It does not relay mail for this sender"
+        )
+        assert server.messages == []
+
+    async def test_a_refused_sender_is_named_as_the_from_address(self, db_session, tls):
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context, refuse_sender=True) as server:
+            await self._row(db_session, server, SECURITY_STARTTLS)
+            with pytest.raises(SmtpSendError) as caught:
+                await send_email(db_session, to_address="owner@example.com", subject="s", body_text="b")
+        assert str(caught.value).startswith("127.0.0.1 refused the From address reports@example.com (553")
+        assert "Use an address this account may send as." in str(caught.value)
+
     async def test_a_failure_is_reported_as_the_readable_reason(self, db_session, tls):
         async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
             await self._row(db_session, server, SECURITY_SSL)
@@ -275,6 +317,29 @@ class TestDescribeSmtpError:
         message = describe_smtp_error(aiosmtplib.SMTPServerDisconnected("gone"), conn)
         assert message.startswith("mail.example.com:465 closed the connection unexpectedly.")
         assert "choose SSL/TLS" in message
+
+    def test_a_certificate_reason_is_found_in_the_text_too(self):
+        exc = OSError(
+            "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: certificate has expired (_ssl.c:1000)"
+        )
+        assert describe_smtp_error(exc, self.conn) == (
+            "The certificate of mail.example.com could not be verified (certificate has expired). "
+            "It has to be renewed on the mail server."
+        )
+
+    def test_other_certificate_failures_do_not_suggest_giving_up_the_check(self):
+        exc = OSError(
+            "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unsupported certificate purpose (_ssl.c:1000)"
+        )
+        assert describe_smtp_error(exc, self.conn) == (
+            "The certificate of mail.example.com could not be verified (unsupported certificate purpose)."
+        )
+
+    def test_refused_data_is_called_the_message(self):
+        exc = aiosmtplib.SMTPDataError(552, "Message size exceeds fixed limit")
+        assert describe_smtp_error(exc, self.conn) == (
+            "mail.example.com:587 refused the message (552 Message size exceeds fixed limit)."
+        )
 
     def test_anything_else_keeps_the_library_text(self):
         assert describe_smtp_error(RuntimeError("odd"), self.conn) == "odd"

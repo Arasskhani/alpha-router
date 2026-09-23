@@ -321,6 +321,25 @@ class TestThePasswordStaysWithItsServer:
         assert resp.status_code == 200, resp.text
         assert decrypt_secret((await _saved(db_session)).password_encrypted) == "s3cret"
 
+    async def test_a_stored_secret_is_not_taken_for_a_new_password(self, client, db_session, admin):
+        headers = _sign_in(client, admin)
+        await self._save_first(client, headers)
+        stolen = (await _saved(db_session)).password_encrypted
+        resp = await client.put(URL, headers=headers, json=_body(host="collector.example.net", password=stolen))
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == (
+            "That is an encrypted value from Alpharouter's own database, not a password. Type the SMTP password itself."
+        )
+        row = await _saved(db_session)
+        assert (row.host, decrypt_secret(row.password_encrypted)) == ("mail.example.com", "s3cret")
+
+    async def test_a_password_that_only_looks_like_a_token_is_saved_as_typed(self, client, db_session, admin):
+        headers = _sign_in(client, admin)
+        lookalike = "gAAAAAB" + "Q" * 93
+        resp = await client.put(URL, headers=headers, json=_body(password=lookalike))
+        assert resp.status_code == 200, resp.text
+        assert decrypt_secret((await _saved(db_session)).password_encrypted) == lookalike
+
     async def test_no_username_means_no_login_and_the_password_goes(self, client, db_session, admin):
         headers = _sign_in(client, admin)
         await self._save_first(client, headers)

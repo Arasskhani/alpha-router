@@ -76,6 +76,31 @@ def encrypt_secret(plaintext: str | None) -> str:
     return _get_fernet().encrypt(plaintext.encode("utf-8")).decode("ascii")
 
 
+def encrypt_typed_secret(plaintext: str) -> str:
+    """Encrypt a secret exactly as a person typed it.
+
+    ``encrypt_secret`` keeps a value that already is valid ciphertext as it is,
+    so a record can be saved again without encrypting twice. For a secret
+    typed into a form that is a hole: whoever holds a copy of a stored token (a
+    database backup, say) could submit it as a "new" secret and have the real
+    one decrypted and used later - sent, for an SMTP password, to a server of
+    their choosing. Callers refuse such a value (``is_own_ciphertext``); this
+    never passes one through.
+    """
+    return _get_fernet().encrypt(plaintext.encode("utf-8")).decode("ascii")
+
+
+def is_own_ciphertext(value: str | None) -> bool:
+    """Whether ``value`` is a token that this deployment's key decrypts."""
+    if not value or not is_encrypted(value):
+        return False
+    try:
+        _decrypt_token(value.strip())
+    except ValueError:
+        return False
+    return True
+
+
 def decrypt_secret(value: str | None) -> str | None:
     """Decrypt current ciphertext and reject plaintext or malformed stored data."""
     if not value:

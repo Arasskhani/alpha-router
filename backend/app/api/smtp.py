@@ -15,7 +15,7 @@ from app.api.deps import require_smtp, require_smtp_write
 from app.database import get_db
 from app.models.system import SmtpSettings
 from app.models.user import User
-from app.services.secret_crypto import decrypt_secret, encrypt_secret
+from app.services.secret_crypto import decrypt_secret, encrypt_typed_secret, is_own_ciphertext
 from app.services.smtp_service import (
     SECURITY_NONE,
     SECURITY_SSL,
@@ -123,6 +123,13 @@ PASSWORD_AGAIN = {
 }
 
 
+#: A stored token typed as the password: saving it would store it unchanged,
+#: and the real password would be decrypted and sent wherever the host says.
+ENCRYPTED_VALUE_TYPED = (
+    "That is an encrypted value from Alpharouter's own database, not a password. Type the SMTP password itself."
+)
+
+
 async def _saved_row(db: AsyncSession) -> SmtpSettings | None:
     return (await db.execute(select(SmtpSettings).limit(1))).scalars().first()
 
@@ -185,6 +192,8 @@ async def save_smtp(
     before = _snapshot(row)
     had_password = row is not None and bool(row.password_encrypted)
     typed = body.typed_password()
+    if typed is not None and is_own_ciphertext(typed):
+        raise HTTPException(400, detail=ENCRYPTED_VALUE_TYPED)
     if row is not None and row.password_encrypted and typed is None and body.username is not None:
         problem = _reuse_problem(row, body)
         if problem is not None:
@@ -198,7 +207,7 @@ async def save_smtp(
     if body.username is None:
         row.password_encrypted = None
     elif typed is not None:
-        row.password_encrypted = encrypt_secret(typed)
+        row.password_encrypted = encrypt_typed_secret(typed)
     row.from_address = body.from_address
     row.security = body.resolved_security()
     row.verify_certificate = body.verify_certificate

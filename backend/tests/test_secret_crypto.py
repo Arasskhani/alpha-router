@@ -16,7 +16,9 @@ from app.services.auth_config import (
 from app.services.secret_crypto import (
     decrypt_secret,
     encrypt_secret,
+    encrypt_typed_secret,
     is_encrypted,
+    is_own_ciphertext,
     mask_secret,
     reset_fernet_cache,
 )
@@ -46,6 +48,26 @@ def test_encrypt_validates_and_preserves_current_ciphertext():
     ciphertext = encrypt_secret("stored-secret")
     assert encrypt_secret(ciphertext) == ciphertext
     assert decrypt_secret(ciphertext) == "stored-secret"
+
+
+def test_a_typed_secret_is_always_encrypted_as_typed():
+    ciphertext = encrypt_secret("provider-api-key-value")
+    # Unlike encrypt_secret, a value that already is ciphertext is not kept as is.
+    again = encrypt_typed_secret(ciphertext)
+    assert again != ciphertext
+    assert decrypt_secret(again) == ciphertext
+    lookalike = "gAAAAAB" + "Q" * 93
+    assert is_encrypted(lookalike)
+    assert decrypt_secret(encrypt_typed_secret(lookalike)) == lookalike
+
+
+def test_own_ciphertext_is_told_apart_from_lookalikes():
+    assert is_own_ciphertext(encrypt_secret("value"))
+    assert is_own_ciphertext("  " + encrypt_secret("value") + " ")
+    assert not is_own_ciphertext("gAAAAAB" + "Q" * 93)
+    assert not is_own_ciphertext("value")
+    assert not is_own_ciphertext("")
+    assert not is_own_ciphertext(None)
 
 
 def test_decrypt_rejects_plaintext_and_invalid_ciphertext():

@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 
 /**
  * Below this width the shell is laid out for a phone: side panels become
@@ -13,14 +13,19 @@ function canMatch(): boolean {
 
 /** Whether `query` matches now; re-renders when that changes. False where there is no window. */
 export function useMediaQuery(query: string): boolean {
-  return useSyncExternalStore(
-    (onChange) => {
-      if (!canMatch()) return () => {};
-      const list = window.matchMedia(query);
+  // One list per component and query, so the store subscribes once, not on every render.
+  const list = useMemo(() => (canMatch() ? window.matchMedia(query) : null), [query]);
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      if (!list) return () => {};
       list.addEventListener("change", onChange);
       return () => list.removeEventListener("change", onChange);
     },
-    () => (canMatch() ? window.matchMedia(query).matches : false),
+    [list],
+  );
+  return useSyncExternalStore(
+    subscribe,
+    () => list?.matches ?? false,
     () => false,
   );
 }

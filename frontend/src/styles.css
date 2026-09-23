@@ -802,13 +802,20 @@ body:not(.login-route) {
   border-right: 1px solid var(--border);
   box-shadow: 12px 0 40px color-mix(in srgb, var(--text) 12%, transparent);
   transform: translateX(-105%);
-  transition: transform 0.34s cubic-bezier(0.32, 0.72, 0, 1);
+  /* Hidden, not just off screen: its links must not take the keyboard focus. */
+  visibility: hidden;
+  transition:
+    transform 0.34s cubic-bezier(0.32, 0.72, 0, 1),
+    visibility 0s linear 0.34s;
   pointer-events: none;
   overflow: hidden;
+  outline: none;
 }
 
 .layout--chat .sidebar--flyout.is-open {
   transform: translateX(0);
+  visibility: visible;
+  transition-delay: 0s;
   pointer-events: auto;
 }
 
@@ -17154,8 +17161,10 @@ p.error,
     color: var(--text);
     cursor: pointer;
   }
-  .topbar-menu-btn:hover {
-    background: color-mix(in srgb, var(--text) 8%, transparent);
+  @media (hover: hover) {
+    .topbar-menu-btn:hover {
+      background: color-mix(in srgb, var(--text) 8%, transparent);
+    }
   }
   .topbar-shortcuts {
     display: none;
@@ -17271,7 +17280,12 @@ p.error,
     overflow-wrap: anywhere;
   }
   .alpha-router-footer {
-    padding: 0 0.6rem calc(0.6rem + env(safe-area-inset-bottom, 0px));
+    padding: 0 0.6rem 0.6rem;
+  }
+  /* No hover on a phone: the per-chat actions and the select box stay visible. */
+  .alpha-router-sidebar--drawer .alpha-router-history-item-actions,
+  .alpha-router-sidebar--drawer .alpha-router-history-check {
+    opacity: 1;
   }
   .alpha-router-disclaimer {
     font-size: 0.7rem;

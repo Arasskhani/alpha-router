@@ -29,6 +29,16 @@ import type { NavItem, NavSection } from "../nav/types";
 
 type Theme = CachedTheme;
 
+/**
+ * Whether an Escape press is for a layer above the drawers: a dialog or a menu
+ * that is open (they listen for it themselves), or a search field with text,
+ * whose first Escape clears the field.
+ */
+function escapeBelongsElsewhere(target: EventTarget | null): boolean {
+  if (document.querySelector('[aria-modal="true"], [role="menu"]')) return true;
+  return target instanceof HTMLInputElement && target.type === "search" && target.value !== "";
+}
+
 export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
   const loc = useLocation();
   const [theme, setThemeState] = useState<Theme>(() => loadCachedTheme());
@@ -42,6 +52,9 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
   const [drawerClaims, setDrawerClaims] = useState(0);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
+  const flyoutRef = useRef<HTMLElement>(null);
+  // What had focus when the navigation flyout opened; it gets it back on close.
+  const flyoutOpenerRef = useRef<HTMLElement | null>(null);
 
   // Shell wraps every authenticated page, so this is the single mount point.
   usePresenceHeartbeat();
@@ -102,13 +115,14 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
   const [wasPhone, setWasPhone] = useState(phone);
   if (wasPhone !== phone) {
     setWasPhone(phone);
-    if (!phone) setDrawerOpen(false);
+    setDrawerOpen(false);
+    setNavPeek(false);
   }
 
   useEffect(() => {
     if (!phone || (!drawerOpen && !navPeek)) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || escapeBelongsElsewhere(event.target)) return;
       // Navigation on top of the chat history closes first, like a stacked dialog.
       if (navPeek) setNavPeek(false);
       else setDrawerOpen(false);
@@ -136,7 +150,10 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
   }, []);
   // The flyout it opens only exists on the chat page; elsewhere the flag is
   // inert and cleared on the next navigation.
-  const openAdminMenu = useCallback(() => setNavPeek(true), []);
+  const openAdminMenu = useCallback(() => {
+    flyoutOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setNavPeek(true);
+  }, []);
   // One object per change, not per render: ChatPanel's claim effect depends on it.
   const shellMenu = useMemo(
     () => ({ openAdminMenu, phone, drawerOpen: phone && drawerOpen, closeDrawer, claimDrawer }),
@@ -176,6 +193,20 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
   const navDrawer = phone && (!isChatLayout || drawerClaims === 0);
   const navDrawerOpen = navDrawer && drawerOpen;
   const navFlyoutOpen = phone && isChat && navPeek;
+  const anythingOpen = (phone && drawerOpen) || navFlyoutOpen;
+
+  // On a phone the flyout is a layer of its own: focus goes in with it and
+  // back to whatever opened it afterwards.
+  const flyoutWasOpen = useRef(false);
+  useEffect(() => {
+    if (navFlyoutOpen) {
+      flyoutRef.current?.focus({ preventScroll: true });
+    } else if (flyoutWasOpen.current) {
+      flyoutOpenerRef.current?.focus({ preventScroll: true });
+      flyoutOpenerRef.current = null;
+    }
+    flyoutWasOpen.current = navFlyoutOpen;
+  }, [navFlyoutOpen]);
 
   return (
     <ChatModelChromeProvider>
@@ -188,10 +219,19 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
                   ref={menuButtonRef}
                   type="button"
                   className="topbar-menu-btn"
-                  aria-label={drawerOpen ? "Close menu" : "Open menu"}
-                  aria-expanded={drawerOpen}
+                  aria-label={anythingOpen ? "Close menu" : "Open menu"}
+                  aria-expanded={anythingOpen}
                   aria-controls="shell-drawer"
-                  onClick={() => setDrawerOpen((open) => !open)}
+                  onClick={() => {
+                    // With the navigation open over the history, the button
+                    // means "close all of it", not "toggle the layer underneath".
+                    if (navPeek) {
+                      setNavPeek(false);
+                      setDrawerOpen(false);
+                    } else {
+                      setDrawerOpen((open) => !open);
+                    }
+                  }}
                 >
                   <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden>
                     <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
@@ -237,7 +277,10 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
                   onMouseEnter={() => setNavPeek(true)}
                 />
                 <aside
+                  ref={flyoutRef}
                   className={`sidebar sidebar--flyout${navPeek ? " is-open" : ""}`}
+                  tabIndex={-1}
+                  aria-hidden={navPeek ? undefined : true}
                   onMouseEnter={() => setNavPeek(true)}
                 >
                   {sidebarInner}

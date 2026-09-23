@@ -6,9 +6,9 @@
  * it; on the chat page it is the chat history, which ChatPanel renders from
  * the state Shell publishes through ShellMenuContext.
  */
-import { act, useEffect } from "react";
+import { StrictMode, act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const layout = vi.hoisted(() => ({ phone: false }));
@@ -37,6 +37,8 @@ const NAV = [
 /** Stands in for ChatPanel: claims the drawer, shows what Shell publishes and can act on it. */
 function ChatProbe({ claim = true }: { claim?: boolean }) {
   const menu = useShellMenu();
+  const navigate = useNavigate();
+  const [dialog, setDialog] = useState(false);
   const claimDrawer = menu?.claimDrawer;
   useEffect(() => {
     if (!claim || !claimDrawer) return undefined;
@@ -51,6 +53,21 @@ function ChatProbe({ claim = true }: { claim?: boolean }) {
       <button type="button" onClick={() => menu?.openAdminMenu()}>
         open navigation
       </button>
+      <button type="button" onClick={() => navigate("/app/projects")}>
+        go to projects
+      </button>
+      <Link to="/app/projects/p1">to a workspace tab</Link>
+      <input type="search" aria-label="Search chats" />
+      <button type="button" onClick={() => setDialog(true)}>
+        open dialog
+      </button>
+      {dialog ? (
+        <div role="dialog" aria-modal="true">
+          <button type="button" onClick={() => setDialog(false)}>
+            close dialog
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -70,21 +87,28 @@ afterEach(() => {
   host.remove();
 });
 
+// StrictMode mounts effects twice: the drawer claim must survive that.
 async function render(path: string) {
   await act(async () => {
     root.render(
-      <MemoryRouter initialEntries={[path]}>
-        <Routes>
-          <Route path="/app" element={<Shell nav={NAV} />}>
-            <Route path="chat" element={<ChatProbe />} />
-            <Route path="projects" element={<h1>Projects page</h1>} />
-            <Route path="projects/:projectId" element={<ChatProbe claim={false} />} />
-          </Route>
-        </Routes>
-      </MemoryRouter>,
+      <StrictMode>
+        <MemoryRouter initialEntries={[path]}>
+          <Routes>
+            <Route path="/app" element={<Shell nav={NAV} />}>
+              <Route path="chat" element={<ChatProbe />} />
+              <Route path="projects" element={<h1>Projects page</h1>} />
+              <Route path="projects/:projectId" element={<ChatProbe claim={false} />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </StrictMode>,
     );
   });
 }
+
+const buttonNamed = (label: string) =>
+  [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === label) ?? null;
+const probeText = () => document.querySelector('[data-testid="probe"]')?.textContent;
 
 const menuButton = () => document.querySelector<HTMLButtonElement>(".topbar-menu-btn");
 const sidebar = () => document.querySelector<HTMLElement>(".layout-body .sidebar:not(.sidebar--flyout)");
@@ -221,13 +245,82 @@ describe("the shell on a phone", () => {
     expect(sidebar()?.classList.contains("is-open")).toBe(false);
   });
 
-  it("renders no navigation drawer on a chat-layout page once the panel claims the button", async () => {
+  it("renders no navigation drawer while the panel holds the claim, and one again once it lets go", async () => {
     await render("/app/chat");
     expect(sidebar()).toBeNull();
+    // Leaving the chat page unmounts the claimant: the button falls back to the navigation.
+    await click(document.querySelector("a[href='/app/projects/p1']"));
+    expect(sidebar()?.classList.contains("sidebar--drawer")).toBe(true);
+    await click(menuButton());
+    expect(sidebar()?.classList.contains("is-open")).toBe(true);
+  });
+
+  it("closes the drawer when the page navigates by itself", async () => {
+    await render("/app/chat");
+    await click(menuButton());
+    expect(probeText()).toBe("phone=true open=true");
+    await click(buttonNamed("go to projects"));
+    expect(document.querySelector("h1")?.textContent).toBe("Projects page");
+    expect(sidebar()?.classList.contains("is-open")).toBe(false);
+  });
+
+  it("the menu button closes the navigation and the history together", async () => {
+    await render("/app/chat");
+    await click(menuButton());
+    await click(buttonNamed("open navigation"));
+    expect(menuButton()?.getAttribute("aria-expanded")).toBe("true");
+    await click(menuButton());
+    expect(document.querySelector(".sidebar--flyout")?.classList.contains("is-open")).toBe(false);
+    expect(probeText()).toBe("phone=true open=false");
+    expect(menuButton()?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("forgets an open navigation flyout too when the layout widens", async () => {
+    await render("/app/chat");
+    await click(menuButton());
+    await click(buttonNamed("open navigation"));
     layout.phone = false;
-    await render("/app/projects/p1");
-    expect(sidebar()).toBeNull();
-    expect(menuButton()).toBeNull();
+    await render("/app/chat");
+    expect(document.querySelector(".sidebar--flyout")?.classList.contains("is-open")).toBe(false);
+    layout.phone = true;
+    await render("/app/chat");
+    expect(document.querySelector(".sidebar--flyout")?.classList.contains("is-open")).toBe(false);
+    expect(backdrop()).toBeNull();
+  });
+
+  it("leaves Escape to a dialog, a menu or a search field that has text", async () => {
+    await render("/app/chat");
+    await click(menuButton());
+    await click(buttonNamed("open dialog"));
+    await escape();
+    expect(probeText()).toBe("phone=true open=true");
+    await click(buttonNamed("close dialog"));
+
+    const search = document.querySelector<HTMLInputElement>('input[type="search"]')!;
+    search.value = "budget";
+    await act(async () => {
+      search.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(probeText()).toBe("phone=true open=true");
+    search.value = "";
+    await act(async () => {
+      search.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(probeText()).toBe("phone=true open=false");
+  });
+
+  it("moves focus into the navigation flyout and back to what opened it", async () => {
+    await render("/app/chat");
+    await click(menuButton());
+    const opener = buttonNamed("open navigation")!;
+    opener.focus();
+    await click(opener);
+    const flyout = document.querySelector<HTMLElement>(".sidebar--flyout")!;
+    expect(document.activeElement).toBe(flyout);
+    expect(flyout.getAttribute("aria-hidden")).toBeNull();
+    await escape();
+    expect(document.activeElement).toBe(opener);
+    expect(flyout.getAttribute("aria-hidden")).toBe("true");
   });
 
   it("shows the brand mark alone in the topbar", async () => {

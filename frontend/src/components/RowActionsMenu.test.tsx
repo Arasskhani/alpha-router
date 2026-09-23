@@ -81,6 +81,27 @@ describe("row actions on a phone", () => {
     expect(document.activeElement?.textContent).toBe("Edit");
   });
 
+  it("are a modal dialog around the menu, and Tab stays inside", async () => {
+    await render();
+    await press(trigger());
+    const layer = document.querySelector(".action-sheet-root");
+    expect(layer?.getAttribute("role")).toBe("dialog");
+    expect(layer?.getAttribute("aria-modal")).toBe("true");
+    expect(layer?.getAttribute("aria-label")).toBe("Actions");
+    const key = (init: KeyboardEventInit) =>
+      act(async () => {
+        document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+      });
+    await key({ key: "Tab" });
+    expect(document.activeElement?.textContent).toBe("Delete");
+    await key({ key: "Tab" });
+    expect(document.activeElement?.textContent).toBe("Cancel");
+    await key({ key: "Tab" });
+    expect(document.activeElement?.textContent).toBe("Edit");
+    await key({ key: "Tab", shiftKey: true });
+    expect(document.activeElement?.textContent).toBe("Cancel");
+  });
+
   it("run an action and close", async () => {
     await render();
     await press(trigger());

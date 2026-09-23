@@ -133,10 +133,28 @@ export default function RowActionsMenu({ actions, label = "Actions", menuClassNa
     sheetWasOpen.current = sheetOpen;
   }, [sheetOpen]);
 
+  // A modal layer: Tab goes round the sheet's items, not out into the page behind.
+  useEffect(() => {
+    if (!sheetOpen) return;
+    const onTab = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const items = [...(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+      if (items.length === 0) return;
+      event.preventDefault();
+      const at = items.indexOf(document.activeElement as HTMLElement);
+      const step = event.shiftKey ? -1 : 1;
+      items[at < 0 ? 0 : (at + step + items.length) % items.length].focus();
+    };
+    document.addEventListener("keydown", onTab);
+    return () => document.removeEventListener("keydown", onTab);
+  }, [sheetOpen]);
+
   const sheetLabel = label === "⋯" || label === "⋮" ? "Actions" : label;
+  // The sheet covers the page (a backdrop takes every tap), so it is a modal
+  // dialog to assistive technology too: VoiceOver stays inside it.
   const sheet = sheetOpen
     ? createPortal(
-        <div ref={sheetRootRef} className="action-sheet-root">
+        <div ref={sheetRootRef} className="action-sheet-root" role="dialog" aria-modal="true" aria-label={sheetLabel}>
           <div className="action-sheet-backdrop" aria-hidden onClick={() => setOpen(false)} />
           <div ref={menuRef} className="action-sheet" role="menu" aria-label={sheetLabel}>
             {visible.map((a) => (

@@ -190,6 +190,9 @@ describe("the phone layout block", () => {
       'input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="hidden"], [type="button"], [type="submit"], [type="reset"], [type="image"]),\n  select,\n  textarea',
     );
     expect(fields).toContain("font-size: 16px !important");
+    // The plan name drawn over the user plan select matches the select's text.
+    expect(declarations(phone.body, ".users-table .user-plan-select-label")).toContain("font-size: 16px");
+    expect(phone.at).toBeGreaterThan(lastTopLevelRule(".users-table .user-plan-select-label"));
   });
 
   it("sizes the app to the visual viewport, so the iOS keyboard cannot cover the composer", () => {

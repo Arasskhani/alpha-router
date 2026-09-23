@@ -17352,6 +17352,11 @@ p.error,
   textarea {
     font-size: 16px !important;
   }
+  /* The user plan select draws the plan's name over itself; that name is the
+     select's own text size, so nothing jumps when the select takes focus. */
+  .users-table .user-plan-select-label {
+    font-size: 16px;
+  }
 
   /* No hover on a phone: the per-chat actions and the select box stay visible. */
   .alpha-router-sidebar--drawer .alpha-router-history-item-actions,

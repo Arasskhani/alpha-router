@@ -16623,65 +16623,256 @@ p.error,
   line-height: 1.5;
 }
 
-/* ── Storage Management: file types card ── */
+/* ── Storage Management: file types card ──
+   The card shows what the server enforces and nothing else: a mode switch
+   that saves on confirm, and one button per list that opens it in a dialog. */
 .file-types-mode {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem 1.25rem;
-  margin: 0.75rem 0 0.9rem;
-  padding: 0;
-  border: none;
-}
-.file-types-mode legend {
-  padding: 0;
-  margin-bottom: 0.3rem;
-}
-.file-types-mode label {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.9rem;
-  cursor: pointer;
-}
-.file-types-mode input[type="radio"] {
-  margin: 0;
-}
-
-.file-types-list-head {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
   gap: 0.5rem;
-  margin-bottom: 0.5rem;
+  margin: 0.75rem 0 0.9rem;
 }
-.file-types-list-head .file-types-add {
-  margin-left: auto;
-}
-
-.file-types-chips {
+.file-types-mode__option {
+  flex: 1 1 15rem;
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  list-style: none;
-  margin: 0 0 0.6rem;
-  padding: 0;
-}
-.file-types-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  padding: 0.55rem 0.75rem;
   border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
-  border-radius: 999px;
-  padding: 0.15rem 0.3rem 0.15rem 0.6rem;
-  font-size: 0.8rem;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.file-types-mode__option:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.file-types-mode__option.is-active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+.file-types-mode__option:disabled {
+  cursor: not-allowed;
+}
+/* A read-only administrator still needs to see which mode is on. */
+.file-types-mode__option:disabled:not(.is-active) {
+  opacity: 0.55;
+}
+.file-types-mode__label {
+  font-weight: 600;
+  font-size: 0.88rem;
+}
+.file-types-mode__hint {
+  font-size: 0.78rem;
   line-height: 1.4;
+  color: var(--muted);
 }
-.file-types-chip__name {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+.file-types-lists {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.6rem;
+  margin-bottom: 0.9rem;
 }
-.file-types-chip__default {
+.file-types-list-button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.file-types-list-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface));
+}
+/* Only while a change to the policy is being saved. */
+.file-types-list-button:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+.file-types-list-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.file-types-list-button__title {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.file-types-list-button__count {
+  font-size: 1.1rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.file-types-list-button__status {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.file-types-list-button__status.is-on {
+  color: var(--accent);
+}
+.file-types-note > .alert {
+  margin: 0 0 0.75rem;
+}
+.file-types-fixed {
+  margin: 0 0 0.25rem;
+}
+
+/* ── File types: the list dialog ──
+   A fixed height, with the list taking whatever is left: opening the Add row
+   shrinks the list instead of growing the dialog, so nothing jumps under the
+   pointer and the Save row stays on screen. */
+.modal-panel.file-types-modal {
+  display: flex;
+  flex-direction: column;
+  height: min(40rem, calc(100vh - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow: hidden;
+}
+/* On phones vh is the viewport with the browser bars hidden; dvh is what is
+   actually visible, which is all the fixed overlay has to centre in. */
+@supports (height: 100dvh) {
+  .modal-panel.file-types-modal {
+    height: min(40rem, calc(100dvh - 2rem));
+    max-height: calc(100dvh - 2rem);
+  }
+}
+.file-types-modal > .modal-header {
+  flex: 0 0 auto;
+}
+.file-types-modal__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* Only when even the smallest list cannot fit, e.g. a phone held sideways. */
+  overflow-y: auto;
+}
+.file-types-modal__body > * {
+  flex: 0 0 auto;
+}
+.file-types-modal__lead {
+  margin: 0 0 0.6rem;
+}
+.file-types-modal__notice {
+  margin: 0 0 0.75rem;
+  font-size: 0.82rem;
+}
+.file-types-modal__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.file-types-modal__search {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+.file-types-modal__add {
+  flex: 0 0 auto;
+}
+
+.file-types-add-row {
+  margin-top: 0.6rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface));
+}
+.file-types-add-row__label {
+  display: block;
+  font-size: var(--label-font);
+  margin-bottom: var(--label-gap);
+}
+.file-types-add-row__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+.file-types-add-row__input {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+.file-types-add-row__hint {
+  margin: 0.4rem 0 0;
+  font-size: 0.78rem;
+}
+
+.file-types-modal__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  align-items: baseline;
+  margin: 0.65rem 0 0.35rem;
+}
+.file-types-modal__notice-line {
+  font-size: 0.8rem;
+  color: var(--accent);
+}
+.file-types-modal__shortcut {
+  align-self: flex-start;
+  margin-bottom: 0.4rem;
+}
+.file-types-modal__empty {
+  margin: 0;
+  padding: 0.9rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+}
+.file-types-modal__empty > p {
+  margin: 0;
+}
+.file-types-modal__empty > .file-types-modal__shortcut {
+  margin-bottom: 0;
+}
+
+/* Hugs a short list; a long one shrinks to what is left and scrolls. */
+.file-types-modal__body > .file-types-rows {
+  flex: 0 1 auto;
+  min-height: 3.5rem;
+}
+.file-types-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.file-types-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.4rem 0.3rem 0.7rem;
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+.file-types-row:last-child {
+  border-bottom: none;
+}
+.file-types-row:hover {
+  background: var(--hover);
+}
+.file-types-row__name {
+  font-family: var(--font-mono);
+  margin-right: auto;
+}
+.file-types-row.is-removed .file-types-row__name {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.file-types-tag {
   font-size: 0.62rem;
   line-height: 1.2;
   text-transform: uppercase;
@@ -16689,46 +16880,75 @@ p.error,
   color: var(--muted);
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 0.05rem 0.35rem;
+  padding: 0.05rem 0.4rem;
+  white-space: nowrap;
 }
-.file-types-chip__remove {
+.file-types-tag.is-new {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.file-types-tag.is-removed,
+.file-types-tag.is-blocked {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+.file-types-row__remove {
   background: none;
   border: none;
-  padding: 0 0.25rem;
+  padding: 0 0.35rem;
   font: inherit;
-  font-size: 0.95rem;
+  font-size: 1rem;
   line-height: 1;
   color: var(--muted);
   cursor: pointer;
   border-radius: 999px;
 }
-.file-types-chip__remove:hover:not(:disabled) {
+.file-types-row__remove:hover:not(:disabled) {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
-.file-types-chip__remove:disabled {
+.file-types-row__remove:disabled,
+.file-types-row__undo:disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
-/* Read-only chips (the inactive list) have no × and read a little quieter. */
-.file-types-other .file-types-chip {
-  padding-right: 0.6rem;
-  color: var(--muted);
+.file-types-row__undo {
+  font-size: 0.8rem;
 }
 
-.file-types-toggle-other {
-  font-size: 0.85rem;
+.file-types-modal__cap,
+.file-types-modal__error {
+  margin: 0.6rem 0 0;
 }
-.file-types-other {
-  margin-top: 0.5rem;
-  padding: 0.6rem 0.75rem;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-sm);
+.file-types-modal__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-top: 0.85rem;
 }
-.file-types-dirty {
-  margin-top: 0.6rem;
-  color: var(--accent);
-  font-weight: 600;
+/* The Save row sits at the bottom of the dialog however short the list. */
+.file-types-modal__body > .file-types-modal__footer {
+  margin-top: auto;
+  padding-top: 0.85rem;
+}
+.file-types-modal__status {
+  flex: 1 1 10rem;
+  font-size: 0.8rem;
+}
+.file-types-modal__actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+@media (max-width: 520px) {
+  .file-types-modal__reset {
+    order: 3;
+  }
+  .file-types-modal__actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
 }
 
 .file-types-add-preview {
@@ -16754,6 +16974,9 @@ p.error,
   color: var(--danger);
   border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
   background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+}
+.file-types-add-preview__note {
+  color: var(--danger);
 }
 
 /* ── Chat attachments: file chips ── */

@@ -2479,21 +2479,37 @@ export const docSections: DocSection[] = [
           </li>
           <li>
             <strong>File types</strong> — which extensions users may upload as chat attachments and into project
-            libraries. Two modes: <em>block the listed types</em> (everything else is allowed; the default) or{" "}
-            <em>allow only the listed types</em>. Each list is shown as chips; every entry, including every shipped
-            default, can be removed with its ×, and <strong>Add file type</strong> opens a popup that takes several
-            extensions at once (commas, spaces or new lines; the dot is optional) and previews each as accepted,
-            already listed or invalid before anything changes. Nothing is applied until{" "}
-            <strong>Save file type policy</strong>; <strong>Restore defaults</strong> puts both lists and the mode
-            back after a confirm. Every save and reset is recorded in Admin Logs as{" "}
-            <code>upload_file_type_policy_changed</code>. Some protections do not depend on the lists at all: a
-            file&apos;s bytes must match its name (an executable is refused under any name, HTML or SVG content is
-            refused behind an image, video or audio name), unrecognised files are always served as downloads, and every
-            upload is scanned by ClamAV.
+            libraries. Two modes: <em>Block listed types</em> (everything not on the Block list is accepted; the
+            default) or <em>Allow only listed types</em> (only types on the Allow list are accepted). The Block list
+            applies in <strong>both</strong> modes, to every extension in a name — <code>report.pdf.exe</code> is
+            refused for <code>exe</code> — so in allowlist mode a type must be on the Allow list <em>and</em> off the
+            Block list. Changing the mode asks for a confirmation and is saved at once; switching to allowlist mode
+            with an empty Allow list is flagged, because it refuses every upload.
+            <br />
+            The card shows one button per list with its size; each opens the list in its own dialog. There you can
+            search it (case and a leading dot do not matter; typing a type that is not listed offers to add it),
+            and <strong>Add file type</strong> opens a row that takes several extensions at once (commas, spaces, or
+            pasted one per line; the dot is optional) and previews each as accepted, already listed or invalid. Entries
+            that are not shipped defaults are tagged <em>custom</em>. Every entry, including every shipped default, can
+            be taken off with its ×; it stays struck through with an Undo until you save, and{" "}
+            <strong>Reset this list to defaults</strong> only changes the draft. Nothing is applied until{" "}
+            <strong>Save</strong>, which asks first when it would unblock anything and names what it unblocks, and the
+            result of every save is shown on the card. On the
+            Allow list, an entry that is also on the Block list is tagged <em>still blocked</em>. Read-only
+            administrators can open and search both lists but not change them.{" "}
+            <strong>Restore defaults</strong> on the card puts both lists and the mode back after a confirm.
+            <br />
+            Saving the mode or a list is recorded in Admin Logs as <code>upload_file_type_policy_changed</code>,
+            restoring the defaults as <code>upload_file_type_policy_reset</code>; both carry what was added and
+            removed. The server caches the policy for up to a minute in each process, and a chat page caches what it
+            was told for up to another minute, so a change reaches every new upload within two minutes. Some
+            protections do not depend on the lists at all: a file&apos;s bytes must match its name (an executable is
+            refused under any name, HTML or SVG content is refused behind an image, video or audio name), unrecognised
+            files are always served as downloads, and every upload is scanned by ClamAV.
             <br />
             <code>.svg</code> and <code>.html</code> are blocked by default because, served inline, they are a
             script-execution vector: a browser runs whatever script such a file carries, in the platform&apos;s own
-            origin. Removing them from the blocklist lets people store those files in the library and attach them to
+            origin. Removing them from the Block list lets people store those files in the library and attach them to
             chats; it does not make the platform render them — they are still delivered as downloads, never opened in
             the page.
           </li>

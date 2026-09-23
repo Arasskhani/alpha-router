@@ -1,27 +1,33 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import AdminPage from "../../components/AdminPage";
-import Modal from "../../components/Modal";
-import { api } from "../../api";
+import FileTypeListModal from "../../components/admin/FileTypeListModal";
+import { api, formatApiError } from "../../api";
 import { useConfirm } from "../../context/ConfirmContext";
 import { useAdminWriteLock } from "../../lib/adminWriteLock";
-import { diffLists, isDefaultType, normalizeExtensionInput } from "../../lib/fileTypePolicy";
+import type { FileTypeListKey, FileTypeMode, FileTypePolicy } from "../../lib/fileTypePolicy";
 
-type FileTypeMode = "blocklist" | "allowlist";
+const FILE_TYPE_MODES: Array<{ value: FileTypeMode; label: string; hint: string }> = [
+  {
+    value: "blocklist",
+    label: "Block listed types",
+    hint: "Anything not on the Block list is accepted.",
+  },
+  {
+    value: "allowlist",
+    label: "Allow only listed types",
+    hint: "Only types on the Allow list are accepted — and never one on the Block list.",
+  },
+];
 
-type FileTypePolicy = {
-  mode: FileTypeMode;
-  blocked: string[];
-  allowed: string[];
-  default_blocked: string[];
-  default_allowed: string[];
-};
+/**
+ * The server caches the policy for up to a minute in each process, and a chat
+ * page caches what it was told for up to another minute.
+ */
+const FILE_TYPES_TAKE_EFFECT = "New uploads follow it within two minutes.";
 
-type FileTypeDraft = Pick<FileTypePolicy, "mode" | "blocked" | "allowed">;
-
-function draftOf(policy: FileTypePolicy): FileTypeDraft {
-  // The server sends sorted lists; sorting again costs nothing and keeps the chips stable if it ever does not.
-  return { mode: policy.mode, blocked: [...policy.blocked].sort(), allowed: [...policy.allowed].sort() };
+function typeCount(n: number) {
+  return `${n} ${n === 1 ? "type" : "types"}`;
 }
 
 type StorageSettings = {
@@ -75,24 +81,21 @@ export default function StorageManagement() {
   const [clearing, setClearing] = useState(false);
   const [flash, setFlash] = useState("");
   const [error, setError] = useState("");
-  const { writeLockProps } = useAdminWriteLock();
+  const { readOnly, writeLockProps } = useAdminWriteLock();
   const [fileTypes, setFileTypes] = useState<FileTypePolicy | null>(null);
-  const [fileTypeDraft, setFileTypeDraft] = useState<FileTypeDraft | null>(null);
-  const [showOtherList, setShowOtherList] = useState(false);
-  const [addOpen, setAddOpen] = useState(false);
-  const [addText, setAddText] = useState("");
-  const [savingFileTypes, setSavingFileTypes] = useState(false);
+  const [openFileTypeList, setOpenFileTypeList] = useState<FileTypeListKey | null>(null);
+  const [savingFileTypeMode, setSavingFileTypeMode] = useState(false);
   const [resettingFileTypes, setResettingFileTypes] = useState(false);
+  // Shown on the card itself: it sits at the bottom of a long page, far from
+  // the page-level banner, and a mode change saves without any other sign.
+  const [fileTypesNote, setFileTypesNote] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 
   async function load() {
     setError("");
     try {
       const data = await api<StorageOverview>("/api/admin/storage");
       setStats(data);
-      if (data.file_types) {
-        setFileTypes(data.file_types);
-        setFileTypeDraft(draftOf(data.file_types));
-      }
+      if (data.file_types) setFileTypes(data.file_types);
       const gb = data.settings?.user_media_quota_gb;
       if (typeof gb === "number" && gb >= 1) setQuotaGb(gb);
       const projectGb = data.settings?.project_media_quota_gb;
@@ -249,90 +252,79 @@ export default function StorageManagement() {
   }
 
   // ── File types ──────────────────────────────────────────────────────────
-  const activeKey: "blocked" | "allowed" = fileTypeDraft?.mode === "allowlist" ? "allowed" : "blocked";
-  const inactiveKey: "blocked" | "allowed" = activeKey === "blocked" ? "allowed" : "blocked";
-  const activeList = useMemo(() => (fileTypeDraft ? fileTypeDraft[activeKey] : []), [fileTypeDraft, activeKey]);
-  const inactiveList = fileTypeDraft ? fileTypeDraft[inactiveKey] : [];
-  const activeDefaults = fileTypes
-    ? activeKey === "blocked"
-      ? fileTypes.default_blocked
-      : fileTypes.default_allowed
-    : [];
-  const inactiveDefaults = fileTypes
-    ? inactiveKey === "blocked"
-      ? fileTypes.default_blocked
-      : fileTypes.default_allowed
-    : [];
+  // The card holds no draft of its own. The mode is saved the moment it is
+  // confirmed, and each list is edited and saved in its own dialog, so what
+  // the card shows is always what the server enforces. Saves update this
+  // card from the response instead of reloading the page, which would reset
+  // any unsaved numbers on the cards above.
+  const allowListInEffect = fileTypes?.mode === "allowlist";
+  // One change at a time: each save sends the whole policy.
+  const fileTypesBusy = savingFileTypeMode || resettingFileTypes;
 
-  const fileTypeChanges = useMemo(() => {
-    if (!fileTypes || !fileTypeDraft) return null;
-    const blocked = diffLists(fileTypes.blocked, fileTypeDraft.blocked);
-    const allowed = diffLists(fileTypes.allowed, fileTypeDraft.allowed);
-    const modeChanged = fileTypes.mode !== fileTypeDraft.mode;
-    const dirty =
-      modeChanged || blocked.added.length + blocked.removed.length + allowed.added.length + allowed.removed.length > 0;
-    return { dirty, modeChanged, blocked, allowed };
-  }, [fileTypes, fileTypeDraft]);
-
-  const addPreview = useMemo(() => {
-    const { valid, invalid } = normalizeExtensionInput(addText);
-    const listed = new Set(activeList);
-    return {
-      fresh: valid.filter((ext) => !listed.has(ext)),
-      already: valid.filter((ext) => listed.has(ext)),
-      invalid,
-    };
-  }, [addText, activeList]);
-
-  function updateActiveList(next: string[]) {
-    setFileTypeDraft((d) => (d ? { ...d, [activeKey]: [...new Set(next)].sort() } : d));
-  }
-
-  function removeFileType(ext: string) {
-    updateActiveList(activeList.filter((x) => x !== ext));
-  }
-
-  function addFileTypes() {
-    if (!addPreview.fresh.length) return;
-    updateActiveList([...activeList, ...addPreview.fresh]);
-    setAddText("");
-    setAddOpen(false);
-  }
-
-  function closeAddDialog() {
-    setAddText("");
-    setAddOpen(false);
-  }
-
-  async function saveFileTypePolicy(e: FormEvent) {
-    e.preventDefault();
-    if (!fileTypeDraft) return;
-    setSavingFileTypes(true);
-    setError("");
-    setFlash("");
+  async function changeFileTypeMode(next: FileTypeMode) {
+    if (!fileTypes || next === fileTypes.mode || fileTypesBusy) return;
+    const allowCount = fileTypes.allowed.length;
+    const ok =
+      next === "allowlist"
+        ? await confirm({
+            title: "Allow only the listed types?",
+            message:
+              allowCount === 0
+                ? "The Allow list is empty, so every upload will be refused until types are added to it. Types " +
+                  "on the Block list stay refused too."
+                : `New uploads will be accepted only when their type is on the Allow list (${typeCount(allowCount)}). ` +
+                  "Types on the Block list stay refused, and every other type is refused for every user.",
+            emphasize: allowCount === 0 ? "every upload will be refused" : undefined,
+            emphasizeDanger: allowCount === 0,
+            confirmLabel: "Allow only listed types",
+            cancelLabel: "Cancel",
+            danger: allowCount === 0,
+          })
+        : await confirm({
+            title: "Block only the listed types?",
+            message:
+              `Every type that is not on the Block list (${typeCount(fileTypes.blocked.length)}) will be accepted ` +
+              "for new uploads. The Allow list is kept, but has no effect in this mode.",
+            confirmLabel: "Block listed types",
+            cancelLabel: "Cancel",
+          });
+    if (!ok) return;
+    setSavingFileTypeMode(true);
+    setFileTypesNote(null);
     try {
       const res = await api<{ ok?: boolean; file_types?: FileTypePolicy }>("/api/admin/storage/file-type-policy", {
         method: "PUT",
-        body: JSON.stringify({
-          mode: fileTypeDraft.mode,
-          blocked: fileTypeDraft.blocked,
-          allowed: fileTypeDraft.allowed,
-        }),
+        // The lists go back exactly as saved: this is a change of mode only.
+        body: JSON.stringify({ mode: next, blocked: fileTypes.blocked, allowed: fileTypes.allowed }),
       });
-      if (res?.file_types) {
-        setFileTypes(res.file_types);
-        setFileTypeDraft(draftOf(res.file_types));
-      }
-      setFlash("File type policy saved. It applies to new uploads immediately.");
-      await load();
+      setFileTypes(res?.file_types ?? { ...fileTypes, mode: next });
+      const label = FILE_TYPE_MODES.find((m) => m.value === next)?.label ?? next;
+      setFileTypesNote({ kind: "ok", text: `Mode set to “${label}”. ${FILE_TYPES_TAKE_EFFECT}` });
     } catch (e) {
-      setError(String(e));
+      setFileTypesNote({ kind: "error", text: `The mode was not changed: ${formatApiError(e)}` });
     } finally {
-      setSavingFileTypes(false);
+      setSavingFileTypeMode(false);
     }
   }
 
+  function onFileTypeListSaved(
+    listKey: FileTypeListKey,
+    next: FileTypePolicy,
+    changes: { added: string[]; removed: string[] },
+  ) {
+    setFileTypes(next);
+    setOpenFileTypeList(null);
+    const name = listKey === "blocked" ? "Block list" : "Allow list";
+    const counts = `+${changes.added.length} −${changes.removed.length}`;
+    const when =
+      listKey === "allowed" && next.mode !== "allowlist"
+        ? "It takes effect when the mode is “Allow only listed types”."
+        : FILE_TYPES_TAKE_EFFECT;
+    setFileTypesNote({ kind: "ok", text: `${name} saved (${counts}). ${when}` });
+  }
+
   async function requestResetFileTypes() {
+    if (fileTypesBusy) return;
     const ok = await confirm({
       title: "Restore default file types?",
       message:
@@ -344,51 +336,19 @@ export default function StorageManagement() {
     });
     if (!ok) return;
     setResettingFileTypes(true);
-    setError("");
-    setFlash("");
+    setFileTypesNote(null);
     try {
       const res = await api<{ ok?: boolean; file_types?: FileTypePolicy }>(
         "/api/admin/storage/file-type-policy/reset",
         { method: "POST" },
       );
-      if (res?.file_types) {
-        setFileTypes(res.file_types);
-        setFileTypeDraft(draftOf(res.file_types));
-      }
-      setFlash("File type policy restored to defaults. It applies to new uploads immediately.");
-      await load();
+      if (res?.file_types) setFileTypes(res.file_types);
+      setFileTypesNote({ kind: "ok", text: `Both lists and the mode are back to the defaults. ${FILE_TYPES_TAKE_EFFECT}` });
     } catch (e) {
-      setError(String(e));
+      setFileTypesNote({ kind: "error", text: `The defaults were not restored: ${formatApiError(e)}` });
     } finally {
       setResettingFileTypes(false);
     }
-  }
-
-  function renderChips(list: string[], defaults: string[], removable: boolean) {
-    if (!list.length) {
-      return <p className="muted-text file-types-empty">No types listed.</p>;
-    }
-    return (
-      <ul className="file-types-chips" aria-label={removable ? "Listed file types" : undefined}>
-        {list.map((ext) => (
-          <li key={ext} className="file-types-chip">
-            <span className="file-types-chip__name">{ext}</span>
-            {isDefaultType(ext, defaults) ? <span className="file-types-chip__default">default</span> : null}
-            {removable ? (
-              <button
-                type="button"
-                className="file-types-chip__remove"
-                aria-label={`Remove ${ext}`}
-                onClick={() => removeFileType(ext)}
-                {...writeLockProps}
-              >
-                ×
-              </button>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-    );
   }
 
   async function requestClearCache() {
@@ -668,108 +628,89 @@ export default function StorageManagement() {
         </div>
       </form>
 
-      <form className="card file-types-card" onSubmit={saveFileTypePolicy} aria-label="File types">
-        <h3>File types</h3>
+      <section className="card file-types-card" aria-labelledby="file-types-title">
+        <h3 id="file-types-title">File types</h3>
         <p className="muted-text">
-          Which file types users may upload as chat attachments and into project libraries, by extension. The list
-          applies to new uploads only; files already stored are untouched.
-        </p>
-        <p className="muted-text">
-          Some protections stay fixed whatever the lists say: a file&apos;s bytes must match its name (an executable is
-          refused under any name; HTML or SVG content is refused behind an image, video or audio name), files the
-          platform does not recognise are always served as downloads rather than opened in the browser, and every
-          upload is virus-scanned. Removing a type from the blocklist lets people <em>store</em> it; it never lets the
-          platform <em>render</em> it.
+          Which file types users may upload as chat attachments and into project libraries, by extension. Changes
+          reach new uploads within two minutes; files already stored are untouched.
         </p>
 
-        {!fileTypeDraft ? (
+        {!fileTypes ? (
           <p className="muted-text">{stats ? "This server does not report a file type policy." : "Loading…"}</p>
         ) : (
           <>
-            <fieldset className="file-types-mode">
-              <legend className="muted-text">Mode</legend>
-              <label>
-                <input
-                  type="radio"
-                  name="file-types-mode"
-                  value="blocklist"
-                  checked={fileTypeDraft.mode === "blocklist"}
-                  onChange={() => setFileTypeDraft((d) => (d ? { ...d, mode: "blocklist" } : d))}
-                  {...writeLockProps}
-                />
-                Block the listed types (everything else is allowed)
-              </label>
-              <label>
-                <input
-                  type="radio"
-                  name="file-types-mode"
-                  value="allowlist"
-                  checked={fileTypeDraft.mode === "allowlist"}
-                  onChange={() => setFileTypeDraft((d) => (d ? { ...d, mode: "allowlist" } : d))}
-                  {...writeLockProps}
-                />
-                Allow only the listed types
-              </label>
-            </fieldset>
+            <div className="file-types-mode" role="group" aria-label="Mode">
+              {FILE_TYPE_MODES.map((mode) => {
+                const active = fileTypes.mode === mode.value;
+                return (
+                  <button
+                    key={mode.value}
+                    type="button"
+                    className={`file-types-mode__option${active ? " is-active" : ""}`}
+                    aria-pressed={active}
+                    onClick={() => void changeFileTypeMode(mode.value)}
+                    disabled={readOnly || fileTypesBusy}
+                    title={writeLockProps.title}
+                  >
+                    <span className="file-types-mode__label">{mode.label}</span>
+                    <span className="file-types-mode__hint">{mode.hint}</span>
+                  </button>
+                );
+              })}
+            </div>
 
-            <div className="file-types-list-head">
-              <strong>{activeKey === "blocked" ? "Blocked types" : "Allowed types"}</strong>
-              <span className="muted-text file-types-count">
-                {activeList.length} {activeList.length === 1 ? "type" : "types"}
-              </span>
+            {/* Open to read-only administrators too: the dialogs show and
+                search the lists and disable only what would change them. */}
+            <div className="file-types-lists">
               <button
                 type="button"
-                className="btn btn-ghost file-types-add"
-                onClick={() => setAddOpen(true)}
-                {...writeLockProps}
+                className="file-types-list-button btn-readonly-ok"
+                aria-haspopup="dialog"
+                onClick={() => setOpenFileTypeList("blocked")}
+                disabled={fileTypesBusy}
               >
-                Add file type
+                <span className="file-types-list-button__title">Block list</span>
+                <span className="file-types-list-button__count">{typeCount(fileTypes.blocked.length)}</span>
+                <span className="file-types-list-button__status is-on">Always in effect</span>
+              </button>
+              <button
+                type="button"
+                className="file-types-list-button btn-readonly-ok"
+                aria-haspopup="dialog"
+                onClick={() => setOpenFileTypeList("allowed")}
+                disabled={fileTypesBusy}
+              >
+                <span className="file-types-list-button__title">Allow list</span>
+                <span className="file-types-list-button__count">{typeCount(fileTypes.allowed.length)}</span>
+                <span className={`file-types-list-button__status ${allowListInEffect ? "is-on" : "is-off"}`}>
+                  {allowListInEffect ? "In effect" : "Not in effect in this mode"}
+                </span>
               </button>
             </div>
-            {renderChips(activeList, activeDefaults, true)}
 
-            <button
-              type="button"
-              className="btn-link file-types-toggle-other btn-readonly-ok"
-              onClick={() => setShowOtherList((v) => !v)}
-            >
-              {showOtherList
-                ? `Hide the ${inactiveKey === "blocked" ? "blocklist" : "allowlist"}`
-                : `Show the ${inactiveKey === "blocked" ? "blocklist" : "allowlist"} too`}
-            </button>
-            {showOtherList ? (
-              <div className="file-types-other">
-                <p className="muted-text">
-                  {inactiveKey === "blocked" ? "Blocklist" : "Allowlist"} — not in effect in the current mode. Switch
-                  mode to edit it.
+            {/* Always mounted, so the result of a save is announced. */}
+            <div className="file-types-note" role="status">
+              {fileTypesNote ? (
+                <p className={`alert ${fileTypesNote.kind === "ok" ? "alert-success" : "alert-error"}`}>
+                  {fileTypesNote.text}
                 </p>
-                {renderChips(inactiveList, inactiveDefaults, false)}
-              </div>
-            ) : null}
+              ) : null}
+            </div>
 
-            {fileTypeChanges?.dirty ? (
-              <p className="muted-text file-types-dirty" role="status">
-                Unsaved changes
-                {fileTypeChanges.modeChanged ? " · mode" : ""}
-                {fileTypeChanges[activeKey].added.length ? ` · +${fileTypeChanges[activeKey].added.length}` : ""}
-                {fileTypeChanges[activeKey].removed.length ? ` · −${fileTypeChanges[activeKey].removed.length}` : ""}
-              </p>
-            ) : null}
+            <p className="muted-text file-types-fixed">
+              Some protections stay fixed whatever the lists say: a file&apos;s bytes must match its name (an
+              executable is refused under any name; HTML or SVG content is refused behind an image, video or audio
+              name), files the platform does not recognise are always served as downloads rather than opened in the
+              browser, and every upload is virus-scanned. Taking a type off the Block list lets people{" "}
+              <em>store</em> it; it never lets the platform <em>render</em> it.
+            </p>
 
             <div className="dialog-actions">
-              <button
-                type="submit"
-                className="btn"
-                disabled={savingFileTypes || writeLockProps.disabled}
-                title={writeLockProps.title}
-              >
-                {savingFileTypes ? "Saving…" : "Save file type policy"}
-              </button>
               <button
                 type="button"
                 className="btn btn-ghost"
                 onClick={() => void requestResetFileTypes()}
-                disabled={resettingFileTypes || writeLockProps.disabled}
+                disabled={fileTypesBusy || readOnly}
                 title={writeLockProps.title}
               >
                 {resettingFileTypes ? "Restoring…" : "Restore defaults"}
@@ -777,56 +718,17 @@ export default function StorageManagement() {
             </div>
           </>
         )}
-      </form>
+      </section>
 
-      <Modal
-        open={addOpen}
-        title="Add file type"
-        onClose={closeAddDialog}
-        panelClassName="modal-panel--md modal-panel--fit"
-      >
-        <p className="muted-text" style={{ marginTop: 0 }}>
-          Extensions to add to the {activeKey === "blocked" ? "blocklist" : "allowlist"}. Separate several with
-          commas, spaces or new lines; the dot is optional. Letters and digits only, up to 16 characters — so{" "}
-          <code>tar.gz</code> is entered as <code>gz</code>.
-        </p>
-        <label htmlFor="file-types-add-input">File extensions</label>
-        <textarea
-          id="file-types-add-input"
-          className="input-block"
-          rows={3}
-          value={addText}
-          onChange={(e) => setAddText(e.target.value)}
-          placeholder="pdf, docx, .xlsx"
+      {openFileTypeList && fileTypes ? (
+        <FileTypeListModal
+          key={openFileTypeList}
+          listKey={openFileTypeList}
+          policy={fileTypes}
+          onClose={() => setOpenFileTypeList(null)}
+          onSaved={(next, changes) => onFileTypeListSaved(openFileTypeList, next, changes)}
         />
-        {addText.trim() ? (
-          <ul className="file-types-add-preview" aria-label="Parsed file types">
-            {addPreview.fresh.map((ext) => (
-              <li key={`ok-${ext}`} className="file-types-add-preview__item is-ok">
-                <code>{ext}</code> <span aria-hidden="true">✓</span>
-              </li>
-            ))}
-            {addPreview.already.map((ext) => (
-              <li key={`dup-${ext}`} className="file-types-add-preview__item is-listed muted-text">
-                <code>{ext}</code> already listed
-              </li>
-            ))}
-            {addPreview.invalid.map((ext) => (
-              <li key={`bad-${ext}`} className="file-types-add-preview__item is-invalid">
-                <code>{ext}</code> invalid
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        <div className="dialog-actions">
-          <button type="button" className="btn btn-ghost btn-readonly-ok" onClick={closeAddDialog}>
-            Cancel
-          </button>
-          <button type="button" className="btn" onClick={addFileTypes} disabled={!addPreview.fresh.length}>
-            Add {addPreview.fresh.length} {addPreview.fresh.length === 1 ? "type" : "types"}
-          </button>
-        </div>
-      </Modal>
+      ) : null}
     </AdminPage>
   );
 }

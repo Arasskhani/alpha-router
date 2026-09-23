@@ -1,9 +1,11 @@
 /**
  * @vitest-environment happy-dom
  *
- * The "File types" card on Storage Management: two modes, an editable chip
- * list where every default can go, a popup for adding several extensions at
- * once, and a Save that sends exactly the draft the operator was looking at.
+ * The "File types" card on Storage Management. It keeps no draft: the mode is
+ * saved as soon as it is confirmed, and each list opens in its own dialog
+ * (tested in FileTypeListModal.test.tsx), so the card always shows what the
+ * server enforces. The Block list applies in both modes; the Allow list only
+ * in allowlist mode — the old card said otherwise.
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -11,16 +13,26 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const readOnly = vi.hoisted(() => ({ value: false }));
-const confirmMock = vi.hoisted(() => vi.fn(async () => true));
+const confirmMock = vi.hoisted(() => vi.fn(async (_opts: Record<string, unknown>): Promise<boolean> => true));
 
-vi.mock("../../api", () => ({ api: vi.fn(), formatApiError: (e: unknown) => String(e) }));
+vi.mock("../../api", () => ({
+  api: vi.fn(),
+  formatApiError: (e: unknown) => (e instanceof Error ? e.message : String(e)),
+}));
 vi.mock("../../context/ReadOnlyContext", () => ({ useReadOnly: () => readOnly.value }));
 vi.mock("../../context/ConfirmContext", () => ({
   useConfirm: () => ({ confirm: confirmMock, prompt: vi.fn() }),
 }));
 
 import { api } from "../../api";
-import { EXTENSION_PATTERN, diffLists, isDefaultType, normalizeExtensionInput } from "../../lib/fileTypePolicy";
+import {
+  EXTENSION_PATTERN,
+  diffLists,
+  filterExtensions,
+  isDefaultType,
+  normalizeExtensionInput,
+  normalizeSearchQuery,
+} from "../../lib/fileTypePolicy";
 import StorageManagement from "./StorageManagement";
 
 describe("fileTypePolicy helpers", () => {
@@ -40,7 +52,7 @@ describe("fileTypePolicy helpers", () => {
     expect(EXTENSION_PATTERN.test("PDF")).toBe(false);
     expect(EXTENSION_PATTERN.test("tar.gz")).toBe(false);
     expect(EXTENSION_PATTERN.test("c++")).toBe(false);
-    expect(normalizeExtensionInput("c++ x".repeat(1)).invalid).toEqual(["c++"]);
+    expect(normalizeExtensionInput("c++ x").invalid).toEqual(["c++"]);
   });
 
   it("diffs two lists as added and removed", () => {
@@ -51,6 +63,15 @@ describe("fileTypePolicy helpers", () => {
   it("knows which entries are shipped defaults", () => {
     expect(isDefaultType("exe", ["exe", "svg"])).toBe(true);
     expect(isDefaultType("pdf", ["exe", "svg"])).toBe(false);
+  });
+
+  it("searches by substring, ignoring case and a leading dot", () => {
+    const list = ["docx", "exe", "htm", "html", "pdf"];
+    expect(filterExtensions(list, "HT")).toEqual(["htm", "html"]);
+    expect(filterExtensions(list, " .pd ")).toEqual(["pdf"]);
+    expect(filterExtensions(list, "")).toEqual(list);
+    expect(filterExtensions(list, "zip")).toEqual([]);
+    expect(normalizeSearchQuery("  .PSD ")).toBe("psd");
   });
 });
 
@@ -100,7 +121,8 @@ let root: Root;
 
 beforeEach(() => {
   vi.mocked(api).mockReset();
-  confirmMock.mockClear();
+  confirmMock.mockReset();
+  confirmMock.mockResolvedValue(true);
   readOnly.value = false;
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -111,6 +133,7 @@ afterEach(() => {
   act(() => root.unmount());
   host.remove();
   document.body.innerHTML = "";
+  document.body.style.overflow = "";
 });
 
 async function render() {
@@ -124,17 +147,18 @@ async function render() {
 }
 
 function card(): HTMLElement {
-  const el = host.querySelector<HTMLElement>('form[aria-label="File types"]');
+  const el = host.querySelector<HTMLElement>("section.file-types-card");
   if (!el) throw new Error("File types card not rendered");
   return el;
 }
 
-function chips(scope: ParentNode = card()): string[] {
-  return [...scope.querySelectorAll(".file-types-chip .file-types-chip__name")].map((n) => n.textContent || "");
-}
-
 function button(label: string, scope: ParentNode = document): HTMLButtonElement | undefined {
   return [...scope.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === label);
+}
+
+/** A button whose text starts with `label` (the mode and list buttons carry a second line). */
+function buttonStarting(label: string, scope: ParentNode = card()): HTMLButtonElement | undefined {
+  return [...scope.querySelectorAll("button")].find((b) => (b.textContent || "").trim().startsWith(label));
 }
 
 function click(el: Element | undefined) {
@@ -142,179 +166,256 @@ function click(el: Element | undefined) {
   return act(async () => el.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 }
 
-/** React tracks the value itself; a plain assignment does not reach onChange. */
-function setValue(el: HTMLTextAreaElement, value: string) {
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+function type(el: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
   return act(async () => {
     setter?.call(el, value);
     el.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
 
-function putCalls() {
+function calls(path: string, method?: string) {
   return vi
     .mocked(api)
-    .mock.calls.filter((c) => c[0] === "/api/admin/storage/file-type-policy" && (c[1] as RequestInit)?.method === "PUT")
-    .map((c) => JSON.parse(String((c[1] as RequestInit).body)));
+    .mock.calls.filter((c) => c[0] === path && (method ? (c[1] as RequestInit)?.method === method : true));
+}
+
+function puts() {
+  return calls("/api/admin/storage/file-type-policy", "PUT").map((c) => JSON.parse(String((c[1] as RequestInit).body)));
+}
+
+const modeButton = (label: string) => buttonStarting(label, card().querySelector(".file-types-mode")!);
+const listButton = (label: "Block list" | "Allow list") =>
+  buttonStarting(label, card().querySelector(".file-types-lists")!);
+const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]');
+/** The card reports its own results: it sits far below the page-level banner. */
+const note = () => card().querySelector(".file-types-note")?.textContent || "";
+const searchBox = () => document.querySelector<HTMLInputElement>('input[aria-label="Search file types"]')!;
+
+/** A promise the test settles by hand, to look at the page while a request is out. */
+function deferred<T>() {
+  let resolve: (v: T) => void = () => {};
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
 }
 
 describe("the File types card", () => {
   it("sits right after the transfer limits card", async () => {
     answerWith();
     await render();
-    const forms = [...host.querySelectorAll("form.card")].map((f) => f.querySelector("h3")?.textContent);
-    expect(forms.indexOf("File types")).toBe(forms.indexOf("Transfer size limits") + 1);
+    const cards = [...host.querySelectorAll("form.card, section.card")].map((c) => c.querySelector("h3")?.textContent);
+    expect(cards.indexOf("File types")).toBe(cards.indexOf("Transfer size limits") + 1);
   });
 
-  it("renders the active list sorted, tagging shipped defaults", async () => {
-    answerWith({ blocked: ["svg", "exe", "zzz", "html"] });
-    await render();
-    expect(chips()).toEqual(["exe", "html", "svg", "zzz"]);
-    const tagged = [...card().querySelectorAll(".file-types-chip")]
-      .filter((c) => c.querySelector(".file-types-chip__default"))
-      .map((c) => c.querySelector(".file-types-chip__name")?.textContent);
-    expect(tagged).toEqual(["exe", "html", "svg"]);
-    expect(card().textContent).toContain("4 types");
-    expect(card().textContent).not.toContain("Unsaved changes");
-  });
-
-  it("lets a default chip be removed and marks the draft dirty", async () => {
+  it("shows the saved mode and the size of each list, and no editor of its own", async () => {
     answerWith();
     await render();
-    await click(card().querySelector('button[aria-label="Remove svg"]') ?? undefined);
-    expect(chips()).toEqual(["exe", "html"]);
-    expect(card().textContent).toContain("Unsaved changes");
-    expect(putCalls()).toHaveLength(0);
+    expect(modeButton("Block listed types")?.getAttribute("aria-pressed")).toBe("true");
+    expect(modeButton("Allow only listed types")?.getAttribute("aria-pressed")).toBe("false");
+    expect(listButton("Block list")?.textContent).toContain("3 types");
+    expect(listButton("Allow list")?.textContent).toContain("2 types");
+    expect(card().querySelector(".file-types-row, input, textarea")).toBeNull();
+    expect(button("Save file type policy")).toBeUndefined();
+    expect(card().textContent).not.toContain("Unsaved");
   });
 
-  it("opens Add file type in a dialog rather than inline", async () => {
+  it("says the Block list is always in effect and the Allow list only in allowlist mode", async () => {
     answerWith();
     await render();
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
-    expect(document.getElementById("file-types-add-input")).toBeNull();
+    expect(listButton("Block list")?.textContent).toContain("Always in effect");
+    expect(listButton("Allow list")?.textContent).toContain("Not in effect in this mode");
 
-    await click(button("Add file type", card()));
-    const dialog = document.querySelector('[role="dialog"]');
-    expect(dialog?.getAttribute("aria-label")).toContain("Add file type");
-    expect(dialog?.querySelector("#file-types-add-input")).not.toBeNull();
+    act(() => root.unmount());
+    root = createRoot(host);
+    answerWith({ mode: "allowlist" });
+    await render();
+    expect(modeButton("Allow only listed types")?.getAttribute("aria-pressed")).toBe("true");
+    expect(listButton("Block list")?.textContent).toContain("Always in effect");
+    expect(listButton("Allow list")?.textContent).toContain("In effect");
+    expect(listButton("Allow list")?.textContent).not.toContain("Not in effect");
   });
 
-  it("previews each parsed entry and adds only the valid, unlisted ones", async () => {
+  it("switches the mode only after a confirm, sending both lists back unchanged", async () => {
     answerWith();
     await render();
-    await click(button("Add file type", card()));
-    const input = document.getElementById("file-types-add-input") as HTMLTextAreaElement;
-    await setValue(input, ".PDF, exe tar.gz");
+    await click(modeButton("Allow only listed types"));
 
-    const preview = document.querySelector(".file-types-add-preview");
-    const items = [...(preview?.querySelectorAll("li") ?? [])].map((li) => ({
-      text: (li.textContent || "").replace(/\s+/g, " ").trim(),
-      cls: li.className,
-    }));
-    expect(items).toEqual([
-      { text: "pdf ✓", cls: expect.stringContaining("is-ok") },
-      { text: "exe already listed", cls: expect.stringContaining("is-listed") },
-      { text: "tar.gz invalid", cls: expect.stringContaining("is-invalid") },
-    ]);
-
-    const add = button("Add 1 type");
-    expect(add?.disabled).toBe(false);
-    await click(add);
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
-    expect(chips()).toEqual(["exe", "html", "pdf", "svg"]);
-    expect(putCalls()).toHaveLength(0);
+    expect(confirmMock).toHaveBeenCalledTimes(1);
+    expect(confirmMock.mock.calls[0][0].title).toBe("Allow only the listed types?");
+    expect(String(confirmMock.mock.calls[0][0].message)).toContain("2 types");
+    expect(puts()).toEqual([{ mode: "allowlist", blocked: ["exe", "html", "svg"], allowed: ["docx", "pdf"] }]);
+    expect(modeButton("Allow only listed types")?.getAttribute("aria-pressed")).toBe("true");
+    expect(listButton("Allow list")?.textContent).not.toContain("Not in effect");
+    expect(note()).toContain("Mode set to “Allow only listed types”");
+    expect(note()).toContain("within two minutes");
+    // Not repeated in the page-level banner above the first card.
+    expect(host.querySelector(".admin-page > .alert-success")).toBeNull();
   });
 
-  it("disables Add when nothing valid was typed", async () => {
+  it("keeps the mode when the confirm is declined", async () => {
+    confirmMock.mockResolvedValueOnce(false);
     answerWith();
     await render();
-    await click(button("Add file type", card()));
-    const input = document.getElementById("file-types-add-input") as HTMLTextAreaElement;
-    await setValue(input, "exe, tar.gz");
-    expect(button("Add 0 types")?.disabled).toBe(true);
+    await click(modeButton("Allow only listed types"));
+    expect(puts()).toHaveLength(0);
+    expect(modeButton("Block listed types")?.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("saves the full draft with PUT and reports success", async () => {
+  it("does nothing when the mode already in force is clicked", async () => {
     answerWith();
     await render();
-    await click(card().querySelector('button[aria-label="Remove html"]') ?? undefined);
-    await click(button("Add file type", card()));
-    await setValue(document.getElementById("file-types-add-input") as HTMLTextAreaElement, "bat");
-    await click(button("Add 1 type"));
-    await click(button("Save file type policy"));
-
-    expect(putCalls()).toEqual([{ mode: "blocklist", blocked: ["bat", "exe", "svg"], allowed: ["docx", "pdf"] }]);
-    expect(host.querySelector(".alert-success")?.textContent).toContain("File type policy saved");
+    await click(modeButton("Block listed types"));
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(puts()).toHaveLength(0);
   });
 
-  it("shows the server's detail when a save is refused", async () => {
-    answerWith();
+  it("warns loudly before allowlist mode with an empty Allow list", async () => {
+    confirmMock.mockResolvedValueOnce(false);
+    answerWith({ allowed: [] });
     await render();
-    vi.mocked(api).mockRejectedValueOnce(new Error("Invalid extension: tar.gz"));
-    await click(card().querySelector('button[aria-label="Remove svg"]') ?? undefined);
-    await click(button("Save file type policy"));
-    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Invalid extension: tar.gz");
+    await click(modeButton("Allow only listed types"));
+    const opts = confirmMock.mock.calls[0][0];
+    expect(opts.emphasize).toBe("every upload will be refused");
+    expect(opts.danger).toBe(true);
+    expect(puts()).toHaveLength(0);
   });
 
-  it("switches which list the chips show when the mode changes, without saving", async () => {
-    answerWith();
+  it("asks before going back to blocklist mode too", async () => {
+    answerWith({ mode: "allowlist" });
     await render();
-    const allowRadio = card().querySelector<HTMLInputElement>('input[value="allowlist"]');
-    await click(allowRadio ?? undefined);
-    expect(allowRadio?.checked).toBe(true);
-    expect(chips()).toEqual(["docx", "pdf"]);
-    expect(card().textContent).toContain("Allowed types");
-    expect(card().textContent).toContain("Unsaved changes");
-    expect(putCalls()).toHaveLength(0);
-
-    await click(button("Save file type policy"));
-    expect(putCalls()).toEqual([{ mode: "allowlist", blocked: ["exe", "html", "svg"], allowed: ["docx", "pdf"] }]);
+    await click(modeButton("Block listed types"));
+    expect(confirmMock.mock.calls[0][0].title).toBe("Block only the listed types?");
+    expect(puts()).toEqual([{ mode: "blocklist", blocked: ["exe", "html", "svg"], allowed: ["docx", "pdf"] }]);
+    expect(modeButton("Block listed types")?.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("shows the inactive list read-only on request", async () => {
+  it("shows the server's reason on the card when a mode change is refused, and keeps the mode", async () => {
     answerWith();
     await render();
-    expect(card().textContent).not.toContain("docx");
-    await click(button("Show the allowlist too", card()));
-    const other = card().querySelector(".file-types-other");
-    expect(chips(other!)).toEqual(["docx", "pdf"]);
-    expect(other?.querySelector(".file-types-chip__remove")).toBeNull();
-    await click(button("Hide the allowlist", card()));
-    expect(card().querySelector(".file-types-other")).toBeNull();
+    vi.mocked(api).mockRejectedValueOnce(new Error("Forbidden"));
+    await click(modeButton("Allow only listed types"));
+    expect(note()).toBe("The mode was not changed: Forbidden");
+    expect(card().querySelector(".file-types-note .alert-error")).not.toBeNull();
+    expect(modeButton("Block listed types")?.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("allows one change at a time while a save is out", async () => {
+    answerWith();
+    await render();
+    const pending = deferred<unknown>();
+    vi.mocked(api).mockImplementationOnce(() => pending.promise as Promise<never>);
+    await click(modeButton("Allow only listed types"));
+
+    expect(modeButton("Block listed types")?.disabled).toBe(true);
+    expect(button("Restore defaults", card())?.disabled).toBe(true);
+    expect(listButton("Block list")?.disabled).toBe(true);
+    expect(listButton("Allow list")?.disabled).toBe(true);
+
+    await act(async () => pending.resolve({ ok: true, file_types: { ...FILE_TYPES, mode: "allowlist" } }));
+    expect(button("Restore defaults", card())?.disabled).toBe(false);
+    expect(listButton("Block list")?.disabled).toBe(false);
+  });
+
+  it("opens each list in its own dialog", async () => {
+    answerWith();
+    await render();
+    expect(dialog()).toBeNull();
+
+    await click(listButton("Block list"));
+    expect(dialog()?.getAttribute("aria-label")).toBe("Block list");
+    expect(dialog()?.textContent).toContain(".exe");
+    await click(button("Cancel", dialog()!));
+    expect(dialog()).toBeNull();
+
+    await click(listButton("Allow list"));
+    expect(dialog()?.getAttribute("aria-label")).toBe("Allow list");
+    expect(dialog()?.textContent).toContain(".docx");
+    expect(dialog()?.textContent).toContain("Not in effect");
+  });
+
+  it("updates the card from a save in the dialog without reloading the page", async () => {
+    answerWith();
+    await render();
+    expect(calls("/api/admin/storage")).toHaveLength(1);
+
+    await click(listButton("Block list"));
+    await type(searchBox(), "bat");
+    await click(button("Add .bat to the Block list"));
+    await click(button("Save", dialog()!));
+
+    expect(puts()).toEqual([{ mode: "blocklist", blocked: ["bat", "exe", "html", "svg"], allowed: ["docx", "pdf"] }]);
+    expect(dialog()).toBeNull();
+    expect(listButton("Block list")?.textContent).toContain("4 types");
+    expect(note()).toContain("Block list saved (+1 −0)");
+    expect(note()).toContain("within two minutes");
+    expect(calls("/api/admin/storage")).toHaveLength(1);
+  });
+
+  it("says when an Allow list saved in blocklist mode will take effect", async () => {
+    answerWith();
+    await render();
+    await click(listButton("Allow list"));
+    await type(searchBox(), "txt");
+    await click(button("Add .txt to the Allow list"));
+    await click(button("Save", dialog()!));
+    expect(listButton("Allow list")?.textContent).toContain("3 types");
+    expect(note()).toContain("It takes effect when the mode is “Allow only listed types”.");
   });
 
   it("restores defaults through the reset endpoint after a confirm", async () => {
-    answerWith();
+    answerWith({ mode: "allowlist", blocked: ["exe"] });
     await render();
-    await click(button("Restore defaults"));
+    await click(button("Restore defaults", card()));
     expect(confirmMock).toHaveBeenCalledTimes(1);
-    const reset = vi.mocked(api).mock.calls.filter((c) => c[0] === "/api/admin/storage/file-type-policy/reset");
+    const reset = calls("/api/admin/storage/file-type-policy/reset");
     expect(reset).toHaveLength(1);
     expect((reset[0][1] as RequestInit).method).toBe("POST");
-    expect(host.querySelector(".alert-success")?.textContent).toContain("restored to defaults");
+    expect(note()).toContain("back to the defaults");
+    expect(modeButton("Block listed types")?.getAttribute("aria-pressed")).toBe("true");
+    expect(listButton("Block list")?.textContent).toContain("3 types");
   });
 
   it("does not reset when the confirm is declined", async () => {
-    answerWith();
     confirmMock.mockResolvedValueOnce(false);
+    answerWith();
     await render();
-    await click(button("Restore defaults"));
-    expect(vi.mocked(api).mock.calls.map((c) => c[0])).not.toContain("/api/admin/storage/file-type-policy/reset");
+    await click(button("Restore defaults", card()));
+    expect(calls("/api/admin/storage/file-type-policy/reset")).toHaveLength(0);
   });
 
-  it("shows the lists to a read-only admin but disables every mutating control", async () => {
+  it("lets a read-only admin open and search both lists but change nothing", async () => {
     readOnly.value = true;
     answerWith();
     await render();
-    expect(chips()).toEqual(["exe", "html", "svg"]);
-    expect(button("Save file type policy")?.disabled).toBe(true);
-    expect(button("Add file type", card())?.disabled).toBe(true);
-    expect(button("Restore defaults")?.disabled).toBe(true);
-    for (const remove of card().querySelectorAll<HTMLButtonElement>(".file-types-chip__remove")) {
-      expect(remove.disabled).toBe(true);
-    }
-    for (const radio of card().querySelectorAll<HTMLInputElement>('input[type="radio"]')) {
-      expect(radio.disabled).toBe(true);
-    }
+    expect(modeButton("Block listed types")?.disabled).toBe(true);
+    expect(modeButton("Allow only listed types")?.disabled).toBe(true);
+    expect(button("Restore defaults", card())?.disabled).toBe(true);
+    // Readable despite the read-only lock that greys out buttons on admin forms.
+    expect(listButton("Block list")?.disabled).toBe(false);
+    expect(listButton("Block list")?.className).toContain("btn-readonly-ok");
+
+    await click(listButton("Block list"));
+    expect(button("Save", dialog()!)?.disabled).toBe(true);
+    await type(searchBox(), "ht");
+    expect(dialog()?.textContent).toContain("1 match for “ht”");
+    await click(button("Close", dialog()!));
+    expect(dialog()).toBeNull();
+
+    await click(listButton("Allow list"));
+    expect(dialog()?.getAttribute("aria-label")).toBe("Allow list");
+    await type(searchBox(), "pd");
+    expect(dialog()?.textContent).toContain(".pdf");
+    expect(dialog()?.textContent).not.toContain(".docx");
+    expect(button("Add file type", dialog()!)?.disabled).toBe(true);
+  });
+
+  it("explains when the server reports no file type policy", async () => {
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path === "/api/admin/storage") return { ...OVERVIEW };
+      throw new Error(`unexpected ${path}`);
+    });
+    await render();
+    expect(card().textContent).toContain("This server does not report a file type policy.");
+    expect(card().querySelector(".file-types-lists")).toBeNull();
   });
 });

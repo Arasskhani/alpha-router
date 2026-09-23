@@ -315,10 +315,64 @@ describe("the phone layout block", () => {
     // Nothing may set `display` on the wrapper itself, or `hidden` would stop hiding it.
     expect(declarations(css, ".filter-panel")).toBeNull();
     expect(declarations(phone.body, ".filter-panel")).toBeNull();
-    expect(declarations(phone.body, ".filter-panel-toggle")).toContain("min-height: 2.5rem");
-    // In the Media filter row the toggle lines up with Refresh.
+    // As tall as a button: in the Media filter row the toggle lines up with Refresh.
+    expect(declarations(phone.body, ".filter-panel-toggle")).toContain("min-height: 2.75rem");
     expect(declarations(phone.body, ".media-page-filters > .filter-panel-toggle")).toContain("margin-bottom: 0");
-    expect(declarations(phone.body, ".media-page-filters > .btn")).toContain("min-height: 2.5rem");
+  });
+
+  it("makes the buttons, fields and selects the size tokens reach 44px tall", () => {
+    const root = declarations(phone.body, ":root");
+    expect(root).toContain("--control-height: 2.75rem");
+    expect(root).toContain("--control-height-sm: 2.75rem");
+    // A desktop keeps its mouse sizes.
+    const desktopRoot = declarations(css.slice(0, phone.at), ":root");
+    expect(desktopRoot).toContain("--control-height: 32px");
+    expect(desktopRoot).toContain("--control-height-sm: 28px");
+    // The controls take their height from the tokens, the small and the admin ones too.
+    expect(declarations(css, ".btn")).toContain("min-height: var(--control-height)");
+    expect(declarations(css, ".btn-sm")).toContain("min-height: var(--control-height-sm)");
+    expect(declarations(css, ".admin-page .btn:not(.model-toggle-btn)")).toContain(
+      "min-height: var(--control-height-sm)",
+    );
+    expect(
+      declarations(
+        css,
+        'input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not([type="hidden"]),\nselect',
+      ),
+    ).toContain("min-height: var(--control-height)");
+    // No phone rule pins a button smaller again.
+    for (const m of phone.body.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (!/\.btn\b|\.btn-sm\b|row-actions-trigger/.test(m[1])) continue;
+      const pinned = /(^|[\s;])(min-)?height:\s*([\d.]+)rem/.exec(m[2]);
+      if (pinned) expect(Number(pinned[3]), m[1].trim()).toBeGreaterThanOrEqual(2.75);
+    }
+    // A short label ("All", "ON") does not leave a button narrower than it is tall.
+    expect(declarations(phone.body, ".btn")).toContain("min-width: var(--control-height)");
+    // The settings dialog sets 26px of its own, as specifically; the phone rule comes later.
+    expect(declarations(css.slice(0, phone.at), ".modal-panel--settings .btn")).toContain("min-height: 26px");
+    expect(declarations(phone.body, ".modal-panel--settings .btn")).toContain("min-height: var(--control-height-sm)");
+    expect(phone.at).toBeGreaterThan(lastTopLevelRule(".modal-panel--settings .btn"));
+  });
+
+  it("starts a card's lines below its 44px Actions button", () => {
+    const rem = (decls: string | null, prop: string) => {
+      const m = new RegExp(`(^|[\\s;])${prop}:\\s*([\\d.]+)rem`).exec(decls ?? "");
+      return m ? Number(m[2]) : NaN;
+    };
+    const trigger = declarations(
+      phone.body,
+      '.data-table.data-table--cards td[data-card-role="actions"] .row-actions-trigger',
+    );
+    // The button is 44px tall by the size tokens.
+    expect(declarations(css, ".btn-sm")).toContain("min-height: var(--control-height-sm)");
+    // The title reaches the button's bottom: its top + 2.75rem - the card's top padding.
+    const titleSelector =
+      '.data-table.data-table--cards tr:has(> td[data-card-role="actions"]) > td[data-card-role="title"]';
+    const title = declarations(phone.body, titleSelector);
+    expect(title).toContain("box-sizing: border-box");
+    const cardPadTop = rem(declarations(phone.body, ".data-table.data-table--cards tr"), "padding");
+    expect(rem(title, "min-height")).toBeCloseTo(rem(trigger, "top") + 2.75 - cardPadTop, 5);
+    expect(outranks(titleSelector, '.data-table.data-table--cards td[data-card-role="title"]')).toBe(true);
   });
 
   it("counts specificity the way the browser does, for the selectors checked here", () => {

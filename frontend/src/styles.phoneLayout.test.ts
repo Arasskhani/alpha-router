@@ -100,6 +100,9 @@ describe("the phone layout block", () => {
       expect(closed).toContain("position: fixed");
       expect(closed).toContain("visibility: hidden");
       expect(closed).toContain("translateX(var(--drawer-hidden))");
+      // As tall as what can be seen below the topbar: the iOS keyboard does not hide its end.
+      expect(closed).toContain("height: calc(var(--app-viewport-height) - var(--app-topbar-height))");
+      expect(closed).not.toMatch(/(^|[\s;])bottom: 0/);
       const open = declarations(body, `${selector}.is-open`);
       expect(open, `${selector}.is-open`).not.toBeNull();
       expect(open).toContain("visibility: visible");

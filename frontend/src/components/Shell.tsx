@@ -1,5 +1,5 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RouteErrorBoundary from "./RouteErrorBoundary";
 import AlphaRouterLogo from "./AlphaRouterLogo";
 import ModelProviderIcon from "./ModelProviderIcon";
@@ -24,6 +24,7 @@ import {
 import { hydrateUserPrefsFromServer, saveThemeToServer } from "../lib/chatStorage";
 import { getSessionUser } from "../lib/session";
 import usePresenceHeartbeat from "../hooks/usePresenceHeartbeat";
+import { usePhoneLayout } from "../hooks/useMediaQuery";
 import type { NavItem, NavSection } from "../nav/types";
 
 type Theme = CachedTheme;
@@ -32,6 +33,15 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
   const loc = useLocation();
   const [theme, setThemeState] = useState<Theme>(() => loadCachedTheme());
   const [navPeek, setNavPeek] = useState(false);
+  // Phone: the side panel is a drawer behind the topbar's menu button. On the
+  // chat page that panel is the chat history (ChatPanel renders it and reads
+  // the state through ShellMenuContext); elsewhere it is the navigation here.
+  const phone = usePhoneLayout();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  // How many mounted panels own the drawer (the chat history claims it).
+  const [drawerClaims, setDrawerClaims] = useState(0);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const drawerRef = useRef<HTMLElement>(null);
 
   // Shell wraps every authenticated page, so this is the single mount point.
   usePresenceHeartbeat();
@@ -83,7 +93,55 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
 
   useEffect(() => {
     setNavPeek(false);
+    setDrawerOpen(false);
   }, [path]);
+
+  // Leaving the phone layout (a rotation, a resized window) puts the panel
+  // back in the page; an "open drawer" would otherwise linger invisibly and
+  // show itself on the next rotation back.
+  const [wasPhone, setWasPhone] = useState(phone);
+  if (wasPhone !== phone) {
+    setWasPhone(phone);
+    if (!phone) setDrawerOpen(false);
+  }
+
+  useEffect(() => {
+    if (!phone || (!drawerOpen && !navPeek)) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      // Navigation on top of the chat history closes first, like a stacked dialog.
+      if (navPeek) setNavPeek(false);
+      else setDrawerOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [phone, drawerOpen, navPeek]);
+
+  // Focus follows the drawer in, and comes back to the button that opened it.
+  const drawerWasOpen = useRef(false);
+  useEffect(() => {
+    if (!phone) return;
+    if (drawerOpen) {
+      drawerRef.current?.focus({ preventScroll: true });
+    } else if (drawerWasOpen.current) {
+      menuButtonRef.current?.focus({ preventScroll: true });
+    }
+    drawerWasOpen.current = drawerOpen;
+  }, [phone, drawerOpen]);
+
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  const claimDrawer = useCallback(() => {
+    setDrawerClaims((n) => n + 1);
+    return () => setDrawerClaims((n) => n - 1);
+  }, []);
+  // The flyout it opens only exists on the chat page; elsewhere the flag is
+  // inert and cleared on the next navigation.
+  const openAdminMenu = useCallback(() => setNavPeek(true), []);
+  // One object per change, not per render: ChatPanel's claim effect depends on it.
+  const shellMenu = useMemo(
+    () => ({ openAdminMenu, phone, drawerOpen: phone && drawerOpen, closeDrawer, claimDrawer }),
+    [openAdminMenu, phone, drawerOpen, closeDrawer, claimDrawer],
+  );
 
   const contentClass = isChatLayout
     ? " content--chat"
@@ -107,24 +165,47 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
       className="sidebar-nav"
       onNavigate={() => {
         if (isChat) setNavPeek(false);
+        setDrawerOpen(false);
       }}
     />
   );
 
+  // On a phone the menu button opens the navigation drawer, unless a page
+  // panel (the chat history) has claimed it. The navigation flyout can open
+  // over that panel. A backdrop closes whichever is on top on tap.
+  const navDrawer = phone && (!isChatLayout || drawerClaims === 0);
+  const navDrawerOpen = navDrawer && drawerOpen;
+  const navFlyoutOpen = phone && isChat && navPeek;
+
   return (
     <ChatModelChromeProvider>
-      <ShellMenuContext.Provider
-        value={{
-          openAdminMenu: () => {
-            if (isChat) setNavPeek(true);
-          },
-        }}
-      >
+      <ShellMenuContext.Provider value={shellMenu}>
         <div className={`layout${layoutClass}`}>
           <header className="app-topbar">
             <div className="topbar-left">
+              {phone ? (
+                <button
+                  ref={menuButtonRef}
+                  type="button"
+                  className="topbar-menu-btn"
+                  aria-label={drawerOpen ? "Close menu" : "Open menu"}
+                  aria-expanded={drawerOpen}
+                  aria-controls="shell-drawer"
+                  onClick={() => setDrawerOpen((open) => !open)}
+                >
+                  <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden>
+                    <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                  </svg>
+                </button>
+              ) : null}
               <Link to={home} className="topbar-brand">
-                <AlphaRouterLogo size={24} showMark joined className="alpha-router-logo--topbar" />
+                <AlphaRouterLogo
+                  size={24}
+                  showMark
+                  joined
+                  markOnly={phone}
+                  className="alpha-router-logo--topbar"
+                />
               </Link>
               {isChat || isProjectWorkspace ? <TopbarModelSearch always={isChat} /> : null}
             </div>
@@ -133,6 +214,17 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
           </header>
 
           <div className="layout-body">
+            {navDrawerOpen || navFlyoutOpen ? (
+              <div
+                className={`shell-drawer-backdrop${navFlyoutOpen ? " shell-drawer-backdrop--over" : ""}`}
+                aria-hidden
+                onClick={() => {
+                  // Like stacked dialogs: a tap outside closes the top layer only.
+                  if (navPeek) setNavPeek(false);
+                  else setDrawerOpen(false);
+                }}
+              />
+            ) : null}
             {isChat ? (
               <div
                 className={`sidebar-flyout${navPeek ? " sidebar-flyout--open" : ""}`}
@@ -151,9 +243,18 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
                   {sidebarInner}
                 </aside>
               </div>
-            ) : isProjectWorkspace ? null : (
-              <aside className="sidebar">{sidebarInner}</aside>
-            )}
+            ) : null}
+            {!isChatLayout || navDrawer ? (
+              <aside
+                ref={drawerRef}
+                id="shell-drawer"
+                className={`sidebar${phone ? " sidebar--drawer" : ""}${navDrawerOpen ? " is-open" : ""}`}
+                tabIndex={phone ? -1 : undefined}
+                aria-hidden={phone && !navDrawerOpen ? true : undefined}
+              >
+                {sidebarInner}
+              </aside>
+            ) : null}
 
             <div className="main-column">
               {readOnly && !isChatLayout && <ReadOnlyBanner />}

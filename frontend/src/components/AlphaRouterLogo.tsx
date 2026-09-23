@@ -17,6 +17,8 @@ type Props = {
   joined?: boolean;
   /** Show ™ after the wordmark. Default on — this component is the brand lockup. */
   showTrademark?: boolean;
+  /** The mark alone, sized like the mark-as-A, where the word does not fit (a phone's topbar). */
+  markOnly?: boolean;
 };
 
 function TrademarkSign() {
@@ -38,6 +40,7 @@ export default function AlphaRouterLogo({
   splitWords = false,
   joined = false,
   showTrademark = true,
+  markOnly = false,
 }: Props) {
   const wordSize = Math.round(size * 0.86);
   /* Joined login: mark reads as display cap above lowercase. */
@@ -77,6 +80,20 @@ export default function AlphaRouterLogo({
   ]
     .filter(Boolean)
     .join(" ");
+
+  if (markOnly) {
+    return (
+      <span
+        className={wordClass}
+        aria-label={showTrademark ? PRODUCT_NAME_MARKED : PRODUCT_NAME}
+        style={{ fontSize: `${wordSize}px`, lineHeight: `${size}px` }}
+      >
+        <span className="alpha-router-logo-tail">
+          <span className="alpha-router-logo-alpha">{mark}</span>
+        </span>
+      </span>
+    );
+  }
 
   return (
     <span

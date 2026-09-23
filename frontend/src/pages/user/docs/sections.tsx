@@ -337,6 +337,11 @@ export const userManualSections: DocSection[] = [
             Switching sessions loads messages as needed. Long threads support scroll-to-bottom when you are not pinned
             to the latest reply.
           </li>
+          <li>
+            On a phone the sidebar is a drawer: the menu button at the top left opens it, and it closes when you pick
+            a chat, start a new one, tap outside it or press Escape. The ☰ inside it opens the other menus (Projects,
+            Media, Activity, Administration).
+          </li>
         </ul>
         <Note>
           Composer text and pending attachments are kept as a per-session draft while you switch chats in the same

@@ -467,6 +467,22 @@ export default function ChatPanel({
   const navigate = useNavigate();
   const location = useLocation();
   const shellMenu = useShellMenu();
+  // Phone: the history is a drawer the topbar menu button opens (state lives in Shell).
+  const phone = shellMenu?.phone ?? false;
+  const historyOpen = phone && !!shellMenu?.drawerOpen;
+  const historyRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (historyOpen) historyRef.current?.focus({ preventScroll: true });
+  }, [historyOpen]);
+  // While the history is on the page, the topbar menu button opens it.
+  const claimDrawer = shellMenu?.claimDrawer;
+  useEffect(() => {
+    if (!phone || hideChatSidebar || !claimDrawer) return undefined;
+    return claimDrawer();
+  }, [phone, hideChatSidebar, claimDrawer]);
+  function closeHistoryDrawer() {
+    if (phone) shellMenu?.closeDrawer();
+  }
   const registerModelChrome = useChatModelChromeRegister();
   const { confirm } = useConfirm();
   const [models, setModels] = useState<Model[]>([]);
@@ -3066,6 +3082,7 @@ export default function ChatPanel({
 
   function startNewChat() {
     if (readOnly) return;
+    closeHistoryDrawer();
     onProjectChatFocus?.();
     const m = resolveNewChatModel(models, model, defaultModel);
     if (!m) {
@@ -3454,7 +3471,10 @@ export default function ChatPanel({
           <button
             type="button"
             className={`alpha-router-history-item${s.id === activeId ? " active" : ""}${isSelected ? " is-selected" : ""}${streamingSessions[s.id] || isBackgroundImageRunning(s.id) || isBackgroundVideoRunning(s.id) || isBackgroundSpeechRunning(s.id) ? " is-streaming" : ""}`}
-            onClick={() => selectSession(s.id)}
+            onClick={() => {
+              selectSession(s.id);
+              closeHistoryDrawer();
+            }}
           >
             {s.privateMode ? (
               <span className="alpha-router-history-item__lock" title="Private Mode" aria-hidden>
@@ -6191,8 +6211,17 @@ export default function ChatPanel({
       />
 
       <div className="alpha-router-workspace">
+      {!hideChatSidebar && historyOpen ? (
+        <div className="shell-drawer-backdrop" aria-hidden onClick={closeHistoryDrawer} />
+      ) : null}
       {!hideChatSidebar ? (
-      <aside className={`alpha-router-sidebar${selectedChatIds.size > 0 ? " is-selecting" : ""}`}>
+      <aside
+        ref={historyRef}
+        id={phone ? "shell-drawer" : undefined}
+        className={`alpha-router-sidebar${selectedChatIds.size > 0 ? " is-selecting" : ""}${phone ? " alpha-router-sidebar--drawer" : ""}${historyOpen ? " is-open" : ""}`}
+        tabIndex={phone ? -1 : undefined}
+        aria-hidden={phone && !historyOpen ? true : undefined}
+      >
         {isProjectChat && projectSidebarHeader ? projectSidebarHeader : null}
         <div className="alpha-router-sidebar-top">
           {!isProjectChat ? (
@@ -6200,9 +6229,11 @@ export default function ChatPanel({
             type="button"
             className="alpha-router-icon-btn alpha-router-menu-btn"
             onClick={() => shellMenu?.openAdminMenu()}
-            onMouseEnter={() => shellMenu?.openAdminMenu()}
-            aria-label="Open menu"
-            title="Menu"
+            // Hover opens it on a desktop; a finger has no hover, and the
+            // synthetic mouseenter a tap sends would open it under the tap.
+            onMouseEnter={phone ? undefined : () => shellMenu?.openAdminMenu()}
+            aria-label="Open navigation"
+            title="Menus"
           >
             ☰
           </button>
@@ -6386,7 +6417,10 @@ export default function ChatPanel({
                     <button
                       type="button"
                       className="alpha-router-history-item"
-                      onClick={() => selectSession(hit.sessionId)}
+                      onClick={() => {
+                        selectSession(hit.sessionId);
+                        closeHistoryDrawer();
+                      }}
                     >
                       <span className="alpha-router-history-item__subtitle">{hit.sessionTitle}</span>
                       {hit.content.slice(0, 80)}

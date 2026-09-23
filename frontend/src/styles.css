@@ -17706,8 +17706,12 @@ p.error,
   .data-table.data-table--cards tbody td:is(:first-child, :last-child) {
     padding-inline: 0;
   }
+  /* The label is for the eye: a screen reader already reads the column
+     header (the cells keep role="cell"), so it gets empty alt text, where the
+     browser knows the syntax; others keep the first declaration. */
   .data-table.data-table--cards td::before {
     content: attr(data-label);
+    content: attr(data-label) / "";
     flex: 0 1 auto;
     max-width: 42%;
     margin-inline-end: auto;

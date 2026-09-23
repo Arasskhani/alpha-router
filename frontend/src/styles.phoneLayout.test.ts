@@ -335,7 +335,10 @@ describe("the phone layout block", () => {
     expect(cell).toContain("display: flex");
     // Card cells win over the column widths of fixed-layout tables (Users sets 11%, 18%…).
     expect(cell).toContain("width: auto");
-    expect(declarations(phone.body, ".data-table.data-table--cards td::before")).toContain("content: attr(data-label)");
+    const label = declarations(phone.body, ".data-table.data-table--cards td::before");
+    expect(label).toContain("content: attr(data-label);");
+    // Read once: the header already names the cell, so the drawn label has empty alt text.
+    expect(label).toContain('content: attr(data-label) / "";');
     // table.card pads its first and last cells more specifically; the card wins back.
     expect(declarations(phone.body, ".data-table.data-table--cards tbody td:is(:first-child, :last-child)")).toContain(
       "padding-inline: 0",

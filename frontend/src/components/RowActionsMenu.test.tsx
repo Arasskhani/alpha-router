@@ -75,7 +75,8 @@ describe("row actions on a phone", () => {
     await press(trigger());
     expect(popover()).toBeNull();
     expect(sheet()?.getAttribute("role")).toBe("menu");
-    expect(sheet()?.getAttribute("aria-label")).toBe("Actions");
+    // The dialog around the menu carries the name; the menu does not repeat it.
+    expect(sheet()?.hasAttribute("aria-label")).toBe(false);
     expect(itemLabels(sheet())).toEqual(["Edit", "Delete", "Cancel"]);
     expect(sheet()!.querySelector(".action-sheet__item--danger")?.textContent).toBe("Delete");
     expect(document.activeElement?.textContent).toBe("Edit");

@@ -156,7 +156,8 @@ export default function RowActionsMenu({ actions, label = "Actions", menuClassNa
     ? createPortal(
         <div ref={sheetRootRef} className="action-sheet-root" role="dialog" aria-modal="true" aria-label={sheetLabel}>
           <div className="action-sheet-backdrop" aria-hidden onClick={() => setOpen(false)} />
-          <div ref={menuRef} className="action-sheet" role="menu" aria-label={sheetLabel}>
+          {/* Named once, by the dialog around it: a label here too was read twice. */}
+          <div ref={menuRef} className="action-sheet" role="menu">
             {visible.map((a) => (
               <button
                 key={a.label}

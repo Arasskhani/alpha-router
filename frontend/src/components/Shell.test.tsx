@@ -99,6 +99,9 @@ async function render(path: string) {
               <Route path="projects" element={<h1>Projects page</h1>} />
               <Route path="projects/:projectId" element={<ChatProbe claim={false} />} />
             </Route>
+            <Route path="/admin" element={<Shell nav={NAV} />}>
+              <Route path="users" element={<h1>Users page</h1>} />
+            </Route>
           </Routes>
         </MemoryRouter>
       </StrictMode>,
@@ -130,6 +133,11 @@ describe("the shell on a desktop", () => {
     expect(sidebar()?.className).toBe("sidebar");
     expect(sidebar()?.getAttribute("aria-hidden")).toBeNull();
     expect(backdrop()).toBeNull();
+  });
+
+  it("has no bottom tab bar", async () => {
+    await render("/app/projects");
+    expect(document.querySelector(".bottom-tab-bar")).toBeNull();
   });
 });
 
@@ -321,6 +329,19 @@ describe("the shell on a phone", () => {
     await escape();
     expect(document.activeElement).toBe(opener);
     expect(flyout.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("puts the user sections in a bottom tab bar, below the page", async () => {
+    await render("/app/chat");
+    const tabs = document.querySelector(".layout > .bottom-tab-bar");
+    expect(tabs).not.toBeNull();
+    expect(tabs?.previousElementSibling?.className).toBe("layout-body");
+  });
+
+  it("has no bottom tab bar in the admin panel", async () => {
+    await render("/admin/users");
+    expect(document.querySelector("h1")?.textContent).toBe("Users page");
+    expect(document.querySelector(".bottom-tab-bar")).toBeNull();
   });
 
   it("shows the brand mark alone in the topbar", async () => {

@@ -146,6 +146,13 @@ describe("the phone layout block", () => {
     expect(layout).toContain("max-height: var(--app-viewport-height, 100dvh)");
   });
 
+  it("keeps the bottom tab bar in the layout's flow, so the composer ends above it", () => {
+    const bar = declarations(phone.body, ".bottom-tab-bar");
+    expect(bar).toContain("flex-shrink: 0");
+    expect(bar).not.toContain("position: fixed");
+    expect(bar).toContain("env(safe-area-inset-bottom");
+  });
+
   it("hides keyboard hints where there is no keyboard", () => {
     const coarse = mediaBlocks("(pointer: coarse)");
     expect(

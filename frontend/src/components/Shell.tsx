@@ -2,6 +2,7 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RouteErrorBoundary from "./RouteErrorBoundary";
 import AlphaRouterLogo from "./AlphaRouterLogo";
+import BottomTabBar from "./BottomTabBar";
 import ModelProviderIcon from "./ModelProviderIcon";
 import SidebarNav from "./SidebarNav";
 import TopbarNav from "./TopbarNav";
@@ -313,6 +314,7 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
               </main>
             </div>
           </div>
+          {phone && (path === "/app" || path.startsWith("/app/")) ? <BottomTabBar /> : null}
         </div>
       </ShellMenuContext.Provider>
     </ChatModelChromeProvider>

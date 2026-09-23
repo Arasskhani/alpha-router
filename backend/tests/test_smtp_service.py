@@ -307,6 +307,16 @@ class TestSendEmail:
         assert "could not be addressed from reports@[ to owner@example.com" in str(caught.value)
         assert server.commands == []
 
+    async def test_a_line_break_in_the_subject_does_not_stop_the_message(self, db_session, tls):
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
+            await self._row(db_session, server, SECURITY_STARTTLS)
+            await send_email(
+                db_session, to_address="owner@example.com", subject="failed sign-ins for '!x\r\nBcc: y'", body_text="b"
+            )
+        (message,) = server.messages
+        assert b"Subject: failed sign-ins for '!x Bcc: y'\r\n" in message.data
+        assert b"\r\nBcc:" not in message.data
+
     async def test_a_failure_is_reported_as_the_readable_reason(self, db_session, tls):
         async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
             await self._row(db_session, server, SECURITY_SSL)

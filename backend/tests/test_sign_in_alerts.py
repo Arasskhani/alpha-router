@@ -336,6 +336,42 @@ class TestRaising:
         assert page["items"][0]["detail"]["kind"] == KIND_ACCOUNT
 
 
+async def test_a_crafted_account_name_cannot_stop_the_alerts_after_it(db_session):
+    """The subject names the account that was tried, and anyone can try any
+    name. One with a line break used to make the mail library raise inside
+    send_email, which stopped the run before the next alert was recorded."""
+
+    from app.models.system import SmtpSettings
+    from tests.smtp_test_server import MODE_PLAIN, SmtpTestServer
+
+    await _super_admin(db_session, "root", "root@test")
+    for i in range(USER_FAILURE_THRESHOLD):
+        db_session.add(_failure(username="!x\ny", ip="198.51.100.1", minutes_ago=i))
+        db_session.add(_failure(username="victim", ip="198.51.100.2", minutes_ago=i))
+    async with SmtpTestServer(mode=MODE_PLAIN) as server:
+        db_session.add(
+            SmtpSettings(
+                host="127.0.0.1",
+                port=server.port,
+                from_address="alerts@example.com",
+                security="none",
+                verify_certificate=True,
+            )
+        )
+        await db_session.commit()
+        result = await raise_alerts(db_session, now=NOW)
+
+    assert result == {"found": 2, "raised": 2, "suppressed": 0, "emails_sent": 2}
+    assert sorted(r.resource_id for r in await _alerts(db_session)) == ["name:!x\ny", "name:victim"]
+    subjects = sorted(
+        next(line for line in m.data.decode().splitlines() if line.startswith("Subject:")) for m in server.messages
+    )
+    assert subjects == [
+        f"Subject: Alpharouter: {USER_FAILURE_THRESHOLD} failed sign-ins for '!x y' in {WINDOW_MINUTES} minutes",
+        f"Subject: Alpharouter: {USER_FAILURE_THRESHOLD} failed sign-ins for 'victim' in {WINDOW_MINUTES} minutes",
+    ]
+
+
 def test_the_job_is_scheduled_every_five_minutes():
     import inspect
 

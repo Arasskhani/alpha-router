@@ -344,8 +344,15 @@ async def send_email(
             f"The message could not be addressed from {row.from_address} to {', '.join(recipients)}: "
             "check that these are plain email addresses."
         ) from exc
-    msg["Subject"] = subject
-    msg.set_content(body_text)
+    # A subject is one line, and some carry text from outside - the account
+    # name a failed sign-in tried, for one. The email package refuses a line
+    # break in a header with ValueError, which would stop the caller (the
+    # sign-in alert job, and every alert after the one that tripped it).
+    msg["Subject"] = " ".join(subject.splitlines())
+    try:
+        msg.set_content(body_text)
+    except ValueError as exc:
+        raise SmtpSendError(f"The message could not be built: {exc}") from exc
     try:
         conn = connection_from_row(row)
     except Exception as exc:

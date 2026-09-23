@@ -339,9 +339,18 @@ describe("the phone layout block", () => {
     expect(declarations(phone.body, ".data-table.data-table--cards td .user-plan-select-wrap select")).toContain(
       "width: 100%",
     );
+    // The Actions button sits in the card's corner; its cell stays in the flow,
+    // so a failed action's message reads under the card instead of over it.
+    expect(
+      declarations(phone.body, '.data-table.data-table--cards td[data-card-role="actions"] .row-actions-trigger'),
+    ).toContain("position: absolute");
+    // Static, not the base .data-table .col-actions' relative: the button is placed against the card.
     expect(declarations(phone.body, '.data-table.data-table--cards td[data-card-role="actions"]')).toContain(
-      "position: absolute",
+      "position: static",
     );
+    expect(
+      declarations(phone.body, '.data-table.data-table--cards td[data-card-role="actions"] .row-actions'),
+    ).toContain("position: static");
     const hidden = declarations(
       phone.body,
       ".data-table.data-table--cards td.col-lg,\n  .data-table.data-table--cards td.col-xl,\n  .users-table.data-table--cards td.users-table__department,\n  .users-table.data-table--cards td.users-table__office,\n  .users-table.data-table--cards td.users-table__job-title,\n  .users-table.data-table--cards td.users-table__auth,\n  .users-table.data-table--cards td.col-budget",

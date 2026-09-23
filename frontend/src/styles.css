@@ -17747,11 +17747,26 @@ p.error,
     inset-inline-start: 0.8rem;
     padding: 0;
   }
+  /* Actions: the button sits in the card's top corner. The cell stays in the
+     card's flow, empty but for a failed action's message (RowActionsMenu),
+     which then reads under the card's lines instead of lying over them. */
   .data-table.data-table--cards td[data-card-role="actions"] {
+    position: static;
+    display: block;
+    padding: 0;
+  }
+  .data-table.data-table--cards td[data-card-role="actions"] .row-actions {
+    position: static;
+    display: block;
+  }
+  .data-table.data-table--cards td[data-card-role="actions"] .row-actions-trigger {
     position: absolute;
     top: 0.45rem;
     inset-inline-end: 0.6rem;
-    padding: 0;
+  }
+  .data-table.data-table--cards td[data-card-role="actions"] .row-actions-error {
+    max-width: none;
+    text-align: start;
   }
   .data-table.data-table--cards td[data-card-role="full"] {
     display: block;

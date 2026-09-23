@@ -1,5 +1,6 @@
 import { ReactNode } from "react";
 import AdminArchitectureDiagram from "../../../components/docs/AdminArchitectureDiagram";
+import DocsTable from "../../../components/docs/DocsTable";
 import { PRODUCT_NAME_MARKED, TRADEMARK_OWNER } from "../../../lib/brand";
 
 export type DocSection = {
@@ -61,7 +62,7 @@ export const docSections: DocSection[] = [
             <p>Dashboard analytics, Operations, API logs, reports, and activity exports.</p>
           </div>
         </div>
-        <table className="docs-table">
+        <DocsTable>
           <thead>
             <tr>
               <th>Section group</th>
@@ -99,7 +100,7 @@ export const docSections: DocSection[] = [
               </td>
             </tr>
           </tbody>
-        </table>
+        </DocsTable>
       </>
     ),
   },
@@ -183,7 +184,7 @@ export const docSections: DocSection[] = [
           These are the images the repository <code>docker-compose.yml</code> pins. Keep them aligned when upgrading;
           they are validated together.
         </p>
-        <table className="docs-table">
+        <DocsTable>
           <thead>
             <tr>
               <th>Component</th>
@@ -251,7 +252,7 @@ export const docSections: DocSection[] = [
               <td>Build-time only (the SPA is served as static files by the app)</td>
             </tr>
           </tbody>
-        </table>
+        </DocsTable>
         <Note>
           Local development without Docker needs Python <code>3.12</code> and Node <code>20</code> on the workstation.
           You still need reachable Postgres and Redis instances for a full run.
@@ -262,7 +263,7 @@ export const docSections: DocSection[] = [
           The following covers the always-on services and moderate chat/gateway traffic. Code Interpreter sandboxes are
           sized separately below.
         </p>
-        <table className="docs-table">
+        <DocsTable>
           <thead>
             <tr>
               <th>Profile</th>
@@ -295,7 +296,7 @@ export const docSections: DocSection[] = [
               <td>Higher concurrency; media growth; larger request logs</td>
             </tr>
           </tbody>
-        </table>
+        </DocsTable>
         <Note>
           Disk grows with media and Knowledge objects (SeaweedFS), Qdrant collections, request logs, and the app{" "}
           <code>/tmp</code> tmpfs used to pack ZIP downloads (Compose reserves up to <code>10g</code>). Provision RAM
@@ -342,7 +343,7 @@ export const docSections: DocSection[] = [
         </p>
         <AdminArchitectureDiagram />
         <h3>Surfaces</h3>
-        <table className="docs-table">
+        <DocsTable>
           <thead>
             <tr>
               <th>Surface</th>
@@ -375,9 +376,9 @@ export const docSections: DocSection[] = [
               </td>
             </tr>
           </tbody>
-        </table>
+        </DocsTable>
         <h3>Runtime services</h3>
-        <table className="docs-table">
+        <DocsTable>
           <thead>
             <tr>
               <th>Service</th>
@@ -452,7 +453,7 @@ export const docSections: DocSection[] = [
               </td>
             </tr>
           </tbody>
-        </table>
+        </DocsTable>
         <Note>
           Hardware sizing, pinned service versions, and the Code Interpreter fleet calculation live in{" "}
           <a href="#requirements">Hardware &amp; software requirements</a>.
@@ -681,7 +682,7 @@ export const docSections: DocSection[] = [
     content: (
       <>
         <h2>Sessions, cookies &amp; CSRF</h2>
-        <table className="docs-table">
+        <DocsTable>
           <thead>
             <tr>
               <th>Cookie</th>
@@ -705,7 +706,7 @@ export const docSections: DocSection[] = [
               </td>
             </tr>
           </tbody>
-        </table>
+        </DocsTable>
         <p>
           CSRF is enforced for unsafe methods under <code>/api/</code> when a session cookie is present. Login, 2FA, and
           SSO exchange paths keep Origin checks with defined exemptions; SAML ACS is fully exempt (IdP form POST). The{" "}
@@ -741,7 +742,7 @@ export const docSections: DocSection[] = [
           read-only, writes are denied.
         </p>
         <h3>Primary assignable roles</h3>
-        <table className="docs-table">
+        <DocsTable>
           <thead>
             <tr>
               <th>Role</th>
@@ -782,7 +783,7 @@ export const docSections: DocSection[] = [
               <td>Scoped access re-enabled for those menus</td>
             </tr>
           </tbody>
-        </table>
+        </DocsTable>
         <p>
           Most other historical per-menu roles were removed from the assignable catalog; Super Admin covers those
           menus. Assign roles from <strong>Roles</strong> (bulk assign) or inline on the <strong>Users</strong> table.
@@ -911,7 +912,7 @@ export const docSections: DocSection[] = [
           These escape hatches default to <code>false</code>. Do not enable them on shared or internet-facing hosts.
           Prefer the safer alternative in the last column.
         </p>
-        <table className="docs-table">
+        <DocsTable>
           <thead>
             <tr>
               <th>Flag</th>
@@ -950,7 +951,7 @@ export const docSections: DocSection[] = [
               </td>
             </tr>
           </tbody>
-        </table>
+        </DocsTable>
         <Warn>
           Copying <code>true</code> for these flags from an old lab <code>.env</code> into a shared server is a common
           misconfiguration. Leave them <code>false</code> unless you deliberately accept the risk.
@@ -1044,7 +1045,7 @@ export const docSections: DocSection[] = [
           The admin sidebar groups match RBAC categories. Items you cannot access are hidden. A read-only role can open
           menus but cannot save destructive changes (writes show as locked).
         </p>
-        <table className="docs-table">
+        <DocsTable>
           <thead>
             <tr>
               <th>Group</th>
@@ -1093,7 +1094,7 @@ export const docSections: DocSection[] = [
               <td>Admin Guide, User Manual</td>
             </tr>
           </tbody>
-        </table>
+        </DocsTable>
       </>
     ),
   },
@@ -1144,7 +1145,7 @@ export const docSections: DocSection[] = [
           Each scope fixes the dataset and hides filters that would be meaningless (for example an API-key page does not
           offer an “API key” filter).
         </p>
-        <table className="docs-table">
+        <DocsTable>
           <thead>
             <tr>
               <th>Scope</th>
@@ -1206,7 +1207,7 @@ export const docSections: DocSection[] = [
               </td>
             </tr>
           </tbody>
-        </table>
+        </DocsTable>
         <p>
           Gateway API key and User rows also link to scoped <strong>Logs</strong> (
           <code>/admin/api-keys/&lt;id&gt;/logs</code>) — the same API Logs table with the key pre-selected. User-scoped
@@ -1265,7 +1266,7 @@ export const docSections: DocSection[] = [
           <code>org.opencontainers.image.version</code> label, so <code>docker inspect alpha-router:latest</code>{" "}
           answers the question without the application running.
         </p>
-        <table className="docs-table">
+        <DocsTable>
           <thead>
             <tr>
               <th>Shown as</th>
@@ -1298,7 +1299,7 @@ export const docSections: DocSection[] = [
               <td>Built outside the install/upgrade scripts, so no version was stamped in</td>
             </tr>
           </tbody>
-        </table>
+        </DocsTable>
         <Note>
           The version is behind the admin guard (<code>GET /api/admin/version</code>) and deliberately absent from{" "}
           <code>/health</code> and <code>/ready</code>, which answer without a session — an exact build number is
@@ -1881,7 +1882,7 @@ export const docSections: DocSection[] = [
           (Open WebUI, scripts, IDEs). These are separate from <strong>personal API keys</strong> that employees create in
           Settings → API Key (one per user, debits that user&apos;s monthly budget).
         </p>
-        <table className="docs-table">
+        <DocsTable>
           <thead>
             <tr>
               <th>Key type</th>
@@ -1904,7 +1905,7 @@ export const docSections: DocSection[] = [
               <td>Personal automation for one employee</td>
             </tr>
           </tbody>
-        </table>
+        </DocsTable>
         <h3>Key settings</h3>
         <ul>
           <li>
@@ -3082,7 +3083,7 @@ export const docSections: DocSection[] = [
           authenticate with a Bearer key only. Chat completions require <code>stream=true</code>; non-stream chat is
           rejected.
         </p>
-        <table className="docs-table">
+        <DocsTable>
           <thead>
             <tr>
               <th>Endpoint</th>
@@ -3111,7 +3112,7 @@ export const docSections: DocSection[] = [
               <td>Embeddings proxy</td>
             </tr>
           </tbody>
-        </table>
+        </DocsTable>
         <h3>Authentication modes</h3>
         <ul>
           <li>

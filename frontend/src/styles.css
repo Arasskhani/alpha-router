@@ -8803,6 +8803,15 @@ body.alpha-router-dashboard-view {
   font-size: 0.9rem;
   margin: 1rem 0;
 }
+/* DocsTable: the wrapper carries the table's outer margin, and on a phone
+   scrolls the table sideways (the phone block). Not on a desktop: a scroll
+   container would stop the table header sticking to the scrolling text. */
+.docs-table-wrap {
+  margin: 1rem 0;
+}
+.docs-table-wrap > .docs-table {
+  margin: 0;
+}
 .docs-table th,
 .docs-table td {
   border: 1px solid var(--border);
@@ -17996,6 +18005,9 @@ p.error,
   }
   .docs-main {
     padding: 1.25rem 1rem 3rem;
+  }
+  .docs-table-wrap {
+    overflow-x: auto;
   }
 }
 

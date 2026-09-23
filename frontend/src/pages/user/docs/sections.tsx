@@ -1,4 +1,5 @@
 import { ReactNode } from "react";
+import DocsTable from "../../../components/docs/DocsTable";
 import { PRODUCT_NAME_MARKED, TRADEMARK_OWNER } from "../../../lib/brand";
 
 export type DocSection = {
@@ -48,7 +49,7 @@ export const userManualSections: DocSection[] = [
             <p>Your spend, tokens, models, heatmaps, trends, and CSV/PDF export.</p>
           </div>
         </div>
-        <table className="docs-table">
+        <DocsTable>
           <thead>
             <tr>
               <th>Section</th>
@@ -82,7 +83,7 @@ export const userManualSections: DocSection[] = [
               <td>Personal library, activity, account preferences and security</td>
             </tr>
           </tbody>
-        </table>
+        </DocsTable>
       </>
     ),
   },
@@ -126,7 +127,7 @@ export const userManualSections: DocSection[] = [
       <>
         <h2>Tour of /app</h2>
         <p>After sign-in you land in the user panel. Main navigation:</p>
-        <table className="docs-table">
+        <DocsTable>
           <thead>
             <tr>
               <th>Item</th>
@@ -175,7 +176,7 @@ export const userManualSections: DocSection[] = [
               </td>
             </tr>
           </tbody>
-        </table>
+        </DocsTable>
         <h3>Top bar</h3>
         <ul>
           <li>
@@ -593,7 +594,7 @@ export const userManualSections: DocSection[] = [
           your deployment and model, and on what your administrator has granted your account: a tool you have not
           been given is not listed, and a chat that had it switched on before opens with it off.
         </p>
-        <table className="docs-table">
+        <DocsTable>
           <thead>
             <tr>
               <th>Tool</th>
@@ -656,7 +657,7 @@ export const userManualSections: DocSection[] = [
               </td>
             </tr>
           </tbody>
-        </table>
+        </DocsTable>
         <Note>
           Tool preferences are remembered per session when you change them. Turn off tools you do not need to avoid
           unexpected calls or cost.
@@ -815,7 +816,7 @@ export const userManualSections: DocSection[] = [
           </li>
         </ul>
         <h3>Roles</h3>
-        <table className="docs-table">
+        <DocsTable>
           <thead>
             <tr>
               <th>Role</th>
@@ -851,7 +852,7 @@ export const userManualSections: DocSection[] = [
               <td>Read rooms, chats, resources, and media. Viewers cannot send messages or change membership.</td>
             </tr>
           </tbody>
-        </table>
+        </DocsTable>
         <h3>Rooms</h3>
         <p>
           <strong>Rooms</strong> are member-only human threads. There is no model, no tools, no Agent, and no AI spend.

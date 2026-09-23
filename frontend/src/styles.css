@@ -17672,6 +17672,10 @@ p.error,
     content: "Select all";
     content: "Select all" / "";
   }
+  /* Nothing to select, no bar: an empty list shows only its message. */
+  .data-table.data-table--cards:not(:has(tbody td[data-card-role="select"])) th[data-card-role="select"] {
+    display: none;
+  }
   .data-table.data-table--cards tbody {
     display: block;
   }

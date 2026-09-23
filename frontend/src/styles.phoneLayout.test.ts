@@ -333,6 +333,11 @@ describe("the phone layout block", () => {
     expect(declarations(phone.body, '.data-table.data-table--cards th[data-card-role="select"]::after')).toContain(
       'content: "Select all"',
     );
+    // An empty list (its message in one spanning cell) has nothing to select, and no bar.
+    const emptyBar =
+      '.data-table.data-table--cards:not(:has(tbody td[data-card-role="select"])) th[data-card-role="select"]';
+    expect(declarations(phone.body, emptyBar)).toContain("display: none");
+    expect(outranks(emptyBar, '.data-table.data-table--cards th[data-card-role="select"]')).toBe(true);
     expect(declarations(phone.body, ".data-table.data-table--cards tr")).toContain("border-radius: var(--radius)");
     const cell = declarations(phone.body, ".data-table.data-table--cards td");
     expect(cell).toContain("display: flex");

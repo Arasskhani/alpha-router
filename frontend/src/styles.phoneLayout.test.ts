@@ -153,6 +153,15 @@ describe("the phone layout block", () => {
     expect(bar).toContain("env(safe-area-inset-bottom");
   });
 
+  it("keeps the project tabs in one strip that scrolls, not two rows", () => {
+    const strip = declarations(phone.body, ".project-tabs");
+    expect(strip).toContain("flex-wrap: nowrap");
+    expect(strip).toContain("overflow-x: auto");
+    expect(declarations(phone.body, ".project-tab")).toContain("white-space: nowrap");
+    // The base rule wraps; the phone rule must come after it to win.
+    expect(phone.at).toBeGreaterThan(lastTopLevelRule(".project-tabs"));
+  });
+
   it("hides keyboard hints where there is no keyboard", () => {
     const coarse = mediaBlocks("(pointer: coarse)");
     expect(

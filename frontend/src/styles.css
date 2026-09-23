@@ -17345,6 +17345,38 @@ p.error,
     font-size: 0.7rem;
   }
 
+  /* Project workspace: the title on one line, the tabs in one strip that
+     scrolls sideways instead of wrapping into a second row. The role chip
+     is in the history drawer's header and on the Overview tab. */
+  .project-chat-toolbar {
+    padding: 0.25rem 0.75rem 0;
+  }
+  .project-chat-toolbar__title {
+    flex: 1 1 auto;
+  }
+  .project-chat-toolbar__title .project-role-chip {
+    display: none;
+  }
+  .project-chat-toolbar .row-actions-trigger {
+    min-height: 2.25rem;
+  }
+  .project-tabs {
+    flex-wrap: nowrap;
+    gap: 0;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+  .project-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .project-tab {
+    flex-shrink: 0;
+    min-height: 2.5rem;
+    padding: 0.5rem 0.8rem;
+    white-space: nowrap;
+  }
+
   /* User sections along the bottom edge (BottomTabBar). A flex item of the
      layout, not fixed over it: the page and the composer end above it. */
   .bottom-tab-bar {

@@ -107,6 +107,7 @@ export default function ProjectWorkspacePage() {
   const [error, setError] = useState("");
   const [tab, setTab] = useState<Tab>("chats");
   const [pendingMedia, setPendingMedia] = useState<ProjectMediaAttachPayload | null>(null);
+  const tabsRef = useRef<HTMLElement>(null);
 
   const projectsListTo = location.pathname.startsWith("/admin")
     ? "/admin/projects"
@@ -132,6 +133,14 @@ export default function ProjectWorkspacePage() {
   useEffect(() => {
     if (searchParams.get("session")) setTab("chats");
   }, [searchParams]);
+
+  // On a phone the tabs are one strip that scrolls sideways; a tab chosen by
+  // the page itself (a chat opened from Media goes back to Chats) is brought into view.
+  useEffect(() => {
+    tabsRef.current
+      ?.querySelector<HTMLElement>(".project-tab--active")
+      ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [tab]);
 
   useEffect(() => {
     setPendingMedia(readQueuedProjectMediaAttach());
@@ -264,7 +273,7 @@ export default function ProjectWorkspacePage() {
               />
             ) : null}
           </div>
-          <nav className="project-tabs" aria-label="Project sections">
+          <nav ref={tabsRef} className="project-tabs" aria-label="Project sections">
             {tabs.map((t) => (
               <button
                 key={t}

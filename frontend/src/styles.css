@@ -17220,10 +17220,15 @@ p.error,
     width: 100%;
   }
 
-  /* Chat: the history is a drawer; the conversation keeps the whole width. */
+  /* The whole app is as tall as what can be seen: the visual viewport, which
+     the iOS keyboard shrinks (useVisualViewportHeight), else 100dvh. */
+  .layout,
   .layout--chat {
-    height: 100dvh;
+    height: var(--app-viewport-height, 100dvh);
+    max-height: var(--app-viewport-height, 100dvh);
   }
+
+  /* Chat: the history is a drawer; the conversation keeps the whole width. */
   .alpha-router-sidebar.alpha-router-sidebar--drawer {
     position: fixed;
     top: var(--app-topbar-height);

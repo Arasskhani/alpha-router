@@ -25,6 +25,7 @@ import { hydrateUserPrefsFromServer, saveThemeToServer } from "../lib/chatStorag
 import { getSessionUser } from "../lib/session";
 import usePresenceHeartbeat from "../hooks/usePresenceHeartbeat";
 import { usePhoneLayout } from "../hooks/useMediaQuery";
+import { useVisualViewportHeight } from "../hooks/useVisualViewportHeight";
 import type { NavItem, NavSection } from "../nav/types";
 
 type Theme = CachedTheme;
@@ -47,6 +48,8 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
   // chat page that panel is the chat history (ChatPanel renders it and reads
   // the state through ShellMenuContext); elsewhere it is the navigation here.
   const phone = usePhoneLayout();
+  // The layout's height follows the visual viewport, so the iOS keyboard does not cover the composer.
+  useVisualViewportHeight(phone);
   const [drawerOpen, setDrawerOpen] = useState(false);
   // How many mounted panels own the drawer (the chat history claims it).
   const [drawerClaims, setDrawerClaims] = useState(0);

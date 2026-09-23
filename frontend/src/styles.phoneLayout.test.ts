@@ -140,6 +140,12 @@ describe("the phone layout block", () => {
     expect(fields).toContain("font-size: 16px");
   });
 
+  it("sizes the app to the visual viewport, so the iOS keyboard cannot cover the composer", () => {
+    const layout = declarations(phone.body, ".layout,\n  .layout--chat");
+    expect(layout).toContain("height: var(--app-viewport-height, 100dvh)");
+    expect(layout).toContain("max-height: var(--app-viewport-height, 100dvh)");
+  });
+
   it("hides keyboard hints where there is no keyboard", () => {
     const coarse = mediaBlocks("(pointer: coarse)");
     expect(

@@ -322,10 +322,13 @@ describe("the phone layout block", () => {
     const table = declarations(phone.body, ".data-table.data-table--cards");
     expect(table).toContain("display: block");
     // The header row is hidden from sight only; screen readers still get it.
-    expect(declarations(phone.body, ".data-table.data-table--cards th")).toContain("clip-path: inset(50%)");
+    const hiddenHeader = '.data-table.data-table--cards thead th:not([data-card-role="select"])';
+    expect(declarations(phone.body, hiddenHeader)).toContain("clip-path: inset(50%)");
+    expect(declarations(phone.body, hiddenHeader)).toContain("padding: 0");
+    expect(outranks(hiddenHeader, "table.card thead th:first-child")).toBe(true);
     // Its select-all box stays in sight, as a "Select all" bar above the cards.
     const selectAll = declarations(phone.body, '.data-table.data-table--cards th[data-card-role="select"]');
-    expect(selectAll).toContain("clip-path: none");
+    expect(selectAll).toContain("display: flex");
     expect(selectAll).toContain("position: static");
     expect(declarations(phone.body, '.data-table.data-table--cards th[data-card-role="select"]::after')).toContain(
       'content: "Select all"',

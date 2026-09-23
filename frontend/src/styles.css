@@ -17641,9 +17641,11 @@ p.error,
     border: 0;
     background: transparent;
   }
-  .data-table.data-table--cards th {
+  /* Specific enough (0,3,2) to beat table.card's first- and last-cell padding. */
+  .data-table.data-table--cards thead th:not([data-card-role="select"]) {
     position: absolute;
     width: 1px;
+    min-width: 0;
     height: 1px;
     padding: 0;
     overflow: hidden;
@@ -17658,12 +17660,9 @@ p.error,
     gap: 0.6rem;
     width: auto;
     min-width: max-content;
-    height: auto;
     min-height: 2.75rem;
     margin: 0 0 0.35rem;
     padding: 0 0.8rem;
-    overflow: visible;
-    clip-path: none;
     background: transparent;
     color: var(--text);
     font-size: 0.85rem;

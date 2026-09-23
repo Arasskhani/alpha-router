@@ -4,6 +4,7 @@ import { api, authFetch } from "../api";
 import AdminPage from "../components/AdminPage";
 import AuthenticatedImage from "../components/AuthenticatedImage";
 import AuthenticatedVideo from "../components/AuthenticatedVideo";
+import FilterPanel, { countActiveFilters } from "../components/FilterPanel";
 import RowActionsMenu from "../components/RowActionsMenu";
 import { useConfirm } from "../context/ConfirmContext";
 import { useReadOnly } from "../context/ReadOnlyContext";
@@ -384,22 +385,25 @@ export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProp
 
       <section className="media-page-toolbar card">
         <div className="media-page-filters">
-          <input
-            type="search"
-            className="media-page-search"
-            placeholder="Search prompt, filename, model, type…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            dir="auto"
-          />
-          <label className="media-page-date">
-            <span>From</span>
-            <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
-          </label>
-          <label className="media-page-date">
-            <span>To</span>
-            <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
-          </label>
+          {/* On a phone the search and dates fold behind one button; Refresh stays in sight. */}
+          <FilterPanel activeCount={countActiveFilters([search, fromDate, toDate])}>
+            <input
+              type="search"
+              className="media-page-search"
+              placeholder="Search prompt, filename, model, type…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              dir="auto"
+            />
+            <label className="media-page-date">
+              <span>From</span>
+              <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+            </label>
+            <label className="media-page-date">
+              <span>To</span>
+              <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+            </label>
+          </FilterPanel>
           <button type="button" className="btn btn-ghost" onClick={() => void load()} disabled={loading}>
             Refresh
           </button>

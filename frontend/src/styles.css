@@ -17613,6 +17613,9 @@ p.error,
   .api-logs-toolbar > .filter-panel-toggle {
     margin-bottom: 0;
   }
+  .media-page-filters > .filter-panel-toggle {
+    margin-bottom: 0;
+  }
   .filter-panel-toggle__count {
     display: inline-grid;
     place-items: center;

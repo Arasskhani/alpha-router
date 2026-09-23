@@ -331,7 +331,7 @@ export const docSections: DocSection[] = [
   },
   {
     id: "architecture",
-    title: "Architecture &amp; services",
+    title: "Architecture & services",
     group: "Get started",
     content: (
       <>
@@ -635,7 +635,7 @@ export const docSections: DocSection[] = [
   },
   {
     id: "sign-in",
-    title: "Sign-in &amp; identity",
+    title: "Sign-in & identity",
     group: "Security",
     content: (
       <>
@@ -676,7 +676,7 @@ export const docSections: DocSection[] = [
   },
   {
     id: "sessions-csrf",
-    title: "Sessions, cookies &amp; CSRF",
+    title: "Sessions, cookies & CSRF",
     group: "Security",
     content: (
       <>
@@ -833,7 +833,7 @@ export const docSections: DocSection[] = [
   },
   {
     id: "secrets-encryption",
-    title: "Secrets &amp; encryption",
+    title: "Secrets & encryption",
     group: "Security",
     content: (
       <>
@@ -3139,7 +3139,7 @@ export const docSections: DocSection[] = [
   },
   {
     id: "budget-pricing",
-    title: "Budget &amp; pricing",
+    title: "Budget & pricing",
     group: "Billing",
     content: (
       <>

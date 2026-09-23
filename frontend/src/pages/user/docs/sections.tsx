@@ -316,7 +316,7 @@ export const userManualSections: DocSection[] = [
   },
   {
     id: "chat-sessions",
-    title: "Sessions &amp; folders",
+    title: "Sessions & folders",
     group: "Chat",
     content: (
       <>
@@ -377,7 +377,7 @@ export const userManualSections: DocSection[] = [
   },
   {
     id: "chat-streaming",
-    title: "Sending, streaming &amp; queue",
+    title: "Sending, streaming & queue",
     group: "Chat",
     content: (
       <>
@@ -440,7 +440,7 @@ export const userManualSections: DocSection[] = [
   },
   {
     id: "chat-attachments",
-    title: "Attachments &amp; voice",
+    title: "Attachments & voice",
     group: "Chat",
     content: (
       <>
@@ -742,7 +742,7 @@ export const userManualSections: DocSection[] = [
   },
   {
     id: "chat-export",
-    title: "Export &amp; feedback",
+    title: "Export & feedback",
     group: "Chat",
     content: (
       <>
@@ -1118,7 +1118,7 @@ export const userManualSections: DocSection[] = [
   },
   {
     id: "user-profile",
-    title: "Budget, theme &amp; logout",
+    title: "Budget, theme & logout",
     group: "Account",
     content: (
       <>

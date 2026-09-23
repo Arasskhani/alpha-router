@@ -17128,6 +17128,9 @@ p.error,
 }
 :root {
   --drawer-hidden: -100%;
+  /* What can be seen; on a phone useVisualViewportHeight sets it to the
+     visual viewport, which the iOS keyboard shrinks and 100dvh does not. */
+  --app-viewport-height: 100dvh;
 }
 [dir="rtl"] {
   --drawer-hidden: 100%;
@@ -17224,8 +17227,8 @@ p.error,
      the iOS keyboard shrinks (useVisualViewportHeight), else 100dvh. */
   .layout,
   .layout--chat {
-    height: var(--app-viewport-height, 100dvh);
-    max-height: var(--app-viewport-height, 100dvh);
+    height: var(--app-viewport-height);
+    max-height: var(--app-viewport-height);
   }
 
   /* Chat: the history is a drawer; the conversation keeps the whole width. */

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 
-/** The CSS variable the phone layout sizes itself with; unset, it falls back to 100dvh. */
+/** The CSS variable the phone layout sizes itself with; its :root default is 100dvh. */
 export const VIEWPORT_HEIGHT_VAR = "--app-viewport-height";
 
 /**

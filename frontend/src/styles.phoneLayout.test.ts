@@ -142,8 +142,10 @@ describe("the phone layout block", () => {
 
   it("sizes the app to the visual viewport, so the iOS keyboard cannot cover the composer", () => {
     const layout = declarations(phone.body, ".layout,\n  .layout--chat");
-    expect(layout).toContain("height: var(--app-viewport-height, 100dvh)");
-    expect(layout).toContain("max-height: var(--app-viewport-height, 100dvh)");
+    expect(layout).toContain("height: var(--app-viewport-height)");
+    expect(layout).toContain("max-height: var(--app-viewport-height)");
+    // Without the hook (no visual viewport, or a desktop) the token is 100dvh.
+    expect(declarations(css, ":root")).toContain("--app-viewport-height: 100dvh");
   });
 
   it("keeps the bottom tab bar in the layout's flow, so the composer ends above it", () => {

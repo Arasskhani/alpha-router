@@ -6,7 +6,7 @@ import datetime
 import re
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -113,8 +113,23 @@ async def _saved_row(db: AsyncSession) -> SmtpSettings | None:
     return (await db.execute(select(SmtpSettings).limit(1))).scalars().first()
 
 
+#: What the audit trail compares between two saves. Never the password.
+_AUDITED_FIELDS = ("host", "port", "username", "from_address", "security", "verify_certificate")
+
+
+def _snapshot(row: SmtpSettings | None) -> dict[str, object]:
+    if row is None:
+        return {}
+    return {name: getattr(row, name) for name in _AUDITED_FIELDS}
+
+
 @router.put("")
-async def save_smtp(body: SmtpIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_smtp_write)):
+async def save_smtp(
+    body: SmtpIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_smtp_write),
+):
     """Save the settings.
 
     A saved password stays with the server it was saved for. Pointing the
@@ -123,9 +138,21 @@ async def save_smtp(body: SmtpIn, db: AsyncSession = Depends(get_db), _: User = 
     the page never shows, by saving their own host and waiting for the next
     report email to log in there. Clearing the username means no login at
     all, and the saved password is discarded.
+
+    Every save that changes something is audited as ``smtp_settings_changed``
+    with the fields before and after. These settings decide where report
+    emails, API keys sent to their owners and security alerts go, and on
+    what terms: turning certificate verification off or choosing no TLS is
+    exactly the change an auditor needs to find. The password itself is only
+    ever recorded as changed or removed.
     """
 
+    from app.services.client_ip import resolve_client_ip
+    from app.services.security_audit import log_security_event
+
     row = await _saved_row(db)
+    before = _snapshot(row)
+    had_password = row is not None and bool(row.password_encrypted)
     typed = body.typed_password()
     if (
         row is not None
@@ -149,6 +176,28 @@ async def save_smtp(body: SmtpIn, db: AsyncSession = Depends(get_db), _: User = 
     row.security = body.resolved_security()
     row.verify_certificate = body.verify_certificate
     row.updated_at = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+
+    after = _snapshot(row)
+    changes = {
+        name: {"from": before.get(name), "to": after[name]}
+        for name in _AUDITED_FIELDS
+        if before.get(name) != after[name]
+    }
+    if typed is not None and body.username is not None:
+        password = "changed"
+    elif had_password and not row.password_encrypted:
+        password = "removed"
+    else:
+        password = "unchanged"
+    if changes or password != "unchanged":
+        await log_security_event(
+            db,
+            actor=admin,
+            actor_ip=resolve_client_ip(request),
+            action="smtp_settings_changed",
+            resource_type="smtp",
+            detail={"created": not before, "changes": changes, "password": password},
+        )
     await db.commit()
     return {"ok": True, "security": row.security}
 

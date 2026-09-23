@@ -8,10 +8,13 @@ that must never be saved, and who may change any of it.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from sqlalchemy import select
 
 from app.core.security import create_access_token
+from app.models.security import SecurityAuditEvent
 from app.models.system import SmtpSettings
 from app.models.user import User
 from app.services import smtp_service
@@ -315,3 +318,74 @@ class TestThePasswordStaysWithItsServer:
             )
         body = resp.json()
         assert (body["ok"], body["login_tested"], body["login_skipped"]) == (True, False, "no_password")
+
+
+class TestTheAuditTrail:
+    async def _events(self, db_session) -> list[dict]:
+        db_session.expire_all()
+        rows = (
+            (
+                await db_session.execute(
+                    select(SecurityAuditEvent)
+                    .where(SecurityAuditEvent.action == "smtp_settings_changed")
+                    .order_by(SecurityAuditEvent.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [{"actor": r.actor_username, "type": r.resource_type, **json.loads(r.detail_json)} for r in rows]
+
+    async def test_the_first_save_records_every_field_and_that_a_password_was_set(self, client, db_session, admin):
+        username = admin.username
+        headers = _sign_in(client, admin)
+        await client.put(URL, headers=headers, json=_body())
+        (event,) = await self._events(db_session)
+        assert event["actor"] == username
+        assert event["type"] == "smtp"
+        assert event["created"] is True
+        assert event["password"] == "changed"
+        assert event["changes"]["host"] == {"from": None, "to": "mail.example.com"}
+        assert event["changes"]["security"] == {"from": None, "to": "starttls"}
+
+    async def test_turning_verification_off_is_recorded_on_its_own(self, client, db_session, admin):
+        headers = _sign_in(client, admin)
+        await client.put(URL, headers=headers, json=_body())
+        await client.put(URL, headers=headers, json=_body(password="********", verify_certificate=False))
+        event = (await self._events(db_session))[-1]
+        assert event["created"] is False
+        assert event["changes"] == {"verify_certificate": {"from": True, "to": False}}
+        assert event["password"] == "unchanged"
+
+    async def test_a_save_that_changes_nothing_records_nothing(self, client, db_session, admin):
+        headers = _sign_in(client, admin)
+        await client.put(URL, headers=headers, json=_body())
+        await client.put(URL, headers=headers, json=_body(password="********"))
+        assert len(await self._events(db_session)) == 1
+
+    async def test_removing_the_login_records_the_password_as_removed(self, client, db_session, admin):
+        headers = _sign_in(client, admin)
+        await client.put(URL, headers=headers, json=_body())
+        await client.put(URL, headers=headers, json=_body(username="", password="********"))
+        event = (await self._events(db_session))[-1]
+        assert event["password"] == "removed"
+        assert event["changes"]["username"] == {"from": "alpha", "to": None}
+
+    async def test_the_password_never_reaches_the_trail(self, client, db_session, admin):
+        headers = _sign_in(client, admin)
+        await client.put(URL, headers=headers, json=_body(password="Sup3r-S3cret-Value"))
+        await client.put(URL, headers=headers, json=_body(password="An0ther-S3cret-Value"))
+        stored = (await _saved(db_session)).password_encrypted
+        db_session.expire_all()
+        raw = [r.detail_json for r in (await db_session.execute(select(SecurityAuditEvent))).scalars()]
+        assert raw
+        for detail in raw:
+            assert "Sup3r-S3cret-Value" not in detail
+            assert "An0ther-S3cret-Value" not in detail
+            assert stored not in detail
+
+    async def test_a_refused_save_records_nothing(self, client, db_session, admin):
+        headers = _sign_in(client, admin)
+        await client.put(URL, headers=headers, json=_body())
+        await client.put(URL, headers=headers, json=_body(host="collector.example.net", password="********"))
+        assert len(await self._events(db_session)) == 1

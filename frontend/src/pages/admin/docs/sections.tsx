@@ -2839,11 +2839,12 @@ export const docSections: DocSection[] = [
           with the reason, and logout, each with the resolved client address; TLS certificate upload, activation and
           deletion; admin IP allowlist changes; connection and gateway API key deletion; model access changes; password
           resets and administrative 2FA disable; user soft delete, restore and permanent deletion, singly and in bulk;
-          clearing all media or all request logs; retention window changes; and rejected SAML responses.
+          clearing all media or all request logs; retention window changes; SMTP settings changes (which fields
+          changed, whether the password was changed or removed — never the password); and rejected SAML responses.
         </p>
         <p>
           It is <strong>not</strong> a record of every administrative change, and the page does not pretend otherwise:
-          plans, groups, identity-provider configuration and SMTP settings, among others, are not yet instrumented.
+          plans, groups and identity-provider configuration, among others, are not yet instrumented.
           The seven domain trails each keep their own append-only table (the governance chain is hash-linked and is
           never written to by this page); the view reads them through one normalised projection and never writes to
           any of them. Only the security trail is subject to the retention windows below — the domain trails keep

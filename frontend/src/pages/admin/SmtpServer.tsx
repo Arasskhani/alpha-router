@@ -303,14 +303,21 @@ export default function SmtpServer() {
           <label htmlFor="smtp-from">From address</label>
           <input
             id="smtp-from"
-            type="email"
+            // Not type="email": that refuses a name before the address.
+            type="text"
+            inputMode="email"
             value={form.from_address}
             onChange={(e) => update({ from_address: e.target.value })}
             placeholder="reports@example.com"
             autoComplete="off"
+            spellCheck={false}
+            aria-describedby="smtp-from-hint"
             required
           />
         </div>
+        <p id="smtp-from-hint" className="smtp-hint">
+          An address, or a name and an address: Alpharouter &lt;reports@example.com&gt;.
+        </p>
 
         <label className="smtp-check" htmlFor="smtp-self-signed">
           <input

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import datetime
-import re
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -25,7 +24,7 @@ from app.services.smtp_service import (
     SmtpSendError,
     close_quietly,
     describe_smtp_error,
-    is_sendable_address,
+    is_sendable_from,
     negotiated_tls_version,
     normalize_security,
     open_smtp,
@@ -40,8 +39,6 @@ router = APIRouter(prefix="/api/admin/smtp", tags=["smtp"])
 #: What the page shows in place of a saved password, and sends back to mean
 #: "keep the one you have".
 PASSWORD_MASK = "********"
-
-_ADDRESS = re.compile(r"^[^@\s]+@[^@\s]+$")
 
 
 class SmtpIn(BaseModel):
@@ -69,8 +66,11 @@ class SmtpIn(BaseModel):
     @classmethod
     def _an_address(cls, value: str) -> str:
         address = value.strip()
-        if not _ADDRESS.match(address) or not is_sendable_address(address):
-            raise ValueError("The From address must be an email address, for example reports@example.com.")
+        if not is_sendable_from(address):
+            raise ValueError(
+                "The From address must be an email address, optionally with a name: "
+                "reports@example.com or Alpharouter <reports@example.com>."
+            )
         return address
 
     @field_validator("username")

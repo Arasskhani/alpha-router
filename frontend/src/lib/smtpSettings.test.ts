@@ -105,6 +105,14 @@ describe("validateSmtpForm", () => {
     expect(validateSmtpForm({ ...ok, from_address: "reports@[" })).toMatch(/email address/);
     expect(validateSmtpForm({ ...ok, from_address: "reports@example.com;x" })).toMatch(/email address/);
     expect(validateSmtpForm({ ...ok, from_address: "first.last+tag@sub.example.co.uk" })).toBeNull();
+    expect(validateSmtpForm({ ...ok, from_address: "Alpharouter reports@example.com" })).toMatch(/email address/);
+    expect(validateSmtpForm({ ...ok, from_address: "Alpharouter <reports@example.com" })).toMatch(/email address/);
+  });
+
+  it("accepts a name before the address in angle brackets, as the server does", () => {
+    expect(validateSmtpForm({ ...ok, from_address: "Alpharouter <reports@example.com>" })).toBeNull();
+    expect(validateSmtpForm({ ...ok, from_address: '"Reports, Alpharouter" <reports@example.com>' })).toBeNull();
+    expect(validateSmtpForm({ ...ok, from_address: "Alpharouter <reports@[>" })).toMatch(/email address/);
   });
 });
 

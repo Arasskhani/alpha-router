@@ -125,6 +125,15 @@ describe("the SMTP Server page", () => {
     expect(field("smtp-self-signed").checked).toBe(false);
   });
 
+  it("takes a From address with a name, which an email input would refuse", async () => {
+    answer({ saved: { ...SAVED, from_address: "Alpharouter <reports@example.com>" } });
+    await render();
+    expect(field("smtp-from").type).toBe("text");
+    expect(field("smtp-from").value).toBe("Alpharouter <reports@example.com>");
+    await submit();
+    expect(sent("/api/admin/smtp", "PUT")[0].from_address).toBe("Alpharouter <reports@example.com>");
+  });
+
   it("keeps the browser from filling in the administrator's own password", async () => {
     answer();
     await render();

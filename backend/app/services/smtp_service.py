@@ -29,7 +29,7 @@ import re
 import ssl
 from dataclasses import dataclass
 from email.errors import HeaderParseError
-from email.headerregistry import Address
+from email.headerregistry import Address, HeaderRegistry
 from email.message import EmailMessage
 
 import aiosmtplib
@@ -68,6 +68,24 @@ def is_sendable_address(value: str) -> bool:
     except _ADDRESS_ERRORS:
         return False
     return True
+
+
+_HEADERS = HeaderRegistry()
+
+
+def is_sendable_from(value: str) -> bool:
+    """Whether ``value`` is one mailbox for a From header, with or without a
+    name: "reports@example.com" or "Alpharouter <reports@example.com>"."""
+
+    try:
+        header = _HEADERS("From", value)
+        addresses = header.addresses
+    except _ADDRESS_ERRORS:
+        return False
+    if header.defects or len(addresses) != 1:
+        return False
+    address = addresses[0]
+    return bool(address.username and address.domain) and is_sendable_address(address.addr_spec)
 
 
 class SmtpNotConfiguredError(Exception):

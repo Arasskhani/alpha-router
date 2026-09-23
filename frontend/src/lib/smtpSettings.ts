@@ -94,9 +94,11 @@ export const PASSWORD_AGAIN: Record<PasswordReuseProblem, string> = {
 export type SmtpFormValues = { host: string; port: string; from_address: string };
 
 // One address, without the characters that mean something else in an address
-// header ("reports@[" or "a@b;c"): the server refuses what the email package
-// cannot put in a header, and this keeps its message from arriving as JSON.
-const PLAIN_ADDRESS = /^[^@\s<>()[\]\\,;:"]+@[^@\s<>()[\]\\,;:"]+$/;
+// header ("reports@[" or "a@b;c"), optionally after a name with the address in
+// angle brackets. The server refuses what the email package cannot put in a
+// From header; this keeps its message from arriving as JSON.
+const ADDRESS = String.raw`[^@\s<>()[\]\\,;:"]+@[^@\s<>()[\]\\,;:"]+`;
+const FROM_ADDRESS = new RegExp(`^(?:${ADDRESS}|[^<>@]*<${ADDRESS}>)$`);
 
 /** The first reason the form cannot be saved as it stands, or null. Mirrors the server's checks. */
 export function validateSmtpForm(form: SmtpFormValues): string | null {
@@ -107,8 +109,8 @@ export function validateSmtpForm(form: SmtpFormValues): string | null {
   }
   const port = Number(form.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) return "The port must be a number from 1 to 65535.";
-  if (!PLAIN_ADDRESS.test(form.from_address.trim())) {
-    return "The From address must be an email address, for example reports@example.com.";
+  if (!FROM_ADDRESS.test(form.from_address.trim())) {
+    return "The From address must be an email address, optionally with a name: reports@example.com or Alpharouter <reports@example.com>.";
   }
   return null;
 }

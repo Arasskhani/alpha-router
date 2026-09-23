@@ -27,6 +27,7 @@ from app.services.smtp_service import (
     close_quietly,
     describe_smtp_error,
     is_sendable_address,
+    is_sendable_from,
     negotiated_tls_version,
     open_smtp,
     security_from_legacy,
@@ -374,6 +375,25 @@ class TestDescribeSmtpError:
     )
     def test_which_addresses_can_go_in_a_header(self, value, sendable):
         assert is_sendable_address(value) is sendable
+
+    @pytest.mark.parametrize(
+        ("value", "sendable"),
+        [
+            ("reports@example.com", True),
+            ("Alpharouter <reports@example.com>", True),
+            ('"Doe, Jane" <jane@example.com>', True),
+            ("<reports@example.com>", True),
+            ("reports", False),
+            ("reports@", False),
+            ("reports@[", False),
+            ("Alpharouter <reports@[>", False),
+            ("Alpharouter reports@example.com", False),
+            ("Alpha, Router <r@example.com>", False),
+            ("Alpharouter <reports>", False),
+        ],
+    )
+    def test_which_senders_can_go_in_a_from_header(self, value, sendable):
+        assert is_sendable_from(value) is sendable
 
     def test_anything_else_keeps_the_library_text(self):
         assert describe_smtp_error(RuntimeError("odd"), self.conn) == "odd"

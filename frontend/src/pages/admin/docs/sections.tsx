@@ -2453,6 +2453,11 @@ export const docSections: DocSection[] = [
             discards it.
           </li>
           <li>
+            <strong>From address</strong> — an address, or a name and an address:{" "}
+            <code>Alpharouter &lt;reports@example.com&gt;</code>. Recipients see the name; the mail server is given the
+            address.
+          </li>
+          <li>
             <strong>Test connection</strong> connects with the values on the form, secures the connection as chosen and
             logs in — with the typed password, or the saved one where Save would keep it — then reports the TLS
             version, whether the certificate was verified and whether the login worked. Nothing is sent or saved. A

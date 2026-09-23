@@ -119,6 +119,20 @@ class TestSaveAndRead:
         }
         assert row.password_encrypted not in str(got)
 
+    @pytest.mark.parametrize(
+        "sender",
+        [
+            "Alpharouter <reports@example.com>",
+            '"Reports, Alpharouter" <reports@example.com>',
+            "گزارش‌ها <reports@example.com>",
+        ],
+    )
+    async def test_a_from_address_may_carry_a_name(self, client, db_session, admin, sender):
+        headers = _sign_in(client, admin)
+        resp = await client.put(URL, headers=headers, json=_body(from_address=sender))
+        assert resp.status_code == 200, resp.text
+        assert (await _saved(db_session)).from_address == sender
+
     async def test_certificate_verification_can_be_turned_off_and_back_on(self, client, db_session, admin):
         headers = _sign_in(client, admin)
         await client.put(URL, headers=headers, json=_body(verify_certificate=False))
@@ -166,6 +180,11 @@ class TestSaveAndRead:
             # Pass a simple pattern, but the email package cannot put them in a header.
             {"from_address": "reports@["},
             {"from_address": "reports@example.com;x"},
+            # A name needs the address in angle brackets, and one mailbox only.
+            {"from_address": "Alpharouter reports@example.com"},
+            {"from_address": "Alpharouter <reports@example.com"},
+            {"from_address": "Alpha <a@example.com>, Beta <b@example.com>"},
+            {"from_address": "Alpharouter <>"},
             {"security": "tls"},
         ],
     )
@@ -520,6 +539,21 @@ class TestTheTestEmail:
         text = parsed.get_content()
         assert username in text
         assert f"127.0.0.1:{server.port} with STARTTLS." in text
+
+    async def test_a_named_sender_keeps_its_name_and_the_envelope_gets_the_address(self, client, admin, tls):
+        headers = _sign_in(client, admin)
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
+            await client.put(
+                URL,
+                headers=headers,
+                json=_body(host="127.0.0.1", port=server.port, from_address="Alpharouter <reports@example.com>"),
+            )
+            resp = await client.post(TEST_EMAIL_URL, headers=headers)
+        assert resp.json()["ok"] is True
+        (message,) = server.messages
+        assert message.mail_from == "reports@example.com"
+        parsed = email.message_from_bytes(message.data, policy=email.policy.default)
+        assert parsed["From"] == "Alpharouter <reports@example.com>"
 
     async def test_the_body_says_when_the_certificate_was_not_checked(self, client, admin, tls):
         headers = _sign_in(client, admin)

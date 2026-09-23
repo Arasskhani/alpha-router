@@ -199,9 +199,22 @@ describe("the phone layout block", () => {
     expect(viewer).toContain("border-radius: 0");
     // The slide-in is skipped for people who asked for less motion.
     const reduced = mediaBlocks("(prefers-reduced-motion: reduce)");
-    expect(reduced.some((b) => (declarations(b.body, ".modal-overlay .modal-panel") ?? "").includes("animation: none"))).toBe(
-      true,
-    );
+    expect(
+      reduced.some((b) =>
+        (declarations(b.body, ".modal-overlay .modal-panel,\n  .action-sheet") ?? "").includes("animation: none"),
+      ),
+    ).toBe(true);
+  });
+
+  it("turns row actions into an action sheet above the drawers", () => {
+    const sheet = declarations(phone.body, ".action-sheet");
+    expect(sheet).toContain("position: fixed");
+    expect(sheet).toContain("bottom: 0");
+    expect(sheet).toContain("env(safe-area-inset-bottom");
+    // Above the topbar (150) and the drawers, like the popover it replaces.
+    const z = Number(/z-index:\s*(\d+)/.exec(declarations(phone.body, ".action-sheet-backdrop") ?? "")?.[1]);
+    expect(z).toBeGreaterThanOrEqual(1200);
+    expect(declarations(phone.body, ".action-sheet__item,\n  .action-sheet__cancel")).toContain("min-height: 3rem");
   });
 
   it("hides keyboard hints where there is no keyboard", () => {

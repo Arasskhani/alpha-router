@@ -17524,6 +17524,57 @@ p.error,
     min-height: 2.75rem;
     margin: -0.5rem -0.6rem -0.5rem 0;
   }
+  /* Row actions (RowActionsMenu): an action sheet in reach of the thumb.
+     Above the drawers and the topbar, like the popover it replaces (1200);
+     a confirmation it opens (3000) still comes on top. */
+  .action-sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1200;
+    background: rgba(0, 0, 0, 0.45);
+  }
+  .action-sheet {
+    position: fixed;
+    inset-inline: 0;
+    bottom: 0;
+    z-index: 1201;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    max-height: calc(var(--app-viewport-height) - 3rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0.5rem 0.5rem calc(0.5rem + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid var(--border);
+    border-radius: 14px 14px 0 0;
+    background: var(--surface);
+    box-shadow: 0 -12px 40px color-mix(in srgb, var(--text) 18%, transparent);
+    animation: modal-sheet-in 0.2s ease-out;
+  }
+  .action-sheet__item,
+  .action-sheet__cancel {
+    min-height: 3rem;
+    padding: 0 1rem;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 1rem;
+    text-align: start;
+    cursor: pointer;
+  }
+  .action-sheet__item--danger {
+    color: var(--danger);
+  }
+  .action-sheet__cancel {
+    margin-top: 0.35rem;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    font-weight: 600;
+    text-align: center;
+  }
+
   /* The media viewer is a picture, not a form: the whole screen. */
   .modal-overlay .modal-panel.modal-panel--media-viewer {
     height: var(--app-viewport-height);
@@ -17538,7 +17589,8 @@ p.error,
   .alpha-router-sidebar.alpha-router-sidebar--drawer {
     transition: none;
   }
-  .modal-overlay .modal-panel {
+  .modal-overlay .modal-panel,
+  .action-sheet {
     animation: none;
   }
 }

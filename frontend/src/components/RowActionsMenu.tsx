@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useReadOnly } from "../context/ReadOnlyContext";
+import { usePhoneLayout } from "../hooks/useMediaQuery";
 import { ADMIN_WRITE_LOCK_TITLE } from "../lib/adminWriteLock";
 
 export type RowAction = {
@@ -39,11 +40,15 @@ const VIEWPORT_PAD = 8;
 
 export default function RowActionsMenu({ actions, label = "Actions", menuClassName = "", onError }: Props) {
   const readOnly = useReadOnly();
+  // On a phone the menu is an action sheet along the bottom edge: a finger-sized
+  // list in reach of the thumb, instead of a small popover next to the button.
+  const phone = usePhoneLayout();
   const [open, setOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const sheetRootRef = useRef<HTMLDivElement>(null);
 
   const [actionError, setActionError] = useState("");
   const visible = actions.filter((a) => !a.disabled);
@@ -82,7 +87,7 @@ export default function RowActionsMenu({ actions, label = "Actions", menuClassNa
   }
 
   useLayoutEffect(() => {
-    if (!open) {
+    if (!open || phone) {
       setMenuPos(null);
       return;
     }
@@ -93,13 +98,15 @@ export default function RowActionsMenu({ actions, label = "Actions", menuClassNa
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
     };
-  }, [open]);
+  }, [open, phone]);
 
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
       const t = e.target as Node;
-      if (rootRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      // The sheet's backdrop closes it on click, not here: closing on mousedown
+      // would let the same tap land on whatever is under the backdrop.
+      if (rootRef.current?.contains(t) || menuRef.current?.contains(t) || sheetRootRef.current?.contains(t)) return;
       setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
@@ -113,8 +120,47 @@ export default function RowActionsMenu({ actions, label = "Actions", menuClassNa
     };
   }, [open]);
 
+  // The sheet is a layer of its own: focus goes in when it opens and back to
+  // the button when it closes, as with the other sheets on a phone.
+  const sheetOpen = open && phone;
+  const sheetWasOpen = useRef(false);
+  useEffect(() => {
+    if (sheetOpen) {
+      menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus({ preventScroll: true });
+    } else if (sheetWasOpen.current && document.activeElement === document.body) {
+      triggerRef.current?.focus({ preventScroll: true });
+    }
+    sheetWasOpen.current = sheetOpen;
+  }, [sheetOpen]);
+
+  const sheetLabel = label === "⋯" || label === "⋮" ? "Actions" : label;
+  const sheet = sheetOpen
+    ? createPortal(
+        <div ref={sheetRootRef} className="action-sheet-root">
+          <div className="action-sheet-backdrop" aria-hidden onClick={() => setOpen(false)} />
+          <div ref={menuRef} className="action-sheet" role="menu" aria-label={sheetLabel}>
+            {visible.map((a) => (
+              <button
+                key={a.label}
+                type="button"
+                role="menuitem"
+                className={`action-sheet__item${a.danger ? " action-sheet__item--danger" : ""}`}
+                onClick={() => void runAction(a)}
+              >
+                {a.label}
+              </button>
+            ))}
+            <button type="button" role="menuitem" className="action-sheet__cancel" onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>,
+        document.body,
+      )
+    : null;
+
   const menu =
-    open && menuPos
+    open && !phone && menuPos
       ? createPortal(
           <div
             ref={menuRef}
@@ -165,6 +211,7 @@ export default function RowActionsMenu({ actions, label = "Actions", menuClassNa
         </p>
       ) : null}
       {menu}
+      {sheet}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, apiList, authFetch, formatApiError, getCachedSession, NO_LIST_BOUNDS, type ListBounds } from "../../api";
 import { useDebounced } from "../../hooks/useDebounced";
 import AdminPage from "../../components/AdminPage";
+import FilterPanel, { countActiveFilters } from "../../components/FilterPanel";
 import CreateLocalUserModal, { type CreateLocalUserValues } from "../../components/users/CreateLocalUserModal";
 import Modal from "../../components/Modal";
 import RoleMultiSelect from "../../components/RoleMultiSelect";
@@ -851,70 +852,82 @@ export default function Users() {
         </p>
       ) : null}
 
-      <div className="users-filter-panel card">
-        <div>
-          <label htmlFor="users-user">User</label>
-          <input id="users-user"
-            placeholder="Username or display name"
-            value={filterUser}
-            onChange={(e) => setFilterUser(e.target.value)}
-          />
+      <FilterPanel
+        activeCount={countActiveFilters([
+          filterUser,
+          filterEmail,
+          filterDepartment,
+          filterJobTitle,
+          filterRole,
+          filterGroupId,
+          filterPlan,
+        ])}
+      >
+        <div className="users-filter-panel card">
+          <div>
+            <label htmlFor="users-user">User</label>
+            <input id="users-user"
+              placeholder="Username or display name"
+              value={filterUser}
+              onChange={(e) => setFilterUser(e.target.value)}
+            />
+          </div>
+          <div>
+            <label htmlFor="users-email">Email</label>
+            <input id="users-email" placeholder="Email" value={filterEmail} onChange={(e) => setFilterEmail(e.target.value)} />
+          </div>
+          <div>
+            <label htmlFor="users-department">Department</label>
+            <input id="users-department"
+              placeholder="Department"
+              value={filterDepartment}
+              onChange={(e) => setFilterDepartment(e.target.value)}
+            />
+          </div>
+          <div>
+            <label htmlFor="users-job-title">Job title</label>
+            <input id="users-job-title"
+              placeholder="Job title"
+              value={filterJobTitle}
+              onChange={(e) => setFilterJobTitle(e.target.value)}
+            />
+          </div>
+          <div>
+            <label htmlFor="users-role">Role</label>
+            <select id="users-role" value={filterRole} onChange={(e) => setFilterRole(e.target.value)}>
+              <option value="">All roles</option>
+              {roleCatalog.map((role) => (
+                <option key={role.slug} value={role.slug}>
+                  {role.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="users-group">Group</label>
+            <select id="users-group" value={filterGroupId} onChange={(e) => setGroupFilter(e.target.value, groups.find((g) => String(g.id) === e.target.value)?.name || "")}>
+              <option value="">All groups</option>
+              {groups.map((g) => (
+                <option key={g.id} value={String(g.id)}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="users-user-plan">User Plan</label>
+            <select id="users-user-plan" value={filterPlan} onChange={(e) => setFilterPlan(e.target.value)}>
+              <option value="">All plans</option>
+              <option value="__none__">No Plan</option>
+              {plans.map((p) => (
+                <option key={p.id} value={String(p.id)}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
-        <div>
-          <label htmlFor="users-email">Email</label>
-          <input id="users-email" placeholder="Email" value={filterEmail} onChange={(e) => setFilterEmail(e.target.value)} />
-        </div>
-        <div>
-          <label htmlFor="users-department">Department</label>
-          <input id="users-department"
-            placeholder="Department"
-            value={filterDepartment}
-            onChange={(e) => setFilterDepartment(e.target.value)}
-          />
-        </div>
-        <div>
-          <label htmlFor="users-job-title">Job title</label>
-          <input id="users-job-title"
-            placeholder="Job title"
-            value={filterJobTitle}
-            onChange={(e) => setFilterJobTitle(e.target.value)}
-          />
-        </div>
-        <div>
-          <label htmlFor="users-role">Role</label>
-          <select id="users-role" value={filterRole} onChange={(e) => setFilterRole(e.target.value)}>
-            <option value="">All roles</option>
-            {roleCatalog.map((role) => (
-              <option key={role.slug} value={role.slug}>
-                {role.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label htmlFor="users-group">Group</label>
-          <select id="users-group" value={filterGroupId} onChange={(e) => setGroupFilter(e.target.value, groups.find((g) => String(g.id) === e.target.value)?.name || "")}>
-            <option value="">All groups</option>
-            {groups.map((g) => (
-              <option key={g.id} value={String(g.id)}>
-                {g.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label htmlFor="users-user-plan">User Plan</label>
-          <select id="users-user-plan" value={filterPlan} onChange={(e) => setFilterPlan(e.target.value)}>
-            <option value="">All plans</option>
-            <option value="__none__">No Plan</option>
-            {plans.map((p) => (
-              <option key={p.id} value={String(p.id)}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
+      </FilterPanel>
 
       <div className="search-bar users-actions">
         <button type="button" className="btn btn-ghost" onClick={clearFilters}>

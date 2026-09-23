@@ -17551,6 +17551,47 @@ p.error,
     white-space: nowrap;
   }
 
+  /* List filters fold behind one button (FilterPanel). Open, the wrapper
+     leaves the page's own layout alone; folded, `hidden` removes it. */
+  .filter-panel:not([hidden]) {
+    display: contents;
+  }
+  .filter-panel-toggle {
+    display: inline-flex;
+    align-items: center;
+    align-self: flex-start;
+    gap: 0.45rem;
+    min-height: 2.5rem;
+    margin-bottom: 0.75rem;
+    padding: 0 0.95rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+  .filter-panel-toggle[aria-expanded="true"] {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .api-logs-toolbar > .filter-panel-toggle {
+    margin-bottom: 0;
+  }
+  .filter-panel-toggle__count {
+    display: inline-grid;
+    place-items: center;
+    min-width: 1.3rem;
+    height: 1.3rem;
+    padding: 0 0.35rem;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-contrast);
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
   /* Row actions (RowActionsMenu): an action sheet in reach of the thumb.
      Above the drawers and the topbar, like the popover it replaces (1200);
      a confirmation it opens (3000) still comes on top. */

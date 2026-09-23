@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import AdminPage from "../../components/AdminPage";
+import FilterPanel, { countActiveFilters } from "../../components/FilterPanel";
 import Modal from "../../components/Modal";
 import LogFilterCombobox from "../../components/admin/LogFilterCombobox";
 import { api, formatApiError } from "../../api";
@@ -206,72 +207,76 @@ export default function AdminLogs() {
         entries keep the action but lose their detail.
       </p>
 
-      <div className="card api-logs-toolbar">
-        <div className="api-logs-toolbar__main">
-          <select
-            className="api-logs-toolbar__date"
-            aria-label="Audit trail"
-            value={source}
-            onChange={(e) => setSource(e.target.value as AuditSource)}
-          >
-            {AUDIT_SOURCES.map(([key, label]) => (
-              <option key={key} value={key}>
-                {label}
-              </option>
-            ))}
-          </select>
-          <LogFilterCombobox
-            value={actor}
-            onChange={setActor}
-            options={options.actors}
-            placeholder="Administrator"
-            onOpen={() => void loadOptions()}
-          />
-          <LogFilterCombobox
-            value={action}
-            onChange={setAction}
-            options={options.actions}
-            placeholder="Action"
-            onOpen={() => void loadOptions()}
-          />
-          <LogFilterCombobox
-            value={resourceType}
-            onChange={setResourceType}
-            options={options.resource_types}
-            placeholder="Resource"
-            onOpen={() => void loadOptions()}
-          />
-          <input
-            type="date"
-            className="api-logs-toolbar__date"
-            aria-label="From date"
-            value={start}
-            onChange={(e) => setStart(e.target.value)}
-          />
-          <input
-            type="date"
-            className="api-logs-toolbar__date"
-            aria-label="To date"
-            value={end}
-            onChange={(e) => setEnd(e.target.value)}
-          />
+      <FilterPanel
+        activeCount={countActiveFilters([source === "all" ? "" : source, actor, action, resourceType, start, end])}
+      >
+        <div className="card api-logs-toolbar">
+          <div className="api-logs-toolbar__main">
+            <select
+              className="api-logs-toolbar__date"
+              aria-label="Audit trail"
+              value={source}
+              onChange={(e) => setSource(e.target.value as AuditSource)}
+            >
+              {AUDIT_SOURCES.map(([key, label]) => (
+                <option key={key} value={key}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <LogFilterCombobox
+              value={actor}
+              onChange={setActor}
+              options={options.actors}
+              placeholder="Administrator"
+              onOpen={() => void loadOptions()}
+            />
+            <LogFilterCombobox
+              value={action}
+              onChange={setAction}
+              options={options.actions}
+              placeholder="Action"
+              onOpen={() => void loadOptions()}
+            />
+            <LogFilterCombobox
+              value={resourceType}
+              onChange={setResourceType}
+              options={options.resource_types}
+              placeholder="Resource"
+              onOpen={() => void loadOptions()}
+            />
+            <input
+              type="date"
+              className="api-logs-toolbar__date"
+              aria-label="From date"
+              value={start}
+              onChange={(e) => setStart(e.target.value)}
+            />
+            <input
+              type="date"
+              className="api-logs-toolbar__date"
+              aria-label="To date"
+              value={end}
+              onChange={(e) => setEnd(e.target.value)}
+            />
+          </div>
+          <div className="api-logs-toolbar__actions">
+            <button type="button" className="btn api-logs-toolbar-btn" onClick={() => void load(0)} disabled={loading}>
+              Filter
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost api-logs-toolbar-btn"
+              onClick={() => {
+                clearFilters();
+              }}
+              disabled={loading}
+            >
+              Clear
+            </button>
+          </div>
         </div>
-        <div className="api-logs-toolbar__actions">
-          <button type="button" className="btn api-logs-toolbar-btn" onClick={() => void load(0)} disabled={loading}>
-            Filter
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost api-logs-toolbar-btn"
-            onClick={() => {
-              clearFilters();
-            }}
-            disabled={loading}
-          >
-            Clear
-          </button>
-        </div>
-      </div>
+      </FilterPanel>
 
       {error ? <p className="alert alert-error" role="alert">{error}</p> : null}
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import AdminPage from "../../components/AdminPage";
+import FilterPanel, { countActiveFilters } from "../../components/FilterPanel";
 import Modal from "../../components/Modal";
 import LogFilterCombobox from "../../components/admin/LogFilterCombobox";
 import { api, authFetch, formatApiError } from "../../api";
@@ -217,81 +218,94 @@ export default function SignInActivity() {
         </p>
       ) : null}
 
-      <div className="card api-logs-toolbar">
-        <div className="api-logs-toolbar__main">
-          <input
-            type="text"
-            className="api-logs-toolbar__date"
-            aria-label="Username"
-            placeholder="Username starts with…"
-            value={filters.username}
-            onChange={(e) => set("username")(e.target.value)}
-          />
-          <LogFilterCombobox
-            value={filters.eventType}
-            onChange={set("eventType")}
-            options={options?.event_types ?? []}
-            placeholder="Event"
-            onOpen={() => void loadOptions()}
-          />
-          <LogFilterCombobox
-            value={filters.outcome}
-            onChange={set("outcome")}
-            options={options?.outcomes ?? []}
-            placeholder="Outcome"
-            onOpen={() => void loadOptions()}
-          />
-          <LogFilterCombobox
-            value={filters.reasonCode}
-            onChange={set("reasonCode")}
-            options={options?.reason_codes ?? []}
-            placeholder="Reason"
-            onOpen={() => void loadOptions()}
-          />
-          <LogFilterCombobox
-            value={filters.authMethod}
-            onChange={set("authMethod")}
-            options={options?.auth_methods ?? []}
-            placeholder="Method"
-            onOpen={() => void loadOptions()}
-          />
-          <input
-            type="text"
-            className="api-logs-toolbar__date"
-            aria-label="IP address"
-            placeholder="IP address"
-            value={filters.ip}
-            onChange={(e) => set("ip")(e.target.value)}
-          />
-          <input
-            type="date"
-            className="api-logs-toolbar__date"
-            aria-label="From date"
-            value={filters.start}
-            onChange={(e) => set("start")(e.target.value)}
-          />
-          <input
-            type="date"
-            className="api-logs-toolbar__date"
-            aria-label="To date"
-            value={filters.end}
-            onChange={(e) => set("end")(e.target.value)}
-          />
+      <FilterPanel
+        activeCount={countActiveFilters([
+          filters.username,
+          filters.eventType,
+          filters.outcome,
+          filters.reasonCode,
+          filters.authMethod,
+          filters.ip,
+          filters.start,
+          filters.end,
+        ])}
+      >
+        <div className="card api-logs-toolbar">
+          <div className="api-logs-toolbar__main">
+            <input
+              type="text"
+              className="api-logs-toolbar__date"
+              aria-label="Username"
+              placeholder="Username starts with…"
+              value={filters.username}
+              onChange={(e) => set("username")(e.target.value)}
+            />
+            <LogFilterCombobox
+              value={filters.eventType}
+              onChange={set("eventType")}
+              options={options?.event_types ?? []}
+              placeholder="Event"
+              onOpen={() => void loadOptions()}
+            />
+            <LogFilterCombobox
+              value={filters.outcome}
+              onChange={set("outcome")}
+              options={options?.outcomes ?? []}
+              placeholder="Outcome"
+              onOpen={() => void loadOptions()}
+            />
+            <LogFilterCombobox
+              value={filters.reasonCode}
+              onChange={set("reasonCode")}
+              options={options?.reason_codes ?? []}
+              placeholder="Reason"
+              onOpen={() => void loadOptions()}
+            />
+            <LogFilterCombobox
+              value={filters.authMethod}
+              onChange={set("authMethod")}
+              options={options?.auth_methods ?? []}
+              placeholder="Method"
+              onOpen={() => void loadOptions()}
+            />
+            <input
+              type="text"
+              className="api-logs-toolbar__date"
+              aria-label="IP address"
+              placeholder="IP address"
+              value={filters.ip}
+              onChange={(e) => set("ip")(e.target.value)}
+            />
+            <input
+              type="date"
+              className="api-logs-toolbar__date"
+              aria-label="From date"
+              value={filters.start}
+              onChange={(e) => set("start")(e.target.value)}
+            />
+            <input
+              type="date"
+              className="api-logs-toolbar__date"
+              aria-label="To date"
+              value={filters.end}
+              onChange={(e) => set("end")(e.target.value)}
+            />
+          </div>
+          <div className="api-logs-toolbar__actions">
+            <button type="button" className="btn api-logs-toolbar-btn" onClick={() => void load(0)} disabled={loading}>
+              Filter
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost api-logs-toolbar-btn"
+              onClick={clearFilters}
+              disabled={loading}
+            >
+              Clear
+            </button>
+          </div>
         </div>
-        <div className="api-logs-toolbar__actions">
-          <button type="button" className="btn api-logs-toolbar-btn" onClick={() => void load(0)} disabled={loading}>
-            Filter
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost api-logs-toolbar-btn"
-            onClick={clearFilters}
-            disabled={loading}
-          >
-            Clear
-          </button>
-        </div>
-      </div>
+      </FilterPanel>
 
       {error ? (
         <p className="alert alert-error" role="alert">

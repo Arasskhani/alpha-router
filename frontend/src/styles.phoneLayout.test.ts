@@ -222,6 +222,14 @@ describe("the phone layout block", () => {
     expect(phone.body).not.toContain(".memory-admin__chips");
   });
 
+  it("folds list filters behind a button without changing the page's layout when open", () => {
+    expect(declarations(phone.body, ".filter-panel:not([hidden])")).toContain("display: contents");
+    // Nothing may set `display` on the wrapper itself, or `hidden` would stop hiding it.
+    expect(declarations(css, ".filter-panel")).toBeNull();
+    expect(declarations(phone.body, ".filter-panel")).toBeNull();
+    expect(declarations(phone.body, ".filter-panel-toggle")).toContain("min-height: 2.5rem");
+  });
+
   it("turns row actions into an action sheet above the drawers", () => {
     const sheet = declarations(phone.body, ".action-sheet");
     expect(sheet).toContain("position: fixed");

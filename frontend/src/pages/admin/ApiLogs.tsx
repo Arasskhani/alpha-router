@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import AdminPage from "../../components/AdminPage";
+import FilterPanel, { countActiveFilters } from "../../components/FilterPanel";
 import LogFilterCombobox from "../../components/admin/LogFilterCombobox";
 import ModelName from "../../components/ModelName";
 import RequestLogCostDetailsModal from "../../components/RequestLogCostDetailsModal";
@@ -312,94 +313,107 @@ export default function ApiLogs({ apiKeyId }: Props) {
         </p>
       ) : null}
       <div className="card api-logs-toolbar">
-        <div className="api-logs-toolbar__main">
-          {scopedKeyId ? null : (
+        <FilterPanel
+          activeCount={countActiveFilters([
+            scopedKeyId ? "" : username,
+            model,
+            responseStatus,
+            promptCache,
+            operationType,
+            errorCode,
+            start,
+            end,
+          ])}
+        >
+          <div className="api-logs-toolbar__main">
+            {scopedKeyId ? null : (
+              <LogFilterCombobox
+                value={username}
+                onChange={setUsername}
+                options={filterOptions.usernames}
+                placeholder="User / API key"
+                loading={optionsLoading}
+                disabled={loading}
+                onOpen={() => void loadFilterOptions()}
+              />
+            )}
             <LogFilterCombobox
-              value={username}
-              onChange={setUsername}
-              options={filterOptions.usernames}
-              placeholder="User / API key"
+              value={model}
+              onChange={setModel}
+              options={filterOptions.models}
+              placeholder="Model"
               loading={optionsLoading}
               disabled={loading}
               onOpen={() => void loadFilterOptions()}
             />
-          )}
-          <LogFilterCombobox
-            value={model}
-            onChange={setModel}
-            options={filterOptions.models}
-            placeholder="Model"
-            loading={optionsLoading}
-            disabled={loading}
-            onOpen={() => void loadFilterOptions()}
-          />
-          <select
-            value={responseStatus}
-            onChange={(e) => setResponseStatus(e.target.value as "" | "success" | "fail")}
-            aria-label="Response Status"
-          >
-            <option value="">All statuses</option>
-            <option value="success">Success</option>
-            <option value="fail">Fail</option>
-          </select>
-          <select
-            value={promptCache}
-            onChange={(e) => setPromptCache(e.target.value as "" | "yes" | "no")}
-            aria-label="Prompt Cache"
-          >
-            <option value="">All cache</option>
-            <option value="yes">Cache hit</option>
-            <option value="no">No cache</option>
-          </select>
-          <select
-            value={operationType}
-            onChange={(e) => setOperationType(e.target.value)}
-            aria-label="Request type"
-            disabled={loading}
-          >
-            <option value="">All types</option>
-            {(filterOptions.operation_types || []).map((t) => (
-              <option key={t} value={t}>
-                {operationTypeLabel(t)}
-              </option>
-            ))}
-          </select>
-          <select
-            value={errorCode}
-            onChange={(e) => setErrorCode(e.target.value)}
-            aria-label="Failure reason"
-            disabled={loading}
-          >
-            <option value="">All failures</option>
-            {(filterOptions.error_codes || []).map((c) => (
-              <option key={c} value={c}>
-                {errorCodeLabel(c)}
-              </option>
-            ))}
-          </select>
-          <input
-            className="api-logs-toolbar__date"
-            type="date"
-            value={start}
-            onChange={(e) => setStart(e.target.value)}
-            aria-label="Start date"
-          />
-          <input
-            className="api-logs-toolbar__date"
-            type="date"
-            value={end}
-            onChange={(e) => setEnd(e.target.value)}
-            aria-label="End date"
-          />
-          <button
-            type="button"
-            className="btn btn-readonly-ok api-logs-toolbar-btn api-logs-toolbar__filter-btn"
-            onClick={() => void load()}
-            disabled={loading}
-          >
-            Filter
-          </button>
-        </div>
+            <select
+              value={responseStatus}
+              onChange={(e) => setResponseStatus(e.target.value as "" | "success" | "fail")}
+              aria-label="Response Status"
+            >
+              <option value="">All statuses</option>
+              <option value="success">Success</option>
+              <option value="fail">Fail</option>
+            </select>
+            <select
+              value={promptCache}
+              onChange={(e) => setPromptCache(e.target.value as "" | "yes" | "no")}
+              aria-label="Prompt Cache"
+            >
+              <option value="">All cache</option>
+              <option value="yes">Cache hit</option>
+              <option value="no">No cache</option>
+            </select>
+            <select
+              value={operationType}
+              onChange={(e) => setOperationType(e.target.value)}
+              aria-label="Request type"
+              disabled={loading}
+            >
+              <option value="">All types</option>
+              {(filterOptions.operation_types || []).map((t) => (
+                <option key={t} value={t}>
+                  {operationTypeLabel(t)}
+                </option>
+              ))}
+            </select>
+            <select
+              value={errorCode}
+              onChange={(e) => setErrorCode(e.target.value)}
+              aria-label="Failure reason"
+              disabled={loading}
+            >
+              <option value="">All failures</option>
+              {(filterOptions.error_codes || []).map((c) => (
+                <option key={c} value={c}>
+                  {errorCodeLabel(c)}
+                </option>
+              ))}
+            </select>
+            <input
+              className="api-logs-toolbar__date"
+              type="date"
+              value={start}
+              onChange={(e) => setStart(e.target.value)}
+              aria-label="Start date"
+            />
+            <input
+              className="api-logs-toolbar__date"
+              type="date"
+              value={end}
+              onChange={(e) => setEnd(e.target.value)}
+              aria-label="End date"
+            />
+            <button
+              type="button"
+              className="btn btn-readonly-ok api-logs-toolbar-btn api-logs-toolbar__filter-btn"
+              onClick={() => void load()}
+              disabled={loading}
+            >
+              Filter
+            </button>
+          </div>
+        </FilterPanel>
         <div className="api-logs-toolbar__actions">
           <button
             type="button"

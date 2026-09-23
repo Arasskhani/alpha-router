@@ -102,17 +102,7 @@ function CopyButton({
   );
 }
 
-function SecretField({
-  label,
-  value,
-  showCopy = true,
-  onCopied,
-}: {
-  label: string;
-  value: string;
-  showCopy?: boolean;
-  onCopied?: () => void;
-}) {
+function SecretField({ label, value, onCopied }: { label: string; value: string; onCopied?: () => void }) {
   return (
     <label className="settings-field personal-api-key-field">
       <span className="settings-label">{label}</span>
@@ -123,7 +113,7 @@ function SecretField({
           className="settings-row__control mono personal-api-key-field__input"
           aria-label={label}
         />
-        {showCopy ? <CopyButton value={value} label={`Copy ${label}`} onCopied={onCopied} /> : null}
+        <CopyButton value={value} label={`Copy ${label}`} onCopied={onCopied} />
       </div>
     </label>
   );
@@ -314,7 +304,7 @@ export default function PersonalApiKeyPanel() {
               </div>
             </div>
             <div className="settings-row__detail">
-              <SecretField label="Base URL" value={activeKey.url} showCopy={false} />
+              <SecretField label="Base URL" value={activeKey.url} />
             </div>
           </div>
         </div>
@@ -358,7 +348,9 @@ export default function PersonalApiKeyPanel() {
               every tool that uses it.
             </p>
             <SecretField label="API key" value={created.api_key} onCopied={() => setKeyCopied(true)} />
-            <SecretField label="Base URL" value={created.url} showCopy={false} />
+            {/* Copyable too - a client needs both - but copying it is not
+                copying the key, so it never unlocks Done. */}
+            <SecretField label="Base URL" value={created.url} />
             <p className="settings-hint mono personal-api-key-created__curl">
               curl {created.url}/models -H &quot;Authorization: Bearer {created.api_key.slice(0, 12)}…&quot;
             </p>

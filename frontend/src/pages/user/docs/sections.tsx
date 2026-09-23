@@ -1096,7 +1096,11 @@ export const userManualSections: DocSection[] = [
           revoking the old one.
         </p>
         <ul>
-          <li>Base URL: your Alpharouter <code>/v1</code> endpoint (shown after creation).</li>
+          <li>
+            Base URL: your Alpharouter <code>/v1</code> endpoint. It is shown with a copy button when the key is
+            created and stays on the key&apos;s row in Settings afterwards. Copying it does not count as copying the
+            key: the dialog still waits for the key itself.
+          </li>
           <li>Header: <code>Authorization: Bearer &lt;your-key&gt;</code></li>
           <li>
             The plaintext key is shown once at creation and is stored only as a hash, so nobody — not an

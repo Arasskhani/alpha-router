@@ -76,6 +76,11 @@ function click(label: string) {
   return act(async () => button(label)?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 }
 
+/** The copy icons have no text, only an accessible name. */
+function labelled(name: string) {
+  return [...document.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === name);
+}
+
 /** React tracks the value itself; a plain assignment does not reach onChange. */
 async function type(input: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
@@ -186,6 +191,27 @@ describe("the personal API key panel", () => {
     expect(button("Revoke")).toBeTruthy();
   });
 
+  it("lets the Base URL of the existing key be copied", async () => {
+    answerWith({
+      keys: [
+        {
+          id: 1,
+          name: "Laptop",
+          prefix: "ar_abc",
+          url: "https://x/v1",
+          is_active: true,
+          created_at: null,
+          last_used_at: null,
+        },
+      ],
+    });
+    await render();
+    const copyUrl = labelled("Copy Base URL");
+    expect(copyUrl).toBeTruthy();
+    await act(async () => copyUrl?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(writeText).toHaveBeenCalledWith("https://x/v1");
+  });
+
 describe("the key is shown once, and the dialog acts like it", () => {
     /** Open the dialog and get as far as the created key. */
     async function reachTheKey() {
@@ -219,6 +245,20 @@ describe("the key is shown once, and the dialog acts like it", () => {
       await click("Copy key");
       expect(writeText).toHaveBeenCalledWith("ar_secret_value");
       expect(button("Copied ✓")?.disabled).toBe(false);
+      expect(button("Done")?.disabled).toBe(false);
+    });
+
+    it("offers the Base URL for copying, but copying it is not copying the key", async () => {
+      await reachTheKey();
+      const copyUrl = labelled("Copy Base URL");
+      expect(copyUrl).toBeTruthy();
+      await act(async () => copyUrl?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+      expect(writeText).toHaveBeenCalledWith("https://x/v1");
+      // The key is still only on screen; the way out stays held back.
+      expect(button("Done")?.disabled).toBe(true);
+      expect(button("Copy key")).toBeTruthy();
+
+      await click("Copy key");
       expect(button("Done")?.disabled).toBe(false);
     });
 

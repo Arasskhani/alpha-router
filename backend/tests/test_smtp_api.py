@@ -241,12 +241,21 @@ class TestWhoMay:
 
 
 class TestThePasswordStaysWithItsServer:
-    """A saved password is only ever sent to the server it was saved for.
+    """A saved password is only used with the server and username it was saved
+    for, and never over a less secure connection than the one it was saved with.
 
     The page never shows it; without this rule, anyone allowed to edit the
-    page could learn it by saving a host of their own and waiting for the
-    next report email to log in there.
+    page could learn it by saving a host of their own, or by switching to no
+    encryption (or an unchecked certificate) and listening on the network.
     """
+
+    SERVER_OR_USERNAME = (
+        "Enter the password again: a saved password is only used with the server and username it was saved for."
+    )
+    LESS_SECURE = (
+        "Enter the password again: a saved password is never sent over a less secure connection "
+        "than the one it was saved for."
+    )
 
     async def _save_first(self, client, headers, **overrides):
         resp = await client.put(URL, headers=headers, json=_body(**overrides))
@@ -257,10 +266,44 @@ class TestThePasswordStaysWithItsServer:
         await self._save_first(client, headers)
         resp = await client.put(URL, headers=headers, json=_body(host="collector.example.net", password="********"))
         assert resp.status_code == 400
-        assert resp.json()["detail"] == (
-            "Enter the password again: a saved password is only ever sent to the server it was saved for."
-        )
+        assert resp.json()["detail"] == self.SERVER_OR_USERNAME
         assert (await _saved(db_session)).host == "mail.example.com"
+
+    async def test_another_username_needs_the_password_typed_again(self, client, db_session, admin):
+        headers = _sign_in(client, admin)
+        await self._save_first(client, headers)
+        resp = await client.put(URL, headers=headers, json=_body(username="bob", password="********"))
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == self.SERVER_OR_USERNAME
+        assert (await _saved(db_session)).username == "alpha"
+
+    @pytest.mark.parametrize("weaker", [{"security": "none", "port": 25}, {"verify_certificate": False}])
+    async def test_a_less_secure_connection_needs_the_password_typed_again(self, client, db_session, admin, weaker):
+        headers = _sign_in(client, admin)
+        await self._save_first(client, headers)
+        resp = await client.put(URL, headers=headers, json=_body(password="********", **weaker))
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == self.LESS_SECURE
+        row = await _saved(db_session)
+        assert (row.security, row.verify_certificate) == ("starttls", True)
+
+        typed = await client.put(URL, headers=headers, json=_body(password="s3cret", **weaker))
+        assert typed.status_code == 200, typed.text
+
+    @pytest.mark.parametrize(
+        ("first", "then"),
+        [
+            ({"verify_certificate": False}, {}),
+            ({"security": "none", "port": 25}, {}),
+            ({"security": "none", "port": 25}, {"verify_certificate": False}),
+        ],
+    )
+    async def test_a_more_secure_connection_keeps_the_password(self, client, db_session, admin, first, then):
+        headers = _sign_in(client, admin)
+        await self._save_first(client, headers, **first)
+        resp = await client.put(URL, headers=headers, json=_body(password="********", **then))
+        assert resp.status_code == 200, resp.text
+        assert decrypt_secret((await _saved(db_session)).password_encrypted) == "s3cret"
 
     async def test_with_the_password_typed_the_new_host_is_saved(self, client, db_session, admin):
         headers = _sign_in(client, admin)
@@ -315,6 +358,18 @@ class TestThePasswordStaysWithItsServer:
         assert (body["login_tested"], body["login_skipped"]) == (False, "saved_for_another_server")
         assert server.auth_attempts == []
 
+    @pytest.mark.parametrize("weaker", [{"security": "none"}, {"verify_certificate": False}])
+    async def test_test_never_sends_the_saved_password_over_a_less_secure_connection(self, client, admin, tls, weaker):
+        headers = _sign_in(client, admin)
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
+            await self._save_first(client, headers, host="127.0.0.1", port=server.port)
+            probe = _body(host="127.0.0.1", port=server.port, password="********", **weaker)
+            resp = await client.post(TEST_URL, headers=headers, json=probe)
+        body = resp.json()
+        assert body["ok"] is True
+        assert (body["login_tested"], body["login_skipped"]) == (False, "less_secure_connection")
+        assert server.auth_attempts == []
+
     async def test_test_with_nothing_to_log_in_with_says_so(self, client, admin, tls):
         headers = _sign_in(client, admin)
         async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
@@ -356,10 +411,19 @@ class TestTheAuditTrail:
     async def test_turning_verification_off_is_recorded_on_its_own(self, client, db_session, admin):
         headers = _sign_in(client, admin)
         await client.put(URL, headers=headers, json=_body())
-        await client.put(URL, headers=headers, json=_body(password="********", verify_certificate=False))
+        # A less secure connection needs the password typed again.
+        await client.put(URL, headers=headers, json=_body(verify_certificate=False))
         event = (await self._events(db_session))[-1]
         assert event["created"] is False
         assert event["changes"] == {"verify_certificate": {"from": True, "to": False}}
+        assert event["password"] == "changed"
+
+    async def test_a_save_that_keeps_the_password_says_so(self, client, db_session, admin):
+        headers = _sign_in(client, admin)
+        await client.put(URL, headers=headers, json=_body())
+        await client.put(URL, headers=headers, json=_body(password="********", from_address="alerts@example.com"))
+        event = (await self._events(db_session))[-1]
+        assert event["changes"] == {"from_address": {"from": "reports@example.com", "to": "alerts@example.com"}}
         assert event["password"] == "unchanged"
 
     async def test_a_save_that_changes_nothing_records_nothing(self, client, db_session, admin):

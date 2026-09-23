@@ -2447,14 +2447,15 @@ export const docSections: DocSection[] = [
           </li>
           <li>
             <strong>Password</strong> — never shown; leave the field empty to keep the saved one. A saved password is
-            only ever sent to the server it was saved for: changing the server needs the password typed again, and
-            clearing the username (a relay that needs no login) discards it.
+            only used with the server and username it was saved for, and never over a less secure connection than the
+            one it was saved with: changing the server or the username, choosing <em>None</em>, or allowing a
+            self-signed certificate needs the password typed again. Clearing the username (a relay that needs no login)
+            discards it.
           </li>
           <li>
             <strong>Test connection</strong> connects with the values on the form, secures the connection as chosen and
-            logs in — with the typed password, or the saved one when the server and username are the saved ones — then
-            reports the TLS version, whether the certificate was verified and whether the login worked. Nothing is sent
-            or saved. A failure is explained in words: the port expecting the other kind of TLS, a server without
+            logs in — with the typed password, or the saved one where Save would keep it — then reports the TLS
+            version, whether the certificate was verified and whether the login worked. Nothing is sent or saved. A failure is explained in words: the port expecting the other kind of TLS, a server without
             STARTTLS, an untrusted certificate, a rejected password.
           </li>
           <li>

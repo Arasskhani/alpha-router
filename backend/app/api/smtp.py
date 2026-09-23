@@ -28,6 +28,7 @@ from app.services.smtp_service import (
     negotiated_tls_version,
     normalize_security,
     open_smtp,
+    protection_level,
     same_server,
     security_from_legacy,
     send_email,
@@ -108,14 +109,40 @@ async def get_smtp(db: AsyncSession = Depends(get_db), _: User = Depends(require
     }
 
 
-#: Refused when the host changes and the password was left alone.
-PASSWORD_BOUND_TO_SERVER = (
-    "Enter the password again: a saved password is only ever sent to the server it was saved for."
-)
+#: Why a saved password is not used for a connection (also ``login_skipped``).
+OTHER_SERVER = "saved_for_another_server"
+LESS_SECURE = "less_secure_connection"
+
+#: What Save answers when the password was left alone but may not be reused.
+PASSWORD_AGAIN = {
+    OTHER_SERVER: "Enter the password again: a saved password is only used with the server and username it was saved for.",
+    LESS_SECURE: (
+        "Enter the password again: a saved password is never sent over a less secure connection "
+        "than the one it was saved for."
+    ),
+}
 
 
 async def _saved_row(db: AsyncSession) -> SmtpSettings | None:
     return (await db.execute(select(SmtpSettings).limit(1))).scalars().first()
+
+
+def _reuse_problem(saved: SmtpSettings, body: SmtpIn) -> str | None:
+    """Why the saved password may not be used with the values in ``body``, or None.
+
+    It belongs to one server and one username, and to the protection it was
+    saved with: without this, anyone allowed to edit the page could have it
+    sent to a host of their own, or in plain text (or past an unchecked
+    certificate) to the real one while they listen - and learn a password the
+    page never shows.
+    """
+
+    if not same_server(body.host, saved.host) or (body.username or "") != (saved.username or "").strip():
+        return OTHER_SERVER
+    saved_level = protection_level(normalize_security(saved.security), saved.verify_certificate is not False)
+    if protection_level(body.resolved_security(), body.verify_certificate) < saved_level:
+        return LESS_SECURE
+    return None
 
 
 #: What the audit trail compares between two saves. Never the password.
@@ -137,12 +164,11 @@ async def save_smtp(
 ):
     """Save the settings.
 
-    A saved password stays with the server it was saved for. Pointing the
-    settings at another host without typing it again is refused: otherwise
-    anyone allowed to edit this page could learn the mailbox password, which
-    the page never shows, by saving their own host and waiting for the next
-    report email to log in there. Clearing the username means no login at
-    all, and the saved password is discarded.
+    A saved password stays with the server and username it was saved for,
+    and with the protection it was saved with (see ``_reuse_problem``).
+    Changing any of that without typing the password again is refused.
+    Clearing the username means no login at all, and the saved password is
+    discarded.
 
     Every save that changes something is audited as ``smtp_settings_changed``
     with the fields before and after. These settings decide where report
@@ -159,14 +185,10 @@ async def save_smtp(
     before = _snapshot(row)
     had_password = row is not None and bool(row.password_encrypted)
     typed = body.typed_password()
-    if (
-        row is not None
-        and row.password_encrypted
-        and typed is None
-        and body.username is not None
-        and not same_server(body.host, row.host)
-    ):
-        raise HTTPException(400, detail=PASSWORD_BOUND_TO_SERVER)
+    if row is not None and row.password_encrypted and typed is None and body.username is not None:
+        problem = _reuse_problem(row, body)
+        if problem is not None:
+            raise HTTPException(400, detail=PASSWORD_AGAIN[problem])
     if not row:
         row = SmtpSettings(host=body.host, port=body.port, from_address=body.from_address)
         db.add(row)
@@ -213,9 +235,9 @@ async def test_smtp(body: SmtpIn, db: AsyncSession = Depends(get_db), _: User = 
     and log in. Nothing is sent and nothing is saved.
 
     The password is the one typed, or else the saved one - but the saved one
-    only for the server and username it was saved for, the same rule Save
-    applies. Otherwise the connection is still tested, without a login, and
-    ``login_skipped`` says why.
+    only where Save would keep it (``_reuse_problem``). Otherwise the
+    connection is still tested, without a login, and ``login_skipped`` says
+    why.
     """
 
     typed = body.typed_password()
@@ -225,8 +247,8 @@ async def test_smtp(body: SmtpIn, db: AsyncSession = Depends(get_db), _: User = 
         saved = await _saved_row(db)
         if saved is None or not saved.password_encrypted:
             skipped = "no_password"
-        elif not same_server(body.host, saved.host) or body.username != (saved.username or "").strip():
-            skipped = "saved_for_another_server"
+        elif (problem := _reuse_problem(saved, body)) is not None:
+            skipped = problem
         else:
             try:
                 password = decrypt_secret(saved.password_encrypted)

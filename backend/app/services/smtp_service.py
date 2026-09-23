@@ -104,6 +104,16 @@ def same_server(a: str | None, b: str | None) -> bool:
     return canonical(a) == canonical(b)
 
 
+def protection_level(security: str, verify_certificate: bool) -> int:
+    """How well a connection keeps a password from other ears: 2 over TLS with
+    a verified certificate, 1 over TLS without verification (anyone able to
+    intercept can pose as the server), 0 in plain text."""
+
+    if security == SECURITY_NONE:
+        return 0
+    return 2 if verify_certificate else 1
+
+
 def client_options(security: str) -> dict[str, bool]:
     """aiosmtplib's two TLS flags for a security mode.
 

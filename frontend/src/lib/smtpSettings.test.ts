@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { describeTestResult, portAfterSecurityChange, portHint, sameServer, validateSmtpForm } from "./smtpSettings";
+import {
+  describeTestResult,
+  passwordReuseProblem,
+  portAfterSecurityChange,
+  portHint,
+  protectionLevel,
+  sameServer,
+  validateSmtpForm,
+} from "./smtpSettings";
 
 describe("portAfterSecurityChange", () => {
   it("moves a standard or empty port to the new mode's standard port", () => {
@@ -36,10 +44,46 @@ describe("portHint", () => {
 });
 
 describe("sameServer", () => {
-  it("ignores case, surrounding space and a trailing dot, like the server", () => {
+  it("ignores case, surrounding space and trailing dots, like the server", () => {
     expect(sameServer("MAIL.example.com.", " mail.example.com ")).toBe(true);
+    expect(sameServer("mail.example.com..", "mail.example.com")).toBe(true);
     expect(sameServer("mail.example.com", "mail.example.net")).toBe(false);
     expect(sameServer(null, "")).toBe(true);
+  });
+});
+
+describe("passwordReuseProblem", () => {
+  const saved = {
+    host: "mail.example.com",
+    username: "alpha",
+    security: "starttls" as const,
+    verify_certificate: true,
+  };
+
+  it("keeps the password for the same server, username and protection", () => {
+    expect(passwordReuseProblem(saved, { ...saved })).toBeNull();
+    expect(passwordReuseProblem(saved, { ...saved, host: "MAIL.example.com.", username: " alpha " })).toBeNull();
+    expect(passwordReuseProblem(saved, { ...saved, security: "ssl" })).toBeNull();
+  });
+
+  it("refuses another server or username", () => {
+    expect(passwordReuseProblem(saved, { ...saved, host: "collector.example.net" })).toBe("saved_for_another_server");
+    expect(passwordReuseProblem(saved, { ...saved, username: "bob" })).toBe("saved_for_another_server");
+  });
+
+  it("refuses a less secure connection and allows a more secure one", () => {
+    expect(passwordReuseProblem(saved, { ...saved, security: "none" })).toBe("less_secure_connection");
+    expect(passwordReuseProblem(saved, { ...saved, verify_certificate: false })).toBe("less_secure_connection");
+    const lenient = { ...saved, verify_certificate: false };
+    expect(passwordReuseProblem(lenient, saved)).toBeNull();
+    expect(passwordReuseProblem({ ...saved, security: "none" }, lenient)).toBeNull();
+  });
+
+  it("ranks the protection the way the server does", () => {
+    expect(protectionLevel("none", true)).toBe(0);
+    expect(protectionLevel("starttls", false)).toBe(1);
+    expect(protectionLevel("ssl", false)).toBe(1);
+    expect(protectionLevel("ssl", true)).toBe(2);
   });
 });
 
@@ -98,6 +142,14 @@ describe("describeTestResult", () => {
     expect(
       describeTestResult({ ok: true, security: "starttls", login_tested: false, login_skipped: "no_password" }),
     ).toContain("there is no password to try");
+    expect(
+      describeTestResult({
+        ok: true,
+        security: "none",
+        login_tested: false,
+        login_skipped: "less_secure_connection",
+      }),
+    ).toContain("not sent over a less secure connection");
   });
 
   it("passes the server's explanation of a failure through", () => {

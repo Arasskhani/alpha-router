@@ -165,8 +165,30 @@ describe("the SMTP Server page", () => {
     expect(text()).not.toContain("Certificate not checked.");
     await click(field("smtp-self-signed"));
     expect(text()).toContain("Certificate not checked.");
+    // The saved password is not sent past an unchecked certificate until it is typed again.
+    expect(button("Save")?.disabled).toBe(true);
+    expect(document.getElementById("smtp-password-hint")?.textContent).toContain("less secure connection");
+    await type(field("smtp-password"), "s3cret");
     await submit();
-    expect(sent("/api/admin/smtp", "PUT")[0].verify_certificate).toBe(false);
+    expect(sent("/api/admin/smtp", "PUT")[0]).toMatchObject({ verify_certificate: false, password: "s3cret" });
+  });
+
+  it("asks for the password again before dropping encryption", async () => {
+    answer();
+    await render();
+    await choose(field<HTMLSelectElement>("smtp-security"), "none");
+    expect(button("Save")?.disabled).toBe(true);
+    expect(document.getElementById("smtp-password-hint")?.textContent).toContain("less secure connection");
+  });
+
+  it("keeps the saved password for a more secure connection", async () => {
+    answer({ saved: { ...SAVED, verify_certificate: false } });
+    await render();
+    expect(field("smtp-self-signed").checked).toBe(true);
+    await click(field("smtp-self-signed"));
+    expect(button("Save")?.disabled).toBe(false);
+    await submit();
+    expect(sent("/api/admin/smtp", "PUT")[0]).toMatchObject({ verify_certificate: true, password: null });
   });
 
   it("saves the explicit mode and keeps the saved password when the field is left empty", async () => {
@@ -204,7 +226,13 @@ describe("the SMTP Server page", () => {
     await render();
     await type(field("smtp-host"), "smtp.example.net");
     expect(button("Save")?.disabled).toBe(true);
-    expect(document.getElementById("smtp-password-hint")?.textContent).toContain("only ever sent to the server");
+    expect(document.getElementById("smtp-password-hint")?.textContent).toContain(
+      "only used with the server and username it was saved for",
+    );
+    // Not even a submit that bypasses the button (Enter in a field) goes out.
+    await submit();
+    expect(sent("/api/admin/smtp", "PUT")).toEqual([]);
+    expect(document.querySelector('.smtp-result[role="alert"]')?.textContent).toContain("Enter the password again");
 
     await type(field("smtp-password"), "n3w");
     expect(button("Save")?.disabled).toBe(false);
@@ -215,8 +243,24 @@ describe("the SMTP Server page", () => {
   it("does not ask when the host is the same server spelled differently", async () => {
     answer();
     await render();
-    await type(field("smtp-host"), "MAIL.example.com");
+    await type(field("smtp-host"), "MAIL.example.com..");
     expect(button("Save")?.disabled).toBe(false);
+  });
+
+  it("asks for the password again for another username", async () => {
+    answer();
+    await render();
+    await type(field("smtp-username"), "bob");
+    expect(button("Save")?.disabled).toBe(true);
+    expect(document.getElementById("smtp-password-hint")?.textContent).toContain("server and username");
+  });
+
+  it("does not take the mask typed into the password field for a password", async () => {
+    answer();
+    await render();
+    await type(field("smtp-host"), "smtp.example.net");
+    await type(field("smtp-password"), "********");
+    expect(button("Save")?.disabled).toBe(true);
   });
 
   it("refuses a URL for a host name without asking the server", async () => {

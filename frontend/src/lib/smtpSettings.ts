@@ -49,11 +49,47 @@ export function portHint(security: SmtpSecurity, port: number): string | null {
   return null;
 }
 
-/** Same rule as the server: case and a trailing dot do not make another server. */
+/** Same rule as the server: case and trailing dots do not make another server. */
 export function sameServer(a: string | null | undefined, b: string | null | undefined): boolean {
-  const canonical = (host: string | null | undefined) => (host ?? "").trim().toLowerCase().replace(/\.$/, "");
+  const canonical = (host: string | null | undefined) => (host ?? "").trim().toLowerCase().replace(/\.+$/, "");
   return canonical(a) === canonical(b);
 }
+
+/** 2: TLS with a verified certificate, 1: TLS without verification, 0: plain text. */
+export function protectionLevel(security: SmtpSecurity, verifyCertificate: boolean): number {
+  if (security === "none") return 0;
+  return verifyCertificate ? 2 : 1;
+}
+
+/** Why a saved password is not used with other values; the server's `login_skipped` uses the same words. */
+export type PasswordReuseProblem = "saved_for_another_server" | "less_secure_connection";
+
+type ConnectionValues = { host: string; username: string | null; security: SmtpSecurity; verify_certificate: boolean };
+
+/**
+ * Why the saved password would not be used with the values on the form, or
+ * null. The server's rule: it stays with its server and username, and is never
+ * sent over a less secure connection than the one it was saved with.
+ */
+export function passwordReuseProblem(saved: ConnectionValues, next: ConnectionValues): PasswordReuseProblem | null {
+  if (!sameServer(next.host, saved.host) || (next.username ?? "").trim() !== (saved.username ?? "").trim()) {
+    return "saved_for_another_server";
+  }
+  if (
+    protectionLevel(next.security, next.verify_certificate) < protectionLevel(saved.security, saved.verify_certificate)
+  ) {
+    return "less_secure_connection";
+  }
+  return null;
+}
+
+/** What the server says when Save leaves the password alone but may not reuse it. */
+export const PASSWORD_AGAIN: Record<PasswordReuseProblem, string> = {
+  saved_for_another_server:
+    "Enter the password again: a saved password is only used with the server and username it was saved for.",
+  less_secure_connection:
+    "Enter the password again: a saved password is never sent over a less secure connection than the one it was saved for.",
+};
 
 export type SmtpFormValues = { host: string; port: string; from_address: string };
 
@@ -79,7 +115,7 @@ export type SmtpTestResult = {
   tls_version?: string | null;
   certificate_verified?: boolean;
   login_tested?: boolean;
-  login_skipped?: "no_password" | "saved_for_another_server" | null;
+  login_skipped?: "no_password" | PasswordReuseProblem | null;
 };
 
 /** One or two sentences for the result of "Test connection". */
@@ -93,6 +129,9 @@ export function describeTestResult(result: SmtpTestResult): string {
   if (result.login_tested) login = "Login succeeded.";
   else if (result.login_skipped === "saved_for_another_server") {
     login = "Login not tested: the saved password belongs to another server or username. Type the password to test it.";
+  } else if (result.login_skipped === "less_secure_connection") {
+    login =
+      "Login not tested: the saved password is not sent over a less secure connection than the saved one. Type the password to test it.";
   } else if (result.login_skipped === "no_password") login = "Login not tested: there is no password to try.";
   else login = "No login configured.";
   return `${connected}. ${login}`;

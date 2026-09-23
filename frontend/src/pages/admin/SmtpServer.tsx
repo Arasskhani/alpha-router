@@ -3,13 +3,14 @@ import AdminPage from "../../components/AdminPage";
 import { api, formatApiError } from "../../api";
 import { useAdminWriteLock } from "../../lib/adminWriteLock";
 import {
+  PASSWORD_AGAIN,
   PASSWORD_MASK,
   SMTP_SECURITY_OPTIONS,
   STANDARD_PORTS,
   describeTestResult,
+  passwordReuseProblem,
   portAfterSecurityChange,
   portHint,
-  sameServer,
   validateSmtpForm,
   type SmtpSecurity,
   type SmtpTestResult,
@@ -106,10 +107,12 @@ export default function SmtpServer() {
   }
 
   const passwordSaved = saved?.password === PASSWORD_MASK;
-  // A saved password only ever goes to the server it was saved for; the
-  // server refuses a new host without it, so say so before Save is pressed.
-  const needsPassword =
-    passwordSaved && !!form.username.trim() && !!saved && !sameServer(form.host, saved.host) && !form.password;
+  // The server reads the mask as "keep the saved one", so typing it is typing nothing.
+  const typedPassword = form.password !== PASSWORD_MASK ? form.password : "";
+  // A saved password stays with its server and username and is never sent over
+  // a less secure connection; the server refuses a Save that would, so say so first.
+  const passwordProblem =
+    saved && passwordSaved && form.username.trim() && !typedPassword ? passwordReuseProblem(saved, form) : null;
   const port = Number(form.port);
   const hint = Number.isInteger(port) ? portHint(form.security, port) : null;
   // The test email goes out the way reports do: with the saved settings, not the form.
@@ -133,7 +136,7 @@ export default function SmtpServer() {
 
   async function save(e: FormEvent) {
     e.preventDefault();
-    const invalid = validateSmtpForm(form);
+    const invalid = validateSmtpForm(form) ?? (passwordProblem ? PASSWORD_AGAIN[passwordProblem] : null);
     if (invalid) {
       setNotice({ kind: "error", text: invalid });
       return;
@@ -284,9 +287,9 @@ export default function SmtpServer() {
             />
           </div>
         </div>
-        <p id="smtp-password-hint" className={`smtp-hint${needsPassword ? " smtp-hint--warn" : ""}`}>
-          {needsPassword
-            ? "Enter the password again: a saved password is only ever sent to the server it was saved for."
+        <p id="smtp-password-hint" className={`smtp-hint${passwordProblem ? " smtp-hint--warn" : ""}`}>
+          {passwordProblem
+            ? PASSWORD_AGAIN[passwordProblem]
             : "Leave the username empty for a relay that needs no login."}
         </p>
 
@@ -356,8 +359,8 @@ export default function SmtpServer() {
           <button
             type="submit"
             className="btn"
-            disabled={saving || readOnly || needsPassword}
-            title={writeLockProps.title ?? (needsPassword ? "Enter the password again first." : undefined)}
+            disabled={saving || readOnly || !!passwordProblem}
+            title={writeLockProps.title ?? (passwordProblem ? "Enter the password again first." : undefined)}
           >
             {saving ? "Saving…" : "Save"}
           </button>

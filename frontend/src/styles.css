@@ -17041,3 +17041,74 @@ p.error,
   font-size: 0.85rem;
   color: var(--muted);
 }
+
+/* ── SMTP Server page ── */
+.smtp-form {
+  max-width: 46rem;
+}
+.smtp-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--label-gap);
+  margin-bottom: 0.75rem;
+  min-width: 0;
+}
+.smtp-field > label {
+  font-size: var(--label-font);
+  font-weight: 600;
+  color: var(--text);
+}
+.smtp-field > input,
+.smtp-field > select {
+  width: 100%;
+  box-sizing: border-box;
+}
+.smtp-field-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(7rem, 1fr);
+  gap: 0 0.75rem;
+}
+.smtp-hint {
+  display: block;
+  margin: -0.35rem 0 0.75rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.smtp-check .smtp-hint {
+  margin: 0.15rem 0 0;
+  font-weight: 400;
+}
+.smtp-hint--warn {
+  color: #92400e;
+}
+[data-scheme="dark"] .smtp-hint--warn {
+  color: #fbbf24;
+}
+.smtp-warning {
+  margin: 0 0 0.75rem;
+  font-size: 0.82rem;
+}
+.smtp-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0.25rem 0 0.75rem;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+.smtp-check input {
+  margin-top: 0.2rem;
+}
+.smtp-check:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.smtp-result {
+  margin: 0 0 0.75rem;
+}
+@media (max-width: 560px) {
+  .smtp-field-row {
+    grid-template-columns: 1fr;
+  }
+}

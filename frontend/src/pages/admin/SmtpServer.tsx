@@ -1,58 +1,331 @@
 import { FormEvent, useEffect, useState } from "react";
 import AdminPage from "../../components/AdminPage";
-import { api } from "../../api";
+import { api, formatApiError } from "../../api";
+import { useAdminWriteLock } from "../../lib/adminWriteLock";
+import {
+  PASSWORD_MASK,
+  SMTP_SECURITY_OPTIONS,
+  STANDARD_PORTS,
+  describeTestResult,
+  portAfterSecurityChange,
+  portHint,
+  sameServer,
+  validateSmtpForm,
+  type SmtpSecurity,
+  type SmtpTestResult,
+} from "../../lib/smtpSettings";
 
-type Smtp = {
+/** The settings as the server returns them. */
+type SavedSmtp = {
   host: string;
   port: number;
-  username: string;
-  password: string;
+  username: string | null;
+  /** The mask when a password is saved, else null. Never the password. */
+  password: string | null;
   from_address: string;
-  use_tls: boolean;
+  security: SmtpSecurity;
+  verify_certificate: boolean;
 };
 
-export default function SmtpServer() {
-  const [cfg, setCfg] = useState<Smtp>({
-    host: "",
-    port: 587,
-    username: "",
+type Form = {
+  host: string;
+  port: string;
+  security: SmtpSecurity;
+  username: string;
+  /** Only what is typed here; empty keeps the saved password. */
+  password: string;
+  from_address: string;
+  verify_certificate: boolean;
+};
+
+type Notice = { kind: "ok" | "error"; text: string };
+
+const EMPTY: Form = {
+  host: "",
+  port: String(STANDARD_PORTS.starttls),
+  security: "starttls",
+  username: "",
+  password: "",
+  from_address: "",
+  verify_certificate: true,
+};
+
+function formFrom(saved: SavedSmtp): Form {
+  return {
+    host: saved.host ?? "",
+    port: String(saved.port ?? STANDARD_PORTS[saved.security ?? "starttls"]),
+    security: saved.security ?? "starttls",
+    username: saved.username ?? "",
     password: "",
-    from_address: "",
-    use_tls: true,
-  });
-  const [msg, setMsg] = useState("");
+    from_address: saved.from_address ?? "",
+    verify_certificate: saved.verify_certificate !== false,
+  };
+}
+
+export default function SmtpServer() {
+  const { readOnly, writeLockProps } = useAdminWriteLock();
+  const [saved, setSaved] = useState<SavedSmtp | null>(null);
+  const [form, setForm] = useState<Form>(EMPTY);
+  const [loadError, setLoadError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [testResult, setTestResult] = useState<SmtpTestResult | null>(null);
 
   useEffect(() => {
-    api<Smtp | null>("/api/admin/smtp").then((d) => d && setCfg({ ...cfg, ...d, password: d.password || "" }));
+    let live = true;
+    api<SavedSmtp | null>("/api/admin/smtp")
+      .then((row) => {
+        if (!live || !row) return;
+        setSaved(row);
+        setForm(formFrom(row));
+      })
+      .catch((err) => live && setLoadError(formatApiError(err)));
+    return () => {
+      live = false;
+    };
   }, []);
+
+  function update(patch: Partial<Form>) {
+    setForm((f) => ({ ...f, ...patch }));
+    setNotice(null);
+  }
+
+  function changeSecurity(next: SmtpSecurity) {
+    setForm((f) => ({ ...f, security: next, port: portAfterSecurityChange(f.port, next) }));
+    setNotice(null);
+  }
+
+  const passwordSaved = saved?.password === PASSWORD_MASK;
+  // A saved password only ever goes to the server it was saved for; the
+  // server refuses a new host without it, so say so before Save is pressed.
+  const needsPassword =
+    passwordSaved && !!form.username.trim() && !!saved && !sameServer(form.host, saved.host) && !form.password;
+  const port = Number(form.port);
+  const hint = Number.isInteger(port) ? portHint(form.security, port) : null;
+
+  function body() {
+    return {
+      host: form.host.trim(),
+      port: Number(form.port),
+      security: form.security,
+      verify_certificate: form.verify_certificate,
+      username: form.username.trim() || null,
+      password: form.password || null,
+      from_address: form.from_address.trim(),
+    };
+  }
 
   async function save(e: FormEvent) {
     e.preventDefault();
-    await api("/api/admin/smtp", { method: "PUT", body: JSON.stringify(cfg) });
-    setMsg("SMTP settings saved.");
+    const invalid = validateSmtpForm(form);
+    if (invalid) {
+      setNotice({ kind: "error", text: invalid });
+      return;
+    }
+    setSaving(true);
+    setNotice(null);
+    try {
+      await api("/api/admin/smtp", { method: "PUT", body: JSON.stringify(body()) });
+      const row = await api<SavedSmtp | null>("/api/admin/smtp");
+      if (row) {
+        setSaved(row);
+        setForm(formFrom(row));
+      }
+      setNotice({ kind: "ok", text: "SMTP settings saved." });
+    } catch (err) {
+      setNotice({ kind: "error", text: formatApiError(err) });
+    } finally {
+      setSaving(false);
+    }
   }
 
-  async function testConn(e: FormEvent) {
-    e.preventDefault();
-    const r = await api<{ ok: boolean; error?: string }>("/api/admin/smtp/test", { method: "POST", body: JSON.stringify(cfg) });
-    setMsg(r.ok ? "Connection successful." : `Failed: ${r.error}`);
+  async function test() {
+    const invalid = validateSmtpForm(form);
+    if (invalid) {
+      setTestResult({ ok: false, error: invalid });
+      return;
+    }
+    setTesting(true);
+    setTestResult(null);
+    try {
+      setTestResult(
+        await api<SmtpTestResult>("/api/admin/smtp/test", { method: "POST", body: JSON.stringify(body()) }),
+      );
+    } catch (err) {
+      setTestResult({ ok: false, error: formatApiError(err) });
+    } finally {
+      setTesting(false);
+    }
   }
 
   return (
     <AdminPage title="SMTP Server">
-      <p className="muted-text">Used for scheduled report emails. Only admins configure this; users can only receive reports.</p>
-      {msg && <p className="card">{msg}</p>}
-      <form className="card" onSubmit={save}>
-        <input placeholder="SMTP host" value={cfg.host} onChange={(e) => setCfg({ ...cfg, host: e.target.value })} required style={{ width: "100%", marginBottom: 8 }} />
-        <input type="number" placeholder="Port" value={cfg.port} onChange={(e) => setCfg({ ...cfg, port: Number(e.target.value) })} style={{ width: "100%", marginBottom: 8 }} />
-        <input placeholder="Username" value={cfg.username} onChange={(e) => setCfg({ ...cfg, username: e.target.value })} style={{ width: "100%", marginBottom: 8 }} />
-        <input type="password" placeholder="Password" value={cfg.password} onChange={(e) => setCfg({ ...cfg, password: e.target.value })} style={{ width: "100%", marginBottom: 8 }} />
-        <input placeholder="From address" value={cfg.from_address} onChange={(e) => setCfg({ ...cfg, from_address: e.target.value })} required style={{ width: "100%", marginBottom: 8 }} />
-        <label><input type="checkbox" checked={cfg.use_tls} onChange={(e) => setCfg({ ...cfg, use_tls: e.target.checked })} /> Use TLS</label>
+      <p className="muted-text">
+        Outbound mail for scheduled reports, API keys sent to their owners, sign-in and certificate alerts, and project
+        invitations.
+      </p>
+      {loadError ? (
+        <p className="alert alert-error" role="alert">
+          {loadError}
+        </p>
+      ) : null}
+
+      <form className="card smtp-form" onSubmit={save} aria-label="SMTP settings" noValidate>
+        <div className="smtp-field">
+          <label htmlFor="smtp-host">Server</label>
+          <input
+            id="smtp-host"
+            value={form.host}
+            onChange={(e) => update({ host: e.target.value })}
+            placeholder="mail.example.com"
+            autoComplete="off"
+            spellCheck={false}
+            required
+          />
+        </div>
+
+        <div className="smtp-field-row">
+          <div className="smtp-field">
+            <label htmlFor="smtp-security">Connection security</label>
+            <select
+              id="smtp-security"
+              value={form.security}
+              onChange={(e) => changeSecurity(e.target.value as SmtpSecurity)}
+            >
+              {SMTP_SECURITY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="smtp-field">
+            <label htmlFor="smtp-port">Port</label>
+            <input
+              id="smtp-port"
+              type="number"
+              min={1}
+              max={65535}
+              value={form.port}
+              onChange={(e) => update({ port: e.target.value })}
+            />
+          </div>
+        </div>
+        {hint ? (
+          <p className="smtp-hint smtp-hint--warn" role="note">
+            {hint}
+          </p>
+        ) : null}
+        {form.security === "none" ? (
+          <p className="alert alert-warning smtp-warning">
+            <strong>No encryption.</strong> The password and every message cross the network in plain text. Use this
+            only for a relay on a network you trust.
+          </p>
+        ) : null}
+
+        <div className="smtp-field-row">
+          <div className="smtp-field">
+            <label htmlFor="smtp-username">Username</label>
+            <input
+              id="smtp-username"
+              value={form.username}
+              onChange={(e) => update({ username: e.target.value })}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </div>
+          <div className="smtp-field">
+            <label htmlFor="smtp-password">Password</label>
+            <input
+              id="smtp-password"
+              type="password"
+              value={form.password}
+              onChange={(e) => update({ password: e.target.value })}
+              placeholder={passwordSaved ? "Saved — leave blank to keep it" : ""}
+              // Not the administrator's own sign-in: stop the browser offering it here.
+              autoComplete="new-password"
+              aria-describedby="smtp-password-hint"
+            />
+          </div>
+        </div>
+        <p id="smtp-password-hint" className={`smtp-hint${needsPassword ? " smtp-hint--warn" : ""}`}>
+          {needsPassword
+            ? "Enter the password again: a saved password is only ever sent to the server it was saved for."
+            : "Leave the username empty for a relay that needs no login."}
+        </p>
+
+        <div className="smtp-field">
+          <label htmlFor="smtp-from">From address</label>
+          <input
+            id="smtp-from"
+            type="email"
+            value={form.from_address}
+            onChange={(e) => update({ from_address: e.target.value })}
+            placeholder="reports@example.com"
+            autoComplete="off"
+            required
+          />
+        </div>
+
+        <label className="smtp-check" htmlFor="smtp-self-signed">
+          <input
+            id="smtp-self-signed"
+            type="checkbox"
+            checked={!form.verify_certificate}
+            onChange={(e) => update({ verify_certificate: !e.target.checked })}
+            // The write lock only greys inputs out; a click on this label would still toggle the box.
+            disabled={form.security === "none" || readOnly}
+          />
+          <span>
+            Allow a self-signed certificate
+            <span className="smtp-hint">
+              For a server whose certificate no public authority signed. The connection stays encrypted, but the
+              server&apos;s identity is not checked.
+            </span>
+          </span>
+        </label>
+        {form.security !== "none" && !form.verify_certificate ? (
+          <p className="alert alert-warning smtp-warning">
+            <strong>Certificate not checked.</strong> Anyone able to intercept the connection could pose as the mail
+            server and collect the password. Use this only on a network you trust.
+          </p>
+        ) : null}
+
+        {testResult ? (
+          <p
+            className={`alert ${testResult.ok ? "alert-success" : "alert-error"} smtp-result`}
+            role={testResult.ok ? "status" : "alert"}
+          >
+            {describeTestResult(testResult)}
+          </p>
+        ) : null}
+        {notice ? (
+          <p
+            className={`alert ${notice.kind === "ok" ? "alert-success" : "alert-error"} smtp-result`}
+            role={notice.kind === "ok" ? "status" : "alert"}
+          >
+            {notice.text}
+          </p>
+        ) : null}
+
         <div className="dialog-actions">
-          <button className="btn" type="submit">Save</button>
-          <button type="button" className="btn btn-ghost dialog-actions-end" onClick={testConn}>
-            Test connection
+          <button
+            type="submit"
+            className="btn"
+            disabled={saving || readOnly || needsPassword}
+            title={writeLockProps.title ?? (needsPassword ? "Enter the password again first." : undefined)}
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost dialog-actions-end"
+            onClick={() => void test()}
+            disabled={testing || readOnly}
+            title={writeLockProps.title}
+          >
+            {testing ? "Testing…" : "Test connection"}
           </button>
         </div>
       </form>

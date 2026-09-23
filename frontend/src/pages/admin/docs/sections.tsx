@@ -2427,15 +2427,47 @@ export const docSections: DocSection[] = [
       <>
         <h2>SMTP Server</h2>
         <p>
-          Path: <code>/admin/smtp</code>. Outbound mail settings used when emailing reports or credentials.
+          Path: <code>/admin/smtp</code>. Outbound mail for scheduled reports, API keys sent to their owners, sign-in
+          and certificate alerts, and project invitations.
         </p>
         <ul>
-          <li>Host, port, username, password, from address, Use TLS</li>
           <li>
-            <strong>Save</strong> and <strong>Test connection</strong>
+            <strong>Connection security</strong> — SMTP has two incompatible ways of using TLS, so pick the one your
+            server speaks: <em>STARTTLS</em> (usually port 587; plain text first, then upgraded — the upgrade is
+            required, and a server that does not offer it gets nothing, password included), <em>SSL/TLS</em> (usually
+            port 465; TLS from the first byte) or <em>None</em> (no encryption; only for a relay on a network you
+            trust). Changing the mode moves a standard port along with it; a port you typed stays. A mismatched pair is
+            flagged — SSL/TLS on port 587 is what fails with &ldquo;[SSL: WRONG_VERSION_NUMBER]&rdquo;.
+          </li>
+          <li>
+            <strong>Allow a self-signed certificate</strong> — for a mail server whose certificate no public authority
+            signed. The connection stays encrypted, but any certificate is accepted, so the server&apos;s identity is
+            not checked and anyone able to intercept the connection could collect the password. Leave it off unless the
+            network between Alpharouter and the mail server is trusted.
+          </li>
+          <li>
+            <strong>Password</strong> — never shown; leave the field empty to keep the saved one. A saved password is
+            only ever sent to the server it was saved for: changing the server needs the password typed again, and
+            clearing the username (a relay that needs no login) discards it.
+          </li>
+          <li>
+            <strong>Test connection</strong> connects with the values on the form, secures the connection as chosen and
+            logs in — with the typed password, or the saved one when the server and username are the saved ones — then
+            reports the TLS version, whether the certificate was verified and whether the login worked. Nothing is sent
+            or saved. A failure is explained in words: the port expecting the other kind of TLS, a server without
+            STARTTLS, an untrusted certificate, a rejected password.
+          </li>
+          <li>
+            Every save that changes something is recorded in Admin Logs as <code>smtp_settings_changed</code>, with the
+            fields before and after and whether the password was changed or removed — never the password.
           </li>
         </ul>
-        <Note>Test uses the values you enter; point it only at trusted SMTP servers.</Note>
+        <Note>
+          Upgrading from a version with the single &ldquo;Use TLS&rdquo; switch: a saved switch on port 25, 587 or 2525
+          becomes STARTTLS (that combination fails against a standard mail server), on any other port it becomes
+          SSL/TLS, and a switch that was off becomes STARTTLS — now required, so a relay without STARTTLS has to be set
+          to None on purpose.
+        </Note>
       </>
     ),
   },

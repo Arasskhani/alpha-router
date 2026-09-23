@@ -16,6 +16,7 @@ import { api, apiList, NO_LIST_BOUNDS, type ListBounds } from "../../api";
 import ListTruncatedBanner from "../../components/ListTruncatedBanner";
 import { useConfirm } from "../../context/ConfirmContext";
 import { useDebounced } from "../../hooks/useDebounced";
+import { useTableCards } from "../../hooks/useTableCards";
 import { BROWSER_EVENT_NAMES, STORAGE_KEYS } from "../../lib/brand";
 import {
   accessCounts,
@@ -47,6 +48,8 @@ function loadViewMode(): ViewMode {
 }
 
 export default function Models() {
+  // On a phone the table view is drawn as a list of cards (styles.css).
+  const tableCardsRef = useTableCards<HTMLTableElement>();
   const { confirm } = useConfirm();
   const [allModels, setAllModels] = useState<CatalogModel[]>([]);
   const [search, setSearch] = useState("");
@@ -420,7 +423,7 @@ export default function Models() {
           />
         ) : (
           <div className="table-wrap">
-            <table className="card data-table">
+            <table ref={tableCardsRef} className="card data-table data-table--cards">
               <thead>
                 <tr>
                   <th className="col-sm">

@@ -259,12 +259,14 @@ def _describe_certificate_failure(chain: list[BaseException], text: str, conn: S
 def _describe_refused_recipients(exc: aiosmtplib.SMTPRecipientsRefused, conn: SmtpConnection) -> str:
     refused = "; ".join(f"{r.recipient} ({r.code} {r.message})" for r in exc.recipients)
     message = f"{conn.host} refused to deliver to {refused}."
-    if "relay" in refused.lower():
-        message += (
-            " It does not relay mail for this sender: set a username and password it accepts, "
-            "or ask its administrator to allow relaying from this server."
-        )
-    return message
+    if "relay" not in refused.lower():
+        return message
+    if conn.username and conn.password:
+        return message + " The login worked, but this account may not send there: ask the mail server's administrator."
+    return message + (
+        " It does not relay mail without a login: set a username and password it accepts, "
+        "or ask its administrator to allow relaying from this server."
+    )
 
 
 def describe_smtp_error(exc: BaseException, conn: SmtpConnection) -> str:

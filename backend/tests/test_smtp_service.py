@@ -277,17 +277,28 @@ class TestSendEmail:
             await send_email(db_session, to_address="owner@example.com", subject="s", body_text="b")
         assert [m.tls for m in server.messages] == [True]
 
-    async def test_a_refused_recipient_is_named_with_the_server_s_reason(self, db_session, tls):
+    @pytest.mark.parametrize(
+        ("login", "hint"),
+        [
+            (True, "The login worked, but this account may not send there"),
+            (False, "It does not relay mail without a login: set a username and password it accepts"),
+        ],
+    )
+    async def test_a_refused_recipient_is_named_with_the_server_s_reason(self, db_session, tls, login, hint):
         async with SmtpTestServer(
             mode=MODE_STARTTLS, tls_context=tls.server_context, refuse_recipients=frozenset({"owner@elsewhere.example"})
         ) as server:
-            await self._row(db_session, server, SECURITY_STARTTLS)
+            row = await self._row(db_session, server, SECURITY_STARTTLS)
+            if not login:
+                row.username = None
+                await db_session.commit()
             with pytest.raises(SmtpSendError) as caught:
                 await send_email(db_session, to_address="owner@elsewhere.example", subject="s", body_text="b")
         assert str(caught.value).startswith(
             "127.0.0.1 refused to deliver to owner@elsewhere.example (554 5.7.1 <owner@elsewhere.example>: "
-            "Relay access denied). It does not relay mail for this sender"
+            f"Relay access denied). {hint}"
         )
+        assert len(server.auth_attempts) == (1 if login else 0)
         assert server.messages == []
 
     async def test_a_refused_sender_is_named_as_the_from_address(self, db_session, tls):

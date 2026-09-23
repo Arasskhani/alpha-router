@@ -455,6 +455,12 @@ describe("the phone layout block", () => {
     expect(phone.at).toBeGreaterThan(lastTopLevelRule(".activity-heatmap__week"));
   });
 
+  it("lets a metric card's long headline go under its title in one piece", () => {
+    expect(declarations(phone.body, ".activity-metric-card__head")).toContain("flex-wrap: wrap");
+    expect(declarations(phone.body, ".activity-metric-card__total--header")).toContain("white-space: nowrap");
+    expect(phone.at).toBeGreaterThan(lastTopLevelRule(".activity-metric-card__head"));
+  });
+
   it("fits the media cards and list rows", () => {
     // The picture opens the file in the grid views, so Open goes there.
     expect(

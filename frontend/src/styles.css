@@ -18116,6 +18116,15 @@ p.error,
     padding-inline: 1rem;
     font-size: 0.9rem;
   }
+
+  /* Metric card headers (Operations): a long headline ("0 peak turns") goes
+     under the title in one piece instead of both breaking into two lines. */
+  .activity-metric-card__head {
+    flex-wrap: wrap;
+  }
+  .activity-metric-card__total--header {
+    white-space: nowrap;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

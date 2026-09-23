@@ -29,10 +29,11 @@ type HeatmapWeek = { month?: string; cells: (HeatmapDay | null)[] };
 
 /**
  * The heatmap's columns: one per week, Sunday first, each labelled with the
- * month that starts in it. A label sits over its week only if the next one is
- * at least two weeks on: the first, partial month often shows a single week
- * before the next month's label, and the two were drawn on top of each other
- * ("SepOct").
+ * month that starts in it. A label sits over its week only if it has two
+ * weeks of room, to the next label or to the chart's end: the first, partial
+ * month often shows a single week before the next month's label, and the two
+ * were drawn on top of each other ("SepOct"); a month begun in the last week
+ * would be drawn against the chart's edge.
  */
 export function heatmapWeeks(days: HeatmapDay[], timezone: TimezoneMode): HeatmapWeek[] {
   if (!days.length) return [];
@@ -65,8 +66,9 @@ export function heatmapWeeks(days: HeatmapDay[], timezone: TimezoneMode): Heatma
   }
   const labelled = grid.map((week, index) => (week.month ? index : -1)).filter((index) => index >= 0);
   labelled.forEach((index, n) => {
-    const next = labelled[n + 1];
-    if (next !== undefined && next - index < 2) grid[index] = { ...grid[index], month: undefined };
+    // Up to the next label, or the end of the chart for the last one.
+    const room = (labelled[n + 1] ?? grid.length) - index;
+    if (room < 2) grid[index] = { ...grid[index], month: undefined };
   });
   return grid;
 }

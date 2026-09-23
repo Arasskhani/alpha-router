@@ -50,6 +50,18 @@ describe("heatmapWeeks", () => {
     ).toEqual(["Oct", "Nov", "Dec"]);
   });
 
+  it("leaves out a month begun in the chart's last week, against its edge", () => {
+    // Ends on Thursday 2026-10-01: October has one day, in the last column.
+    const weeks = heatmapWeeks(year("2025-10-02", "2026-10-01"), "utc");
+    expect(weeks[weeks.length - 1].month).toBeUndefined();
+    expect(
+      weeks
+        .map((w) => w.month)
+        .filter(Boolean)
+        .pop(),
+    ).toBe("Sep");
+  });
+
   it("keeps every column: one per week, Sunday first", () => {
     const weeks = heatmapWeeks(year("2025-09-24", "2026-09-23"), "utc");
     expect(weeks.every((w) => w.cells.length === 7)).toBe(true);

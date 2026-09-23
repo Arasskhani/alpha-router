@@ -93,6 +93,16 @@ describe("useTableCards", () => {
       phone = false;
       await act(async () => cell.click());
       expect(box.checked).toBe(false);
+      // A box the page has locked stays as it is: read-only admin takes it out of
+      // reach with pointer-events: none, and a disabled box is disabled.
+      phone = true;
+      box.style.pointerEvents = "none";
+      await act(async () => cell.click());
+      expect(box.checked).toBe(false);
+      box.style.pointerEvents = "";
+      box.disabled = true;
+      await act(async () => cell.click());
+      expect(box.checked).toBe(false);
     } finally {
       window.matchMedia = real;
     }

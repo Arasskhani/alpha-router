@@ -49,7 +49,11 @@ function tapSelectAllCaption(event: MouseEvent): void {
   if (!(target instanceof Element) || target instanceof HTMLInputElement) return;
   const cell = target.closest('thead th[data-card-role="select"]');
   if (!cell || !window.matchMedia?.(PHONE_QUERY).matches) return;
-  cell.querySelector<HTMLInputElement>('input[type="checkbox"]')?.click();
+  const box = cell.querySelector<HTMLInputElement>('input[type="checkbox"]');
+  // A box the page has locked stays as it is: disabled, or out of reach by CSS
+  // (read-only admin sets pointer-events: none, which a click() would get past).
+  if (!box || box.disabled || getComputedStyle(box).pointerEvents === "none") return;
+  box.click();
 }
 
 type CardRole = "select" | "title" | "actions" | "full" | "field";

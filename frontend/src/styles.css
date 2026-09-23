@@ -17687,6 +17687,11 @@ p.error,
     word-break: normal;
     overflow-wrap: anywhere;
   }
+  /* table.card pads its first and last cells (0,2,3, more specific than the
+     rule above); a card's lines all start at the card's own padding. */
+  .data-table.data-table--cards tbody td:is(:first-child, :last-child) {
+    padding-inline: 0;
+  }
   .data-table.data-table--cards td::before {
     content: attr(data-label);
     flex: 0 1 auto;
@@ -17714,10 +17719,21 @@ p.error,
   .data-table.data-table--cards td[data-card-role="title"] > * + * {
     font-weight: 400;
   }
-  /* A select in a card sits on its label's line instead of taking a line of its own. */
-  .data-table.data-table--cards td :is(select, .role-select, .role-multi-select, .user-plan-select-wrap) {
+  /* A select in a card sits on its label's line instead of taking a line of
+     its own. Of the plan select, the wrapper is capped: the select fills it,
+     so the plan name drawn over it stays inside its border. */
+  .data-table.data-table--cards td :is(select, .role-multi-select__trigger, .user-plan-select-wrap) {
     width: auto;
     max-width: 62%;
+  }
+  .data-table.data-table--cards td .user-plan-select-wrap select {
+    width: 100%;
+    max-width: 100%;
+  }
+  /* The plan name drawn over the select reads like the select's own text,
+     from the start, not from the card line's end. */
+  .data-table.data-table--cards td .user-plan-select-label {
+    text-align: start;
   }
   .data-table.data-table--cards tr:has(> td[data-card-role="actions"]) > td[data-card-role="title"] {
     padding-inline-end: 6.5rem;

@@ -54,6 +54,53 @@ function declarations(scope: string, selector: string): string | null {
   return found;
 }
 
+type Specificity = [number, number, number];
+
+/** Split a selector list at its top-level commas. */
+function selectorList(list: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < list.length; i += 1) {
+    if (list[i] === "(") depth += 1;
+    else if (list[i] === ")") depth -= 1;
+    else if (list[i] === "," && depth === 0) {
+      out.push(list.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  out.push(list.slice(start).trim());
+  return out;
+}
+
+const bySpecificity = (a: Specificity, b: Specificity) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+
+/**
+ * [ids, classes, types] of one selector, enough for the rules checked here:
+ * :is(), :not() and :has() count as their most specific argument, :where() as nothing.
+ */
+function specificity(selector: string): Specificity {
+  const score: Specificity = [0, 0, 0];
+  const rest = selector.replace(/:(is|not|has|where)\(((?:[^()]|\([^()]*\))*)\)/g, (_m, fn: string, args: string) => {
+    if (fn !== "where") {
+      const best = selectorList(args.replace(/^\s*[>+~]/, "")).map(specificity).sort(bySpecificity).pop()!;
+      score[0] += best[0];
+      score[1] += best[1];
+      score[2] += best[2];
+    }
+    return "";
+  });
+  score[0] += (rest.match(/#[\w-]+/g) ?? []).length;
+  score[1] += (rest.match(/\.[\w-]+|\[[^\]]*\]|(?<!:):(?!:)[\w-]+/g) ?? []).length;
+  score[2] += (rest.match(/(^|[\s>+~])[a-zA-Z][\w-]*|::[\w-]+/g) ?? []).length;
+  return score;
+}
+
+/** Whether `override` outranks `base` on specificity alone, whatever their order. */
+function outranks(override: string, base: string): boolean {
+  return bySpecificity(specificity(override), specificity(base)) > 0;
+}
+
 function lastTopLevelRule(selector: string): number {
   // Top level: not inside any @media block. Strip the blocks, remembering offsets.
   let depth = 0;
@@ -230,6 +277,32 @@ describe("the phone layout block", () => {
     expect(declarations(phone.body, ".filter-panel-toggle")).toContain("min-height: 2.5rem");
   });
 
+  it("counts specificity the way the browser does, for the selectors checked here", () => {
+    expect(specificity("table.card tbody td:first-child")).toEqual([0, 2, 3]);
+    expect(specificity(".data-table.data-table--cards tbody td:is(:first-child, :last-child)")).toEqual([0, 3, 2]);
+    expect(specificity('.a td[data-card-role="title"]::before')).toEqual([0, 2, 2]);
+    expect(specificity(".a tr:has(> td[data-x]) > td")).toEqual([0, 2, 3]);
+    expect(specificity(":where(.a) b")).toEqual([0, 0, 1]);
+  });
+
+  it("gives the card rules enough weight to beat the table rules they replace", () => {
+    // Whatever the order: these base rules are more specific than a plain card rule.
+    expect(outranks(".data-table.data-table--cards tbody td:is(:first-child, :last-child)", "table.card tbody td:first-child")).toBe(true);
+    expect(outranks(".data-table.data-table--cards tbody td:is(:first-child, :last-child)", "table.card tbody td:last-child")).toBe(true);
+    const cap = ".data-table.data-table--cards td :is(select, .role-multi-select__trigger, .user-plan-select-wrap)";
+    expect(outranks(cap, ".users-table .role-multi-select__trigger")).toBe(true);
+    expect(outranks(cap, ".users-table .user-plan-select-wrap")).toBe(true);
+    // …and the plan select filling its wrapper outranks the cap.
+    expect(outranks(".data-table.data-table--cards td .user-plan-select-wrap select", cap)).toBe(true);
+    // The title keeps room for the Actions button over the padding reset.
+    expect(
+      outranks(
+        '.data-table.data-table--cards tr:has(> td[data-card-role="actions"]) > td[data-card-role="title"]',
+        ".data-table.data-table--cards tbody td:is(:first-child, :last-child)",
+      ),
+    ).toBe(true);
+  });
+
   it("draws the list tables as cards and keeps log tables scrolling with the first column in place", () => {
     const table = declarations(phone.body, ".data-table.data-table--cards");
     expect(table).toContain("display: block");
@@ -248,6 +321,24 @@ describe("the phone layout block", () => {
     // Card cells win over the column widths of fixed-layout tables (Users sets 11%, 18%…).
     expect(cell).toContain("width: auto");
     expect(declarations(phone.body, ".data-table.data-table--cards td::before")).toContain("content: attr(data-label)");
+    // table.card pads its first and last cells more specifically; the card wins back.
+    expect(declarations(phone.body, ".data-table.data-table--cards tbody td:is(:first-child, :last-child)")).toContain(
+      "padding-inline: 0",
+    );
+    expect(declarations(css.slice(0, phone.at), "table.card thead th:first-child,\ntable.card tbody td:first-child")).toContain(
+      "padding-left",
+    );
+    // The users table's role control is RoleMultiSelect's trigger button, not a select.
+    expect(
+      declarations(
+        phone.body,
+        ".data-table.data-table--cards td :is(select, .role-multi-select__trigger, .user-plan-select-wrap)",
+      ),
+    ).toContain("max-width: 62%");
+    // The plan select fills its capped wrapper, so the name drawn over it stays inside its border.
+    expect(declarations(phone.body, ".data-table.data-table--cards td .user-plan-select-wrap select")).toContain(
+      "width: 100%",
+    );
     expect(declarations(phone.body, '.data-table.data-table--cards td[data-card-role="actions"]')).toContain(
       "position: absolute",
     );

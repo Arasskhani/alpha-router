@@ -77,19 +77,37 @@ const bySpecificity = (a: Specificity, b: Specificity) => a[0] - b[0] || a[1] - 
 
 /**
  * [ids, classes, types] of one selector, enough for the rules checked here:
- * :is(), :not() and :has() count as their most specific argument, :where() as nothing.
+ * :is(), :not() and :has() count as their most specific argument, :where() as
+ * nothing, however deeply they nest.
  */
 function specificity(selector: string): Specificity {
   const score: Specificity = [0, 0, 0];
-  const rest = selector.replace(/:(is|not|has|where)\(((?:[^()]|\([^()]*\))*)\)/g, (_m, fn: string, args: string) => {
-    if (fn !== "where") {
-      const best = selectorList(args.replace(/^\s*[>+~]/, "")).map(specificity).sort(bySpecificity).pop()!;
+  let rest = "";
+  for (let i = 0; i < selector.length; ) {
+    const fn = /^:(is|not|has|where)\(/.exec(selector.slice(i));
+    if (!fn) {
+      rest += selector[i];
+      i += 1;
+      continue;
+    }
+    // The argument runs to the matching parenthesis.
+    const open = i + fn[0].length - 1;
+    let close = open;
+    for (let depth = 0; close < selector.length; close += 1) {
+      if (selector[close] === "(") depth += 1;
+      else if (selector[close] === ")" && --depth === 0) break;
+    }
+    if (fn[1] !== "where") {
+      const best = selectorList(selector.slice(open + 1, close))
+        .map((arg) => specificity(arg.replace(/^[>+~]\s*/, "")))
+        .sort(bySpecificity)
+        .pop()!;
       score[0] += best[0];
       score[1] += best[1];
       score[2] += best[2];
     }
-    return "";
-  });
+    i = close + 1;
+  }
   score[0] += (rest.match(/#[\w-]+/g) ?? []).length;
   score[1] += (rest.match(/\.[\w-]+|\[[^\]]*\]|(?<!:):(?!:)[\w-]+/g) ?? []).length;
   score[2] += (rest.match(/(^|[\s>+~])[a-zA-Z][\w-]*|::[\w-]+/g) ?? []).length;
@@ -185,6 +203,44 @@ describe("the phone layout block", () => {
     expect(declarations(drawer.body, ".topbar-menu-btn")).toContain("display: inline-flex");
     // The menu button exists only on a phone; the base rule keeps it out of a desktop.
     expect(declarations(css, ".topbar-menu-btn")).toContain("display: none");
+  });
+
+  it("gives switches and checkboxes a finger's hit area", () => {
+    // A label around a checkbox or radio is its target, and a finger tall…
+    const labelled = ':where(label:has(> input:is([type="checkbox"], [type="radio"])))';
+    expect(declarations(phone.body, labelled)).toContain("min-height: 2.75rem");
+    // …a bare one laid out as a box for that, its text beside the box…
+    const bare = ':where(label:not([class], [style]):has(> input:is([type="checkbox"], [type="radio"])))';
+    const bareRule = declarations(phone.body, bare);
+    expect(bareRule).toContain("display: inline-flex");
+    expect(bareRule).toContain("gap: 0.4em");
+    // …and at no weight, so a component's own label rules (the memory chips') still win.
+    expect(specificity(labelled)).toEqual([0, 0, 0]);
+    expect(specificity(bare)).toEqual([0, 0, 0]);
+    expect(declarations(css.slice(0, phone.at), ".memory-admin__chips label")).toContain("gap: 0.3rem");
+    // Switches and lone boxes get a 44px hit area that draws nothing, centred on a positioned box.
+    const area = declarations(
+      phone.body,
+      ".alpha-router-toggle::before,\n  .media-page-item__check::before,\n  .models-browse-card__check::before",
+    );
+    expect(area).toContain('content: ""');
+    expect(area).toContain("position: absolute");
+    expect(area).toContain("width: max(100%, 2.75rem)");
+    expect(area).toContain("height: max(100%, 2.75rem)");
+    expect(area).toContain("transform: translate(-50%, -50%)");
+    expect(area).not.toMatch(/background|border/);
+    expect(declarations(phone.body, ".alpha-router-toggle")).toContain("position: relative");
+    // A lone box's label does not grow into a 44px chip: the area is its only change.
+    expect(declarations(phone.body, ".media-page-item__check,\n  .models-browse-card__check")).toContain("min-height: 0");
+    // In the media list views the label is positioned for the area, not moved by the grid's offsets.
+    const listViews = declarations(
+      phone.body,
+      ".models-browse-card__check,\n  .media-page-grid--list .media-page-item__check,\n  .media-page-grid--detail .media-page-item__check,\n  .media-page-grid--title .media-page-item__check",
+    );
+    expect(listViews).toContain("position: relative");
+    expect(listViews).toContain("top: auto");
+    expect(listViews).toContain("left: auto");
+    expect(outranks(".media-page-grid--list .media-page-item__check", ".media-page-item__check")).toBe(true);
   });
 
   it("gives the topbar's logo and profile button a finger's size", () => {
@@ -417,6 +473,10 @@ describe("the phone layout block", () => {
     expect(specificity('.a td[data-card-role="title"]::before')).toEqual([0, 2, 2]);
     expect(specificity(".a tr:has(> td[data-x]) > td")).toEqual([0, 2, 3]);
     expect(specificity(":where(.a) b")).toEqual([0, 0, 1]);
+    // Nested functions: :where() inside or around the others.
+    expect(specificity(':where(label:has(> input:is([type="checkbox"], [type="radio"])))')).toEqual([0, 0, 0]);
+    expect(specificity('label:has(> input:is([type="checkbox"], [type="radio"]))')).toEqual([0, 1, 2]);
+    expect(specificity(".a:is(.b, :where(.c .d)) e")).toEqual([0, 2, 1]);
   });
 
   it("gives the card rules enough weight to beat the table rules they replace", () => {

@@ -17404,6 +17404,54 @@ p.error,
   .modal-panel--settings .btn {
     min-height: var(--control-height-sm);
   }
+  /* A checkbox or radio in a label: the whole label is its target, at least
+     a finger tall. A bare label (no class or style of its own) becomes a box
+     for that, its text beside the checkbox. :where() gives these no weight,
+     so a component's own label rules still win. */
+  :where(label:has(> input:is([type="checkbox"], [type="radio"]))) {
+    min-height: 2.75rem;
+  }
+  :where(label:not([class], [style]):has(> input:is([type="checkbox"], [type="radio"]))) {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4em;
+  }
+  /* A label around a lone box (a media item's, a model card's) keeps the
+     box's size and draws nothing more: a hit area around it takes the finger. */
+  .media-page-item__check,
+  .models-browse-card__check {
+    min-height: 0;
+  }
+  /* Far enough into the picture that the card's edge does not cut its hit area. */
+  .media-page-item__check {
+    top: 0.6rem;
+    left: 0.6rem;
+  }
+  /* Positioned for the hit area below, and not moved: the offsets are the grid views'. */
+  .models-browse-card__check,
+  .media-page-grid--list .media-page-item__check,
+  .media-page-grid--detail .media-page-item__check,
+  .media-page-grid--title .media-page-item__check {
+    position: relative;
+    top: auto;
+    left: auto;
+  }
+  /* Switches (21px) and lone boxes: a 44px hit area around them, drawn by
+     nothing. Their boxes are positioned, so the area is centred on them. */
+  .alpha-router-toggle {
+    position: relative;
+  }
+  .alpha-router-toggle::before,
+  .media-page-item__check::before,
+  .models-browse-card__check::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 2.75rem);
+    height: max(100%, 2.75rem);
+    transform: translate(-50%, -50%);
+  }
 
   /* No hover on a phone: the per-chat actions and the select box stay visible. */
   .alpha-router-sidebar--drawer .alpha-router-history-item-actions,

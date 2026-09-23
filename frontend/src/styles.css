@@ -16488,6 +16488,13 @@ p.error,
   text-align: right;
   white-space: nowrap;
 }
+/* The table carries data-table only to be drawn as cards on a phone; the
+   generic data-table cell breaking would change its desktop layout. */
+.chat-tools-table.data-table td,
+.chat-tools-table.data-table th {
+  word-break: normal;
+  overflow-wrap: normal;
+}
 .chat-tools-table .badge-open {
   color: #059669;
   background: color-mix(in srgb, #059669 12%, var(--surface));

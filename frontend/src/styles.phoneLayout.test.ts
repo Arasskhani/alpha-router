@@ -468,6 +468,10 @@ describe("the phone layout block", () => {
     const actionsLabel = ".chat-tools-table.data-table--cards td.chat-tools-table__actions::before";
     expect(declarations(phone.body, actionsLabel)).toContain("content: none");
     expect(outranks(actionsLabel, ".data-table.data-table--cards td::before")).toBe(true);
+    // On a desktop it keeps its own word breaking, not data-table's.
+    const desktopBreaking = declarations(css.slice(0, phone.at), ".chat-tools-table.data-table td,\n.chat-tools-table.data-table th");
+    expect(desktopBreaking).toContain("overflow-wrap: normal");
+    expect(outranks(".chat-tools-table.data-table td", ".data-table td")).toBe(true);
   });
 
   it("fits the media cards and list rows", () => {

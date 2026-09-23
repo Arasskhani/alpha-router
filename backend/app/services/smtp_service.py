@@ -29,7 +29,7 @@ import re
 import ssl
 from dataclasses import dataclass
 from email.errors import HeaderParseError
-from email.headerregistry import Address, HeaderRegistry
+from email.headerregistry import Address, AddressHeader, HeaderRegistry
 from email.message import EmailMessage
 
 import aiosmtplib
@@ -79,12 +79,11 @@ def is_sendable_from(value: str) -> bool:
 
     try:
         header = _HEADERS("From", value)
-        addresses = header.addresses
     except _ADDRESS_ERRORS:
         return False
-    if header.defects or len(addresses) != 1:
+    if not isinstance(header, AddressHeader) or header.defects or len(header.addresses) != 1:
         return False
-    address = addresses[0]
+    address = header.addresses[0]
     return bool(address.username and address.domain) and is_sendable_address(address.addr_spec)
 
 

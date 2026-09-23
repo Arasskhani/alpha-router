@@ -52,6 +52,9 @@ async def apply_schema_column_patches() -> None:
             }
         ),
         "chat_messages": frozenset({"agent_run_id", "author_display_name"}),
+        # Revision 4ce0678f5e1c fills it from the old use_tls switch; added
+        # bare here, every row would read as the default instead.
+        "smtp_settings": frozenset({"security"}),
         "image_generation_attempts": frozenset({"project_id"}),
         "video_generation_jobs": frozenset({"project_id"}),
         "project_config_versions": frozenset({"memory_auto_capture"}),

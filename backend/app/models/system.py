@@ -16,7 +16,9 @@ class SmtpSettings(Base):
     username = Column(String(255), nullable=True)
     password_encrypted = Column(Text, nullable=True)
     from_address = Column(String(255), nullable=False)
-    use_tls = Column(Boolean, default=True)
+    #: How the connection is secured: "starttls" (usually 587), "ssl" (usually
+    #: 465) or "none". See ``app.services.smtp_service``.
+    security = Column(String(16), nullable=False, default="starttls")
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 

@@ -114,4 +114,21 @@ describe("Tabs", () => {
     expect(panel.getAttribute("aria-labelledby")).toBe("ex-tab-two");
     expect(tabs()[1].getAttribute("aria-controls")).toBe("ex-panel-two");
   });
+
+  it("scrolls the strip to a tab the page selects by itself", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    current = "one";
+    render("one");
+    const list = container.querySelector<HTMLElement>('[role="tablist"]')!;
+    const rect = (left: number, right: number) => () =>
+      ({ left, right, top: 0, bottom: 20, width: right - left, height: 20, x: left, y: 0, toJSON: () => ({}) }) as DOMRect;
+    // A 200px strip; the third tab sits 60px past its right edge.
+    list.getBoundingClientRect = rect(0, 200);
+    tabs()[2].getBoundingClientRect = rect(180, 260);
+    list.scrollLeft = 0;
+    render("three");
+    expect(list.scrollLeft).toBe(60);
+  });
 });

@@ -206,6 +206,22 @@ describe("the phone layout block", () => {
     ).toBe(true);
   });
 
+  it("keeps tab lists and filter chips in one line that scrolls", () => {
+    const strips = ".tabs,\n  .agent-filter-tabs,\n  .models-filter-bar,\n  .settings-nav";
+    const rule = declarations(phone.body, strips);
+    expect(rule).toContain("flex-wrap: nowrap");
+    expect(rule).toContain("overflow-x: auto");
+    expect(
+      declarations(phone.body, ".tabs > *,\n  .agent-filter-tabs > *,\n  .models-filter-bar > *,\n  .settings-nav > *"),
+    ).toContain("flex-shrink: 0");
+    // The base rules wrap; the phone rules must come after them to win.
+    for (const selector of [".tabs", ".agent-filter-tabs", ".models-filter-bar", ".settings-nav"]) {
+      expect(phone.at, selector).toBeGreaterThan(lastTopLevelRule(selector));
+    }
+    // A checkbox group is not a strip: every option stays visible.
+    expect(phone.body).not.toContain(".memory-admin__chips");
+  });
+
   it("turns row actions into an action sheet above the drawers", () => {
     const sheet = declarations(phone.body, ".action-sheet");
     expect(sheet).toContain("position: fixed");

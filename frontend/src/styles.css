@@ -17524,6 +17524,33 @@ p.error,
     min-height: 2.75rem;
     margin: -0.5rem -0.6rem -0.5rem 0;
   }
+  /* Tab lists and filter chips: one line that scrolls sideways, like the
+     project tabs, instead of wrapping into two to four rows above the
+     content (the model filters took four). Checkbox groups such as the memory
+     categories keep wrapping: every option should stay visible. */
+  .tabs,
+  .agent-filter-tabs,
+  .models-filter-bar,
+  .settings-nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar,
+  .agent-filter-tabs::-webkit-scrollbar,
+  .models-filter-bar::-webkit-scrollbar,
+  .settings-nav::-webkit-scrollbar {
+    display: none;
+  }
+  .tabs > *,
+  .agent-filter-tabs > *,
+  .models-filter-bar > *,
+  .settings-nav > * {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
   /* Row actions (RowActionsMenu): an action sheet in reach of the thumb.
      Above the drawers and the topbar, like the popover it replaces (1200);
      a confirmation it opens (3000) still comes on top. */

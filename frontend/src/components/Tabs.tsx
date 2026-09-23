@@ -1,4 +1,6 @@
-import { useRef, type KeyboardEvent } from "react";
+import { useEffect, useRef, type KeyboardEvent } from "react";
+
+import { scrollIntoStrip } from "../lib/scrollIntoStrip";
 
 type TabItem<T extends string> = {
   id: T;
@@ -37,6 +39,13 @@ export default function Tabs<T extends string>({
   tabClassName,
 }: Props<T>) {
   const refs = useRef<Map<T, HTMLButtonElement>>(new Map());
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // On a phone a tab list is one strip that scrolls sideways (styles.css);
+  // the selected tab is kept in view when the page selects one by itself.
+  useEffect(() => {
+    scrollIntoStrip(listRef.current, refs.current.get(value));
+  }, [value]);
 
   const focusAndSelect = (id: T) => {
     onChange(id);
@@ -67,7 +76,7 @@ export default function Tabs<T extends string>({
   };
 
   return (
-    <div className={className} role="tablist" aria-label={ariaLabel}>
+    <div ref={listRef} className={className} role="tablist" aria-label={ariaLabel}>
       {items.map((item, index) => {
         const active = item.id === value;
         return (

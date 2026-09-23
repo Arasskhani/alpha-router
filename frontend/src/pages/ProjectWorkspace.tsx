@@ -9,6 +9,7 @@ import ProjectRooms from "./ProjectRooms";
 import ActivityView from "../components/activity/ActivityView";
 import { formatRequests, formatSpend, formatTokens } from "../components/activity/formatters";
 import { USAGE_AND_ACTIVITY_LABEL } from "../lib/usageActivityLabel";
+import { scrollIntoStrip } from "../lib/scrollIntoStrip";
 import {
   addMember,
   archiveProject,
@@ -136,16 +137,9 @@ export default function ProjectWorkspacePage() {
 
   // On a phone the tabs are one strip that scrolls sideways; a tab chosen by
   // the page itself (a chat opened from Media goes back to Chats) is brought into view.
-  // Only the strip scrolls (scrollIntoView could move the page around it too);
-  // on a desktop, where nothing overflows, this is a no-op.
   useEffect(() => {
     const strip = tabsRef.current;
-    const active = strip?.querySelector<HTMLElement>(".project-tab--active");
-    if (!strip || !active) return;
-    const outer = strip.getBoundingClientRect();
-    const inner = active.getBoundingClientRect();
-    if (inner.left < outer.left) strip.scrollLeft -= outer.left - inner.left;
-    else if (inner.right > outer.right) strip.scrollLeft += inner.right - outer.right;
+    scrollIntoStrip(strip, strip?.querySelector<HTMLElement>(".project-tab--active"));
   }, [tab]);
 
   useEffect(() => {

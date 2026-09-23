@@ -28,6 +28,8 @@ import asyncio
 import re
 import ssl
 from dataclasses import dataclass
+from email.errors import HeaderParseError
+from email.headerregistry import Address
 from email.message import EmailMessage
 
 import aiosmtplib
@@ -51,6 +53,21 @@ _STARTTLS_PORTS = frozenset({25, 587, 2525})
 #: Per network operation (connect, each command). aiosmtplib's own default is
 #: a minute, which is a long time to stare at a "Test connection" button.
 TIMEOUT_SECONDS = 20.0
+
+
+#: What the email package raises for an address it cannot use: several
+#: unrelated types, AttributeError among them (for "reports@[", say).
+_ADDRESS_ERRORS = (ValueError, IndexError, AttributeError, HeaderParseError)
+
+
+def is_sendable_address(value: str) -> bool:
+    """Whether ``value`` is one plain address the email package can put in a header."""
+
+    try:
+        Address(addr_spec=value)
+    except _ADDRESS_ERRORS:
+        return False
+    return True
 
 
 class SmtpNotConfiguredError(Exception):
@@ -312,16 +329,23 @@ async def send_email(
 
     cc_addrs = [a.strip() for a in (cc or []) if (a or "").strip()]
     cc_addrs = [a for a in cc_addrs if a.lower() != to_address.lower()]
+    recipients = [to_address, *cc_addrs]
 
     msg = EmailMessage()
-    msg["From"] = row.from_address
-    msg["To"] = to_address
+    try:
+        msg["From"] = row.from_address
+        msg["To"] = to_address
+        if cc_addrs:
+            msg["Cc"] = ", ".join(cc_addrs)
+    except _ADDRESS_ERRORS as exc:
+        # A From address saved before it was checked, or a malformed address
+        # on an account: say so instead of failing every caller with a crash.
+        raise SmtpSendError(
+            f"The message could not be addressed from {row.from_address} to {', '.join(recipients)}: "
+            "check that these are plain email addresses."
+        ) from exc
     msg["Subject"] = subject
     msg.set_content(body_text)
-    if cc_addrs:
-        msg["Cc"] = ", ".join(cc_addrs)
-
-    recipients = [to_address, *cc_addrs]
     try:
         conn = connection_from_row(row)
     except Exception as exc:

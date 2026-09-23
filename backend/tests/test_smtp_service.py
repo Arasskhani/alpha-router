@@ -26,6 +26,7 @@ from app.services.smtp_service import (
     client_options,
     close_quietly,
     describe_smtp_error,
+    is_sendable_address,
     negotiated_tls_version,
     open_smtp,
     security_from_legacy,
@@ -296,6 +297,16 @@ class TestSendEmail:
         assert str(caught.value).startswith("127.0.0.1 refused the From address reports@example.com (553")
         assert "Use an address this account may send as." in str(caught.value)
 
+    async def test_an_address_the_email_package_cannot_use_is_reported_before_connecting(self, db_session, tls):
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
+            row = await self._row(db_session, server, SECURITY_STARTTLS)
+            row.from_address = "reports@["
+            await db_session.commit()
+            with pytest.raises(SmtpSendError) as caught:
+                await send_email(db_session, to_address="owner@example.com", subject="s", body_text="b")
+        assert "could not be addressed from reports@[ to owner@example.com" in str(caught.value)
+        assert server.commands == []
+
     async def test_a_failure_is_reported_as_the_readable_reason(self, db_session, tls):
         async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
             await self._row(db_session, server, SECURITY_SSL)
@@ -340,6 +351,19 @@ class TestDescribeSmtpError:
         assert describe_smtp_error(exc, self.conn) == (
             "mail.example.com:587 refused the message (552 Message size exceeds fixed limit)."
         )
+
+    @pytest.mark.parametrize(
+        ("value", "sendable"),
+        [
+            ("reports@example.com", True),
+            ("reports@مثال.ایران", True),
+            ("reports@[", False),
+            ("reports@example.com;x", False),
+            ("x@y>", False),
+        ],
+    )
+    def test_which_addresses_can_go_in_a_header(self, value, sendable):
+        assert is_sendable_address(value) is sendable
 
     def test_anything_else_keeps_the_library_text(self):
         assert describe_smtp_error(RuntimeError("odd"), self.conn) == "odd"

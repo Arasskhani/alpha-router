@@ -163,6 +163,9 @@ class TestSaveAndRead:
             {"port": 70000},
             {"from_address": "reports"},
             {"from_address": "reports at example.com"},
+            # Pass a simple pattern, but the email package cannot put them in a header.
+            {"from_address": "reports@["},
+            {"from_address": "reports@example.com;x"},
             {"security": "tls"},
         ],
     )
@@ -553,6 +556,20 @@ class TestTheTestEmail:
         assert body["ok"] is False
         assert "choose STARTTLS" in body["error"]
         assert server.messages == []
+
+    async def test_a_from_address_saved_before_it_was_checked_is_explained(self, client, db_session, admin):
+        headers = _sign_in(client, admin)
+        await client.put(URL, headers=headers, json=_body())
+        row = await _saved(db_session)
+        row.from_address = "reports@["
+        await db_session.commit()
+        resp = await client.post(TEST_EMAIL_URL, headers=headers)
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "ok": False,
+            "error": "The message could not be addressed from reports@[ to fixture_admin@test: "
+            "check that these are plain email addresses.",
+        }
 
     async def test_nothing_is_sent_before_the_settings_are_saved(self, client, admin):
         headers = _sign_in(client, admin)

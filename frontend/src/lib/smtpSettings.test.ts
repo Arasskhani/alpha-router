@@ -102,6 +102,9 @@ describe("validateSmtpForm", () => {
     expect(validateSmtpForm({ ...ok, port: "70000" })).toMatch(/1 to 65535/);
     expect(validateSmtpForm({ ...ok, port: "" })).toMatch(/1 to 65535/);
     expect(validateSmtpForm({ ...ok, from_address: "reports" })).toMatch(/email address/);
+    expect(validateSmtpForm({ ...ok, from_address: "reports@[" })).toMatch(/email address/);
+    expect(validateSmtpForm({ ...ok, from_address: "reports@example.com;x" })).toMatch(/email address/);
+    expect(validateSmtpForm({ ...ok, from_address: "first.last+tag@sub.example.co.uk" })).toBeNull();
   });
 });
 

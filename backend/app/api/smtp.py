@@ -25,6 +25,7 @@ from app.services.smtp_service import (
     SmtpSendError,
     close_quietly,
     describe_smtp_error,
+    is_sendable_address,
     negotiated_tls_version,
     normalize_security,
     open_smtp,
@@ -68,7 +69,7 @@ class SmtpIn(BaseModel):
     @classmethod
     def _an_address(cls, value: str) -> str:
         address = value.strip()
-        if not _ADDRESS.match(address):
+        if not _ADDRESS.match(address) or not is_sendable_address(address):
             raise ValueError("The From address must be an email address, for example reports@example.com.")
         return address
 

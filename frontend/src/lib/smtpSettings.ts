@@ -93,6 +93,11 @@ export const PASSWORD_AGAIN: Record<PasswordReuseProblem, string> = {
 
 export type SmtpFormValues = { host: string; port: string; from_address: string };
 
+// One address, without the characters that mean something else in an address
+// header ("reports@[" or "a@b;c"): the server refuses what the email package
+// cannot put in a header, and this keeps its message from arriving as JSON.
+const PLAIN_ADDRESS = /^[^@\s<>()[\]\\,;:"]+@[^@\s<>()[\]\\,;:"]+$/;
+
 /** The first reason the form cannot be saved as it stands, or null. Mirrors the server's checks. */
 export function validateSmtpForm(form: SmtpFormValues): string | null {
   const host = form.host.trim();
@@ -102,7 +107,7 @@ export function validateSmtpForm(form: SmtpFormValues): string | null {
   }
   const port = Number(form.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) return "The port must be a number from 1 to 65535.";
-  if (!/^[^@\s]+@[^@\s]+$/.test(form.from_address.trim())) {
+  if (!PLAIN_ADDRESS.test(form.from_address.trim())) {
     return "The From address must be an email address, for example reports@example.com.";
   }
   return null;

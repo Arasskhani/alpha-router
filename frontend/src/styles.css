@@ -18078,6 +18078,44 @@ p.error,
     z-index: 1;
     background: var(--surface);
   }
+
+  /* The role picker (RoleMultiSelect): a sheet from the bottom edge over the
+     action-sheet backdrop, instead of a 220px popover beside the trigger;
+     finger-sized rows, and the list scrolls between search and buttons. */
+  .role-multi-select__menu.role-multi-select__menu--sheet {
+    position: fixed;
+    inset-inline: 0;
+    bottom: 0;
+    z-index: 1201;
+    display: flex;
+    flex-direction: column;
+    max-height: calc(var(--app-viewport-height) - 3rem);
+    padding-top: 0.6rem;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    border-bottom: 0;
+    border-radius: 14px 14px 0 0;
+    animation: modal-sheet-in 0.2s ease-out;
+  }
+  .role-multi-select__menu--sheet .role-multi-select__list {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    overscroll-behavior: contain;
+  }
+  .role-multi-select__menu--sheet .role-multi-select__option {
+    min-height: 2.75rem;
+    padding-inline: 1rem;
+    font-size: 0.95rem;
+  }
+  .role-multi-select__menu--sheet .role-multi-select__actions {
+    justify-content: flex-end;
+    padding: 0.6rem 1rem;
+  }
+  .role-multi-select__menu--sheet .role-multi-select__actions .btn-sm {
+    min-height: 2.5rem;
+    padding-inline: 1rem;
+    font-size: 0.9rem;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -18087,7 +18125,8 @@ p.error,
     transition: none;
   }
   .modal-overlay .modal-panel,
-  .action-sheet {
+  .action-sheet,
+  .role-multi-select__menu--sheet {
     animation: none;
   }
 }

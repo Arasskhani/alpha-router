@@ -264,7 +264,9 @@ describe("the phone layout block", () => {
     const reduced = mediaBlocks("(prefers-reduced-motion: reduce)");
     expect(
       reduced.some((b) =>
-        (declarations(b.body, ".modal-overlay .modal-panel,\n  .action-sheet") ?? "").includes("animation: none"),
+        (declarations(b.body, ".modal-overlay .modal-panel,\n  .action-sheet,\n  .role-multi-select__menu--sheet") ?? "").includes(
+          "animation: none",
+        ),
       ),
     ).toBe(true);
   });
@@ -469,6 +471,17 @@ describe("the phone layout block", () => {
     // The base rules for those rows come first, so the phone rules win on order.
     expect(lastTopLevelRule(".media-page-grid--title .media-page-item__actions")).toBeGreaterThan(0);
     expect(phone.at).toBeGreaterThan(lastTopLevelRule(".media-page-grid--title .media-page-item__actions"));
+  });
+
+  it("turns the role picker into a sheet from the bottom edge", () => {
+    const sheet = declarations(phone.body, ".role-multi-select__menu.role-multi-select__menu--sheet");
+    expect(sheet).toContain("position: fixed");
+    expect(sheet).toContain("bottom: 0");
+    expect(sheet).toContain("env(safe-area-inset-bottom");
+    expect(Number(/z-index:\s*(\d+)/.exec(sheet ?? "")?.[1])).toBeGreaterThanOrEqual(1201);
+    expect(declarations(phone.body, ".role-multi-select__menu--sheet .role-multi-select__option")).toContain(
+      "min-height: 2.75rem",
+    );
   });
 
   it("turns row actions into an action sheet above the drawers", () => {

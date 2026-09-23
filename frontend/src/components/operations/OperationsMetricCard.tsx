@@ -64,7 +64,9 @@ export default function OperationsMetricCard({
     [segments],
   );
 
-  const totalLabel = totalLabelOverride ?? `${formatValue(total)}${unit}`;
+  // A symbol ("%", "ms") sits against the number; a word ("peak turns") needs a space.
+  const unitGap = /^[a-z]{3,}/i.test(unit) ? " " : "";
+  const totalLabel = totalLabelOverride ?? `${formatValue(total)}${unitGap}${unit}`;
   const axisFormat = chartFormatValue ?? formatValue;
   const changeClass =
     changePct == null ? "" : changePct < 0 ? " activity-change-badge--down" : changePct > 0 ? " activity-change-badge--up" : "";

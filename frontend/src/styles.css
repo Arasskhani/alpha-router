@@ -17754,6 +17754,11 @@ p.error,
   .data-table.data-table--cards td[data-card-role="full"]::before {
     content: none;
   }
+  /* A column without a header (a Logs link, say) has no label to push its
+     value to the end of the line, where every other value sits. */
+  .data-table.data-table--cards td[data-label=""] {
+    justify-content: flex-end;
+  }
   .data-table.data-table--cards td[data-card-role="title"] {
     display: block;
     padding-top: 0.1rem;

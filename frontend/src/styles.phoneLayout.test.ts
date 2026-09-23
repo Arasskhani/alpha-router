@@ -354,6 +354,10 @@ describe("the phone layout block", () => {
     expect(label).toContain("content: attr(data-label);");
     // Read once: the header already names the cell, so the drawn label has empty alt text.
     expect(label).toContain('content: attr(data-label) / "";');
+    // A cell under an empty header has no label to push it to the end of its line.
+    expect(declarations(phone.body, '.data-table.data-table--cards td[data-label=""]')).toContain(
+      "justify-content: flex-end",
+    );
     // table.card pads its first and last cells more specifically; the card wins back.
     expect(declarations(phone.body, ".data-table.data-table--cards tbody td:is(:first-child, :last-child)")).toContain(
       "padding-inline: 0",

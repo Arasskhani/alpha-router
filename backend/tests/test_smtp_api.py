@@ -12,6 +12,7 @@ import email
 import email.policy
 import json
 
+import aiosmtplib
 import pytest
 from sqlalchemy import select
 
@@ -214,6 +215,20 @@ class TestTestConnection:
         assert lenient["ok"] is True
         assert lenient["certificate_verified"] is False
         assert lenient["tls_version"] in {"TLSv1.2", "TLSv1.3"}
+
+    async def test_a_server_that_hangs_up_after_the_login_is_reported_not_a_crash(
+        self, client, admin, tls, monkeypatch
+    ):
+        def hung_up(_client):
+            raise aiosmtplib.SMTPServerDisconnected("Server not connected")
+
+        # What reading the TLS version does once the server has closed the connection.
+        monkeypatch.setattr("app.api.smtp.negotiated_tls_version", hung_up)
+        headers = _sign_in(client, admin)
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
+            resp = await client.post(TEST_URL, headers=headers, json=_body(host="127.0.0.1", port=server.port))
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": False, "error": f"127.0.0.1:{server.port} closed the connection unexpectedly."}
 
     async def test_nothing_is_saved_by_a_test(self, client, db_session, admin, tls):
         headers = _sign_in(client, admin)

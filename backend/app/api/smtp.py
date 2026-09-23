@@ -274,10 +274,13 @@ async def test_smtp(body: SmtpIn, db: AsyncSession = Depends(get_db), _: User = 
     )
     try:
         client = await open_smtp(conn)
+        try:
+            # Raises too when the server hung up right after the login.
+            tls_version = negotiated_tls_version(client)
+        finally:
+            await close_quietly(client)
     except Exception as exc:  # noqa: BLE001 -- the reason is reported to the administrator
         return {"ok": False, "error": describe_smtp_error(exc, conn)}
-    tls_version = negotiated_tls_version(client)
-    await close_quietly(client)
     return {
         "ok": True,
         "security": conn.security,

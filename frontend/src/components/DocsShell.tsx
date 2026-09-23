@@ -69,8 +69,10 @@ export default function DocsShell({
     return () => window.clearTimeout(t);
   }, [location.pathname, location.hash]);
 
+  // The sections on the page change with the search: a section it hid comes
+  // back as a new element, which has to be observed again.
   useEffect(() => {
-    const nodes = sections
+    const nodes = filtered
       .map((s) => document.getElementById(s.id))
       .filter(Boolean) as HTMLElement[];
 
@@ -86,7 +88,7 @@ export default function DocsShell({
 
     nodes.forEach((n) => observer.observe(n));
     return () => observer.disconnect();
-  }, [sections]);
+  }, [filtered]);
 
   // The sheet is modal: Escape closes it, Tab goes round inside it.
   useEffect(() => {

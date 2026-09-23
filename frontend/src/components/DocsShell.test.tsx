@@ -40,14 +40,24 @@ let root: Root;
 const scrolled: string[] = [];
 const realScrollIntoView = Element.prototype.scrollIntoView;
 
+/** The elements the page's IntersectionObserver watches now. */
+const observed = new Set<Element>();
+
 beforeEach(() => {
   layout.phone = false;
   scrolled.length = 0;
+  observed.clear();
   vi.stubGlobal(
     "IntersectionObserver",
     class {
-      observe() {}
-      disconnect() {}
+      private mine: Element[] = [];
+      observe(el: Element) {
+        this.mine.push(el);
+        observed.add(el);
+      }
+      disconnect() {
+        this.mine.forEach((el) => observed.delete(el));
+      }
     },
   );
   Element.prototype.scrollIntoView = function (this: Element) {
@@ -105,6 +115,29 @@ describe("the docs on a desktop", () => {
     expect(contents().hasAttribute("role")).toBe(false);
     expect(contents().querySelector(".docs-search")).toBe(search());
     expect(search().getAttribute("aria-label")).toBe("Search manual");
+  });
+});
+
+describe("the contents highlight", () => {
+  it("follows the text again after a search is cleared", async () => {
+    await render();
+    const typeQuery = async (value: string) => {
+      const setValue = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      await act(async () => {
+        setValue.call(search(), value);
+        search().dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    const sectionsNow = () => [...host.querySelectorAll(".docs-section")];
+    expect(sectionsNow().every((s) => observed.has(s))).toBe(true);
+    await typeQuery("media");
+    await typeQuery("");
+    // The sections the search hid are new elements; each is watched again.
+    expect(sectionsNow()).toHaveLength(3);
+    expect(sectionsNow().every((s) => observed.has(s))).toBe(true);
   });
 });
 

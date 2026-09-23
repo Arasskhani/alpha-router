@@ -9,12 +9,14 @@ import { VIEWPORT_HEIGHT_VAR, useVisualViewportHeight } from "./useVisualViewpor
 
 class FakeViewport extends EventTarget {
   height = 800;
+  scale = 1;
 }
 
 let host: HTMLDivElement;
 let root: Root;
 let viewport: FakeViewport;
 const original = Object.getOwnPropertyDescriptor(window, "visualViewport");
+const originalScrollY = Object.getOwnPropertyDescriptor(window, "scrollY");
 
 function Probe({ active }: { active: boolean }) {
   useVisualViewportHeight(active);
@@ -37,6 +39,9 @@ afterEach(() => {
   if (original) Object.defineProperty(window, "visualViewport", original);
   else delete (window as { visualViewport?: unknown }).visualViewport;
   document.documentElement.style.removeProperty(VIEWPORT_HEIGHT_VAR);
+  if (originalScrollY) Object.defineProperty(window, "scrollY", originalScrollY);
+  else delete (window as { scrollY?: unknown }).scrollY;
+  vi.restoreAllMocks();
 });
 
 describe("useVisualViewportHeight", () => {
@@ -53,11 +58,29 @@ describe("useVisualViewportHeight", () => {
 
   it("puts a page the keyboard scrolled back at the top", async () => {
     const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
-    Object.defineProperty(window, "scrollY", { configurable: true, value: 120 });
-    await act(async () => root.render(<Probe active />));
-    expect(scrollTo).toHaveBeenCalledWith(0, 0);
     Object.defineProperty(window, "scrollY", { configurable: true, value: 0 });
-    scrollTo.mockRestore();
+    await act(async () => root.render(<Probe active />));
+    expect(scrollTo).not.toHaveBeenCalled();
+    // The keyboard opens and iOS scrolls the focused field into view.
+    Object.defineProperty(window, "scrollY", { configurable: true, value: 120 });
+    viewport.height = 450;
+    await act(async () => viewport.dispatchEvent(new Event("resize")));
+    expect(scrollTo).toHaveBeenCalledWith(0, 0);
+  });
+
+  it("leaves the height and the scroll alone while the page is pinch-zoomed", async () => {
+    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    await act(async () => root.render(<Probe active />));
+    Object.defineProperty(window, "scrollY", { configurable: true, value: 300 });
+    viewport.scale = 2;
+    viewport.height = 400;
+    await act(async () => viewport.dispatchEvent(new Event("resize")));
+    expect(value()).toBe("800px");
+    expect(scrollTo).not.toHaveBeenCalled();
+    viewport.scale = 1;
+    viewport.height = 800;
+    await act(async () => viewport.dispatchEvent(new Event("resize")));
+    expect(value()).toBe("800px");
   });
 
   it("sets nothing while inactive, and clears the variable when it stops", async () => {

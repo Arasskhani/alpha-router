@@ -274,7 +274,7 @@ export default function DatabaseMonitor() {
             <p className="muted-text" style={{ marginTop: 0 }}>
               Row counts across Alpharouter tables (approx. {totalRows.toLocaleString()} rows total).
             </p>
-            <div className="table-wrap">
+            <div className="table-wrap table-wrap--phone-scroll">
               <table className="data-table data-table--sticky-first">
                 <thead>
                   <tr>

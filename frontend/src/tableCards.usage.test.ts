@@ -33,6 +33,14 @@ describe("card tables", () => {
     ]);
   });
 
+  it("leave the sticky-first tables' wrappers alone on a desktop", () => {
+    const sticky = sources.filter((s) => s.text.includes("data-table--sticky-first"));
+    expect(sticky.map((s) => s.path.split(/[\\/]/).pop()).sort()).toEqual(["DatabaseMonitor.tsx", "ProjectUsage.tsx"]);
+    for (const { path, text } of sticky) {
+      expect(text, path).toMatch(/<div className="table-wrap table-wrap--phone-scroll">\s*<table className="[^"]*data-table--sticky-first/);
+    }
+  });
+
   it("each label their cells with useTableCards on the same table", () => {
     for (const { path, text } of cardTables) {
       expect(text, path).toMatch(/const (\w+) = useTableCards<HTMLTableElement>\(\);/);

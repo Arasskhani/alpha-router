@@ -73,7 +73,7 @@ export default function ProjectUsage() {
       </p>
       {error ? <p className="flash flash-error">{error}</p> : null}
       {loading ? <div className="loading-state">Loading…</div> : null}
-      <div className="table-wrap">
+      <div className="table-wrap table-wrap--phone-scroll">
         <table className="data-table data-table--sticky-first">
           <thead>
             <tr>

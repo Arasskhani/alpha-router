@@ -1566,6 +1566,12 @@ input:focus, select:focus, textarea:focus {
   -webkit-overflow-scrolling: touch;
   margin-bottom: 1rem;
 }
+/* Scrolls sideways on a phone only (the phone block). On a desktop it must not
+   be a scroll container: the sticky header would stick to it, not the page. */
+.table-wrap.table-wrap--phone-scroll {
+  overflow: visible;
+  margin-bottom: 0;
+}
 
 table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: auto; }
 table th {
@@ -17713,6 +17719,9 @@ p.error,
   /* Log tables (and Project Usage, Database) keep their columns and scroll
      sideways; the first column stays put as the row's anchor. A time wraps
      at its comma, so the anchor is about 6rem, not half the screen. */
+  .table-wrap.table-wrap--phone-scroll {
+    overflow-x: auto;
+  }
   .table-wrap--api-logs .data-table--api-logs th:first-child,
   .table-wrap--api-logs .data-table--api-logs td:first-child:not([colspan]),
   .data-table--sticky-first th:first-child,

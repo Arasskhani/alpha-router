@@ -255,6 +255,13 @@ describe("the phone layout block", () => {
     );
     expect(sticky).toContain("position: sticky");
     expect(sticky).toContain("background: var(--surface)");
+    // Project Usage and Database scroll sideways in a wrapper that only a phone
+    // makes a scroll container: on a desktop their sticky header sticks to the page.
+    const wrap = ".table-wrap.table-wrap--phone-scroll";
+    expect(declarations(phone.body, wrap)).toContain("overflow-x: auto");
+    const desktopWrap = declarations(css.slice(0, phone.at), wrap);
+    expect(desktopWrap).toContain("overflow: visible");
+    expect(desktopWrap).toContain("margin-bottom: 0");
     // The corner sits above the other header cells, which are sticky at z-index 1.
     expect(
       declarations(phone.body, ".table-wrap--api-logs .data-table--api-logs th:first-child,\n  .data-table--sticky-first th:first-child"),

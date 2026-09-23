@@ -50,6 +50,9 @@ const EMPTY: Form = {
   verify_certificate: true,
 };
 
+/** What "Send test email to me" answers. */
+type TestEmailResult = { ok: boolean; to?: string; error?: string };
+
 function formFrom(saved: SavedSmtp): Form {
   return {
     host: saved.host ?? "",
@@ -62,6 +65,10 @@ function formFrom(saved: SavedSmtp): Form {
   };
 }
 
+function sameForm(a: Form, b: Form): boolean {
+  return (Object.keys(a) as (keyof Form)[]).every((key) => a[key] === b[key]);
+}
+
 export default function SmtpServer() {
   const { readOnly, writeLockProps } = useAdminWriteLock();
   const [saved, setSaved] = useState<SavedSmtp | null>(null);
@@ -71,6 +78,8 @@ export default function SmtpServer() {
   const [testing, setTesting] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [testResult, setTestResult] = useState<SmtpTestResult | null>(null);
+  const [mailing, setMailing] = useState(false);
+  const [mailNotice, setMailNotice] = useState<Notice | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -103,6 +112,12 @@ export default function SmtpServer() {
     passwordSaved && !!form.username.trim() && !!saved && !sameServer(form.host, saved.host) && !form.password;
   const port = Number(form.port);
   const hint = Number.isInteger(port) ? portHint(form.security, port) : null;
+  // The test email goes out the way reports do: with the saved settings, not the form.
+  let mailBlocked: string | null = null;
+  if (!saved) mailBlocked = "Save the settings first: the test email is sent with the saved settings.";
+  else if (!sameForm(form, formFrom(saved))) {
+    mailBlocked = "Save your changes first: the test email is sent with the saved settings.";
+  }
 
   function body() {
     return {
@@ -156,6 +171,26 @@ export default function SmtpServer() {
       setTestResult({ ok: false, error: formatApiError(err) });
     } finally {
       setTesting(false);
+    }
+  }
+
+  async function sendTestEmail() {
+    setMailing(true);
+    setMailNotice(null);
+    try {
+      const result = await api<TestEmailResult>("/api/admin/smtp/test-email", { method: "POST" });
+      setMailNotice(
+        result.ok
+          ? {
+              kind: "ok",
+              text: `The mail server accepted a test email for ${result.to}. If it does not arrive, look in the spam folder.`,
+            }
+          : { kind: "error", text: result.error || "The test email could not be sent." },
+      );
+    } catch (err) {
+      setMailNotice({ kind: "error", text: formatApiError(err) });
+    } finally {
+      setMailing(false);
     }
   }
 
@@ -308,6 +343,14 @@ export default function SmtpServer() {
             {notice.text}
           </p>
         ) : null}
+        {mailNotice ? (
+          <p
+            className={`alert ${mailNotice.kind === "ok" ? "alert-success" : "alert-error"} smtp-result smtp-mail-result`}
+            role={mailNotice.kind === "ok" ? "status" : "alert"}
+          >
+            {mailNotice.text}
+          </p>
+        ) : null}
 
         <div className="dialog-actions">
           <button
@@ -318,16 +361,33 @@ export default function SmtpServer() {
           >
             {saving ? "Saving…" : "Save"}
           </button>
-          <button
-            type="button"
-            className="btn btn-ghost dialog-actions-end"
-            onClick={() => void test()}
-            disabled={testing || readOnly}
-            title={writeLockProps.title}
-          >
-            {testing ? "Testing…" : "Test connection"}
-          </button>
+          <div className="dialog-actions-end">
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => void test()}
+              disabled={testing || readOnly}
+              title={writeLockProps.title}
+            >
+              {testing ? "Testing…" : "Test connection"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => void sendTestEmail()}
+              disabled={mailing || readOnly || !!mailBlocked}
+              title={writeLockProps.title ?? mailBlocked ?? undefined}
+              aria-describedby={mailBlocked && !readOnly ? "smtp-mail-hint" : undefined}
+            >
+              {mailing ? "Sending…" : "Send test email to me"}
+            </button>
+          </div>
         </div>
+        {mailBlocked && !readOnly ? (
+          <p id="smtp-mail-hint" className="smtp-hint smtp-actions-hint">
+            {mailBlocked}
+          </p>
+        ) : null}
       </form>
     </AdminPage>
   );

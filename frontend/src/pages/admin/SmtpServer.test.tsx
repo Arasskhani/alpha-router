@@ -33,11 +33,17 @@ const SAVED = {
 
 type Handler = (init?: RequestInit) => unknown;
 
-function answer({ saved = SAVED as unknown, put, test }: { saved?: unknown; put?: Handler; test?: Handler } = {}) {
+function answer({
+  saved = SAVED as unknown,
+  put,
+  test,
+  mail,
+}: { saved?: unknown; put?: Handler; test?: Handler; mail?: Handler } = {}) {
   vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
     if (path === "/api/admin/smtp" && (!init || !init.method)) return saved;
     if (path === "/api/admin/smtp" && init?.method === "PUT") return put ? put(init) : { ok: true };
     if (path === "/api/admin/smtp/test") return test ? test(init) : { ok: true, security: "starttls" };
+    if (path === "/api/admin/smtp/test-email") return mail ? mail(init) : { ok: true, to: "admin@example.com" };
     throw new Error(`unexpected ${path}`);
   });
 }
@@ -269,6 +275,72 @@ describe("the SMTP Server page", () => {
     await render();
     expect(button("Save")?.disabled).toBe(true);
     expect(button("Test connection")?.disabled).toBe(true);
+    expect(button("Send test email to me")?.disabled).toBe(true);
     expect(field("smtp-self-signed").disabled).toBe(true);
+  });
+});
+
+describe("Send test email to me", () => {
+  const mailCalls = () => vi.mocked(api).mock.calls.filter((c) => c[0] === "/api/admin/smtp/test-email");
+
+  it("sends with the saved settings and says which address the server accepted", async () => {
+    answer();
+    await render();
+    expect(document.getElementById("smtp-mail-hint")).toBeNull();
+    await click(button("Send test email to me"));
+    expect(mailCalls()).toHaveLength(1);
+    // Nothing from the form: the server sends with what is saved, to the administrator's own address.
+    expect((mailCalls()[0][1] as RequestInit).body).toBeUndefined();
+    expect(document.querySelector('.smtp-mail-result[role="status"]')?.textContent).toBe(
+      "The mail server accepted a test email for admin@example.com. If it does not arrive, look in the spam folder.",
+    );
+  });
+
+  it("waits for unsaved changes to be saved first", async () => {
+    answer();
+    await render();
+    await type(field("smtp-from"), "alerts@example.com");
+    expect(button("Send test email to me")?.disabled).toBe(true);
+    expect(document.getElementById("smtp-mail-hint")?.textContent).toBe(
+      "Save your changes first: the test email is sent with the saved settings.",
+    );
+    // Typing the password counts as a change too.
+    await type(field("smtp-from"), "reports@example.com");
+    expect(button("Send test email to me")?.disabled).toBe(false);
+    await type(field("smtp-password"), "n3w");
+    expect(button("Send test email to me")?.disabled).toBe(true);
+
+    await submit();
+    expect(button("Send test email to me")?.disabled).toBe(false);
+    expect(document.getElementById("smtp-mail-hint")).toBeNull();
+  });
+
+  it("cannot send before anything is saved", async () => {
+    answer({ saved: null });
+    await render();
+    expect(button("Send test email to me")?.disabled).toBe(true);
+    expect(document.getElementById("smtp-mail-hint")?.textContent).toContain("Save the settings first");
+  });
+
+  it("shows the server's explanation when the email could not be sent", async () => {
+    answer({ mail: () => ({ ok: false, error: "mail.example.com rejected the username or password (535)." }) });
+    await render();
+    await click(button("Send test email to me"));
+    expect(document.querySelector('.smtp-mail-result[role="alert"]')?.textContent).toBe(
+      "mail.example.com rejected the username or password (535).",
+    );
+  });
+
+  it("shows why the server refused to try", async () => {
+    answer({
+      mail: () => {
+        throw new Error("Your account has no email address to send the test to.");
+      },
+    });
+    await render();
+    await click(button("Send test email to me"));
+    expect(document.querySelector('.smtp-mail-result[role="alert"]')?.textContent).toBe(
+      "Your account has no email address to send the test to.",
+    );
   });
 });

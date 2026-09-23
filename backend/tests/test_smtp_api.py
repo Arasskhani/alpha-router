@@ -8,6 +8,8 @@ that must never be saved, and who may change any of it.
 
 from __future__ import annotations
 
+import email
+import email.policy
 import json
 
 import pytest
@@ -24,6 +26,7 @@ from tests.smtp_test_server import MODE_STARTTLS, SmtpTestServer, TlsMaterial, m
 
 URL = "/api/admin/smtp"
 TEST_URL = "/api/admin/smtp/test"
+TEST_EMAIL_URL = "/api/admin/smtp/test-email"
 
 
 @pytest.fixture(autouse=True)
@@ -226,6 +229,7 @@ class TestWhoMay:
         assert (await client.get(URL, headers=headers)).status_code == 403
         assert (await client.put(URL, headers=headers, json=_body())).status_code == 403
         assert (await client.post(TEST_URL, headers=headers, json=_body())).status_code == 403
+        assert (await client.post(TEST_EMAIL_URL, headers=headers)).status_code == 403
 
     async def test_a_read_only_super_admin_may_look_but_not_change_or_test(self, client, db_session):
         viewer = await _user(db_session, "viewer", roles=["read_only_super_admin"])
@@ -233,6 +237,7 @@ class TestWhoMay:
         assert (await client.get(URL, headers=headers)).status_code == 200
         assert (await client.put(URL, headers=headers, json=_body())).status_code == 403
         assert (await client.post(TEST_URL, headers=headers, json=_body())).status_code == 403
+        assert (await client.post(TEST_EMAIL_URL, headers=headers)).status_code == 403
 
 
 class TestThePasswordStaysWithItsServer:
@@ -389,3 +394,80 @@ class TestTheAuditTrail:
         await client.put(URL, headers=headers, json=_body())
         await client.put(URL, headers=headers, json=_body(host="collector.example.net", password="********"))
         assert len(await self._events(db_session)) == 1
+
+
+class TestTheTestEmail:
+    """The "Send test email to me" button: a real message, sent with the saved
+    settings, to the administrator's own address and to nobody else."""
+
+    async def test_a_real_message_reaches_the_administrator_through_the_saved_settings(self, client, admin, tls):
+        address, username = admin.email, admin.username
+        headers = _sign_in(client, admin)
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
+            saved = await client.put(URL, headers=headers, json=_body(host="127.0.0.1", port=server.port))
+            assert saved.status_code == 200, saved.text
+            resp = await client.post(TEST_EMAIL_URL, headers=headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"ok": True, "to": address}
+
+        (message,) = server.messages
+        assert (message.mail_from, message.recipients, message.tls) == ("reports@example.com", (address,), True)
+        assert [(a.password, a.tls) for a in server.auth_attempts] == [("s3cret", True)]
+        parsed = email.message_from_bytes(message.data, policy=email.policy.default)
+        assert parsed["Subject"] == "Alpharouter test email"
+        assert parsed["To"] == address
+        text = parsed.get_content()
+        assert username in text
+        assert f"127.0.0.1:{server.port} with STARTTLS." in text
+
+    async def test_the_body_says_when_the_certificate_was_not_checked(self, client, admin, tls):
+        headers = _sign_in(client, admin)
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.self_signed_context) as server:
+            await client.put(
+                URL, headers=headers, json=_body(host="127.0.0.1", port=server.port, verify_certificate=False)
+            )
+            resp = await client.post(TEST_EMAIL_URL, headers=headers)
+        assert resp.json()["ok"] is True
+        (message,) = server.messages
+        text = email.message_from_bytes(message.data, policy=email.policy.default).get_content()
+        assert "with STARTTLS (certificate not verified)." in text
+
+    async def test_the_recipient_is_never_taken_from_the_request(self, client, admin, tls):
+        address = admin.email
+        headers = _sign_in(client, admin)
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
+            await client.put(URL, headers=headers, json=_body(host="127.0.0.1", port=server.port))
+            resp = await client.post(
+                TEST_EMAIL_URL,
+                headers=headers,
+                json={"to": "someone@elsewhere.example", "to_address": "someone@elsewhere.example"},
+            )
+        assert resp.json() == {"ok": True, "to": address}
+        assert [m.recipients for m in server.messages] == [(address,)]
+
+    async def test_a_failure_comes_back_explained(self, client, admin, tls):
+        headers = _sign_in(client, admin)
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
+            await client.put(URL, headers=headers, json=_body(host="127.0.0.1", port=server.port, security="ssl"))
+            resp = await client.post(TEST_EMAIL_URL, headers=headers)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is False
+        assert "choose STARTTLS" in body["error"]
+        assert server.messages == []
+
+    async def test_nothing_is_sent_before_the_settings_are_saved(self, client, admin):
+        headers = _sign_in(client, admin)
+        resp = await client.post(TEST_EMAIL_URL, headers=headers)
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "Save the SMTP settings first."
+
+    async def test_an_account_without_an_address_is_told_so(self, client, db_session, admin, tls):
+        headers = _sign_in(client, admin)
+        await client.put(URL, headers=headers, json=_body())
+        nobody = await _user(db_session, "no_address", roles=["super_admin"])
+        nobody.email = None
+        await db_session.commit()
+        resp = await client.post(TEST_EMAIL_URL, headers=_sign_in(client, nobody))
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "Your account has no email address to send the test to."

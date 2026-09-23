@@ -17,8 +17,12 @@ from app.models.system import SmtpSettings
 from app.models.user import User
 from app.services.secret_crypto import decrypt_secret, encrypt_secret
 from app.services.smtp_service import (
+    SECURITY_NONE,
+    SECURITY_SSL,
     SECURITY_STARTTLS,
     SmtpConnection,
+    SmtpNotConfiguredError,
+    SmtpSendError,
     close_quietly,
     describe_smtp_error,
     negotiated_tls_version,
@@ -26,6 +30,7 @@ from app.services.smtp_service import (
     open_smtp,
     same_server,
     security_from_legacy,
+    send_email,
 )
 
 router = APIRouter(prefix="/api/admin/smtp", tags=["smtp"])
@@ -250,3 +255,48 @@ async def test_smtp(body: SmtpIn, db: AsyncSession = Depends(get_db), _: User = 
         "login_tested": bool(conn.username and conn.password),
         "login_skipped": skipped,
     }
+
+
+TEST_EMAIL_SUBJECT = "Alpharouter test email"
+
+_SECURITY_NAMES = {SECURITY_STARTTLS: "STARTTLS", SECURITY_SSL: "SSL/TLS", SECURITY_NONE: "no encryption"}
+
+
+def _test_email_text(row: SmtpSettings, admin: User, sent_at: datetime.datetime) -> str:
+    security = normalize_security(row.security)
+    how = _SECURITY_NAMES[security]
+    if security != SECURITY_NONE and row.verify_certificate is False:
+        how += " (certificate not verified)"
+    return (
+        "This is a test email from Alpharouter.\n\n"
+        f"{admin.username} sent it from Admin > SMTP Server at {sent_at:%Y-%m-%d %H:%M} UTC, "
+        f"through {row.host}:{row.port} with {how}.\n\n"
+        "If it arrived, the saved SMTP settings work: scheduled reports, API keys sent to "
+        "their owners and security alerts are sent the same way.\n"
+    )
+
+
+@router.post("/test-email")
+async def send_test_email(db: AsyncSession = Depends(get_db), admin: User = Depends(require_smtp_write)):
+    """Send a short email to the signed-in administrator with the saved settings.
+
+    Test connection proves the server answers and accepts the login; this
+    proves a message actually leaves, by the same path as scheduled reports
+    and alerts. The recipient is always the administrator's own address,
+    never one from the request, so the button cannot mail anyone else.
+    """
+
+    address = (admin.email or "").strip()
+    if not address:
+        raise HTTPException(400, detail="Your account has no email address to send the test to.")
+    row = await _saved_row(db)
+    if row is None or not (row.host or "").strip():
+        raise HTTPException(400, detail="Save the SMTP settings first.")
+    text = _test_email_text(row, admin, datetime.datetime.now(datetime.UTC))
+    try:
+        await send_email(db, to_address=address, subject=TEST_EMAIL_SUBJECT, body_text=text)
+    except SmtpNotConfiguredError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+    except SmtpSendError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "to": address}

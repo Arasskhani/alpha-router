@@ -17112,3 +17112,7 @@ p.error,
     grid-template-columns: 1fr;
   }
 }
+.smtp-actions-hint {
+  margin: 0.5rem 0 0;
+  text-align: right;
+}

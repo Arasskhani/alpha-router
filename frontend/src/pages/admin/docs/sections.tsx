@@ -2458,6 +2458,12 @@ export const docSections: DocSection[] = [
             STARTTLS, an untrusted certificate, a rejected password.
           </li>
           <li>
+            <strong>Send test email to me</strong> sends a short message to your own account&apos;s email address with
+            the <em>saved</em> settings — the same way scheduled reports and alerts go out — so save any changes first.
+            It proves that mail actually leaves, not only that the server answers. The recipient is always your own
+            address; it cannot be pointed anywhere else.
+          </li>
+          <li>
             Every save that changes something is recorded in Admin Logs as <code>smtp_settings_changed</code>, with the
             fields before and after and whether the password was changed or removed — never the password.
           </li>

@@ -122,7 +122,7 @@ export default function SmtpServer() {
     saved && passwordSaved && form.username.trim() && !typedPassword ? passwordReuseProblem(saved, form) : null;
   const port = Number(form.port);
   const hint = Number.isInteger(port) ? portHint(form.security, port) : null;
-  // The test email goes out the way reports do: with the saved settings, not the form.
+  // The test email goes out the way every other email does: with the saved settings, not the form.
   let mailBlocked: string | null = null;
   if (!saved) mailBlocked = "Save the settings first: the test email is sent with the saved settings.";
   else if (!sameForm(form, formFrom(saved))) {
@@ -207,8 +207,7 @@ export default function SmtpServer() {
   return (
     <AdminPage title="SMTP Server">
       <p className="muted-text">
-        Outbound mail for scheduled reports, API keys sent to their owners, sign-in and certificate alerts, and project
-        invitations.
+        Outbound mail for API keys sent to their owners, sign-in and certificate alerts, and project invitations.
       </p>
       {loadError ? (
         <p className="alert alert-error" role="alert">

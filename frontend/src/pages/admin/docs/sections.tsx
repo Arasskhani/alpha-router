@@ -2427,8 +2427,8 @@ export const docSections: DocSection[] = [
       <>
         <h2>SMTP Server</h2>
         <p>
-          Path: <code>/admin/smtp</code>. Outbound mail for scheduled reports, API keys sent to their owners, sign-in
-          and certificate alerts, and project invitations.
+          Path: <code>/admin/smtp</code>. Outbound mail for API keys sent to their owners, sign-in and certificate
+          alerts, and project invitations. Report schedules are stored, but nothing emails them yet.
         </p>
         <ul>
           <li>
@@ -2455,12 +2455,14 @@ export const docSections: DocSection[] = [
           <li>
             <strong>Test connection</strong> connects with the values on the form, secures the connection as chosen and
             logs in — with the typed password, or the saved one where Save would keep it — then reports the TLS
-            version, whether the certificate was verified and whether the login worked. Nothing is sent or saved. A failure is explained in words: the port expecting the other kind of TLS, a server without
-            STARTTLS, an untrusted certificate, a rejected password.
+            version, whether the certificate was verified and whether the login worked. Nothing is sent or saved. A
+            failure is explained in words: the port expecting the other kind of TLS, a server without STARTTLS, an
+            untrusted certificate, a rejected password.
           </li>
           <li>
             <strong>Send test email to me</strong> sends a short message to your own account&apos;s email address with
-            the <em>saved</em> settings — the same way scheduled reports and alerts go out — so save any changes first.
+            the <em>saved</em> settings — the same way alerts, invitations and API keys go out — so save any changes
+            first.
             It proves that mail actually leaves, not only that the server answers. The recipient is always your own
             address; it cannot be pointed anywhere else.
           </li>

@@ -179,9 +179,9 @@ async def save_smtp(
     discarded.
 
     Every save that changes something is audited as ``smtp_settings_changed``
-    with the fields before and after. These settings decide where report
-    emails, API keys sent to their owners and security alerts go, and on
-    what terms: turning certificate verification off or choosing no TLS is
+    with the fields before and after. These settings decide where API keys
+    sent to their owners, security alerts and invitations go, and on what
+    terms: turning certificate verification off or choosing no TLS is
     exactly the change an auditor needs to find. The password itself is only
     ever recorded as changed or removed.
     """
@@ -306,8 +306,8 @@ def _test_email_text(row: SmtpSettings, admin: User, sent_at: datetime.datetime)
         "This is a test email from Alpharouter.\n\n"
         f"{admin.username} sent it from Admin > SMTP Server at {sent_at:%Y-%m-%d %H:%M} UTC, "
         f"through {row.host}:{row.port} with {how}.\n\n"
-        "If it arrived, the saved SMTP settings work: scheduled reports, API keys sent to "
-        "their owners and security alerts are sent the same way.\n"
+        "If it arrived, the saved SMTP settings work: sign-in and certificate alerts, project "
+        "invitations and API keys sent to their owners go out the same way.\n"
     )
 
 
@@ -316,8 +316,8 @@ async def send_test_email(db: AsyncSession = Depends(get_db), admin: User = Depe
     """Send a short email to the signed-in administrator with the saved settings.
 
     Test connection proves the server answers and accepts the login; this
-    proves a message actually leaves, by the same path as scheduled reports
-    and alerts. The recipient is always the administrator's own address,
+    proves a message actually leaves, by the same path as alerts, invitations
+    and API keys. The recipient is always the administrator's own address,
     never one from the request, so the button cannot mail anyone else.
     """
 

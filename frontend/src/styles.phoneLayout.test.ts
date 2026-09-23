@@ -297,6 +297,7 @@ describe("the phone layout block", () => {
     expect(declarations(phone.body, ".filter-panel-toggle")).toContain("min-height: 2.5rem");
     // In the Media filter row the toggle lines up with Refresh.
     expect(declarations(phone.body, ".media-page-filters > .filter-panel-toggle")).toContain("margin-bottom: 0");
+    expect(declarations(phone.body, ".media-page-filters > .btn")).toContain("min-height: 2.5rem");
   });
 
   it("counts specificity the way the browser does, for the selectors checked here", () => {

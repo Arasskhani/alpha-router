@@ -17623,6 +17623,10 @@ p.error,
   .media-page-filters > .filter-panel-toggle {
     margin-bottom: 0;
   }
+  /* Refresh stands as tall as the Filters button beside it. */
+  .media-page-filters > .btn {
+    min-height: 2.5rem;
+  }
   .filter-panel-toggle__count {
     display: inline-grid;
     place-items: center;

@@ -12,6 +12,7 @@ import ListTruncatedBanner from "../../components/ListTruncatedBanner";
 import { useDebounced } from "../../hooks/useDebounced";
 import { useConfirm } from "../../context/ConfirmContext";
 import { USAGE_AND_ACTIVITY_LABEL } from "../../lib/usageActivityLabel";
+import { useTableCards } from "../../hooks/useTableCards";
 
 type Group = { id: number; name: string; description: string | null; source: string; plan_id: number | null };
 type Plan = { id: number; name: string };
@@ -22,6 +23,8 @@ function buildPlanBody(budgetPlan: string): Record<string, unknown> {
 }
 
 export default function Groups() {
+  // On a phone the table is drawn as a list of cards (styles.css).
+  const tableCardsRef = useTableCards<HTMLTableElement>();
   const navigate = useNavigate();
   const { confirm } = useConfirm();
   const [groups, setGroups] = useState<Group[]>([]);
@@ -320,7 +323,7 @@ export default function Groups() {
       </div>
 
       <div className="table-wrap">
-        <table className="card data-table">
+        <table ref={tableCardsRef} className="card data-table data-table--cards">
           <thead>
             <tr>
               <th style={{ width: 36 }}>

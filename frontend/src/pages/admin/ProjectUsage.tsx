@@ -73,47 +73,49 @@ export default function ProjectUsage() {
       </p>
       {error ? <p className="flash flash-error">{error}</p> : null}
       {loading ? <div className="loading-state">Loading…</div> : null}
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th>Project</th>
-            <th>Status</th>
-            <th>Visibility</th>
-            <th>Cost</th>
-            <th>Media</th>
-            <th>Requests</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id}>
-              <td>{row.name}</td>
-              <td>{row.status}</td>
-              <td>{row.visibility}</td>
-              <td>{formatUsd(row.costUsd)}</td>
-              <td>{formatUsd(row.mediaCostUsd)}</td>
-              <td>{row.requests}</td>
-              <td>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => navigate(`/app/projects/${row.id}/activity`)}
-                >
-                  {USAGE_AND_ACTIVITY_LABEL}
-                </button>
-              </td>
-            </tr>
-          ))}
-          {!loading && rows.length === 0 ? (
+      <div className="table-wrap">
+        <table className="data-table data-table--sticky-first">
+          <thead>
             <tr>
-              <td colSpan={7} className="empty-state">
-                No projects yet.
-              </td>
+              <th>Project</th>
+              <th>Status</th>
+              <th>Visibility</th>
+              <th>Cost</th>
+              <th>Media</th>
+              <th>Requests</th>
+              <th></th>
             </tr>
-          ) : null}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id}>
+                <td>{row.name}</td>
+                <td>{row.status}</td>
+                <td>{row.visibility}</td>
+                <td>{formatUsd(row.costUsd)}</td>
+                <td>{formatUsd(row.mediaCostUsd)}</td>
+                <td>{row.requests}</td>
+                <td>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => navigate(`/app/projects/${row.id}/activity`)}
+                  >
+                    {USAGE_AND_ACTIVITY_LABEL}
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {!loading && rows.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="empty-state">
+                  No projects yet.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
     </AdminPage>
   );
 }

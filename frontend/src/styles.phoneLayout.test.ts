@@ -230,6 +230,37 @@ describe("the phone layout block", () => {
     expect(declarations(phone.body, ".filter-panel-toggle")).toContain("min-height: 2.5rem");
   });
 
+  it("draws the list tables as cards and keeps log tables scrolling with the first column in place", () => {
+    const table = declarations(phone.body, ".data-table.data-table--cards");
+    expect(table).toContain("display: block");
+    // The header row is hidden from sight only; screen readers still get it.
+    expect(declarations(phone.body, ".data-table.data-table--cards thead")).toContain("clip-path: inset(50%)");
+    expect(declarations(phone.body, ".data-table.data-table--cards tr")).toContain("border-radius: var(--radius)");
+    const cell = declarations(phone.body, ".data-table.data-table--cards td");
+    expect(cell).toContain("display: flex");
+    // Card cells win over the column widths of fixed-layout tables (Users sets 11%, 18%…).
+    expect(cell).toContain("width: auto");
+    expect(declarations(phone.body, ".data-table.data-table--cards td::before")).toContain("content: attr(data-label)");
+    expect(declarations(phone.body, '.data-table.data-table--cards td[data-card-role="actions"]')).toContain(
+      "position: absolute",
+    );
+    const hidden = declarations(
+      phone.body,
+      ".data-table.data-table--cards td.col-lg,\n  .data-table.data-table--cards td.col-xl,\n  .users-table.data-table--cards td.users-table__department,\n  .users-table.data-table--cards td.users-table__office,\n  .users-table.data-table--cards td.users-table__job-title,\n  .users-table.data-table--cards td.users-table__auth,\n  .users-table.data-table--cards td.col-budget",
+    );
+    expect(hidden).toContain("display: none");
+    const sticky = declarations(
+      phone.body,
+      ".table-wrap--api-logs .data-table--api-logs th:first-child,\n  .table-wrap--api-logs .data-table--api-logs td:first-child:not([colspan]),\n  .data-table--sticky-first th:first-child,\n  .data-table--sticky-first td:first-child:not([colspan])",
+    );
+    expect(sticky).toContain("position: sticky");
+    expect(sticky).toContain("background: var(--surface)");
+    // The corner sits above the other header cells, which are sticky at z-index 1.
+    expect(
+      declarations(phone.body, ".table-wrap--api-logs .data-table--api-logs th:first-child,\n  .data-table--sticky-first th:first-child"),
+    ).toContain("z-index: 2");
+  });
+
   it("turns row actions into an action sheet above the drawers", () => {
     const sheet = declarations(phone.body, ".action-sheet");
     expect(sheet).toContain("position: fixed");

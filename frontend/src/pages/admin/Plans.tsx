@@ -6,6 +6,7 @@ import Modal from "../../components/Modal";
 import RowActionsMenu from "../../components/RowActionsMenu";
 import { api } from "../../api";
 import { useConfirm } from "../../context/ConfirmContext";
+import { useTableCards } from "../../hooks/useTableCards";
 
 type GroupOption = { id: number; name: string; source: string };
 type Plan = {
@@ -21,6 +22,8 @@ type PlanMembers = {
 };
 
 export default function Plans() {
+  // On a phone the table is drawn as a list of cards (styles.css).
+  const tableCardsRef = useTableCards<HTMLTableElement>();
   const { confirm } = useConfirm();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [groups, setGroups] = useState<GroupOption[]>([]);
@@ -205,7 +208,7 @@ export default function Plans() {
       </div>
 
       <div className="table-wrap">
-        <table className="card data-table">
+        <table ref={tableCardsRef} className="card data-table data-table--cards">
           <thead>
             <tr>
               <th>Name</th>

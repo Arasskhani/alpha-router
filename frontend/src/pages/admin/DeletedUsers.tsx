@@ -8,6 +8,7 @@ import { api, apiList, NO_LIST_BOUNDS, type ListBounds } from "../../api";
 import { formatLocalDateTime } from "../../lib/dateTime";
 import { useConfirm } from "../../context/ConfirmContext";
 import { USAGE_AND_ACTIVITY_LABEL } from "../../lib/usageActivityLabel";
+import { useTableCards } from "../../hooks/useTableCards";
 
 type DeletedUser = {
   id: number;
@@ -21,6 +22,8 @@ type DeletedUser = {
 };
 
 export default function DeletedUsers() {
+  // On a phone the table is drawn as a list of cards (styles.css).
+  const tableCardsRef = useTableCards<HTMLTableElement>();
   const navigate = useNavigate();
   const { confirm } = useConfirm();
   const [users, setUsers] = useState<DeletedUser[]>([]);
@@ -224,7 +227,7 @@ export default function DeletedUsers() {
         </button>
       </div>
       <div className="table-wrap">
-        <table className="card data-table">
+        <table ref={tableCardsRef} className="card data-table data-table--cards">
           <thead>
             <tr>
               <th style={{ width: 36 }}>

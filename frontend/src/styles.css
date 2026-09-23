@@ -17592,6 +17592,146 @@ p.error,
     font-weight: 600;
   }
 
+  /* List tables marked data-table--cards (Users, Roles, API Keys,
+     Connections, Groups, Plans, Deleted Users): each row is a card, each cell
+     a "label: value" line. useTableCards copies the column headers into
+     data-label and marks the title, select and Actions cells. */
+  .data-table.data-table--cards {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    table-layout: auto;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .data-table.data-table--cards thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .data-table.data-table--cards tbody {
+    display: block;
+  }
+  .data-table.data-table--cards tr {
+    position: relative;
+    display: block;
+    margin: 0 0 0.6rem;
+    padding: 0.55rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+  .data-table.data-table--cards td {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 0.35rem 0.75rem;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    padding: 0.28rem 0;
+    border: 0;
+    text-align: end;
+    white-space: normal;
+    word-break: normal;
+    overflow-wrap: anywhere;
+  }
+  .data-table.data-table--cards td::before {
+    content: attr(data-label);
+    flex: 0 1 auto;
+    max-width: 42%;
+    margin-inline-end: auto;
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-weight: 500;
+    text-align: start;
+  }
+  .data-table.data-table--cards td[data-label=""]::before,
+  .data-table.data-table--cards td[data-card-role="title"]::before,
+  .data-table.data-table--cards td[data-card-role="select"]::before,
+  .data-table.data-table--cards td[data-card-role="actions"]::before,
+  .data-table.data-table--cards td[data-card-role="full"]::before {
+    content: none;
+  }
+  .data-table.data-table--cards td[data-card-role="title"] {
+    display: block;
+    padding-top: 0.1rem;
+    font-weight: 600;
+    text-align: start;
+  }
+  /* A title cell's second line (an owner, a description) stays regular. */
+  .data-table.data-table--cards td[data-card-role="title"] > * + * {
+    font-weight: 400;
+  }
+  /* A select in a card sits on its label's line instead of taking a line of its own. */
+  .data-table.data-table--cards td :is(select, .role-select, .role-multi-select, .user-plan-select-wrap) {
+    width: auto;
+    max-width: 62%;
+  }
+  .data-table.data-table--cards tr:has(> td[data-card-role="actions"]) > td[data-card-role="title"] {
+    padding-inline-end: 6.5rem;
+  }
+  .data-table.data-table--cards tr:has(> td[data-card-role="select"]) {
+    padding-inline-start: 2.6rem;
+  }
+  .data-table.data-table--cards td[data-card-role="select"] {
+    position: absolute;
+    top: 0.6rem;
+    inset-inline-start: 0.8rem;
+    padding: 0;
+  }
+  .data-table.data-table--cards td[data-card-role="actions"] {
+    position: absolute;
+    top: 0.45rem;
+    inset-inline-end: 0.6rem;
+    padding: 0;
+  }
+  .data-table.data-table--cards td[data-card-role="full"] {
+    display: block;
+    text-align: center;
+  }
+  /* Low-priority columns stay out of a card as they stay out of a narrow
+     table: creation and change dates, and the user's department, office,
+     job title, sign-in source and budget. */
+  .data-table.data-table--cards td.col-lg,
+  .data-table.data-table--cards td.col-xl,
+  .users-table.data-table--cards td.users-table__department,
+  .users-table.data-table--cards td.users-table__office,
+  .users-table.data-table--cards td.users-table__job-title,
+  .users-table.data-table--cards td.users-table__auth,
+  .users-table.data-table--cards td.col-budget {
+    display: none;
+  }
+
+  /* Log tables (and Project Usage, Database) keep their columns and scroll
+     sideways; the first column stays put as the row's anchor. A time wraps
+     at its comma, so the anchor is about 6rem, not half the screen. */
+  .table-wrap--api-logs .data-table--api-logs th:first-child,
+  .table-wrap--api-logs .data-table--api-logs td:first-child:not([colspan]),
+  .data-table--sticky-first th:first-child,
+  .data-table--sticky-first td:first-child:not([colspan]) {
+    position: sticky;
+    inset-inline-start: 0;
+    z-index: 1;
+    max-width: 6.5rem;
+    white-space: normal;
+    background: var(--surface);
+    box-shadow: 1px 0 0 var(--border);
+  }
+  /* Every header cell is already sticky at z-index 1 (table thead th); the
+     corner cell must sit above the others as they scroll under it. */
+  .table-wrap--api-logs .data-table--api-logs th:first-child,
+  .data-table--sticky-first th:first-child {
+    z-index: 2;
+  }
+
   /* Row actions (RowActionsMenu): an action sheet in reach of the thumb.
      Above the drawers and the topbar, like the popover it replaces (1200);
      a confirmation it opens (3000) still comes on top. */

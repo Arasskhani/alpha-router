@@ -274,31 +274,33 @@ export default function DatabaseMonitor() {
             <p className="muted-text" style={{ marginTop: 0 }}>
               Row counts across Alpharouter tables (approx. {totalRows.toLocaleString()} rows total).
             </p>
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Table</th>
-                  <th>Name</th>
-                  <th className="col-num">Rows</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.tables.map((t) => (
-                  <tr key={t.name}>
-                    <td>{t.label}</td>
-                    <td>
-                      <code>{t.name}</code>
-                    </td>
-                    <td className="col-num">
-                      {!t.exists && <span className="muted-text">missing</span>}
-                      {t.exists && t.error && <span className="muted-text" title={t.error}>error</span>}
-                      {t.exists && !t.error && t.row_count != null && t.row_count.toLocaleString()}
-                      {t.exists && !t.error && t.row_count == null && "—"}
-                    </td>
+            <div className="table-wrap">
+              <table className="data-table data-table--sticky-first">
+                <thead>
+                  <tr>
+                    <th>Table</th>
+                    <th>Name</th>
+                    <th className="col-num">Rows</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {data.tables.map((t) => (
+                    <tr key={t.name}>
+                      <td>{t.label}</td>
+                      <td>
+                        <code>{t.name}</code>
+                      </td>
+                      <td className="col-num">
+                        {!t.exists && <span className="muted-text">missing</span>}
+                        {t.exists && t.error && <span className="muted-text" title={t.error}>error</span>}
+                        {t.exists && !t.error && t.row_count != null && t.row_count.toLocaleString()}
+                        {t.exists && !t.error && t.row_count == null && "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       )}

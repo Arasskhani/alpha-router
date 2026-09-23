@@ -4,6 +4,7 @@ import Modal from "../../components/Modal";
 import { api } from "../../api";
 import { roleLabel, type RoleRecord } from "../../lib/rbac";
 import { useConfirm } from "../../context/ConfirmContext";
+import { useTableCards } from "../../hooks/useTableCards";
 
 type UserRow = {
   id: number;
@@ -14,6 +15,8 @@ type UserRow = {
 };
 
 export default function Roles() {
+  // On a phone the table is drawn as a list of cards (styles.css).
+  const tableCardsRef = useTableCards<HTMLTableElement>();
   const { confirm } = useConfirm();
   const [roles, setRoles] = useState<RoleRecord[]>([]);
   const [users, setUsers] = useState<UserRow[]>([]);
@@ -162,7 +165,7 @@ export default function Roles() {
       </div>
 
       <div className="table-wrap table-wrap--roles">
-        <table className="card data-table roles-table">
+        <table ref={tableCardsRef} className="card data-table data-table--cards roles-table">
           <thead>
             <tr>
               <th className="roles-table__check">

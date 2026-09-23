@@ -8,6 +8,7 @@ import { formatLocalDateTime } from "../../lib/dateTime";
 import { useConfirm } from "../../context/ConfirmContext";
 import { BROWSER_EVENT_NAMES } from "../../lib/brand";
 import { USAGE_AND_ACTIVITY_LABEL } from "../../lib/usageActivityLabel";
+import { useTableCards } from "../../hooks/useTableCards";
 
 type Conn = {
   id: number;
@@ -46,6 +47,8 @@ function truncateUrl(url: string | null, max = 42) {
 }
 
 export default function Connections() {
+  // On a phone the table is drawn as a list of cards (styles.css).
+  const tableCardsRef = useTableCards<HTMLTableElement>();
   const { confirm } = useConfirm();
   const navigate = useNavigate();
   const [list, setList] = useState<Conn[]>([]);
@@ -169,7 +172,7 @@ export default function Connections() {
       </div>
 
       <div className="table-wrap">
-        <table className="card data-table connections-table">
+        <table ref={tableCardsRef} className="card data-table data-table--cards connections-table">
           <thead>
             <tr>
               <th>Name</th>

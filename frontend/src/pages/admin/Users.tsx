@@ -17,6 +17,7 @@ import {
   presenceAvailableFromUserRows,
 } from "../../lib/presence";
 import { normalizeRole, roleLabel, userHasSuperAdminAccess, type RoleRecord } from "../../lib/rbac";
+import { useTableCards } from "../../hooks/useTableCards";
 
 function userPlanSelectValue(u: U): string {
   if (u.user_plan_mode === "none") return "__none__";
@@ -201,6 +202,8 @@ const emptyEditForm: EditForm = {
 const USERS_PAGE_SIZE = 100;
 
 export default function Users() {
+  // On a phone the table is drawn as a list of cards (styles.css).
+  const tableCardsRef = useTableCards<HTMLTableElement>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { confirm } = useConfirm();
@@ -957,7 +960,7 @@ export default function Users() {
       </div>
 
       <div className="table-wrap table-wrap--users">
-        <table className="card data-table users-table">
+        <table ref={tableCardsRef} className="card data-table data-table--cards users-table">
           <thead>
             <tr>
               <th className="users-table__select">

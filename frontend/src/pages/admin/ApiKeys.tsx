@@ -10,6 +10,7 @@ import RowActionsMenu from "../../components/RowActionsMenu";
 import { useConfirm } from "../../context/ConfirmContext";
 import { formatLocalDate, formatLocalDateTime, parseApiDateTime } from "../../lib/dateTime";
 import { USAGE_AND_ACTIVITY_LABEL } from "../../lib/usageActivityLabel";
+import { useTableCards } from "../../hooks/useTableCards";
 
 type KeysListResponse = {
   items: AlphaRouterKey[];
@@ -97,6 +98,8 @@ function formatUsd(v: number) {
 }
 
 export default function AdminApiKeys() {
+  // On a phone the table is drawn as a list of cards (styles.css).
+  const tableCardsRef = useTableCards<HTMLTableElement>();
   const { confirm } = useConfirm();
   const navigate = useNavigate();
   const [keys, setKeys] = useState<AlphaRouterKey[]>([]);
@@ -311,7 +314,7 @@ export default function AdminApiKeys() {
       </div>
 
       <div className="table-wrap">
-        <table className="card data-table api-keys-table">
+        <table ref={tableCardsRef} className="card data-table data-table--cards api-keys-table">
           <thead>
             <tr>
               <th className="col-sm">

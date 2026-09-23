@@ -17613,13 +17613,51 @@ p.error,
     background: transparent;
     box-shadow: none;
   }
-  .data-table.data-table--cards thead {
+  /* The header row stays for screen readers, out of sight, except its
+     select-all box: that shows as a "Select all" bar above the cards (a tap
+     on the caption ticks the box too, useTableCards). */
+  .data-table.data-table--cards thead,
+  .data-table.data-table--cards thead tr {
+    display: block;
+  }
+  .data-table.data-table--cards thead tr {
+    position: static;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+  .data-table.data-table--cards th {
     position: absolute;
     width: 1px;
     height: 1px;
+    padding: 0;
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
+  }
+  /* min-width beats the fixed widths some pages give this column (36px inline). */
+  .data-table.data-table--cards th[data-card-role="select"] {
+    position: static;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    width: auto;
+    min-width: max-content;
+    height: auto;
+    min-height: 2.75rem;
+    margin: 0 0 0.35rem;
+    padding: 0 0.8rem;
+    overflow: visible;
+    clip-path: none;
+    background: transparent;
+    color: var(--text);
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .data-table.data-table--cards th[data-card-role="select"]::after {
+    content: "Select all";
+    content: "Select all" / "";
   }
   .data-table.data-table--cards tbody {
     display: block;

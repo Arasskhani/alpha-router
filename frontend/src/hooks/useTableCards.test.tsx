@@ -5,6 +5,7 @@ import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { PHONE_QUERY } from "./useMediaQuery";
 import { useTableCards } from "./useTableCards";
 
 let host: HTMLDivElement;
@@ -71,6 +72,30 @@ describe("useTableCards", () => {
     const first = cells(0);
     expect(first.map((td) => td.getAttribute("data-label"))).toEqual(["", "User", "Email", "Role", "Actions"]);
     expect(first.map((td) => td.getAttribute("data-card-role"))).toEqual(["select", "title", "field", "field", "actions"]);
+    const headers = [...host.querySelectorAll("thead th")];
+    expect(headers.map((th) => th.getAttribute("data-card-role"))).toEqual(["select", "title", "field", "field", "actions"]);
+  });
+
+  it("counts a tap on the phone's Select all caption as a tap on the box", async () => {
+    const real = window.matchMedia;
+    let phone = true;
+    window.matchMedia = ((query: string) => ({ matches: phone && query === PHONE_QUERY })) as typeof window.matchMedia;
+    try {
+      await act(async () => root.render(<UsersTable />));
+      const cell = host.querySelector<HTMLElement>("thead th")!;
+      const box = cell.querySelector("input")!;
+      await act(async () => cell.click());
+      expect(box.checked).toBe(true);
+      // A tap on the box is the box's own: it is not passed on a second time.
+      await act(async () => box.click());
+      expect(box.checked).toBe(false);
+      // On a desktop there is no caption; a click beside the box does nothing.
+      phone = false;
+      await act(async () => cell.click());
+      expect(box.checked).toBe(false);
+    } finally {
+      window.matchMedia = real;
+    }
   });
 
   it("treats a cell that spans the table as full width, without a label", async () => {

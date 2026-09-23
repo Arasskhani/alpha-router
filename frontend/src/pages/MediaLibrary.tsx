@@ -5,9 +5,10 @@ import AdminPage from "../components/AdminPage";
 import AuthenticatedImage from "../components/AuthenticatedImage";
 import AuthenticatedVideo from "../components/AuthenticatedVideo";
 import FilterPanel, { countActiveFilters } from "../components/FilterPanel";
-import RowActionsMenu from "../components/RowActionsMenu";
+import RowActionsMenu, { type RowAction } from "../components/RowActionsMenu";
 import { useConfirm } from "../context/ConfirmContext";
 import { useReadOnly } from "../context/ReadOnlyContext";
+import { usePhoneLayout } from "../hooks/useMediaQuery";
 import {
   fetchAuthenticatedMediaBlob,
   fetchAuthenticatedMediaObjectUrl,
@@ -47,6 +48,7 @@ function buildQuery(search: string, fromDate: string, toDate: string) {
 
 export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProps = {}) {
   const readOnly = useReadOnly();
+  const phone = usePhoneLayout();
   const isAdminScope = adminUserId != null && Number.isFinite(adminUserId);
   const apiBase = isAdminScope ? `/api/admin/users/${adminUserId}/media` : "/api/user/media";
   const { confirm } = useConfirm();
@@ -328,6 +330,25 @@ export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProp
     return Math.min(100, quota.used_percent);
   }, [quota]);
 
+  // On a phone the five bulk actions are one action sheet instead of three
+  // rows of buttons. Read-only has only the two downloads: they stay buttons
+  // (the menu is locked in read-only, and downloads must not be).
+  const bulkActions: RowAction[] = [
+    {
+      label: "Download selected",
+      onClick: () => downloadSelected(false),
+      disabled: !someSelected || downloadingZip,
+    },
+    {
+      label: "Download all (filtered)",
+      onClick: () => downloadSelected(true),
+      disabled: !displayItems.length || downloadingZip,
+    },
+    { label: "Delete selected", onClick: () => deleteIds([...selected]), disabled: !someSelected, danger: true },
+    { label: "Schedule cleanup", onClick: () => setScheduleOpen((o) => !o) },
+    { label: "Delete all", onClick: () => deleteAll(), disabled: !items.length, danger: true },
+  ];
+
   const viewActions = MEDIA_VIEW_OPTIONS.map((opt) => ({
     label: opt.label,
     onClick: () => changeView(opt.id),
@@ -422,40 +443,50 @@ export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProp
               {total > displayItems.length ? ` (${displayItems.length} shown)` : ""}
             </span>
           </label>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            disabled={!someSelected || downloadingZip}
-            onClick={() => void downloadSelected(false)}
-          >
-            {downloadingZip ? "Preparing ZIP…" : "Download selected"}
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            disabled={!displayItems.length || downloadingZip}
-            onClick={() => void downloadSelected(true)}
-          >
-            {downloadingZip ? "Preparing ZIP…" : "Download all (filtered)"}
-          </button>
-          {!readOnly ? (
+          {phone && !readOnly ? (
+            <RowActionsMenu
+              label={downloadingZip ? "Preparing ZIP…" : "Actions"}
+              actions={bulkActions}
+              onError={setError}
+            />
+          ) : (
             <>
               <button
                 type="button"
                 className="btn btn-ghost"
-                disabled={!someSelected}
-                onClick={() => void deleteIds([...selected])}
+                disabled={!someSelected || downloadingZip}
+                onClick={() => void downloadSelected(false)}
               >
-                Delete selected
+                {downloadingZip ? "Preparing ZIP…" : "Download selected"}
               </button>
-              <button type="button" className="btn btn-ghost" onClick={() => setScheduleOpen((o) => !o)}>
-                Schedule cleanup
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={!displayItems.length || downloadingZip}
+                onClick={() => void downloadSelected(true)}
+              >
+                {downloadingZip ? "Preparing ZIP…" : "Download all (filtered)"}
               </button>
-              <button type="button" className="btn btn-danger" disabled={!items.length} onClick={() => void deleteAll()}>
-                Delete all
-              </button>
+              {!readOnly ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={!someSelected}
+                    onClick={() => void deleteIds([...selected])}
+                  >
+                    Delete selected
+                  </button>
+                  <button type="button" className="btn btn-ghost" onClick={() => setScheduleOpen((o) => !o)}>
+                    Schedule cleanup
+                  </button>
+                  <button type="button" className="btn btn-danger" disabled={!items.length} onClick={() => void deleteAll()}>
+                    Delete all
+                  </button>
+                </>
+              ) : null}
             </>
-          ) : null}
+          )}
         </div>
       </section>
 

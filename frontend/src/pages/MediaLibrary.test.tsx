@@ -123,3 +123,79 @@ describe("the Media filters", () => {
     );
   });
 });
+
+const actionsRow = () =>
+  host.querySelector<HTMLElement>(".media-page-actions")!;
+const buttonTexts = () =>
+  [...actionsRow().querySelectorAll(":scope > button")].map((b) =>
+    b.textContent?.trim(),
+  );
+const sheetItems = () =>
+  [...document.querySelectorAll(".action-sheet [role=menuitem]")].map(
+    (b) => b.textContent,
+  );
+
+describe("the Media bulk actions", () => {
+  it("are five buttons on a desktop", async () => {
+    await render();
+    expect(buttonTexts()).toEqual([
+      "Download selected",
+      "Download all (filtered)",
+      "Delete selected",
+      "Schedule cleanup",
+      "Delete all",
+    ]);
+  });
+
+  it("are one action sheet on a phone, offering what applies now", async () => {
+    layout.phone = true;
+    await render();
+    expect(buttonTexts()).toEqual([]);
+    const trigger = actionsRow().querySelector<HTMLButtonElement>(
+      ".row-actions-trigger",
+    )!;
+    expect(trigger.textContent).toContain("Actions");
+    await act(async () => trigger.click());
+    // Nothing selected yet: no "selected" actions.
+    expect(sheetItems()).toEqual([
+      "Download all (filtered)",
+      "Schedule cleanup",
+      "Delete all",
+      "Cancel",
+    ]);
+    await act(async () =>
+      [
+        ...document.querySelectorAll<HTMLButtonElement>(
+          ".action-sheet [role=menuitem]",
+        ),
+      ]
+        .find((b) => b.textContent === "Cancel")!
+        .click(),
+    );
+    await act(async () =>
+      actionsRow()
+        .querySelector<HTMLInputElement>("input[type=checkbox]")!
+        .click(),
+    );
+    await act(async () => trigger.click());
+    expect(sheetItems()).toEqual([
+      "Download selected",
+      "Download all (filtered)",
+      "Delete selected",
+      "Schedule cleanup",
+      "Delete all",
+      "Cancel",
+    ]);
+  });
+
+  it("stay download buttons for a read-only admin on a phone", async () => {
+    layout.phone = true;
+    layout.readOnly = true;
+    await render();
+    expect(actionsRow().querySelector(".row-actions-trigger")).toBeNull();
+    expect(buttonTexts()).toEqual([
+      "Download selected",
+      "Download all (filtered)",
+    ]);
+  });
+});

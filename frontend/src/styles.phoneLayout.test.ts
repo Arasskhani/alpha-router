@@ -309,6 +309,63 @@ describe("the phone layout block", () => {
     expect(phone.at).toBeGreaterThan(lastTopLevelRule(".users-table .user-plan-select-label"));
   });
 
+  it("gives the chat's small controls a 44px hit area, with room for it", () => {
+    const rem = (decls: string | null, prop: string) => {
+      const m = new RegExp(`(^|[\\s;])${prop}:\\s*(-?[\\d.]+)rem`).exec(decls ?? "");
+      return m ? Number(m[2]) : NaN;
+    };
+    const targets = [
+      ".alpha-router-msg-actions .alpha-router-msg-action-btn",
+      ".alpha-router-composer-bar .alpha-router-tools-trigger--icon",
+      ".alpha-router-composer-bar .alpha-router-agent-ctrl",
+      ".alpha-router-composer-bar .alpha-router-attach-btn",
+      ".alpha-router-composer-bar .alpha-router-voice-btn",
+      ".alpha-router-composer-bar .alpha-router-send",
+      ".alpha-router-composer-bar .alpha-router-stop",
+      ".app-topbar .topbar-model-search__field",
+      ".app-topbar .topbar-model-search__add",
+      ".app-topbar .alpha-router-model-pill__remove",
+    ];
+    expect(declarations(phone.body, targets.join(",\n  "))).toContain("position: relative");
+    const area = declarations(phone.body, targets.map((t) => `${t}::before`).join(",\n  "));
+    expect(area).toContain('content: ""');
+    expect(area).toContain("width: max(100%, 2.75rem)");
+    expect(area).toContain("height: max(100%, 2.75rem)");
+    // Composer controls clip what spills out of them; the two icon ones given an area do not.
+    expect(declarations(css, ".alpha-router-composer-ctrl")).toContain("overflow: hidden");
+    expect(declarations(css, ".alpha-router-agent-ctrl")).toContain("overflow: visible");
+    expect(
+      declarations(
+        css,
+        ".alpha-router-tools-trigger--icon.alpha-router-composer-ctrl,\n.alpha-router-model-trigger.alpha-router-tools-trigger--icon",
+      ),
+    ).toContain("overflow: visible");
+    // The translate chip does clip, so it is 44px tall itself.
+    expect(declarations(phone.body, ".alpha-router-composer-bar .alpha-router-translate-eng-btn")).toContain(
+      "min-height: 2.75rem",
+    );
+    // 36px attach and voice buttons 0.5rem apart: their areas meet, and do not overlap.
+    const attach = declarations(
+      phone.body,
+      ".alpha-router-composer-bar .alpha-router-attach-btn,\n  .alpha-router-composer-bar .alpha-router-voice-btn",
+    );
+    const gap = rem(declarations(phone.body, ".alpha-router-composer-bar .alpha-router-send-group"), "gap");
+    expect(gap).toBeGreaterThanOrEqual(2.75 - rem(attach, "width"));
+    // The pill row clips; it has room above and below for a remove button's area, taking no space.
+    const pills = declarations(phone.body, ".app-topbar .topbar-selected-models");
+    expect(rem(pills, "padding-block")).toBeGreaterThanOrEqual((2.75 - 2.25) / 2);
+    expect(rem(pills, "margin-block")).toBe(-rem(pills, "padding-block"));
+    // The model search's two buttons are 44px wide.
+    expect(
+      declarations(phone.body, ".app-topbar .topbar-model-search__field,\n  .app-topbar .topbar-model-search__add"),
+    ).toContain("width: 2.75rem");
+    expect(outranks(".app-topbar .topbar-model-search", ".topbar-model-search")).toBe(true);
+    // A code block's actions and the model picker's rows.
+    expect(declarations(phone.body, ".alpha-router-code-block__action")).toContain("min-height: 2.75rem");
+    expect(declarations(phone.body, ".alpha-router-code-block__toolbar")).toContain("padding-block: 0");
+    expect(declarations(phone.body, ".alpha-router-model-modal__item")).toContain("min-height: 2.75rem");
+  });
+
   it("sizes the app to the visual viewport, so the iOS keyboard cannot cover the composer", () => {
     const layout = declarations(phone.body, ".layout,\n  .layout--chat");
     expect(layout).toContain("height: var(--app-viewport-height)");

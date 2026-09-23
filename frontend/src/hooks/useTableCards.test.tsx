@@ -108,6 +108,65 @@ describe("useTableCards", () => {
     }
   });
 
+  it("counts a tap anywhere in a card's select corner as a tap on that card's box", async () => {
+    const real = window.matchMedia;
+    let phone = true;
+    window.matchMedia = ((query: string) => ({ matches: phone && query === PHONE_QUERY })) as typeof window.matchMedia;
+    try {
+      await act(async () => root.render(<UsersTable />));
+      const corner = cells(0)[0];
+      const box = corner.querySelector("input")!;
+      await act(async () => corner.click());
+      expect(box.checked).toBe(true);
+      expect(cells(1)[0].querySelector("input")!.checked).toBe(false);
+      // Elsewhere in the card a tap is not a tap on the box.
+      await act(async () => cells(0)[1].click());
+      expect(box.checked).toBe(true);
+      // On a desktop the cell is a table cell like any other.
+      phone = false;
+      await act(async () => corner.click());
+      expect(box.checked).toBe(true);
+    } finally {
+      window.matchMedia = real;
+    }
+  });
+
+  it("leaves a box inside a label to the label, which ticks it once", async () => {
+    const real = window.matchMedia;
+    window.matchMedia = ((query: string) => ({ matches: query === PHONE_QUERY })) as typeof window.matchMedia;
+    function Labelled() {
+      const ref = useTableCards<HTMLTableElement>();
+      return (
+        <table ref={ref} className="data-table data-table--cards">
+          <thead>
+            <tr>
+              <th />
+              <th>Model</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <label>
+                  <input type="checkbox" /> <span>Pick</span>
+                </label>
+              </td>
+              <td>mock-gpt-4o</td>
+            </tr>
+          </tbody>
+        </table>
+      );
+    }
+    try {
+      await act(async () => root.render(<Labelled />));
+      expect(cells(0)[0].getAttribute("data-card-role")).toBe("select");
+      await act(async () => host.querySelector<HTMLElement>("tbody label span")!.click());
+      expect(host.querySelector<HTMLInputElement>("tbody input")!.checked).toBe(true);
+    } finally {
+      window.matchMedia = real;
+    }
+  });
+
   it("treats a cell that spans the table as full width, without a label", async () => {
     await act(async () => root.render(<UsersTable />));
     const empty = cells(2)[0];

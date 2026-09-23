@@ -354,25 +354,34 @@ describe("the phone layout block", () => {
     expect(phone.at).toBeGreaterThan(lastTopLevelRule(".modal-panel--settings .btn"));
   });
 
-  it("starts a card's lines below its 44px Actions button", () => {
+  it("gives a card's Actions button and select box 44px corners, and starts the card's lines below them", () => {
     const rem = (decls: string | null, prop: string) => {
       const m = new RegExp(`(^|[\\s;])${prop}:\\s*([\\d.]+)rem`).exec(decls ?? "");
       return m ? Number(m[2]) : NaN;
     };
+    const corner = declarations(phone.body, '.data-table.data-table--cards td[data-card-role="select"]');
+    expect(rem(corner, "width")).toBe(2.75);
+    expect(rem(corner, "height")).toBe(2.75);
     const trigger = declarations(
       phone.body,
       '.data-table.data-table--cards td[data-card-role="actions"] .row-actions-trigger',
     );
-    // The button is 44px tall by the size tokens.
+    // Both corners at the same height; the button is 44px tall by the size tokens.
+    expect(rem(trigger, "top")).toBe(rem(corner, "top"));
     expect(declarations(css, ".btn-sm")).toContain("min-height: var(--control-height-sm)");
-    // The title reaches the button's bottom: its top + 2.75rem - the card's top padding.
+    // The title reaches the corners' bottom: their top + 2.75rem - the card's top padding.
     const titleSelector =
-      '.data-table.data-table--cards tr:has(> td[data-card-role="actions"]) > td[data-card-role="title"]';
+      '.data-table.data-table--cards tr:has(> td[data-card-role="actions"], > td[data-card-role="select"]) > td[data-card-role="title"]';
     const title = declarations(phone.body, titleSelector);
     expect(title).toContain("box-sizing: border-box");
     const cardPadTop = rem(declarations(phone.body, ".data-table.data-table--cards tr"), "padding");
-    expect(rem(title, "min-height")).toBeCloseTo(rem(trigger, "top") + 2.75 - cardPadTop, 5);
+    expect(rem(title, "min-height")).toBeCloseTo(rem(corner, "top") + 2.75 - cardPadTop, 5);
+    expect(outranks(titleSelector, ".data-table.data-table--cards tbody td:is(:first-child, :last-child)")).toBe(true);
     expect(outranks(titleSelector, '.data-table.data-table--cards td[data-card-role="title"]')).toBe(true);
+    // The lines start after the select corner, not under its edge.
+    expect(
+      rem(declarations(phone.body, '.data-table.data-table--cards tr:has(> td[data-card-role="select"])'), "padding-inline-start"),
+    ).toBeGreaterThanOrEqual(2.75);
   });
 
   it("counts specificity the way the browser does, for the selectors checked here", () => {

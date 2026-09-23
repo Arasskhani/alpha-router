@@ -17817,24 +17817,39 @@ p.error,
   .data-table.data-table--cards td .user-plan-select-label {
     text-align: start;
   }
-  /* The Actions button is a 44px target in the card's top corner, 0.45rem
-     down. The title's first line sits level with its middle and the title
-     reaches its bottom, so the next line starts below the button instead of
-     under it: 0.45rem + 2.75rem - the card's 0.55rem padding = 2.65rem. */
-  .data-table.data-table--cards tr:has(> td[data-card-role="actions"]) > td[data-card-role="title"] {
+  /* The Actions button and the select box are 44px targets in the card's
+     top corners, 0.45rem down. The title's first line sits level with their
+     middle and the title reaches their bottom, so the next line starts below
+     them instead of under them: 0.45rem + 2.75rem - the card's 0.55rem
+     padding = 2.65rem. */
+  .data-table.data-table--cards tr:has(> td[data-card-role="actions"], > td[data-card-role="select"]) > td[data-card-role="title"] {
     box-sizing: border-box;
     min-height: 2.65rem;
     padding-top: 0.65rem;
-    padding-inline-end: 6.5rem;
     line-height: 1.25rem;
   }
+  .data-table.data-table--cards tr:has(> td[data-card-role="actions"]) > td[data-card-role="title"] {
+    padding-inline-end: 6.5rem;
+  }
+  /* Roles' "Read only" pill: a space from the name, and level with it, so the
+     line stays as tall as the others (the desktop puts it under the name). */
+  .roles-table.data-table--cards .badge-muted {
+    margin-top: 0;
+    margin-inline-start: 0.4rem;
+    vertical-align: middle;
+  }
   .data-table.data-table--cards tr:has(> td[data-card-role="select"]) {
-    padding-inline-start: 2.6rem;
+    padding-inline-start: 2.75rem;
   }
   .data-table.data-table--cards td[data-card-role="select"] {
     position: absolute;
-    top: 0.6rem;
-    inset-inline-start: 0.8rem;
+    top: 0.45rem;
+    inset-inline-start: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
     padding: 0;
   }
   /* Actions: the button sits in the card's top corner. The cell stays in the

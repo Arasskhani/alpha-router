@@ -16,7 +16,9 @@ import { PHONE_QUERY } from "./useMediaQuery";
  *
  * The header row is out of sight in card mode, except a select-all checkbox:
  * CSS shows it as a "Select all" bar above the cards, and a tap on that
- * caption counts as a tap on the box, as it would on a label.
+ * caption counts as a tap on the box, as it would on a label. A card's own
+ * box sits in a finger-sized corner of the card, and a tap anywhere in that
+ * corner counts too.
  *
  * On a desktop the attributes are unused; the table looks as it always did.
  */
@@ -30,24 +32,28 @@ export function useTableCards<T extends HTMLTableElement>() {
     releaseRef.current = null;
     if (!table) return;
     labelTableCells(table);
-    table.addEventListener("click", tapSelectAllCaption);
+    table.addEventListener("click", tapSelectCell);
     // Only childList: the attributes set here do not wake the observer up again.
     const observer =
       typeof MutationObserver === "undefined" ? null : new MutationObserver(() => labelTableCells(table));
     observer?.observe(table, { childList: true, subtree: true });
     releaseRef.current = () => {
       observer?.disconnect();
-      table.removeEventListener("click", tapSelectAllCaption);
+      table.removeEventListener("click", tapSelectCell);
     };
   }, []);
 }
 
-/** On a phone, a tap on the "Select all" caption beside the header's checkbox ticks the box. */
-function tapSelectAllCaption(event: MouseEvent): void {
+/**
+ * On a phone, a tap on the "Select all" caption beside the header's checkbox,
+ * or anywhere in a card's select corner, ticks the box.
+ */
+function tapSelectCell(event: MouseEvent): void {
   const target = event.target;
-  // A tap on the box itself is the box's own business.
-  if (!(target instanceof Element) || target instanceof HTMLInputElement) return;
-  const cell = target.closest('thead th[data-card-role="select"]');
+  // A tap on the box itself is the box's own business, and so is a tap on a
+  // label, which the browser passes on to its box.
+  if (!(target instanceof Element) || target instanceof HTMLInputElement || target.closest("label")) return;
+  const cell = target.closest('thead th[data-card-role="select"], tbody td[data-card-role="select"]');
   if (!cell || !window.matchMedia?.(PHONE_QUERY).matches) return;
   const box = cell.querySelector<HTMLInputElement>('input[type="checkbox"]');
   // A box the page has locked stays as it is: disabled, or out of reach by CSS

@@ -85,7 +85,8 @@ export default function OperationsMetricCard({
       </header>
       <div className="activity-metric-card__chart" style={{ minHeight: chartHeight }}>
         <ResponsiveContainer width="100%" height={chartHeight}>
-          <BarChart data={data} margin={{ top: 4, right: 4, left: -18, bottom: 0 }} barCategoryGap="12%">
+          {/* No negative left margin: it cut the start off the axis numbers ("12.0" showed as "2.0"). */}
+          <BarChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }} barCategoryGap="12%">
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
             <XAxis dataKey="label" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
             <YAxis tick={{ fontSize: 9 }} width={40} tickFormatter={(v) => axisFormat(Number(v))} />

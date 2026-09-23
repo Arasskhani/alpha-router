@@ -124,9 +124,11 @@ describe("the role picker on a phone", () => {
         ".role-multi-select__option input",
       ),
     ];
+    // From the focused element, as a real key press: the search box has a
+    // key handler of its own on the way up.
     const key = (init: KeyboardEventInit) =>
       act(async () => {
-        document.dispatchEvent(
+        (document.activeElement ?? document).dispatchEvent(
           new KeyboardEvent("keydown", {
             bubbles: true,
             cancelable: true,
@@ -153,6 +155,28 @@ describe("the role picker on a phone", () => {
     );
     expect(changes).toEqual([["user", "full_administrator"]]);
     expect(panel()).toBeNull();
+  });
+
+  it("closes on Escape from its search box, and gives focus back to the trigger", async () => {
+    await render();
+    await open();
+    const search = panel()!.querySelector<HTMLInputElement>(
+      ".role-multi-select__search",
+    )!;
+    await act(async () => search.focus());
+    await act(async () => {
+      search.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    expect(panel()).toBeNull();
+    expect(document.activeElement).toBe(
+      host.querySelector(".role-multi-select__trigger"),
+    );
   });
 
   it("closes on a tap on the backdrop without the tap reaching the page", async () => {

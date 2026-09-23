@@ -77,6 +77,16 @@ export default function RoleMultiSelect({ value, roles, onChange, className }: P
     return () => window.clearTimeout(t);
   }, [open, phone]);
 
+  // Closed on a phone, the sheet gives focus back to its trigger, as the
+  // other sheets do, instead of leaving it on the page's body.
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    if (!open && wasOpenRef.current && phone && document.activeElement === document.body) {
+      triggerRef.current?.focus({ preventScroll: true });
+    }
+    wasOpenRef.current = open;
+  }, [open, phone]);
+
   function updatePosition() {
     const btn = triggerRef.current;
     if (!btn) return;
@@ -183,7 +193,11 @@ export default function RoleMultiSelect({ value, roles, onChange, className }: P
           placeholder="Search roles…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            // Typing stays in the box; Escape and Tab go on to the picker's own
+            // handling (close; on a phone, keep Tab inside the sheet).
+            if (e.key !== "Escape" && e.key !== "Tab") e.stopPropagation();
+          }}
         />
       </div>
       <div className="role-multi-select__list">

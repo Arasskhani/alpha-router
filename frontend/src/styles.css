@@ -17472,12 +17472,83 @@ p.error,
     width: 1.25rem;
     height: 1.25rem;
   }
+
+  /* Dialogs (Modal, ConfirmModal): a sheet from the bottom edge, full width,
+     the way a phone presents one. The overlay is as tall as what can be seen
+     (--app-viewport-height), so on iOS a sheet with a field sits above the
+     keyboard instead of behind it. A strip of backdrop stays visible at the
+     top: it shows there is a page underneath and closes the sheet on a tap. */
+  .modal-overlay {
+    inset: 0 0 auto 0;
+    height: var(--app-viewport-height);
+    align-items: flex-end;
+    padding: 0;
+  }
+  .modal-overlay .modal-panel {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: none;
+    max-height: calc(var(--app-viewport-height) - 1.5rem);
+    overflow: hidden;
+    border-bottom: 0;
+    border-radius: 14px 14px 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    animation: modal-sheet-in 0.2s ease-out;
+  }
+  .modal-overlay .modal-header {
+    flex-shrink: 0;
+  }
+  .modal-overlay .modal-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  /* These two scroll an inner list themselves; a second scroller would fight it. */
+  .modal-overlay .modal-body.modal-body--settings,
+  .modal-overlay .modal-body.modal-body--move-folder {
+    overflow: hidden;
+  }
+  /* The buttons of a long form stay in reach while the form scrolls. */
+  .modal-overlay .modal-actions:last-child,
+  .modal-overlay .dialog-actions:last-child {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    padding-block: 0.6rem;
+    background: var(--surface);
+  }
+  .modal-overlay .modal-close {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    margin: -0.5rem -0.6rem -0.5rem 0;
+  }
+  /* The media viewer is a picture, not a form: the whole screen. */
+  .modal-overlay .modal-panel.modal-panel--media-viewer {
+    height: var(--app-viewport-height);
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .layout .sidebar.sidebar--drawer,
   .alpha-router-sidebar.alpha-router-sidebar--drawer {
     transition: none;
+  }
+  .modal-overlay .modal-panel {
+    animation: none;
+  }
+}
+
+@keyframes modal-sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
   }
 }
 

@@ -172,6 +172,38 @@ describe("the phone layout block", () => {
     expect(phone.at).toBeGreaterThan(lastTopLevelRule(".project-tabs"));
   });
 
+  it("presents dialogs as sheets from the bottom edge, above the iOS keyboard", () => {
+    const overlay = declarations(phone.body, ".modal-overlay");
+    expect(overlay).toContain("align-items: flex-end");
+    // As tall as what can be seen, so a sheet with a field is not behind the keyboard.
+    expect(overlay).toContain("height: var(--app-viewport-height)");
+    expect(overlay).toContain("padding: 0");
+    const panel = declarations(phone.body, ".modal-overlay .modal-panel");
+    expect(panel).toContain("width: 100%");
+    expect(panel).toContain("max-height: calc(var(--app-viewport-height) - 1.5rem)");
+    expect(panel).toContain("border-radius: 14px 14px 0 0");
+    expect(panel).toContain("env(safe-area-inset-bottom");
+    expect(declarations(phone.body, ".modal-overlay .modal-body")).toContain("overflow-y: auto");
+    // Bodies that scroll an inner list keep doing it alone.
+    expect(
+      declarations(
+        phone.body,
+        ".modal-overlay .modal-body.modal-body--settings,\n  .modal-overlay .modal-body.modal-body--move-folder",
+      ),
+    ).toContain("overflow: hidden");
+    expect(
+      declarations(phone.body, ".modal-overlay .modal-actions:last-child,\n  .modal-overlay .dialog-actions:last-child"),
+    ).toContain("position: sticky");
+    const viewer = declarations(phone.body, ".modal-overlay .modal-panel.modal-panel--media-viewer");
+    expect(viewer).toContain("height: var(--app-viewport-height)");
+    expect(viewer).toContain("border-radius: 0");
+    // The slide-in is skipped for people who asked for less motion.
+    const reduced = mediaBlocks("(prefers-reduced-motion: reduce)");
+    expect(reduced.some((b) => (declarations(b.body, ".modal-overlay .modal-panel") ?? "").includes("animation: none"))).toBe(
+      true,
+    );
+  });
+
   it("hides keyboard hints where there is no keyboard", () => {
     const coarse = mediaBlocks("(pointer: coarse)");
     expect(

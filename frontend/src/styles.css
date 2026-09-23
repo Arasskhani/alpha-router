@@ -17901,11 +17901,108 @@ p.error,
     border: 0;
     border-radius: 0;
   }
+
+  /* Docs (User Manual, Admin Guide): one column. The search and a Contents
+     button sit in a bar above the text; the contents list is a side sheet
+     over everything, the topbar included, like the More sheet (155/160). */
+  .docs-shell {
+    flex-direction: column;
+  }
+  .docs-phone-bar {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .docs-phone-bar .docs-search {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+  }
+  .docs-contents-btn {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 2.75rem;
+    padding: 0 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .docs-sidebar.docs-sidebar--drawer {
+    position: fixed;
+    top: 0;
+    inset-inline-start: 0;
+    z-index: 160;
+    width: min(85vw, 20rem);
+    height: var(--app-viewport-height);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    border-right: 0;
+    border-inline-end: 1px solid var(--border);
+    box-shadow: 12px 0 40px color-mix(in srgb, var(--text) 18%, transparent);
+    transform: translateX(var(--drawer-hidden));
+    visibility: hidden;
+    transition:
+      transform 0.22s ease,
+      visibility 0s linear 0.22s;
+  }
+  .docs-sidebar.docs-sidebar--drawer.is-open {
+    transform: none;
+    visibility: visible;
+    transition-delay: 0s;
+  }
+  .docs-contents-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 155;
+    background: rgba(0, 0, 0, 0.45);
+  }
+  .docs-sidebar--drawer .docs-sidebar-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding-block: 0.4rem;
+    padding-inline: 1rem 0.4rem;
+  }
+  .docs-sidebar--drawer .docs-sidebar-label {
+    margin-bottom: 0;
+  }
+  .docs-contents-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .docs-sidebar--drawer .docs-nav-link {
+    min-height: 2.75rem;
+    padding-block: 0.55rem;
+    text-align: start;
+  }
+  .docs-main {
+    padding: 1.25rem 1rem 3rem;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .layout .sidebar.sidebar--drawer,
-  .alpha-router-sidebar.alpha-router-sidebar--drawer {
+  .alpha-router-sidebar.alpha-router-sidebar--drawer,
+  .docs-sidebar.docs-sidebar--drawer {
     transition: none;
   }
   .modal-overlay .modal-panel,

@@ -412,6 +412,25 @@ describe("the phone layout block", () => {
     ).toContain("z-index: 2");
   });
 
+  it("lays the docs out in one column, the contents in a side sheet above the topbar", () => {
+    expect(declarations(phone.body, ".docs-shell")).toContain("flex-direction: column");
+    const sheet = declarations(phone.body, ".docs-sidebar.docs-sidebar--drawer");
+    expect(sheet).toContain("position: fixed");
+    expect(sheet).toContain("translateX(var(--drawer-hidden))");
+    expect(sheet).toContain("visibility: hidden");
+    expect(sheet).toContain("height: var(--app-viewport-height)");
+    // Above the topbar (150), like the More sheet: the whole page is behind it.
+    expect(Number(/z-index:\s*(\d+)/.exec(sheet ?? "")?.[1])).toBeGreaterThan(150);
+    expect(Number(/z-index:\s*(\d+)/.exec(declarations(phone.body, ".docs-contents-backdrop") ?? "")?.[1])).toBeGreaterThan(150);
+    const open = declarations(phone.body, ".docs-sidebar.docs-sidebar--drawer.is-open");
+    expect(open).toContain("visibility: visible");
+    expect(open).toContain("transform: none");
+    // The base rule, a 280px column beside the text, comes first.
+    expect(phone.at).toBeGreaterThan(lastTopLevelRule(".docs-sidebar"));
+    const reduced = mediaBlocks("(prefers-reduced-motion: reduce)");
+    expect(reduced.some((b) => b.body.includes(".docs-sidebar.docs-sidebar--drawer"))).toBe(true);
+  });
+
   it("turns row actions into an action sheet above the drawers", () => {
     const sheet = declarations(phone.body, ".action-sheet");
     expect(sheet).toContain("position: fixed");

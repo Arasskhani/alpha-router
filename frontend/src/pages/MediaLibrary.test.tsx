@@ -135,6 +135,16 @@ const sheetItems = () =>
     (b) => b.textContent,
   );
 
+describe("the Media cards", () => {
+  it("mark their Open button, which a phone drops in the grid views", async () => {
+    await render();
+    const open = [
+      ...host.querySelectorAll(".media-page-item__actions button"),
+    ].filter((b) => b.classList.contains("media-page-item__open"));
+    expect(open.map((b) => b.textContent?.trim())).toEqual(["Open", "Open"]);
+  });
+});
+
 describe("the Media bulk actions", () => {
   it("are five buttons on a desktop", async () => {
     await render();

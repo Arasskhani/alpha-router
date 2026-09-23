@@ -18012,6 +18012,31 @@ p.error,
   .docs-table-wrap {
     overflow-x: auto;
   }
+
+  /* Media cards in the grid views: the picture opens the file itself, so the
+     Open button goes and Download and Delete share one line. */
+  .media-page-grid:not(.media-page-grid--list, .media-page-grid--detail, .media-page-grid--title) .media-page-item__open {
+    display: none;
+  }
+  /* Media list views (List, Detail, Title): the actions take a line of their
+     own under the name and details, which had been squeezed into a sliver
+     beside the picture ("i" for the file name). */
+  .media-page-grid--list .media-page-item,
+  .media-page-grid--detail .media-page-item,
+  .media-page-grid--title .media-page-item {
+    flex-wrap: wrap;
+  }
+  .media-page-grid--list .media-page-item__actions,
+  .media-page-grid--detail .media-page-item__actions,
+  .media-page-grid--title .media-page-item__actions {
+    flex-basis: 100%;
+    align-self: auto;
+    padding: 0 0.65rem 0.55rem;
+  }
+  .media-page-grid--detail .media-page-item__preview {
+    width: 7rem;
+    min-width: 7rem;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

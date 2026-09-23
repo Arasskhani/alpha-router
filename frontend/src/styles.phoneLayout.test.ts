@@ -433,6 +433,24 @@ describe("the phone layout block", () => {
     expect(reduced.some((b) => b.body.includes(".docs-sidebar.docs-sidebar--drawer"))).toBe(true);
   });
 
+  it("fits the media cards and list rows", () => {
+    // The picture opens the file in the grid views, so Open goes there.
+    expect(
+      declarations(
+        phone.body,
+        ".media-page-grid:not(.media-page-grid--list, .media-page-grid--detail, .media-page-grid--title) .media-page-item__open",
+      ),
+    ).toContain("display: none");
+    const lists = ".media-page-grid--list .media-page-item,\n  .media-page-grid--detail .media-page-item,\n  .media-page-grid--title .media-page-item";
+    expect(declarations(phone.body, lists)).toContain("flex-wrap: wrap");
+    const actions =
+      ".media-page-grid--list .media-page-item__actions,\n  .media-page-grid--detail .media-page-item__actions,\n  .media-page-grid--title .media-page-item__actions";
+    expect(declarations(phone.body, actions)).toContain("flex-basis: 100%");
+    // The base rules for those rows come first, so the phone rules win on order.
+    expect(lastTopLevelRule(".media-page-grid--title .media-page-item__actions")).toBeGreaterThan(0);
+    expect(phone.at).toBeGreaterThan(lastTopLevelRule(".media-page-grid--title .media-page-item__actions"));
+  });
+
   it("turns row actions into an action sheet above the drawers", () => {
     const sheet = declarations(phone.body, ".action-sheet");
     expect(sheet).toContain("position: fixed");

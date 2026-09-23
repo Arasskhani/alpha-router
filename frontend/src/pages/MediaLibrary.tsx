@@ -608,7 +608,7 @@ export default function MediaLibrary({ adminUserId, backLink }: MediaLibraryProp
               <span className="media-page-item__size">{formatMediaBytes(m.size_bytes)}</span>
             </div>
             <div className="media-page-item__actions">
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => openItem(m)}>
+              <button type="button" className="btn btn-ghost btn-sm media-page-item__open" onClick={() => openItem(m)}>
                 Open
               </button>
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => void downloadOne(m)}>

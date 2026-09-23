@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { useTableCards } from "../../hooks/useTableCards";
 import ModelName from "../ModelName";
 
 export type SlowModelRow = {
@@ -21,6 +22,8 @@ function fmtMs(ms: number) {
 }
 
 export default function OperationsSlowModelsTable({ rows, thresholdMs }: Props) {
+  // On a phone each model is drawn as a card (styles.css).
+  const tableCardsRef = useTableCards<HTMLTableElement>();
   return (
     <div className="card operations-slow-models">
       <h3>Slowest models (by P95)</h3>
@@ -33,7 +36,7 @@ export default function OperationsSlowModelsTable({ rows, thresholdMs }: Props) 
         <p className="muted-text">Not enough request data yet.</p>
       ) : (
         <div className="table-wrap">
-          <table className="data-table">
+          <table ref={tableCardsRef} className="data-table data-table--cards">
             <thead>
               <tr>
                 <th>Model</th>

@@ -319,7 +319,9 @@ async def test_acs_endpoint_refuses_replay_of_the_same_response(fake_redis, monk
         b64 = _build_response(in_response_to=request_id)
 
         first = await auth_api.saml_acs(_acs_request(), b64, None, db)
-        assert first.status_code in (302, 307)
+        # 303 exactly: after the IdP's form POST the browser must follow with a
+        # GET. A 307 (Starlette's default) repeats the POST and gets a 405.
+        assert first.status_code == 303
         assert "/login?code=" in first.headers["location"]
 
         # Same Response again: the request id is gone.

@@ -476,7 +476,10 @@ async def saml_acs(
         frontend_url = validate_frontend_url(settings.frontend_url)
     except ValueError as exc:
         raise HTTPException(status_code=500, detail="Invalid frontend redirect configuration") from exc
-    return RedirectResponse(f"{frontend_url}/login?code={xchg_code}")
+    # 303, not Starlette's default 307: the IdP delivered the assertion as a
+    # form POST, and a 307 makes the browser repeat that POST against the
+    # login page, which only answers GET (405 Method Not Allowed).
+    return RedirectResponse(f"{frontend_url}/login?code={xchg_code}", status_code=303)
 
 
 async def _audit_saml_rejection(db: AsyncSession, request: Request, reason: str, ref: str | None) -> None:

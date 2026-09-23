@@ -243,6 +243,32 @@ describe("the phone layout block", () => {
     expect(outranks(".media-page-grid--list .media-page-item__check", ".media-page-item__check")).toBe(true);
   });
 
+  it("sizes the pickers and text actions that nothing else sizes", () => {
+    const own = declarations(
+      phone.body,
+      ".role-multi-select__trigger,\n  .user-owner-select__item,\n  .settings-row__action,\n  .memory-admin__budget-links a",
+    );
+    expect(own).toContain("min-height: 2.75rem");
+    // A link takes min-height only as a box.
+    expect(declarations(phone.body, ".memory-admin__budget-links a")).toContain("display: inline-flex");
+    // The models table's on/off button pins 26px in a rule of the same weight; the phone rule comes after it.
+    expect(declarations(css.slice(0, phone.at), ".data-table .model-toggle-btn")).toContain("min-height: 26px");
+    expect(declarations(phone.body, ".data-table .model-toggle-btn")).toContain("min-height: 2.75rem");
+    expect(phone.at).toBeGreaterThan(lastTopLevelRule(".data-table .model-toggle-btn"));
+    // "Explore ›" reaches into its card as far as it is padded, so the card's header keeps its height…
+    const explore = declarations(phone.body, ".overview-explore-link") ?? "";
+    const padding = /(^|[\s;])padding:\s*([\d.]+)rem ([\d.]+)rem/.exec(explore);
+    const margin = /(^|[\s;])margin:\s*-([\d.]+)rem -([\d.]+)rem/.exec(explore);
+    expect(padding && margin).toBeTruthy();
+    expect(margin![2]).toBe(padding![2]);
+    expect(margin![3]).toBe(padding![3]);
+    // …44px with its 15px line…
+    expect(Number(padding![2]) * 2 * 16 + 15).toBeGreaterThanOrEqual(44);
+    // …and above the chart under it, which is positioned.
+    expect(explore).toContain("position: relative");
+    expect(explore).toContain("z-index: 1");
+  });
+
   it("gives the topbar's logo and profile button a finger's size", () => {
     expect(declarations(phone.body, ".app-topbar .topbar-brand")).toContain("min-width: 2.75rem");
     expect(declarations(phone.body, ".app-topbar .user-profile-trigger")).toContain("min-height: 2.75rem");

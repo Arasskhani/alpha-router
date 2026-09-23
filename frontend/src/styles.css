@@ -17452,6 +17452,34 @@ p.error,
     height: max(100%, 2.75rem);
     transform: translate(-50%, -50%);
   }
+  /* Pickers, text actions and links of their own, sized by nothing above. */
+  .role-multi-select__trigger,
+  .user-owner-select__item,
+  .settings-row__action,
+  .memory-admin__budget-links a {
+    min-height: 2.75rem;
+  }
+  .settings-row__action {
+    padding-inline: 0.6rem;
+  }
+  .memory-admin__budget-links a {
+    display: inline-flex;
+    align-items: center;
+  }
+  .data-table .model-toggle-btn {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+  /* "Explore ›" and "Open Activity →" head their cards in small text: the
+     hit area reaches into the card around them (a 15px line and 0.95rem
+     above and below), and the header keeps its height. Lifted above the
+     chart under it, which is positioned and would take the lower part. */
+  .overview-explore-link {
+    position: relative;
+    z-index: 1;
+    padding: 0.95rem 0.5rem;
+    margin: -0.95rem -0.5rem;
+  }
 
   /* No hover on a phone: the per-chat actions and the select box stay visible. */
   .alpha-router-sidebar--drawer .alpha-router-history-item-actions,

@@ -18056,6 +18056,28 @@ p.error,
     width: 100%;
     min-width: 0;
   }
+
+  /* The usage heatmap: a year of weeks squeezed into 390px left cells under
+     4px wide. The weeks keep a readable size and scroll sideways, starting at
+     the latest week (ActivityHeatmap); the day names stay put. */
+  .activity-heatmap__chart-row {
+    --heatmap-gap: 2px;
+    --heatmap-month-h: 12px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+  .activity-heatmap__grid {
+    flex: 0 0 auto;
+  }
+  .activity-heatmap__week {
+    flex: 0 0 0.75rem;
+  }
+  .activity-heatmap__dow {
+    position: sticky;
+    inset-inline-start: 0;
+    z-index: 1;
+    background: var(--surface);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

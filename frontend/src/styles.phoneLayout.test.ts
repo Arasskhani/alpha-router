@@ -442,6 +442,17 @@ describe("the phone layout block", () => {
     expect(phone.at).toBeGreaterThan(oneColumn!.at);
   });
 
+  it("keeps the usage heatmap's cells readable, scrolling sideways with the day names in place", () => {
+    const row = declarations(phone.body, ".activity-heatmap__chart-row");
+    expect(row).toContain("overflow-x: auto");
+    expect(declarations(phone.body, ".activity-heatmap__week")).toContain("flex: 0 0 0.75rem");
+    expect(declarations(phone.body, ".activity-heatmap__grid")).toContain("flex: 0 0 auto");
+    const days = declarations(phone.body, ".activity-heatmap__dow");
+    expect(days).toContain("position: sticky");
+    expect(days).toContain("background: var(--surface)");
+    expect(phone.at).toBeGreaterThan(lastTopLevelRule(".activity-heatmap__week"));
+  });
+
   it("fits the media cards and list rows", () => {
     // The picture opens the file in the grid views, so Open goes there.
     expect(

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import { dateKeyForTimezone, formatHeatmapTooltip, formatHeatmapValue } from "./formatters";
 import type { ActivityInsights, HeatmapDay, HeatmapMetric, TimezoneMode } from "./types";
 
@@ -76,6 +76,15 @@ export default function ActivityHeatmap({ insights, metric, timezone, onMetricCh
 
   const weeks = useMemo(() => heatmapWeeks(days, timezone), [days, timezone]);
 
+  // On a phone the weeks keep a readable size and scroll sideways
+  // (styles.css): start at the latest week. On a desktop they fit, and this
+  // leaves the chart where it is.
+  const chartRowRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const row = chartRowRef.current;
+    if (row) row.scrollLeft = row.scrollWidth;
+  }, [weeks]);
+
   const sideStats = useMemo(() => {
     const s = insights.usage_stats[metric];
     return {
@@ -107,7 +116,7 @@ export default function ActivityHeatmap({ insights, metric, timezone, onMetricCh
       </header>
       <div className="activity-heatmap__body">
         <div className="activity-heatmap__grid-wrap">
-          <div className="activity-heatmap__chart-row">
+          <div ref={chartRowRef} className="activity-heatmap__chart-row">
             <div className="activity-heatmap__dow" aria-hidden>
               <span>M</span>
               <span />

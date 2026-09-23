@@ -7,6 +7,14 @@ import { useCallback, useMemo, useSyncExternalStore } from "react";
  */
 export const PHONE_QUERY = "(max-width: 768px)";
 
+/**
+ * Below this width the shell's navigation, outside the chat pages, is a
+ * drawer behind the topbar's menu button: on phones, and on tablets up to
+ * 1024px, where it was a block stacked above the page. styles.css holds the
+ * drawer rules in a block with the same query.
+ */
+export const NAV_DRAWER_QUERY = "(max-width: 1024px)";
+
 function canMatch(): boolean {
   return typeof window !== "undefined" && typeof window.matchMedia === "function";
 }

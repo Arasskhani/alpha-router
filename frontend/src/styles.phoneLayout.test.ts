@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { PHONE_QUERY } from "./hooks/useMediaQuery";
+import { NAV_DRAWER_QUERY, PHONE_QUERY } from "./hooks/useMediaQuery";
 
 const css = readFileSync(join(__dirname, "styles.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
@@ -123,10 +123,28 @@ describe("the phone layout block", () => {
   const blocks = mediaBlocks(PHONE_QUERY);
   const phone = blocks[blocks.length - 1];
 
-  it("uses the same query as usePhoneLayout and holds the drawers", () => {
+  // The navigation drawer serves phones and tablets: its own block, just before the phone block.
+  const drawerBlocks = mediaBlocks(NAV_DRAWER_QUERY);
+  const drawer = drawerBlocks[drawerBlocks.length - 1];
+
+  it("uses the same queries as the hooks and holds the drawers", () => {
     expect(PHONE_QUERY).toBe("(max-width: 768px)");
-    expect(phone.body).toContain(".sidebar--drawer");
-    expect(blocks.filter((b) => b.body.includes(".sidebar--drawer"))).toHaveLength(1);
+    expect(NAV_DRAWER_QUERY).toBe("(max-width: 1024px)");
+    // The chat history drawer is a phone's; the navigation drawer a phone's and a tablet's.
+    expect(phone.body).toContain(".alpha-router-sidebar--drawer");
+    expect(blocks.filter((b) => b.body.includes(".alpha-router-sidebar--drawer"))).toHaveLength(1);
+    expect(drawer.body).toContain(".layout .sidebar.sidebar--drawer");
+    expect(drawerBlocks.filter((b) => b.body.includes(".sidebar.sidebar--drawer"))).toHaveLength(1);
+    expect(phone.body).not.toContain(".layout .sidebar.sidebar--drawer");
+  });
+
+  it("puts the drawer block after the base tablet rules and before the phone block", () => {
+    // The base 1024px rules stack the navigation above the page; the drawer block must win.
+    const stacked = drawerBlocks.find((b) => b.body.includes(".layout:not(.layout--chat) .sidebar {"));
+    expect(stacked).toBeDefined();
+    expect(drawer.at).toBeGreaterThan(stacked!.at);
+    expect(drawer.at).toBeLessThan(phone.at);
+    expect(declarations(drawer.body, ".layout:not(.layout--chat) .layout-body")).toContain("flex-direction: row");
   });
 
   it("comes after the base rules it overrides", () => {
@@ -140,8 +158,10 @@ describe("the phone layout block", () => {
   });
 
   it("turns both side panels into hidden drawers that the open state shows", () => {
-    const body = phone.body;
-    for (const selector of [".layout .sidebar.sidebar--drawer", ".alpha-router-sidebar.alpha-router-sidebar--drawer"]) {
+    for (const [selector, body] of [
+      [".layout .sidebar.sidebar--drawer", drawer.body],
+      [".alpha-router-sidebar.alpha-router-sidebar--drawer", phone.body],
+    ]) {
       const closed = declarations(body, selector);
       expect(closed, selector).not.toBeNull();
       expect(closed).toContain("position: fixed");
@@ -161,7 +181,8 @@ describe("the phone layout block", () => {
     const body = phone.body;
     expect(declarations(body, ".topbar-shortcuts")).toContain("display: none");
     expect(declarations(body, ".sidebar-peek-rail")).toContain("display: none");
-    expect(declarations(body, ".topbar-menu-btn")).toContain("display: inline-flex");
+    // The menu button serves the drawer, on tablets too.
+    expect(declarations(drawer.body, ".topbar-menu-btn")).toContain("display: inline-flex");
     // The menu button exists only on a phone; the base rule keeps it out of a desktop.
     expect(declarations(css, ".topbar-menu-btn")).toContain("display: none");
   });

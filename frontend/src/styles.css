@@ -17163,27 +17163,20 @@ p.error,
   display: contents;
 }
 
-@media (max-width: 768px) {
-  :root {
-    --app-topbar-height: 48px;
-  }
-  .app-topbar {
-    --topbar-inline-pad: 0.6rem;
-    gap: 0.4rem;
-  }
-  .topbar-left,
-  .topbar-left:has(.topbar-model-search) {
-    width: auto;
-    flex: 0 1 auto;
-    gap: 0.35rem;
-  }
+/* The navigation drawer (NAV_DRAWER_QUERY): on phones and tablets the
+   shell's navigation, outside the chat pages, sits behind the topbar's menu
+   button, instead of a block stacked above the page (the 1024px rules above).
+   After those rules, so it wins; the phone block below adds what only a
+   phone needs. */
+@media (max-width: 1024px) {
   .topbar-menu-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
     width: 2.75rem;
-    height: 2.75rem;
+    /* 44px on a phone; no taller than a tablet's 40px topbar. */
+    height: min(2.75rem, var(--app-topbar-height));
     margin-inline-start: -0.4rem;
     border: 0;
     border-radius: var(--radius-sm);
@@ -17195,16 +17188,6 @@ p.error,
     .topbar-menu-btn:hover {
       background: color-mix(in srgb, var(--text) 8%, transparent);
     }
-  }
-  .topbar-shortcuts {
-    display: none;
-  }
-  .topbar-nav {
-    margin-inline-start: auto;
-    flex-shrink: 0;
-  }
-  .topbar-selected-models {
-    min-width: 0;
   }
 
   /* Navigation: a drawer over the page instead of a block above it. */
@@ -17248,6 +17231,32 @@ p.error,
   }
   .layout:not(.layout--chat) .main-column {
     width: 100%;
+  }
+}
+
+@media (max-width: 768px) {
+  :root {
+    --app-topbar-height: 48px;
+  }
+  .app-topbar {
+    --topbar-inline-pad: 0.6rem;
+    gap: 0.4rem;
+  }
+  .topbar-left,
+  .topbar-left:has(.topbar-model-search) {
+    width: auto;
+    flex: 0 1 auto;
+    gap: 0.35rem;
+  }
+  .topbar-shortcuts {
+    display: none;
+  }
+  .topbar-nav {
+    margin-inline-start: auto;
+    flex-shrink: 0;
+  }
+  .topbar-selected-models {
+    min-width: 0;
   }
 
   /* The whole app is as tall as what can be seen: the visual viewport, which

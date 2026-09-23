@@ -25,7 +25,7 @@ import {
 import { hydrateUserPrefsFromServer, saveThemeToServer } from "../lib/chatStorage";
 import { getSessionUser } from "../lib/session";
 import usePresenceHeartbeat from "../hooks/usePresenceHeartbeat";
-import { usePhoneLayout } from "../hooks/useMediaQuery";
+import { NAV_DRAWER_QUERY, useMediaQuery, usePhoneLayout } from "../hooks/useMediaQuery";
 import { useVisualViewportHeight } from "../hooks/useVisualViewportHeight";
 import type { NavItem, NavSection } from "../nav/types";
 
@@ -49,6 +49,9 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
   // chat page that panel is the chat history (ChatPanel renders it and reads
   // the state through ShellMenuContext); elsewhere it is the navigation here.
   const phone = usePhoneLayout();
+  // Up to 1024px (tablets too) the navigation is a drawer outside the chat
+  // pages; a tablet's chat pages keep their desktop layout (drawerLayout below).
+  const navDrawerWidth = useMediaQuery(NAV_DRAWER_QUERY);
   // The layout's height follows the visual viewport, so the iOS keyboard does not cover the composer.
   useVisualViewportHeight(phone);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -69,6 +72,9 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
   const isChatLayout = isChat || isProjectWorkspace;
   const isDocs = path.endsWith("/docs") || path.endsWith("/manual");
   const home = path.startsWith("/admin") ? "/admin" : "/app";
+  // Whether the side panel is a drawer behind the menu button: on a phone
+  // always, on a tablet outside the chat pages.
+  const drawerLayout = phone || (navDrawerWidth && !isChatLayout);
 
   useEffect(() => {
     applyThemeToDocument(theme);
@@ -113,18 +119,18 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
     setDrawerOpen(false);
   }, [path]);
 
-  // Leaving the phone layout (a rotation, a resized window) puts the panel
+  // Leaving the drawer layout (a rotation, a resized window) puts the panel
   // back in the page; an "open drawer" would otherwise linger invisibly and
   // show itself on the next rotation back.
-  const [wasPhone, setWasPhone] = useState(phone);
-  if (wasPhone !== phone) {
-    setWasPhone(phone);
+  const [wasDrawerLayout, setWasDrawerLayout] = useState(drawerLayout);
+  if (wasDrawerLayout !== drawerLayout) {
+    setWasDrawerLayout(drawerLayout);
     setDrawerOpen(false);
     setNavPeek(false);
   }
 
   useEffect(() => {
-    if (!phone || (!drawerOpen && !navPeek)) return;
+    if (!drawerLayout || (!drawerOpen && !navPeek)) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || escapeBelongsElsewhere(event.target)) return;
       // Navigation on top of the chat history closes first, like a stacked dialog.
@@ -133,19 +139,19 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [phone, drawerOpen, navPeek]);
+  }, [drawerLayout, drawerOpen, navPeek]);
 
   // Focus follows the drawer in, and comes back to the button that opened it.
   const drawerWasOpen = useRef(false);
   useEffect(() => {
-    if (!phone) return;
+    if (!drawerLayout) return;
     if (drawerOpen) {
       drawerRef.current?.focus({ preventScroll: true });
     } else if (drawerWasOpen.current) {
       menuButtonRef.current?.focus({ preventScroll: true });
     }
     drawerWasOpen.current = drawerOpen;
-  }, [phone, drawerOpen]);
+  }, [drawerLayout, drawerOpen]);
 
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
   const claimDrawer = useCallback(() => {
@@ -191,13 +197,14 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
     />
   );
 
-  // On a phone the menu button opens the navigation drawer, unless a page
-  // panel (the chat history) has claimed it. The navigation flyout can open
-  // over that panel. A backdrop closes whichever is on top on tap.
-  const navDrawer = phone && (!isChatLayout || drawerClaims === 0);
+  // In the drawer layout the menu button opens the navigation drawer, unless
+  // a page panel (the chat history, on a phone) has claimed it. The
+  // navigation flyout can open over that panel. A backdrop closes whichever
+  // is on top on tap.
+  const navDrawer = drawerLayout && (!isChatLayout || drawerClaims === 0);
   const navDrawerOpen = navDrawer && drawerOpen;
   const navFlyoutOpen = phone && isChat && navPeek;
-  const anythingOpen = (phone && drawerOpen) || navFlyoutOpen;
+  const anythingOpen = (drawerLayout && drawerOpen) || navFlyoutOpen;
 
   // On a phone the flyout is a layer of its own: focus goes in with it and
   // back to whatever opened it afterwards.
@@ -218,7 +225,7 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
         <div className={`layout${layoutClass}`}>
           <header className="app-topbar">
             <div className="topbar-left">
-              {phone ? (
+              {drawerLayout ? (
                 <button
                   ref={menuButtonRef}
                   type="button"
@@ -295,9 +302,9 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
               <aside
                 ref={drawerRef}
                 id="shell-drawer"
-                className={`sidebar${phone ? " sidebar--drawer" : ""}${navDrawerOpen ? " is-open" : ""}`}
-                tabIndex={phone ? -1 : undefined}
-                aria-hidden={phone && !navDrawerOpen ? true : undefined}
+                className={`sidebar${drawerLayout ? " sidebar--drawer" : ""}${navDrawerOpen ? " is-open" : ""}`}
+                tabIndex={drawerLayout ? -1 : undefined}
+                aria-hidden={drawerLayout && !navDrawerOpen ? true : undefined}
               >
                 {sidebarInner}
               </aside>

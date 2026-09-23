@@ -11,12 +11,14 @@ import { createRoot, type Root } from "react-dom/client";
 import { Link, MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const layout = vi.hoisted(() => ({ phone: false }));
+const layout = vi.hoisted(() => ({ phone: false, tablet: false }));
 
 vi.mock("../hooks/useMediaQuery", () => ({
   PHONE_QUERY: "(max-width: 768px)",
+  NAV_DRAWER_QUERY: "(max-width: 1024px)",
   usePhoneLayout: () => layout.phone,
-  useMediaQuery: () => false,
+  // A phone is narrower than a tablet: the drawer query holds for both.
+  useMediaQuery: (query: string) => query === "(max-width: 1024px)" && (layout.phone || layout.tablet),
 }));
 vi.mock("../hooks/usePresenceHeartbeat", () => ({ default: () => {} }));
 vi.mock("../lib/session", () => ({ getSessionUser: () => null }));
@@ -77,6 +79,7 @@ let root: Root;
 
 beforeEach(() => {
   layout.phone = false;
+  layout.tablet = false;
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -138,6 +141,50 @@ describe("the shell on a desktop", () => {
   it("has no bottom tab bar", async () => {
     await render("/app/projects");
     expect(document.querySelector(".bottom-tab-bar")).toBeNull();
+  });
+});
+
+describe("the shell on a tablet (769–1024px)", () => {
+  beforeEach(() => {
+    layout.tablet = true;
+  });
+
+  it("puts the navigation in the drawer instead of a block above the page", async () => {
+    await render("/admin/users");
+    const aside = sidebar()!;
+    expect(aside.classList.contains("sidebar--drawer")).toBe(true);
+    expect(aside.getAttribute("aria-hidden")).toBe("true");
+    await click(menuButton());
+    expect(aside.classList.contains("is-open")).toBe(true);
+    expect(document.activeElement).toBe(aside);
+    await escape();
+    expect(aside.classList.contains("is-open")).toBe(false);
+    expect(document.activeElement).toBe(menuButton());
+  });
+
+  it("keeps the full logo and has no bottom tab bar", async () => {
+    await render("/app/projects");
+    expect(menuButton()).not.toBeNull();
+    expect(document.querySelector(".bottom-tab-bar")).toBeNull();
+    expect(document.querySelector('[data-testid="probe"]')).toBeNull();
+  });
+
+  it("leaves the chat pages as on a desktop: no menu button, and the history is no drawer", async () => {
+    await render("/app/chat");
+    expect(menuButton()).toBeNull();
+    expect(probeText()).toBe("phone=false open=false");
+  });
+
+  it("closes the drawer when a link in it leads to the chat page, which has none", async () => {
+    await render("/app/projects");
+    await click(menuButton());
+    const chat = [...document.querySelectorAll<HTMLAnchorElement>(".sidebar--drawer a")].find(
+      (a) => a.textContent?.trim() === "Chat",
+    );
+    await click(chat ?? null);
+    expect(probeText()).toBe("phone=false open=false");
+    expect(menuButton()).toBeNull();
+    expect(backdrop()).toBeNull();
   });
 });
 

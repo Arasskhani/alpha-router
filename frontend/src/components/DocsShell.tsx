@@ -123,9 +123,24 @@ export default function DocsShell({
     sheetWasOpen.current = sheetOpen;
   }, [sheetOpen]);
 
+  // A section the search hides is not on the page: picking it clears the
+  // search, and the text goes there once the section is back.
+  const pendingSection = useRef<string | null>(null);
+  useEffect(() => {
+    const id = pendingSection.current;
+    if (!id) return;
+    pendingSection.current = null;
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [filtered]);
+
   function scrollTo(id: string) {
     setActiveId(id);
     setContentsOpen(false);
+    if (!filtered.some((s) => s.id === id)) {
+      pendingSection.current = id;
+      setQuery("");
+      return;
+    }
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 

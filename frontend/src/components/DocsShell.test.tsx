@@ -141,6 +141,29 @@ describe("the contents highlight", () => {
   });
 });
 
+describe("picking a section the search hides", () => {
+  it("clears the search and goes there", async () => {
+    await render();
+    const setValue = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!;
+    await act(async () => {
+      setValue.call(search(), "media");
+      search().dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(
+      [...host.querySelectorAll(".docs-section")].map((s) => s.id),
+    ).toEqual(["media"]);
+    await act(async () => link("Chat overview").click());
+    expect(search().value).toBe("");
+    expect(
+      [...host.querySelectorAll(".docs-section")].map((s) => s.id),
+    ).toEqual(["intro", "chat", "media"]);
+    expect(scrolled).toEqual(["chat"]);
+  });
+});
+
 describe("the docs on a phone", () => {
   beforeEach(() => {
     layout.phone = true;

@@ -175,6 +175,35 @@ class TestAgainstARealServer:
         assert server.auth_attempts == []
         message = describe_smtp_error(caught.value, conn)
         assert message.startswith("The certificate of 127.0.0.1 could not be verified")
+        assert "Allow a self-signed certificate" in message
+
+    async def test_a_self_signed_certificate_is_accepted_when_verification_is_off(self, tls):
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.self_signed_context) as server:
+            conn = _conn(server, SECURITY_STARTTLS, verify_certificate=False)
+            client = await open_smtp(conn)
+            assert negotiated_tls_version(client) in {"TLSv1.2", "TLSv1.3"}
+            await close_quietly(client)
+        # Still encrypted: only the identity check was given up.
+        assert server.auth_attempts == [AuthAttempt("alpha", "s3cret", tls=True)]
+        assert conn.certificate_checked is False
+
+    async def test_the_same_goes_for_ssl(self, tls):
+        async with SmtpTestServer(mode=MODE_SSL, tls_context=tls.self_signed_context) as server:
+            client = await open_smtp(_conn(server, SECURITY_SSL, verify_certificate=False))
+            await close_quietly(client)
+        assert server.auth_attempts == [AuthAttempt("alpha", "s3cret", tls=True)]
+
+    async def test_not_verifying_never_means_falling_back_to_plain_text(self, tls):
+        async with SmtpTestServer(
+            mode=MODE_STARTTLS, tls_context=tls.self_signed_context, advertise_starttls=False
+        ) as server:
+            with pytest.raises(aiosmtplib.SMTPException):
+                await open_smtp(_conn(server, SECURITY_STARTTLS, verify_certificate=False))
+        assert server.auth_attempts == []
+
+    def test_without_tls_there_is_no_certificate_to_check(self):
+        assert SmtpConnection(host="h", port=25, security=SECURITY_NONE).certificate_checked is False
+        assert SmtpConnection(host="h", port=587, security=SECURITY_STARTTLS).certificate_checked is True
 
     async def test_a_wrong_password_is_named_as_such(self, tls):
         async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
@@ -193,7 +222,7 @@ class TestAgainstARealServer:
 
 
 class TestSendEmail:
-    async def _row(self, db_session, server: SmtpTestServer, security: str) -> SmtpSettings:
+    async def _row(self, db_session, server: SmtpTestServer, security: str, *, verify: bool = True) -> SmtpSettings:
         row = SmtpSettings(
             host="127.0.0.1",
             port=server.port,
@@ -201,6 +230,7 @@ class TestSendEmail:
             password_encrypted=encrypt_secret("s3cret"),
             from_address="reports@example.com",
             security=security,
+            verify_certificate=verify,
         )
         db_session.add(row)
         await db_session.commit()
@@ -217,6 +247,12 @@ class TestSendEmail:
         assert message.recipients == ("owner@example.com",)
         assert b"Subject: Weekly usage" in message.data
         assert server.auth_attempts == [AuthAttempt("alpha", "s3cret", tls=True)]
+
+    async def test_a_saved_self_signed_exception_is_honoured(self, db_session, tls):
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.self_signed_context) as server:
+            await self._row(db_session, server, SECURITY_STARTTLS, verify=False)
+            await send_email(db_session, to_address="owner@example.com", subject="s", body_text="b")
+        assert [m.tls for m in server.messages] == [True]
 
     async def test_a_failure_is_reported_as_the_readable_reason(self, db_session, tls):
         async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:

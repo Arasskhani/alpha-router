@@ -11,6 +11,10 @@ either cannot connect or leaks:
 * ``ssl`` (usually port 465): TLS from the first byte, often called SMTPS.
 * ``none``: no TLS, chosen on purpose, for a relay on a trusted network.
 
+Certificates are verified unless ``verify_certificate`` is off, for a server
+with a self-signed certificate: the connection is still encrypted, but any
+certificate is accepted, so the server's identity is no longer checked.
+
 The settings page used to have one "Use TLS" switch that meant ``ssl``, and
 it shipped switched on with port 587: a combination that can never connect
 and fails with "[SSL: WRONG_VERSION_NUMBER]". ``describe_smtp_error`` turns
@@ -65,6 +69,13 @@ class SmtpConnection:
     security: str = SECURITY_STARTTLS
     username: str | None = None
     password: str | None = None
+    #: Off accepts any certificate (a self-signed one included). Meaningless
+    #: without TLS.
+    verify_certificate: bool = True
+
+    @property
+    def certificate_checked(self) -> bool:
+        return self.security != SECURITY_NONE and self.verify_certificate
 
 
 def normalize_security(value: str | None) -> str:
@@ -107,6 +118,7 @@ def connection_from_row(row: SmtpSettings) -> SmtpConnection:
         security=normalize_security(row.security),
         username=(row.username or "").strip() or None,
         password=password,
+        verify_certificate=row.verify_certificate is not False,
     )
 
 
@@ -118,6 +130,7 @@ async def open_smtp(conn: SmtpConnection, *, login: bool = True) -> aiosmtplib.S
         hostname=conn.host,
         port=conn.port,
         timeout=TIMEOUT_SECONDS,
+        validate_certs=conn.verify_certificate,
         **client_options(conn.security),
     )
     await client.connect()
@@ -167,7 +180,10 @@ def describe_smtp_error(exc: BaseException, conn: SmtpConnection) -> str:
     if cert_error is not None or "CERTIFICATE_VERIFY_FAILED" in text:
         reason = getattr(cert_error, "verify_message", "") or ""
         detail = f" ({reason})" if reason else ""
-        return f"The certificate of {conn.host} could not be verified{detail}."
+        return (
+            f"The certificate of {conn.host} could not be verified{detail}. If this server uses a self-signed "
+            "certificate and you trust the network between you, turn on “Allow a self-signed certificate”."
+        )
 
     if "WRONG_VERSION_NUMBER" in text:
         if conn.security == SECURITY_SSL:

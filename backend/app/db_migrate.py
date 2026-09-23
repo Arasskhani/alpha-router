@@ -52,9 +52,10 @@ async def apply_schema_column_patches() -> None:
             }
         ),
         "chat_messages": frozenset({"agent_run_id", "author_display_name"}),
-        # Revision 4ce0678f5e1c fills it from the old use_tls switch; added
-        # bare here, every row would read as the default instead.
-        "smtp_settings": frozenset({"security"}),
+        # Revision 4ce0678f5e1c fills security from the old use_tls switch;
+        # added bare here, every row would read as the default instead.
+        # verify_certificate comes with 3e27b36f9d8f, NOT NULL, defaulting on.
+        "smtp_settings": frozenset({"security", "verify_certificate"}),
         "image_generation_attempts": frozenset({"project_id"}),
         "video_generation_jobs": frozenset({"project_id"}),
         "project_config_versions": frozenset({"memory_auto_capture"}),

@@ -108,8 +108,17 @@ class TestSaveAndRead:
             "password": "********",
             "from_address": "reports@example.com",
             "security": "ssl",
+            "verify_certificate": True,
         }
         assert row.password_encrypted not in str(got)
+
+    async def test_certificate_verification_can_be_turned_off_and_back_on(self, client, db_session, admin):
+        headers = _sign_in(client, admin)
+        await client.put(URL, headers=headers, json=_body(verify_certificate=False))
+        assert (await _saved(db_session)).verify_certificate is False
+        assert (await client.get(URL, headers=headers)).json()["verify_certificate"] is False
+        await client.put(URL, headers=headers, json=_body())
+        assert (await _saved(db_session)).verify_certificate is True
 
     async def test_the_mask_keeps_the_saved_password(self, client, db_session, admin):
         headers = _sign_in(client, admin)
@@ -167,6 +176,7 @@ class TestTestConnection:
         assert body["ok"] is True
         assert body["security"] == "starttls"
         assert body["tls_version"] in {"TLSv1.2", "TLSv1.3"}
+        assert body["certificate_verified"] is True
         assert body["login_tested"] is True
         assert [a.tls for a in server.auth_attempts] == [True]
 
@@ -179,6 +189,25 @@ class TestTestConnection:
         body = resp.json()
         assert body["ok"] is False
         assert "choose STARTTLS" in body["error"]
+
+    async def test_a_self_signed_server_passes_only_when_verification_is_off(self, client, admin, tls):
+        headers = _sign_in(client, admin)
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.self_signed_context) as server:
+            strict = (
+                await client.post(TEST_URL, headers=headers, json=_body(host="127.0.0.1", port=server.port))
+            ).json()
+            lenient = (
+                await client.post(
+                    TEST_URL,
+                    headers=headers,
+                    json=_body(host="127.0.0.1", port=server.port, verify_certificate=False),
+                )
+            ).json()
+        assert strict["ok"] is False
+        assert "Allow a self-signed certificate" in strict["error"]
+        assert lenient["ok"] is True
+        assert lenient["certificate_verified"] is False
+        assert lenient["tls_version"] in {"TLSv1.2", "TLSv1.3"}
 
     async def test_nothing_is_saved_by_a_test(self, client, db_session, admin, tls):
         headers = _sign_in(client, admin)

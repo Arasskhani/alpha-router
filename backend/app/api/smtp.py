@@ -43,6 +43,8 @@ class SmtpIn(BaseModel):
     password: str | None = Field(default=None, max_length=1024)
     from_address: str = Field(min_length=3, max_length=255)
     security: Literal["starttls", "ssl", "none"] | None = None
+    #: Off accepts a self-signed (or any other) certificate.
+    verify_certificate: bool = True
     #: Sent by a page loaded before ``security`` existed. Read only when
     #: ``security`` is absent, with the same rule the migration applied.
     use_tls: bool | None = None
@@ -96,6 +98,7 @@ async def get_smtp(db: AsyncSession = Depends(get_db), _: User = Depends(require
         "password": PASSWORD_MASK if row.password_encrypted else None,
         "from_address": row.from_address,
         "security": normalize_security(row.security),
+        "verify_certificate": row.verify_certificate is not False,
     }
 
 
@@ -113,6 +116,7 @@ async def save_smtp(body: SmtpIn, db: AsyncSession = Depends(get_db), _: User = 
         row.password_encrypted = encrypt_secret(typed)
     row.from_address = body.from_address
     row.security = body.resolved_security()
+    row.verify_certificate = body.verify_certificate
     row.updated_at = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
     await db.commit()
     return {"ok": True, "security": row.security}
@@ -129,6 +133,7 @@ async def test_smtp(body: SmtpIn, _: User = Depends(require_smtp_write)):
         security=body.resolved_security(),
         username=body.username,
         password=body.typed_password(),
+        verify_certificate=body.verify_certificate,
     )
     try:
         client = await open_smtp(conn)
@@ -140,5 +145,6 @@ async def test_smtp(body: SmtpIn, _: User = Depends(require_smtp_write)):
         "ok": True,
         "security": conn.security,
         "tls_version": tls_version,
+        "certificate_verified": conn.certificate_checked,
         "login_tested": bool(conn.username and conn.password),
     }

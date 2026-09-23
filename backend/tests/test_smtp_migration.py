@@ -35,9 +35,9 @@ CASES = [
 ]
 
 
-def _revision():
-    path = next((_BACKEND / "alembic" / "versions").glob("4ce0678f5e1c_*.py"))
-    spec = importlib.util.spec_from_file_location("_rev_4ce0678f5e1c", path)
+def _revision(revision: str = "4ce0678f5e1c"):
+    path = next((_BACKEND / "alembic" / "versions").glob(f"{revision}_*.py"))
+    spec = importlib.util.spec_from_file_location(f"_rev_{revision}", path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
@@ -72,8 +72,8 @@ def _old_table(engine) -> None:
             )
 
 
-def _run(engine, monkeypatch, step: str) -> None:
-    module = _revision()
+def _run(engine, monkeypatch, step: str, revision: str = "4ce0678f5e1c") -> None:
+    module = _revision(revision)
     with engine.begin() as conn:
         monkeypatch.setattr(module, "op", Operations(MigrationContext.configure(conn)))
         getattr(module, step)()
@@ -139,6 +139,28 @@ def test_downgrade_puts_the_switch_back(database, monkeypatch):
 def test_a_database_without_the_table_is_left_alone(database, monkeypatch):
     _run(database, monkeypatch, "upgrade")
     _run(database, monkeypatch, "downgrade")
+    assert "smtp_settings" not in sa.inspect(database).get_table_names()
+
+
+def test_existing_rows_keep_verifying_certificates(database, monkeypatch):
+    """Revision 3e27b36f9d8f: the self-signed exception starts switched off."""
+
+    _old_table(database)
+    _run(database, monkeypatch, "upgrade")
+    _run(database, monkeypatch, "upgrade", "3e27b36f9d8f")
+    with database.connect() as conn:
+        values = {row[0] for row in conn.execute(sa.text("SELECT verify_certificate FROM smtp_settings"))}
+    assert values == {1}
+
+    _run(database, monkeypatch, "upgrade", "3e27b36f9d8f")  # again: nothing to do
+    _run(database, monkeypatch, "downgrade", "3e27b36f9d8f")
+    assert "verify_certificate" not in _columns(database)
+    _run(database, monkeypatch, "downgrade", "3e27b36f9d8f")  # again: nothing to do
+
+
+def test_the_certificate_revision_leaves_a_missing_table_alone(database, monkeypatch):
+    _run(database, monkeypatch, "upgrade", "3e27b36f9d8f")
+    _run(database, monkeypatch, "downgrade", "3e27b36f9d8f")
     assert "smtp_settings" not in sa.inspect(database).get_table_names()
 
 

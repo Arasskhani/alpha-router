@@ -19,6 +19,9 @@ class SmtpSettings(Base):
     #: How the connection is secured: "starttls" (usually 587), "ssl" (usually
     #: 465) or "none". See ``app.services.smtp_service``.
     security = Column(String(16), nullable=False, default="starttls")
+    #: False accepts any certificate, a self-signed one included: the link is
+    #: still encrypted, but the server's identity is not checked.
+    verify_certificate = Column(Boolean, nullable=False, default=True)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 

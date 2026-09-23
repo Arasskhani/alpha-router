@@ -108,6 +108,37 @@ describe("the bottom tab bar", () => {
     expect(bar()).not.toBeNull();
   });
 
+  it("comes back when the focused field is removed without a focusout", async () => {
+    await render("/app/chat");
+    const box = document.createElement("input");
+    document.body.appendChild(box);
+    await focus(box);
+    expect(bar()).toBeNull();
+    // WebKit fires no focusout for a removed element; stop happy-dom's one to act like it.
+    const swallow = (event: Event) => event.stopImmediatePropagation();
+    window.addEventListener("focusout", swallow, true);
+    try {
+      await act(async () => box.remove());
+    } finally {
+      window.removeEventListener("focusout", swallow, true);
+    }
+    expect(bar()).toBeNull();
+    await act(async () => {
+      document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    });
+    expect(bar()).not.toBeNull();
+  });
+
+  it("closes the More sheet for good when a field takes the keyboard", async () => {
+    await render("/app/chat");
+    await click(moreButton());
+    expect(sheet()).not.toBeNull();
+    await focus(field("Message"));
+    await blur(field("Message"));
+    expect(bar()).not.toBeNull();
+    expect(sheet()).toBeNull();
+  });
+
   it("opens More as a sheet with the other sections, and focus goes in and back", async () => {
     session.admin = true;
     await render("/app/chat");

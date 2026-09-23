@@ -14,6 +14,7 @@ const TAB_PATHS = ["/app/chat", "/app/projects", "/app/media", "/app/my-activity
 const NON_TEXT_INPUTS = new Set(["button", "checkbox", "color", "file", "image", "radio", "range", "reset", "submit"]);
 
 function bringsUpKeyboard(target: EventTarget | null): boolean {
+  if (!(target instanceof Node) || !target.isConnected) return false;
   if (target instanceof HTMLTextAreaElement) return true;
   if (target instanceof HTMLInputElement) return !NON_TEXT_INPUTS.has(target.type);
   return target instanceof HTMLElement && target.isContentEditable;
@@ -45,14 +46,28 @@ export default function BottomTabBar() {
   const moreActive = more.some((item) => isActive(path, item.to));
 
   useEffect(() => {
-    const onFocusIn = (event: FocusEvent) => setTyping(bringsUpKeyboard(event.target));
+    const onFocusIn = (event: FocusEvent) => {
+      const keyboard = bringsUpKeyboard(event.target);
+      setTyping(keyboard);
+      // The sheet goes with the bar; it does not come back on its own afterwards.
+      if (keyboard) setMoreOpen(false);
+    };
     // Focus moving from one field to the next keeps the bar away: no flash between them.
     const onFocusOut = (event: FocusEvent) => setTyping(bringsUpKeyboard(event.relatedTarget));
+    // A focused field that leaves the page (the model picker's search box,
+    // closing with the picker) fires no focusout in Safari or Firefox. Look
+    // again on the next tap and when the keyboard goes away.
+    const recheck = () => setTyping(bringsUpKeyboard(document.activeElement));
+    const viewport = window.visualViewport;
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
+    document.addEventListener("pointerdown", recheck, true);
+    viewport?.addEventListener("resize", recheck);
     return () => {
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
+      document.removeEventListener("pointerdown", recheck, true);
+      viewport?.removeEventListener("resize", recheck);
     };
   }, []);
 

@@ -6,7 +6,7 @@ import datetime
 import re
 from typing import Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +15,7 @@ from app.api.deps import require_smtp, require_smtp_write
 from app.database import get_db
 from app.models.system import SmtpSettings
 from app.models.user import User
-from app.services.secret_crypto import encrypt_secret
+from app.services.secret_crypto import decrypt_secret, encrypt_secret
 from app.services.smtp_service import (
     SECURITY_STARTTLS,
     SmtpConnection,
@@ -24,6 +24,7 @@ from app.services.smtp_service import (
     negotiated_tls_version,
     normalize_security,
     open_smtp,
+    same_server,
     security_from_legacy,
 )
 
@@ -102,17 +103,47 @@ async def get_smtp(db: AsyncSession = Depends(get_db), _: User = Depends(require
     }
 
 
+#: Refused when the host changes and the password was left alone.
+PASSWORD_BOUND_TO_SERVER = (
+    "Enter the password again: a saved password is only ever sent to the server it was saved for."
+)
+
+
+async def _saved_row(db: AsyncSession) -> SmtpSettings | None:
+    return (await db.execute(select(SmtpSettings).limit(1))).scalars().first()
+
+
 @router.put("")
 async def save_smtp(body: SmtpIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_smtp_write)):
-    row = (await db.execute(select(SmtpSettings).limit(1))).scalars().first()
+    """Save the settings.
+
+    A saved password stays with the server it was saved for. Pointing the
+    settings at another host without typing it again is refused: otherwise
+    anyone allowed to edit this page could learn the mailbox password, which
+    the page never shows, by saving their own host and waiting for the next
+    report email to log in there. Clearing the username means no login at
+    all, and the saved password is discarded.
+    """
+
+    row = await _saved_row(db)
+    typed = body.typed_password()
+    if (
+        row is not None
+        and row.password_encrypted
+        and typed is None
+        and body.username is not None
+        and not same_server(body.host, row.host)
+    ):
+        raise HTTPException(400, detail=PASSWORD_BOUND_TO_SERVER)
     if not row:
         row = SmtpSettings(host=body.host, port=body.port, from_address=body.from_address)
         db.add(row)
     row.host = body.host
     row.port = body.port
     row.username = body.username
-    typed = body.typed_password()
-    if typed is not None:
+    if body.username is None:
+        row.password_encrypted = None
+    elif typed is not None:
         row.password_encrypted = encrypt_secret(typed)
     row.from_address = body.from_address
     row.security = body.resolved_security()
@@ -123,16 +154,37 @@ async def save_smtp(body: SmtpIn, db: AsyncSession = Depends(get_db), _: User = 
 
 
 @router.post("/test")
-async def test_smtp(body: SmtpIn, _: User = Depends(require_smtp_write)):
-    """Connect, secure the connection as configured and, when a password was
-    typed, log in. Nothing is sent and nothing is saved."""
+async def test_smtp(body: SmtpIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_smtp_write)):
+    """Connect with the values on the form, secure the connection as chosen
+    and log in. Nothing is sent and nothing is saved.
+
+    The password is the one typed, or else the saved one - but the saved one
+    only for the server and username it was saved for, the same rule Save
+    applies. Otherwise the connection is still tested, without a login, and
+    ``login_skipped`` says why.
+    """
+
+    typed = body.typed_password()
+    password = typed
+    skipped: str | None = None
+    if body.username is not None and typed is None:
+        saved = await _saved_row(db)
+        if saved is None or not saved.password_encrypted:
+            skipped = "no_password"
+        elif not same_server(body.host, saved.host) or body.username != (saved.username or "").strip():
+            skipped = "saved_for_another_server"
+        else:
+            try:
+                password = decrypt_secret(saved.password_encrypted)
+            except Exception as exc:  # noqa: BLE001 -- reported to the administrator
+                return {"ok": False, "error": f"The saved SMTP password could not be decrypted: {exc}"}
 
     conn = SmtpConnection(
         host=body.host,
         port=body.port,
         security=body.resolved_security(),
         username=body.username,
-        password=body.typed_password(),
+        password=password,
         verify_certificate=body.verify_certificate,
     )
     try:
@@ -147,4 +199,5 @@ async def test_smtp(body: SmtpIn, _: User = Depends(require_smtp_write)):
         "tls_version": tls_version,
         "certificate_verified": conn.certificate_checked,
         "login_tested": bool(conn.username and conn.password),
+        "login_skipped": skipped,
     }

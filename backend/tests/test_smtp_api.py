@@ -230,3 +230,88 @@ class TestWhoMay:
         assert (await client.get(URL, headers=headers)).status_code == 200
         assert (await client.put(URL, headers=headers, json=_body())).status_code == 403
         assert (await client.post(TEST_URL, headers=headers, json=_body())).status_code == 403
+
+
+class TestThePasswordStaysWithItsServer:
+    """A saved password is only ever sent to the server it was saved for.
+
+    The page never shows it; without this rule, anyone allowed to edit the
+    page could learn it by saving a host of their own and waiting for the
+    next report email to log in there.
+    """
+
+    async def _save_first(self, client, headers, **overrides):
+        resp = await client.put(URL, headers=headers, json=_body(**overrides))
+        assert resp.status_code == 200, resp.text
+
+    async def test_a_new_host_needs_the_password_typed_again(self, client, db_session, admin):
+        headers = _sign_in(client, admin)
+        await self._save_first(client, headers)
+        resp = await client.put(URL, headers=headers, json=_body(host="collector.example.net", password="********"))
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == (
+            "Enter the password again: a saved password is only ever sent to the server it was saved for."
+        )
+        assert (await _saved(db_session)).host == "mail.example.com"
+
+    async def test_with_the_password_typed_the_new_host_is_saved(self, client, db_session, admin):
+        headers = _sign_in(client, admin)
+        await self._save_first(client, headers)
+        resp = await client.put(URL, headers=headers, json=_body(host="smtp.example.net", password="n3w"))
+        assert resp.status_code == 200
+        row = await _saved(db_session)
+        assert (row.host, decrypt_secret(row.password_encrypted)) == ("smtp.example.net", "n3w")
+
+    @pytest.mark.parametrize("same", [{"host": "MAIL.example.com."}, {"port": 465, "security": "ssl"}])
+    async def test_the_same_server_keeps_its_password(self, client, db_session, admin, same):
+        headers = _sign_in(client, admin)
+        await self._save_first(client, headers)
+        resp = await client.put(URL, headers=headers, json=_body(password="********", **same))
+        assert resp.status_code == 200, resp.text
+        assert decrypt_secret((await _saved(db_session)).password_encrypted) == "s3cret"
+
+    async def test_no_username_means_no_login_and_the_password_goes(self, client, db_session, admin):
+        headers = _sign_in(client, admin)
+        await self._save_first(client, headers)
+        resp = await client.put(
+            URL, headers=headers, json=_body(host="relay.internal", username="", password="********")
+        )
+        assert resp.status_code == 200, resp.text
+        row = await _saved(db_session)
+        assert row.username is None and row.password_encrypted is None
+        assert (await client.get(URL, headers=headers)).json()["password"] is None
+
+    async def test_test_logs_in_with_the_saved_password_on_its_own_server(self, client, admin, tls):
+        headers = _sign_in(client, admin)
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
+            await self._save_first(client, headers, host="127.0.0.1", port=server.port)
+            resp = await client.post(
+                TEST_URL, headers=headers, json=_body(host="127.0.0.1", port=server.port, password="********")
+            )
+        body = resp.json()
+        assert body["ok"] is True
+        assert (body["login_tested"], body["login_skipped"]) == (True, None)
+        assert [(a.password, a.tls) for a in server.auth_attempts] == [("s3cret", True)]
+
+    @pytest.mark.parametrize("elsewhere", [{"host": "localhost"}, {"username": "someone-else"}])
+    async def test_test_never_takes_the_saved_password_elsewhere(self, client, admin, tls, elsewhere):
+        headers = _sign_in(client, admin)
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
+            await self._save_first(client, headers, host="127.0.0.1", port=server.port)
+            probe = _body(host="127.0.0.1", port=server.port, password="********")
+            probe.update(elsewhere)
+            resp = await client.post(TEST_URL, headers=headers, json=probe)
+        body = resp.json()
+        # The connection is still tested, just without a login.
+        assert body["ok"] is True
+        assert (body["login_tested"], body["login_skipped"]) == (False, "saved_for_another_server")
+        assert server.auth_attempts == []
+
+    async def test_test_with_nothing_to_log_in_with_says_so(self, client, admin, tls):
+        headers = _sign_in(client, admin)
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
+            resp = await client.post(
+                TEST_URL, headers=headers, json=_body(host="127.0.0.1", port=server.port, password=None)
+            )
+        body = resp.json()
+        assert (body["ok"], body["login_tested"], body["login_skipped"]) == (True, False, "no_password")

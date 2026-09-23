@@ -95,6 +95,15 @@ def security_from_legacy(use_tls: bool | None, port: int | None) -> str:
     return SECURITY_STARTTLS
 
 
+def same_server(a: str | None, b: str | None) -> bool:
+    """Whether two host names name the same server, as far as spelling goes."""
+
+    def canonical(host: str | None) -> str:
+        return (host or "").strip().lower().rstrip(".")
+
+    return canonical(a) == canonical(b)
+
+
 def client_options(security: str) -> dict[str, bool]:
     """aiosmtplib's two TLS flags for a security mode.
 

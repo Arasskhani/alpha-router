@@ -81,7 +81,19 @@ export default function BottomTabBar() {
   useEffect(() => {
     if (!moreOpen) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMoreOpen(false);
+      if (event.key === "Escape") {
+        setMoreOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      // A modal dialog: Tab goes round the sheet's links, not out into the page.
+      const links = [...(sheetRef.current?.querySelectorAll<HTMLElement>("a") ?? [])];
+      if (links.length === 0) return;
+      event.preventDefault();
+      const at = links.indexOf(document.activeElement as HTMLElement);
+      const step = event.shiftKey ? -1 : 1;
+      const next = at < 0 ? 0 : (at + step + links.length) % links.length;
+      links[next].focus();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);

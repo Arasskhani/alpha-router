@@ -17382,8 +17382,6 @@ p.error,
   /* User sections along the bottom edge (BottomTabBar). A flex item of the
      layout, not fixed over it: the page and the composer end above it. */
   .bottom-tab-bar {
-    position: relative;
-    z-index: 100;
     display: flex;
     flex-shrink: 0;
     align-items: stretch;
@@ -17426,17 +17424,23 @@ p.error,
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* Toasts sit above the bar, not on it. */
+  body:has(.bottom-tab-bar) .app-toast-host {
+    bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px));
+  }
+  /* The More sheet is a dialog: over the topbar (150) too, so nothing
+     around it takes a tap while it is open. */
   .bottom-sheet-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 125;
+    z-index: 155;
     background: rgba(0, 0, 0, 0.45);
   }
   .bottom-sheet {
     position: fixed;
     inset-inline: 0;
     bottom: 0;
-    z-index: 130;
+    z-index: 160;
     padding: 0.5rem 0.5rem calc(0.5rem + env(safe-area-inset-bottom, 0px));
     border-top: 1px solid var(--border);
     border-radius: 14px 14px 0 0;

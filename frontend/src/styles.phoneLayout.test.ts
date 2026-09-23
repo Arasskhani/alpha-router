@@ -156,6 +156,11 @@ describe("the phone layout block", () => {
     expect(bar).toContain("flex-shrink: 0");
     expect(bar).not.toContain("position: fixed");
     expect(bar).toContain("env(safe-area-inset-bottom");
+    // The sheet "More" opens is modal: above the topbar, so the menu button is covered too.
+    const topbar = Number(/z-index:\s*(\d+)/.exec(declarations(css, ".app-topbar") ?? "")?.[1]);
+    const sheetZ = Number(/z-index:\s*(\d+)/.exec(declarations(phone.body, ".bottom-sheet-backdrop") ?? "")?.[1]);
+    expect(topbar).toBeGreaterThan(0);
+    expect(sheetZ).toBeGreaterThan(topbar);
   });
 
   it("keeps the project tabs in one strip that scrolls, not two rows", () => {

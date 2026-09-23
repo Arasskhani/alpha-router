@@ -150,9 +150,20 @@ describe("the bottom tab bar", () => {
     expect(items).toEqual(["User Manual", "Administration"]);
     expect(document.activeElement).toBe(sheet()!.querySelector("a"));
 
-    await act(async () => {
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    });
+    // Tab goes round the sheet, both ways, and does not leave it.
+    const [manual, admin] = [...sheet()!.querySelectorAll("a")];
+    const key = (init: KeyboardEventInit) =>
+      act(async () => {
+        document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+      });
+    await key({ key: "Tab" });
+    expect(document.activeElement).toBe(admin);
+    await key({ key: "Tab" });
+    expect(document.activeElement).toBe(manual);
+    await key({ key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(admin);
+
+    await key({ key: "Escape" });
     expect(sheet()).toBeNull();
     expect(document.activeElement).toBe(moreButton());
   });

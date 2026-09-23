@@ -60,8 +60,9 @@ beforeEach(() => {
       }
     },
   );
+  // Records the sections scrolled to (a contents link scrolled into the list's view has no id).
   Element.prototype.scrollIntoView = function (this: Element) {
-    scrolled.push(this.id);
+    if (this.id) scrolled.push(this.id);
   };
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -115,6 +116,10 @@ describe("the docs on a desktop", () => {
     expect(contents().hasAttribute("role")).toBe(false);
     expect(contents().querySelector(".docs-search")).toBe(search());
     expect(search().getAttribute("aria-label")).toBe("Search manual");
+    // Sections are not focusable on a desktop; a click in the text leaves focus alone.
+    expect(host.querySelector(".docs-section")?.hasAttribute("tabindex")).toBe(
+      false,
+    );
   });
 });
 
@@ -196,7 +201,8 @@ describe("the docs on a phone", () => {
     await act(async () => link("Media library").click());
     expect(scrolled).toEqual(["media"]);
     expect(contents().classList.contains("is-open")).toBe(false);
-    expect(document.activeElement).toBe(button());
+    // The reader is taken to the section, not back to the button above the text.
+    expect(document.activeElement).toBe(host.querySelector("#media"));
     expect(link("Media library").classList.contains("active")).toBe(true);
   });
 

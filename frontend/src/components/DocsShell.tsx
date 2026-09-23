@@ -110,16 +110,24 @@ export default function DocsShell({
     return () => document.removeEventListener("keydown", onKey);
   }, [sheetOpen]);
 
-  // Focus goes to the section being read when the sheet opens, and back to
-  // the Contents button when it closes.
+  // Focus goes to the link of the section being read when the sheet opens.
+  // When it closes, a section picked in it gets focus, so the reader is
+  // taken there; closed any other way, focus goes back to the Contents button.
   const sheetWasOpen = useRef(false);
+  const pickedSection = useRef<string | null>(null);
   useEffect(() => {
     if (sheetOpen) {
       const sheet = contentsRef.current;
-      (sheet?.querySelector<HTMLElement>(".docs-nav-link.active") ?? sheet?.querySelector<HTMLElement>(".docs-nav-link"))?.focus();
+      const link =
+        sheet?.querySelector<HTMLElement>(".docs-nav-link.active") ?? sheet?.querySelector<HTMLElement>(".docs-nav-link");
+      // The sheet is still sliding in: focus without scrolling, then bring the link into the list's view.
+      link?.focus({ preventScroll: true });
+      link?.scrollIntoView({ block: "nearest" });
     } else if (sheetWasOpen.current) {
-      contentsButtonRef.current?.focus({ preventScroll: true });
+      const picked = pickedSection.current ? document.getElementById(pickedSection.current) : null;
+      (picked ?? contentsButtonRef.current)?.focus({ preventScroll: true });
     }
+    pickedSection.current = null;
     sheetWasOpen.current = sheetOpen;
   }, [sheetOpen]);
 
@@ -135,6 +143,7 @@ export default function DocsShell({
 
   function scrollTo(id: string) {
     setActiveId(id);
+    if (sheetOpen) pickedSection.current = id;
     setContentsOpen(false);
     if (!filtered.some((s) => s.id === id)) {
       pendingSection.current = id;
@@ -222,7 +231,8 @@ export default function DocsShell({
 
       <article className="docs-main">
         {filtered.map((section) => (
-          <section key={section.id} id={section.id} className="docs-section">
+          // Focusable on a phone only, where picking it in the Contents sheet moves focus to it.
+          <section key={section.id} id={section.id} className="docs-section" tabIndex={phone ? -1 : undefined}>
             {section.content}
           </section>
         ))}

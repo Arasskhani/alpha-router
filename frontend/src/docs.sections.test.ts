@@ -24,7 +24,7 @@ describe("the docs", () => {
     expect(
       sections
         .map((s) => s.title)
-        .filter((title) => /&(?:[a-z]+|#\d+);/i.test(title)),
+        .filter((title) => /&(?:[a-z]+|#\d+|#x[0-9a-f]+);/i.test(title)),
     ).toEqual([]);
   });
 

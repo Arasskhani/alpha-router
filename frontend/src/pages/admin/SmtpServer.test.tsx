@@ -335,6 +335,31 @@ describe("the SMTP Server page", () => {
     expect(document.querySelector(".smtp-result")).toBeNull();
   });
 
+  it("ignores a test result that arrives after the values were edited", async () => {
+    let finish: (value: unknown) => void = () => {};
+    answer({ test: () => new Promise((resolve) => (finish = resolve)) });
+    await render();
+    await click(button("Test connection"));
+    await type(field("smtp-host"), "other.example.net");
+    await act(async () => finish({ ok: true, security: "starttls", tls_version: "TLSv1.3", login_tested: true }));
+    expect(document.querySelector(".smtp-result")).toBeNull();
+    expect(button("Test connection")?.disabled).toBe(false);
+  });
+
+  it("keeps what was typed while saving, as an unsaved change", async () => {
+    let finish: (value: unknown) => void = () => {};
+    answer({ put: () => new Promise((resolve) => (finish = resolve)) });
+    await render();
+    await submit();
+    await type(field("smtp-from"), "alerts@example.com");
+    await act(async () => finish({ ok: true }));
+    expect(field("smtp-from").value).toBe("alerts@example.com");
+    expect(document.querySelector('.smtp-result[role="status"]')?.textContent).toBe(
+      "SMTP settings saved, without the changes made while saving.",
+    );
+    expect(button("Send test email to me")?.disabled).toBe(true);
+  });
+
   it("starts empty with STARTTLS on 587 when nothing is configured", async () => {
     answer({ saved: null });
     await render();

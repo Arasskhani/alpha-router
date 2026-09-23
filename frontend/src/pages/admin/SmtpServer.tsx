@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import AdminPage from "../../components/AdminPage";
 import { api, formatApiError } from "../../api";
 import { useAdminWriteLock } from "../../lib/adminWriteLock";
@@ -81,6 +81,8 @@ export default function SmtpServer() {
   const [testResult, setTestResult] = useState<SmtpTestResult | null>(null);
   const [mailing, setMailing] = useState(false);
   const [mailNotice, setMailNotice] = useState<Notice | null>(null);
+  // Counts edits, so an answer to a request made before the latest one can tell it is stale.
+  const revision = useRef(0);
 
   useEffect(() => {
     let live = true;
@@ -104,11 +106,13 @@ export default function SmtpServer() {
   }
 
   function update(patch: Partial<Form>) {
+    revision.current += 1;
     setForm((f) => ({ ...f, ...patch }));
     clearResults();
   }
 
   function changeSecurity(next: SmtpSecurity) {
+    revision.current += 1;
     setForm((f) => ({ ...f, security: next, port: portAfterSecurityChange(f.port, next) }));
     clearResults();
   }
@@ -148,16 +152,22 @@ export default function SmtpServer() {
       setNotice({ kind: "error", text: invalid });
       return;
     }
+    const started = revision.current;
     setSaving(true);
     setNotice(null);
     try {
       await api("/api/admin/smtp", { method: "PUT", body: JSON.stringify(body()) });
       const row = await api<SavedSmtp | null>("/api/admin/smtp");
+      const editedMeanwhile = revision.current !== started;
       if (row) {
         setSaved(row);
-        setForm(formFrom(row));
+        // What was typed while saving stays on the form, as an unsaved change.
+        if (!editedMeanwhile) setForm(formFrom(row));
       }
-      setNotice({ kind: "ok", text: "SMTP settings saved." });
+      setNotice({
+        kind: "ok",
+        text: editedMeanwhile ? "SMTP settings saved, without the changes made while saving." : "SMTP settings saved.",
+      });
     } catch (err) {
       setNotice({ kind: "error", text: formatApiError(err) });
     } finally {
@@ -171,14 +181,15 @@ export default function SmtpServer() {
       setTestResult({ ok: false, error: invalid });
       return;
     }
+    const started = revision.current;
     setTesting(true);
     setTestResult(null);
+    // A result for values that have been edited since would read as a pass (or a failure) for the new ones.
+    const show = (result: SmtpTestResult) => revision.current === started && setTestResult(result);
     try {
-      setTestResult(
-        await api<SmtpTestResult>("/api/admin/smtp/test", { method: "POST", body: JSON.stringify(body()) }),
-      );
+      show(await api<SmtpTestResult>("/api/admin/smtp/test", { method: "POST", body: JSON.stringify(body()) }));
     } catch (err) {
-      setTestResult({ ok: false, error: formatApiError(err) });
+      show({ ok: false, error: formatApiError(err) });
     } finally {
       setTesting(false);
     }

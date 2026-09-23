@@ -238,9 +238,16 @@ describe("the phone layout block", () => {
         ".modal-overlay .modal-body.modal-body--settings,\n  .modal-overlay .modal-body.modal-body--move-folder",
       ),
     ).toContain("overflow: hidden");
+    const actions = declarations(
+      phone.body,
+      ".modal-overlay .modal-actions:last-child,\n  .modal-overlay .dialog-actions:last-child",
+    );
+    expect(actions).toContain("position: sticky");
+    // The strip of body padding under the stuck buttons is filled, so the form does not show through it.
+    expect(actions).toContain("box-shadow: 0 1.25rem 0 var(--surface)");
     expect(
-      declarations(phone.body, ".modal-overlay .modal-actions:last-child,\n  .modal-overlay .dialog-actions:last-child"),
-    ).toContain("position: sticky");
+      declarations(phone.body, ".modal-overlay .modal-body:has(.modal-actions:last-child, .dialog-actions:last-child)"),
+    ).toContain("scroll-padding-bottom");
     const viewer = declarations(phone.body, ".modal-overlay .modal-panel.modal-panel--media-viewer");
     expect(viewer).toContain("height: var(--app-viewport-height)");
     expect(viewer).toContain("border-radius: 0");

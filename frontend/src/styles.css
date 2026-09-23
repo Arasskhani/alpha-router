@@ -17516,7 +17516,10 @@ p.error,
   .modal-overlay .modal-body.modal-body--move-folder {
     overflow: hidden;
   }
-  /* The buttons of a long form stay in reach while the form scrolls. */
+  /* The buttons of a long form stay in reach while the form scrolls. They
+     stick above the body's bottom padding, and the form would show through
+     that strip as it scrolls by; a shadow in the sheet's colour fills it (the
+     body clips whatever of it is not needed). */
   .modal-overlay .modal-actions:last-child,
   .modal-overlay .dialog-actions:last-child {
     position: sticky;
@@ -17524,6 +17527,11 @@ p.error,
     z-index: 1;
     padding-block: 0.6rem;
     background: var(--surface);
+    box-shadow: 0 1.25rem 0 var(--surface);
+  }
+  /* A field that takes focus scrolls into view above the buttons, not under them. */
+  .modal-overlay .modal-body:has(.modal-actions:last-child, .dialog-actions:last-child) {
+    scroll-padding-bottom: 4.5rem;
   }
   .modal-overlay .modal-close {
     min-width: 2.75rem;

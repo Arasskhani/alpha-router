@@ -116,6 +116,15 @@ describe("the phone layout block", () => {
     expect(declarations(css, ".topbar-menu-btn")).toContain("display: none");
   });
 
+  it("lets tables in replies scroll rather than break numbers and words", () => {
+    const table = declarations(phone.body, ".markdown-body table");
+    expect(table).toContain("display: block");
+    expect(table).toContain("overflow-x: auto");
+    const cells = declarations(phone.body, ".markdown-body th,\n  .markdown-body td");
+    expect(cells).toContain("word-break: normal");
+    expect(cells).toContain("overflow-wrap: normal");
+  });
+
   it("flips the hidden side for right-to-left pages", () => {
     expect(declarations(css, '[dir="rtl"]')).toContain("--drawer-hidden: 100%");
     expect(declarations(css, ":root")).toContain("--drawer-hidden: -100%");

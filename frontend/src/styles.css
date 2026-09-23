@@ -17282,6 +17282,24 @@ p.error,
   .alpha-router-footer {
     padding: 0 0.6rem 0.6rem;
   }
+  /* Tables in replies: scroll inside the message instead of squeezing their
+     columns until numbers and words break in the middle ("18,20 / 4,113").
+     .markdown-body sets word-break: break-word, which lets every cell shrink
+     to one character wide; cells break at spaces only here. */
+  .markdown-body table {
+    display: block;
+    width: auto;
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+  .markdown-body th,
+  .markdown-body td {
+    word-break: normal;
+    overflow-wrap: normal;
+    min-width: 4.5rem;
+  }
+
   /* No hover on a phone: the per-chat actions and the select box stay visible. */
   .alpha-router-sidebar--drawer .alpha-router-history-item-actions,
   .alpha-router-sidebar--drawer .alpha-router-history-check {

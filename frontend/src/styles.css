@@ -17300,6 +17300,37 @@ p.error,
     min-width: 4.5rem;
   }
 
+  /* Controls a thumb can hit: about 40px. The desktop sizes are 23-31px. */
+  .alpha-router-msg-actions {
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+  .alpha-router-msg-actions .alpha-router-msg-action-btn {
+    min-width: 2.25rem;
+    min-height: 2.25rem;
+    padding: 0.3rem 0.45rem;
+    font-size: 0.8rem;
+  }
+  .alpha-router-composer-bar .alpha-router-composer-ctrl {
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+    justify-content: center;
+  }
+  .alpha-router-composer-bar .alpha-router-send {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+  .app-topbar .topbar-model-search,
+  .app-topbar .topbar-selected-models .alpha-router-model-pill {
+    height: 2.25rem;
+  }
+  /* iOS zooms into a field whose text is under 16px as soon as it gets focus. */
+  .alpha-router-composer .alpha-router-composer-input,
+  .alpha-router-sidebar .alpha-router-history-search,
+  .alpha-router-model-modal input[type="search"] {
+    font-size: 16px;
+  }
+
   /* No hover on a phone: the per-chat actions and the select box stay visible. */
   .alpha-router-sidebar--drawer .alpha-router-history-item-actions,
   .alpha-router-sidebar--drawer .alpha-router-history-check {
@@ -17314,5 +17345,13 @@ p.error,
   .layout .sidebar.sidebar--drawer,
   .alpha-router-sidebar.alpha-router-sidebar--drawer {
     transition: none;
+  }
+}
+
+/* A finger has no arrow keys or Escape: keyboard hints only for a mouse. */
+@media (pointer: coarse) {
+  .alpha-router-kbd,
+  .alpha-router-model-modal__key-hint {
+    display: none;
   }
 }

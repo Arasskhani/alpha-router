@@ -170,8 +170,8 @@ export default function ChatModelPickerModal({
         </ul>
 
         <footer className="alpha-router-model-modal__footer">
-          <span>↑ ↓ Navigate</span>
-          <span>↵ Select</span>
+          <span className="alpha-router-model-modal__key-hint">↑ ↓ Navigate</span>
+          <span className="alpha-router-model-modal__key-hint">↵ Select</span>
           <span className="alpha-router-model-modal__count">{filtered.length} models</span>
         </footer>
       </div>

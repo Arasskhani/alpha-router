@@ -125,6 +125,32 @@ describe("the phone layout block", () => {
     expect(cells).toContain("overflow-wrap: normal");
   });
 
+  it("sizes the chat controls for a thumb and keeps iOS from zooming into fields", () => {
+    expect(declarations(phone.body, ".alpha-router-msg-actions .alpha-router-msg-action-btn")).toContain(
+      "min-height: 2.25rem",
+    );
+    expect(declarations(phone.body, ".alpha-router-composer-bar .alpha-router-composer-ctrl")).toContain(
+      "min-height: 2.5rem",
+    );
+    expect(declarations(phone.body, ".alpha-router-composer-bar .alpha-router-send")).toContain("height: 2.5rem");
+    const fields = declarations(
+      phone.body,
+      '.alpha-router-composer .alpha-router-composer-input,\n  .alpha-router-sidebar .alpha-router-history-search,\n  .alpha-router-model-modal input[type="search"]',
+    );
+    expect(fields).toContain("font-size: 16px");
+  });
+
+  it("hides keyboard hints where there is no keyboard", () => {
+    const coarse = mediaBlocks("(pointer: coarse)");
+    expect(
+      coarse.some((b) =>
+        (declarations(b.body, ".alpha-router-kbd,\n  .alpha-router-model-modal__key-hint") ?? "").includes(
+          "display: none",
+        ),
+      ),
+    ).toBe(true);
+  });
+
   it("flips the hidden side for right-to-left pages", () => {
     expect(declarations(css, '[dir="rtl"]')).toContain("--drawer-hidden: 100%");
     expect(declarations(css, ":root")).toContain("--drawer-hidden: -100%");

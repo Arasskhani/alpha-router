@@ -2657,7 +2657,11 @@ table.data-table--api-logs {
   gap: 0.35rem;
   transition: background 0.15s ease;
 }
-.btn:hover:not(:disabled) { background: var(--accent-hover); }
+/* :where() keeps this at the specificity of a plain ".btn:hover". Written as
+   ":not(:disabled)" it outranked every variant's own hover, and ghost,
+   danger and login buttons all turned dark teal - ghost ones with dark text
+   on it. Variants below and later in the file win again. */
+.btn:hover:where(:not(:disabled)) { background: var(--accent-hover); }
 .btn:disabled {
   opacity: 0.6;
   cursor: default;
@@ -2667,7 +2671,7 @@ table.data-table--api-logs {
   color: var(--muted);
   border: 1px solid var(--border);
 }
-.btn-ghost:hover { background: var(--bg); color: var(--text); }
+.btn-ghost:hover:where(:not(:disabled)) { background: var(--bg); color: var(--text); }
 .search-bar {
   display: flex;
   gap: 0.5rem;
@@ -8134,7 +8138,7 @@ table.data-table--api-logs {
   color: var(--danger-contrast);
   border: none;
 }
-.btn-danger:hover { background: var(--danger-hover); }
+.btn-danger:hover:where(:not(:disabled)) { background: var(--danger-hover); }
 .btn-sm.btn-danger { padding: 0.35rem 0.65rem; font-size: 0.8rem; }
 .input-block {
   width: 100%;

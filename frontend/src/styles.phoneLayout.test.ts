@@ -250,6 +250,10 @@ describe("the phone layout block", () => {
     expect(
       declarations(phone.body, ".modal-overlay .modal-body:has(.modal-actions:last-child, .dialog-actions:last-child)"),
     ).toContain("scroll-padding-bottom");
+    // The close button reaches into the header's padding on its end side, whichever side that is.
+    const close = declarations(phone.body, ".modal-overlay .modal-close");
+    expect(close).toContain("margin-inline: 0 -0.6rem");
+    expect(close).not.toMatch(/(^|[\s;])margin:/);
     const viewer = declarations(phone.body, ".modal-overlay .modal-panel.modal-panel--media-viewer");
     expect(viewer).toContain("height: var(--app-viewport-height)");
     expect(viewer).toContain("border-radius: 0");
@@ -380,6 +384,14 @@ describe("the phone layout block", () => {
     const desktopWrap = declarations(css.slice(0, phone.at), wrap);
     expect(desktopWrap).toContain("overflow: visible");
     expect(desktopWrap).toContain("margin-bottom: 0");
+    expect(sticky).toContain("box-shadow: 1px 0 0 var(--border)");
+    // In RTL the first column is on the right, and its divider on its left.
+    expect(
+      declarations(
+        phone.body,
+        '[dir="rtl"] .table-wrap--api-logs .data-table--api-logs th:first-child,\n  [dir="rtl"] .table-wrap--api-logs .data-table--api-logs td:first-child:not([colspan]),\n  [dir="rtl"] .data-table--sticky-first th:first-child,\n  [dir="rtl"] .data-table--sticky-first td:first-child:not([colspan])',
+      ),
+    ).toContain("box-shadow: -1px 0 0 var(--border)");
     // The corner sits above the other header cells, which are sticky at z-index 1.
     expect(
       declarations(phone.body, ".table-wrap--api-logs .data-table--api-logs th:first-child,\n  .data-table--sticky-first th:first-child"),

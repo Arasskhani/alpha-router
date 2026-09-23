@@ -17545,7 +17545,8 @@ p.error,
   .modal-overlay .modal-close {
     min-width: 2.75rem;
     min-height: 2.75rem;
-    margin: -0.5rem -0.6rem -0.5rem 0;
+    margin-block: -0.5rem;
+    margin-inline: 0 -0.6rem;
   }
   /* Tab lists and filter chips: one line that scrolls sideways, like the
      project tabs, instead of wrapping into two to four rows above the
@@ -17815,6 +17816,13 @@ p.error,
     white-space: normal;
     background: var(--surface);
     box-shadow: 1px 0 0 var(--border);
+  }
+  /* The divider goes on the column's inner edge, which is its left in RTL. */
+  [dir="rtl"] .table-wrap--api-logs .data-table--api-logs th:first-child,
+  [dir="rtl"] .table-wrap--api-logs .data-table--api-logs td:first-child:not([colspan]),
+  [dir="rtl"] .data-table--sticky-first th:first-child,
+  [dir="rtl"] .data-table--sticky-first td:first-child:not([colspan]) {
+    box-shadow: -1px 0 0 var(--border);
   }
   /* Every header cell is already sticky at z-index 1 (table thead th); the
      corner cell must sit above the others as they scroll under it. */

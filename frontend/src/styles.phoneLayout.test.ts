@@ -279,7 +279,9 @@ describe("the phone layout block", () => {
   });
 
   it("folds list filters behind a button without changing the page's layout when open", () => {
-    expect(declarations(phone.body, ".filter-panel:not([hidden])")).toContain("display: contents");
+    // The wrapper is there at every width (the fields must not be remounted
+    // when the width crosses the breakpoint), so its rule is a base rule.
+    expect(declarations(css.slice(0, phone.at), ".filter-panel:not([hidden])")).toContain("display: contents");
     // Nothing may set `display` on the wrapper itself, or `hidden` would stop hiding it.
     expect(declarations(css, ".filter-panel")).toBeNull();
     expect(declarations(phone.body, ".filter-panel")).toBeNull();

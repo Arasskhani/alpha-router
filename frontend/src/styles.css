@@ -17141,6 +17141,11 @@ p.error,
 [dir="rtl"] {
   --drawer-hidden: 100%;
 }
+/* FilterPanel's wrapper, at every width: shown, it leaves the page's own
+   layout alone; folded (a phone only), `hidden` removes it. */
+.filter-panel:not([hidden]) {
+  display: contents;
+}
 
 @media (max-width: 768px) {
   :root {
@@ -17569,11 +17574,7 @@ p.error,
     white-space: nowrap;
   }
 
-  /* List filters fold behind one button (FilterPanel). Open, the wrapper
-     leaves the page's own layout alone; folded, `hidden` removes it. */
-  .filter-panel:not([hidden]) {
-    display: contents;
-  }
+  /* List filters fold behind one button (FilterPanel). */
   .filter-panel-toggle {
     display: inline-flex;
     align-items: center;

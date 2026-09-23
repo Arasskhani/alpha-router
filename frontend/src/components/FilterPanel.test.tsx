@@ -43,11 +43,27 @@ const toggle = () => host.querySelector<HTMLButtonElement>(".filter-panel-toggle
 const panel = () => host.querySelector<HTMLElement>(".filter-panel");
 
 describe("FilterPanel", () => {
-  it("renders only its children on a desktop", async () => {
+  it("shows the filters and no button on a desktop", async () => {
     await render(2);
     expect(toggle()).toBeNull();
-    expect(panel()).toBeNull();
-    expect(host.firstElementChild?.className).toBe("filters");
+    // The wrapper is there (display: contents in styles.css), never hidden.
+    expect(panel()?.hidden).toBe(false);
+    expect(panel()?.firstElementChild?.className).toBe("filters");
+  });
+
+  it("keeps the same fields, and what was typed, when the width crosses the breakpoint", async () => {
+    await render(0);
+    const input = host.querySelector<HTMLInputElement>('[aria-label="User"]')!;
+    input.value = "sara";
+    layout.phone = true;
+    await render(0);
+    expect(toggle()).not.toBeNull();
+    expect(host.querySelector('[aria-label="User"]')).toBe(input);
+    layout.phone = false;
+    await render(0);
+    expect(toggle()).toBeNull();
+    expect(host.querySelector('[aria-label="User"]')).toBe(input);
+    expect(input.value).toBe("sara");
   });
 
   it("folds the filters behind a button on a phone, and keeps them mounted", async () => {

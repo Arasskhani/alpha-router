@@ -183,11 +183,13 @@ describe("the phone layout block", () => {
       "min-height: 2.5rem",
     );
     expect(declarations(phone.body, ".alpha-router-composer-bar .alpha-router-send")).toContain("height: 2.5rem");
+    // Every text field, not a chosen few: a 13px one in a dialog zoomed the page
+    // and left the dialog's buttons behind the keyboard.
     const fields = declarations(
       phone.body,
-      '.alpha-router-composer .alpha-router-composer-input,\n  .alpha-router-sidebar .alpha-router-history-search,\n  .alpha-router-model-modal input[type="search"]',
+      'input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="hidden"], [type="button"], [type="submit"], [type="reset"], [type="image"]),\n  select,\n  textarea',
     );
-    expect(fields).toContain("font-size: 16px");
+    expect(fields).toContain("font-size: 16px !important");
   });
 
   it("sizes the app to the visual viewport, so the iOS keyboard cannot cover the composer", () => {

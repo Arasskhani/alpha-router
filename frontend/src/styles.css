@@ -17337,11 +17337,15 @@ p.error,
   .app-topbar .topbar-selected-models .alpha-router-model-pill {
     height: 2.25rem;
   }
-  /* iOS zooms into a field whose text is under 16px as soon as it gets focus. */
-  .alpha-router-composer .alpha-router-composer-input,
-  .alpha-router-sidebar .alpha-router-history-search,
-  .alpha-router-model-modal input[type="search"] {
-    font-size: 16px;
+  /* iOS zooms into a field whose text is under 16px as soon as it gets focus.
+     Zoomed in, the page stops following the keyboard (useVisualViewportHeight
+     ignores a pinch-zoomed viewport), so a dialog's buttons stay behind it.
+     Every text field is 16px on a phone: !important, because many compact
+     fields set a smaller size of their own, some more specifically than this. */
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="hidden"], [type="button"], [type="submit"], [type="reset"], [type="image"]),
+  select,
+  textarea {
+    font-size: 16px !important;
   }
 
   /* No hover on a phone: the per-chat actions and the select box stay visible. */

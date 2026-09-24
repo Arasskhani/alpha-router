@@ -101,6 +101,29 @@ nothing is silently dropped.
 | licences | `python scripts/check-licences.py python backend/requirements.lock` (and the sandbox sets, and `node frontend`) | A weak-copyleft or unknown licence must be named in `NOTICE`; strong copyleft is refused outright. Metadata that misstates a licence goes in `scripts/licence-overrides.json` with a reason. |
 | dependency audit | `pip-audit`, `npm audit`, Trivy on images | Bump the dependency. Runtime Python versions live in `backend/requirements.lock` (hashed, regenerated with `uv pip compile`, see the file header); direct dependencies in `requirements.txt`. |
 
+## Phone layout audit
+
+`frontend/scripts/phone-audit.mjs` checks the phone layout of every route at
+360, 390 and 768 px: no sideways scrolling, no wide table without a scroller,
+touch targets of at least 44x44 px and text fields of at least 16 px (iOS
+zooms into smaller ones). It is not in CI because it needs a running stack and
+a signed-in admin. Run it before you merge anything that touches the phone
+layout:
+
+```bash
+cd frontend
+npx playwright install chromium   # once
+PHONE_AUDIT_URL=http://127.0.0.1:5173 PHONE_AUDIT_USER=<admin> PHONE_AUDIT_PASSWORD=<password> \
+  npm run audit:phone -- --routes=/app/chat --widths=360
+```
+
+Leave out `--routes` and `--widths` to audit everything; `--verbose` lists each
+finding. The small-target and small-field counts are compared with
+`frontend/scripts/phone-audit.baseline.json`, per route and width. Counts may
+only go down: when one drops, lock it in with `--update`; raise one only on
+purpose, with `--update`, and say why in the commit. Sideways scrolling and
+unwrapped tables are never baselined. They always fail.
+
 ## Dependencies
 
 - Python runtime: edit `backend/requirements.txt`, regenerate

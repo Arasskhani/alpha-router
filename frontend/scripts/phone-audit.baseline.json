@@ -1,0 +1,452 @@
+{
+  "360": {
+    "/admin": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/admin-logs": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/agent-activity": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/agent-approvals": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/agent-evaluations": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/agent-tools": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/agents": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/agents/studio": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/api-keys": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/authentication": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/chat-tools": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/code-interpreter": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/connections": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/database": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/deleted-users": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/docs": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/groups": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/knowledge": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/logs": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/memory": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/models": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/operations": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/plans": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/project-usage": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/reports": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/retention-policy": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/roles": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/security-settings": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/sign-in-activity": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/smtp": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/storage-management": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/users": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/app/chat": {
+      "smallFields": 0,
+      "smallTargets": 2
+    },
+    "/app/manual": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/app/media": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/app/my-activity": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/app/projects": {
+      "smallFields": 0,
+      "smallTargets": 0
+    }
+  },
+  "390": {
+    "/admin": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/admin-logs": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/agent-activity": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/agent-approvals": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/agent-evaluations": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/agent-tools": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/agents": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/agents/studio": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/api-keys": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/authentication": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/chat-tools": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/code-interpreter": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/connections": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/database": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/deleted-users": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/docs": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/groups": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/knowledge": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/logs": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/memory": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/models": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/operations": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/plans": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/project-usage": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/reports": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/retention-policy": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/roles": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/security-settings": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/sign-in-activity": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/smtp": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/storage-management": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/users": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/app/chat": {
+      "smallFields": 0,
+      "smallTargets": 1
+    },
+    "/app/manual": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/app/media": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/app/my-activity": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/app/projects": {
+      "smallFields": 0,
+      "smallTargets": 0
+    }
+  },
+  "768": {
+    "/admin": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/admin-logs": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/agent-activity": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/agent-approvals": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/agent-evaluations": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/agent-tools": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/agents": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/agents/studio": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/api-keys": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/authentication": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/chat-tools": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/code-interpreter": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/connections": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/database": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/deleted-users": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/docs": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/groups": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/knowledge": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/logs": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/memory": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/models": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/operations": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/plans": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/project-usage": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/reports": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/retention-policy": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/roles": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/security-settings": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/sign-in-activity": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/smtp": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/storage-management": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/admin/users": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/app/chat": {
+      "smallFields": 0,
+      "smallTargets": 1
+    },
+    "/app/manual": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/app/media": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/app/my-activity": {
+      "smallFields": 0,
+      "smallTargets": 0
+    },
+    "/app/projects": {
+      "smallFields": 0,
+      "smallTargets": 0
+    }
+  }
+}

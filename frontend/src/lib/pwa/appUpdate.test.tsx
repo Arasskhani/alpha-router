@@ -1,5 +1,6 @@
 /**
  * @vitest-environment happy-dom
+ * @vitest-environment-options {"settings": {"disableJavaScriptFileLoading": true, "handleDisabledFileLoadingAsSuccess": true}}
  *
  * The new-version check: compares the server's entry script with the running
  * one when the app comes back into view (at most every 15 minutes) and hourly

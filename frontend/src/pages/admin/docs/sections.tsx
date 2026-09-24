@@ -2701,9 +2701,11 @@ export const docSections: DocSection[] = [
         <ul>
           <li>
             <strong>Times</strong> are the server&apos;s clock, the one the other scheduled jobs use (the{" "}
-            <code>TZ</code> setting, or else the host&apos;s timezone); the page names it. A cron expression is read the
-            standard way: five fields (minute, hour, day of the month, month, day of the week), 0 and 7 both being
-            Sunday; when both day fields are set, a day matching either one runs.
+            <code>TZ</code> setting, or else the host&apos;s timezone); the page names it. So are the days a report
+            covers: the day before is the server&apos;s yesterday, midnight to midnight, and one report&apos;s days end
+            where the next one&apos;s begin. A cron expression is read the standard way: five fields (minute, hour, day
+            of the month, month, day of the week), 0 and 7 both being Sunday; when both day fields are set, a day
+            matching either one runs.
           </li>
           <li>
             <strong>Scheduled reports</strong>, under the catalog, lists each schedule with its next run and how the

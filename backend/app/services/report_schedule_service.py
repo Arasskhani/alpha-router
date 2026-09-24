@@ -127,6 +127,22 @@ def period_dates(period: str | None, today: dt.date) -> tuple[dt.date, dt.date]:
     raise ValueError(f"Unknown period: {period}")
 
 
+def period_bounds(start: dt.date, end: dt.date, tz: dt.tzinfo) -> tuple[dt.datetime, dt.datetime]:
+    """The first and last instant of those days on the server's clock, as naive UTC.
+
+    A report request takes its dates as whole UTC days, which is what the
+    columns store. A schedule's days are the server's: run at 08:00 in Tokyo,
+    "the day before" is a day that has ended there, while the UTC day of that
+    date still had an hour to go, and what happened in that hour fell into
+    neither that report nor the next one.
+    """
+
+    def instant(day: dt.date) -> dt.datetime:
+        return dt.datetime.combine(day, dt.time(), tzinfo=tz).astimezone(dt.UTC).replace(tzinfo=None)
+
+    return instant(start), instant(end + dt.timedelta(days=1)) - dt.timedelta(microseconds=1)
+
+
 # --- cron ----------------------------------------------------------------------
 
 
@@ -388,7 +404,13 @@ async def run_schedule(
     try:
         start, end = period_dates(period, today)
         request = build_request(schedule.report_type, parse_parameters(schedule.parameters_json), fmt, start, end)
-        frame = await reports_service.build_report(db, schedule.report_type, report_params(request))
+        params = report_params(request)
+        first, last = period_bounds(start, end, tz)
+        if "_start" in params:
+            params["_start"] = first
+        if "_end" in params:
+            params["_end"] = last
+        frame = await reports_service.build_report(db, schedule.report_type, params)
         content, media_type, exported_name = reports_service.export_dataframe(frame, fmt, schedule.report_type)
     except HTTPException as exc:
         return _record(schedule, now, RunResult(STATUS_FAILED, error=f"The report could not be built: {exc.detail}"))

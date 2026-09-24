@@ -144,6 +144,28 @@ class TestPeriods:
             svc.period_dates("previous_year", dt.date(2026, 9, 24))
 
 
+class TestPeriodBounds:
+    def test_the_server_s_days_as_utc(self):
+        assert svc.period_bounds(dt.date(2026, 9, 23), dt.date(2026, 9, 23), TEHRAN) == (
+            dt.datetime(2026, 9, 22, 20, 30),
+            dt.datetime(2026, 9, 23, 20, 29, 59, 999999),
+        )
+        assert svc.period_bounds(dt.date(2026, 9, 17), dt.date(2026, 9, 23), UTC) == (
+            dt.datetime(2026, 9, 17),
+            dt.datetime(2026, 9, 23, 23, 59, 59, 999999),
+        )
+
+    def test_one_run_s_days_end_where_the_next_one_s_begin(self):
+        _, last = svc.period_bounds(dt.date(2026, 9, 23), dt.date(2026, 9, 23), TEHRAN)
+        first, _ = svc.period_bounds(dt.date(2026, 9, 24), dt.date(2026, 9, 24), TEHRAN)
+        assert first - last == dt.timedelta(microseconds=1)
+
+    def test_the_day_the_clocks_go_back_has_25_hours(self):
+        berlin = zoneinfo.ZoneInfo("Europe/Berlin")
+        first, last = svc.period_bounds(dt.date(2026, 10, 25), dt.date(2026, 10, 25), berlin)
+        assert (first, last) == (dt.datetime(2026, 10, 24, 22, 0), dt.datetime(2026, 10, 25, 22, 59, 59, 999999))
+
+
 # --- parameters ------------------------------------------------------------------
 
 
@@ -260,6 +282,27 @@ class TestRunSchedule:
             f"{PRODUCT_NAME} report: New users, 2026-09-23",
             f"{PRODUCT_NAME} report: New users, 2026-09-22",
         ]
+
+    async def test_the_days_are_the_server_s_calendar_days(self, db_session):
+        """Just after midnight in Tehran, "the day before" is a day that has ended
+        there. The report covers its 24 hours, not the UTC day of that date,
+        which still had hours to go."""
+        # The 23rd in Tehran (UTC+03:30) runs from 20:30 UTC on the 22nd to 20:30 UTC on the 23rd.
+        await _person(db_session, "late_on_the_22nd", dt.datetime(2026, 9, 22, 20, 15))
+        await _person(db_session, "early_on_the_23rd", dt.datetime(2026, 9, 22, 21, 0))
+        await _person(db_session, "late_on_the_23rd", dt.datetime(2026, 9, 23, 20, 15))
+        await _person(db_session, "on_the_24th", dt.datetime(2026, 9, 23, 20, 45))
+        row = await _schedule(db_session, period="previous_day", recipients="a@example.com")
+        just_after_midnight = dt.datetime(2026, 9, 23, 21, 0)  # 00:30 on the 24th in Tehran
+        async with SmtpTestServer(mode=MODE_PLAIN) as server:
+            await _smtp(db_session, server)
+            await svc.run_schedule(db_session, row, now=just_after_midnight, tz=TEHRAN)
+        message = _parsed(server.messages[0])
+        assert message["Subject"] == f"{PRODUCT_NAME} report: New users, 2026-09-23"
+        (attachment,) = message.iter_attachments()
+        content = attachment.get_content()
+        assert "early_on_the_23rd" in content and "late_on_the_23rd" in content
+        assert "late_on_the_22nd" not in content and "on_the_24th" not in content
 
     async def test_a_snapshot_report_is_named_for_the_day_it_was_taken(self, db_session):
         await _person(db_session, "gone", dt.datetime(2026, 1, 1), is_active=False)

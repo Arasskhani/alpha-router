@@ -97,6 +97,21 @@ describe("ConfirmModal on its own", () => {
     renderConfirm(false, handlers);
     expect(document.activeElement).toBe(opener);
   });
+
+  it("gives focus back to nothing when nothing had it as it opened", () => {
+    // In Safari a click does not focus a button: the search box typed in
+    // earlier lost focus to nothing, and must not get it back, the page
+    // scrolling up to it, when a confirmation opened further down closes.
+    const search = document.createElement("input");
+    document.body.appendChild(search);
+    search.focus();
+    act(() => search.blur());
+    const handlers = renderConfirm(true);
+    key(null, "Escape");
+    renderConfirm(false, handlers);
+    expect(document.activeElement).not.toBe(search);
+    search.remove();
+  });
 });
 
 /** A dialog with a button that asks for confirmation, as the file type lists do. */

@@ -22,7 +22,10 @@ export function isTopDialog(panel: HTMLElement | null): boolean {
 
 // What had focus before the element that has it now. A dialog whose child
 // takes focus as it mounts (autoFocus) has lost its opener by the time its
-// effect runs; this still knows it.
+// effect runs; this still knows it. Focus that left for nowhere counts as
+// nothing: in Safari a click does not focus a button, and a search box typed
+// in long before must not be taken for the opener, and be given focus back,
+// scrolling the page to it, when the dialog closes.
 let previousFocus: Element | null = null;
 let currentFocus: Element | null = null;
 if (typeof document !== "undefined") {
@@ -31,6 +34,13 @@ if (typeof document !== "undefined") {
     (event) => {
       previousFocus = currentFocus;
       currentFocus = event.target instanceof Element ? event.target : null;
+    },
+    true,
+  );
+  document.addEventListener(
+    "focusout",
+    (event) => {
+      if (event.relatedTarget === null) currentFocus = null;
     },
     true,
   );

@@ -136,7 +136,7 @@ from app.services.rbac import (
 )
 from app.services.reports_service import export_activity_logs_workbook
 from app.services.scheduler import refresh_chat_retention_cleanup_schedule, refresh_storage_cleanup_schedule
-from app.services.secret_crypto import decrypt_secret, encrypt_secret, mask_secret
+from app.services.secret_crypto import decrypt_secret, encrypt_typed_secret, is_own_ciphertext, mask_secret
 from app.services.security_audit import log_security_event
 from app.services.smtp_service import SmtpNotConfiguredError, SmtpSendError, send_email
 from app.services.storage_service import (
@@ -296,6 +296,21 @@ class ConnectionIn(BaseModel):
     sync_interval_hours: int = 6
 
 
+#: A stored token typed as a connection's API key. Saved unchanged, it would be
+#: decrypted into whatever secret it holds (another connection's key, the SMTP
+#: or LDAP password) and sent to this connection's base URL on the next sync.
+ENCRYPTED_API_KEY_TYPED = (
+    "That is an encrypted value from Alpharouter's own database, not an API key. Type the provider's API key itself."
+)
+
+
+def _encrypt_typed_api_key(api_key: str) -> str:
+    """Encrypt an API key as typed; refuse a stored token typed in its place."""
+    if is_own_ciphertext(api_key):
+        raise HTTPException(400, detail=ENCRYPTED_API_KEY_TYPED)
+    return encrypt_typed_secret(api_key) if api_key else ""
+
+
 @router.get("/dashboard/top-users")
 async def top_users(period: str = "month", db: AsyncSession = Depends(get_db), _: User = Depends(require_dashboard)):
     since = _period_start(period)
@@ -325,7 +340,7 @@ async def create_connection(
     conn = Connection(
         name=body.name.strip(),
         provider_type=provider,
-        api_key_encrypted=encrypt_secret(body.api_key),
+        api_key_encrypted=_encrypt_typed_api_key(body.api_key),
         base_url=base_url,
         sync_interval_hours=body.sync_interval_hours,
     )
@@ -1926,6 +1941,8 @@ async def update_connection(
     conn = await db.get(Connection, conn_id)
     if not conn:
         raise HTTPException(404)
+    # Checked before anything changes, so a refused key leaves the row as it was.
+    new_api_key = _encrypt_typed_api_key(body.api_key) if body.api_key else None
     before = connection_snapshot(conn)
     patches: dict[str, object] = {}
     if body.name is not None:
@@ -1937,8 +1954,8 @@ async def update_connection(
             raise HTTPException(400, detail="Provider is required")
         conn.provider_type = provider
         patches["provider_type"] = conn.provider_type
-    if body.api_key:
-        conn.api_key_encrypted = encrypt_secret(body.api_key)
+    if new_api_key is not None:
+        conn.api_key_encrypted = new_api_key
     if body.base_url is not None:
         conn.base_url = await _validated_connection_base_url(body.base_url)
         patches["base_url"] = conn.base_url or ""

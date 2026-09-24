@@ -48,7 +48,9 @@ MAX_SITE_PATTERNS = 200
 MAX_MODEL_REFS = 500
 
 _LABEL_RE = re.compile(r"^(?!-)[a-z0-9-]{1,63}(?<!-)$")
-_MODEL_REF_RE = re.compile(r"^model::(\d{1,18})$")
+_MODEL_REF_RE = re.compile(r"^model::(\d{1,10})$")
+#: Model ids are INTEGER columns; a larger number fails in PostgreSQL itself.
+_MAX_MODEL_ID = 2**31 - 1
 
 #: Why a site is off limits, as the API reports it.
 SITE_BLOCKED = "site_blocked"
@@ -190,21 +192,27 @@ def _site_list(label: str, values: list[str]) -> tuple[str, ...]:
     return tuple(sorted(out))
 
 
-async def _model_list(db: AsyncSession, label: str, values: list[str]) -> tuple[str, ...]:
+async def _model_list(
+    db: AsyncSession, label: str, values: list[str], *, enabled_only: bool = False
+) -> tuple[str, ...]:
     if len(values) > MAX_MODEL_REFS:
         raise ExtensionSettingsError(f"{label}: at most {MAX_MODEL_REFS} models.")
     ids: set[int] = set()
     for value in values:
         match = _MODEL_REF_RE.match((value or "").strip())
-        if match is None:
+        if match is None or not 1 <= int(match.group(1)) <= _MAX_MODEL_ID:
             raise ExtensionSettingsError(f"{label}: {value!r} is not a model.")
         ids.add(int(match.group(1)))
     if not ids:
         return ()
-    found = set((await db.execute(select(AIModel.id).where(AIModel.id.in_(ids)))).scalars().all())
+    query = select(AIModel.id).where(AIModel.id.in_(ids))
+    if enabled_only:
+        query = query.where(AIModel.is_enabled == True)  # noqa: E712
+    found = set((await db.execute(query)).scalars().all())
     missing = sorted(ids - {int(i) for i in found})
     if missing:
-        raise ExtensionSettingsError(f"{label}: model {missing[0]} does not exist.")
+        state = "is not enabled or does not exist" if enabled_only else "does not exist"
+        raise ExtensionSettingsError(f"{label}: model {missing[0]} {state}.")
     return tuple(f"model::{i}" for i in sorted(ids))
 
 
@@ -227,7 +235,8 @@ async def validated_update(
     if not MIN_MAX_STEPS <= int(agent_max_steps) <= MAX_MAX_STEPS:
         raise ExtensionSettingsError(f"Agent steps must be between {MIN_MAX_STEPS} and {MAX_MAX_STEPS}.")
     review = (agent_review_model or "").strip() or None
-    review_list = await _model_list(db, "Review model", [review] if review else [])
+    # The review model has to answer for every action in Auto mode: it must work today.
+    review_list = await _model_list(db, "Review model", [review] if review else [], enabled_only=True)
     if agent_auto_mode and not review_list:
         raise ExtensionSettingsError("Auto mode needs a review model to check each action.")
     return replace(

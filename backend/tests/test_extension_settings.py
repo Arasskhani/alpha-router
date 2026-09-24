@@ -184,6 +184,28 @@ class TestAnAdminsChange:
         with pytest.raises(ExtensionSettingsError, match="not a model"):
             await validated_update(db_session, ExtensionSettings(), **_update(agent_models=["gpt-test"]))
 
+    @pytest.mark.parametrize(
+        "ref", ["model::0", "model::2147483648", "model::99999999999", "model::123456789012345678"]
+    )
+    async def test_an_id_the_database_cannot_hold_is_not_a_model(self, db_session, ref):
+        """Past INTEGER's range PostgreSQL itself would fail: a 500 instead of a message."""
+        with pytest.raises(ExtensionSettingsError, match="not a model"):
+            await validated_update(db_session, ExtensionSettings(), **_update(page_content_models=[ref]))
+
+    async def test_the_review_model_must_be_enabled(self, db_session):
+        model = await _model(db_session, "retired")
+        model.is_enabled = False
+        await db_session.commit()
+        with pytest.raises(ExtensionSettingsError, match="not enabled"):
+            await validated_update(
+                db_session,
+                ExtensionSettings(),
+                **_update(agent_auto_mode=True, agent_review_model=f"model::{model.id}"),
+            )
+        # A disabled model may still sit in an allowlist, ready for when it comes back.
+        kept = await validated_update(db_session, ExtensionSettings(), **_update(agent_models=[f"model::{model.id}"]))
+        assert kept.agent_models == (f"model::{model.id}",)
+
     async def test_auto_mode_needs_a_review_model(self, db_session):
         with pytest.raises(ExtensionSettingsError, match="review model"):
             await validated_update(db_session, ExtensionSettings(), **_update(agent_auto_mode=True))

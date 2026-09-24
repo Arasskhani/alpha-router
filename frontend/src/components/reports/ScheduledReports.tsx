@@ -29,12 +29,12 @@ type Props = {
   onReload: () => Promise<void>;
 };
 
-type Notice = { tone: "status" | "alert"; text: string };
+type Notice = { tone: "success" | "progress" | "alert"; text: string };
 
 function sendNotice(schedule: ScheduledReport, result: SendResult): Notice {
   const total = result.sent.length + Object.keys(result.not_sent).length;
   if (result.status === "sent") {
-    return { tone: "status", text: `Sent ${schedule.report_title} to ${total === 1 ? "1 recipient" : `${total} recipients`}.` };
+    return { tone: "success", text: `Sent ${schedule.report_title} to ${total === 1 ? "1 recipient" : `${total} recipients`}.` };
   }
   if (result.status === "partial") {
     return {
@@ -53,17 +53,23 @@ export default function ScheduledReports({ schedules, periods, timezone, onReloa
   const tableRef = useTableCards<HTMLTableElement>();
   const [notice, setNotice] = useState<Notice | null>(null);
   const [deleting, setDeleting] = useState<ScheduledReport | null>(null);
+  // Schedules being sent now: a big report to many people takes a while, and a
+  // second Send now meanwhile would send it all again.
+  const [sending, setSending] = useState<ReadonlySet<number>>(new Set());
 
   const periodLabel = (value: string) => periods.find((p) => p.value === value)?.label ?? value;
   const formatLabel = (value: string) => SCHEDULE_FORMATS.find((f) => f.value === value)?.label ?? value.toUpperCase();
 
   async function sendNow(schedule: ScheduledReport) {
-    setNotice(null);
+    setSending((ids) => new Set(ids).add(schedule.id));
+    setNotice({ tone: "progress", text: `Sending ${schedule.report_title}…` });
     try {
       const result = await api<SendResult>(`/api/admin/reports/schedules/${schedule.id}/send`, { method: "POST" });
       setNotice(sendNotice(schedule, result));
     } catch (ex) {
       setNotice({ tone: "alert", text: formatApiError(ex) });
+    } finally {
+      setSending((ids) => new Set([...ids].filter((id) => id !== schedule.id)));
     }
     await onReload();
   }
@@ -103,16 +109,14 @@ export default function ScheduledReports({ schedules, periods, timezone, onReloa
         Emailed on their schedule, on the server&apos;s clock ({timezone}). To add one, choose a report and use Schedule by
         email.
       </p>
-      {notice ? (
-        notice.tone === "alert" ? (
-          <p className="alert alert-error" role="alert">
-            {notice.text}
-          </p>
-        ) : (
-          <p className="alert alert-success" role="status">
-            {notice.text}
-          </p>
-        )
+      {notice?.tone === "alert" ? (
+        <p className="alert alert-error" role="alert">
+          {notice.text}
+        </p>
+      ) : notice ? (
+        <p className={notice.tone === "success" ? "alert alert-success" : "muted-text"} role="status">
+          {notice.text}
+        </p>
       ) : null}
       {schedules.length === 0 ? (
         <p className="muted-text">No reports are scheduled.</p>
@@ -161,7 +165,8 @@ export default function ScheduledReports({ schedules, periods, timezone, onReloa
                         label="Actions"
                         onError={(message) => setNotice({ tone: "alert", text: message })}
                         actions={[
-                          { label: "Send now", onClick: () => sendNow(s) },
+                          // Disabled actions leave the menu: none while this one is being sent.
+                          { label: "Send now", onClick: () => sendNow(s), disabled: sending.has(s.id) },
                           s.is_active
                             ? { label: "Pause", onClick: () => setActive(s, false) }
                             : { label: "Resume", onClick: () => setActive(s, true) },

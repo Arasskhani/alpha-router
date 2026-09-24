@@ -140,6 +140,35 @@ describe("ScheduledReports", () => {
     expect(onReload).toHaveBeenCalledTimes(1);
   });
 
+  it("says a report is being sent, and offers no second Send now meanwhile", async () => {
+    let finish: (value: unknown) => void = () => {};
+    vi.mocked(api).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await render([schedule()]);
+    await act_on(rows()[0], "Send now");
+    expect(host.querySelector('[role="status"]')?.textContent).toBe("Sending Organization cost summary…");
+    await act(async () => {
+      rows()[0].querySelector<HTMLButtonElement>(".row-actions-trigger")!.click();
+    });
+    const labels = [...document.querySelectorAll('[role="menuitem"]')].map((b) => b.textContent);
+    expect(labels).toEqual(["Pause", "Delete"]);
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    await act(async () => {
+      finish({ status: "sent", sent: ["a@example.com", "b@example.com"], not_sent: {}, error: null });
+    });
+    expect(host.querySelector('[role="status"]')?.textContent).toBe("Sent Organization cost summary to 2 recipients.");
+    expect(api).toHaveBeenCalledTimes(1);
+    await act_on(rows()[0], "Send now");
+    expect(api).toHaveBeenCalledTimes(2);
+  });
+
   it("says who a partly sent report did not reach", async () => {
     vi.mocked(api).mockResolvedValue({
       status: "partial",

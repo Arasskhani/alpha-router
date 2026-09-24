@@ -418,7 +418,11 @@ async function main() {
       try {
         await logIn(page, base, user, password);
       } catch (err) {
-        fail(`could not sign in at ${base}/login as ${user}: ${String(err.message || err).split("\n")[0]}`);
+        // Thrown, not fail(): the finally below still closes the browser.
+        throw new Error(
+          `could not sign in at ${base}/login as ${user} (the account must not use two-factor sign-in): `
+            + String(err.message || err).split("\n")[0],
+        );
       }
 
       const rows = [];
@@ -458,4 +462,5 @@ async function main() {
   process.exit(failed ? 1 : 0);
 }
 
-await main();
+// Anything that escapes main() is a setup problem (sign-in, the browser), not a failed check.
+await main().catch((err) => fail(String(err.message || err).split("\n")[0]));

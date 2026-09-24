@@ -107,8 +107,8 @@ nothing is silently dropped.
 360, 390 and 768 px: no sideways scrolling, no wide table without a scroller,
 touch targets of at least 44x44 px and text fields of at least 16 px (iOS
 zooms into smaller ones). It is not in CI because it needs a running stack and
-a signed-in admin. Run it before you merge anything that touches the phone
-layout:
+a signed-in admin (one without two-factor sign-in). Run it before you merge
+anything that touches the phone layout:
 
 ```bash
 cd frontend
@@ -118,10 +118,12 @@ PHONE_AUDIT_URL=http://127.0.0.1:5173 PHONE_AUDIT_USER=<admin> PHONE_AUDIT_PASSW
 ```
 
 Leave out `--routes` and `--widths` to audit everything; `--verbose` lists each
-finding. The small-target and small-field counts are compared with
+finding. `PHONE_AUDIT_CHROMIUM` points it at a Chromium of your own instead of
+Playwright's. The small-target and small-field counts are compared with
 `frontend/scripts/phone-audit.baseline.json`, per route and width. Counts may
-only go down: when one drops, lock it in with `--update`; raise one only on
-purpose, with `--update`, and say why in the commit. Sideways scrolling and
+only go down: when one drops, lock it in with `--update` (with `--routes` or
+`--widths` it rewrites only what it measured); raise one only on purpose, with
+`--update`, and say why in the commit. Sideways scrolling and
 unwrapped tables are never baselined. They always fail.
 
 ## Dependencies

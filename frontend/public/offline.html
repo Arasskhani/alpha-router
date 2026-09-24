@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<!--
+  Alpharouter's page for when the server cannot be reached. The service worker
+  (sw.js) caches this one file and shows it instead of the browser's error page
+  or a proxy's 502/503/504. Self-contained, and no script: an enforced
+  script-src 'self' would block inline JavaScript. After editing, update
+  OFFLINE_REV in sw.js; a unit test says the new value.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Alpharouter can't be reached</title>
+    <style>
+      :root {
+        --bg: #f6f7f9;
+        --surface: #ffffff;
+        --text: #12171e;
+        --muted: #5b6573;
+        --border: #e3e6ea;
+        --accent: #0f766e;
+        --accent-text: #ffffff;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0b0f14;
+          --surface: #12171e;
+          --text: #e8ebef;
+          --muted: #a3acb8;
+          --border: #273040;
+          --accent: #2dd4bf;
+          --accent-text: #0b0f14;
+        }
+        .mark {
+          filter: invert(1);
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        min-height: 100dvh;
+        padding: max(1.5rem, env(safe-area-inset-top)) max(1.25rem, env(safe-area-inset-right))
+          max(1.5rem, env(safe-area-inset-bottom)) max(1.25rem, env(safe-area-inset-left));
+        background: var(--bg);
+        color: var(--text);
+        font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      main {
+        width: 100%;
+        max-width: 26rem;
+        padding: 2rem 1.5rem;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: var(--surface);
+        text-align: center;
+      }
+      .mark {
+        width: 56px;
+        height: auto;
+        margin-bottom: 1rem;
+      }
+      h1 {
+        margin: 0 0 0.75rem;
+        font-size: 1.25rem;
+        line-height: 1.3;
+      }
+      p {
+        margin: 0 0 0.75rem;
+        color: var(--muted);
+      }
+      .retry {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 2.75rem;
+        margin-top: 0.75rem;
+        padding: 0 1.5rem;
+        border-radius: 10px;
+        background: var(--accent);
+        color: var(--accent-text);
+        font-weight: 600;
+        text-decoration: none;
+      }
+      .retry:focus-visible {
+        outline: 3px solid var(--text);
+        outline-offset: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img class="mark" alt="" width="128" height="115" src="data:image/png;base64,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" />
+      <h1>Can't reach Alpharouter right now</h1>
+      <p>You may be offline, or the server may be restarting.</p>
+      <p>Check your internet connection or VPN, then try again in a moment.</p>
+      <p>If this keeps happening, ask your administrator whether the address has changed.</p>
+      <a class="retry" href="">Try again</a>
+    </main>
+  </body>
+</html>

@@ -14,6 +14,17 @@ export type SessionInfo = {
 let cachedSession: SessionInfo | null = null;
 let bootstrapPromise: Promise<SessionInfo> | null = null;
 let handlingUnauthorized = false;
+const sessionListeners = new Set<(session: SessionInfo) => void>();
+
+/**
+ * Call `listener` each time the server confirms a session, and at once if it
+ * already has. For start-up work that needs the session's feature switches.
+ */
+export function onSessionReady(listener: (session: SessionInfo) => void): () => void {
+  sessionListeners.add(listener);
+  if (cachedSession) listener(cachedSession);
+  return () => sessionListeners.delete(listener);
+}
 
 function cookieValue(name: string): string {
   const prefix = `${encodeURIComponent(name)}=`;
@@ -86,6 +97,13 @@ export function bootstrapSession(force = false): Promise<SessionInfo> {
         localStorage.setItem(STORAGE_KEYS.authProvider, session.auth_provider);
       }
       handlingUnauthorized = false;
+      for (const listener of sessionListeners) {
+        try {
+          listener(session);
+        } catch (err) {
+          console.warn("Alpharouter: a session listener failed", err);
+        }
+      }
       return session;
     })
     .finally(() => {

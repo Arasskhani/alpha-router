@@ -18,6 +18,7 @@ from app.database import get_db
 from app.models.user import User
 from app.services.client_ip import resolve_client_ip
 from app.services.extension_distribution import ExtensionUnavailable, current_build, distribution_payload
+from app.services.extension_keys import ExtensionKeyUnavailable, get_signing_key
 from app.services.extension_settings import (
     MAX_MAX_STEPS,
     MAX_MODEL_REFS,
@@ -44,6 +45,17 @@ class ExtensionSettingsIn(BaseModel):
     agent_review_model: str | None = Field(default=None, max_length=64)
 
 
+async def _key_status(db: AsyncSession) -> dict:
+    """The signing key on its own: a missing build or FRONTEND_URL must not hide an unreadable key."""
+    try:
+        key = await get_signing_key(db)
+    except ExtensionKeyUnavailable as exc:
+        return {"key_status": "unreadable", "key_message": str(exc)}
+    if key is None:
+        return {"key_status": "not_created", "key_message": None}
+    return {"key_status": "ok", "key_message": None}
+
+
 async def _overview(db: AsyncSession, request: Request) -> dict:
     settings = await load_extension_settings(db)
     try:
@@ -51,7 +63,8 @@ async def _overview(db: AsyncSession, request: Request) -> dict:
         unavailable = None
     except ExtensionUnavailable as exc:
         build, unavailable = None, exc
-    return {"settings": settings.to_json(), "distribution": distribution_payload(build, unavailable)}
+    distribution = {**distribution_payload(build, unavailable), **await _key_status(db)}
+    return {"settings": settings.to_json(), "distribution": distribution}
 
 
 @router.get("/settings")

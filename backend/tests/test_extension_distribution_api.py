@@ -445,6 +445,7 @@ class TestTheAdminCard:
         body = resp.json()
         assert body["settings"]["site_access"] == "per_site"
         assert body["distribution"]["available"] is True
+        assert body["distribution"]["key_status"] == "ok"
         assert body["distribution"]["gpo_value"].endswith(";https://ai.example.com/extension/update.xml")
 
     async def test_saving_validates_audits_and_publishes_a_new_version(
@@ -497,6 +498,24 @@ class TestTheAdminCard:
         resp = await client.put("/api/admin/extension/settings", json=auto, headers=headers)
         assert resp.status_code == 400
         assert "review model" in resp.json()["detail"]
+
+    async def test_the_key_is_reported_on_its_own(self, client, admin, monkeypatch, tmp_path, session_factory):
+        """Even without a build, the card says when the key cannot be read (DATA_ENCRYPTION_KEY changed)."""
+        from app.models.system import SystemSetting
+        from app.services.extension_keys import KEY_SETTING
+
+        monkeypatch.setattr(extension_distribution, "resolve_extension_dist", lambda: tmp_path / "missing")
+        _sign_in(client, admin)
+        body = (await client.get("/api/admin/extension/settings")).json()
+        assert body["distribution"]["reason_code"] == "not_built"
+        assert body["distribution"]["key_status"] == "not_created"
+
+        async with session_factory() as session:
+            session.add(SystemSetting(key=KEY_SETTING, value="gAAAAAB-not-a-real-token"))
+            await session.commit()
+        body = (await client.get("/api/admin/extension/settings")).json()
+        assert body["distribution"]["key_status"] == "unreadable"
+        assert "DATA_ENCRYPTION_KEY" in body["distribution"]["key_message"]
 
     async def test_a_plain_user_cannot_read_it(self, client, user, built_extension):
         _sign_in(client, user)

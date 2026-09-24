@@ -34,9 +34,22 @@ class ReportSchedule(Base):
     cron_expression = Column(String(128), nullable=False)
     recipients = Column(Text, nullable=False)  # comma-separated emails
     parameters_json = Column(Text, nullable=True)
-    format = Column(String(16), default="pdf")  # csv | xls | pdf
+    format = Column(String(16), default="pdf")  # csv | xlsx | pdf
+    #: The days a dated report covers, counted back from the day it runs:
+    #: previous_day | previous_7_days | previous_30_days | previous_month.
+    #: Null is previous_7_days. See ``app.services.report_schedule_service``.
+    period = Column(String(32), nullable=True)
     is_active = Column(Boolean, default=True)
+    #: When the schedule runs next (naive UTC): set when it is created or
+    #: resumed, moved on each time it runs. A run missed while the server was
+    #: down is still due when it is back, and goes out once.
+    next_run_at = Column(DateTime, nullable=True)
+    #: When it last ran (naive UTC). Null before the first run.
     last_run_at = Column(DateTime, nullable=True)
+    #: How the last run went: running | sent | partial | failed.
+    last_status = Column(String(16), nullable=True)
+    #: What went wrong on the last run, for the Reports page.
+    last_error = Column(Text, nullable=True)
 
 
 class SystemSetting(Base):

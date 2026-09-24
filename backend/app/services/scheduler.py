@@ -458,6 +458,24 @@ async def job_sign_in_alerts():
             logger.exception("Sign-in alert job failed")
 
 
+async def job_report_schedules():
+    """Email the scheduled reports that are due. See report_schedule_service."""
+    from app.services.report_schedule_service import run_due_schedules
+
+    try:
+        result = await run_due_schedules(AsyncSessionLocal)
+        if result["ran"]:
+            logger.info(
+                "Scheduled reports: %s ran, %s sent, %s partly sent, %s failed",
+                result["ran"],
+                result["sent"],
+                result["partial"],
+                result["failed"],
+            )
+    except Exception:
+        logger.exception("Scheduled reports job failed")
+
+
 async def job_purge_deleted_projects():
     async with AsyncSessionLocal() as db:
         from app.services.project_service import purge_expired_deleted_projects
@@ -670,6 +688,16 @@ def start_scheduler():
         "interval",
         minutes=5,
         id="sign_in_alerts",
+        max_instances=1,
+        coalesce=True,
+    )
+    # Every minute, so a report goes out within a minute of its time; the job
+    # itself works out which schedules are due.
+    scheduler.add_job(
+        job_report_schedules,
+        "interval",
+        minutes=1,
+        id="report_schedules",
         max_instances=1,
         coalesce=True,
     )

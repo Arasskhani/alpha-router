@@ -361,6 +361,15 @@ class TestRunSchedule:
         assert row.last_status == "partial"
         assert row.last_error.startswith("gone@example.com: ")
 
+    async def test_an_address_the_server_cannot_take_costs_only_that_address(self, db_session):
+        row = await _schedule(db_session, recipients="josé@example.com,a@example.com")
+        async with SmtpTestServer(mode=MODE_PLAIN) as server:
+            await _smtp(db_session, server)
+            result = await svc.run_schedule(db_session, row, now=NOW, tz=UTC)
+        assert (result.status, result.sent) == ("partial", ["a@example.com"])
+        assert "SMTPUTF8" in result.not_sent["josé@example.com"]
+        assert [m.recipients for m in server.messages] == [("a@example.com",)]
+
     async def test_every_address_refused_is_a_failed_run(self, db_session):
         row = await _schedule(db_session, recipients="gone@example.com")
         async with SmtpTestServer(mode=MODE_PLAIN, refuse_recipients=frozenset({"gone@example.com"})) as server:

@@ -344,6 +344,32 @@ class TestSendEmail:
                 await send_email(db_session, to_address="owner@example.com", subject="s", body_text="b")
         assert not isinstance(caught.value, SmtpRecipientError)
 
+    @pytest.mark.parametrize("address", ["josé@example.com", "owner@bücher.example"])
+    async def test_an_address_a_server_without_smtputf8_cannot_take_is_that_recipient_s(self, db_session, tls, address):
+        """Such a server takes no address with letters outside ASCII. One such
+        recipient used to read as a server that cannot send, which stopped every
+        alert after it and left the others without theirs."""
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
+            await self._row(db_session, server, SECURITY_STARTTLS)
+            with pytest.raises(SmtpRecipientError) as caught:
+                await send_email(db_session, to_address=address, subject="s", body_text="b")
+            await send_email(db_session, to_address="owner@example.com", subject="s", body_text="b")
+        assert str(caught.value) == (
+            f"127.0.0.1 cannot deliver to {address}: it takes no address with letters outside plain ASCII "
+            "(it does not support SMTPUTF8)."
+        )
+        assert [m.recipients for m in server.messages] == [("owner@example.com",)]
+
+    async def test_a_from_address_such_a_server_cannot_take_is_the_settings_problem(self, db_session, tls):
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
+            row = await self._row(db_session, server, SECURITY_STARTTLS)
+            row.from_address = "rapports@bücher.example"
+            await db_session.commit()
+            with pytest.raises(SmtpSendError) as caught:
+                await send_email(db_session, to_address="josé@example.com", subject="s", body_text="b")
+        assert not isinstance(caught.value, SmtpRecipientError)
+        assert server.messages == []
+
     async def test_attachments_arrive_as_files_with_their_type(self, db_session, tls):
         import email
         import email.policy

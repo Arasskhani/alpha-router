@@ -462,5 +462,22 @@ async def send_email(
             await close_quietly(client)
     except aiosmtplib.SMTPRecipientsRefused as exc:
         raise SmtpRecipientError(describe_smtp_error(exc, conn)) from exc
+    except aiosmtplib.SMTPNotSupported as exc:
+        # A server without SMTPUTF8 takes no address with letters outside ASCII.
+        # When the From address is plain, the one it could not take is a
+        # recipient's: that recipient's problem, not a server that cannot send.
+        foreign = [address for address in recipients if not address.isascii()]
+        if foreign and _sender_address(msg).isascii():
+            raise SmtpRecipientError(
+                f"{conn.host} cannot deliver to {', '.join(foreign)}: it takes no address with letters outside "
+                "plain ASCII (it does not support SMTPUTF8)."
+            ) from exc
+        raise SmtpSendError(describe_smtp_error(exc, conn)) from exc
     except Exception as exc:
         raise SmtpSendError(describe_smtp_error(exc, conn)) from exc
+
+
+def _sender_address(msg: EmailMessage) -> str:
+    """The address in a message's From header, the one the envelope carries."""
+    addresses = getattr(msg["From"], "addresses", ())
+    return str(addresses[0].addr_spec) if addresses else str(msg["From"] or "")

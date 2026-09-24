@@ -6,7 +6,10 @@ import { clearStoredImageGenerationForCurrentUser } from "../lib/chatStorage";
 import { formatSessionDuration, getMyActivityPath, getSessionUser, logout } from "../lib/session";
 import { MY_USAGE_AND_ACTIVITY_LABEL } from "../lib/usageActivityLabel";
 import type { CachedTheme } from "../lib/themeCache";
+import { promptInstall, useInstallState } from "../lib/pwa/installPrompt";
+import { markInstallDone } from "../lib/pwa/installSuggestion";
 import { IconActivity, IconLogout } from "./icons/navIcons";
+import InstallInstructionsModal from "./InstallInstructionsModal";
 import SettingsModal from "./SettingsModal";
 import ThemePicker from "./ThemePicker";
 
@@ -48,6 +51,15 @@ type Props = {
   onThemeChange: (theme: CachedTheme) => void;
 };
 
+function IconInstall() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <rect x="6" y="2" width="12" height="20" rx="2" />
+      <path d="M12 7v7M9 11l3 3 3-3M10 18h4" />
+    </svg>
+  );
+}
+
 function IconGear() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
@@ -60,6 +72,8 @@ function IconGear() {
 export default function UserProfile({ theme, onThemeChange }: Props) {
   const [open, setOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [installHelpOpen, setInstallHelpOpen] = useState(false);
+  const installState = useInstallState();
   const [duration, setDuration] = useState("");
   const [budget, setBudget] = useState<UserBudget | null>(null);
   const [budgetLoading, setBudgetLoading] = useState(false);
@@ -144,6 +158,27 @@ export default function UserProfile({ theme, onThemeChange }: Props) {
             <span className="user-profile-menu-icon"><IconActivity /></span>
             <span>{MY_USAGE_AND_ACTIVITY_LABEL}</span>
           </Link>
+          {installState === "can-prompt" || installState === "ios-manual" ? (
+            <button
+              type="button"
+              className="user-profile-menu-item"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                if (installState === "ios-manual") {
+                  setInstallHelpOpen(true);
+                  return;
+                }
+                // Straight from the click: the browser opens its dialog only inside a user gesture.
+                void promptInstall().then((outcome) => {
+                  if (outcome === "accepted") markInstallDone();
+                });
+              }}
+            >
+              <span className="user-profile-menu-icon"><IconInstall /></span>
+              <span>Install app</span>
+            </button>
+          ) : null}
           <button
             type="button"
             className="user-profile-menu-item"
@@ -174,6 +209,7 @@ export default function UserProfile({ theme, onThemeChange }: Props) {
         </div>
       )}
 
+      <InstallInstructionsModal open={installHelpOpen} onClose={() => setInstallHelpOpen(false)} />
       <SettingsModal
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}

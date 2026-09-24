@@ -53,6 +53,7 @@ describe("project-owned naming contracts", () => {
       userPrefsSaved: "alpha-router:user-prefs-saved",
       modelsSyncFlash: "alpha-router:models-sync-flash",
       chatsImported: "alpha-router:chats-imported",
+      chatReplyCompleted: "alpha-router:chat-reply-completed",
     });
   });
 

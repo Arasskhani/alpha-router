@@ -10,11 +10,13 @@ import { applyBlankFavicon } from "./lib/favicon";
 import { onSessionReady } from "./api";
 import { registerAppServiceWorker } from "./lib/pwa/registerServiceWorker";
 import { startInstallListeners } from "./lib/pwa/installPrompt";
+import { startInstallSuggestion } from "./lib/pwa/installSuggestion";
 
 applyThemeToDocument();
 applyBlankFavicon();
 // Before React renders: the browser's install event can fire before any component mounts.
 startInstallListeners();
+startInstallSuggestion();
 // Once signed in: the session carries the server's switch for the worker.
 onSessionReady(() => registerAppServiceWorker());
 

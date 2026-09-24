@@ -39,6 +39,8 @@ export const BROWSER_EVENT_NAMES = {
   modelsSyncFlash: "alpha-router:models-sync-flash",
   /** Fired after Settings → Import chats succeeds (additive merge). */
   chatsImported: "alpha-router:chats-imported",
+  /** A chat reply finished streaming on this device (the install suggestion counts it as use). */
+  chatReplyCompleted: "alpha-router:chat-reply-completed",
 } as const;
 
 export const PAGE_TITLE = `${PRODUCT_NAME_MARKED} | ${LOGIN_TAGLINE}`;

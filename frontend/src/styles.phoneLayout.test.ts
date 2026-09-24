@@ -1030,3 +1030,17 @@ describe("the installed app's edges", () => {
     expect(Object.keys(NEEDS_NO_INSETS).filter((s) => !fixed.has(s))).toEqual([]);
   });
 });
+
+describe("the install suggestion bar", () => {
+  it("steps aside while a dialog is open", () => {
+    expect(declarations(css, 'body:has(.modal-overlay, [aria-modal="true"]) .install-banner')).toContain("display: none");
+  });
+
+  it("sits in the layout's flow with finger-sized buttons", () => {
+    expect(declarations(css, ".install-banner")).toContain("flex-shrink: 0");
+    expect(declarations(css, ".install-banner")).not.toContain("position: fixed");
+    const buttons = declarations(css, ".install-banner__install,\n.install-banner__dismiss");
+    expect(buttons).toContain("min-height: 2.75rem");
+    expect(buttons).toContain("min-width: 2.75rem");
+  });
+});

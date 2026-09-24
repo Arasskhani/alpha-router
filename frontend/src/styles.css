@@ -189,6 +189,74 @@ body:not(.login-route) {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
+/* The install suggestion (InstallBanner): a slim bar in the layout's flow,
+   above the tab bar, so it pushes the page and the composer up instead of
+   covering them. It steps aside while a dialog is open. */
+.install-banner {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem 0.35rem 0.75rem;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.8125rem;
+}
+body:has(.modal-overlay, [aria-modal="true"]) .install-banner {
+  display: none;
+}
+.install-banner__mark {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.install-banner__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: 1.25;
+  font-weight: 500;
+}
+.install-banner__install,
+.install-banner__dismiss {
+  flex-shrink: 0;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  padding: 0 0.65rem;
+  border: 0;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.install-banner__install {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+.install-banner__dismiss {
+  background: transparent;
+  color: var(--muted);
+}
+.install-instructions__lead {
+  margin: 0 0 0.75rem;
+  color: var(--muted);
+}
+.install-instructions__steps {
+  margin: 0 0 0.75rem;
+  padding-inline-start: 1.25rem;
+  line-height: 1.6;
+}
+.install-instructions__steps li + li {
+  margin-top: 0.4rem;
+}
+.install-instructions__note {
+  margin: 0 0 1rem;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
 .layout-body {
   display: flex;
   align-items: stretch;

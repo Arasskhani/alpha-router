@@ -4325,6 +4325,10 @@ export default function ChatPanel({
     applyMessages(sid, finalMsgs);
     applyAgentMetadataToSession(sid, streamed.agentMetadata);
     maybeNotifyReplyReady(sid, assistantClientMessageId, finalContent);
+    // The install suggestion counts a completed reply as having used the app here.
+    if (isSuccessfulNotifyContent(finalContent)) {
+      window.dispatchEvent(new Event(BROWSER_EVENT_NAMES.chatReplyCompleted));
+    }
     if (useServerPersist && !options?.skipReconcile) {
       void fetchSessionWithMessages(sid).then((remote) => {
         if (!remote?.messages.length) return;

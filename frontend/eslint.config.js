@@ -7,12 +7,12 @@ import jsxA11y from "eslint-plugin-jsx-a11y";
 import globals from "globals";
 
 export default tseslint.config(
-  { ignores: ["dist/**", "node_modules/**", "src/generated/**", "*.config.*", "scripts/**"] },
+  { ignores: ["dist/**", "dist-extension/**", "node_modules/**", "src/generated/**", "*.config.*", "scripts/**"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   jsxA11y.flatConfigs.recommended,
   {
-    files: ["src/**/*.{ts,tsx}"],
+    files: ["src/**/*.{ts,tsx}", "extension/src/**/*.{ts,tsx}"],
     plugins: { "react-hooks": reactHooks },
     languageOptions: {
       globals: { ...globals.browser, ...globals.es2022 },
@@ -50,7 +50,13 @@ export default tseslint.config(
     languageOptions: { sourceType: "script", globals: { ...globals.serviceworker } },
   },
   {
-    files: ["src/**/*.test.{ts,tsx}", "src/test/**"],
+    files: ["src/**/*.test.{ts,tsx}", "src/test/**", "extension/src/**/*.test.{ts,tsx}", "extension/src/test/**"],
     languageOptions: { globals: { ...globals.node } },
+  },
+  {
+    // The browser extension: its pages, service worker and content script all
+    // see the WebExtension globals (chrome.*).
+    files: ["extension/src/**/*.{ts,tsx}"],
+    languageOptions: { globals: { ...globals.webextensions } },
   },
 );

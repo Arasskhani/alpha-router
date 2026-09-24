@@ -39,6 +39,7 @@ coverage.xml
 # =============================================================================
 node_modules/
 frontend/dist/
+frontend/dist-extension/
 frontend/build/
 frontend/tsconfig.tsbuildinfo
 # Compiled twins of the TypeScript sources. They are build output, not source:
@@ -47,6 +48,7 @@ frontend/tsconfig.tsbuildinfo
 # authored in TypeScript -- if a genuine hand-written .js is ever needed there,
 # add an explicit `!frontend/src/path/to/file.js` exception below.
 frontend/src/**/*.js
+frontend/extension/**/*.js
 *.log
 npm-debug.log*
 yarn-debug.log*

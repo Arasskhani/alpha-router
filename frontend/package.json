@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "prebuild": "node scripts/generate-persian-fonts.mjs",
-    "build": "tsc -b && vite build",
-    "typecheck": "tsc -b",
+    "build": "tsc -b && tsc -p extension/tsconfig.json && vite build && node scripts/build-extension.mjs",
+    "build:extension": "tsc -p extension/tsconfig.json && node scripts/build-extension.mjs",
+    "typecheck": "tsc -b && tsc -p extension/tsconfig.json",
     "lint": "eslint . --max-warnings 181",
     "lint:strict": "eslint . --max-warnings 0",
     "knip": "knip",
@@ -27,6 +28,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
+    "@types/chrome": "^0.3.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",

@@ -1,5 +1,12 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
-  "entry": ["scripts/*.mjs"],
-  "project": ["src/**/*.{ts,tsx}", "scripts/**/*.mjs"]
+  "entry": [
+    "scripts/*.mjs",
+    "extension/src/background.ts",
+    "extension/src/panel/main.tsx",
+    "extension/src/connected/main.ts",
+    "extension/src/content/content.ts"
+  ],
+  "project": ["src/**/*.{ts,tsx}", "scripts/**/*.mjs", "extension/src/**/*.{ts,tsx}"],
+  "typescript": { "config": ["tsconfig.json", "extension/tsconfig.json"] }
 }

@@ -1,7 +1,7 @@
 # Multi-stage production image: React frontend + FastAPI backend.
 #
 # Stages
-#   frontend-build  node:20-alpine   builds the Vite bundle
+#   frontend-build  node:20-alpine   builds the Vite bundle and the browser extension
 #   wheels          python:3.12-slim compiles every Python dependency into wheels
 #                                    (python3-saml needs libxml2/xmlsec headers
 #                                    and a C toolchain; nothing else does)
@@ -68,6 +68,9 @@ COPY backend/alembic.ini ./alembic.ini
 COPY backend/alembic ./alembic
 COPY backend/app ./app
 COPY --from=frontend-build /fe/dist ./frontend/dist
+# The browser extension's neutral build; the server makes each download its own
+# (key, origin, version) from it.
+COPY --from=frontend-build /fe/dist-extension ./frontend/dist-extension
 RUN groupadd --system --gid 10001 alpha_router \
     && useradd --system --uid 10001 --gid 10001 --create-home --home-dir /home/alpha_router alpha_router \
     && mkdir -p /app/tls \

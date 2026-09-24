@@ -46,14 +46,14 @@ repos:
         name: eslint (frontend, errors)
         entry: bash -c 'cd frontend && ./node_modules/.bin/eslint --quiet "${@#frontend/}"' --
         language: system
-        files: ^frontend/src/.*\.(ts|tsx)$
+        files: ^frontend/(src|extension/src)/.*\.(ts|tsx)$
 
       - id: tsc
-        name: tsc -b (frontend)
-        entry: bash -c 'cd frontend && npx tsc -b'
+        name: tsc -b (frontend and browser extension)
+        entry: bash -c 'cd frontend && npx tsc -b && npx tsc -p extension/tsconfig.json'
         language: system
         pass_filenames: false
-        files: ^frontend/(src/.*\.(ts|tsx)|tsconfig\.json)$
+        files: ^frontend/(src/.*\.(ts|tsx)|extension/(src/.*\.(ts|tsx)|tsconfig\.json|manifest\.template\.json)|tsconfig\.json)$
 
       - id: shellcheck
         # Same invocation as the scripts-tests CI job. Needs shellcheck on PATH

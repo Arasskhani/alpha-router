@@ -10,7 +10,7 @@
     "noEmit": true,
     "resolveJsonModule": true,
     "esModuleInterop": true,
-    "types": ["node"]
+    "types": ["chrome"]
   },
-  "include": ["src"]
+  "include": ["src", "manifest.template.json"]
 }

@@ -14,15 +14,21 @@ let box: HTMLDivElement;
 let field: HTMLTextAreaElement;
 
 beforeEach(() => {
+  // Inside a tab panel: a role around the box is not the box's business.
   document.body.innerHTML = `
+    <div role="tabpanel">
     <div class="alpha-router-composer-box" role="presentation">
-      <span class="alpha-router-pending-attachment">report.pdf <button type="button">×</button></span>
+      <div class="alpha-router-pending-attachments">
+        <span class="alpha-router-pending-attachment"><span class="name">report.pdf</span> <button type="button">×</button></span>
+      </div>
+      <div class="alpha-router-prompt-queue"><span class="alpha-router-prompt-queue__next">Summarise the report</span></div>
       <textarea></textarea>
       <div class="alpha-router-composer-bar">
         <div class="alpha-router-model-row"><button type="button" aria-label="Tools"><svg><path /></svg></button></div>
         <div class="alpha-router-send-group"><button type="button">Send</button></div>
       </div>
       <button type="button">Other</button>
+    </div>
     </div>`;
   box = document.querySelector(".alpha-router-composer-box")!;
   field = box.querySelector("textarea")!;
@@ -53,19 +59,17 @@ describe("a tap in the composer box", () => {
       expect(prevented).toBe(true);
       expect(document.activeElement).toBe(field);
     }
-    // An attachment's name is not a control either.
-    field.blur();
-    expect(
-      tap(box.querySelector(".alpha-router-pending-attachment")!).went,
-    ).toBe(true);
   });
 
-  it("stays with a control, or anything inside one", () => {
+  it("stays with a control or anything inside one, and with the queued messages and attachments", () => {
     for (const el of [
       box.querySelector('[aria-label="Tools"] path')!,
       box.querySelector(".alpha-router-send-group button")!,
       box.querySelector(".alpha-router-pending-attachment button")!,
       field,
+      // Their text stays selectable, and a tap on it does not bring the keyboard up.
+      box.querySelector(".alpha-router-pending-attachment .name")!,
+      box.querySelector(".alpha-router-prompt-queue__next")!,
     ]) {
       const { went, prevented } = tap(el);
       expect(went).toBe(false);

@@ -977,3 +977,56 @@ describe("responsive rules", () => {
     expect([...dead]).toEqual([]);
   });
 });
+
+describe("the installed app's edges", () => {
+  // viewport-fit=cover lets the page reach under the notch, the iOS home
+  // indicator and Android's gesture bar; without it env(safe-area-inset-*) is
+  // always 0 and the home indicator sits on the tab bar. Each edge keeps its
+  // content clear instead.
+  const html = readFileSync(join(__dirname, "..", "index.html"), "utf8");
+  const phoneBlocks = mediaBlocks(PHONE_QUERY);
+  const phoneBlock = phoneBlocks[phoneBlocks.length - 1];
+
+  it("lets the page reach the screen's edges", () => {
+    expect(html).toMatch(/<meta name="viewport" content="[^"]*viewport-fit=cover[^"]*interactive-widget=resizes-content/);
+  });
+
+  it("pads the layout for the home indicator unless the tab bar or the keyboard has that edge", () => {
+    expect(declarations(css, ".layout:not(.layout--has-tabbar):not([data-soft-keyboard])")).toContain(
+      "padding-bottom: env(safe-area-inset-bottom, 0px)",
+    );
+    expect(declarations(phoneBlock.body, ".bottom-tab-bar")).toContain("padding-bottom: env(safe-area-inset-bottom, 0px)");
+    expect(declarations(css, ".login-page")).toContain("padding-bottom: env(safe-area-inset-bottom, 0px)");
+  });
+
+  it("keeps the content clear of the notch in the base rules, since a landscape iPhone gets the desktop layout", () => {
+    const body = declarations(css, "body");
+    expect(body).toContain("padding-left: env(safe-area-inset-left, 0px)");
+    expect(body).toContain("padding-right: env(safe-area-inset-right, 0px)");
+  });
+
+  // Fixed layers ignore the body's padding, so each one answers for the insets
+  // itself or is listed here with the reason it does not need to.
+  const NEEDS_NO_INSETS: Record<string, string> = {
+    ".shell-drawer-backdrop": "a backdrop: it covers the whole screen on purpose",
+    ".bottom-sheet-backdrop": "a backdrop",
+    ".action-sheet-backdrop": "a backdrop",
+    ".docs-contents-backdrop": "a backdrop",
+    ".alpha-router-admin-drawer-overlay": "a backdrop; the drawer in it pads itself",
+    ".row-actions-menu--portal": "opens beside its trigger, which is inside the safe area",
+    ".alpha-router-attach-menu": "opens beside its trigger, which is inside the safe area",
+    ".alpha-router-server-tools-menu": "opens beside its trigger, which is inside the safe area",
+  };
+
+  it("gives every fixed layer an answer for the insets, or a reason it needs none", () => {
+    const rules = styleRules();
+    const fixed = new Set(rules.filter((r) => /position:\s*fixed/.test(r.body)).flatMap((r) => r.selectors));
+    const insetAware = new Set(
+      rules.filter((r) => /safe-area-inset|--safe-inline/.test(r.body)).flatMap((r) => r.selectors),
+    );
+    const unanswered = [...fixed].filter((s) => !insetAware.has(s) && !(s in NEEDS_NO_INSETS));
+    expect(unanswered).toEqual([]);
+    // And the list holds no layer that is gone or no longer fixed.
+    expect(Object.keys(NEEDS_NO_INSETS).filter((s) => !fixed.has(s))).toEqual([]);
+  });
+});

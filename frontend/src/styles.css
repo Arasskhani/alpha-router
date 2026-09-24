@@ -1,5 +1,9 @@
 /* Light, performant UI — cool slate neutrals, teal as signal only */
 :root {
+  /* The wider of the side insets (the notch, a landscape phone's rounded
+     corners, Android's side navigation bar), for layers pinned to one side:
+     a drawer's start edge is the left in LTR and the right in RTL. */
+  --safe-inline: max(env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
   --bg: #f1f5f9;
   --surface: #ffffff;
   --text: #0f172a;
@@ -145,6 +149,11 @@ html {
 }
 body {
   margin: 0;
+  /* viewport-fit=cover (index.html) lets the page reach under the notch of a
+     landscape iPhone; the content stays clear of it. Notched phones are wider
+     than the phone layout in landscape, so this is a base rule. */
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
   font-family: Inter, system-ui, -apple-system, sans-serif;
   background: var(--bg);
   color: var(--text);
@@ -170,6 +179,14 @@ body:not(.login-route) {
   height: 100dvh;
   max-height: 100dvh;
   overflow: hidden;
+}
+
+/* The home indicator (iOS) and the gesture bar (Android) take the bottom edge
+   of an installed app. The tab bar pads itself; without one (every /admin
+   page) the layout does, except while the keyboard is up and covers that edge
+   anyway. Shell sets both markers. */
+.layout:not(.layout--has-tabbar):not([data-soft-keyboard]) {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .layout-body {
@@ -715,7 +732,7 @@ body:not(.login-route) {
 /* Chat only: main nav slides away; peek rail below topbar reveals it on hover */
 .sidebar-flyout {
   position: fixed;
-  left: 0;
+  left: env(safe-area-inset-left, 0px);
   top: var(--app-topbar-height);
   z-index: 140;
   display: flex;
@@ -5270,7 +5287,8 @@ table.data-table--api-logs {
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 12vh 1rem 2rem;
+  padding: 12vh max(1rem, env(safe-area-inset-right, 0px)) max(2rem, env(safe-area-inset-bottom, 0px))
+    max(1rem, env(safe-area-inset-left, 0px));
   background: color-mix(in srgb, #000 42%, transparent);
 }
 
@@ -7582,6 +7600,9 @@ table.data-table--api-logs {
   position: fixed;
   inset: 0;
   z-index: 2600;
+  /* The shade covers the whole screen; the bar and the picture keep clear of the edges. */
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px)
+    env(safe-area-inset-left, 0px);
   background: rgba(10, 12, 16, 0.82);
   display: flex;
   flex-direction: column;
@@ -7773,7 +7794,8 @@ table.data-table--api-logs {
   height: 100%;
   background: var(--surface);
   border-right: 1px solid var(--border);
-  padding: 1rem;
+  padding: max(1rem, env(safe-area-inset-top, 0px)) 1rem max(1rem, env(safe-area-inset-bottom, 0px))
+    max(1rem, env(safe-area-inset-left, 0px));
   display: flex;
   flex-direction: column;
 }
@@ -7820,7 +7842,8 @@ table.data-table--api-logs {
   align-items: center;
   justify-content: center;
   z-index: 1000;
-  padding: 1rem;
+  padding: max(1rem, env(safe-area-inset-top, 0px)) max(1rem, env(safe-area-inset-right, 0px))
+    max(1rem, env(safe-area-inset-bottom, 0px)) max(1rem, env(safe-area-inset-left, 0px));
 }
 .modal-overlay-confirm {
   z-index: 3000;
@@ -11788,6 +11811,8 @@ body.login-route #root {
   max-height: 100dvh;
   width: 100%;
   overflow: hidden;
+  /* Clear of the home indicator in the installed app. */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   background: var(--bg);
   display: flex;
   align-items: stretch;
@@ -13288,8 +13313,8 @@ body.login-route #root {
    arrangement. Logical inset so it lands on the correct side under RTL. */
 .app-toast-host {
   position: fixed;
-  inset-inline-end: 1rem;
-  bottom: 1rem;
+  inset-inline-end: calc(1rem + var(--safe-inline));
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
   z-index: 12000;
   display: flex;
   flex-direction: column;
@@ -17266,6 +17291,8 @@ p.error,
     height: calc(var(--app-viewport-height) - var(--app-topbar-height));
     z-index: 120;
     padding: 0.75rem;
+    padding-inline-start: max(0.75rem, var(--safe-inline));
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
     border-right: 0;
     border-bottom: 0;
     border-inline-end: 1px solid var(--border);
@@ -17350,6 +17377,8 @@ p.error,
     height: calc(var(--app-viewport-height) - var(--app-topbar-height));
     max-height: none;
     z-index: 120;
+    padding-inline-start: var(--safe-inline);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
     border-right: 0;
     border-inline-end: 1px solid var(--alpha-router-border);
     box-shadow: 12px 0 40px rgba(0, 0, 0, 0.35);
@@ -17798,7 +17827,8 @@ p.error,
     inset-inline: 0;
     bottom: 0;
     z-index: 160;
-    padding: 0.5rem 0.5rem calc(0.5rem + env(safe-area-inset-bottom, 0px));
+    padding: 0.5rem max(0.5rem, env(safe-area-inset-right, 0px)) calc(0.5rem + env(safe-area-inset-bottom, 0px))
+      max(0.5rem, env(safe-area-inset-left, 0px));
     border-top: 1px solid var(--border);
     border-radius: 14px 14px 0 0;
     background: var(--surface);
@@ -18259,7 +18289,8 @@ p.error,
     max-height: calc(var(--app-viewport-height) - 3rem);
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding: 0.5rem 0.5rem calc(0.5rem + env(safe-area-inset-bottom, 0px));
+    padding: 0.5rem max(0.5rem, env(safe-area-inset-right, 0px)) calc(0.5rem + env(safe-area-inset-bottom, 0px))
+      max(0.5rem, env(safe-area-inset-left, 0px));
     border-top: 1px solid var(--border);
     border-radius: 14px 14px 0 0;
     background: var(--surface);
@@ -18341,6 +18372,7 @@ p.error,
     z-index: 160;
     width: min(85vw, 20rem);
     height: var(--app-viewport-height);
+    padding-inline-start: var(--safe-inline);
     padding-bottom: env(safe-area-inset-bottom, 0px);
     border-right: 0;
     border-inline-end: 1px solid var(--border);

@@ -394,6 +394,27 @@ describe("the shell on a phone", () => {
     expect(document.querySelector(".bottom-tab-bar")).toBeNull();
   });
 
+  it("says the tab bar pads for the home indicator under /app", async () => {
+    await render("/app/chat");
+    expect(document.querySelector(".layout")?.classList.contains("layout--has-tabbar")).toBe(true);
+  });
+
+  it("leaves the home indicator's padding to the layout in the admin panel, which has no tab bar", async () => {
+    await render("/admin/users");
+    expect(document.querySelector(".layout")?.classList.contains("layout--has-tabbar")).toBe(false);
+  });
+
+  it("marks the layout while the keyboard is up, so it drops that padding", async () => {
+    await render("/app/chat");
+    const layoutEl = document.querySelector(".layout")!;
+    const field = document.querySelector<HTMLInputElement>('input[aria-label="Search chats"]')!;
+    expect(layoutEl.hasAttribute("data-soft-keyboard")).toBe(false);
+    await act(async () => field.focus());
+    expect(layoutEl.hasAttribute("data-soft-keyboard")).toBe(true);
+    await act(async () => field.blur());
+    expect(layoutEl.hasAttribute("data-soft-keyboard")).toBe(false);
+  });
+
   it("shows the brand mark alone in the topbar", async () => {
     await render("/app/projects");
     expect(document.querySelector(".topbar-brand .alpha-router-logo-alpha-rest")).toBeNull();

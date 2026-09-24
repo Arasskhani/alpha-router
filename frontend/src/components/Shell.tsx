@@ -3,6 +3,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import RouteErrorBoundary from "./RouteErrorBoundary";
 import AlphaRouterLogo from "./AlphaRouterLogo";
 import BottomTabBar from "./BottomTabBar";
+import { useSoftKeyboardOpen } from "../hooks/useSoftKeyboardOpen";
 import ModelProviderIcon from "./ModelProviderIcon";
 import SidebarNav from "./SidebarNav";
 import TopbarNav from "./TopbarNav";
@@ -186,6 +187,10 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
       : "";
 
   const readOnly = useReadOnly();
+  // The bottom edge's owner in an installed app: the tab bar pads itself for the
+  // home indicator; otherwise the layout does, unless the keyboard is up.
+  const hasTabBar = phone && (path === "/app" || path.startsWith("/app/"));
+  const layoutRef = useRef<HTMLDivElement>(null);
 
   const sidebarInner = (
     <SidebarNav
@@ -223,7 +228,8 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
   return (
     <ChatModelChromeProvider>
       <ShellMenuContext.Provider value={shellMenu}>
-        <div className={`layout${layoutClass}`}>
+        <div ref={layoutRef} className={`layout${layoutClass}${hasTabBar ? " layout--has-tabbar" : ""}`}>
+          <SoftKeyboardMarker target={layoutRef} />
           <header className="app-topbar">
             <div className="topbar-left">
               {drawerLayout ? (
@@ -322,11 +328,23 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
               </main>
             </div>
           </div>
-          {phone && (path === "/app" || path.startsWith("/app/")) ? <BottomTabBar /> : null}
+          {hasTabBar ? <BottomTabBar /> : null}
         </div>
       </ShellMenuContext.Provider>
     </ChatModelChromeProvider>
   );
+}
+
+/**
+ * Marks the layout with data-soft-keyboard while the on-screen keyboard is up.
+ * A component of its own, so focusing a field re-renders it and not the page.
+ */
+function SoftKeyboardMarker({ target }: { target: React.RefObject<HTMLElement | null> }) {
+  const open = useSoftKeyboardOpen();
+  useEffect(() => {
+    target.current?.toggleAttribute("data-soft-keyboard", open);
+  }, [open, target]);
+  return null;
 }
 
 function shortTopbarModelName(name: string, id: string) {

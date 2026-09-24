@@ -361,11 +361,27 @@ describe("the phone layout block", () => {
     const pills = declarations(phone.body, ".app-topbar .topbar-selected-models");
     expect(rem(pills, "padding-block")).toBeGreaterThanOrEqual((2.75 - 2.25) / 2);
     expect(rem(pills, "margin-block")).toBe(-rem(pills, "padding-block"));
-    // The model search's two buttons are 44px wide.
-    expect(
-      declarations(phone.body, ".app-topbar .topbar-model-search__field,\n  .app-topbar .topbar-model-search__add"),
-    ).toContain("width: 2.75rem");
+    // The model search's two buttons, 36px wide side by side: each one's area reaches away from the other…
+    const searchButtons = declarations(
+      phone.body,
+      ".app-topbar .topbar-model-search__field,\n  .app-topbar .topbar-model-search__add",
+    );
+    const buttonWidth = rem(searchButtons, "width");
+    expect(buttonWidth).toBe(2.25);
+    const fieldArea = declarations(phone.body, ".app-topbar .topbar-model-search__field::before");
+    expect(fieldArea).toContain("inset-inline-end: 0");
+    expect(fieldArea).toContain("transform: translateY(-50%)");
+    expect(declarations(phone.body, ".app-topbar .topbar-model-search__add::before")).toContain("inset-inline-start: 0");
+    // …and the magnifier's reaches no further than the space kept from the logo.
+    const pill = declarations(phone.body, ".app-topbar .topbar-model-search");
+    const leftGap = rem(declarations(phone.body, ".topbar-left,\n  .topbar-left:has(.topbar-model-search)"), "gap");
+    expect(rem(pill, "margin-inline-start") + leftGap).toBeCloseTo(2.75 - buttonWidth, 5);
     expect(outranks(".app-topbar .topbar-model-search", ".topbar-model-search")).toBe(true);
+    // A model's remove area reaches back into the gap before it, not over the model's name.
+    const removeArea = declarations(phone.body, ".app-topbar .alpha-router-model-pill__remove::before");
+    const reachBack = -rem(removeArea, "inset-inline-start");
+    expect(reachBack).toBeGreaterThan(0);
+    expect(reachBack).toBeLessThan(rem(declarations(css, ".alpha-router-model-pill"), "gap"));
     // A code block's actions and the model picker's rows.
     expect(declarations(phone.body, ".alpha-router-code-block__action")).toContain("min-height: 2.75rem");
     expect(declarations(phone.body, ".alpha-router-code-block__toolbar")).toContain("padding-block: 0");

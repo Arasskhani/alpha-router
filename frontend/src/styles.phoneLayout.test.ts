@@ -297,6 +297,8 @@ describe("the phone layout block", () => {
       "min-height: 2.5rem",
     );
     expect(declarations(phone.body, ".alpha-router-composer-bar .alpha-router-send")).toContain("height: 2.5rem");
+    // Room above the toolbar for a 44px tap on the field: the tap strip was 43px.
+    expect(declarations(phone.body, ".alpha-router-composer-bar")).toContain("margin-top: 0.625rem");
     // Every text field, not a chosen few: a 13px one in a dialog zoomed the page
     // and left the dialog's buttons behind the keyboard.
     const fields = declarations(

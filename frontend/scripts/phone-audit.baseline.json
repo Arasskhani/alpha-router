@@ -130,7 +130,7 @@
     },
     "/app/chat": {
       "smallFields": 0,
-      "smallTargets": 2
+      "smallTargets": 1
     },
     "/app/manual": {
       "smallFields": 0,

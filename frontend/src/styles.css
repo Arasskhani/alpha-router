@@ -17487,6 +17487,12 @@ p.error,
   .alpha-router-composer-bar .alpha-router-translate-eng-btn {
     min-height: 2.75rem;
   }
+  /* The composer passes a tap between its field and the toolbar on to the
+     field, so that strip is the field's height for a finger: with the
+     toolbar's 44px chip it was 43px, and 2px more make it 45px. */
+  .alpha-router-composer-bar {
+    margin-top: 0.625rem;
+  }
   /* Attach and voice (34px, 30px) are 36px like the message actions, and
      0.5rem apart, so their hit areas do not take from each other or Send. */
   .alpha-router-composer-bar .alpha-router-attach-btn,

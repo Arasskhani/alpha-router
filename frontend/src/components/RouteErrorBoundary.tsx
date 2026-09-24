@@ -48,11 +48,13 @@ export default class RouteErrorBoundary extends Component<Props, State> {
   render(): ReactNode {
     if (!this.state.error) return this.props.children;
     if (isChunkLoadError(this.state.error)) {
-      // Trying again would fetch the same missing file; only a reload helps.
+      // Offline, the page's code simply could not be fetched; online, it is gone
+      // because the app was upgraded. Either way only a reload helps.
+      const offline = typeof navigator !== "undefined" && navigator.onLine === false;
       return (
         <div className="route-error card" role="alert">
-          <h2>Alpharouter was updated</h2>
-          <p className="muted">Reload to continue.</p>
+          <h2>{offline ? "You're offline" : "Alpharouter was updated"}</h2>
+          <p className="muted">{offline ? "Reconnect, then reload to open this page." : "Reload to continue."}</p>
           <div className="route-error__actions">
             <button type="button" className="btn" onClick={() => window.location.reload()}>
               Reload

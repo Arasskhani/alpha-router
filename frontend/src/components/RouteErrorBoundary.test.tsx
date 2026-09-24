@@ -62,6 +62,18 @@ describe("RouteErrorBoundary", () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
+  it("says the device is offline when a page's code could not be fetched without a connection", async () => {
+    Object.defineProperty(navigator, "onLine", { value: false, configurable: true });
+    try {
+      await render("Failed to fetch dynamically imported module: https://x/assets/Users-abc.js");
+      expect(host.querySelector("h2")?.textContent).toBe("You're offline");
+      expect(host.textContent).toContain("Reconnect, then reload");
+      expect([...host.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Reload"]);
+    } finally {
+      Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+    }
+  });
+
   it("still shows any other error with Try again and Reload", async () => {
     await render("Cannot read properties of undefined");
     expect(host.querySelector("h2")?.textContent).toBe("This page could not be displayed");

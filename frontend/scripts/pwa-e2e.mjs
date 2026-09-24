@@ -281,7 +281,6 @@ async function installedApp() {
       await page.route(/\/assets\/Users-[\w-]+\.js$/, (route) => route.fulfill({ status: 404, body: "Not Found" }));
       await routeChange(page, "/admin/users");
       await page.getByRole("heading", { name: "Alpharouter was updated" }).waitFor({ timeout: 10_000 });
-      await page.locator(".app-notice").waitFor({ timeout: 5_000 });
       await page.unroute(/\/assets\/Users-[\w-]+\.js$/);
     });
 

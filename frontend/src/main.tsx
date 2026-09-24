@@ -11,7 +11,7 @@ import { onSessionReady } from "./api";
 import { registerAppServiceWorker } from "./lib/pwa/registerServiceWorker";
 import { startInstallListeners } from "./lib/pwa/installPrompt";
 import { startInstallSuggestion } from "./lib/pwa/installSuggestion";
-import { markUpdateAvailable, startUpdateChecks } from "./lib/pwa/appUpdate";
+import { checkForUpdate, startUpdateChecks } from "./lib/pwa/appUpdate";
 
 applyThemeToDocument();
 applyBlankFavicon();
@@ -19,10 +19,11 @@ applyBlankFavicon();
 startInstallListeners();
 startInstallSuggestion();
 startUpdateChecks();
-// A page's code failed to load, typically because the app was upgraded while it
-// stayed open: say a new version is available. The error still reaches the
-// route's error boundary, which offers the reload too; nothing reloads by itself.
-window.addEventListener("vite:preloadError", () => markUpdateAvailable());
+// A page's code failed to load: often the app was upgraded while it stayed open,
+// but a phone that is offline fails the same way. Ask the server whether its
+// build changed before saying a new version is available. The error still
+// reaches the route's error boundary, which offers a reload; nothing reloads by itself.
+window.addEventListener("vite:preloadError", () => void checkForUpdate());
 // Once signed in: the session carries the server's switch for the worker.
 onSessionReady(() => registerAppServiceWorker());
 

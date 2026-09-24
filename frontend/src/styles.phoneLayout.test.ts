@@ -948,7 +948,7 @@ describe("responsive rules", () => {
   it("are not overridden by a later base rule for the same selector", () => {
     // A rule in a max-width query has no more weight than a base rule for the same selector,
     // so a base rule further down the file wins on source order and the query does nothing
-    // for that property. That is how the topbar kept its desktop padding on a phone.
+    // for that property. That is how the topbar kept its desktop padding on tablets.
     const rules = styleRules();
     const base = new Map<string, Array<{ at: number; props: Map<string, boolean> }>>();
     for (const rule of rules.filter((r) => r.atRules.length === 0)) {

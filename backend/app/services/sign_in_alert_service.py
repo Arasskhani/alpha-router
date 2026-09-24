@@ -39,7 +39,7 @@ from app.models.security import SecurityAuditEvent
 from app.models.user import User, UserRoleAssignment
 from app.services.observability import increment
 from app.services.rbac import SUPER_ADMIN_SLUG
-from app.services.smtp_service import SmtpNotConfiguredError, SmtpSendError, send_email
+from app.services.smtp_service import SmtpNotConfiguredError, SmtpRecipientError, SmtpSendError, send_email
 
 logger = logging.getLogger(__name__)
 
@@ -273,17 +273,32 @@ async def raise_alerts(db: AsyncSession, *, now: datetime.datetime | None = None
 
         if smtp_down:
             continue
-        if recipients is None:
-            recipients = await _recipients(db)
-            if not recipients:
-                logger.warning("Sign-in alert not e-mailed: no active Super Admin has an e-mail address.")
-        subject, body = _message(alert)
+        # The record is committed; whatever goes wrong with this alert's mail
+        # below must not stop the alerts after it being recorded and mailed.
+        try:
+            if recipients is None:
+                recipients = await _recipients(db)
+                if not recipients:
+                    logger.warning("Sign-in alert not e-mailed: no active Super Admin has an e-mail address.")
+            subject, body = _message(alert)
+        except Exception:  # noqa: BLE001 -- one alert's mail must not stop the next alert
+            logger.exception("Sign-in alert %s for %s could not be prepared for e-mail", alert.kind, alert.subject)
+            continue
         for address in recipients:
             try:
                 await send_email(db, to_address=address, subject=subject, body_text=body)
                 sent += 1
-            except (SmtpNotConfiguredError, SmtpSendError) as exc:
+            except SmtpRecipientError as exc:
+                # This address only (malformed, or refused by the server): the
+                # other Super Admins, and the alerts after this one, still get it.
                 logger.warning("Sign-in alert not e-mailed to %s: %s", address, exc)
+            except (SmtpNotConfiguredError, SmtpSendError) as exc:
+                # The server or the settings: every other address would fail the same way.
+                logger.warning("Sign-in alert not e-mailed to %s: %s", address, exc)
+                smtp_down = True
+                break
+            except Exception:  # noqa: BLE001 -- the records must survive whatever the mail path raises
+                logger.exception("Sign-in alert not e-mailed to %s", address)
                 smtp_down = True
                 break
     return {"found": len(found), "raised": raised, "suppressed": suppressed, "emails_sent": sent}

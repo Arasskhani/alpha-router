@@ -393,3 +393,72 @@ async def test_the_job_runs_against_the_test_engine(db_session, session_factory,
 
     await scheduler.job_sign_in_alerts()
     assert len(await _alerts(db_session)) == 1
+
+
+class TestOneFailureDoesNotStopTheRest:
+    """The trail row is committed before any mail; what goes wrong with one
+    alert's mail, or one recipient, must not stop the other alerts and the
+    other Super Admins."""
+
+    async def _two_alerts(self, db):
+        for i in range(USER_FAILURE_THRESHOLD):
+            db.add(_failure(username="alice", ip="198.51.100.1", minutes_ago=i))
+            db.add(_failure(username="bob", ip="198.51.100.2", minutes_ago=i))
+        await db.commit()
+
+    async def test_a_refused_address_does_not_stop_mail_to_the_other_super_admins(self, db_session):
+        from app.models.system import SmtpSettings
+        from tests.smtp_test_server import MODE_PLAIN, SmtpTestServer
+
+        await _super_admin(db_session, "root", "root@refused.example")
+        await _super_admin(db_session, "second", "second@test")
+        await self._two_alerts(db_session)
+        async with SmtpTestServer(mode=MODE_PLAIN, refuse_recipients=frozenset({"root@refused.example"})) as server:
+            db_session.add(
+                SmtpSettings(
+                    host="127.0.0.1",
+                    port=server.port,
+                    from_address="alerts@example.com",
+                    security="none",
+                    verify_certificate=True,
+                )
+            )
+            await db_session.commit()
+            result = await raise_alerts(db_session, now=NOW)
+
+        assert result == {"found": 2, "raised": 2, "suppressed": 0, "emails_sent": 2}
+        assert [m.recipients for m in server.messages] == [("second@test",), ("second@test",)]
+
+    async def test_an_alert_whose_mail_cannot_be_prepared_does_not_stop_the_next(self, db_session, outbox, monkeypatch):
+        await _super_admin(db_session)
+        await self._two_alerts(db_session)
+        real_message = svc._message
+
+        def _message(alert):
+            if alert.subject == "name:alice":
+                raise RuntimeError("a bug in one alert's text")
+            return real_message(alert)
+
+        monkeypatch.setattr(svc, "_message", _message)
+        result = await raise_alerts(db_session, now=NOW)
+
+        assert result["raised"] == 2 and result["emails_sent"] == 1
+        assert len(await _alerts(db_session)) == 2
+        assert "'bob'" in outbox[0][1]
+
+    async def test_an_unexpected_mail_error_keeps_every_record(self, db_session, monkeypatch):
+        await _super_admin(db_session)
+        await self._two_alerts(db_session)
+        calls = []
+
+        async def _crash(*_a, **_k):
+            calls.append(1)
+            raise RuntimeError("database went away")
+
+        monkeypatch.setattr(svc, "send_email", _crash)
+        result = await raise_alerts(db_session, now=NOW)
+
+        assert result["raised"] == 2 and result["emails_sent"] == 0
+        assert len(await _alerts(db_session)) == 2
+        # Taken as the mail path being down for this run: tried once, not once per alert.
+        assert calls == [1]

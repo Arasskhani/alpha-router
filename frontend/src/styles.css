@@ -12233,13 +12233,6 @@ body.login-route #root {
     transform: none;
     animation: none;
   }
-
-  .login-highlight--reveal {
-    opacity: 1;
-    filter: none;
-    transform: none;
-    animation: none;
-  }
 }
 
 .login-highlights {
@@ -12297,6 +12290,18 @@ body.login-route #root {
     opacity: 1;
     filter: blur(0);
     transform: translateY(0);
+  }
+}
+
+/* After the rule it undoes: in the reduced-motion block above, it came first
+   and lost to it, so the highlights still blurred in for anyone who asked
+   for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  .login-highlight--reveal {
+    opacity: 1;
+    filter: none;
+    transform: none;
+    animation: none;
   }
 }
 

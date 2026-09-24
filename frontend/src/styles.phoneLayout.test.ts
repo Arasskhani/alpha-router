@@ -896,6 +896,24 @@ describe("the sign-in page on a phone held sideways", () => {
   });
 });
 
+describe("the sign-in page's highlights", () => {
+  it("stay still for anyone who asks for less motion", () => {
+    expect(declarations(css, ".login-highlight--reveal")).toContain("animation: login-highlight-emerge");
+    const overrides = mediaBlocks("(prefers-reduced-motion: reduce)").filter((b) =>
+      declarations(b.body, ".login-highlight--reveal"),
+    );
+    expect(overrides.length).toBeGreaterThan(0);
+    for (const block of overrides) {
+      // After the rule it undoes: a query adds no weight, so one before it loses on source order.
+      expect(block.at).toBeGreaterThan(lastTopLevelRule(".login-highlight--reveal"));
+      const undo = declarations(block.body, ".login-highlight--reveal");
+      for (const declaration of ["opacity: 1", "filter: none", "transform: none", "animation: none"]) {
+        expect(undo).toContain(declaration);
+      }
+    }
+  });
+});
+
 /** Every style rule in the file, whitespace normalised, with the @-rules it sits in, outermost first. */
 function styleRules(): Array<{ at: number; selectors: string[]; body: string; atRules: string[] }> {
   const rules: Array<{ at: number; selectors: string[]; body: string; atRules: string[] }> = [];

@@ -30,6 +30,8 @@ export const STORAGE_KEYS = {
   adminSidebarOpenSections: "alpha_router_admin_sidebar_open_sections",
   modelsView: "alpha_router_models_view",
   mediaView: "alpha_router_media_view",
+  /** The install suggestion's answers on this device (lib/pwa/installSuggestion.ts). Never sent to the server. */
+  installPrompt: "alpha_router_install_prompt",
 } as const;
 
 export const BROWSER_EVENT_NAMES = {

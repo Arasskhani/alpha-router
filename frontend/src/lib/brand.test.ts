@@ -44,6 +44,7 @@ describe("project-owned naming contracts", () => {
       adminSidebarOpenSections: "alpha_router_admin_sidebar_open_sections",
       modelsView: "alpha_router_models_view",
       mediaView: "alpha_router_media_view",
+      installPrompt: "alpha_router_install_prompt",
     });
   });
 

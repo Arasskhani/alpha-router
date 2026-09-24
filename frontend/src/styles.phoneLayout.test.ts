@@ -340,6 +340,12 @@ describe("the phone layout block", () => {
         ".alpha-router-tools-trigger--icon.alpha-router-composer-ctrl,\n.alpha-router-model-trigger.alpha-router-tools-trigger--icon",
       ),
     ).toContain("overflow: visible");
+    // A reply's actions share their gaps: each area reaches halfway across, not into the next button.
+    const actionsGap = rem(declarations(phone.body, ".alpha-router-msg-actions"), "gap");
+    expect(actionsGap).toBeGreaterThan(0);
+    expect(declarations(phone.body, ".alpha-router-msg-actions .alpha-router-msg-action-btn::before")).toContain(
+      `width: calc(100% + ${actionsGap}rem)`,
+    );
     // The translate chip does clip, so it is 44px tall itself.
     expect(declarations(phone.body, ".alpha-router-composer-bar .alpha-router-translate-eng-btn")).toContain(
       "min-height: 2.75rem",

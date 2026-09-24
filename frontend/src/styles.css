@@ -17357,12 +17357,11 @@ p.error,
   }
 
   /* Controls a thumb can hit: about 40px. The desktop sizes are 23-31px. */
-  /* With each button's hit area (below) reaching 4px past it, 36px buttons
-     0.4rem apart take 42px each: eight of them - a reply's actions - still
-     fit on one line of a 390px phone, where 44px each would not. */
+  /* 36px buttons 0.3rem apart, as before: a reply's eight actions fit on one
+     line of a 375px phone. Their hit areas (below) take half of each gap. */
   .alpha-router-msg-actions {
     flex-wrap: wrap;
-    gap: 0.4rem;
+    gap: 0.3rem;
   }
   .alpha-router-msg-actions .alpha-router-msg-action-btn {
     min-width: 2.25rem;
@@ -17416,6 +17415,11 @@ p.error,
     width: max(100%, 2.75rem);
     height: max(100%, 2.75rem);
     transform: translate(-50%, -50%);
+  }
+  /* Side by side, a reply's actions' areas meet halfway across the gap
+     instead of reaching into each other: 41px wide, 44px tall. */
+  .alpha-router-msg-actions .alpha-router-msg-action-btn::before {
+    width: calc(100% + 0.3rem);
   }
   /* The translate chip clips what spills out of it, a hit area too: it is
      44px tall instead. */

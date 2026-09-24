@@ -307,11 +307,8 @@ import {
 } from "./chat/AgentExperience";
 import AgentMenu from "./chat/AgentMenu";
 import { useBackOnline } from "../hooks/useBackOnline";
-import {
-  CONNECTION_LOST_MESSAGE,
-  endsWithConnectionLost,
-  isConnectionLostError,
-} from "../lib/chatConnection";
+import { CONNECTION_LOST_MESSAGE, isConnectionLostError } from "../lib/chatConnection";
+import { RECOVERY_RETRY_MS, createReplyRecovery } from "../lib/replyRecovery";
 import {
   shortModelName,
   readAudioMessage,
@@ -668,8 +665,30 @@ export default function ChatPanel({
   foldersRef.current = folders;
   messagesRef.current = messages;
   const isSessionStreaming = activeId ? !!streamingSessions[activeId] : false;
-  // Back online, or back in view on a phone: show what the server saved of a reply the connection cut off.
-  useBackOnline(recoverCutOffReply);
+  // A reply the connection cut off: fetched again from the server once it is
+  // shown, and whenever the device is back online or the app back in view.
+  const readOnlyRef = useRef(readOnly);
+  useEffect(() => {
+    readOnlyRef.current = readOnly;
+  }, [readOnly]);
+  const replyRecoveryRef = useRef<ReturnType<typeof createReplyRecovery> | null>(null);
+  replyRecoveryRef.current ??= createReplyRecovery({
+    activeSessionId: () => activeIdRef.current,
+    messagesOf: (sid) => getSessionMessages(sid),
+    skip: (sid) => readOnlyRef.current || sessionPrivateMode(sid),
+    busy: (sid) => isLocalWorkInFlight(sid),
+    fetchRemote: async (sid) => (await fetchSessionWithMessages(sid))?.messages ?? null,
+    replaceLast: (sid, message) => applyMessages(sid, [...getSessionMessages(sid).slice(0, -1), message]),
+    finalizeAbandoned: (sid, message) =>
+      void finalizeAssistantOnServer(sid, message.content, {
+        receivedAt: message.receivedAt,
+        modelId: message.modelId,
+        modelName: message.modelName,
+        clientMessageId: message.clientMessageId,
+      }).catch((e) => reportSyncError(e, sid)),
+  });
+  useEffect(() => () => replyRecoveryRef.current?.stop(), []);
+  useBackOnline(() => replyRecoveryRef.current?.nudge());
   const isStopVisible =
     !!activeId &&
     (isSessionStreaming ||
@@ -4914,29 +4933,6 @@ export default function ChatPanel({
     textareaRef.current?.focus();
   }
 
-  /**
-   * The open chat's last reply was cut off by a lost connection: once the
-   * device is back, show what the server saved of it (the server treats the
-   * disconnect as Stop and keeps the partial reply). Private chats keep
-   * nothing on the server, so they are left as they are.
-   */
-  function recoverCutOffReply() {
-    const sid = activeIdRef.current;
-    if (!sid || readOnly || sessionPrivateMode(sid) || isLocalWorkInFlight(sid)) return;
-    if (!endsWithConnectionLost(getSessionMessages(sid))) return;
-    void fetchSessionWithMessages(sid)
-      .then((remote) => {
-        if (!remote?.messages.length || activeIdRef.current !== sid || isLocalWorkInFlight(sid)) return;
-        const local = getSessionMessages(sid);
-        if (!endsWithConnectionLost(local)) return;
-        // Never let a server copy that lacks the user's prompt replace the local thread.
-        const prompts = (list: ChatMessage[]) => list.filter((m) => m.role === "user").length;
-        if (prompts(remote.messages) < prompts(local)) return;
-        applyMessages(sid, remote.messages);
-      })
-      .catch(() => {});
-  }
-
   function getSessionMessages(sessionId: string): ChatMessage[] {
     // Prefer the live active thread — sessionsRef can lag right after creating a chat.
     if (sessionId === activeIdRef.current && messagesRef.current.length) {
@@ -5067,8 +5063,9 @@ export default function ChatPanel({
           errAssistant,
         ];
         applyMessages(sessionId, errMsgs);
-        // A lost connection: the server saved what it had, which is fetched again once back online.
-        if (!sessionPrivateMode(sessionId) && !isConnectionLostError(err)) {
+        // A lost connection: the server saved what it had, which recovery fetches again.
+        if (isConnectionLostError(err)) replyRecoveryRef.current?.nudge(RECOVERY_RETRY_MS);
+        else if (!sessionPrivateMode(sessionId)) {
           void finalizeAssistantOnServer(sessionId, errAssistant.content, {
             receivedAt: errAssistant.receivedAt,
             modelId: validModel.id,
@@ -5141,8 +5138,9 @@ export default function ChatPanel({
               ? current.map((m, j) => (j === idx ? errAssistant : m))
               : [...current, errAssistant];
           applyMessages(sessionId, errMsgs);
-          // A lost connection: the server saved what it had, which is fetched again once back online.
-          if (!sessionPrivateMode(sessionId) && !isConnectionLostError(err)) {
+          // A lost connection: the server saved what it had, which recovery fetches again.
+          if (isConnectionLostError(err)) replyRecoveryRef.current?.nudge(RECOVERY_RETRY_MS);
+          else if (!sessionPrivateMode(sessionId)) {
             void finalizeAssistantOnServer(sessionId, errAssistant.content, {
               receivedAt: errAssistant.receivedAt,
               modelId: turnModel.id,
@@ -5670,8 +5668,9 @@ export default function ChatPanel({
               ? current.map((m, j) => (j === idx ? errAssistant : m))
               : [...current, errAssistant];
           applyMessages(sid, errMsgs);
-          // A lost connection: the server saved what it had, which is fetched again once back online.
-          if (!sessionPrivateMode(sid) && !isConnectionLostError(err)) {
+          // A lost connection: the server saved what it had, which recovery fetches again.
+          if (isConnectionLostError(err)) replyRecoveryRef.current?.nudge(RECOVERY_RETRY_MS);
+          else if (!sessionPrivateMode(sid)) {
             void finalizeAssistantOnServer(sid, errAssistant.content, {
               receivedAt: errAssistant.receivedAt,
               modelId: turnModel.id,

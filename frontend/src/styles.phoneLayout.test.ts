@@ -915,26 +915,26 @@ describe("the sign-in page's highlights", () => {
 });
 
 /** Every style rule in the file, whitespace normalised, with the @-rules it sits in, outermost first. */
-function styleRules(): Array<{ at: number; selectors: string[]; body: string; atRules: string[] }> {
+function styleRules(source = css): Array<{ at: number; selectors: string[]; body: string; atRules: string[] }> {
   const rules: Array<{ at: number; selectors: string[]; body: string; atRules: string[] }> = [];
   const atRules: string[] = [];
   let start = 0;
-  for (let i = 0; i < css.length; i += 1) {
-    if (css[i] === "}") {
+  for (let i = 0; i < source.length; i += 1) {
+    if (source[i] === "}") {
       atRules.pop();
       start = i + 1;
-    } else if (css[i] === ";" && css.slice(start, i).trim().startsWith("@")) {
+    } else if (source[i] === ";" && source.slice(start, i).trim().startsWith("@")) {
       start = i + 1; // A statement like @import, with no block.
-    } else if (css[i] === "{") {
-      const head = css.slice(start, i).trim().replace(/\s+/g, " ");
+    } else if (source[i] === "{") {
+      const head = source.slice(start, i).trim().replace(/\s+/g, " ");
       if (head.startsWith("@")) {
         atRules.push(head);
         start = i + 1;
         continue;
       }
       // Style rules do not nest in this file, so the declarations end at the next brace.
-      const close = css.indexOf("}", i);
-      rules.push({ at: start, selectors: selectorList(head), body: css.slice(i + 1, close), atRules: [...atRules] });
+      const close = source.indexOf("}", i);
+      rules.push({ at: start, selectors: selectorList(head), body: source.slice(i + 1, close), atRules: [...atRules] });
       i = close;
       start = close + 1;
     }
@@ -975,37 +975,81 @@ const shorthands = new Map<string, RegExp>([
 const overlaps = (a: string, b: string) =>
   a === b || Boolean(shorthands.get(a)?.test(b)) || Boolean(shorthands.get(b)?.test(a));
 
-describe("responsive rules", () => {
-  it("are not overridden by a later base rule for the same selector", () => {
-    // A rule in a max-width query has no more weight than a base rule for the same selector,
-    // so a base rule further down the file wins on source order and the query does nothing
-    // for that property. That is how the topbar kept its desktop padding on tablets.
-    const rules = styleRules();
-    const base = new Map<string, Array<{ at: number; props: Map<string, boolean> }>>();
-    for (const rule of rules.filter((r) => r.atRules.length === 0)) {
-      for (const selector of rule.selectors) {
-        base.set(selector, [...(base.get(selector) ?? []), { at: rule.at, props: properties(rule.body) }]);
-      }
+/** The at-rules whose condition decides whether their rules apply, but not how much they weigh. */
+const CONDITIONAL_AT_RULE = /^@(media|container|supports)\b/;
+
+/**
+ * Rules in a query that a base rule further down the file overrides.
+ *
+ * A rule in a query has no more weight than a base rule for the same selector,
+ * whatever the query - a media query of either width, the range syntax
+ * (`width <= 768px`), a container query or a feature query - so a base rule
+ * further down wins on source order and the query does nothing for that
+ * property. That is how the topbar kept its desktop padding on tablets.
+ */
+function overriddenQueryRules(source: string): string[] {
+  const rules = styleRules(source);
+  const base = new Map<string, Array<{ at: number; props: Map<string, boolean> }>>();
+  for (const rule of rules.filter((r) => r.atRules.length === 0)) {
+    for (const selector of rule.selectors) {
+      base.set(selector, [...(base.get(selector) ?? []), { at: rule.at, props: properties(rule.body) }]);
     }
-    const dead = new Set<string>();
-    for (const rule of rules) {
-      const media = rule.atRules.find((a) => a.startsWith("@media"));
-      if (!media?.includes("max-width")) continue;
-      const props = properties(rule.body);
-      for (const selector of rule.selectors) {
-        for (const later of (base.get(selector) ?? []).filter((b) => b.at > rule.at)) {
-          for (const [prop, important] of props) {
-            for (const [laterProp, laterImportant] of later.props) {
-              // An !important declaration in the query still beats a plain one after it.
-              if (overlaps(prop, laterProp) && (laterImportant || !important)) {
-                dead.add(`${media}: ${selector} { ${prop} } is overridden by a later base rule`);
-              }
+  }
+  const dead = new Set<string>();
+  for (const rule of rules) {
+    const query = rule.atRules.find((a) => CONDITIONAL_AT_RULE.test(a));
+    if (!query) continue;
+    const props = properties(rule.body);
+    for (const selector of rule.selectors) {
+      for (const later of (base.get(selector) ?? []).filter((b) => b.at > rule.at)) {
+        for (const [prop, important] of props) {
+          for (const [laterProp, laterImportant] of later.props) {
+            // An !important declaration in the query still beats a plain one after it.
+            if (overlaps(prop, laterProp) && (laterImportant || !important)) {
+              dead.add(`${query}: ${selector} { ${prop} } is overridden by a later base rule`);
             }
           }
         }
       }
     }
-    expect([...dead]).toEqual([]);
+  }
+  return [...dead];
+}
+
+describe("responsive rules", () => {
+  it("are not overridden by a later base rule for the same selector", () => {
+    expect(overriddenQueryRules(css)).toEqual([]);
+  });
+
+  it("are checked in every kind of query", () => {
+    const later = (query: string) => `${query} { .x { padding-left: 1rem; } }\n.x { padding: 0; }`;
+    for (const query of [
+      "@media (max-width: 768px)",
+      "@media (min-width: 768px)",
+      "@media (width <= 768px)",
+      "@media screen and (400px < width < 900px)",
+      "@media (prefers-reduced-motion: reduce)",
+      "@container (max-width: 30rem)",
+      "@container sidebar (inline-size > 20rem)",
+      "@supports (height: 100dvh)",
+    ]) {
+      expect(overriddenQueryRules(later(query)), query).toEqual([
+        `${query}: .x { padding-left } is overridden by a later base rule`,
+      ]);
+    }
+    // A query nested in another is checked too.
+    expect(overriddenQueryRules("@media (width <= 768px) { @container (max-width: 20rem) { .x { gap: 0; } } }\n.x { gap: 1rem; }")).toHaveLength(1);
+  });
+
+  it("are left alone by an earlier base rule, another property, another selector or an !important", () => {
+    expect(overriddenQueryRules(".x { padding: 0; }\n@container (max-width: 30rem) { .x { padding-left: 1rem; } }")).toEqual([]);
+    expect(overriddenQueryRules("@container (max-width: 30rem) { .x { color: red; } }\n.x { padding: 0; }")).toEqual([]);
+    expect(overriddenQueryRules("@media (width <= 768px) { .x .y { padding: 1rem; } }\n.x { padding: 0; }")).toEqual([]);
+    expect(
+      overriddenQueryRules("@media (width <= 768px) { .x { padding-left: 1rem !important; } }\n.x { padding: 0; }"),
+    ).toEqual([]);
+    // Not a rule's condition: keyframes and font faces are not queries.
+    expect(overriddenQueryRules("@keyframes x { from { opacity: 0; } }\nfrom { opacity: 1; }")).toEqual([]);
   });
 });
 

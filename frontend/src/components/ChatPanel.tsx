@@ -306,6 +306,12 @@ import {
   AgentHandoffBanner,
 } from "./chat/AgentExperience";
 import AgentMenu from "./chat/AgentMenu";
+import { useBackOnline } from "../hooks/useBackOnline";
+import {
+  CONNECTION_LOST_MESSAGE,
+  endsWithConnectionLost,
+  isConnectionLostError,
+} from "../lib/chatConnection";
 import {
   shortModelName,
   readAudioMessage,
@@ -662,6 +668,8 @@ export default function ChatPanel({
   foldersRef.current = folders;
   messagesRef.current = messages;
   const isSessionStreaming = activeId ? !!streamingSessions[activeId] : false;
+  // Back online, or back in view on a phone: show what the server saved of a reply the connection cut off.
+  useBackOnline(recoverCutOffReply);
   const isStopVisible =
     !!activeId &&
     (isSessionStreaming ||
@@ -3964,11 +3972,8 @@ export default function ChatPanel({
     ) {
       return err.message;
     }
-    const message = err instanceof Error ? err.message : String(err);
-    if (message.includes("network") || message === "Failed to fetch") {
-      return `Cannot reach ${PRODUCT_NAME} API. Check that Docker is running and hard-refresh (Ctrl+Shift+R).`;
-    }
-    return message;
+    if (isConnectionLostError(err)) return CONNECTION_LOST_MESSAGE;
+    return err instanceof Error ? err.message : String(err);
   }
 
   async function syncTextTurnToServer(
@@ -4909,6 +4914,29 @@ export default function ChatPanel({
     textareaRef.current?.focus();
   }
 
+  /**
+   * The open chat's last reply was cut off by a lost connection: once the
+   * device is back, show what the server saved of it (the server treats the
+   * disconnect as Stop and keeps the partial reply). Private chats keep
+   * nothing on the server, so they are left as they are.
+   */
+  function recoverCutOffReply() {
+    const sid = activeIdRef.current;
+    if (!sid || readOnly || sessionPrivateMode(sid) || isLocalWorkInFlight(sid)) return;
+    if (!endsWithConnectionLost(getSessionMessages(sid))) return;
+    void fetchSessionWithMessages(sid)
+      .then((remote) => {
+        if (!remote?.messages.length || activeIdRef.current !== sid || isLocalWorkInFlight(sid)) return;
+        const local = getSessionMessages(sid);
+        if (!endsWithConnectionLost(local)) return;
+        // Never let a server copy that lacks the user's prompt replace the local thread.
+        const prompts = (list: ChatMessage[]) => list.filter((m) => m.role === "user").length;
+        if (prompts(remote.messages) < prompts(local)) return;
+        applyMessages(sid, remote.messages);
+      })
+      .catch(() => {});
+  }
+
   function getSessionMessages(sessionId: string): ChatMessage[] {
     // Prefer the live active thread — sessionsRef can lag right after creating a chat.
     if (sessionId === activeIdRef.current && messagesRef.current.length) {
@@ -5039,7 +5067,8 @@ export default function ChatPanel({
           errAssistant,
         ];
         applyMessages(sessionId, errMsgs);
-        if (!sessionPrivateMode(sessionId)) {
+        // A lost connection: the server saved what it had, which is fetched again once back online.
+        if (!sessionPrivateMode(sessionId) && !isConnectionLostError(err)) {
           void finalizeAssistantOnServer(sessionId, errAssistant.content, {
             receivedAt: errAssistant.receivedAt,
             modelId: validModel.id,
@@ -5112,7 +5141,8 @@ export default function ChatPanel({
               ? current.map((m, j) => (j === idx ? errAssistant : m))
               : [...current, errAssistant];
           applyMessages(sessionId, errMsgs);
-          if (!sessionPrivateMode(sessionId)) {
+          // A lost connection: the server saved what it had, which is fetched again once back online.
+          if (!sessionPrivateMode(sessionId) && !isConnectionLostError(err)) {
             void finalizeAssistantOnServer(sessionId, errAssistant.content, {
               receivedAt: errAssistant.receivedAt,
               modelId: turnModel.id,
@@ -5640,7 +5670,8 @@ export default function ChatPanel({
               ? current.map((m, j) => (j === idx ? errAssistant : m))
               : [...current, errAssistant];
           applyMessages(sid, errMsgs);
-          if (!sessionPrivateMode(sid)) {
+          // A lost connection: the server saved what it had, which is fetched again once back online.
+          if (!sessionPrivateMode(sid) && !isConnectionLostError(err)) {
             void finalizeAssistantOnServer(sid, errAssistant.content, {
               receivedAt: errAssistant.receivedAt,
               modelId: turnModel.id,

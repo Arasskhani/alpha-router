@@ -59,11 +59,48 @@ function colorSchemeFor(resolved: ResolvedTheme): "light" | "dark" {
   return resolved === "dark" || resolved === "dark-mint" ? "dark" : "light";
 }
 
+/** Each theme's --surface (styles.css): the topbar's colour, which the browser and status bar take. */
+export const THEME_SURFACE: Record<ResolvedTheme, string> = {
+  light: "#ffffff",
+  dark: "#12171e",
+  mint: "#ffffff",
+  "dark-mint": "#161616",
+};
+
+/**
+ * The theme-color for a light and a dark OS scheme. A theme that follows the
+ * system keeps one per scheme, so the bar is right as soon as the OS switches;
+ * a chosen theme uses its own colour for both.
+ */
+function themeColors(theme: CachedTheme): { light: string; dark: string } {
+  if (theme === "system") return { light: THEME_SURFACE.light, dark: THEME_SURFACE.dark };
+  if (theme === "mint-system") return { light: THEME_SURFACE.mint, dark: THEME_SURFACE["dark-mint"] };
+  const color = THEME_SURFACE[resolveTheme(theme)];
+  return { light: color, dark: color };
+}
+
+/** Tint the browser's toolbar and an installed app's status bar (Android) with the theme. */
+function applyThemeColor(theme: CachedTheme): void {
+  const colors = themeColors(theme);
+  for (const scheme of ["light", "dark"] as const) {
+    const media = `(prefers-color-scheme: ${scheme})`;
+    let meta = document.head.querySelector<HTMLMetaElement>(`meta[name="theme-color"][media="${media}"]`);
+    if (!meta) {
+      meta = document.createElement("meta");
+      meta.setAttribute("name", "theme-color");
+      meta.setAttribute("media", media);
+      document.head.appendChild(meta);
+    }
+    meta.setAttribute("content", colors[scheme]);
+  }
+}
+
 export function applyThemeToDocument(theme: CachedTheme = loadCachedTheme()): void {
   const resolved = resolveTheme(theme);
   const root = document.documentElement;
   root.setAttribute("data-theme", resolved);
   root.setAttribute("data-scheme", colorSchemeFor(resolved));
+  applyThemeColor(theme);
 }
 
 export function namedThemeOf(theme: CachedTheme): NamedTheme {

@@ -22,6 +22,7 @@ from app.services.smtp_service import (
     SECURITY_SSL,
     SECURITY_STARTTLS,
     SmtpConnection,
+    SmtpRecipientError,
     SmtpSendError,
     client_options,
     close_quietly,
@@ -292,7 +293,7 @@ class TestSendEmail:
             if not login:
                 row.username = None
                 await db_session.commit()
-            with pytest.raises(SmtpSendError) as caught:
+            with pytest.raises(SmtpRecipientError) as caught:
                 await send_email(db_session, to_address="owner@elsewhere.example", subject="s", body_text="b")
         assert str(caught.value).startswith(
             "127.0.0.1 refused to deliver to owner@elsewhere.example (554 5.7.1 <owner@elsewhere.example>: "
@@ -316,8 +317,31 @@ class TestSendEmail:
             await db_session.commit()
             with pytest.raises(SmtpSendError) as caught:
                 await send_email(db_session, to_address="owner@example.com", subject="s", body_text="b")
-        assert "could not be addressed from reports@[ to owner@example.com" in str(caught.value)
+        assert str(caught.value) == (
+            "The message could not be sent from reports@[: check that it is a plain email address."
+        )
+        # The settings are wrong, not the recipient: no message could go out.
+        assert not isinstance(caught.value, SmtpRecipientError)
         assert server.commands == []
+
+    async def test_a_recipient_address_it_cannot_use_is_that_recipient_s_problem(self, db_session, tls):
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
+            await self._row(db_session, server, SECURITY_STARTTLS)
+            with pytest.raises(SmtpRecipientError) as caught:
+                await send_email(db_session, to_address="owner@[", subject="s", body_text="b")
+            with pytest.raises(SmtpRecipientError):
+                await send_email(db_session, to_address="   ", subject="s", body_text="b")
+        assert str(caught.value) == (
+            "The message could not be addressed to owner@[: check that these are plain email addresses."
+        )
+        assert server.commands == []
+
+    async def test_a_refused_sender_is_the_settings_problem_not_the_recipient_s(self, db_session, tls):
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context, refuse_sender=True) as server:
+            await self._row(db_session, server, SECURITY_STARTTLS)
+            with pytest.raises(SmtpSendError) as caught:
+                await send_email(db_session, to_address="owner@example.com", subject="s", body_text="b")
+        assert not isinstance(caught.value, SmtpRecipientError)
 
     async def test_a_line_break_in_the_subject_does_not_stop_the_message(self, db_session, tls):
         async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:

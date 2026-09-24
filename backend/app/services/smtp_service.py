@@ -95,6 +95,13 @@ class SmtpSendError(Exception):
     pass
 
 
+class SmtpRecipientError(SmtpSendError):
+    """The message could not go to *these* recipients (a malformed address, or
+    the server refused them); the server itself works, and a message to someone
+    else may well go through. Every other SmtpSendError is about the server or
+    the settings, and would fail for any recipient."""
+
+
 @dataclass(frozen=True)
 class SmtpConnection:
     """Everything needed to open one SMTP session."""
@@ -344,23 +351,29 @@ async def send_email(
     row = await _load_smtp_row(db)
     to_address = (to_address or "").strip()
     if not to_address:
-        raise SmtpSendError("Recipient email is missing.")
+        raise SmtpRecipientError("Recipient email is missing.")
 
     cc_addrs = [a.strip() for a in (cc or []) if (a or "").strip()]
     cc_addrs = [a for a in cc_addrs if a.lower() != to_address.lower()]
     recipients = [to_address, *cc_addrs]
 
     msg = EmailMessage()
+    # Say what is wrong instead of failing every caller with a crash: a From
+    # address saved before it was checked is the settings' fault (no message
+    # can go out), a malformed address on an account is only that recipient's.
     try:
         msg["From"] = row.from_address
+    except _ADDRESS_ERRORS as exc:
+        raise SmtpSendError(
+            f"The message could not be sent from {row.from_address}: check that it is a plain email address."
+        ) from exc
+    try:
         msg["To"] = to_address
         if cc_addrs:
             msg["Cc"] = ", ".join(cc_addrs)
     except _ADDRESS_ERRORS as exc:
-        # A From address saved before it was checked, or a malformed address
-        # on an account: say so instead of failing every caller with a crash.
-        raise SmtpSendError(
-            f"The message could not be addressed from {row.from_address} to {', '.join(recipients)}: "
+        raise SmtpRecipientError(
+            f"The message could not be addressed to {', '.join(recipients)}: "
             "check that these are plain email addresses."
         ) from exc
     # A subject is one line, and some carry text from outside - the account
@@ -383,5 +396,7 @@ async def send_email(
             await client.send_message(msg, recipients=recipients)
         finally:
             await close_quietly(client)
+    except aiosmtplib.SMTPRecipientsRefused as exc:
+        raise SmtpRecipientError(describe_smtp_error(exc, conn)) from exc
     except Exception as exc:
         raise SmtpSendError(describe_smtp_error(exc, conn)) from exc

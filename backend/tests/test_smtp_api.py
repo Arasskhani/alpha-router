@@ -601,8 +601,7 @@ class TestTheTestEmail:
         assert resp.status_code == 200
         assert resp.json() == {
             "ok": False,
-            "error": "The message could not be addressed from reports@[ to fixture_admin@test: "
-            "check that these are plain email addresses.",
+            "error": "The message could not be sent from reports@[: check that it is a plain email address.",
         }
 
     async def test_nothing_is_sent_before_the_settings_are_saved(self, client, admin):

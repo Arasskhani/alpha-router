@@ -437,13 +437,8 @@ class Settings(BaseSettings):
     oidc_client_id: str = ""
     oidc_client_secret: str = ""
 
-    # SMTP (admin-configured)
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
-    smtp_from: str = "alpha-router@localhost"
-    smtp_tls: bool = True
+    # SMTP lives in the database (Admin -> SMTP), not here: the SMTP_* keys an
+    # older .env may still carry are ignored (extra="ignore").
 
     # Object storage (SeaweedFS / S3-compatible) — all media blobs
     s3_endpoint_url: str = "http://127.0.0.1:8333"

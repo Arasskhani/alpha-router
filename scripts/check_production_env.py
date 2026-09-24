@@ -27,8 +27,6 @@ def main() -> int:
         saml_enabled=settings.saml_enabled,
         oidc_enabled=settings.oidc_enabled,
         oidc_issuer=settings.oidc_issuer or "",
-        smtp_host=settings.smtp_host or "",
-        smtp_tls=settings.smtp_tls,
         s3_endpoint_url=settings.s3_endpoint_url,
         s3_use_ssl=settings.s3_use_ssl,
         frontend_url=settings.frontend_url,

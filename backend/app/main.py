@@ -146,8 +146,6 @@ def _assert_production_safe() -> None:
         saml_enabled=settings.saml_enabled,
         oidc_enabled=settings.oidc_enabled,
         oidc_issuer=settings.oidc_issuer,
-        smtp_host=settings.smtp_host,
-        smtp_tls=settings.smtp_tls,
         s3_endpoint_url=settings.s3_endpoint_url,
         s3_use_ssl=settings.s3_use_ssl,
         frontend_url=settings.frontend_url,
@@ -327,8 +325,6 @@ def _collect_production_insecurities(  # noqa: C901 -- Phase 4 split; complexity
     saml_enabled: bool = False,
     oidc_enabled: bool = False,
     oidc_issuer: str = "",
-    smtp_host: str = "",
-    smtp_tls: bool = True,
     s3_endpoint_url: str = "",
     s3_use_ssl: bool = True,
     frontend_url: str = "",
@@ -397,8 +393,6 @@ def _collect_production_insecurities(  # noqa: C901 -- Phase 4 split; complexity
         or (api_public_url.strip() and not _url_uses_tls(api_public_url) and not _url_is_loopback(api_public_url))
     ):
         insecure.append("OIDC_TLS")
-    if smtp_host.strip() and not smtp_tls:
-        insecure.append("SMTP_TLS")
     if allow_insecure_saml:
         # Lets admins switch off signed assertions: a forged login in production.
         insecure.append("ALLOW_INSECURE_SAML")
@@ -452,8 +446,6 @@ def _check_production_safe(
     saml_enabled: bool = False,
     oidc_enabled: bool = False,
     oidc_issuer: str = "",
-    smtp_host: str = "",
-    smtp_tls: bool = True,
     s3_endpoint_url: str = "",
     s3_use_ssl: bool = True,
     frontend_url: str = "",
@@ -497,8 +489,6 @@ def _check_production_safe(
         saml_enabled=saml_enabled,
         oidc_enabled=oidc_enabled,
         oidc_issuer=oidc_issuer,
-        smtp_host=smtp_host,
-        smtp_tls=smtp_tls,
         s3_endpoint_url=s3_endpoint_url,
         s3_use_ssl=s3_use_ssl,
         frontend_url=frontend_url,

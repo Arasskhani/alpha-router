@@ -15,7 +15,7 @@ import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
-from app.core.frontend_files import IMMUTABLE, NO_CACHE, ImmutableStaticFiles, frontend_file
+from app.core.frontend_files import IMMUTABLE, NO_CACHE, ImmutableStaticFiles, frontend_file, service_worker
 
 MAIN = Path(__file__).resolve().parents[1] / "app" / "main.py"
 
@@ -99,3 +99,50 @@ def test_main_serves_the_frontend_through_these_helpers():
     assert 'ImmutableStaticFiles(directory=_FRONTEND_DIST / "assets")' in source
     assert "FileResponse(" not in source, "serve dist/ files with frontend_file() so they get their Cache-Control"
     assert len(re.findall(r"return frontend_file\(", source)) >= 3
+
+
+@pytest.fixture()
+def worker_dist(tmp_path):
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "sw.js").write_text("// the worker", encoding="utf-8")
+    (dist / "sw-retire.js").write_text("// the retirement", encoding="utf-8")
+    return dist
+
+
+def _worker_client(dist, enabled):
+    app = FastAPI()
+
+    @app.get("/sw.js")
+    async def sw():
+        return service_worker(dist, enabled=enabled)
+
+    return TestClient(app)
+
+
+def test_sw_js_is_the_worker_while_it_is_switched_on(worker_dist):
+    r = _worker_client(worker_dist, True).get("/sw.js")
+    assert r.status_code == 200
+    assert r.text == "// the worker"
+    assert r.headers["cache-control"] == NO_CACHE
+    assert r.headers["content-type"].startswith("text/javascript")
+
+
+def test_sw_js_retires_the_worker_while_it_is_switched_off(worker_dist):
+    r = _worker_client(worker_dist, False).get("/sw.js")
+    assert r.status_code == 200
+    assert r.text == "// the retirement"
+    assert r.headers["cache-control"] == NO_CACHE
+    assert r.headers["content-type"].startswith("text/javascript")
+
+
+def test_sw_js_is_a_404_without_a_build(tmp_path):
+    for enabled in (True, False):
+        assert _worker_client(tmp_path, enabled).get("/sw.js").status_code == 404
+
+
+def test_main_declares_sw_js_before_the_spa_fallback():
+    """The catch-all would otherwise answer /sw.js with dist/sw.js whatever the switch says."""
+    source = MAIN.read_text(encoding="utf-8")
+    assert source.index('@app.get("/sw.js"') < source.index('@app.get("/{full_path:path}")')
+    assert "enabled=get_settings().pwa_service_worker_enabled" in source

@@ -56,7 +56,7 @@ from app.branding import (
     SESSION_COOKIE_NAME,
 )
 from app.config import INSECURE_DEFAULTS, application_version, get_settings
-from app.core.frontend_files import ImmutableStaticFiles, frontend_file
+from app.core.frontend_files import ImmutableStaticFiles, frontend_file, service_worker
 from app.core.security import hash_password
 from app.database import AsyncSessionLocal, engine
 from app.db_migrate import (
@@ -900,6 +900,15 @@ async def root():
     if index.is_file():
         return frontend_file(index)
     return HTMLResponse(_fallback_html())
+
+
+@app.get("/sw.js", include_in_schema=False)
+async def service_worker_script():
+    """The installable app's service worker, or its retirement (PWA_SERVICE_WORKER_ENABLED).
+
+    Declared before spa_fallback, which would otherwise serve dist/sw.js whatever the switch says.
+    """
+    return service_worker(_FRONTEND_DIST, enabled=get_settings().pwa_service_worker_enabled)
 
 
 # Static assets (JS/CSS) - must be after explicit routes like /health

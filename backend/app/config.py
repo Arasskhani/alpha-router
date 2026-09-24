@@ -140,6 +140,12 @@ class Settings(BaseSettings):
     # install whose .env predated the key lost the whole section with nothing
     # on screen to say why.
     agents_platform_enabled: bool = True  # env: AGENTS_PLATFORM_ENABLED
+    # Installable app (PWA). The service worker shows our own page when the
+    # server cannot be reached and lets Chrome offer to install the app. Off,
+    # /sw.js serves a script that retires the worker on every device.
+    pwa_service_worker_enabled: bool = True  # env: PWA_SERVICE_WORKER_ENABLED
+    # The "install this app" suggestion on phones. The menu item stays either way.
+    pwa_install_prompt_enabled: bool = True  # env: PWA_INSTALL_PROMPT_ENABLED
     secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     # Token lifetime. Default 8h (480 min) — balances UX against stolen-token

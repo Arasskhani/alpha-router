@@ -58,7 +58,7 @@ async def test_the_session_tells_the_ui_the_platform_is_on(client, user):
     client.cookies.set(get_settings().session_cookie_name, create_access_token(user.username, "user"))
     resp = await client.get("/api/auth/session")
     assert resp.status_code == 200
-    assert resp.json()["features"] == {"agents_platform": True}
+    assert resp.json()["features"]["agents_platform"] is True
 
 
 async def test_the_session_reports_it_off_when_a_deployment_turns_it_off(client, user):
@@ -70,7 +70,7 @@ async def test_the_session_reports_it_off_when_a_deployment_turns_it_off(client,
     client.cookies.set(get_settings().session_cookie_name, create_access_token(user.username, "user"))
     with patch.object(auth_api.settings, "agents_platform_enabled", False):
         resp = await client.get("/api/auth/session")
-    assert resp.json()["features"] == {"agents_platform": False}
+    assert resp.json()["features"]["agents_platform"] is False
 
 
 async def test_agent_fields_in_chat_body_are_refused_when_it_is_off(db_session, user):

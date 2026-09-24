@@ -45,6 +45,11 @@ export default tseslint.config(
     },
   },
   {
+    // The service worker scripts run in a worker, not in a page.
+    files: ["public/**/*.js"],
+    languageOptions: { sourceType: "script", globals: { ...globals.serviceworker } },
+  },
+  {
     files: ["src/**/*.test.{ts,tsx}", "src/test/**"],
     languageOptions: { globals: { ...globals.node } },
   },

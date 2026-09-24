@@ -99,7 +99,11 @@ async def auth_session(user: User = Depends(get_current_user), db: AsyncSession 
         "auth_provider": user.auth_provider or "local",
         **session_payload_for_slugs(slugs),
         # Feature switches the UI needs to hide a section a deployment left out.
-        "features": {"agents_platform": bool(settings.agents_platform_enabled)},
+        "features": {
+            "agents_platform": bool(settings.agents_platform_enabled),
+            "pwa_service_worker": bool(settings.pwa_service_worker_enabled),
+            "pwa_install_prompt": bool(settings.pwa_install_prompt_enabled),
+        },
     }
 
 

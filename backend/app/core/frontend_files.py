@@ -29,6 +29,19 @@ def frontend_file(path: Path) -> FileResponse:
     return FileResponse(path, headers=headers)
 
 
+def service_worker(dist: Path, *, enabled: bool) -> Response:
+    """/sw.js: the worker, or while it is switched off the script that retires it.
+
+    Revalidated on every load (browsers check /sw.js on each navigation anyway,
+    with updateViaCache "none"), so switching it off reaches every device the
+    next time the app is opened.
+    """
+    script = dist / ("sw.js" if enabled else "sw-retire.js")
+    if not script.is_file():
+        return Response(status_code=404)
+    return FileResponse(script, media_type="text/javascript", headers={"Cache-Control": NO_CACHE})
+
+
 class ImmutableStaticFiles(StaticFiles):
     """StaticFiles for content-hashed assets: cached for a year once found."""
 

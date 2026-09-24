@@ -102,4 +102,22 @@ describe("Modal with an autoFocus child", () => {
     });
     expect(document.activeElement?.id).toBe("confirm");
   });
+
+  it("still gives focus back to the element that opened it", () => {
+    const render = (open: boolean) =>
+      act(() => {
+        root.render(
+          <Modal open={open} title="Confirm" onClose={() => {}}>
+            {/* eslint-disable-next-line jsx-a11y/no-autofocus -- the case under test */}
+            <button id="confirm" type="button" autoFocus>
+              Confirm
+            </button>
+          </Modal>,
+        );
+      });
+    render(true);
+    expect(document.activeElement?.id).toBe("confirm");
+    render(false);
+    expect(document.activeElement, "focus is back on the opener, not lost with the child").toBe(opener);
+  });
 });

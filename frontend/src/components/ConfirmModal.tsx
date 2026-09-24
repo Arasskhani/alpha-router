@@ -1,5 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+
+import { useDialogFocus } from "../hooks/useDialogFocus";
+import { isTopDialog } from "../lib/dialogStack";
 
 type Props = {
   open: boolean;
@@ -39,6 +42,8 @@ export default function ConfirmModal({
   onSecondary,
 }: Props) {
   const [promptValue, setPromptValue] = useState(promptDefault);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
 
   useEffect(() => {
     if (open) setPromptValue(promptDefault);
@@ -46,12 +51,18 @@ export default function ConfirmModal({
 
   useEffect(() => {
     if (!open) return;
+    // Escape belongs to the dialog on top: this one, even over another dialog.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
+      if (e.key === "Escape" && isTopDialog(panelRef.current)) onCancel();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onCancel]);
+
+  // Focus in, Tab kept inside, focus back to whatever opened it. A confirmation
+  // is often opened from another dialog, whose own trap used to pull Tab back
+  // into the dialog behind it.
+  useDialogFocus(panelRef, open);
 
   if (!open) return null;
   const emphasisIndex = emphasize ? message.indexOf(emphasize) : -1;
@@ -74,9 +85,17 @@ export default function ConfirmModal({
 
   return createPortal(
     <div className="modal-overlay modal-overlay-confirm" onClick={onCancel} role="presentation">
-      <div className="modal-panel modal-panel-confirm" onClick={(e) => e.stopPropagation()} role="alertdialog" aria-modal="true">
+      <div
+        ref={panelRef}
+        tabIndex={-1}
+        className="modal-panel modal-panel-confirm"
+        onClick={(e) => e.stopPropagation()}
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+      >
         <div className="modal-header">
-          <h3>{title}</h3>
+          <h3 id={titleId}>{title}</h3>
         </div>
         <div className="modal-body">
           <p className="confirm-message">{renderedMessage}</p>

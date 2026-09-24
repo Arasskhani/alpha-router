@@ -1,7 +1,7 @@
 import { ReactNode, useEffect, useRef } from "react";
 
-const FOCUSABLE =
-  'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
+import { useDialogFocus } from "../hooks/useDialogFocus";
+import { isTopDialog } from "../lib/dialogStack";
 
 type Props = {
   open: boolean;
@@ -38,63 +38,23 @@ export default function Modal({
 
   useEffect(() => {
     if (!open || !closeOnEscape) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    // Escape belongs to the dialog on top: a confirmation opened from this one
+    // closes alone.
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && isTopDialog(panelRef.current) && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose, closeOnEscape]);
 
-  // The dialog pattern: focus moves in when it opens, Tab stays inside, and
-  // focus goes back to whatever opened it when it closes. Without this a
-  // keyboard user tabbed straight through the overlay into the page behind
-  // it, and a screen-reader user was left wherever they had been.
+  // The dialog pattern (focus in, Tab trapped, focus back to the opener), for
+  // the dialog on top only: a confirmation opened from this one keeps focus.
+  useDialogFocus(panelRef, open);
+
   useEffect(() => {
     if (!open) return;
-    const opener = document.activeElement as HTMLElement | null;
-    const panel = panelRef.current;
-    const focusable = () =>
-      panel
-        ? [...panel.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-            (el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true",
-          )
-        : [];
-    // A child with autoFocus has already taken focus during commit; respect
-    // it. Otherwise prefer the first control in the body over the header's
-    // close button.
-    if (!panel?.contains(document.activeElement)) {
-      const body = panel?.querySelector<HTMLElement>(".modal-body");
-      const initial = body
-        ? [...body.querySelectorAll<HTMLElement>(FOCUSABLE)].find((el) => !el.hasAttribute("disabled"))
-        : null;
-      (initial ?? focusable()[0] ?? panel)?.focus();
-    }
-
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Tab") return;
-      const items = focusable();
-      if (!items.length) {
-        e.preventDefault();
-        return;
-      }
-      const first = items[0];
-      const last = items[items.length - 1];
-      const active = document.activeElement;
-      if (e.shiftKey && (active === first || !panel?.contains(active))) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && (active === last || !panel?.contains(active))) {
-        e.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-
     return () => {
-      document.removeEventListener("keydown", onKey);
       document.body.style.overflow = previousOverflow;
-      if (opener && document.contains(opener)) opener.focus();
     };
   }, [open]);
 

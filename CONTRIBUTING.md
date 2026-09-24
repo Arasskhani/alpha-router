@@ -126,6 +126,27 @@ only go down: when one drops, lock it in with `--update` (with `--routes` or
 `--update`, and say why in the commit. Sideways scrolling and
 unwrapped tables are never baselined. They always fail.
 
+## Installable app check
+
+`frontend/scripts/pwa-e2e.mjs` checks the installable app (PWA) end to end in
+Chromium against the production build: Chrome's own install check, the
+service worker (it controls the app, never answers API calls, streams or
+assets, and shows the offline page when the server is down or a proxy answers
+502/503/504), its retirement script, the install suggestion and the profile
+menu's Install app (Android and iPhone), the new-version notice and the
+"Alpharouter was updated" message. Run it after `npm run build`, with the
+backend serving the build, whenever you touch `public/sw.js`,
+`public/offline.html`, the manifest or `src/lib/pwa/`:
+
+```bash
+cd frontend
+PWA_E2E_URL=http://127.0.0.1:8080 PWA_E2E_USER=<user> PWA_E2E_PASSWORD=<password> npm run e2e:pwa
+```
+
+The account must not use two-factor sign-in; the check sends one short chat
+message to its default model. `localhost` counts as a secure context; any
+other host needs HTTPS. A failed step prints a screenshot path.
+
 ## Dependencies
 
 - Python runtime: edit `backend/requirements.txt`, regenerate

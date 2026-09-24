@@ -99,6 +99,13 @@ class TestSitePatterns:
         assert host_matches("Example.com.", "example.com")
         assert not host_matches("mail.example.com", "example.com")
 
+    def test_an_allow_list_never_shuts_out_alpharouter_itself(self):
+        settings = ExtensionSettings(allowed_sites=("*.corp.example",))
+        assert site_refusal("ai.example.com", settings) == SITE_NOT_ALLOWED
+        assert site_refusal("AI.example.com", settings, server_host="ai.example.com") is None
+        blocked = ExtensionSettings(blocked_sites=("ai.example.com",))
+        assert site_refusal("ai.example.com", blocked, server_host="ai.example.com") == SITE_BLOCKED
+
     def test_blocking_a_wildcard_blocks_the_site_itself(self):
         """An admin who blocks *.bank.example means the bank's own site too."""
         assert site_refusal("bank.example", ExtensionSettings(blocked_sites=("*.bank.example",))) == SITE_BLOCKED

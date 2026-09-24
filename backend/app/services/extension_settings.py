@@ -127,10 +127,17 @@ def host_matches(host: str, pattern: str) -> bool:
     return host == pattern
 
 
-def site_refusal(host: str, settings: ExtensionSettings) -> str | None:
-    """None when the site may be read and acted on; otherwise why not."""
+def site_refusal(host: str, settings: ExtensionSettings, *, server_host: str | None = None) -> str | None:
+    """None when the site may be read and acted on; otherwise why not.
+
+    ``server_host`` is this Alpharouter's own host: an allow list never shuts
+    the user out of asking about Alpharouter itself (the agent never acts on it,
+    which the extension enforces). An explicit block still applies.
+    """
     if any(host_matches(host, pattern) for pattern in settings.blocked_sites):
         return SITE_BLOCKED
+    if server_host and _ascii_host(host) == _ascii_host(server_host):
+        return None
     if settings.allowed_sites and not any(host_matches(host, pattern) for pattern in settings.allowed_sites):
         return SITE_NOT_ALLOWED
     return None

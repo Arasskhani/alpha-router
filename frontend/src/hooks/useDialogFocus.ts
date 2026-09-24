@@ -42,7 +42,9 @@ export function useDialogFocus(panelRef: RefObject<HTMLElement | null>, open: bo
       const first = items[0];
       const last = items[items.length - 1];
       const active = document.activeElement;
-      if (e.shiftKey && (active === first || !panel.contains(active))) {
+      // The panel itself takes focus (a click on its text): Shift+Tab from it
+      // would leave for the page behind.
+      if (e.shiftKey && (active === first || active === panel || !panel.contains(active))) {
         e.preventDefault();
         last.focus();
       } else if (!e.shiftKey && (active === last || !panel.contains(active))) {

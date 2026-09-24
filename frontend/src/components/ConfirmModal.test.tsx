@@ -112,6 +112,16 @@ describe("ConfirmModal on its own", () => {
     expect(document.activeElement).not.toBe(search);
     search.remove();
   });
+
+  it("keeps Shift+Tab inside when the dialog itself has focus", () => {
+    renderConfirm(true, undefined, "Type DELETE");
+    const panel = confirmPanel()!;
+    // A click on the message focuses the panel, which takes focus but is not a control.
+    panel.focus();
+    key(panel, "Tab", true);
+    const items = buttonsIn(panel).filter((el) => !el.hasAttribute("disabled"));
+    expect(document.activeElement).toBe(items[items.length - 1]);
+  });
 });
 
 /** A dialog with a button that asks for confirmation, as the file type lists do. */

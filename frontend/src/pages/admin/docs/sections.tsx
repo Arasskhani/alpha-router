@@ -844,6 +844,12 @@ export const docSections: DocSection[] = [
           encryption. The only encryption key is derived from <code>DATA_ENCRYPTION_KEY</code> (PBKDF2).
           Plaintext, malformed ciphertext, and ciphertext from another key are rejected instead of being forwarded upstream.
         </p>
+        <p>
+          A secret typed into a form is encrypted as typed. Where a provider API key, the SMTP password, the LDAP bind
+          password or the OIDC client secret goes, a value that is itself one of this deployment&apos;s encrypted tokens
+          (copied from a database backup or an export) is refused with a message saying so: saved unchanged, it would
+          later be decrypted into the secret it holds and sent to whatever server the form names.
+        </p>
         <h3>Sandbox trust boundary</h3>
         <p>
           Code interpreter workloads are sent to <code>alpha-router-sandbox-broker</code>, which authenticates with a
@@ -2475,6 +2481,15 @@ export const docSections: DocSection[] = [
           <li>
             Every save that changes something is recorded in Admin Logs as <code>smtp_settings_changed</code>, with the
             fields before and after and whether the password was changed or removed — never the password.
+          </li>
+          <li>
+            In production (<code>ENVIRONMENT=production</code>) the server log warns at every start while the saved
+            settings use no TLS or do not verify the certificate: <code>Production SMTP: … Change it under Admin &gt;
+            SMTP.</code> The server still starts, so that this page stays within reach to fix it.
+          </li>
+          <li>
+            Mail settings live on this page only. <code>SMTP_*</code> environment variables are not read, so leftovers
+            in an old <code>.env</code> change nothing.
           </li>
         </ul>
         <Note>

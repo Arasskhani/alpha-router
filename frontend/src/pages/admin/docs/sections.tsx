@@ -3070,6 +3070,89 @@ export const docSections: DocSection[] = [
     ),
   },
 
+  {
+    id: "installable-app",
+    title: "Installable app (PWA)",
+    group: "End users",
+    content: (
+      <>
+        <h2>Installable app (PWA)</h2>
+        <p>
+          Users can install Alpharouter on Android, iPhone and iPad (and from Chrome or Edge on a desktop). The installed
+          app is the same web UI, opened full screen from its own icon; the API, the <code>/v1</code> gateway, uploads,
+          streaming and media work exactly as in a browser. The User Manual explains installing to end users.
+        </p>
+        <h3>Requirements</h3>
+        <ul>
+          <li>
+            <strong>HTTPS with a valid certificate</strong> on the address users open. Over plain HTTP (for example{" "}
+            <code>http://host:8080</code>) Alpharouter stays an ordinary website: no install offer, nothing breaks.
+          </li>
+          <li>
+            A proxy in front of Alpharouter must pass <code>Cache-Control</code> through unchanged. The server sends{" "}
+            <code>no-cache</code> for <code>index.html</code>, <code>/sw.js</code> and the manifest, and a one-year{" "}
+            <code>immutable</code> cache for <code>/assets/*</code>, whose names are content hashes.
+          </li>
+          <li>
+            If you set an enforced <code>CONTENT_SECURITY_POLICY</code>, keep <code>worker-src &apos;self&apos;</code> and{" "}
+            <code>manifest-src &apos;self&apos;</code> in it. The default report-only policy already has both.
+          </li>
+        </ul>
+        <h3>Switches</h3>
+        <p>
+          Both are in <code>.env</code>, on by default, and applied on restart. An upgrade adds any missing key as{" "}
+          <code>true</code> and never changes a value you set.
+        </p>
+        <DocsTable>
+          <thead>
+            <tr>
+              <th>Setting</th>
+              <th>Effect</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <code>PWA_INSTALL_PROMPT_ENABLED</code>
+              </td>
+              <td>
+                The suggestion on phones and tablets to install the app. <code>false</code> stops it; &quot;Install
+                app&quot; in the profile menu stays.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>PWA_SERVICE_WORKER_ENABLED</code>
+              </td>
+              <td>
+                The service worker. It caches one page, <code>offline.html</code>, and answers only page loads of app
+                routes: it shows that page when the server cannot be reached or a proxy answers 502, 503 or 504. It never
+                handles API calls, streams, uploads, media or SSO callbacks. <code>false</code> retires it on every device
+                the next time the app is opened (the kill switch).
+              </td>
+            </tr>
+          </tbody>
+        </DocsTable>
+        <h3>Upgrades, rollback and moves</h3>
+        <ul>
+          <li>Upgrades need nothing: the new version arrives with the next launch, and a long-open app offers a reload.</li>
+          <li>
+            To remove the PWA code, first run one release with <code>PWA_SERVICE_WORKER_ENABLED=false</code> so installed
+            copies retire themselves; a service worker registration otherwise never expires.
+          </li>
+          <li>
+            An installed app belongs to its address. After a hostname or port change the old icon shows the
+            &quot;can&apos;t reach&quot; page; users install again from the new address.
+          </li>
+        </ul>
+        <Note>
+          Single sign-on inside an app installed on an iPhone depends on the identity provider. Test it on a device; if
+          it does not finish there, iPhone users can sign in with SSO in Safari instead.
+        </Note>
+      </>
+    ),
+  },
+
   // ── Platform API & Billing ────────────────────────────────────────────────
   {
     id: "platform-api",

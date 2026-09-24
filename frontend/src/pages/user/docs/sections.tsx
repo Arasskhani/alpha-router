@@ -120,6 +120,68 @@ export const userManualSections: DocSection[] = [
     ),
   },
   {
+    id: "install-app",
+    title: "Install on your phone",
+    group: "Get started",
+    content: (
+      <>
+        <h2>Install on your phone</h2>
+        <p>
+          Alpharouter can be installed like an app on Android phones, iPhones and iPads. It then opens from its own
+          icon, full screen, straight into Chat. Nothing changes if you keep using it in the browser. Installing needs
+          the secure (<code>https://</code>) address your administrator gave you.
+        </p>
+        <h3>Android</h3>
+        <ul>
+          <li>
+            In <strong>Chrome</strong> or <strong>Samsung Internet</strong>, tap <strong>Install</strong> when Alpharouter
+            suggests it, or choose <strong>Install app</strong> in your profile menu (top right).
+          </li>
+          <li>
+            You can also use the browser&apos;s menu: <strong>Add to Home screen</strong> or <strong>Install app</strong>.
+          </li>
+        </ul>
+        <h3>iPhone and iPad</h3>
+        <ol>
+          <li>
+            Open Alpharouter in <strong>Safari</strong>. If you opened a link from another app (Slack, Mail) and don&apos;t
+            see the options below, open the page in Safari first.
+          </li>
+          <li>
+            Tap <strong>Share</strong>. In Safari it may be under <strong>⋯</strong> next to the address bar; Chrome on
+            iOS shows it in the address bar.
+          </li>
+          <li>
+            Tap <strong>Add to Home Screen</strong>, keep <strong>Open as Web App</strong> on, and tap <strong>Add</strong>.
+          </li>
+        </ol>
+        <p>
+          <strong>Install app</strong> in your profile menu shows these steps too.
+        </p>
+        <Note>
+          On an iPhone or iPad the installed app keeps its own sign-in, separate from Safari: sign in once inside the app.
+          If single sign-on (SSO) does not finish inside the installed app, use Alpharouter in Safari and tell your
+          administrator.
+        </Note>
+        <h3>The install suggestion</h3>
+        <p>
+          After you have used Alpharouter on a phone or tablet, a small bar may suggest installing it. <strong>Not now</strong>{" "}
+          hides it for 30 days; after the third time it does not come back on its own. Your answer stays on the device.
+        </p>
+        <h3>When Alpharouter can&apos;t be reached</h3>
+        <p>
+          If you are offline, or the server is restarting, the app shows <strong>Can&apos;t reach Alpharouter right
+          now</strong> instead of an error page. Check your connection or VPN and tap <strong>Try again</strong>. If it
+          keeps happening, ask your administrator whether the address has changed: an installed app belongs to its
+          address, so after a move you install it again from the new one.
+        </p>
+        <p>
+          To remove the app, long-press its icon and choose <strong>Remove</strong> or <strong>Uninstall</strong>.
+        </p>
+      </>
+    ),
+  },
+  {
     id: "app-tour",
     title: "Tour of /app",
     group: "Get started",

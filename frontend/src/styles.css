@@ -2895,12 +2895,14 @@ table.data-table--api-logs {
   margin: 0 0 0.25rem;
 }
 
-.reports-schedules__intro {
+/* Qualified, to outrank .muted-text, which these lines also carry and whose
+   size came later and won. */
+.reports-schedules .reports-schedules__intro {
   margin: 0 0 0.85rem;
   font-size: 0.85rem;
 }
 
-.reports-schedules__detail {
+.reports-schedules .reports-schedules__detail {
   display: block;
   font-size: 0.78rem;
   line-height: 1.35;
@@ -2919,7 +2921,7 @@ table.data-table--api-logs {
   white-space: pre-line;
 }
 
-.report-schedule-form__hint {
+.report-schedule-form .report-schedule-form__hint {
   margin: -0.35rem 0 0.85rem;
   font-size: 0.8rem;
 }

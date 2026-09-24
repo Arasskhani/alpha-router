@@ -914,6 +914,19 @@ describe("the sign-in page's highlights", () => {
   });
 });
 
+describe("the scheduled reports", () => {
+  it("size their secondary lines over .muted-text, which the same elements carry", () => {
+    for (const selector of [
+      ".reports-schedules .reports-schedules__intro",
+      ".reports-schedules .reports-schedules__detail",
+      ".report-schedule-form .report-schedule-form__hint",
+    ]) {
+      expect(declarations(css, selector), selector).toMatch(/font-size:/);
+      expect(outranks(selector, ".muted-text"), selector).toBe(true);
+    }
+  });
+});
+
 /** Every style rule in the file, whitespace normalised, with the @-rules it sits in, outermost first. */
 function styleRules(source = css): Array<{ at: number; selectors: string[]; body: string; atRules: string[] }> {
   const rules: Array<{ at: number; selectors: string[]; body: string; atRules: string[] }> = [];

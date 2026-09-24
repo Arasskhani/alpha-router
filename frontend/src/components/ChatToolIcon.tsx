@@ -77,6 +77,19 @@ export default function ChatToolIcon({ name, size = 16 }: { name: string; size?:
           <circle cx="12" cy="14" r="1.5" />
         </svg>
       );
+    case "puzzle":
+      return (
+        <svg {...common}>
+          <path d="M4 7h4a2 2 0 1 1 4 0h4v4a2 2 0 1 1 0 4v4H4z" />
+        </svg>
+      );
+    case "cursor":
+      return (
+        <svg {...common}>
+          <path d="M5 3l14 7-6 2-2 6z" />
+          <path d="m13 12 5 5" />
+        </svg>
+      );
     default:
       // A tool registered with an icon this client has not learned yet still
       // needs a row on the page.

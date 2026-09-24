@@ -14,9 +14,10 @@ arrives with governance already attached rather than as a follow-up commit
 somebody has to remember.
 
 ``key`` is the wire name the client already sends and must not change once
-shipped: it is what a policy row and its access grants are keyed by. The keys
-here name what the chat composer offers today; the same registry (and the same
-two tables behind it) can hold anything else a turn may be granted later - an
+shipped: it is what a policy row and its access grants are keyed by. Most keys
+here name what the chat composer offers; the last two govern the browser
+extension, which the composer never shows. The same registry (and the same two
+tables behind it) can hold anything else a turn may be granted later - an
 Agent tool by slug, a document export - without a migration.
 """
 
@@ -41,6 +42,8 @@ KNOWN_ICONS = frozenset(
         "microphone",
         "terminal",
         "lock",
+        "puzzle",
+        "cursor",
     }
 )
 
@@ -58,7 +61,9 @@ class ChatToolSpec:
     :param default_access: the policy used until an administrator saves one.
         ``public`` means "everybody, until restricted" - the behaviour every
         one of these tools had before this registry existed, and the reason an
-        upgrade changes nothing for anybody.
+        upgrade changes nothing for anybody. ``private`` suits a tool that did
+        not exist before and should reach nobody until an administrator grants
+        it.
     """
 
     key: str
@@ -116,6 +121,24 @@ CHAT_TOOLS: tuple[ChatToolSpec, ...] = (
         title="Private Mode",
         description="Do not store this conversation",
         icon="lock",
+    ),
+    # The browser extension: connecting it, downloading it and every request
+    # it makes. Public like the rest - restricting it is how an administrator
+    # keeps the extension away from a role or a group.
+    ChatToolSpec(
+        key="browser_extension",
+        title="Browser Extension",
+        description="Use Alpharouter from the browser side panel",
+        icon="puzzle",
+    ),
+    # The extension's agent clicks and types in the user's own signed-in tabs.
+    # Nobody has it until an administrator grants it.
+    ChatToolSpec(
+        key="browser_agent",
+        title="Browser Agent",
+        description="Let the extension click and type in web pages",
+        icon="cursor",
+        default_access=ACCESS_PRIVATE,
     ),
 )
 

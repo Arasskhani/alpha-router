@@ -246,7 +246,8 @@ class TestTheEndpointTheComposerReads:
         assert resp.status_code == 200
         rows = resp.json()
         assert [row["key"] for row in rows] == [spec.key for spec in CHAT_TOOLS]
-        assert all(row["permitted"] for row in rows)
+        # Every tool is what its registry entry says until an admin saves a policy.
+        assert [row["permitted"] for row in rows] == [spec.default_access == "public" for spec in CHAT_TOOLS]
         assert {"key", "title", "description", "icon", "permitted"} == set(rows[0])
 
     async def test_a_restricted_tool_comes_back_not_permitted(self, client, db_session, user):

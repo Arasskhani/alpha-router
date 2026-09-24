@@ -11,6 +11,9 @@ Nothing at build time catches that, so it is caught here.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 from app.api.chat import ChatToolsIn
@@ -60,6 +63,20 @@ class TestTheRegistryIsWellFormed:
         assert spec.title.strip() and spec.description.strip()
         assert spec.icon in KNOWN_ICONS
         assert spec.default_access in ("public", "private")
+
+    def test_the_extension_tools_are_registered_but_never_asked_for_by_a_chat_turn(self):
+        """The browser extension is governed here, but the composer has no toggle for it."""
+        assert TOOL_BY_KEY["browser_extension"].default_access == "public"
+        assert TOOL_BY_KEY["browser_agent"].default_access == "private"
+        assert {"browser_extension", "browser_agent"}.isdisjoint(REQUEST_TOOL_KEYS)
+        body = {"tools": {"browser_extension": True, "browser_agent": True}, "browser_agent": True}
+        assert requested_tool_keys(body) == frozenset()
+
+    def test_the_client_draws_every_icon_the_registry_may_send(self):
+        """An icon the client does not know renders as a generic glyph on the admin page."""
+        source = Path(__file__).resolve().parents[2] / "frontend" / "src" / "components" / "ChatToolIcon.tsx"
+        drawn = set(re.findall(r'case "([a-z]+)":', source.read_text(encoding="utf-8")))
+        assert drawn == set(KNOWN_ICONS)
 
     def test_lookup_ignores_surrounding_space_and_unknown_keys(self):
         assert spec_or_none(" web_search ") is TOOL_BY_KEY["web_search"]

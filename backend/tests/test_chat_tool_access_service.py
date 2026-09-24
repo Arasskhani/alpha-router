@@ -61,7 +61,15 @@ class TestAToolNobodyHasConfigured:
     async def test_is_available_to_everyone(self, db_session, user):
         """The upgrade that adds this must not take a tool away from anybody."""
         subject = await resolve_resource_access_subject(db_session, user_id=user.id)
-        assert await permitted_tool_keys(db_session, subject) == {spec.key for spec in CHAT_TOOLS}
+        public = {spec.key for spec in CHAT_TOOLS if spec.default_access == "public"}
+        assert await permitted_tool_keys(db_session, subject) == public
+
+    async def test_a_tool_registered_as_private_reaches_nobody_until_granted(self, db_session, user):
+        """The browser agent acts in a user's signed-in tabs: off until an administrator grants it."""
+        subject = await resolve_resource_access_subject(db_session, user_id=user.id)
+        permitted = await permitted_tool_keys(db_session, subject)
+        assert "browser_agent" not in permitted
+        assert "browser_extension" in permitted
 
     async def test_reads_as_public_with_no_grants(self, db_session):
         saved = await get_chat_tool_access(db_session, "code_interpreter")
@@ -72,7 +80,8 @@ class TestAToolNobodyHasConfigured:
     async def test_appears_on_the_admin_page_before_anyone_saves_a_policy(self, db_session):
         rows = await chat_tool_overview(db_session)
         assert [row["key"] for row in rows] == [spec.key for spec in CHAT_TOOLS]
-        assert all(row["access_type"] == "public" for row in rows)
+        assert [row["access_type"] for row in rows] == [spec.default_access for spec in CHAT_TOOLS]
+        assert {row["key"]: row["access_type"] for row in rows}["browser_agent"] == "private"
 
 
 class TestRestrictingATool:

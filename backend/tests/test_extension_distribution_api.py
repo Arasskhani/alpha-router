@@ -323,6 +323,46 @@ class TestTwoWorkersSeeANewBuildAtOnce:
         assert stored == {"latest": 3, "recent": {"fp-a": 1, "fp-b": 2, "fp-c": 3}}
 
 
+class TestBuildingOnce:
+    async def test_the_crx_is_signed_once_per_package(self, client, built_extension, monkeypatch):
+        signed = []
+        real = extension_distribution.build_crx3
+
+        def counting(archive, key):
+            signed.append(1)
+            return real(archive, key)
+
+        monkeypatch.setattr(extension_distribution, "build_crx3", counting)
+        first = await client.get("/extension/alpharouter.crx")
+        second = await client.get("/extension/alpharouter.crx")
+        assert first.status_code == second.status_code == 200
+        assert first.content == second.content
+        assert len(signed) == 1
+        (built_extension / "background.js").write_text("// changed\n", encoding="utf-8")
+        third = await client.get("/extension/alpharouter.crx")
+        assert third.content != first.content
+        assert len(signed) == 2
+
+    async def test_the_built_files_are_read_again_only_when_they_change(
+        self, client, user, built_extension, monkeypatch
+    ):
+        reads = []
+        real = extension_distribution.read_dist
+
+        def counting(dist):
+            reads.append(1)
+            return real(dist)
+
+        monkeypatch.setattr(extension_distribution, "read_dist", counting)
+        _sign_in(client, user)
+        await client.get("/api/extension/info")
+        await client.get("/extension/update.xml")
+        assert len(reads) == 1
+        (built_extension / "config.json").write_text('{"serverUrl": "x"}\n', encoding="utf-8")
+        await client.get("/api/extension/info")
+        assert len(reads) == 2
+
+
 class TestGroupPolicyUpdates:
     async def test_update_xml_and_the_crx_agree(self, client, db_session, built_extension):
         xml = await client.get("/extension/update.xml")

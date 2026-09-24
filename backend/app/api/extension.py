@@ -79,7 +79,7 @@ async def download_extension(
     if build is None:
         raise HTTPException(status_code=503, detail=unavailable.message if unavailable else "Unavailable")
     return Response(
-        content=zip_bytes(build),
+        content=await zip_bytes(build),
         media_type="application/zip",
         headers={
             **_NO_STORE,
@@ -101,4 +101,4 @@ async def extension_crx(request: Request, db: AsyncSession = Depends(get_db)) ->
     build, _ = await _build_or_none(db, request)
     if build is None:
         raise HTTPException(status_code=404, detail="Not Found")
-    return Response(content=crx_bytes(build), media_type="application/x-chrome-extension", headers=_NO_CACHE)
+    return Response(content=await crx_bytes(build), media_type="application/x-chrome-extension", headers=_NO_CACHE)

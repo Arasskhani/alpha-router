@@ -9,8 +9,11 @@ IT pastes into Group Policy. Anything that makes a download impossible is an
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import json
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -161,12 +164,47 @@ async def package_revision(fingerprint: str) -> int:
 
 
 @dataclass(frozen=True)
+class _DistSnapshot:
+    #: (path, size, mtime) of every file: when it is unchanged, so are the files.
+    signature: tuple[tuple[str, int, int], ...]
+    files: dict[str, bytes]
+
+
+_dist_snapshots: dict[Path, _DistSnapshot] = {}
+_ARTIFACT_CACHE_SIZE = 8
+_artifacts: OrderedDict[tuple[str, ...], bytes] = OrderedDict()
+_artifacts_lock = threading.Lock()
+
+
+def _dist_signature(dist: Path) -> tuple[tuple[str, int, int], ...]:
+    entries = []
+    for path in dist.rglob("*"):
+        if path.is_file():
+            stat = path.stat()
+            entries.append((path.relative_to(dist).as_posix(), stat.st_size, stat.st_mtime_ns))
+    return tuple(sorted(entries))
+
+
+def _dist_files(dist: Path) -> dict[str, bytes]:
+    """The built files, read again only when one of them changed."""
+    signature = _dist_signature(dist) if dist.is_dir() else ()
+    cached = _dist_snapshots.get(dist)
+    if cached is not None and cached.signature == signature:
+        return cached.files
+    files = read_dist(dist)
+    _dist_snapshots[dist] = _DistSnapshot(signature=signature, files=files)
+    return files
+
+
+@dataclass(frozen=True)
 class ExtensionBuild:
     origin: str
     version: str
     key: ExtensionKey
     settings: ExtensionSettings
     files: dict[str, bytes]
+    #: What the package is made from; with the version and the key, it names the bytes.
+    fingerprint: str
 
     @property
     def extension_id(self) -> str:
@@ -186,7 +224,7 @@ async def current_build(db: AsyncSession, *, request_host: str | None) -> Extens
     """Everything a download needs, or ExtensionUnavailable saying why not."""
     dist = resolve_extension_dist()
     try:
-        files = read_dist(dist)
+        files = _dist_files(dist)
         template = load_template(files)
     except (FileNotFoundError, ValueError) as exc:
         raise ExtensionUnavailable(
@@ -215,15 +253,36 @@ async def current_build(db: AsyncSession, *, request_host: str | None) -> Extens
         key=key,
         settings=settings,
         files=package_files(files, manifest=manifest, config=config),
+        fingerprint=fingerprint,
     )
 
 
-def zip_bytes(build: ExtensionBuild) -> bytes:
-    return build_zip(build.files)
+def _artifact(kind: str, build: ExtensionBuild, make) -> bytes:
+    """Build each ZIP and CRX once: anyone may ask for the CRX, and signing is not free."""
+    key = (kind, build.fingerprint, build.version, build.extension_id)
+    with _artifacts_lock:
+        cached = _artifacts.get(key)
+        if cached is not None:
+            _artifacts.move_to_end(key)
+            return cached
+    data = make()
+    with _artifacts_lock:
+        _artifacts[key] = data
+        _artifacts.move_to_end(key)
+        while len(_artifacts) > _ARTIFACT_CACHE_SIZE:
+            _artifacts.popitem(last=False)
+    return data
 
 
-def crx_bytes(build: ExtensionBuild) -> bytes:
-    return build_crx3(build_zip(build.files), build.key)
+async def zip_bytes(build: ExtensionBuild) -> bytes:
+    # Off the event loop: compressing the build must not stall chat streams.
+    return await asyncio.to_thread(_artifact, "zip", build, lambda: build_zip(build.files))
+
+
+async def crx_bytes(build: ExtensionBuild) -> bytes:
+    return await asyncio.to_thread(
+        _artifact, "crx", build, lambda: build_crx3(_artifact("zip", build, lambda: build_zip(build.files)), build.key)
+    )
 
 
 def update_xml(build: ExtensionBuild) -> str:

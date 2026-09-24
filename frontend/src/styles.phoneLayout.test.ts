@@ -404,9 +404,11 @@ describe("the phone layout block", () => {
     const oneLine = ".alpha-router-selected-models.topbar-selected-models";
     expect(declarations(css, oneLine)).toContain("flex-wrap: nowrap");
     expect(outranks(oneLine, ".alpha-router-selected-models")).toBe(true);
-    // Pills that do not fit scroll sideways rather than being cut off.
+    // Pills that do not fit scroll sideways rather than being cut off; Tab brings a half-hidden remove button wholly in.
     expect(declarations(css, oneLine)).toContain("overflow-x: auto");
     expect(declarations(css, oneLine)).toContain("overflow-y: hidden");
+    expect(declarations(css, oneLine)).toContain("scroll-padding-inline: 1.5rem");
+    expect(declarations(css, `${oneLine}.is-drag-scrolling`)).toContain("cursor: grabbing");
     // A pill shrinks by its name only: its fixed parts (padding, border, icon, gaps, remove button) stay inside.
     expect(declarations(css, ".topbar-selected-models .alpha-router-model-pill")).toContain("min-width: 3.375rem");
     // On a narrow phone, with two or more models, a pill is its icon and its remove button.

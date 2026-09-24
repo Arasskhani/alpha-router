@@ -404,9 +404,14 @@ describe("the shell on a phone", () => {
   });
 });
 
-/** Stands in for ChatPanel's model chrome: two models picked. */
-function ModelsProbe() {
+/** Stands in for ChatPanel's model chrome: the models picked, which the test can change. */
+let setPicked: (names: string[]) => void = () => {};
+function ModelsProbe({ initial }: { initial: string[] }) {
   const register = useChatModelChromeRegister();
+  const [picked, setPickedState] = useState(initial);
+  useEffect(() => {
+    setPicked = setPickedState;
+  }, []);
   useEffect(() => {
     register({
       openReplacePicker: () => {},
@@ -415,39 +420,109 @@ function ModelsProbe() {
       addModelDisabled: false,
       addModelTitle: "Add model",
       addModelAriaLabel: "Add model",
-      selectedModels: [
-        { id: "a", name: "mock-gpt-4o" },
-        { id: "b", name: "mock-claude-sonnet" },
-      ],
-      onRemoveModel: () => {},
+      selectedModels: picked.map((name) => ({ id: name, name })),
+      onRemoveModel: (id) => setPickedState((names) => names.filter((n) => n !== id)),
     });
     return () => register(null);
-  }, [register]);
+  }, [register, picked]);
   return <p>chat</p>;
 }
 
+async function renderModels(initial: string[]) {
+  await act(async () => {
+    root.render(
+      <MemoryRouter initialEntries={["/app/chat"]}>
+        <Routes>
+          <Route path="/app" element={<Shell nav={NAV} />}>
+            <Route path="chat" element={<ModelsProbe initial={initial} />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+  });
+}
+
+const pillRow = () => document.querySelector<HTMLElement>(".topbar-selected-models")!;
+const pills = () => [...pillRow().querySelectorAll<HTMLElement>(".alpha-router-model-pill")];
+
 describe("the topbar's model pills", () => {
   it("name their model on the whole pill, which a crowded topbar leaves too narrow to show it", async () => {
-    await act(async () => {
-      root.render(
-        <MemoryRouter initialEntries={["/app/chat"]}>
-          <Routes>
-            <Route path="/app" element={<Shell nav={NAV} />}>
-              <Route path="chat" element={<ModelsProbe />} />
-            </Route>
-          </Routes>
-        </MemoryRouter>,
-      );
-    });
-    const pills = [...document.querySelectorAll(".topbar-selected-models .alpha-router-model-pill")];
-    expect(pills.map((p) => p.getAttribute("title"))).toEqual(["mock-gpt-4o", "mock-claude-sonnet"]);
+    await renderModels(["mock-gpt-4o", "mock-claude-sonnet"]);
+    expect(pills().map((p) => p.getAttribute("title"))).toEqual(["mock-gpt-4o", "mock-claude-sonnet"]);
     // Every tooltip in a pill names the model, the provider icon's too (it named only the provider).
-    for (const pill of pills) {
+    for (const pill of pills()) {
       for (const el of pill.querySelectorAll("[title]")) expect(el.getAttribute("title")).toBe(pill.getAttribute("title"));
     }
-    expect(pills.map((p) => p.querySelector("button")?.getAttribute("aria-label"))).toEqual([
+    expect(pills().map((p) => p.querySelector("button")?.getAttribute("aria-label"))).toEqual([
       "Remove mock-gpt-4o",
       "Remove mock-claude-sonnet",
     ]);
   });
+
+  it("bring a model just added into view in their row, and leave the row alone when one goes", async () => {
+    const real = Element.prototype.scrollIntoView;
+    const shown: string[] = [];
+    Element.prototype.scrollIntoView = function (this: Element) {
+      shown.push(this.getAttribute("title") ?? "");
+    };
+    try {
+      await renderModels(["mock-gpt-4o"]);
+      expect(shown).toEqual([]);
+      await act(async () => setPicked(["mock-gpt-4o", "mock-claude-sonnet"]));
+      expect(shown).toEqual(["mock-claude-sonnet"]);
+      await act(async () => setPicked(["mock-gpt-4o"]));
+      expect(shown).toEqual(["mock-claude-sonnet"]);
+    } finally {
+      Element.prototype.scrollIntoView = real;
+    }
+  });
+
+  it("turn with a mouse wheel when they do not fit, and only then", async () => {
+    await renderModels(["mock-gpt-4o", "mock-claude-sonnet", "mock-llama"]);
+    const row = pillRow();
+    let scrollWidth = 300;
+    Object.defineProperty(row, "scrollWidth", { configurable: true, get: () => scrollWidth });
+    Object.defineProperty(row, "clientWidth", { configurable: true, get: () => 120 });
+    const wheel = (init: WheelEventInit) =>
+      act(async () => {
+        row.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, ...init }));
+      });
+    await wheel({ deltaY: 40 });
+    expect(row.scrollLeft).toBe(40);
+    // A sideways swipe is the browser's own business.
+    await wheel({ deltaX: 30, deltaY: 5 });
+    expect(row.scrollLeft).toBe(40);
+    // Right to left, the row's start is on the right: down the wheel is further left.
+    row.scrollLeft = 0;
+    row.style.direction = "rtl";
+    await wheel({ deltaY: 40 });
+    expect(row.scrollLeft).toBe(-40);
+    // Everything fits: the wheel is left alone.
+    row.style.direction = "";
+    row.scrollLeft = 0;
+    scrollWidth = 120;
+    await wheel({ deltaY: 40 });
+    expect(row.scrollLeft).toBe(0);
+  });
+
+  it("pull sideways under a mouse when they do not fit", async () => {
+    await renderModels(["mock-gpt-4o", "mock-claude-sonnet", "mock-llama"]);
+    const row = pillRow();
+    Object.defineProperty(row, "scrollWidth", { configurable: true, get: () => 300 });
+    Object.defineProperty(row, "clientWidth", { configurable: true, get: () => 120 });
+    const name = pills()[0].querySelector(".alpha-router-model-pill__name")!;
+    const pointer = (type: string, clientX: number) =>
+      act(async () => {
+        name.dispatchEvent(
+          new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, pointerType: "mouse", button: 0, clientX, clientY: 10 }),
+        );
+      });
+    await pointer("pointerdown", 100);
+    await pointer("pointermove", 60);
+    await pointer("pointerup", 60);
+    expect(row.scrollLeft).toBe(40);
+    // The pull's closing click does not remove a model.
+    expect(pills()).toHaveLength(3);
+  });
 });
+

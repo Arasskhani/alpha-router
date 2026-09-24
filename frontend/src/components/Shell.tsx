@@ -14,6 +14,7 @@ import {
   useChatModelChromeApi,
 } from "../context/ChatModelChromeContext";
 import { PAGE_TITLE } from "../lib/brand";
+import { attachDragScroll } from "../lib/dragScroll";
 import { isProjectWorkspacePath } from "../lib/userPanelNav";
 import {
   applyThemeToDocument,
@@ -366,12 +367,37 @@ function TopbarModelSearch({ always = false }: { always?: boolean }) {
   );
 }
 
+/** A mouse wheel over a row that scrolls sideways turns it, as a trackpad's swipe would. */
+function turnWheelSideways(event: React.WheelEvent<HTMLElement>) {
+  const row = event.currentTarget;
+  if (row.scrollWidth <= row.clientWidth || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+  row.scrollLeft += getComputedStyle(row).direction === "rtl" ? -event.deltaY : event.deltaY;
+}
+
 function TopbarSelectedModels({ always = false }: { always?: boolean }) {
   const api = useChatModelChromeApi();
+  const count = api?.selectedModels.length ?? 0;
+  // Pills that do not fit scroll sideways (styles.css). A mouse can pull the
+  // row and turn it with the wheel, and a model just added is brought into view.
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  const releaseDragRef = useRef<(() => void) | null>(null);
+  const setRow = useCallback((row: HTMLDivElement | null) => {
+    releaseDragRef.current?.();
+    releaseDragRef.current = row ? attachDragScroll(row) : null;
+    rowRef.current = row;
+  }, []);
+  // Added to the models already there, not the first ones to arrive (the row starts at its start).
+  const countBefore = useRef(count);
+  useEffect(() => {
+    if (countBefore.current > 0 && count > countBefore.current) {
+      rowRef.current?.lastElementChild?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+    countBefore.current = count;
+  }, [count]);
   if (!always && !api) return null;
   if (!api?.selectedModels.length) return null;
   return (
-    <div className="alpha-router-selected-models topbar-selected-models">
+    <div ref={setRow} className="alpha-router-selected-models topbar-selected-models" onWheel={turnWheelSideways}>
       {api.selectedModels.map((m) => (
         // The whole pill names its model, its icon too: a squeezed pill may show no name at all.
         <span key={m.id} className="alpha-router-model-pill" title={m.name}>

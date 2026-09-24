@@ -5175,17 +5175,24 @@ table.data-table--api-logs {
 /* In the topbar the pills stay on one line and shrink, as .topbar-selected-models
    says: wrapped, a second model's pill hung below the topbar over the page (on
    a phone at once, on a desktop with enough models). This rule came later with
-   the same weight and won. Pills that still do not fit scroll sideways (a
-   trackpad, a finger, or Tab to a remove button), instead of being cut off. */
+   the same weight and won. Pills that still do not fit scroll sideways -
+   a finger, a trackpad, a mouse pulling or turning its wheel (Shell), Tab to
+   a remove button - instead of being cut off; the scroll padding brings a
+   remove button Tab reaches at the edge wholly into view. */
 .alpha-router-selected-models.topbar-selected-models {
   flex-wrap: nowrap;
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
+  scroll-padding-inline: 1.5rem;
   scrollbar-width: none;
 }
 .alpha-router-selected-models.topbar-selected-models::-webkit-scrollbar {
   display: none;
+}
+.alpha-router-selected-models.topbar-selected-models.is-drag-scrolling {
+  cursor: grabbing;
+  user-select: none;
 }
 
 .alpha-router-add-model-btn {

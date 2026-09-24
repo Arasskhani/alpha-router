@@ -649,6 +649,12 @@ async def lifespan(app: FastAPI):
 
         await ensure_all_model_compatibility_rows(db)
         await db.commit()
+        from app.services.smtp_service import warn_about_insecure_settings
+
+        try:
+            await warn_about_insecure_settings(db, environment=settings.environment)
+        except Exception:  # noqa: BLE001 -- a warning must never stop the start-up
+            logging.getLogger(LOGGER_NAMESPACE).exception("Could not check the saved SMTP settings")
 
     # One scheduler per deployment, not per uvicorn worker: the leader holds a
     # PostgreSQL advisory lock (see scheduler_leader.py). Losing the lock stops

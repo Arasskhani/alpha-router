@@ -25,6 +25,7 @@ on.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import ssl
 from dataclasses import dataclass
@@ -38,6 +39,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.system import SmtpSettings
 from app.services.secret_crypto import decrypt_secret
+
+logger = logging.getLogger(__name__)
 
 SECURITY_STARTTLS = "starttls"
 SECURITY_SSL = "ssl"
@@ -181,6 +184,41 @@ def connection_from_row(row: SmtpSettings) -> SmtpConnection:
         password=password,
         verify_certificate=row.verify_certificate is not False,
     )
+
+
+def insecure_setting_findings(row: SmtpSettings | None) -> list[str]:
+    """What is unsafe about the saved settings, in a sentence each (empty when nothing is).
+
+    Both are legitimate choices the settings page allows with a warning (a
+    relay on a trusted network, a server with a self-signed certificate), so
+    they are reported, never refused.
+    """
+    if row is None or not (row.host or "").strip():
+        return []
+    where = f"{row.host.strip()}:{row.port}"
+    if normalize_security(row.security) == SECURITY_NONE:
+        what = "messages and the password" if row.username and row.password_encrypted else "messages"
+        return [f"SMTP to {where} uses no TLS, so {what} travel in plain text"]
+    if row.verify_certificate is False:
+        return [f"SMTP to {where} does not verify the server's certificate, so anyone in between can pose as it"]
+    return []
+
+
+async def warn_about_insecure_settings(db: AsyncSession, *, environment: str) -> list[str]:
+    """In production, log each insecure choice in the saved SMTP settings.
+
+    Called once at start-up. The production guard checks the environment and
+    refuses to start; these settings live in the database and are changed on
+    the settings page, which a refused start would lock the administrator out
+    of, so they are a warning instead.
+    """
+    if (environment or "").strip().lower() != "production":
+        return []
+    row = (await db.execute(select(SmtpSettings).limit(1))).scalars().first()
+    findings = insecure_setting_findings(row)
+    for finding in findings:
+        logger.warning("Production SMTP: %s. Change it under Admin > SMTP.", finding)
+    return findings
 
 
 async def open_smtp(conn: SmtpConnection, *, login: bool = True) -> aiosmtplib.SMTP:

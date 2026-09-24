@@ -409,6 +409,10 @@ describe("the phone layout block", () => {
     expect(declarations(css, oneLine)).toContain("overflow-y: hidden");
     expect(declarations(css, oneLine)).toContain("scroll-padding-inline: 1.5rem");
     expect(declarations(css, `${oneLine}.is-drag-scrolling`)).toContain("cursor: grabbing");
+    // The last remove area stops at its pill: past it, it gave a row that fits something to scroll to.
+    expect(declarations(phone.body, ".app-topbar .topbar-selected-models .alpha-router-model-pill:last-child")).toContain(
+      "overflow-x: clip",
+    );
     // A pill shrinks by its name only: its fixed parts (padding, border, icon, gaps, remove button) stay inside.
     expect(declarations(css, ".topbar-selected-models .alpha-router-model-pill")).toContain("min-width: 3.375rem");
     // On a narrow phone, with two or more models, a pill is its icon and its remove button.

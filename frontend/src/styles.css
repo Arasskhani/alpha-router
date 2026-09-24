@@ -17580,6 +17580,11 @@ p.error,
   .app-topbar .topbar-selected-models .alpha-router-model-pill {
     position: relative;
   }
+  /* The last remove area stops at its pill's end: reaching past it, it gave
+     the row something to scroll to when every pill fitted. */
+  .app-topbar .topbar-selected-models .alpha-router-model-pill:last-child {
+    overflow-x: clip;
+  }
   .alpha-router-model-modal__item {
     min-height: 2.75rem;
   }

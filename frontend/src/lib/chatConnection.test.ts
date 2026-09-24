@@ -30,6 +30,13 @@ describe("isConnectionLostError", () => {
     expect(isConnectionLostError(new DOMException("The user aborted a request.", "AbortError"))).toBe(false);
   });
 
+  it("never mistakes an error the server or the model reported for the user's connection", () => {
+    // A provider the server cannot reach comes back as the stream's error frame, a plain Error.
+    expect(isConnectionLostError(new Error("[Errno 101] Network is unreachable"))).toBe(false);
+    expect(isConnectionLostError(new Error("Upstream failed to fetch the page"))).toBe(false);
+    expect(isConnectionLostError(new TypeError("Cannot read properties of undefined"))).toBe(false);
+  });
+
   it("says what to do without mentioning Docker or a hard refresh", () => {
     expect(CONNECTION_LOST_MESSAGE).toBe("Connection lost. Check your connection and try again.");
     expect(CONNECTION_LOST_CONTENT).toBe(`Error: ${CONNECTION_LOST_MESSAGE}`);

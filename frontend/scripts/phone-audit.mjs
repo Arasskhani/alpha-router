@@ -167,8 +167,8 @@ function measureFields(minFont) {
  * on to it). Controls whose centre is off-screen or covered are "occluded".
  */
 function measureTargets() {
-  const SEL = "button, a[href], [role=tab], [role=switch], [role=menuitem], summary, select, textarea,"
-    + " input:not([type=hidden])";
+  const SEL = "button, a[href], [role=button], [role=tab], [role=switch], [role=checkbox], [role=radio],"
+    + " [role=menuitem], [role=option], summary, select, textarea, input:not([type=hidden])";
   // A tap on one of these inside the composer box is its own, not the field's.
   const OWN = 'button, a[href], input, select, textarea, label, summary, [contenteditable],'
     + ' [role]:not([role="presentation"], [role="none"]), .alpha-router-prompt-queue, .alpha-router-pending-attachments';

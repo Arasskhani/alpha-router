@@ -880,3 +880,98 @@ describe("the sign-in page on a phone held sideways", () => {
     for (const block of narrow) expect(short[0].at).toBeGreaterThan(block.at);
   });
 });
+
+/** Every style rule in the file, whitespace normalised, with the @-rules it sits in, outermost first. */
+function styleRules(): Array<{ at: number; selectors: string[]; body: string; atRules: string[] }> {
+  const rules: Array<{ at: number; selectors: string[]; body: string; atRules: string[] }> = [];
+  const atRules: string[] = [];
+  let start = 0;
+  for (let i = 0; i < css.length; i += 1) {
+    if (css[i] === "}") {
+      atRules.pop();
+      start = i + 1;
+    } else if (css[i] === ";" && css.slice(start, i).trim().startsWith("@")) {
+      start = i + 1; // A statement like @import, with no block.
+    } else if (css[i] === "{") {
+      const head = css.slice(start, i).trim().replace(/\s+/g, " ");
+      if (head.startsWith("@")) {
+        atRules.push(head);
+        start = i + 1;
+        continue;
+      }
+      // Style rules do not nest in this file, so the declarations end at the next brace.
+      const close = css.indexOf("}", i);
+      rules.push({ at: start, selectors: selectorList(head), body: css.slice(i + 1, close), atRules: [...atRules] });
+      i = close;
+      start = close + 1;
+    }
+  }
+  return rules;
+}
+
+/** The properties a rule sets, and whether each is !important. */
+function properties(body: string): Map<string, boolean> {
+  const found = new Map<string, boolean>();
+  for (const declaration of body.split(";")) {
+    const m = /^\s*(-?-?[a-z][\w-]*)\s*:/i.exec(declaration);
+    if (m) found.set(m[1].toLowerCase(), /!\s*important\s*$/i.test(declaration));
+  }
+  return found;
+}
+
+// The longhands each shorthand resets. Deliberately short: enough to catch a base rule that
+// sets `padding` after a query set `padding-left`, not a full table of CSS.
+const shorthands = new Map<string, RegExp>([
+  ["padding", /^padding-/],
+  ["margin", /^margin-/],
+  ["gap", /^(row|column)-gap$/],
+  ["inset", /^(top|right|bottom|left)$|^inset-/],
+  ["border", /^border-(?!radius)/],
+  ["background", /^background-/],
+  ["font", /^font-|^line-height$/],
+  ["flex", /^flex-(grow|shrink|basis)$/],
+  ["grid-template", /^grid-template-/],
+  ["overflow", /^overflow-[xy]$/],
+  ["place-items", /^(align|justify)-items$/],
+  ["place-content", /^(align|justify)-content$/],
+  ["place-self", /^(align|justify)-self$/],
+  ["transition", /^transition-/],
+  ["animation", /^animation-/],
+]);
+
+const overlaps = (a: string, b: string) =>
+  a === b || Boolean(shorthands.get(a)?.test(b)) || Boolean(shorthands.get(b)?.test(a));
+
+describe("responsive rules", () => {
+  it("are not overridden by a later base rule for the same selector", () => {
+    // A rule in a max-width query has no more weight than a base rule for the same selector,
+    // so a base rule further down the file wins on source order and the query does nothing
+    // for that property. That is how the topbar kept its desktop padding on a phone.
+    const rules = styleRules();
+    const base = new Map<string, Array<{ at: number; props: Map<string, boolean> }>>();
+    for (const rule of rules.filter((r) => r.atRules.length === 0)) {
+      for (const selector of rule.selectors) {
+        base.set(selector, [...(base.get(selector) ?? []), { at: rule.at, props: properties(rule.body) }]);
+      }
+    }
+    const dead = new Set<string>();
+    for (const rule of rules) {
+      const media = rule.atRules.find((a) => a.startsWith("@media"));
+      if (!media?.includes("max-width")) continue;
+      const props = properties(rule.body);
+      for (const selector of rule.selectors) {
+        for (const later of (base.get(selector) ?? []).filter((b) => b.at > rule.at)) {
+          for (const [prop, important] of props) {
+            for (const [laterProp, laterImportant] of later.props) {
+              // An !important declaration in the query still beats a plain one after it.
+              if (overlaps(prop, laterProp) && (laterImportant || !important)) {
+                dead.add(`${media}: ${selector} { ${prop} } is overridden by a later base rule`);
+              }
+            }
+          }
+        }
+      }
+    }
+    expect([...dead]).toEqual([]);
+  });
+});

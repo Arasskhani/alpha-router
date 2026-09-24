@@ -12441,6 +12441,32 @@ body.login-route #root {
   }
 }
 
+/* A phone held sideways (360-430px tall): the sign-in card is taller than
+   the screen. The page scrolls instead of cutting it off, and the trademark
+   line follows the card instead of lying over its Continue button. Auto
+   margins centre the card when there is room, and give way when there is
+   not (justify-content: center would put its top out of reach). */
+@media (max-height: 500px) {
+  .login-page {
+    flex-direction: column;
+    justify-content: flex-start;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .login-page__shell {
+    flex: 0 0 auto;
+    height: auto;
+    max-height: none;
+    margin-block: auto;
+    padding-bottom: 0.75rem;
+  }
+  .login-page__legal {
+    position: static;
+    flex: 0 0 auto;
+    padding-bottom: 0.55rem;
+  }
+}
+
 /* —— User Media library page —— */
 .media-page-quota {
   margin-bottom: 1rem;

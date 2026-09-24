@@ -833,3 +833,31 @@ describe("the phone layout block", () => {
     expect(declarations(css, ":root")).toContain("--drawer-hidden: -100%");
   });
 });
+
+describe("the sign-in page on a phone held sideways", () => {
+  const short = mediaBlocks("(max-height: 500px)");
+
+  it("scrolls instead of cutting the card off, with the trademark line after the card", () => {
+    expect(short).toHaveLength(1);
+    const body = short[0].body;
+    const page = declarations(body, ".login-page");
+    expect(page).toContain("flex-direction: column");
+    expect(page).toContain("overflow-y: auto");
+    // Centred by the card's auto margins, which give way when it is taller than the screen.
+    expect(page).toContain("justify-content: flex-start");
+    const shell = declarations(body, ".login-page__shell");
+    expect(shell).toContain("height: auto");
+    expect(shell).toContain("max-height: none");
+    expect(shell).toContain("margin-block: auto");
+    // In the flow below the card, not laid over its Continue button.
+    expect(declarations(body, ".login-page__legal")).toContain("position: static");
+    // Base rules pin the page and the card to the screen; the narrow layout sets the card too.
+    expect(declarations(css.slice(0, short[0].at), ".login-page")).toContain("overflow: hidden");
+    expect(declarations(css.slice(0, short[0].at), ".login-page__legal")).toContain("position: absolute");
+    expect(short[0].at).toBeGreaterThan(lastTopLevelRule(".login-page"));
+    expect(short[0].at).toBeGreaterThan(lastTopLevelRule(".login-page__shell"));
+    const narrow = mediaBlocks("(max-width: 900px)").filter((b) => b.body.includes(".login-page__shell {"));
+    expect(narrow.length).toBeGreaterThan(0);
+    for (const block of narrow) expect(short[0].at).toBeGreaterThan(block.at);
+  });
+});

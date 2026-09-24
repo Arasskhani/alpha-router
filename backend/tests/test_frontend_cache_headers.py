@@ -29,6 +29,7 @@ def client(tmp_path):
     (dist / "offline.html").write_text("<!DOCTYPE html><title>Offline</title>", encoding="utf-8")
     (dist / "assets" / "index-abc123.js").write_text("console.log(1);", encoding="utf-8")
     (dist / "icons" / "icon-192.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (dist / "manifest.webmanifest").write_text('{"name": "Alpharouter"}', encoding="utf-8")
 
     app = FastAPI()
 
@@ -58,6 +59,14 @@ def test_other_html_in_dist_is_revalidated_too(client):
     r = client.get("/offline.html")
     assert r.status_code == 200
     assert r.headers["cache-control"] == NO_CACHE
+
+
+def test_the_manifest_is_revalidated_and_typed(client):
+    r = client.get("/manifest.webmanifest")
+    assert r.status_code == 200
+    assert r.headers["cache-control"] == NO_CACHE
+    # X-Content-Type-Options: nosniff is set app-wide, so the type must be right.
+    assert r.headers["content-type"].startswith("application/manifest+json")
 
 
 def test_a_plain_file_from_dist_keeps_the_default(client):

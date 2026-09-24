@@ -1,6 +1,8 @@
 /** Apply Alpharouter brand favicon (cache-bust when mark assets change). */
 const BRAND_FAVICON_SVG = "/favicon.svg?v=4";
 const BRAND_FAVICON_ICO = "/favicon.ico?v=4";
+/** iOS needs a PNG for the Home Screen icon; with an SVG it uses a screenshot of the page. */
+export const APPLE_TOUCH_ICON = "/icons/apple-touch-icon.png";
 
 const ICON_SELECTOR =
   'link[rel="icon"], link[rel="shortcut icon"], link[rel="apple-touch-icon"], link[rel="mask-icon"]';
@@ -27,6 +29,6 @@ export function applyBlankFavicon(): void {
 
   const touch = document.createElement("link");
   touch.rel = "apple-touch-icon";
-  touch.href = BRAND_FAVICON_SVG;
+  touch.href = APPLE_TOUCH_ICON;
   document.head.appendChild(touch);
 }

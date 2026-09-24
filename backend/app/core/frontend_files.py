@@ -3,7 +3,8 @@
 - HTML (index.html, and any other page in dist/) is revalidated on every load,
   so a browser, or an app installed from the home screen, never starts the old
   build after an upgrade: the old HTML would point at hashed chunks that no
-  longer exist.
+  longer exist. The web app manifest too, so a new name or icon arrives with
+  the next launch.
 - /assets/* file names are content hashes, so they can be cached for a year.
   The header goes on 200 and 304 responses only, never on a 404.
 """
@@ -23,7 +24,8 @@ IMMUTABLE = "public, max-age=31536000, immutable"
 
 def frontend_file(path: Path) -> FileResponse:
     """A file from dist/, with the Cache-Control its kind needs."""
-    headers = {"Cache-Control": NO_CACHE} if path.suffix == ".html" else None
+    revalidate = path.suffix == ".html" or path.name == "manifest.webmanifest"
+    headers = {"Cache-Control": NO_CACHE} if revalidate else None
     return FileResponse(path, headers=headers)
 
 

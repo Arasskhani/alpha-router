@@ -79,17 +79,22 @@ def resolve_extension_dist(services_file: Path | None = None) -> Path:
     return candidates[1]
 
 
+def _ip(host: str | None) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    try:
+        return ipaddress.ip_address((host or "").strip("[]"))
+    except ValueError:
+        return None
+
+
 def _is_loopback(host: str | None) -> bool:
     name = (host or "").strip("[]").lower()
     if not name or name == "localhost" or name.endswith(".localhost"):
         return True
-    try:
-        return ipaddress.ip_address(name).is_loopback
-    except ValueError:
-        return False
+    address = _ip(name)
+    return bool(address and address.is_loopback)
 
 
-def server_origin(request_host: str | None) -> str:
+def server_origin(request_host: str | None, client_ip: str | None = None) -> str:
     """FRONTEND_URL's origin, which every copy of the extension talks to.
 
     Never the request's own Host: forwarded headers are trusted only from known
@@ -106,7 +111,19 @@ def server_origin(request_host: str | None) -> str:
             UNAVAILABLE_FRONTEND_URL,
             f"FRONTEND_URL ({configured!r}) is not a usable http(s) address.",
         ) from exc
-    if _is_loopback(urlsplit(origin).hostname) and not _is_loopback(request_host):
+    host = urlsplit(origin).hostname
+    address = _ip(host)
+    if address is not None and address.is_unspecified:
+        raise ExtensionUnavailable(
+            UNAVAILABLE_FRONTEND_URL,
+            f"FRONTEND_URL is {origin}, an address to listen on, not one a browser can reach. "
+            "Set it to the address people use for this server, then restart it.",
+        )
+    # Loopback is right only when the person asking is on this machine too:
+    # by the name they used, and by where the request came from (a proxy on
+    # the same host can send Host: 127.0.0.1 for a visitor from anywhere).
+    asked_from_elsewhere = not _is_loopback(request_host) or (client_ip is not None and not _is_loopback(client_ip))
+    if _is_loopback(host) and asked_from_elsewhere:
         raise ExtensionUnavailable(
             UNAVAILABLE_FRONTEND_URL,
             f"FRONTEND_URL is {origin}. Set it to the address people use for this server, then restart it.",
@@ -220,7 +237,7 @@ class ExtensionBuild:
         return f"{self.extension_id};{self.update_url}"
 
 
-async def current_build(db: AsyncSession, *, request_host: str | None) -> ExtensionBuild:
+async def current_build(db: AsyncSession, *, request_host: str | None, client_ip: str | None = None) -> ExtensionBuild:
     """Everything a download needs, or ExtensionUnavailable saying why not."""
     dist = resolve_extension_dist()
     try:
@@ -231,7 +248,7 @@ async def current_build(db: AsyncSession, *, request_host: str | None) -> Extens
             UNAVAILABLE_NOT_BUILT,
             "The browser extension is not built on this server. Rebuild the image (npm run build builds it).",
         ) from exc
-    origin = server_origin(request_host)
+    origin = server_origin(request_host, client_ip)
     try:
         key = await load_or_create_signing_key(db)
     except ExtensionKeyUnavailable as exc:

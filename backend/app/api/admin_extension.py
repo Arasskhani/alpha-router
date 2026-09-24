@@ -47,7 +47,8 @@ class ExtensionSettingsIn(BaseModel):
 async def _overview(db: AsyncSession, request: Request) -> dict:
     settings = await load_extension_settings(db)
     try:
-        build, unavailable = await current_build(db, request_host=request.url.hostname), None
+        build = await current_build(db, request_host=request.url.hostname, client_ip=resolve_client_ip(request))
+        unavailable = None
     except ExtensionUnavailable as exc:
         build, unavailable = None, exc
     return {"settings": settings.to_json(), "distribution": distribution_payload(build, unavailable)}

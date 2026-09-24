@@ -107,6 +107,46 @@ class TestTheSettingsTab:
         assert info["reason_code"] == "frontend_url"
         assert "FRONTEND_URL" in info["reason"]
 
+    async def _info_as(self, session_factory, user, *, base_url: str, client: tuple[str, int]) -> dict:
+        import httpx
+
+        from app.database import get_db
+        from app.main import app as fastapi_app
+
+        async def _get_db():
+            async with session_factory() as session:
+                yield session
+                await session.commit()
+
+        fastapi_app.dependency_overrides[get_db] = _get_db
+        try:
+            transport = httpx.ASGITransport(app=fastapi_app, client=client)
+            async with httpx.AsyncClient(transport=transport, base_url=base_url) as local:
+                _sign_in(local, user)
+                return (await local.get("/api/extension/info")).json()
+        finally:
+            fastapi_app.dependency_overrides.pop(get_db, None)
+
+    async def test_a_proxy_on_this_host_cannot_make_a_visitor_look_local(
+        self, session_factory, user, built_extension, monkeypatch
+    ):
+        """Host: 127.0.0.1 from a proxy on the same machine, but the visitor is elsewhere."""
+        monkeypatch.setattr(get_settings(), "frontend_url", "http://127.0.0.1:8080")
+        info = await self._info_as(
+            session_factory, user, base_url="http://127.0.0.1:8080", client=("203.0.113.9", 51000)
+        )
+        assert info["available"] is False
+        assert info["reason_code"] == "frontend_url"
+
+    @pytest.mark.parametrize("url", ["http://0.0.0.0:8080", "http://[::]:8080"])
+    async def test_a_listening_address_is_never_a_server_address(
+        self, session_factory, user, built_extension, monkeypatch, url
+    ):
+        monkeypatch.setattr(get_settings(), "frontend_url", url)
+        info = await self._info_as(session_factory, user, base_url="http://127.0.0.1:8080", client=("127.0.0.1", 51000))
+        assert info["available"] is False
+        assert "listen on" in info["reason"]
+
     async def test_a_loopback_frontend_url_reached_on_loopback_works(
         self, session_factory, user, built_extension, monkeypatch
     ):

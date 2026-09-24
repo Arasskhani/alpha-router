@@ -17,6 +17,7 @@ from app.api.deps import get_current_user, require_active_user
 from app.database import get_db
 from app.models.user import User
 from app.services.chat_tool_access_service import permitted_tool_keys
+from app.services.client_ip import resolve_client_ip
 from app.services.extension_distribution import (
     ExtensionBuild,
     ExtensionUnavailable,
@@ -47,7 +48,7 @@ async def _build_or_none(
     db: AsyncSession, request: Request
 ) -> tuple[ExtensionBuild | None, ExtensionUnavailable | None]:
     try:
-        return await current_build(db, request_host=request.url.hostname), None
+        return await current_build(db, request_host=request.url.hostname, client_ip=resolve_client_ip(request)), None
     except ExtensionUnavailable as exc:
         return None, exc
 

@@ -128,8 +128,9 @@ export const userManualSections: DocSection[] = [
         <h2>Install on your phone</h2>
         <p>
           Alpharouter can be installed like an app on Android phones, iPhones and iPads. It then opens from its own
-          icon, full screen, straight into Chat. Nothing changes if you keep using it in the browser. Installing needs
-          the secure (<code>https://</code>) address your administrator gave you.
+          icon, full screen, on your home page (Chat, or the admin panel for administrators). Nothing changes if you
+          keep using it in the browser. Installing needs the secure (<code>https://</code>) address your administrator
+          gave you.
         </p>
         <h3>Android</h3>
         <ul>
@@ -174,6 +175,10 @@ export const userManualSections: DocSection[] = [
           now</strong> instead of an error page. Check your connection or VPN and tap <strong>Try again</strong>. If it
           keeps happening, ask your administrator whether the address has changed: an installed app belongs to its
           address, so after a move you install it again from the new one.
+        </p>
+        <p>
+          If the connection drops while a reply is being written, the chat shows <strong>Connection lost</strong> in its
+          place and, once you are back online, replaces it with the part the server saved.
         </p>
         <p>
           To remove the app, long-press its icon and choose <strong>Remove</strong> or <strong>Uninstall</strong>.

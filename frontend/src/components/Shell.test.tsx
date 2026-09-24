@@ -165,6 +165,8 @@ describe("the shell on a tablet (769–1024px)", () => {
   it("keeps the full logo and has no bottom tab bar", async () => {
     await render("/app/projects");
     expect(menuButton()).not.toBeNull();
+    // The whole wordmark, not a phone's mark alone.
+    expect(document.querySelector(".topbar-brand .alpha-router-logo-alpha-rest")).not.toBeNull();
     expect(document.querySelector(".bottom-tab-bar")).toBeNull();
     expect(document.querySelector('[data-testid="probe"]')).toBeNull();
   });

@@ -146,13 +146,11 @@ def period_bounds(start: dt.date, end: dt.date, tz: dt.tzinfo) -> tuple[dt.datet
 # --- cron ----------------------------------------------------------------------
 
 
-def _weekday_number(token: str, *, end_of_range: bool = False) -> int:
+def _weekday_number(token: str) -> int:
     """0-7 in standard numbering (0 and 7 are Sunday) for a number or a name."""
     token = token.strip().lower()
     if token in _WEEKDAYS:
-        number = _WEEKDAYS.index(token)
-        # "mon-sun" runs to the end of the week.
-        return 7 if end_of_range and number == 0 else number
+        return _WEEKDAYS.index(token)
     if token.isdigit() and int(token) <= 7:
         return int(token)
     raise ValueError(f"{token!r} is not a day of the week: use 0-7 (0 and 7 are Sunday) or sun-sat")
@@ -182,7 +180,11 @@ def standard_weekdays(field_text: str) -> str:
         elif "-" in base:
             start_text, _, end_text = base.partition("-")
             first = _weekday_number(start_text)
-            last = _weekday_number(end_text, end_of_range=True)
+            last = _weekday_number(end_text)
+            # A range that ends on Sunday after another day ("mon-sun", "5-0") runs to
+            # the end of the week; one from Sunday to Sunday is Sunday.
+            if last == 0 and first > 0:
+                last = 7
             if first > last:
                 raise ValueError(f"{item!r}: a range runs from the earlier day to the later one")
         else:

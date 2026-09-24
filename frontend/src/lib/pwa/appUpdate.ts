@@ -12,7 +12,9 @@
  */
 import { useSyncExternalStore } from "react";
 
-const ENTRY = /\/assets\/index-[\w-]+\.js/;
+/** The page's module script: /assets/index-<hash>.js (not a modulepreload that happens to share the name). */
+const ENTRY_SCRIPT = /<script\b[^>]*\btype="module"[^>]*\bsrc="(\/assets\/index-[\w-]+\.js)"/;
+const ENTRY_PATH = /^\/assets\/index-[\w-]+\.js$/;
 export const VISIBLE_CHECK_GAP_MS = 15 * 60 * 1000;
 export const HOURLY_MS = 60 * 60 * 1000;
 
@@ -47,8 +49,8 @@ export function useUpdateAvailable(): boolean {
 /** The entry script this page runs, from its module script tag. */
 export function runningEntry(doc: Document = document): string | null {
   for (const script of doc.querySelectorAll<HTMLScriptElement>('script[type="module"][src]')) {
-    const match = ENTRY.exec(script.getAttribute("src") ?? "");
-    if (match) return match[0];
+    const src = script.getAttribute("src") ?? "";
+    if (ENTRY_PATH.test(src)) return src;
   }
   return null;
 }
@@ -65,7 +67,7 @@ export async function checkForUpdate(now: number = Date.now()): Promise<boolean>
   try {
     const response = await fetch("/", { cache: "no-store", credentials: "same-origin" });
     if (!response.ok) return false;
-    const latest = ENTRY.exec(await response.text())?.[0];
+    const latest = ENTRY_SCRIPT.exec(await response.text())?.[1];
     if (latest && latest !== running) {
       markUpdateAvailable();
       return true;

@@ -61,6 +61,14 @@ describe("checkForUpdate", () => {
     expect(update).toHaveBeenCalled();
   });
 
+  it("reads the server's build from its module script, not from a preload that shares the name", async () => {
+    const m = await fresh();
+    served =
+      '<link rel="modulepreload" href="/assets/index-OLD1.js">' +
+      '<script type="module" crossorigin src="/assets/index-NEW2.js"></script>';
+    expect(await m.checkForUpdate()).toBe(true);
+  });
+
   it("says nothing while the server cannot be reached or answers with an error", async () => {
     const m = await fresh();
     vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new TypeError("Failed to fetch"))));

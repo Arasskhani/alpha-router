@@ -6,9 +6,9 @@ Kept as one JSON document in ``system_settings`` (``extension.settings``):
   ``all_sites`` (granted at install, which a Group Policy install does
   silently). It changes the extension's permissions, so it changes the
   package, and policy-installed copies update to the new permissions.
-- ``allowed_sites`` / ``blocked_sites``: host patterns (``example.com`` or
-  ``*.example.com``). Blocked always wins; a non-empty allowed list means
-  every other site is off limits. The extension checks them before it reads
+- ``allowed_sites`` / ``blocked_sites``: host patterns (``example.com``, or
+  ``*.example.com`` for the domain and all its subdomains). Blocked always
+  wins; a non-empty allowed list means every other site is off limits. The extension checks them before it reads
   or does anything, and the server checks the sites it is told about.
 - ``page_content_models`` / ``agent_models``: ``model::<id>`` lists (empty
   means any model the user may use) for turns that carry page content, and
@@ -114,10 +114,14 @@ def normalize_site_pattern(raw: str) -> str:
 
 
 def host_matches(host: str, pattern: str) -> bool:
-    """``*.example.com`` covers sub.example.com but not example.com itself; list both for both."""
+    """``*.example.com`` covers example.com and every subdomain, as in Chrome's match patterns.
+
+    That is what an admin who blocks ``*.bank.example`` expects: the bank's own
+    site blocked too, not only its subdomains.
+    """
     host = _ascii_host(host)
     if pattern.startswith("*."):
-        return host.endswith(pattern[1:])
+        return host == pattern[2:] or host.endswith(pattern[1:])
     return host == pattern
 
 

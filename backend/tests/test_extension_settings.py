@@ -90,12 +90,18 @@ class TestSitePatterns:
         with pytest.raises(ValueError):
             normalize_site_pattern(raw)
 
-    def test_a_wildcard_covers_subdomains_but_not_the_domain_itself(self):
+    def test_a_wildcard_covers_the_domain_and_its_subdomains_as_in_chrome(self):
         assert host_matches("mail.example.com", "*.example.com")
         assert host_matches("a.b.example.com", "*.example.com")
-        assert not host_matches("example.com", "*.example.com")
+        assert host_matches("example.com", "*.example.com")
         assert not host_matches("badexample.com", "*.example.com")
+        assert not host_matches("example.com.evil", "*.example.com")
         assert host_matches("Example.com.", "example.com")
+        assert not host_matches("mail.example.com", "example.com")
+
+    def test_blocking_a_wildcard_blocks_the_site_itself(self):
+        """An admin who blocks *.bank.example means the bank's own site too."""
+        assert site_refusal("bank.example", ExtensionSettings(blocked_sites=("*.bank.example",))) == SITE_BLOCKED
 
     def test_blocked_wins_and_an_allow_list_closes_everything_else(self):
         settings = ExtensionSettings(

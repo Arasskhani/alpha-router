@@ -388,6 +388,18 @@ describe("the phone layout block", () => {
     expect(declarations(phone.body, ".alpha-router-model-modal__item")).toContain("min-height: 2.75rem");
   });
 
+  it("keeps the topbar's model pills on one line, each over the remove area of the one before", () => {
+    // The generic rule wraps; the topbar's one line must outrank it, not merely come first.
+    expect(declarations(css, ".alpha-router-selected-models")).toContain("flex-wrap: wrap");
+    const oneLine = ".alpha-router-selected-models.topbar-selected-models";
+    expect(declarations(css, oneLine)).toContain("flex-wrap: nowrap");
+    expect(outranks(oneLine, ".alpha-router-selected-models")).toBe(true);
+    // Positioned pills paint in order: a pill takes its own taps from the remove area reaching out of the one before.
+    expect(declarations(phone.body, ".app-topbar .topbar-selected-models .alpha-router-model-pill")).toContain(
+      "position: relative",
+    );
+  });
+
   it("sizes the app to the visual viewport, so the iOS keyboard cannot cover the composer", () => {
     const layout = declarations(phone.body, ".layout,\n  .layout--chat");
     expect(layout).toContain("height: var(--app-viewport-height)");

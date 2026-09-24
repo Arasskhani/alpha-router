@@ -5168,6 +5168,14 @@ table.data-table--api-logs {
   flex: 1;
 }
 
+/* In the topbar the pills stay on one line and shrink, as .topbar-selected-models
+   says: wrapped, a second model's pill hung below the topbar over the page (on
+   a phone at once, on a desktop with enough models). This rule came later with
+   the same weight and won. */
+.alpha-router-selected-models.topbar-selected-models {
+  flex-wrap: nowrap;
+}
+
 .alpha-router-add-model-btn {
   display: inline-flex;
   align-items: center;
@@ -17495,6 +17503,12 @@ p.error,
   .app-topbar .topbar-selected-models {
     padding-block: 0.25rem;
     margin-block: -0.25rem;
+  }
+  /* Positioned, so a pill paints over the remove area reaching out of the
+     pill before it on their line, and a tap on the second model does not
+     remove the first. */
+  .app-topbar .topbar-selected-models .alpha-router-model-pill {
+    position: relative;
   }
   .alpha-router-model-modal__item {
     min-height: 2.75rem;

@@ -12477,6 +12477,11 @@ body.login-route #root {
     flex: 0 0 auto;
     padding-bottom: 0.55rem;
   }
+  /* The lower glow sat 8% below the page's edge and, the page scrolling,
+     gave it that much to scroll for nothing. */
+  .login-page__glow--b {
+    bottom: 0;
+  }
 }
 
 /* —— User Media library page —— */

@@ -1031,6 +1031,14 @@ describe("the installed app's edges", () => {
   });
 });
 
+describe("the new-version notice", () => {
+  it("sits in the layout's flow with a finger-sized Reload", () => {
+    expect(declarations(css, ".app-notice")).toContain("flex-shrink: 0");
+    expect(declarations(css, ".app-notice")).not.toContain("position: fixed");
+    expect(declarations(css, ".app-notice__action")).toContain("min-height: 2.75rem");
+  });
+});
+
 describe("the install suggestion bar", () => {
   it("steps aside while a dialog is open", () => {
     expect(declarations(css, 'body:has(.modal-overlay, [aria-modal="true"]) .install-banner')).toContain("display: none");

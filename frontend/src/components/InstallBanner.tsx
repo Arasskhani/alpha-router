@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useLocation } from "react-router-dom";
 
 import { useSoftKeyboardOpen } from "../hooks/useSoftKeyboardOpen";
+import { useUpdateAvailable } from "../lib/pwa/appUpdate";
 import { promptInstall, useInstallState } from "../lib/pwa/installPrompt";
 import {
   markInstallDone,
@@ -22,6 +23,8 @@ export default function InstallBanner() {
   const path = useLocation().pathname.replace(/\/$/, "") || "/";
   const state = useInstallState();
   const keyboardOpen = useSoftKeyboardOpen();
+  // The new-version notice takes the same place, and comes first.
+  const updateAvailable = useUpdateAvailable();
   const [decidedFor, setDecidedFor] = useState<string | null>(null);
   const [wanted, setWanted] = useState(false);
   const [instructions, setInstructions] = useState(false);
@@ -32,7 +35,7 @@ export default function InstallBanner() {
   }
 
   const offer = state === "can-prompt" || state === "ios-manual";
-  const shown = wanted && offer && !keyboardOpen;
+  const shown = wanted && offer && !keyboardOpen && !updateAvailable;
 
   const install = () => {
     setWanted(false);

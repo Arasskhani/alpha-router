@@ -4,6 +4,7 @@ import RouteErrorBoundary from "./RouteErrorBoundary";
 import AlphaRouterLogo from "./AlphaRouterLogo";
 import BottomTabBar from "./BottomTabBar";
 import InstallBanner from "./InstallBanner";
+import UpdateNotice from "./UpdateNotice";
 import { useSoftKeyboardOpen } from "../hooks/useSoftKeyboardOpen";
 import ModelProviderIcon from "./ModelProviderIcon";
 import SidebarNav from "./SidebarNav";
@@ -329,6 +330,7 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
               </main>
             </div>
           </div>
+          <UpdateNotice />
           <InstallBanner />
           {hasTabBar ? <BottomTabBar /> : null}
         </div>

@@ -33,6 +33,9 @@ vi.mock("../lib/pwa/installPrompt", async () => {
   };
 });
 
+const update = vi.hoisted(() => ({ available: false }));
+vi.mock("../lib/pwa/appUpdate", () => ({ useUpdateAvailable: () => update.available }));
+
 import { promptInstall } from "../lib/pwa/installPrompt";
 import { STORAGE_KEYS } from "../lib/brand";
 import { loadPrefs } from "../lib/pwa/installSuggestion";
@@ -74,6 +77,7 @@ beforeEach(() => {
   install.state = "can-prompt";
   install.outcome = "accepted";
   install.switchOn = true;
+  update.available = false;
   vi.mocked(promptInstall).mockClear();
   localStorage.clear();
   setPrefs({ days: 2, lastDay: "2026-09-23" });
@@ -183,5 +187,11 @@ describe("InstallBanner", () => {
     install.switchOn = true;
     await act(async () => go("/app/projects"));
     expect(banner()).not.toBeNull();
+  });
+
+  it("gives way to the new-version notice, which takes the same place", async () => {
+    update.available = true;
+    await render();
+    expect(banner()).toBeNull();
   });
 });

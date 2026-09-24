@@ -189,6 +189,39 @@ body:not(.login-route) {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
+/* The new-version notice (UpdateNotice): the same place as the install
+   suggestion, which it replaces while it shows. */
+.app-notice {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.35rem 0.5rem 0.35rem 0.75rem;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--text);
+  font-size: 0.8125rem;
+}
+.app-notice__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: 1.25;
+  font-weight: 500;
+}
+.app-notice__action {
+  flex-shrink: 0;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  padding: 0 0.85rem;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 /* The install suggestion (InstallBanner): a slim bar in the layout's flow,
    above the tab bar, so it pushes the page and the composer up instead of
    covering them. It steps aside while a dialog is open. */

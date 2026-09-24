@@ -2429,7 +2429,7 @@ export const docSections: DocSection[] = [
         <h2>SMTP Server</h2>
         <p>
           Path: <code>/admin/smtp</code>. Outbound mail for API keys sent to their owners, sign-in and certificate
-          alerts, and project invitations. Report schedules are stored, but nothing emails them yet.
+          alerts, project invitations and <a href="#admin-reports">scheduled reports</a>.
         </p>
         <ul>
           <li>
@@ -2675,9 +2675,50 @@ export const docSections: DocSection[] = [
           chat session&apos;s project — clients cannot spoof another project&apos;s <code>project_id</code> on the
           request.
         </p>
+        <h3>Scheduled reports</h3>
+        <p>
+          <strong>Schedule by email…</strong> beside Download emails the chosen report on a schedule, with the filters
+          chosen on the page: every day, week or month at a time, or a cron expression; the days a dated report covers
+          (the day, 7 days, 30 days or calendar month before the day it runs, never that day itself, whose data is
+          still coming in); CSV, Excel or PDF; up to 20 recipients. Each recipient gets an email of their own with the
+          report attached, so nobody sees the other addresses.
+        </p>
+        <ul>
+          <li>
+            <strong>Times</strong> are the server&apos;s clock, the one the other scheduled jobs use (the{" "}
+            <code>TZ</code> setting, or else the host&apos;s timezone); the page names it. A cron expression is read the
+            standard way: five fields (minute, hour, day of the month, month, day of the week), 0 and 7 both being
+            Sunday; when both day fields are set, a day matching either one runs.
+          </li>
+          <li>
+            <strong>Scheduled reports</strong>, under the catalog, lists each schedule with its next run and how the
+            last one went: <em>Sent</em>, <em>Partly sent</em> (the addresses the mail server refused, and why) or{" "}
+            <em>Failed</em> (why: SMTP not set up, the mail server not sending, the report not building). Its actions
+            are <strong>Send now</strong> (sent as the next run would be, without moving it), <strong>Pause</strong>{" "}
+            and <strong>Resume</strong> (a resumed schedule does not send what it missed while paused), and{" "}
+            <strong>Delete</strong>.
+          </li>
+          <li>
+            A run missed while the server was down goes out once when it is back. A run is never sent twice: one the
+            server stopped half way through shows as not finished and waits for its next time.
+          </li>
+          <li>A report over 10 MB is not emailed; narrow it with a shorter period or a filter, or download it here.</li>
+          <li>
+            Setting up, pausing, resuming, deleting and sending now take write access to Reports, and each is recorded
+            in Admin Logs with the recipients: <code>report_schedule_created</code>, <code>report_schedule_paused</code>,{" "}
+            <code>report_schedule_resumed</code>, <code>report_schedule_deleted</code> and{" "}
+            <code>report_schedule_sent_now</code>.
+          </li>
+          <li>
+            A schedule made through the API to go to one&apos;s own address (<code>POST
+            /api/admin/reports/schedules/user</code>) shows who set it up. It stops, paused, once that person loses
+            write access to Reports or their address changes.
+          </li>
+        </ul>
         <Note>
-          Report generation is interactive from this page. Ensure SMTP is configured if you rely on email delivery
-          elsewhere in your process.
+          Scheduled reports go out through the <a href="#admin-smtp">SMTP Server</a> settings. Set those up and use{" "}
+          <strong>Send test email to me</strong> first; then <strong>Send now</strong> on a new schedule shows it
+          working end to end.
         </Note>
       </>
     ),
@@ -3407,6 +3448,7 @@ export const docSections: DocSection[] = [
           <li>Chat session stats reconcile</li>
           <li>Code Interpreter compatibility probes for due models (interval, small claimed batches)</li>
           <li>Auth directory sync schedules (when configured)</li>
+          <li>Scheduled reports (checked every minute; each schedule runs at its own time)</li>
         </ul>
       </>
     ),

@@ -13,7 +13,7 @@ from app.models.system import SystemSetting
 from app.models.user import User, UserRoleAssignment
 from app.services.observability import increment
 from app.services.rbac import SUPER_ADMIN_SLUG
-from app.services.smtp_service import SmtpNotConfiguredError, SmtpSendError, send_email
+from app.services.smtp_service import SmtpNotConfiguredError, SmtpRecipientError, SmtpSendError, send_email
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,12 @@ async def notify_expiring_certificates(db: AsyncSession, *, now: datetime.dateti
         try:
             await send_email(db, to_address=address, subject=subject, body_text=body)
             sent += 1
+        except SmtpRecipientError as exc:
+            # This address only: the others still get the notice, and it is
+            # not sent again to everyone tomorrow because of one bad address.
+            logger.warning("TLS expiry notice not sent to %s: %s", address, exc)
         except (SmtpNotConfiguredError, SmtpSendError) as exc:
+            # The server or the settings: left unstamped, so it is tried again.
             logger.warning("TLS expiry notice not sent to %s: %s", address, exc)
             smtp_failed = True
             break

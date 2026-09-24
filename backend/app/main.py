@@ -19,6 +19,7 @@ from app.api import (
     admin_agent_governance,
     admin_agents,
     admin_chat_tools,
+    admin_extension,
     admin_knowledge,
     admin_logs,
     admin_memory,
@@ -28,6 +29,7 @@ from app.api import (
     auth,
     authentication,
     chat,
+    extension,
     gateway,
     groups,
     images,
@@ -772,6 +774,7 @@ if settings.agents_platform_enabled:
     app.include_router(admin_agents.router)
     app.include_router(admin_knowledge.router)
 app.include_router(admin_chat_tools.router)
+app.include_router(admin_extension.router)
 app.include_router(admin_logs.router)
 app.include_router(sign_in_activity.router)
 app.include_router(admin_memory.router)
@@ -795,6 +798,8 @@ app.include_router(smtp.router)
 app.include_router(admin_security.router)
 app.include_router(groups.router)
 app.include_router(chat.router)
+# Before the SPA fallback: /extension/update.xml and the CRX are served here.
+app.include_router(extension.router)
 app.include_router(projects.router)
 
 

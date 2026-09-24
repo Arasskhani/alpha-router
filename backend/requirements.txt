@@ -24,6 +24,8 @@ apscheduler>=3.10.4
 bcrypt>=4.1
 python-jose[cryptography]>=3.3.0
 cryptography>=41.0.0
+# Host names in the browser extension's site rules, encoded the way browsers do (UTS #46).
+idna>=3.7
 pyotp>=2.9.0
 qrcode>=8.0
 python3-saml>=1.16.0

@@ -2887,6 +2887,43 @@ table.data-table--api-logs {
   border-top: 1px solid var(--border);
 }
 
+.reports-schedules {
+  margin-top: 1rem;
+}
+
+.reports-schedules__title {
+  margin: 0 0 0.25rem;
+}
+
+.reports-schedules__intro {
+  margin: 0 0 0.85rem;
+  font-size: 0.85rem;
+}
+
+.reports-schedules__detail {
+  display: block;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.reports-schedules__recipients {
+  overflow-wrap: anywhere;
+}
+
+.reports-schedules__error {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--danger);
+  white-space: pre-line;
+}
+
+.report-schedule-form__hint {
+  margin: -0.35rem 0 0.85rem;
+  font-size: 0.8rem;
+}
+
 @media (max-width: 900px) {
   .reports-layout {
     grid-template-columns: 1fr;
@@ -15817,6 +15854,11 @@ p.error,
 .status-badge--processing {
   color: #1d4ed8;
   background: #eff6ff;
+}
+
+.status-badge--partial {
+  color: #b45309;
+  background: #fffbeb;
 }
 
 .status-badge--failed,

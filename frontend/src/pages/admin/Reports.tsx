@@ -2,7 +2,11 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { localDateKey } from "../../components/activity/formatters";
 import AdminPage from "../../components/AdminPage";
 import UserOwnerSelect from "../../components/apiKeys/UserOwnerSelect";
+import ScheduledReports from "../../components/reports/ScheduledReports";
+import ScheduleReportDialog from "../../components/reports/ScheduleReportDialog";
 import { api, authFetch, formatApiError } from "../../api";
+import { useAdminWriteLock } from "../../lib/adminWriteLock";
+import { scheduleParameters, type ScheduledReport, type SchedulePeriod } from "../../lib/reportSchedules";
 
 type ReportDef = {
   id: string;
@@ -29,6 +33,14 @@ type ReportOptions = {
 };
 
 type Preview = { columns: string[]; rows: Record<string, unknown>[]; row_count: number };
+
+type Catalog = {
+  reports: ReportDef[];
+  categories: Record<string, string>;
+  default_dates: { start_date: string; end_date: string };
+  schedule_periods?: SchedulePeriod[];
+  schedule_timezone?: string;
+};
 
 type ParamState = {
   user_id: number | null;
@@ -69,6 +81,8 @@ const emptyParams: ParamState = {
   auth_provider: "",
   group_by: "model",
 };
+
+const SCHEDULES_URL = "/api/admin/reports/schedules";
 
 // Calendar day in the admin's own timezone. toISOString() gave the UTC day,
 // so "last 7 days" started/ended a day off for anyone east of Greenwich in
@@ -115,13 +129,26 @@ export default function Reports() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [periods, setPeriods] = useState<SchedulePeriod[]>([]);
+  const [timezone, setTimezone] = useState("");
+  const [schedules, setSchedules] = useState<ScheduledReport[]>([]);
+  const [scheduling, setScheduling] = useState(false);
+  const { readOnly, writeLockProps } = useAdminWriteLock();
+
+  async function loadSchedules() {
+    try {
+      setSchedules(await api<ScheduledReport[]>(SCHEDULES_URL));
+    } catch (ex) {
+      setErr(formatApiError(ex));
+    }
+  }
 
   useEffect(() => {
-    void api<{ reports: ReportDef[]; categories: Record<string, string>; default_dates: { start_date: string; end_date: string } }>(
-      "/api/admin/reports/catalog",
-    ).then((data) => {
+    void api<Catalog>("/api/admin/reports/catalog").then((data) => {
       setCatalog(data.reports);
       setCategories(data.categories);
+      setPeriods(data.schedule_periods ?? []);
+      setTimezone(data.schedule_timezone ?? "");
       const d = applyPreset("30");
       setStart(d.start);
       setEnd(d.end);
@@ -134,6 +161,7 @@ export default function Reports() {
       }
     });
     void api<ReportOptions>("/api/admin/reports/options").then(setOptions).catch(() => {});
+    api<ScheduledReport[]>(SCHEDULES_URL).then(setSchedules, (ex) => setErr(formatApiError(ex)));
   }, []);
 
   const selected = useMemo(
@@ -559,6 +587,15 @@ export default function Reports() {
                 <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => void runExport()}>
                   Download
                 </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={busy || readOnly}
+                  title={writeLockProps.title}
+                  onClick={() => setScheduling(true)}
+                >
+                  Schedule by email…
+                </button>
               </div>
             </form>
           )}
@@ -589,6 +626,20 @@ export default function Reports() {
           )}
         </div>
       </div>
+
+      <ScheduledReports schedules={schedules} periods={periods} timezone={timezone} onReload={loadSchedules} />
+
+      {selected ? (
+        <ScheduleReportDialog
+          open={scheduling}
+          report={selected}
+          parameters={scheduleParameters(buildBody())}
+          periods={periods}
+          timezone={timezone}
+          onClose={() => setScheduling(false)}
+          onScheduled={() => void loadSchedules()}
+        />
+      ) : null}
     </AdminPage>
   );
 }

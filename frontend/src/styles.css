@@ -17738,11 +17738,22 @@ p.error,
     inset-inline-start: -0.25rem;
     transform: translateY(-50%);
   }
-  /* A model's remove button reaches past its pill, and the row of pills
-     clips what spills out of it: room above and below that takes no space. */
+  /* At least as wide as its glyph is in any font, so that the area past the
+     pill (below) is never wider than the room kept for it. */
+  .app-topbar .alpha-router-model-pill__remove {
+    min-width: 0.875rem;
+  }
+  /* A model's remove area reaches past its pill, and the row of pills clips
+     what spills out of it: room above and below that takes no space, and room
+     at the end, for the last pill's area. Stopped at that pill's end instead,
+     it was 25px wide; reaching past the row's end, it gave a row whose pills
+     all fitted something to scroll to. Free space in the row takes up the
+     room; only a full row gives its pills that much less (two models on a
+     360px phone: the row scrolls a few pixels, both pills still in view). */
   .app-topbar .topbar-selected-models {
     padding-block: 0.25rem;
     margin-block: -0.25rem;
+    padding-inline-end: 1.25rem;
   }
   /* Two or more models on a narrow phone: each pill is its model's icon and
      its remove button, as small as those allow (the name, a sliver of a
@@ -17760,11 +17771,6 @@ p.error,
      remove the first. */
   .app-topbar .topbar-selected-models .alpha-router-model-pill {
     position: relative;
-  }
-  /* The last remove area stops at its pill's end: reaching past it, it gave
-     the row something to scroll to when every pill fitted. */
-  .app-topbar .topbar-selected-models .alpha-router-model-pill:last-child {
-    overflow-x: clip;
   }
   .alpha-router-model-modal__item {
     min-height: 2.75rem;

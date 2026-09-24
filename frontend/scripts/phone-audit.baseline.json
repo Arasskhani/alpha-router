@@ -130,7 +130,7 @@
     },
     "/app/chat": {
       "smallFields": 0,
-      "smallTargets": 1
+      "smallTargets": 0
     },
     "/app/manual": {
       "smallFields": 0,
@@ -280,7 +280,7 @@
     },
     "/app/chat": {
       "smallFields": 0,
-      "smallTargets": 1
+      "smallTargets": 0
     },
     "/app/manual": {
       "smallFields": 0,
@@ -430,7 +430,7 @@
     },
     "/app/chat": {
       "smallFields": 0,
-      "smallTargets": 1
+      "smallTargets": 0
     },
     "/app/manual": {
       "smallFields": 0,

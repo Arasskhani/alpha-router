@@ -411,10 +411,23 @@ describe("the phone layout block", () => {
     expect(declarations(css, oneLine)).toContain("overflow-y: hidden");
     expect(declarations(css, oneLine)).toContain("scroll-padding-inline: 1.5rem");
     expect(declarations(css, `${oneLine}.is-drag-scrolling`)).toContain("cursor: grabbing");
-    // The last remove area stops at its pill: past it, it gave a row that fits something to scroll to.
-    expect(declarations(phone.body, ".app-topbar .topbar-selected-models .alpha-router-model-pill:last-child")).toContain(
-      "overflow-x: clip",
-    );
+    // The last remove area reaches past its pill as far as the others do, into room kept for it at the row's end:
+    // stopped at its pill it was 25px wide, and past the row's end it gave a row that fits something to scroll to.
+    expect(declarations(phone.body, ".app-topbar .topbar-selected-models .alpha-router-model-pill:last-child")).toBeNull();
+    const rem = (decls: string | null, prop: string) => {
+      const m = new RegExp(`(^|[\\s;])${prop}:\\s*(-?[\\d.]+)rem`).exec(decls ?? "");
+      return m ? Number(m[2]) : NaN;
+    };
+    const room = rem(declarations(phone.body, ".app-topbar .topbar-selected-models"), "padding-inline-end");
+    const reachBack = -rem(declarations(phone.body, ".app-topbar .alpha-router-model-pill__remove::before"), "inset-inline-start");
+    const removeWidth = rem(declarations(phone.body, ".app-topbar .alpha-router-model-pill__remove"), "min-width");
+    // The pill's padding on its remove button's side (the right, or the left on a right-to-left page), and its border.
+    const padding = /(^|[\s;])padding:\s*([^;]+)/.exec(declarations(css, ".alpha-router-model-pill") ?? "")?.[2];
+    const [, right, , left] = (padding ?? "").trim().split(/\s+/).map((value) => parseFloat(value));
+    const pillEnd = Math.min(right, left) + 1 / 16;
+    expect(pillEnd).toBeGreaterThan(0);
+    expect(removeWidth).toBeGreaterThan(0);
+    expect(room).toBeGreaterThanOrEqual(2.75 - reachBack - removeWidth - pillEnd);
     // A pill shrinks by its name only: its fixed parts (padding, border, icon, gaps, remove button) stay inside.
     expect(declarations(css, ".topbar-selected-models .alpha-router-model-pill")).toContain("min-width: 3.375rem");
     // On a narrow phone, with two or more models, a pill is its icon and its remove button.

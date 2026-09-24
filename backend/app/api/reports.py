@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_active_user, require_reports, require_reports_write
+from app.api.deps import require_reports, require_reports_write
 from app.database import get_db
 from app.models.agent import Agent
 from app.models.api_key import AlphaRouterApiKey
@@ -221,14 +221,16 @@ async def create_schedule(
 @router.post("/schedules/user")
 async def user_schedule_report(
     body: ScheduleIn,
-    user: User = Depends(require_active_user),
+    user: User = Depends(require_reports_write),
     db: AsyncSession = Depends(get_db),
 ):
-    """Users may schedule their own reports; cannot configure SMTP.
+    """A schedule of one's own, sent only to the caller's own address.
 
-    Same validation as the admin endpoint, plus: a user may only send to
-    their own address (anything else would be an unauthenticated mailer
-    the moment the sender is wired up).
+    Reports hold the whole organisation's usage, so this takes what running
+    them takes: write access to Reports. It used to take only an active
+    account, which would have let anyone have any report mailed to them the
+    moment the sender was wired up. The address rule stays: anything else
+    would be an unauthenticated mailer.
     """
     clean = _validate_schedule(body)
     own = (user.email or "").strip().lower()

@@ -373,9 +373,9 @@ function TopbarSelectedModels({ always = false }: { always?: boolean }) {
   return (
     <div className="alpha-router-selected-models topbar-selected-models">
       {api.selectedModels.map((m) => (
-        // The whole pill names its model: a squeezed pill may show no name at all.
+        // The whole pill names its model, its icon too: a squeezed pill may show no name at all.
         <span key={m.id} className="alpha-router-model-pill" title={m.name}>
-          <ModelProviderIcon modelId={m.external_id || m.id} size={14} />
+          <ModelProviderIcon modelId={m.external_id || m.id} size={14} title={m.name} />
           <span className="alpha-router-model-pill__name" title={m.name}>
             {shortTopbarModelName(m.name, m.id)}
           </span>

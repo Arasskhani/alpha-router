@@ -441,6 +441,10 @@ describe("the topbar's model pills", () => {
     });
     const pills = [...document.querySelectorAll(".topbar-selected-models .alpha-router-model-pill")];
     expect(pills.map((p) => p.getAttribute("title"))).toEqual(["mock-gpt-4o", "mock-claude-sonnet"]);
+    // Every tooltip in a pill names the model, the provider icon's too (it named only the provider).
+    for (const pill of pills) {
+      for (const el of pill.querySelectorAll("[title]")) expect(el.getAttribute("title")).toBe(pill.getAttribute("title"));
+    }
     expect(pills.map((p) => p.querySelector("button")?.getAttribute("aria-label"))).toEqual([
       "Remove mock-gpt-4o",
       "Remove mock-claude-sonnet",

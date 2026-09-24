@@ -4,9 +4,8 @@ Kept as one JSON document in ``system_settings`` (``extension.settings``):
 
 - ``site_access``: ``per_site`` (Chrome asks the first time a site is used) or
   ``all_sites`` (granted at install, which a Group Policy install does
-  silently). It changes the extension's permissions, so changing it bumps
-  ``manifest_revision`` and with it the version, and policy-installed copies
-  update to the new permissions.
+  silently). It changes the extension's permissions, so it changes the
+  package, and policy-installed copies update to the new permissions.
 - ``allowed_sites`` / ``blocked_sites``: host patterns (``example.com`` or
   ``*.example.com``). Blocked always wins; a non-empty allowed list means
   every other site is off limits. The extension checks them before it reads
@@ -36,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.model_catalog import AIModel
 from app.models.system import SystemSetting
-from app.services.extension_package import MAX_MANIFEST_REVISION, SITE_ACCESS_MODES, SITE_ACCESS_PER_SITE
+from app.services.extension_package import SITE_ACCESS_MODES, SITE_ACCESS_PER_SITE
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +69,6 @@ class ExtensionSettings:
     agent_max_steps: int = DEFAULT_MAX_STEPS
     agent_auto_mode: bool = False
     agent_review_model: str | None = None
-    manifest_revision: int = 0
 
     def to_json(self) -> dict[str, Any]:
         data = asdict(self)
@@ -152,7 +150,6 @@ def parse_settings(raw: str | None) -> ExtensionSettings:
     defaults = ExtensionSettings()
     site_access = data.get("site_access")
     max_steps = data.get("agent_max_steps")
-    revision = data.get("manifest_revision")
     review = data.get("agent_review_model")
     return ExtensionSettings(
         site_access=site_access if site_access in SITE_ACCESS_MODES else defaults.site_access,
@@ -167,7 +164,6 @@ def parse_settings(raw: str | None) -> ExtensionSettings:
         ),
         agent_auto_mode=bool(data.get("agent_auto_mode")) and isinstance(review, str) and bool(review),
         agent_review_model=review if isinstance(review, str) and review else None,
-        manifest_revision=(revision if isinstance(revision, int) and 0 <= revision <= MAX_MANIFEST_REVISION else 0),
     )
 
 
@@ -230,11 +226,6 @@ async def validated_update(
     review_list = await _model_list(db, "Review model", [review] if review else [])
     if agent_auto_mode and not review_list:
         raise ExtensionSettingsError("Auto mode needs a review model to check each action.")
-    revision = current.manifest_revision
-    if site_access != current.site_access:
-        if revision >= MAX_MANIFEST_REVISION:
-            raise ExtensionSettingsError("Site access has been changed too many times to publish another version.")
-        revision += 1
     return replace(
         current,
         site_access=site_access,
@@ -245,7 +236,6 @@ async def validated_update(
         agent_max_steps=int(agent_max_steps),
         agent_auto_mode=bool(agent_auto_mode),
         agent_review_model=review_list[0] if review_list else None,
-        manifest_revision=revision,
     )
 
 

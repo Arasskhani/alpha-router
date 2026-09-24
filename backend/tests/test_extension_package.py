@@ -26,6 +26,7 @@ from app.services.extension_package import (
     load_template,
     normalize_origin,
     package_files,
+    package_fingerprint,
     read_dist,
     update_manifest_xml,
     update_url,
@@ -35,6 +36,7 @@ TEMPLATE = {
     "manifest_version": 3,
     "name": "Alpharouter",
     "version": "0.0.0",
+    "version_name": "dev build",
     "permissions": ["sidePanel", "storage"],
     "host_permissions": [],
     "optional_host_permissions": ["<all_urls>"],
@@ -50,51 +52,55 @@ def key() -> ExtensionKey:
 
 class TestTheVersion:
     @pytest.mark.parametrize(
-        ("app_version", "revision", "expected"),
+        ("revision", "expected"),
         [
-            ("v1.2.3", 0, "1.2.3.32768"),
-            ("v1.2.3", 5, "1.2.3.32773"),
-            ("1.2.3", 0, "1.2.3.32768"),
-            ("v1.2", 0, "1.2.0.32768"),
-            ("v7", 1, "7.0.0.32769"),
-            # git describe after the tag, and a dirty tree: the tag's code or later.
-            ("v1.2.0-5-gabc1234", 0, "1.2.0.32768"),
-            ("v1.2.0-dirty", 2, "1.2.0.32770"),
-            # A pre-release stays below the release of the same numbers.
-            ("v1.3.0-rc.1", 2, "1.3.0.2"),
-            ("v1.3.0-RC2", 0, "1.3.0.0"),
-            ("v1.3.0-beta", 0, "1.3.0.0"),
-            ("v1.3.0-preview.4", 0, "1.3.0.0"),
-            # No version: below any real release.
-            ("gabc1234", 3, "0.0.0.3"),
-            ("", 0, "0.0.0.0"),
-            (None, 0, "0.0.0.0"),
-            ("v70000.1.1", 0, "65535.1.1.32768"),
-            ("v01.002.3", 0, "1.2.3.32768"),
+            (1, "1.0.0.1"),
+            (2, "1.0.0.2"),
+            (65535, "1.0.0.65535"),
+            (65536, "1.0.1.0"),
+            (65537, "1.0.1.1"),
+            (65535 * 65536 + 65535, "1.0.65535.65535"),
         ],
     )
-    def test_it_follows_the_app_version(self, app_version, revision, expected):
-        assert extension_version(app_version, revision) == expected
+    def test_it_numbers_the_package_revision(self, revision, expected):
+        assert extension_version(revision) == expected
 
-    @pytest.mark.parametrize("revision", [-1, 32768])
-    def test_the_revision_has_room_below_the_release_offset(self, revision):
+    @pytest.mark.parametrize("revision", [0, -1, 65536 * 65536])
+    def test_a_revision_outside_the_range_is_refused(self, revision):
         with pytest.raises(ValueError):
-            extension_version("v1.0.0", revision)
+            extension_version(revision)
 
-    def test_updates_move_forward(self):
+    def test_a_later_revision_is_a_higher_version(self):
         def as_tuple(v: str) -> tuple[int, ...]:
             return tuple(int(p) for p in v.split("."))
 
-        sequence = [
-            extension_version("", 0),
-            extension_version("v1.2.0-rc.1", 0),
-            extension_version("v1.2.0", 0),
-            extension_version("v1.2.0", 1),
-            extension_version("v1.2.1-rc.1", 5),
-            extension_version("v1.2.1", 0),
-        ]
-        assert [as_tuple(v) for v in sequence] == sorted(as_tuple(v) for v in sequence)
-        assert len(set(sequence)) == len(sequence)
+        versions = [extension_version(r) for r in (1, 2, 9, 10, 65535, 65536, 70000, 200000)]
+        assert [as_tuple(v) for v in versions] == sorted(as_tuple(v) for v in versions)
+        assert len(set(versions)) == len(versions)
+
+
+class TestTheFingerprint:
+    FILES = {"manifest.json": b"{}", "background.js": b"sw", "assets/a.js": b"a"}
+
+    def _fp(self, files=None, origin="https://ai.example.com", site_access="per_site", server_name="Alpharouter"):
+        return package_fingerprint(files or self.FILES, origin=origin, site_access=site_access, server_name=server_name)
+
+    def test_the_same_inputs_give_the_same_fingerprint_whatever_the_order(self):
+        assert self._fp() == self._fp(dict(reversed(list(self.FILES.items()))))
+
+    @pytest.mark.parametrize(
+        "change",
+        [
+            {"files": {**FILES, "background.js": b"sw2"}},
+            {"files": {**FILES, "assets/b.js": b"b"}},
+            {"files": {k if k != "assets/a.js" else "assets/c.js": v for k, v in FILES.items()}},
+            {"origin": "https://other.example"},
+            {"site_access": "all_sites"},
+            {"server_name": "Another"},
+        ],
+    )
+    def test_anything_that_changes_the_package_changes_it(self, change):
+        assert self._fp(**change) != self._fp()
 
 
 class TestTheOrigin:
@@ -124,8 +130,7 @@ class TestTheManifest:
     def _manifest(self, site_access: str) -> dict:
         return build_manifest(
             TEMPLATE,
-            version="1.2.3.32768",
-            version_name="v1.2.3",
+            version="1.0.0.7",
             public_key_b64="S0VZ",
             origin="https://ai.example.com",
             site_access=site_access,
@@ -134,8 +139,9 @@ class TestTheManifest:
     def test_it_is_this_servers_extension(self):
         manifest = self._manifest("per_site")
         assert manifest["key"] == "S0VZ"
-        assert manifest["version"] == "1.2.3.32768"
-        assert manifest["version_name"] == "v1.2.3"
+        assert manifest["version"] == "1.0.0.7"
+        # The app's exact build never goes into a file anyone can download.
+        assert "version_name" not in manifest
         assert manifest["update_url"] == "https://ai.example.com/extension/update.xml"
         assert manifest["web_accessible_resources"] == [
             {"resources": ["connected.html"], "matches": ["https://ai.example.com/*"]}
@@ -310,8 +316,8 @@ class TestTheUpdateManifest:
     def test_it_points_at_this_version_of_this_extension(self):
         xml = update_manifest_xml(
             extension_id="abcdefghijklmnopabcdefghijklmnop",
-            codebase=crx_url("https://ai.example.com", "1.2.3.32768"),
-            version="1.2.3.32768",
+            codebase=crx_url("https://ai.example.com", "1.0.0.7"),
+            version="1.0.0.7",
         )
         root = ElementTree.fromstring(xml)
         ns = "{http://www.google.com/update2/response}"
@@ -319,8 +325,8 @@ class TestTheUpdateManifest:
         app = root.find(f"{ns}app")
         assert app.get("appid") == "abcdefghijklmnopabcdefghijklmnop"
         check = app.find(f"{ns}updatecheck")
-        assert check.get("codebase") == "https://ai.example.com/extension/alpharouter.crx?v=1.2.3.32768"
-        assert check.get("version") == "1.2.3.32768"
+        assert check.get("codebase") == "https://ai.example.com/extension/alpharouter.crx?v=1.0.0.7"
+        assert check.get("version") == "1.0.0.7"
 
     def test_values_are_escaped(self):
         xml = update_manifest_xml(extension_id="a", codebase="https://x.example/c?a=1&b='2'", version="1")

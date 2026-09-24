@@ -15,6 +15,14 @@ What a browser actually loads is made from it here, per server:
 The ZIP is byte-for-byte reproducible (sorted entries, fixed timestamps), and
 the CRX3 is written by hand from its specification: a protobuf header with one
 RSA SHA-256 proof, then the ZIP.
+
+The version is not the app's version. A policy-installed copy updates only when
+update.xml offers a higher version, and it must update whenever the package
+changes: new code (with or without a new git tag), another site-access mode,
+another origin. So the server numbers the package itself - a revision that
+grows each time the package's fingerprint changes (extension_distribution) -
+and the version is ``1.0.<high>.<low>`` of that revision. It also keeps the
+app's exact build out of a file anyone can download.
 """
 
 from __future__ import annotations
@@ -23,7 +31,6 @@ import copy
 import hashlib
 import io
 import json
-import re
 import struct
 import zipfile
 from collections.abc import Mapping
@@ -43,36 +50,32 @@ SITE_ACCESS_MODES = (SITE_ACCESS_PER_SITE, SITE_ACCESS_ALL_SITES)
 
 #: Chrome accepts up to four dot-separated integers, each 0-65535.
 MAX_VERSION_PART = 65535
-#: The fourth number is the manifest revision for a pre-release build and this
-#: plus the revision for a release, so a release always updates a pre-release
-#: of the same A.B.C.
-RELEASE_OFFSET = 32768
-MAX_MANIFEST_REVISION = RELEASE_OFFSET - 1
+#: The first number of every version; raised only to start the count again.
+VERSION_MAJOR = 1
+MAX_PACKAGE_REVISION = MAX_VERSION_PART * 65536 + MAX_VERSION_PART
 
 CONNECTED_PAGE = "connected.html"
 UPDATE_PATH = "/extension/update.xml"
 CRX_PATH = "/extension/alpharouter.crx"
 
-_VERSION_RE = re.compile(r"^\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(.*)$")
-#: A semver pre-release right after the numbers (``-rc.1``, ``-beta2``). A
-#: ``git describe`` suffix (``-5-gabc1234``, ``-dirty``) is code at or after
-#: the tag and is not one.
-_PRERELEASE_RE = re.compile(r"^-(?:rc|alpha|beta|pre|preview|dev)(?![a-z])", re.IGNORECASE)
 _FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
 
 
-def extension_version(app_version: str | None, revision: int) -> str:
-    """``A.B.C.X`` for the manifest, from APP_VERSION and the manifest revision."""
-    if not 0 <= int(revision) <= MAX_MANIFEST_REVISION:
-        raise ValueError(f"manifest revision must be 0..{MAX_MANIFEST_REVISION}")
-    match = _VERSION_RE.match(app_version or "")
-    if match is None:
-        # No version at all ("", a bare commit id): below any real release.
-        return f"0.0.0.{int(revision)}"
-    parts = [min(int(group or 0), MAX_VERSION_PART) for group in match.groups()[:3]]
-    prerelease = bool(_PRERELEASE_RE.match(match.group(4) or ""))
-    fourth = int(revision) if prerelease else RELEASE_OFFSET + int(revision)
-    return f"{parts[0]}.{parts[1]}.{parts[2]}.{fourth}"
+def extension_version(revision: int) -> str:
+    """``1.0.<high>.<low>`` of the package revision (1 and up)."""
+    if not 1 <= int(revision) <= MAX_PACKAGE_REVISION:
+        raise ValueError(f"package revision must be 1..{MAX_PACKAGE_REVISION}")
+    return f"{VERSION_MAJOR}.0.{int(revision) // 65536}.{int(revision) % 65536}"
+
+
+def package_fingerprint(files: Mapping[str, bytes], *, origin: str, site_access: str, server_name: str) -> str:
+    """What the package is made from: the built files and everything the server patches in."""
+    digest = hashlib.sha256()
+    for name in sorted(files):
+        digest.update(name.encode("utf-8") + b"\0" + hashlib.sha256(files[name]).digest())
+    inputs = {"origin": origin, "site_access": site_access, "server_name": server_name}
+    digest.update(json.dumps(inputs, sort_keys=True).encode("utf-8"))
+    return digest.hexdigest()
 
 
 def normalize_origin(url: str) -> str:
@@ -106,7 +109,6 @@ def build_manifest(
     template: Mapping[str, Any],
     *,
     version: str,
-    version_name: str,
     public_key_b64: str,
     origin: str,
     site_access: str,
@@ -117,7 +119,8 @@ def build_manifest(
     manifest = copy.deepcopy(dict(template))
     server_pattern = f"{origin}/*"
     manifest["version"] = version
-    manifest["version_name"] = version_name
+    # Never the app's build (a git describe string) in a file anyone can fetch.
+    manifest.pop("version_name", None)
     manifest["key"] = public_key_b64
     hosts = [server_pattern]
     if site_access == SITE_ACCESS_ALL_SITES:

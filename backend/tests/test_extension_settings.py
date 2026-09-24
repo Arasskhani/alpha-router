@@ -117,9 +117,7 @@ class TestStoredSettings:
         assert settings.agent_auto_mode is False
 
     async def test_saved_settings_read_back(self, db_session):
-        saved = ExtensionSettings(
-            site_access="all_sites", blocked_sites=("bank.example",), agent_max_steps=40, manifest_revision=3
-        )
+        saved = ExtensionSettings(site_access="all_sites", blocked_sites=("bank.example",), agent_max_steps=40)
         await save_extension_settings(db_session, saved)
         await db_session.commit()
         assert await load_extension_settings(db_session) == saved
@@ -135,7 +133,6 @@ class TestStoredSettings:
                 {
                     "site_access": "some_sites",
                     "agent_max_steps": 1000,
-                    "manifest_revision": -4,
                     "blocked_sites": ["ok.example", 7],
                     "agent_auto_mode": True,
                 }
@@ -143,7 +140,6 @@ class TestStoredSettings:
         )
         assert odd.site_access == "per_site"
         assert odd.agent_max_steps == 25
-        assert odd.manifest_revision == 0
         assert odd.blocked_sites == ("ok.example",)
         # Auto mode without a review model is never read back as on.
         assert odd.agent_auto_mode is False
@@ -199,11 +195,8 @@ class TestAnAdminsChange:
         with pytest.raises(ExtensionSettingsError, match="between 5 and 100"):
             await validated_update(db_session, ExtensionSettings(), **_update(agent_max_steps=steps))
 
-    async def test_changing_site_access_publishes_a_new_version(self, db_session):
-        start = ExtensionSettings(manifest_revision=2)
-        same = await validated_update(db_session, start, **_update(site_access="per_site", blocked_sites=["x.example"]))
-        assert same.manifest_revision == 2
-        changed = await validated_update(db_session, start, **_update(site_access="all_sites"))
-        assert changed.manifest_revision == 3
-        back = await validated_update(db_session, changed, **_update(site_access="per_site"))
-        assert back.manifest_revision == 4
+    async def test_site_access_is_saved_as_asked(self, db_session):
+        changed = await validated_update(db_session, ExtensionSettings(), **_update(site_access="all_sites"))
+        assert changed.site_access == "all_sites"
+        with pytest.raises(ExtensionSettingsError, match="per site or all sites"):
+            await validated_update(db_session, ExtensionSettings(), **_update(site_access="some_sites"))

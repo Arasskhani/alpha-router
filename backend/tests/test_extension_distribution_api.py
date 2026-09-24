@@ -48,6 +48,7 @@ def built_extension(tmp_path, monkeypatch) -> Path:
 @pytest.fixture(autouse=True)
 def _server(monkeypatch, session_factory):
     monkeypatch.setattr(extension_keys, "AsyncSessionLocal", session_factory)
+    monkeypatch.setattr(extension_distribution, "AsyncSessionLocal", session_factory)
     # The admin IP guard reads its allowlist in a session of its own.
     monkeypatch.setattr("app.services.admin_ip_guard.AsyncSessionLocal", session_factory)
     monkeypatch.setattr(get_settings(), "frontend_url", f"{SERVER}/")
@@ -81,7 +82,7 @@ class TestTheSettingsTab:
         info = resp.json()
         key = await load_or_create_signing_key(db_session)
         assert info["available"] is True and info["permitted"] is True
-        assert info["version"] == "1.4.0.32768"
+        assert info["version"] == "1.0.0.1"
         assert info["extension_id"] == key.extension_id
         assert info["update_url"] == f"{SERVER}/extension/update.xml"
         assert info["gpo_value"] == f"{key.extension_id};{SERVER}/extension/update.xml"
@@ -150,15 +151,15 @@ class TestTheDownload:
         resp = await client.get("/api/extension/download")
         assert resp.status_code == 200, resp.text
         assert resp.headers["content-type"] == "application/zip"
-        assert resp.headers["content-disposition"] == 'attachment; filename="alpharouter-extension-1.4.0.32768.zip"'
+        assert resp.headers["content-disposition"] == 'attachment; filename="alpharouter-extension-1.0.0.1.zip"'
         assert resp.headers["cache-control"] == "no-store"
         archive = zipfile.ZipFile(io.BytesIO(resp.content))
         assert sorted(archive.namelist()) == ["background.js", "config.json", "icons/icon-16.png", "manifest.json"]
         manifest = json.loads(archive.read("manifest.json"))
         key = await load_or_create_signing_key(db_session)
         assert manifest["key"] == key.public_key_b64
-        assert manifest["version"] == "1.4.0.32768"
-        assert manifest["version_name"] == "v1.4.0"
+        assert manifest["version"] == "1.0.0.1"
+        assert "version_name" not in manifest
         assert manifest["host_permissions"] == [f"{SERVER}/*"]
         assert manifest["optional_host_permissions"] == ["<all_urls>"]
         assert manifest["web_accessible_resources"] == [{"resources": ["connected.html"], "matches": [f"{SERVER}/*"]}]
@@ -166,20 +167,22 @@ class TestTheDownload:
         assert json.loads(archive.read("config.json")) == {
             "serverUrl": SERVER,
             "serverName": "Alpharouter",
-            "extensionVersion": "1.4.0.32768",
+            "extensionVersion": "1.0.0.1",
         }
 
     async def test_all_sites_access_is_in_the_manifest_with_a_new_version(
         self, client, db_session, user, built_extension
     ):
-        await save_extension_settings(db_session, ExtensionSettings(site_access="all_sites", manifest_revision=1))
-        await db_session.commit()
         _sign_in(client, user)
+        first = zipfile.ZipFile(io.BytesIO((await client.get("/api/extension/download")).content))
+        before = json.loads(first.read("manifest.json"))
+        await save_extension_settings(db_session, ExtensionSettings(site_access="all_sites"))
+        await db_session.commit()
         archive = zipfile.ZipFile(io.BytesIO((await client.get("/api/extension/download")).content))
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["host_permissions"] == [f"{SERVER}/*", "<all_urls>"]
         assert "optional_host_permissions" not in manifest
-        assert manifest["version"] == "1.4.0.32769"
+        assert (before["version"], manifest["version"]) == ("1.0.0.1", "1.0.0.2")
 
     async def test_the_key_and_id_stay_the_same_across_downloads(self, client, user, built_extension):
         _sign_in(client, user)
@@ -217,6 +220,109 @@ class TestTheDownload:
         assert "not built" in resp.json()["detail"]
 
 
+class TestTheVersionFollowsThePackage:
+    async def _version(self, client) -> str:
+        return (await client.get("/api/extension/info")).json()["version"]
+
+    async def test_the_same_package_keeps_its_version(self, client, user, built_extension):
+        _sign_in(client, user)
+        assert await self._version(client) == "1.0.0.1"
+        assert await self._version(client) == "1.0.0.1"
+
+    async def test_new_code_is_a_new_version_even_without_a_new_tag(self, client, user, built_extension):
+        """git describe gives v1.1.0-256-g... for every build after v1.1.0: the tag alone would never move."""
+        _sign_in(client, user)
+        assert await self._version(client) == "1.0.0.1"
+        (built_extension / "background.js").write_text("// sw, changed\n", encoding="utf-8")
+        assert await self._version(client) == "1.0.0.2"
+
+    async def test_a_new_origin_is_a_new_version(self, client, user, built_extension, monkeypatch):
+        _sign_in(client, user)
+        assert await self._version(client) == "1.0.0.1"
+        monkeypatch.setattr(get_settings(), "frontend_url", "https://ai2.example.com")
+        assert await self._version(client) == "1.0.0.2"
+
+    async def test_the_app_version_alone_does_not_change_it(self, client, user, built_extension, monkeypatch):
+        _sign_in(client, user)
+        assert await self._version(client) == "1.0.0.1"
+        monkeypatch.setattr(get_settings(), "app_version", "v1.5.0")
+        assert await self._version(client) == "1.0.0.1"
+
+    async def test_two_builds_answering_at_once_keep_their_numbers(self, client, user, built_extension):
+        """Old and new workers during an upgrade: the counter must not climb on every request."""
+        _sign_in(client, user)
+        background = built_extension / "background.js"
+        old = background.read_text(encoding="utf-8")
+        assert await self._version(client) == "1.0.0.1"
+        background.write_text("// new build\n", encoding="utf-8")
+        assert await self._version(client) == "1.0.0.2"
+        background.write_text(old, encoding="utf-8")
+        assert await self._version(client) == "1.0.0.1"
+        background.write_text("// new build\n", encoding="utf-8")
+        assert await self._version(client) == "1.0.0.2"
+
+    async def test_an_old_build_seen_long_ago_gets_a_new_number(self, client, user, built_extension):
+        _sign_in(client, user)
+        background = built_extension / "background.js"
+        first = background.read_text(encoding="utf-8")
+        assert await self._version(client) == "1.0.0.1"
+        for i in range(3):
+            background.write_text(f"// build {i}\n", encoding="utf-8")
+            await self._version(client)
+        background.write_text(first, encoding="utf-8")
+        assert await self._version(client) == "1.0.0.5"
+
+    async def test_the_counter_by_fingerprint(self):
+        from app.services.extension_distribution import package_revision
+
+        assert await package_revision("fp-a") == 1
+        assert await package_revision("fp-b") == 2
+        assert await package_revision("fp-b") == 2
+        assert await package_revision("fp-a") == 1
+
+
+class TestTwoWorkersSeeANewBuildAtOnce:
+    async def test_the_one_whose_update_loses_takes_the_next_number(self, session_factory, monkeypatch):
+        from sqlalchemy.sql.dml import Update
+
+        from app.models.system import SystemSetting
+        from app.services.extension_distribution import PACKAGE_KEY, package_revision
+
+        assert await package_revision("fp-a") == 1
+
+        class _Racing:
+            """A session whose first UPDATE finds another worker already moved the counter on."""
+
+            def __init__(self, inner):
+                self._inner = inner
+                self.raced = False
+
+            async def __aenter__(self):
+                await self._inner.__aenter__()
+                return self
+
+            async def __aexit__(self, *exc):
+                return await self._inner.__aexit__(*exc)
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+            async def execute(self, statement, *args, **kwargs):
+                if isinstance(statement, Update) and not self.raced:
+                    self.raced = True
+                    async with session_factory() as other:
+                        row = await other.get(SystemSetting, PACKAGE_KEY)
+                        row.value = json.dumps({"latest": 2, "recent": {"fp-a": 1, "fp-b": 2}}, sort_keys=True)
+                        await other.commit()
+                return await self._inner.execute(statement, *args, **kwargs)
+
+        monkeypatch.setattr(extension_distribution, "AsyncSessionLocal", lambda: _Racing(session_factory()))
+        assert await package_revision("fp-c") == 3
+        async with session_factory() as session:
+            stored = json.loads((await session.get(SystemSetting, PACKAGE_KEY)).value)
+        assert stored == {"latest": 3, "recent": {"fp-a": 1, "fp-b": 2, "fp-c": 3}}
+
+
 class TestGroupPolicyUpdates:
     async def test_update_xml_and_the_crx_agree(self, client, db_session, built_extension):
         xml = await client.get("/extension/update.xml")
@@ -228,19 +334,22 @@ class TestGroupPolicyUpdates:
         app = ElementTree.fromstring(xml.text).find(f"{ns}app")
         check = app.find(f"{ns}updatecheck")
         assert app.get("appid") == key.extension_id
-        assert check.get("version") == "1.4.0.32768"
-        assert check.get("codebase") == f"{SERVER}/extension/alpharouter.crx?v=1.4.0.32768"
+        assert check.get("version") == "1.0.0.1"
+        assert check.get("codebase") == f"{SERVER}/extension/alpharouter.crx?v=1.0.0.1"
+        # The app's version is for admins; it is not published here.
+        assert "1.4.0" not in xml.text
 
-        crx = await client.get("/extension/alpharouter.crx?v=1.4.0.32768")
+        crx = await client.get("/extension/alpharouter.crx?v=1.0.0.1")
         assert crx.status_code == 200
         assert crx.headers["content-type"] == "application/x-chrome-extension"
         assert crx.content[:4] == b"Cr24" and struct.unpack("<I", crx.content[4:8])[0] == 3
         header_size = struct.unpack("<I", crx.content[8:12])[0]
         archive = zipfile.ZipFile(io.BytesIO(crx.content[12 + header_size :]))
         manifest = json.loads(archive.read("manifest.json"))
-        assert manifest["version"] == "1.4.0.32768"
+        assert manifest["version"] == "1.0.0.1"
         assert manifest["key"] == key.public_key_b64
         assert key.public_der in crx.content[12 : 12 + header_size]
+        assert b"1.4.0" not in crx.content
 
     async def test_they_need_no_session_but_404_when_unavailable(self, client, monkeypatch, tmp_path):
         monkeypatch.setattr(extension_distribution, "resolve_extension_dist", lambda: tmp_path / "missing")
@@ -276,8 +385,8 @@ class TestTheAdminCard:
         assert resp.status_code == 200, resp.text
         saved = resp.json()["settings"]
         assert saved["blocked_sites"] == ["*.gambling.example", "bank.example"]
-        assert saved["manifest_revision"] == 1
-        assert resp.json()["distribution"]["version"] == "1.4.0.32769"
+        assert "manifest_revision" not in saved
+        assert resp.json()["distribution"]["version"] == "1.0.0.1"
         assert (await load_extension_settings(db_session)).agent_max_steps == 30
 
         rows = (

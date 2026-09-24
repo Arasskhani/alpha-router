@@ -10,17 +10,23 @@ IT pastes into Group Policy. Anything that makes a download impossible is an
 from __future__ import annotations
 
 import ipaddress
+import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 
+from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.branding import PRODUCT_NAME
 from app.config import get_settings
+from app.database import AsyncSessionLocal
+from app.models.system import SystemSetting
 from app.services.extension_keys import ExtensionKey, ExtensionKeyUnavailable, load_or_create_signing_key
 from app.services.extension_package import (
+    MAX_PACKAGE_REVISION,
     build_crx3,
     build_manifest,
     build_zip,
@@ -30,6 +36,7 @@ from app.services.extension_package import (
     load_template,
     normalize_origin,
     package_files,
+    package_fingerprint,
     read_dist,
     update_manifest_xml,
     update_url,
@@ -39,6 +46,14 @@ from app.services.extension_settings import ExtensionSettings, load_extension_se
 UNAVAILABLE_NOT_BUILT = "not_built"
 UNAVAILABLE_KEY_UNREADABLE = "key_unreadable"
 UNAVAILABLE_FRONTEND_URL = "frontend_url"
+
+#: ``{"latest": n, "recent": {fingerprint: revision}}``: the package's revision
+#: counter, and the revisions of the last few fingerprints seen.
+PACKAGE_KEY = "extension.package"
+#: Fingerprints remembered with their revision. Two builds answering at once
+#: (old and new workers during an upgrade) then keep their numbers instead of
+#: bumping the counter on every request.
+_RECENT_FINGERPRINTS = 3
 
 
 class ExtensionUnavailable(Exception):
@@ -96,11 +111,59 @@ def server_origin(request_host: str | None) -> str:
     return origin
 
 
+def _parse_package_state(raw: str | None) -> tuple[int, dict[str, int]]:
+    try:
+        data = json.loads(raw or "")
+        latest = int(data["latest"])
+        recent = {str(fp): int(rev) for fp, rev in dict(data["recent"]).items()}
+    except (ValueError, TypeError, KeyError):
+        return 0, {}
+    return latest, recent
+
+
+async def package_revision(fingerprint: str) -> int:
+    """The revision of the package with this fingerprint; a new fingerprint gets the next number.
+
+    Committed in a session of its own (a version handed out must not be rolled
+    back with the request) and with a compare-and-set update, so two workers
+    that see the same new build agree on one number.
+    """
+    async with AsyncSessionLocal() as session:
+        for _ in range(8):
+            row = await session.get(SystemSetting, PACKAGE_KEY, populate_existing=True)
+            stored = cast("str | None", row.value) if row is not None else None
+            latest, recent = _parse_package_state(stored)
+            if fingerprint in recent:
+                return recent[fingerprint]
+            revision = latest + 1
+            if revision > MAX_PACKAGE_REVISION:
+                raise ExtensionUnavailable(UNAVAILABLE_NOT_BUILT, "The extension's version counter is exhausted.")
+            recent[fingerprint] = revision
+            kept = dict(sorted(recent.items(), key=lambda item: item[1])[-_RECENT_FINGERPRINTS:])
+            value = json.dumps({"latest": revision, "recent": kept}, sort_keys=True)
+            if row is None:
+                session.add(SystemSetting(key=PACKAGE_KEY, value=value))
+                try:
+                    await session.commit()
+                except IntegrityError:
+                    await session.rollback()
+                    continue
+                return revision
+            result = await session.execute(
+                update(SystemSetting)
+                .where(SystemSetting.key == PACKAGE_KEY, SystemSetting.value == stored)
+                .values(value=value)
+            )
+            await session.commit()
+            if int(getattr(result, "rowcount", 0) or 0) == 1:
+                return revision
+    raise ExtensionUnavailable(UNAVAILABLE_NOT_BUILT, "The extension's version could not be recorded; try again.")
+
+
 @dataclass(frozen=True)
 class ExtensionBuild:
     origin: str
     version: str
-    version_name: str
     key: ExtensionKey
     settings: ExtensionSettings
     files: dict[str, bytes]
@@ -136,13 +199,11 @@ async def current_build(db: AsyncSession, *, request_host: str | None) -> Extens
     except ExtensionKeyUnavailable as exc:
         raise ExtensionUnavailable(UNAVAILABLE_KEY_UNREADABLE, str(exc)) from exc
     settings = await load_extension_settings(db)
-    app_version = get_settings().app_version.strip()
-    version = extension_version(app_version, settings.manifest_revision)
-    version_name = app_version or "development"
+    fingerprint = package_fingerprint(files, origin=origin, site_access=settings.site_access, server_name=PRODUCT_NAME)
+    version = extension_version(await package_revision(fingerprint))
     manifest = build_manifest(
         template,
         version=version,
-        version_name=version_name,
         public_key_b64=key.public_key_b64,
         origin=origin,
         site_access=settings.site_access,
@@ -151,7 +212,6 @@ async def current_build(db: AsyncSession, *, request_host: str | None) -> Extens
     return ExtensionBuild(
         origin=origin,
         version=version,
-        version_name=version_name,
         key=key,
         settings=settings,
         files=package_files(files, manifest=manifest, config=config),

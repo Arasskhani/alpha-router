@@ -55,7 +55,9 @@ function onUnauthorized(path: string) {
   void import("./lib/session").then((m) => m.purgePrivateModeData()).catch(() => {});
   localStorage.removeItem(STORAGE_KEYS.token);
   localStorage.removeItem(STORAGE_KEYS.role);
-  if (handlingUnauthorized || window.location.pathname === "/login") return;
+  // "/" decides for itself where to go without a session (HomeRedirect): a
+  // reload to /login on top of that would load the sign-in page twice.
+  if (handlingUnauthorized || window.location.pathname === "/login" || window.location.pathname === "/") return;
   handlingUnauthorized = true;
   window.location.assign("/login");
 }

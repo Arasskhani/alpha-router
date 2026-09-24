@@ -3,24 +3,32 @@
 ``encrypt_secret`` keeps a value that already is valid ciphertext unchanged, so
 a record can be saved again without encrypting twice. Applied to a secret typed
 into a form, that was a hole: whoever holds a copy of a stored token (a database
-backup, an export) could submit it as a connection's API key. Saved unchanged,
-it was later decrypted into the real secret it holds - another connection's
-key, the SMTP password - and sent to the base URL the form names. The SMTP
-password was closed the same way.
+backup, an export) could submit it as a connection's API key, an LDAP bind
+password or an OIDC client secret. Saved unchanged, it was later decrypted into
+the real secret it holds - another connection's key, the SMTP password - and
+sent to the server the form names. The SMTP password was closed the same way;
+these are the others.
 """
 
 from __future__ import annotations
+
+import json
 
 import pytest
 from sqlalchemy import select
 
 from app.api.admin import ENCRYPTED_API_KEY_TYPED
+from app.api.authentication import ENCRYPTED_BIND_PASSWORD_TYPED, ENCRYPTED_CLIENT_SECRET_TYPED
 from app.config import get_settings
 from app.core.security import create_access_token
+from app.models.auth_provider import AuthProviderConfig
 from app.models.connection import Connection
+from app.services.auth_config import decrypt_provider_config, save_provider_config
 from app.services.secret_crypto import decrypt_secret, encrypt_secret, reset_fernet_cache
 
 CONNECTIONS = "/api/admin/connections"
+LDAP = "/api/admin/authentication/ldap"
+OIDC = "/api/admin/authentication/oidc"
 
 
 @pytest.fixture(autouse=True)
@@ -128,3 +136,51 @@ class TestConnectionApiKey:
         db_session.expire_all()
         [conn] = await _connections(db_session)
         assert decrypt_secret(conn.api_key_encrypted) == "sk-rotated"
+
+
+class TestLdapBindPassword:
+    @pytest.mark.parametrize("path", [LDAP, f"{LDAP}/test"])
+    async def test_a_stored_token_typed_as_the_password_is_refused(self, client, admin, db_session, path):
+        headers = _sign_in(client, admin.username)
+        body = {"enabled": True, "dc_host": "dc.example.com", "bind_username": "svc", "bind_password": _stolen_token()}
+        send = client.put if path == LDAP else client.post
+        resp = await send(path, json=body, headers=headers)
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == ENCRYPTED_BIND_PASSWORD_TYPED
+        assert await db_session.get(AuthProviderConfig, "ldap") is None
+
+
+class TestOidcClientSecret:
+    async def test_a_stored_token_typed_as_the_client_secret_is_refused(self, client, admin, db_session):
+        headers = _sign_in(client, admin.username)
+        body = {
+            "enabled": True,
+            "issuer": "https://idp.example.com",
+            "client_id": "alpharouter",
+            "client_secret": _stolen_token(),
+        }
+        resp = await client.put(OIDC, json=body, headers=headers)
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == ENCRYPTED_CLIENT_SECRET_TYPED
+        assert await db_session.get(AuthProviderConfig, "oidc") is None
+
+
+class TestSavedProviderConfig:
+    async def test_a_value_that_is_a_stored_token_is_encrypted_again_not_kept(self, db_session):
+        """Below the API check, the save path itself never keeps a token as it is:
+        it decrypts back to the token text, never to the secret the token holds."""
+        token = _stolen_token()
+        await save_provider_config(
+            db_session, "oidc", True, {"issuer": "https://idp.example.com", "client_secret": token}
+        )
+        row = await db_session.get(AuthProviderConfig, "oidc")
+        stored = json.loads(row.config_json)["client_secret"]
+        assert stored != token
+        assert decrypt_provider_config("oidc", {"client_secret": stored})["client_secret"] == token
+
+    async def test_a_plain_secret_round_trips(self, db_session):
+        await save_provider_config(db_session, "ldap", True, {"bind_password": "p@ss"})
+        row = await db_session.get(AuthProviderConfig, "ldap")
+        stored = json.loads(row.config_json)["bind_password"]
+        assert stored != "p@ss"
+        assert decrypt_provider_config("ldap", {"bind_password": stored})["bind_password"] == "p@ss"

@@ -38,8 +38,21 @@ from app.services.saml_sp import (
 from app.services.saml_sp import (
     public_view as saml_public_view,
 )
+from app.services.secret_crypto import is_own_ciphertext
 
 router = APIRouter(prefix="/api/admin/authentication", tags=["authentication"])
+
+#: A stored token typed where a secret goes. Saved, it used to be kept as it
+#: was (it already looked encrypted) and so decrypted at sign-in into whatever
+#: secret it holds, then sent to the directory or identity provider named here.
+ENCRYPTED_BIND_PASSWORD_TYPED = (
+    "That is an encrypted value from Alpharouter's own database, not a password. "
+    "Type the service account's password itself."
+)
+ENCRYPTED_CLIENT_SECRET_TYPED = (
+    "That is an encrypted value from Alpharouter's own database, not a client secret. "
+    "Type the client secret from your identity provider itself."
+)
 
 
 class LdapSimpleIn(BaseModel):
@@ -95,6 +108,8 @@ async def get_ldap(db: AsyncSession = Depends(get_db), _: User = Depends(require
 async def save_ldap(
     body: LdapSimpleIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_authentication_write)
 ):
+    if is_own_ciphertext(body.bind_password):
+        raise HTTPException(400, ENCRYPTED_BIND_PASSWORD_TYPED)
     existing_row = await db.get(AuthProviderConfig, "ldap")
     existing: dict = {}
     if existing_row and existing_row.config_json:
@@ -153,6 +168,8 @@ async def test_ldap(
     _: User = Depends(require_authentication_write),
 ):
     """Bind with the service account and run a small LDAP query over LDAPS."""
+    if is_own_ciphertext(body.bind_password):
+        raise HTTPException(400, ENCRYPTED_BIND_PASSWORD_TYPED)
     existing_row = await db.get(AuthProviderConfig, "ldap")
     existing: dict = {}
     if existing_row and existing_row.config_json:
@@ -222,6 +239,8 @@ async def get_oidc(db: AsyncSession = Depends(get_db), _: User = Depends(require
 async def save_oidc(
     body: OidcConfigIn, db: AsyncSession = Depends(get_db), _: User = Depends(require_authentication_write)
 ):
+    if is_own_ciphertext(body.client_secret):
+        raise HTTPException(400, ENCRYPTED_CLIENT_SECRET_TYPED)
     existing = await get_provider_config(db, "oidc")
     data = body.model_dump()
     if data.get("client_secret") == "********":

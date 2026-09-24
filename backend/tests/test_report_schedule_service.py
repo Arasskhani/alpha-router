@@ -116,6 +116,31 @@ class TestScheduleTrigger:
             svc.first_run("0 9 30 2 *", NOW, UTC)
 
 
+class TestRunAfter:
+    BERLIN = zoneinfo.ZoneInfo("Europe/Berlin")
+
+    def test_a_time_of_day_runs_once_on_the_night_the_clocks_go_back(self):
+        # 02:30 comes round twice in Berlin on 25 October 2026: 00:30 and 01:30 UTC.
+        due = dt.datetime(2026, 10, 25, 0, 30)
+        assert svc.run_after("30 2 * * *", due, due + dt.timedelta(seconds=5), self.BERLIN) == dt.datetime(
+            2026, 10, 26, 1, 30
+        )
+        new_york = zoneinfo.ZoneInfo("America/New_York")
+        due = dt.datetime(2026, 11, 1, 5, 30)  # 01:30, the first time
+        assert svc.run_after("30 1 * * 0", due, due, new_york) == dt.datetime(2026, 11, 8, 6, 30)
+
+    def test_a_schedule_every_few_minutes_runs_through_the_repeated_hour(self):
+        due = dt.datetime(2026, 10, 25, 0, 45)  # 02:45 summer time; 02:00 winter time comes next
+        assert svc.run_after("*/15 * * * *", due, due, self.BERLIN) == dt.datetime(2026, 10, 25, 1, 0)
+
+    def test_a_late_run_moves_on_to_the_next_time_after_it(self):
+        assert svc.run_after("0 9 * * *", dt.datetime(2026, 9, 21, 9, 0), NOW, UTC) == dt.datetime(2026, 9, 24, 9, 0)
+
+    def test_a_date_that_never_comes_is_refused(self):
+        with pytest.raises(ValueError, match="never"):
+            svc.run_after("0 9 30 2 *", NOW, NOW, UTC)
+
+
 # --- periods ---------------------------------------------------------------------
 
 
@@ -512,6 +537,15 @@ class TestRunDueSchedules:
 
         await svc.run_due_schedules(session_factory, now=NOW + dt.timedelta(minutes=1), tz=UTC)
         assert len(sent) == 1, "not sent again the next minute"
+
+    async def test_the_night_the_clocks_go_back_sends_it_once(self, session_factory, sent):
+        berlin = zoneinfo.ZoneInfo("Europe/Berlin")
+        first_pass = dt.datetime(2026, 10, 25, 0, 30)  # 02:30 summer time
+        schedule_id = await self._row(session_factory, cron_expression="30 2 * * *", next_run_at=first_pass)
+        await svc.run_due_schedules(session_factory, now=first_pass, tz=berlin)
+        assert (await self._get(session_factory, schedule_id)).next_run_at == dt.datetime(2026, 10, 26, 1, 30)
+        await svc.run_due_schedules(session_factory, now=dt.datetime(2026, 10, 25, 1, 30), tz=berlin)
+        assert sent == [(schedule_id, first_pass)], "not again at 02:30 winter time"
 
     async def test_a_schedule_not_due_yet_or_paused_does_not_run(self, session_factory, sent):
         await self._row(session_factory, next_run_at=NOW + dt.timedelta(minutes=1))

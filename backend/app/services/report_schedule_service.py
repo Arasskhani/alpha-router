@@ -513,11 +513,37 @@ async def _pause_unrunnable(db: AsyncSession, schedule_id: int, reason: str, now
     )
 
 
+_NEVER = "The cron expression never comes round (a date that does not exist?)."
+
+
 def first_run(cron_expression: str, now: dt.datetime, tz: dt.tzinfo | None = None) -> dt.datetime:
     """When a schedule set up (or resumed) at ``now`` first runs. Raises ValueError if never."""
     following = next_run_after(schedule_trigger(cron_expression, tz), now)
     if following is None:
-        raise ValueError("The cron expression never comes round (a date that does not exist?).")
+        raise ValueError(_NEVER)
+    return following
+
+
+def _wall_clock(moment: dt.datetime, tz: dt.tzinfo) -> dt.datetime:
+    """A naive UTC instant as the server's clock reads it (either pass of a repeated hour alike)."""
+    return moment.replace(tzinfo=dt.UTC).astimezone(tz).replace(tzinfo=None, fold=0)
+
+
+def run_after(cron_expression: str, due_at: dt.datetime, now: dt.datetime, tz: dt.tzinfo | None = None) -> dt.datetime:
+    """When a schedule due at ``due_at``, and run at ``now``, runs next. Raises ValueError if never.
+
+    The first time its expression comes round after ``now``, except on the
+    night the clocks go back: the time it has just run at comes round again
+    an hour later, and standard cron does not run a job twice for one time of
+    day, so neither does this.
+    """
+    tz = tz or get_server_timezone()
+    trigger = schedule_trigger(cron_expression, tz)
+    following = next_run_after(trigger, now)
+    if following is not None and _wall_clock(following, tz) == _wall_clock(due_at, tz):
+        following = next_run_after(trigger, following)
+    if following is None:
+        raise ValueError(_NEVER)
     return following
 
 
@@ -532,7 +558,7 @@ async def _run_one(
     """Claim one due schedule and run it. The status, or None if someone else had it."""
     async with session_factory() as db:
         try:
-            following = first_run(cron_expression, now, tz)
+            following = run_after(cron_expression, due_at, now, tz)
         except ValueError as exc:
             await _pause_unrunnable(db, schedule_id, str(exc), now)
             await db.commit()

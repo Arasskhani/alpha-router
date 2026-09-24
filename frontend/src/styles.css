@@ -17457,25 +17457,34 @@ p.error,
     min-height: 2.75rem;
   }
   /* The model search: the magnifier (the model picker) and the "+" (another
-     model) were 12px and 23px wide in one 45px pill. Each is 36px wide, so
-     the model's name beside them keeps its room on a 360px phone. */
-  /* 0.15rem more from the logo: 0.5rem in all, as far as the magnifier's
-     hit area reaches out (8px), so it does not take the logo's edge. */
+     model) were 12px and 23px wide in one 45px pill. Each is at least 36px
+     wide, so the model's name beside them keeps its room on a 360px phone;
+     the magnifier grows with its "Search Models" label, which shows above
+     640px. The pill keeps 0.5rem from the logo and from the model pills in
+     all, as far as the magnifier's and the "+"'s hit areas reach out (8px),
+     so neither takes the edge of what is beside it. */
   .app-topbar .topbar-model-search {
     flex: 0 0 auto;
     width: auto;
     min-width: 0;
     max-width: none;
-    margin-inline-start: 0.15rem;
+    margin-inline: 0.15rem;
     padding: 0;
     gap: 0;
   }
   .app-topbar .topbar-model-search__field,
   .app-topbar .topbar-model-search__add {
-    flex: 0 0 2.25rem;
     justify-content: center;
-    width: 2.25rem;
+    min-width: 2.25rem;
     height: 100%;
+  }
+  .app-topbar .topbar-model-search__field {
+    flex: 0 0 auto;
+    padding-inline: 0.55rem;
+  }
+  .app-topbar .topbar-model-search__add {
+    flex: 0 0 2.25rem;
+    width: 2.25rem;
   }
   /* Hit areas that reach one way: the magnifier's and the "+"'s away from
      each other, a model's remove button's away from the model's name (it

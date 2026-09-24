@@ -361,21 +361,31 @@ describe("the phone layout block", () => {
     const pills = declarations(phone.body, ".app-topbar .topbar-selected-models");
     expect(rem(pills, "padding-block")).toBeGreaterThanOrEqual((2.75 - 2.25) / 2);
     expect(rem(pills, "margin-block")).toBe(-rem(pills, "padding-block"));
-    // The model search's two buttons, 36px wide side by side: each one's area reaches away from the other…
+    // The model search's two buttons, at least 36px wide side by side: each one's area reaches away from the other…
     const searchButtons = declarations(
       phone.body,
       ".app-topbar .topbar-model-search__field,\n  .app-topbar .topbar-model-search__add",
     );
-    const buttonWidth = rem(searchButtons, "width");
+    const buttonWidth = rem(searchButtons, "min-width");
     expect(buttonWidth).toBe(2.25);
+    expect(rem(declarations(phone.body, ".app-topbar .topbar-model-search__add"), "width")).toBe(buttonWidth);
+    // The magnifier grows with its "Search Models" label, which only 640px and under hide.
+    const field = declarations(phone.body, ".app-topbar .topbar-model-search__field");
+    expect(field).toContain("flex: 0 0 auto");
+    expect(field).not.toMatch(/(^|[\s;])width:/);
+    expect(
+      mediaBlocks("(max-width: 640px)").some((b) =>
+        (declarations(b.body, ".topbar-model-search__field > span") ?? "").includes("display: none"),
+      ),
+    ).toBe(true);
     const fieldArea = declarations(phone.body, ".app-topbar .topbar-model-search__field::before");
     expect(fieldArea).toContain("inset-inline-end: 0");
     expect(fieldArea).toContain("transform: translateY(-50%)");
     expect(declarations(phone.body, ".app-topbar .topbar-model-search__add::before")).toContain("inset-inline-start: 0");
-    // …and the magnifier's reaches no further than the space kept from the logo.
+    // …no further than the space kept on each side: from the logo, and from the model pills.
     const pill = declarations(phone.body, ".app-topbar .topbar-model-search");
     const leftGap = rem(declarations(phone.body, ".topbar-left,\n  .topbar-left:has(.topbar-model-search)"), "gap");
-    expect(rem(pill, "margin-inline-start") + leftGap).toBeCloseTo(2.75 - buttonWidth, 5);
+    expect(rem(pill, "margin-inline") + leftGap).toBeCloseTo(2.75 - buttonWidth, 5);
     expect(outranks(".app-topbar .topbar-model-search", ".topbar-model-search")).toBe(true);
     // A model's remove area reaches back into the gap before it, not over the model's name.
     const removeArea = declarations(phone.body, ".app-topbar .alpha-router-model-pill__remove::before");

@@ -3,7 +3,7 @@
  * only offline.html and answers only GET page loads of app routes.
  */
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { publicScript, runWorker } from "../test/serviceWorkerHarness";
 
@@ -49,6 +49,35 @@ describe("installing", () => {
     const rev = createHash("sha256").update(publicScript("offline.html")).digest("hex").slice(0, 12);
     // After editing offline.html, set OFFLINE_REV in sw.js to this value.
     expect(SOURCE).toContain(`const OFFLINE_REV = "${rev}";`);
+  });
+});
+
+describe("letting requests that are not page loads skip the worker", () => {
+  const RULE = [{ condition: { not: { requestMode: "navigate" } }, source: "network" }];
+
+  it("registers a static route to the network where the browser supports it", async () => {
+    const addRoutes = vi.fn(async () => undefined);
+    const w = worker();
+    await w.lifecycle("install", { addRoutes });
+    expect(addRoutes).toHaveBeenCalledWith(RULE);
+    expect(await w.caches.keys()).toHaveLength(1);
+  });
+
+  it("still installs where static routing is missing, throws or is refused", async () => {
+    for (const addRoutes of [
+      undefined,
+      () => {
+        throw new TypeError("unsupported rule");
+      },
+      async () => {
+        throw new TypeError("rejected rule");
+      },
+    ]) {
+      const w = worker();
+      await w.lifecycle("install", addRoutes ? { addRoutes } : {});
+      expect(w.self.skipWaiting).toHaveBeenCalled();
+      expect(await w.caches.keys()).toHaveLength(1);
+    }
   });
 });
 

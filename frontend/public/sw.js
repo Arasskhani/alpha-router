@@ -21,6 +21,23 @@ const OFFLINE_URL = "/offline.html";
 const APP_ROUTE = /^\/(?:$|login$|app(?:\/|$)|admin(?:\/|$))/;
 
 self.addEventListener("install", (event) => {
+  // Any fetch handler makes every request wait for the worker to start, even
+  // one it lets through. Where the browser supports static routing (Chrome 123
+  // and later), requests that are not page loads - API calls, chat streams,
+  // uploads, media - go straight to the network without starting the worker.
+  // Feature-detected and never allowed to fail the install; other browsers
+  // keep the small delay.
+  try {
+    if (typeof event.addRoutes === "function") {
+      event.waitUntil(
+        Promise.resolve(
+          event.addRoutes([{ condition: { not: { requestMode: "navigate" } }, source: "network" }]),
+        ).catch(() => undefined),
+      );
+    }
+  } catch {
+    // An older rule syntax: the fetch handler below still lets these through.
+  }
   event.waitUntil(
     (async () => {
       const cache = await caches.open(CACHE);

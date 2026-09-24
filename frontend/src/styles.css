@@ -706,42 +706,6 @@ body:not(.login-route) {
   }
 }
 
-@media (max-width: 1024px) {
-  .topbar-shortcut__label {
-    display: none;
-  }
-
-  .topbar-shortcut {
-    padding: 0.3rem 0.4rem;
-  }
-
-  .topbar-nav {
-    gap: 0.45rem;
-  }
-}
-
-@media (max-width: 900px) {
-  .topbar-shortcut {
-    padding: 0.28rem 0.32rem;
-    font-size: 0.75rem;
-  }
-
-  .topbar-shortcut[href$="/manual"] {
-    display: none;
-  }
-}
-
-@media (max-width: 640px) {
-  .user-profile-name {
-    display: none;
-  }
-  .topbar-shortcuts {
-    gap: 0;
-  }
-  .topbar-shortcut[href$="/manual"] {
-    display: none;
-  }
-}
 .layout--chat {
   --alpha-router-sidebar-width: 260px;
   height: 100vh;
@@ -1115,6 +1079,45 @@ body:not(.login-route) {
   border-radius: 0 0 6px 6px;
   color: var(--muted);
   font-size: 0.8rem;
+}
+
+/* Narrower screens: drop the shortcut labels, then tighten the shortcuts.
+   These come after the base .topbar-* rules above so that they win the cascade. */
+@media (max-width: 1024px) {
+  .topbar-shortcut__label {
+    display: none;
+  }
+
+  .topbar-shortcut {
+    padding: 0.3rem 0.4rem;
+  }
+
+  .topbar-nav {
+    gap: 0.45rem;
+  }
+}
+
+@media (max-width: 900px) {
+  .topbar-shortcut {
+    padding: 0.28rem 0.32rem;
+    font-size: 0.75rem;
+  }
+
+  .topbar-shortcut[href$="/manual"] {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .user-profile-name {
+    display: none;
+  }
+  .topbar-shortcuts {
+    gap: 0;
+  }
+  .topbar-shortcut[href$="/manual"] {
+    display: none;
+  }
 }
 
 .user-profile { position: relative; }

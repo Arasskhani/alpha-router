@@ -28,6 +28,7 @@ import asyncio
 import logging
 import re
 import ssl
+from collections.abc import Sequence
 from dataclasses import dataclass
 from email.errors import HeaderParseError
 from email.headerregistry import Address, AddressHeader, HeaderRegistry
@@ -92,6 +93,15 @@ def is_sendable_from(value: str) -> bool:
 
 class SmtpNotConfiguredError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class EmailAttachment:
+    """A file sent with a message: a scheduled report, say."""
+
+    filename: str
+    content: bytes
+    mime_type: str = "application/octet-stream"
 
 
 class SmtpSendError(Exception):
@@ -378,6 +388,13 @@ async def _load_smtp_row(db: AsyncSession) -> SmtpSettings:
     return row
 
 
+def _attachment_filename(name: str) -> str:
+    """A file name for a header: no path, no line breaks, never empty."""
+    base = re.split(r"[\\/]", name or "")[-1]
+    base = " ".join(base.splitlines()).strip()
+    return base or "attachment"
+
+
 async def send_email(
     db: AsyncSession,
     *,
@@ -385,6 +402,7 @@ async def send_email(
     subject: str,
     body_text: str,
     cc: list[str] | None = None,
+    attachments: Sequence[EmailAttachment] = (),
 ) -> None:
     row = await _load_smtp_row(db)
     to_address = (to_address or "").strip()
@@ -421,6 +439,14 @@ async def send_email(
     msg["Subject"] = " ".join(subject.splitlines())
     try:
         msg.set_content(body_text)
+        for attachment in attachments:
+            maintype, _, subtype = attachment.mime_type.partition("/")
+            msg.add_attachment(
+                attachment.content,
+                maintype=maintype or "application",
+                subtype=subtype or "octet-stream",
+                filename=_attachment_filename(attachment.filename),
+            )
     except ValueError as exc:
         raise SmtpSendError(f"The message could not be built: {exc}") from exc
     try:

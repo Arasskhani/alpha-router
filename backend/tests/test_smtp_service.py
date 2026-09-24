@@ -21,6 +21,7 @@ from app.services.smtp_service import (
     SECURITY_NONE,
     SECURITY_SSL,
     SECURITY_STARTTLS,
+    EmailAttachment,
     SmtpConnection,
     SmtpRecipientError,
     SmtpSendError,
@@ -342,6 +343,54 @@ class TestSendEmail:
             with pytest.raises(SmtpSendError) as caught:
                 await send_email(db_session, to_address="owner@example.com", subject="s", body_text="b")
         assert not isinstance(caught.value, SmtpRecipientError)
+
+    async def test_attachments_arrive_as_files_with_their_type(self, db_session, tls):
+        import email
+        import email.policy
+
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
+            await self._row(db_session, server, SECURITY_STARTTLS)
+            await send_email(
+                db_session,
+                to_address="owner@example.com",
+                subject="Weekly usage",
+                body_text="The report is attached.",
+                attachments=[
+                    EmailAttachment("usage.csv", b"user,cost\nsara,1.5\n", "text/csv"),
+                    EmailAttachment("usage.pdf", b"%PDF-1.4 fake", "application/pdf"),
+                ],
+            )
+        message = email.message_from_bytes(server.messages[0].data, policy=email.policy.default)
+        assert message.get_content_type() == "multipart/mixed"
+        body = message.get_body(preferencelist=("plain",))
+        assert body.get_content().strip() == "The report is attached."
+        files = {part.get_filename(): part for part in message.iter_attachments()}
+        assert set(files) == {"usage.csv", "usage.pdf"}
+        assert files["usage.csv"].get_content_type() == "text/csv"
+        assert files["usage.csv"].get_content().replace("\r\n", "\n") == "user,cost\nsara,1.5\n"
+        assert files["usage.pdf"].get_content_type() == "application/pdf"
+        assert files["usage.pdf"].get_content() == b"%PDF-1.4 fake"
+
+    async def test_an_attachment_name_cannot_carry_a_path_or_a_line_break(self, db_session, tls):
+        import email
+        import email.policy
+
+        async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:
+            await self._row(db_session, server, SECURITY_STARTTLS)
+            await send_email(
+                db_session,
+                to_address="owner@example.com",
+                subject="s",
+                body_text="b",
+                attachments=[
+                    EmailAttachment("../../etc/report\nX-Injected: yes.csv", b"a", "text/csv"),
+                    EmailAttachment("", b"b"),
+                ],
+            )
+        message = email.message_from_bytes(server.messages[0].data, policy=email.policy.default)
+        names = [part.get_filename() for part in message.iter_attachments()]
+        assert names == ["report X-Injected: yes.csv", "attachment"]
+        assert "X-Injected" not in message
 
     async def test_a_line_break_in_the_subject_does_not_stop_the_message(self, db_session, tls):
         async with SmtpTestServer(mode=MODE_STARTTLS, tls_context=tls.server_context) as server:

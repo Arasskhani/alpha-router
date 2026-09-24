@@ -149,15 +149,7 @@ export default function UserProfile({ theme, onThemeChange }: Props) {
             <span className="user-profile-meta-value">{formatBudgetLine(budget, budgetLoading)}</span>
           </div>
           <div className="user-profile-menu-divider" />
-          <Link
-            to={getMyActivityPath(user.role)}
-            className="user-profile-menu-item"
-            role="menuitem"
-            onClick={() => setOpen(false)}
-          >
-            <span className="user-profile-menu-icon"><IconActivity /></span>
-            <span>{MY_USAGE_AND_ACTIVITY_LABEL}</span>
-          </Link>
+          {/* First in the menu: installing is what a user who has not yet done it is offered. */}
           {installState === "can-prompt" || installState === "ios-manual" ? (
             <button
               type="button"
@@ -179,6 +171,15 @@ export default function UserProfile({ theme, onThemeChange }: Props) {
               <span>Install app</span>
             </button>
           ) : null}
+          <Link
+            to={getMyActivityPath(user.role)}
+            className="user-profile-menu-item"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+          >
+            <span className="user-profile-menu-icon"><IconActivity /></span>
+            <span>{MY_USAGE_AND_ACTIVITY_LABEL}</span>
+          </Link>
           <button
             type="button"
             className="user-profile-menu-item"

@@ -66,6 +66,13 @@ afterEach(() => {
 });
 
 describe("Install app in the profile menu", () => {
+  it("comes first, above Activity", async () => {
+    await openMenu();
+    const items = [...host.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    expect(items[0]).toBe(item());
+    expect(items.length).toBeGreaterThan(1);
+  });
+
   it("opens the browser's install dialog once and remembers an accepted install", async () => {
     await openMenu();
     await act(async () => item()!.click());

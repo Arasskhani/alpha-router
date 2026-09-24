@@ -1,11 +1,12 @@
 import { Navigate, Route, Routes } from "react-router-dom";
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Suspense, lazy } from "react";
+import HomeRedirect from "./components/HomeRedirect";
 import RouteErrorBoundary from "./components/RouteErrorBoundary";
 import Login from "./pages/Login";
 import AdminLayout from "./pages/admin/AdminLayout";
 import UserLayout from "./pages/user/UserLayout";
 import { isAdminPanelRole } from "./lib/rbac";
-import { bootstrapSession, type SessionInfo } from "./api";
+import { useSessionGate } from "./hooks/useSessionGate";
 
 // Every page is its own chunk (Phase 4.6): the shell, the login page and the
 // layouts load first; a route downloads only when it is visited.
@@ -59,28 +60,6 @@ const AgentUsageActivity = lazy(() => import("./pages/admin/AgentUsageActivity")
 const SecuritySettings = lazy(() => import("./pages/admin/SecuritySettings"));
 
 
-function useSessionGate() {
-  const [session, setSession] = useState<SessionInfo | null>(null);
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    let active = true;
-    bootstrapSession()
-      .then((value) => {
-        if (active) setSession(value);
-      })
-      .catch(() => {
-        if (active) setSession(null);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-  return { session, loading };
-}
-
 function Private({ children }: { children: React.ReactNode }) {
   const { session, loading } = useSessionGate();
   if (loading) return <div className="app-loading">Loading…</div>;
@@ -101,6 +80,7 @@ export default function App() {
     <RouteErrorBoundary title="Alpharouter could not start">
       <Suspense fallback={<div className="app-loading">Loading…</div>}>
         <Routes>
+      <Route path="/" element={<HomeRedirect />} />
       <Route path="/login" element={<Login />} />
       <Route
         path="/admin"

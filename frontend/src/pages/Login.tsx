@@ -4,8 +4,7 @@ import AlphaRouterLogo from "../components/AlphaRouterLogo";
 import { LOGIN_TAGLINE, PAGE_TITLE, PRODUCT_NAME_MARKED, TRADEMARK_OWNER } from "../lib/brand";
 import { applyThemeToDocument } from "../lib/themeCache";
 import { markLoggedIn } from "../lib/session";
-import { isAdminPanelRole, normalizeRole, filterAdminNav, firstAllowedAdminPath } from "../lib/rbac";
-import { adminNavSections } from "../nav/adminNav";
+import { homePathFor } from "../lib/homePath";
 import { authFetch, bootstrapSession } from "../api";
 function FeatureProvidersArt() {
   return (
@@ -112,12 +111,7 @@ async function finishLogin(nav: NavigateFunction) {
   const session = await bootstrapSession(true);
   const active = session.is_active !== false;
   markLoggedIn(active);
-  if (isAdminPanelRole(session.role)) {
-    const role = normalizeRole(session.role);
-    nav(firstAllowedAdminPath(filterAdminNav(adminNavSections, role)));
-  } else {
-    nav("/app/chat");
-  }
+  nav(homePathFor(session));
 }
 
 export default function Login() {

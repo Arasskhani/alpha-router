@@ -404,6 +404,16 @@ describe("the phone layout block", () => {
     const oneLine = ".alpha-router-selected-models.topbar-selected-models";
     expect(declarations(css, oneLine)).toContain("flex-wrap: nowrap");
     expect(outranks(oneLine, ".alpha-router-selected-models")).toBe(true);
+    // Pills that do not fit scroll sideways rather than being cut off.
+    expect(declarations(css, oneLine)).toContain("overflow-x: auto");
+    expect(declarations(css, oneLine)).toContain("overflow-y: hidden");
+    // A pill shrinks by its name only: its fixed parts (padding, border, icon, gaps, remove button) stay inside.
+    expect(declarations(css, ".topbar-selected-models .alpha-router-model-pill")).toContain("min-width: 3.375rem");
+    // On a narrow phone, with two or more models, a pill is its icon and its remove button.
+    const crowded = ".app-topbar .topbar-selected-models:has(> .alpha-router-model-pill + .alpha-router-model-pill)";
+    expect(declarations(phone.body, `${crowded} .alpha-router-model-pill__name`)).toContain("display: none");
+    expect(declarations(phone.body, `${crowded} .alpha-router-model-pill`)).toContain("min-width: auto");
+    expect(outranks(`${crowded} .alpha-router-model-pill`, ".topbar-selected-models .alpha-router-model-pill")).toBe(true);
     // Positioned pills paint in order: a pill takes its own taps from the remove area reaching out of the one before.
     expect(declarations(phone.body, ".app-topbar .topbar-selected-models .alpha-router-model-pill")).toContain(
       "position: relative",

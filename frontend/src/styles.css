@@ -886,9 +886,13 @@ body:not(.login-route) {
   overflow: hidden;
 }
 
+/* A pill shrinks by its name only: 3.375rem is its padding, border, icon,
+   remove button and the gaps between, so those stay inside it (a squeezed
+   pill let its remove button spill out, under the next pill or past the
+   row's end), and a pill squeezed that far shows no sliver of a name. */
 .topbar-selected-models .alpha-router-model-pill {
   flex: 0 1 auto;
-  min-width: 0;
+  min-width: 3.375rem;
   max-width: min(14rem, 100%);
 }
 
@@ -5171,9 +5175,17 @@ table.data-table--api-logs {
 /* In the topbar the pills stay on one line and shrink, as .topbar-selected-models
    says: wrapped, a second model's pill hung below the topbar over the page (on
    a phone at once, on a desktop with enough models). This rule came later with
-   the same weight and won. */
+   the same weight and won. Pills that still do not fit scroll sideways (a
+   trackpad, a finger, or Tab to a remove button), instead of being cut off. */
 .alpha-router-selected-models.topbar-selected-models {
   flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.alpha-router-selected-models.topbar-selected-models::-webkit-scrollbar {
+  display: none;
 }
 
 .alpha-router-add-model-btn {
@@ -17538,6 +17550,17 @@ p.error,
   .app-topbar .topbar-selected-models {
     padding-block: 0.25rem;
     margin-block: -0.25rem;
+  }
+  /* Two or more models on a narrow phone: each pill is its model's icon and
+     its remove button, as small as those allow (the name, a sliver of a
+     letter there, is in the pill's tooltip and the model picker). */
+  @media (max-width: 640px) {
+    .app-topbar .topbar-selected-models:has(> .alpha-router-model-pill + .alpha-router-model-pill) .alpha-router-model-pill {
+      min-width: auto;
+    }
+    .app-topbar .topbar-selected-models:has(> .alpha-router-model-pill + .alpha-router-model-pill) .alpha-router-model-pill__name {
+      display: none;
+    }
   }
   /* Positioned, so a pill paints over the remove area reaching out of the
      pill before it on their line, and a tap on the second model does not

@@ -29,6 +29,7 @@ vi.mock("../lib/chatStorage", () => ({
 vi.mock("./TopbarNav", () => ({ default: () => <div data-testid="topbar-nav" /> }));
 
 import Shell from "./Shell";
+import { useChatModelChromeRegister } from "../context/ChatModelChromeContext";
 import { useShellMenu } from "../context/ShellMenuContext";
 
 const NAV = [
@@ -400,5 +401,49 @@ describe("the shell on a phone", () => {
     layout.phone = false;
     await render("/app/projects");
     expect(document.querySelector(".topbar-brand .alpha-router-logo-alpha-rest")).not.toBeNull();
+  });
+});
+
+/** Stands in for ChatPanel's model chrome: two models picked. */
+function ModelsProbe() {
+  const register = useChatModelChromeRegister();
+  useEffect(() => {
+    register({
+      openReplacePicker: () => {},
+      openAppendPicker: () => {},
+      modelsReady: true,
+      addModelDisabled: false,
+      addModelTitle: "Add model",
+      addModelAriaLabel: "Add model",
+      selectedModels: [
+        { id: "a", name: "mock-gpt-4o" },
+        { id: "b", name: "mock-claude-sonnet" },
+      ],
+      onRemoveModel: () => {},
+    });
+    return () => register(null);
+  }, [register]);
+  return <p>chat</p>;
+}
+
+describe("the topbar's model pills", () => {
+  it("name their model on the whole pill, which a crowded topbar leaves too narrow to show it", async () => {
+    await act(async () => {
+      root.render(
+        <MemoryRouter initialEntries={["/app/chat"]}>
+          <Routes>
+            <Route path="/app" element={<Shell nav={NAV} />}>
+              <Route path="chat" element={<ModelsProbe />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>,
+      );
+    });
+    const pills = [...document.querySelectorAll(".topbar-selected-models .alpha-router-model-pill")];
+    expect(pills.map((p) => p.getAttribute("title"))).toEqual(["mock-gpt-4o", "mock-claude-sonnet"]);
+    expect(pills.map((p) => p.querySelector("button")?.getAttribute("aria-label"))).toEqual([
+      "Remove mock-gpt-4o",
+      "Remove mock-claude-sonnet",
+    ]);
   });
 });

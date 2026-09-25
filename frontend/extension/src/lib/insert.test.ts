@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { insertIntoFocusedField, plainText } from "./insert";
+import { isSensitiveField } from "./sensitive";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -122,5 +123,29 @@ describe("an answer as plain text", () => {
   it("leaves list stars and plain text alone", () => {
     expect(plainText("* first\n* second")).toBe("* first\n* second");
     expect(plainText("2 * 3 = 6")).toBe("2 * 3 = 6");
+  });
+});
+
+describe("the rules for sensitive fields", () => {
+  // insert.ts runs serialized in the page and cannot import sensitive.ts: the two copies must agree.
+  it.each([
+    '<input type="password">',
+    '<input name="card_number">',
+    '<input autocomplete="cc-exp">',
+    '<input id="cvc">',
+    '<input autocomplete="one-time-code">',
+    '<input aria-label="Security code">',
+    '<input name="iban">',
+    '<input name="otp">',
+    '<input name="user_pin">',
+    '<input autocomplete="new-password" type="text">',
+    '<input type="text" name="email">',
+    '<input type="search" aria-label="Search the docs">',
+    '<input type="text" name="spinach">',
+    '<input type="text" name="discard-reason">',
+  ])("classify %s alike", (html) => {
+    const field = focusOn<HTMLInputElement>(html);
+    const inserted = insertIntoFocusedField("x", here());
+    expect(inserted === "sensitive").toBe(isSensitiveField(field));
   });
 });

@@ -131,3 +131,37 @@ async def test_check_login_rate_limit_allows_under_limit_via_redis(monkeypatch):
     fake = _FakeRedisOk()
     monkeypatch.setattr(rl, "_client", lambda: fake)
     await rl.check_login_rate_limit("bob", "10.0.0.2")
+
+
+async def test_failures_only_count_when_recorded(monkeypatch):
+    fake = _FakeRedisOk()
+    monkeypatch.setattr(rl, "_client", lambda: fake)
+    for _ in range(10):
+        assert not await rl.failure_limit_reached("f1", limit=3)
+    for _ in range(3):
+        await rl.record_failure("f1")
+    assert await rl.failure_limit_reached("f1", limit=3)
+    assert not await rl.failure_limit_reached("f2", limit=3)
+
+
+async def test_failures_fall_back_to_memory_when_redis_is_down(monkeypatch):
+    broken = _FakeRedisBroken()
+    rl._buckets.clear()
+    monkeypatch.setattr(rl, "_client", lambda: broken)
+    assert not await rl.failure_limit_reached("f3", limit=2)
+    await rl.record_failure("f3")
+    await rl.record_failure("f3")
+    assert await rl.failure_limit_reached("f3", limit=2)
+    rl._buckets.clear()
+
+
+async def test_failures_leave_the_window(monkeypatch):
+    broken = _FakeRedisBroken()
+    rl._buckets.clear()
+    monkeypatch.setattr(rl, "_client", lambda: broken)
+    await rl.record_failure("f4")
+    assert await rl.failure_limit_reached("f4", limit=1)
+    # A minute and a bit later (moved by hand: the event loop runs on the same clock).
+    rl._buckets["f4"] = [t - 61 for t in rl._buckets["f4"]]
+    assert not await rl.failure_limit_reached("f4", limit=1)
+    rl._buckets.clear()

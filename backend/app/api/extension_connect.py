@@ -41,6 +41,7 @@ from app.services.extension_tokens import (
     AUDIT_RESOURCE,
     REVOKED_BY_USER,
     ExtensionTokenError,
+    TokenPair,
     clean_device_name,
     create_auth_code,
     create_session,
@@ -51,16 +52,17 @@ from app.services.extension_tokens import (
     revoke_session,
     token_hash,
 )
-from app.services.rate_limit import check_rate_limit
+from app.services.rate_limit import check_rate_limit, failure_limit_reached, record_failure
 from app.services.security_audit import log_security_event
 
 router = APIRouter(tags=["extension"])
 
 AUTHORIZE_LIMIT_PER_USER = 20
-CODE_EXCHANGE_LIMIT_PER_IP = 30
 REFRESH_LIMIT_PER_TOKEN = 10
-#: Generous: an office behind one address refreshes about once an hour per browser.
-REFRESH_LIMIT_PER_IP = 300
+#: Failed code exchanges and refreshes from one address in a minute. Only
+#: failures count, so a whole office behind one NAT connecting and refreshing
+#: at once never fills it; a stream of junk from one host does.
+TOKEN_FAILURES_PER_IP = 60
 
 _STATE_RE = r"^[A-Za-z0-9_-]{16,128}$"
 _EXTENSION_SCHEMES = ("chrome-extension", "extension")
@@ -132,54 +134,61 @@ def _token_refusal(code: str, message: str) -> HTTPException:
     return HTTPException(status_code=400, detail={"code": code, "message": message}, headers=_TOKEN_HEADERS)
 
 
+async def _exchange_code(db: AsyncSession, body: TokenIn, request: Request, ip: str | None) -> TokenPair:
+    if not (body.code and body.code_verifier and body.redirect_uri):
+        raise ExtensionTokenError("invalid_request", "code, code_verifier and redirect_uri are required.")
+    user = await redeem_auth_code(db, code=body.code, code_verifier=body.code_verifier, redirect_uri=body.redirect_uri)
+    if not await extension_permitted(db, user):
+        raise ExtensionTokenError("not_permitted", "The browser extension is not enabled for your account.")
+    pair = await create_session(
+        db,
+        user=user,
+        device_name=body.device_name,
+        user_agent=request.headers.get("user-agent"),
+        ip=ip,
+    )
+    await log_security_event(
+        db,
+        actor=user,
+        actor_ip=ip,
+        action=AUDIT_CONNECTED,
+        resource_type=AUDIT_RESOURCE,
+        resource_id=pair.session_id,
+        detail={"device_name": clean_device_name(body.device_name)},
+    )
+    return pair
+
+
+async def _refresh(db: AsyncSession, body: TokenIn, ip: str | None) -> TokenPair:
+    if not body.refresh_token:
+        raise ExtensionTokenError("invalid_request", "refresh_token is required.")
+    await check_rate_limit(f"extension:refresh:{token_hash(body.refresh_token)[:32]}", limit=REFRESH_LIMIT_PER_TOKEN)
+    return await refresh_session(db, body.refresh_token, ip=ip)
+
+
 @router.post("/api/extension/token")
 async def extension_token(body: TokenIn, request: Request, db: AsyncSession = Depends(get_db)) -> JSONResponse:
     """Trade a connect code, or a refresh token, for a new pair of tokens."""
     ip = resolve_client_ip(request)
-    if body.grant_type == "authorization_code":
-        await check_rate_limit(f"extension:code:{ip}", limit=CODE_EXCHANGE_LIMIT_PER_IP)
-        if not (body.code and body.code_verifier and body.redirect_uri):
-            raise _token_refusal("invalid_request", "code, code_verifier and redirect_uri are required.")
-        try:
-            user = await redeem_auth_code(
-                db, code=body.code, code_verifier=body.code_verifier, redirect_uri=body.redirect_uri
-            )
-        except ExtensionTokenError as exc:
-            raise _token_refusal(exc.code, exc.message) from None
-        if not await extension_permitted(db, user):
-            raise _token_refusal("not_permitted", "The browser extension is not enabled for your account.")
-        pair = await create_session(
-            db,
-            user=user,
-            device_name=body.device_name,
-            user_agent=request.headers.get("user-agent"),
-            ip=ip,
+    failures = f"extension:token-failures:{ip or 'unknown'}"
+    if await failure_limit_reached(failures, limit=TOKEN_FAILURES_PER_IP):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed attempts from this address. Try again shortly.",
+            headers=_TOKEN_HEADERS,
         )
-        await log_security_event(
-            db,
-            actor=user,
-            actor_ip=ip,
-            action=AUDIT_CONNECTED,
-            resource_type=AUDIT_RESOURCE,
-            resource_id=pair.session_id,
-            detail={"device_name": clean_device_name(body.device_name)},
-        )
-        await db.commit()
-        return JSONResponse(pair.as_response(), headers=_TOKEN_HEADERS)
-    if body.grant_type == "refresh_token":
-        if not body.refresh_token:
-            raise _token_refusal("invalid_request", "refresh_token is required.")
-        await check_rate_limit(f"extension:refresh-ip:{ip}", limit=REFRESH_LIMIT_PER_IP)
-        await check_rate_limit(
-            f"extension:refresh:{token_hash(body.refresh_token)[:32]}", limit=REFRESH_LIMIT_PER_TOKEN
-        )
-        try:
-            pair = await refresh_session(db, body.refresh_token, ip=ip)
-        except ExtensionTokenError as exc:
-            raise _token_refusal(exc.code, exc.message) from None
-        await db.commit()
-        return JSONResponse(pair.as_response(), headers=_TOKEN_HEADERS)
-    raise _token_refusal("invalid_request", "grant_type must be authorization_code or refresh_token.")
+    try:
+        if body.grant_type == "authorization_code":
+            pair = await _exchange_code(db, body, request, ip)
+        elif body.grant_type == "refresh_token":
+            pair = await _refresh(db, body, ip)
+        else:
+            raise ExtensionTokenError("invalid_request", "grant_type must be authorization_code or refresh_token.")
+    except ExtensionTokenError as exc:
+        await record_failure(failures)
+        raise _token_refusal(exc.code, exc.message) from None
+    await db.commit()
+    return JSONResponse(pair.as_response(), headers=_TOKEN_HEADERS)
 
 
 def _server_url() -> str | None:

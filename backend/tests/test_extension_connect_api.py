@@ -18,6 +18,7 @@ from app.models.extension import ExtensionSession
 from app.models.security import SecurityAuditEvent
 from app.models.system import SystemSetting
 from app.models.user import User
+from app.api import extension_connect as rate_limits
 from app.services import extension_distribution, extension_keys, extension_tokens, rate_limit
 from app.services.chat_tool_access_service import set_chat_tool_access
 from app.services.extension_keys import KEY_SETTING, load_or_create_signing_key
@@ -141,6 +142,13 @@ async def _connect(client, browser, user, redirect_uri, *, device_name="Chrome o
     )
     assert resp.status_code == 200, resp.text
     return resp.json()
+
+
+def _from(address: tuple[str, int]) -> httpx.AsyncClient:
+    """A client whose requests come from ``address`` (``client`` fixture must be active for the database)."""
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=fastapi_app, client=address), base_url="http://testserver"
+    )
 
 
 def _bearer(token: str) -> dict[str, str]:
@@ -378,8 +386,8 @@ class TestTheCodeExchange:
         assert resp.status_code == 400
         assert resp.json()["detail"]["code"] == "invalid_request"
 
-    async def test_thirty_exchanges_a_minute_per_address(self, browser):
-        for _ in range(30):
+    async def test_sixty_failures_a_minute_close_the_address(self, browser):
+        for _ in range(60):
             resp = await self._exchange(browser, code="nope", code_verifier=VERIFIER, redirect_uri="x")
             assert resp.status_code == 400
         assert (await self._exchange(browser, code="nope", code_verifier=VERIFIER, redirect_uri="x")).status_code == 429
@@ -429,6 +437,25 @@ class TestRefresh:
         await db_session.execute(update(User).where(User.id == user.id).values(is_active=True))
         await db_session.commit()
         assert (await browser.get("/api/chat/models", headers=_bearer(access))).status_code == 200
+
+    async def test_successes_never_fill_the_address_window(self, client, browser, user, redirect):
+        tokens = await _connect(client, browser, user, redirect)
+        refresh = tokens["refresh_token"]
+        for _ in range(rate_limits.TOKEN_FAILURES_PER_IP + 5):
+            resp = await browser.post(
+                "/api/extension/token", json={"grant_type": "refresh_token", "refresh_token": refresh}
+            )
+            assert resp.status_code == 200, resp.text
+            refresh = resp.json()["refresh_token"]
+
+    async def test_the_per_token_limit_follows_the_token_not_the_address(self, client):
+        body = {"grant_type": "refresh_token", "refresh_token": "alpha-router-ext-rt-same"}
+        async with _from(("10.0.0.8", 5000)) as first, _from(("10.0.0.9", 5000)) as second:
+            for _ in range(10):
+                assert (await first.post("/api/extension/token", json=body)).status_code == 400
+            assert (await second.post("/api/extension/token", json=body)).status_code == 429
+            other = {"grant_type": "refresh_token", "refresh_token": "alpha-router-ext-rt-other"}
+            assert (await second.post("/api/extension/token", json=other)).status_code == 400
 
     async def test_ten_refreshes_a_minute_per_token(self, browser):
         body = {"grant_type": "refresh_token", "refresh_token": "alpha-router-ext-rt-same"}

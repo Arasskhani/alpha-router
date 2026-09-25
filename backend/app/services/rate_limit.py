@@ -13,6 +13,7 @@ all workers, so the configured limit is the true limit.
 
 from __future__ import annotations
 
+import secrets
 import time
 from collections import defaultdict
 from threading import Lock
@@ -89,6 +90,53 @@ async def check_rate_limit(
         if len(_buckets[key]) >= limit:
             raise HTTPException(status_code=429, detail=_RATE_LIMIT_EXCEEDED)
         _buckets[key].append(now)
+
+
+async def failure_limit_reached(key: str, *, limit: int, window_seconds: int = 60) -> bool:
+    """Whether ``key`` already has ``limit`` failures in the window.
+
+    Counts nothing itself. A caller asks before doing the work and records only
+    what failed (:func:`record_failure`), so however many requests succeed
+    behind one address - an office's NAT at nine in the morning - none of them
+    fills the window. Fail-open, like the chat limiters.
+    """
+    client = _client()
+    if client is not None:
+        try:
+            pipe = client.pipeline()
+            pipe.zremrangebyscore(key, 0, time.time() - window_seconds)
+            pipe.zcard(key)
+            _, count = await pipe.execute()
+            return int(count) >= limit
+        except Exception:  # noqa: BLE001 -- any Redis failure degrades to the in-memory limiter
+            increment("redis_fallback")
+    cutoff = time.monotonic() - window_seconds
+    with _lock:
+        hits = [t for t in _buckets.get(key, []) if t > cutoff]
+        _buckets[key] = hits
+        return len(hits) >= limit
+
+
+async def record_failure(key: str, *, window_seconds: int = 60) -> None:
+    """Count one failure against ``key`` for :func:`failure_limit_reached`.
+
+    In Redis it is scored with the wall clock, which every worker and host
+    shares; the per-process fallback uses the monotonic clock, as the rest of
+    this module does.
+    """
+    client = _client()
+    if client is not None:
+        try:
+            now = time.time()
+            pipe = client.pipeline()
+            pipe.zadd(key, {f"{now:.6f}:{secrets.token_hex(4)}": now})
+            pipe.expire(key, window_seconds + 5)
+            await pipe.execute()
+            return
+        except Exception:  # noqa: BLE001 -- any Redis failure degrades to the in-memory limiter
+            increment("redis_fallback")
+    with _lock:
+        _buckets[key].append(time.monotonic())
 
 
 def prune_stale_buckets(max_age_seconds: int = 3600) -> None:

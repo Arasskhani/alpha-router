@@ -566,6 +566,26 @@ class TestTheAdminCard:
             {"ref": f"model::{chat.id}", "label": "Model gpt-chat", "provider": "openai", "state": "ok"}
         ]
 
+    async def test_a_value_past_a_limit_is_refused_with_the_limit(self, client, admin, built_extension):
+        """The server's own message, not the request parser's, for lists and steps past the settings' limits."""
+        headers = _sign_in(client, admin)
+        many = {
+            "site_access": "per_site",
+            "agent_max_steps": 25,
+            "allowed_sites": [f"s{i}.example" for i in range(201)],
+        }
+        resp = await client.put("/api/admin/extension/settings", json=many, headers=headers)
+        assert resp.status_code == 400, resp.text
+        assert resp.json()["detail"] == "Allowed sites: at most 200 sites."
+        for steps in (4, 101):
+            resp = await client.put(
+                "/api/admin/extension/settings",
+                json={"site_access": "per_site", "agent_max_steps": steps},
+                headers=headers,
+            )
+            assert resp.status_code == 400, resp.text
+            assert resp.json()["detail"] == "Agent steps must be between 5 and 100."
+
     async def test_the_key_is_reported_on_its_own(self, client, admin, monkeypatch, tmp_path, session_factory):
         """Even without a build, the card says when the key cannot be read (DATA_ENCRYPTION_KEY changed)."""
         from app.models.system import SystemSetting

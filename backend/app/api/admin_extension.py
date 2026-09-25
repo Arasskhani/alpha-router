@@ -20,10 +20,6 @@ from app.services.client_ip import resolve_client_ip
 from app.services.extension_distribution import ExtensionUnavailable, current_build, distribution_payload
 from app.services.extension_keys import ExtensionKeyUnavailable, get_signing_key
 from app.services.extension_settings import (
-    MAX_MAX_STEPS,
-    MAX_MODEL_REFS,
-    MAX_SITE_PATTERNS,
-    MIN_MAX_STEPS,
     ExtensionSettingsError,
     load_extension_settings,
     model_choices,
@@ -35,13 +31,20 @@ from app.services.security_audit import log_security_event
 router = APIRouter(prefix="/api/admin/extension", tags=["admin-extension"])
 
 
+#: How long a list the request may carry at all. The settings' own limits are
+#: lower and are checked by ``validated_update``, whose message says which list
+#: is too long and what the limit is; a longer body is not read.
+_BODY_LIST_CAP = 2_000
+
+
 class ExtensionSettingsIn(BaseModel):
     site_access: Literal["per_site", "all_sites"]
-    allowed_sites: list[str] = Field(default_factory=list, max_length=MAX_SITE_PATTERNS)
-    blocked_sites: list[str] = Field(default_factory=list, max_length=MAX_SITE_PATTERNS)
-    page_content_models: list[str] = Field(default_factory=list, max_length=MAX_MODEL_REFS)
-    agent_models: list[str] = Field(default_factory=list, max_length=MAX_MODEL_REFS)
-    agent_max_steps: int = Field(ge=MIN_MAX_STEPS, le=MAX_MAX_STEPS)
+    allowed_sites: list[str] = Field(default_factory=list, max_length=_BODY_LIST_CAP)
+    blocked_sites: list[str] = Field(default_factory=list, max_length=_BODY_LIST_CAP)
+    page_content_models: list[str] = Field(default_factory=list, max_length=_BODY_LIST_CAP)
+    agent_models: list[str] = Field(default_factory=list, max_length=_BODY_LIST_CAP)
+    # The range is checked by validated_update, with a message that names it.
+    agent_max_steps: int
     agent_auto_mode: bool = False
     agent_review_model: str | None = Field(default=None, max_length=64)
 

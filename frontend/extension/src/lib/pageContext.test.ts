@@ -343,6 +343,18 @@ describe("reading a PDF tab", () => {
     expect(upload).not.toHaveBeenCalled();
   });
 
+  it("refuses a PDF the download redirects to another site, and follows the same site", async () => {
+    const elsewhere = new Response(PDF, { status: 200 });
+    Object.defineProperties(elsewhere, { redirected: { value: true }, url: { value: "https://hr.blocked.example/confidential.pdf" } });
+    serve(elsewhere);
+    await expect(readPdf({ id: 7, url: PDF_URL }, OPEN, upload)).rejects.toThrow("sent from another site (hr.blocked.example)");
+    expect(upload).not.toHaveBeenCalled();
+    const sameSite = new Response(PDF, { status: 200 });
+    Object.defineProperties(sameSite, { redirected: { value: true }, url: { value: "https://docs.example.com/files/v2/Q3.pdf" } });
+    serve(sameSite);
+    await expect(readPdf({ id: 7, url: PDF_URL }, OPEN, upload)).resolves.toMatchObject({ host: "docs.example.com" });
+  });
+
   it("says so when the server finds no text in it", async () => {
     serve(new Response(PDF, { status: 200 }));
     upload.mockResolvedValueOnce({ text: "(No extractable text in PDF.)" });

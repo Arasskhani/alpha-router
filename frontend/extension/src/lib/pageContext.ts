@@ -185,6 +185,12 @@ export async function readPdf(
   } catch {
     throw new PageReadError(`Alpharouter could not download this PDF. Check that you can open it, and that it is allowed on ${target.host}.`);
   }
+  // Downloaded again, the address may send the request elsewhere: a PDF from another site is not this page's,
+  // and the site rules - and the user - know only this one.
+  const landed = response.redirected ? readablePage(response.url) : target;
+  if (landed?.host !== target.host) {
+    throw new PageReadError(`This PDF is sent from another site${landed ? ` (${landed.host})` : ""}. Open it there and ask again.`);
+  }
   if (!response.ok) throw new PageReadError(`${target.host} answered ${response.status} for this PDF.`);
   if (Number(response.headers.get("content-length") || 0) > MAX_PDF_BYTES) throw new PageReadError("This PDF is too large to read (25 MB at most).");
   const bytes = await response.arrayBuffer();

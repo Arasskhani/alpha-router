@@ -333,6 +333,13 @@ async def _user_still_holds(db: AsyncSession, session: ExtensionSession) -> User
     return user
 
 
+#: For every UPDATE here. By default SQLAlchemy applies an UPDATE's values to
+#: matching objects already loaded, judged in Python - including a rotation
+#: that lost its race and changed no row, which would leave the loaded session
+#: holding a hash that was never issued. Reads use populate_existing instead.
+_NO_SYNC = {"synchronize_session": False}
+
+
 def _rowcount(result: Any) -> int:
     return int(getattr(result, "rowcount", 0) or 0)
 
@@ -348,7 +355,7 @@ async def revoke_session(
     query = update(ExtensionSession).where(ExtensionSession.id == session_id, ExtensionSession.revoked_at.is_(None))
     if user_id is not None:
         query = query.where(ExtensionSession.user_id == user_id)
-    result = await db.execute(query.values(revoked_at=_now(), revoked_reason=reason[:32]))
+    result = await db.execute(query.values(revoked_at=_now(), revoked_reason=reason[:32]), execution_options=_NO_SYNC)
     return _rowcount(result) > 0
 
 
@@ -422,7 +429,8 @@ async def refresh_session(db: AsyncSession, refresh_token: str | None, *, ip: st
                     refresh_expires_at=min(now + REFRESH_IDLE_LIFETIME, current.absolute_expires_at),
                     prior_refresh_token_hash=presented,
                     prior_refresh_valid_until=now + REFRESH_GRACE,
-                )
+                ),
+                execution_options=_NO_SYNC,
             )
             if _rowcount(result) == 1:
                 return TokenPair(str(current.id), access, refresh, _ACCESS_SECONDS)
@@ -497,7 +505,8 @@ async def touch_session(session_id: str, *, ip: str | None) -> None:
                     ExtensionSession.id == session_id,
                     ExtensionSession.last_used_at.is_(None) | (ExtensionSession.last_used_at < now - TOUCH_INTERVAL),
                 )
-                .values(last_used_at=now, last_ip=(ip or "")[:64] or None)
+                .values(last_used_at=now, last_ip=(ip or "")[:64] or None),
+                execution_options=_NO_SYNC,
             )
             await db.commit()
     except Exception:  # noqa: BLE001 -- bookkeeping only

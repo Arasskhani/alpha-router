@@ -21,7 +21,7 @@ import { useActivePage, useSiteAccess } from "./activePage";
 import { createAgentBrowser, type PanelBrowser } from "./agentBrowser";
 import { runAgent, type AgentDeps, type AgentEventReport, type ApprovalRequest, type RunOutcome, type StepView } from "./agentRun";
 import { AGENT_TOOLS } from "./agentTools";
-import { pickModel, textModels, type ChatModel } from "./chat";
+import { pickModel, textModels, type ChatModel } from "./conversation";
 import type { Me } from "./types";
 
 const MODEL_KEY = "alpharouter.agentModel";

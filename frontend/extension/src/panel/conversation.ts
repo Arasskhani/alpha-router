@@ -1,5 +1,9 @@
 /**
- * The side panel's chat, minus the UI: which models, what a turn sends.
+ * The side panel's conversation, minus the UI: which models, what a turn sends.
+ *
+ * Not "chat.ts": beside Chat.tsx that name differs only in case, and on a
+ * disk that ignores case (Windows, macOS) "./chat" then resolves to the
+ * component, since .tsx comes first in the resolver's extensions.
  */
 
 import { modelSupportsTextChat } from "../../../src/lib/chatModels";

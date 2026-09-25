@@ -24,7 +24,7 @@ import { readablePage } from "../lib/sites";
 import { DisconnectedError, TemporaryError } from "../lib/tokens";
 import { compareVersions } from "../lib/version";
 import { useActivePage, useSiteAccess } from "./activePage";
-import { carriesScreenshots, completionBody, pagesIn, pickModel, textModels, type ChatModel, type Turn } from "./chat";
+import { carriesScreenshots, completionBody, pagesIn, pickModel, textModels, type ChatModel, type Turn } from "./conversation";
 import { MAX_OTHER_TABS, matchingTabs, mentionAt, tabCandidates, useChosenTabs, type PickableTab } from "./otherTabs";
 import PanelMarkdown from "./PanelMarkdown";
 import PromptPicker from "./PromptPicker";

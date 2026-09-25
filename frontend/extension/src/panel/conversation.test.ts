@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { pageMessage, type PageContext } from "../lib/pageContext";
 import { compareVersions } from "../lib/version";
-import { apiMessages, carriesScreenshots, completionBody, pagesIn, pickModel, textModels, type Turn } from "./chat";
+import { apiMessages, carriesScreenshots, completionBody, pagesIn, pickModel, textModels, type Turn } from "./conversation";
 
 const user = (content: string, id = "u1"): Turn => ({ id, role: "user", content });
 const assistant = (content: string, extra: Partial<Turn> = {}): Turn => ({ id: "a1", role: "assistant", content, ...extra });

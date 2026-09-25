@@ -62,9 +62,10 @@ def _extension_refusal(status_code: int, code: str, message: str) -> HTTPExcepti
     return HTTPException(status_code=status_code, detail={"code": code, "message": message}, headers=headers)
 
 
-def _route_key(request: Request) -> tuple[str, str]:
-    route = request.scope.get("route")
-    return request.method.upper(), str(getattr(route, "path", None) or request.url.path)
+def _route_key(request: Request) -> tuple[str, str] | None:
+    """The matched route's method and template; None when routing did not say (then nothing is allowed)."""
+    path = getattr(request.scope.get("route"), "path", None)
+    return (request.method.upper(), path) if isinstance(path, str) and path else None
 
 
 async def _extension_user(request: Request, token: str, db: AsyncSession) -> User:
@@ -74,7 +75,7 @@ async def _extension_user(request: Request, token: str, db: AsyncSession) -> Use
     except ExtensionTokenError as exc:
         raise _extension_refusal(401, exc.code, exc.message) from None
     key = _route_key(request)
-    if key not in EXTENSION_SCOPE:
+    if key is None or key not in EXTENSION_SCOPE:
         raise _extension_refusal(403, "extension_scope", "The browser extension cannot use this endpoint.")
     user = found.user
     if key not in EXTENSION_UNGATED:

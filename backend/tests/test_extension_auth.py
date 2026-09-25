@@ -150,6 +150,20 @@ class TestTheScope:
         assert created.json()["id"]
 
 
+class TestWithoutARoute:
+    async def test_the_scope_fails_closed_when_routing_did_not_name_the_route(self, db_session, user):
+        from fastapi import HTTPException
+        from starlette.requests import Request as StarletteRequest
+
+        pair = await _connect(db_session, user)
+        # A request that reached the dependency with no matched route in its scope.
+        request = StarletteRequest({"type": "http", "method": "GET", "path": "/api/chat/models", "headers": []})
+        with pytest.raises(HTTPException) as caught:
+            await deps._extension_user(request, pair.access_token, db_session)
+        assert caught.value.status_code == 403
+        assert caught.value.detail["code"] == "extension_scope"
+
+
 class TestRefusals:
     async def test_an_unknown_token(self, probe):
         resp = await probe.get("/api/chat/models", headers=_bearer(extension_tokens.ACCESS_TOKEN_PREFIX + "nope"))

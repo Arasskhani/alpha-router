@@ -112,6 +112,18 @@ describe("clicking", () => {
     });
   });
 
+  it("reads the words a control shows as well as its name, which a label can hide", () => {
+    expect(classify("click", { element: el({ name: "Continue", text: "Place order" }) })).toMatchObject({ class: "blocked", reason: "purchase_label" });
+    expect(classify("click", { element: el({ name: "Next", text: "Delete account" }) })).toMatchObject({ class: "sensitive", reason: "sensitive_label" });
+    expect(classify("submit_form", { element: el({ name: "Continue", text: "Pay now", submits: true }) })).toMatchObject({ class: "blocked" });
+  });
+
+  it("asks before clicking something nameless, which nobody can judge; a link is judged by where it goes", () => {
+    expect(classify("click", { element: el({ name: "" }) })).toMatchObject({ class: "sensitive", reason: "unnamed_control" });
+    expect(classify("click", { element: el({ role: "text", name: "", tag: "div" }) })).toMatchObject({ class: "sensitive", reason: "unnamed_control" });
+    expect(classify("click", { element: el({ role: "link", name: "", tag: "a", href: "https://shop.example.com/cart" }) })).toMatchObject({ class: "act" });
+  });
+
   it("does not take a longer word for a short one", () => {
     expect(classify("click", { element: el({ name: "Posts" }) })).toMatchObject({ class: "act" });
     expect(classify("click", { element: el({ name: "Payroll" }) })).toMatchObject({ class: "act" });

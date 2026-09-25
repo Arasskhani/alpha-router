@@ -212,6 +212,13 @@ function whereTo(url: unknown): string {
   }
 }
 
+/** The element as the reviewer sees it: its role, its name and the words it shows, and where a link goes. */
+function reviewTarget(element: ElementInfo): string {
+  const shows = element.text ? ` (it shows "${element.text}")` : "";
+  const goes = element.href ? ` - a link to ${readablePage(element.href) ? whereTo(element.href) : "another program"}` : "";
+  return clip(`${element.role}: ${element.name || "(no name)"}${shows}${goes}`, 300);
+}
+
 /** What an action does, in words for the step log and the approval card. */
 function describeAction(tool: string, a: Record<string, unknown>, element?: ElementInfo): string {
   switch (tool) {
@@ -485,7 +492,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
           task: options.task,
           tool: name,
           site: pageNow?.host ?? verdict.site ?? "",
-          target: element ? clip(`${element.role}: ${element.name}`, 300) : undefined,
+          target: element ? reviewTarget(element) : undefined,
           arguments: a,
           history: history.slice(-HISTORY_LINES),
         },

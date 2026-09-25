@@ -64,6 +64,8 @@ export function cleanElement(raw: unknown): ElementInfo | null {
   const tag = str(v.tag, 32);
   if (!ref || !REF.test(ref) || !role || !tag) return null;
   const info: ElementInfo = { ref, role, name: str(v.name, 120) ?? "", tag };
+  const text = str(v.text, 120);
+  if (text) info.text = text;
   const type = str(v.type, 32);
   if (type) info.type = type;
   const value = str(v.value, 120);

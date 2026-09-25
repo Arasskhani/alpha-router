@@ -36,6 +36,11 @@ export type ElementInfo = {
   role: string;
   /** Its accessible name: what a screen reader would announce. Never its value. */
   name: string;
+  /**
+   * A control's own words, when they are not its name: a button labelled
+   * "Continue" by aria-label or a <label> that says "Place order" itself.
+   */
+  text?: string;
   tag: string;
   /** An input's type. */
   type?: string;
@@ -187,6 +192,21 @@ function clip(text: string, limit: number): string {
 
 const FIELDS = new Set(["INPUT", "TEXTAREA", "SELECT", "OPTION", "DATALIST"]);
 
+/**
+ * Whether an element's words count for its name, as a screen reader reads
+ * them: all but what is removed from the page (display: none, visibility:
+ * hidden, `hidden`, aria-hidden). Screen-reader-only text - a one-pixel,
+ * clipped box, the usual name of an icon button - counts, though it is not
+ * drawn: without it a "Delete account" button with only an icon is nameless.
+ */
+function isExposed(el: Element): boolean {
+  if (el.hasAttribute("hidden") || el.getAttribute("aria-hidden") === "true") return false;
+  const view = el.ownerDocument.defaultView;
+  if (!view) return true;
+  const style = view.getComputedStyle(el);
+  return style.display !== "none" && style.visibility !== "hidden" && style.visibility !== "collapse";
+}
+
 /** The text a person sees in an element, images by their alt text, without any field's value. */
 function visibleText(el: Element, isVisible: Visibility, limit = 200): string {
   const parts: string[] = [];
@@ -329,11 +349,12 @@ function headingLevel(el: Element): number | null {
 }
 
 /** A label's words, without the text of the fields inside it (a menu's options, a box's value). */
-function labelText(label: Element, isVisible: Visibility): string {
-  return visibleText(label, isVisible, NAME_CHARS);
+function labelText(label: Element): string {
+  return visibleText(label, isExposed, NAME_CHARS);
 }
 
-function labelsOf(el: Element, isVisible: Visibility): string {
+/** The words of an element's labels; a label removed from the page (display: none) names nothing. */
+function labelsOf(el: Element): string {
   const doc = el.ownerDocument;
   const found = new Set<Element>();
   const labels = (el as HTMLInputElement).labels;
@@ -345,7 +366,12 @@ function labelsOf(el: Element, isVisible: Visibility): string {
   }
   const wrapping = el.closest("label");
   if (wrapping) found.add(wrapping);
-  return squash(Array.from(found, (label) => labelText(label, isVisible)).join(" "));
+  return squash(
+    Array.from(found)
+      .filter(isExposed)
+      .map(labelText)
+      .join(" "),
+  );
 }
 
 /**
@@ -353,15 +379,19 @@ function labelsOf(el: Element, isVisible: Visibility): string {
  * field's labels, alt and title, then the words inside - cut short. A text
  * field's own text is its value, never its name.
  */
-function accessibleName(el: Element, role: string, isVisible: Visibility): string {
+function accessibleName(el: Element, role: string): string {
   const doc = el.ownerDocument;
   const labelledBy = (el.getAttribute("aria-labelledby") ?? "").split(/\s+/).filter(Boolean);
   if (labelledBy.length) {
     const text = squash(
-      labelledBy.map((id) => {
-        const target = doc.getElementById(id);
-        return target ? visibleText(target, () => true, NAME_CHARS) : "";
-      }).join(" "),
+      labelledBy
+        .map((id) => {
+          const target = doc.getElementById(id);
+          // Named on purpose, a hidden element still names: then all of it does, as a screen reader has it.
+          if (!target) return "";
+          return visibleText(target, isExposed(target) ? isExposed : () => true, NAME_CHARS);
+        })
+        .join(" "),
     );
     if (text) return clip(text, NAME_CHARS);
   }
@@ -369,7 +399,7 @@ function accessibleName(el: Element, role: string, isVisible: Visibility): strin
   if (aria) return clip(aria, NAME_CHARS);
   const tag = el.tagName.toUpperCase();
   if (FIELDS.has(tag) || tag === "BUTTON" || tag === "METER" || tag === "PROGRESS") {
-    const labels = labelsOf(el, isVisible);
+    const labels = labelsOf(el);
     if (labels) return clip(labels, NAME_CHARS);
   }
   if (tag === "INPUT") {
@@ -381,7 +411,7 @@ function accessibleName(el: Element, role: string, isVisible: Visibility): strin
   }
   const textual = role === "textbox" || role === "searchbox" || role === "combobox" || role === "spinbutton";
   if (!textual) {
-    const inside = visibleText(el, isVisible, NAME_CHARS);
+    const inside = visibleText(el, isExposed, NAME_CHARS);
     if (inside) return inside;
   }
   const title = squash(el.getAttribute("title") ?? "");
@@ -490,6 +520,16 @@ function checkedState(el: Element, role: string): boolean | undefined {
   return aria === "true" ? true : aria === "false" ? false : undefined;
 }
 
+/** Roles of controls a person clicks, whose own words say what the click does. */
+const CLICKED_ROLES = new Set(["button", "link", "menuitem", "menuitemcheckbox", "menuitemradio", "tab", "option", "switch", "treeitem"]);
+
+/** The words a clicked control shows itself - a button's text, a submit input's value - which its name can hide. */
+function ownWords(el: Element, role: string, isVisible: Visibility): string {
+  if (!CLICKED_ROLES.has(role)) return "";
+  if (el.tagName.toUpperCase() === "INPUT") return clip(el.getAttribute("value") ?? "", NAME_CHARS);
+  return visibleText(el, isVisible, NAME_CHARS);
+}
+
 /** Input types whose value is never text a person typed. */
 const NOT_TEXT_INPUTS = new Set(["hidden", "checkbox", "radio", "file", "submit", "image", "reset", "button", "range", "color"]);
 
@@ -503,7 +543,7 @@ function holdsText(el: Element): boolean {
 
 /** Everything the panel's rules and the model need to know about one element. */
 function describeElement(el: Element, role: string, isVisible: Visibility): ElementInfo {
-  const info: ElementInfo = { ref: refFor(el), role, name: accessibleName(el, role, isVisible), tag: el.tagName.toLowerCase() };
+  const info: ElementInfo = { ref: refFor(el), role, name: accessibleName(el, role), tag: el.tagName.toLowerCase() };
   if (el.tagName.toUpperCase() === "INPUT") info.type = inputType(el);
   // By the field, not its role: <input type="password" role="combobox"> still holds a password.
   const sensitive = holdsText(el) && isSensitiveField(el);
@@ -515,6 +555,8 @@ function describeElement(el: Element, role: string, isVisible: Visibility): Elem
   const checked = checkedState(el, role);
   if (checked !== undefined) info.checked = checked;
   if (isDisabled(el)) info.disabled = true;
+  const own = ownWords(el, role, isVisible);
+  if (own && own !== info.name) info.text = own;
   // Every link's address, whatever role it claims: a menu item or a "button" that is a link still goes there.
   const tag = el.tagName.toUpperCase();
   if ((tag === "A" || tag === "AREA") && el.hasAttribute("href")) {
@@ -734,7 +776,7 @@ export function click(ref: unknown, isVisible: Visibility): Result<{ note?: stri
   const cover = coveredBy(el);
   if (cover) {
     const role = roleOf(cover);
-    const name = role ? accessibleName(cover, role, isVisible) : visibleText(cover, isVisible, 60);
+    const name = role ? accessibleName(cover, role) : visibleText(cover, isVisible, 60);
     return { ok: false, error: "covered", message: `Something covers element ${ref as string}${name ? `: "${name}"` : ""}. Close it first.` };
   }
   const rect = el.getBoundingClientRect();
@@ -860,7 +902,7 @@ export function submitForm(ref: unknown, isVisible: Visibility): Result<{ note: 
   if (invalid.length) {
     const names = invalid.slice(0, 5).map((field) => {
       const role = roleOf(field) ?? "field";
-      return accessibleName(field, role, isVisible) || field.getAttribute("name") || role;
+      return accessibleName(field, role) || field.getAttribute("name") || role;
     });
     return { ok: false, error: "invalid_form", message: `The form is not complete: ${names.map(quoted).join(", ")}.` };
   }

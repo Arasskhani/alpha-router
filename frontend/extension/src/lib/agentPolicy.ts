@@ -131,15 +131,20 @@ function sendsSomething(name: string): boolean {
 }
 
 function named(element: ElementInfo): string {
-  return element.name ? `"${element.name}"` : `element ${element.ref}`;
+  return element.name ? `"${element.name}"` : element.text ? `"${element.text}"` : `element ${element.ref}`;
+}
+
+/** What a control says of itself: its name, and the words it shows when they differ (a label can hide them). */
+function labels(element: ElementInfo): string[] {
+  return [element.name, element.text ?? ""].map((label) => label.trim()).filter(Boolean);
 }
 
 function clickVerdict(element: ElementInfo, page: { url: string; host: string }, ctx: PolicyContext): Verdict {
-  const name = element.name.trim();
+  const said = labels(element);
   // A link is where it goes, whatever role it claims (a menu item, a "button").
   const linkish = element.role === "link" || Boolean(element.href);
   const buttonish = BUTTON_ROLES.has(element.role) || element.submits === true;
-  if ((buttonish || linkish) && purchase(name, linkish ? "link" : element.role)) {
+  if ((buttonish || linkish) && said.some((label) => purchase(label, linkish ? "link" : element.role))) {
     return blocked("purchase_label", `The agent never buys or pays: ${named(element)} is for the user to click.`);
   }
   if (element.href) {
@@ -165,7 +170,11 @@ function clickVerdict(element: ElementInfo, page: { url: string; host: string },
     }
     return verdict("sensitive", "submit", `Clicking ${named(element)} sends a form.`);
   }
-  if (sendsSomething(name)) return verdict("sensitive", "sensitive_label", `Clicking ${named(element)} may send, delete or publish something.`);
+  if (said.some(sendsSomething)) return verdict("sensitive", "sensitive_label", `Clicking ${named(element)} may send, delete or publish something.`);
+  // Nothing tells what it does - an icon without a name - so neither the agent nor a reviewer can judge it.
+  if (!said.length && !element.href) {
+    return verdict("sensitive", "unnamed_control", `The ${element.role === "text" ? "element" : element.role} ${element.ref} has no name, so what clicking it does cannot be told.`);
+  }
   return verdict("act", "click", `Clicking ${named(element)}.`);
 }
 
@@ -182,7 +191,7 @@ function typeVerdict(element: ElementInfo): Verdict {
 }
 
 function submitVerdict(element: ElementInfo, ctx: PolicyContext): Verdict {
-  if (purchase(element.name.trim(), element.role === "link" ? "button" : element.role)) {
+  if (labels(element).some((label) => purchase(label, element.role === "link" ? "button" : element.role))) {
     return blocked("purchase_label", `The agent never buys or pays: sending ${named(element)} is for the user.`);
   }
   const target = element.formAction ? readablePage(element.formAction) : null;

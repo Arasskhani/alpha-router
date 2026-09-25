@@ -6,10 +6,11 @@ import { describe, expect, it } from "vitest";
 import type { ElementInfo } from "../content/agent";
 import { approvalFor, classifyAction, type PolicyContext, type ProposedAction } from "./agentPolicy";
 
-const OPEN: PolicyContext = { policy: { allowed_sites: [], blocked_sites: [] }, serverHost: "ai.example.com" };
+const OPEN: PolicyContext = { policy: { allowed_sites: [], blocked_sites: [] }, serverHost: "ai.example.com", serverOrigin: "https://ai.example.com" };
 const RULES: PolicyContext = {
   policy: { allowed_sites: ["*.example.com", "partner.org"], blocked_sites: ["bank.example.com"] },
   serverHost: "ai.example.com",
+  serverOrigin: "https://ai.example.com",
 };
 const SHOP = { url: "https://shop.example.com/cart", host: "shop.example.com" };
 
@@ -33,9 +34,16 @@ describe("reading", () => {
     expect(classify("get_page_text", { page: elsewhere }, RULES)).toMatchObject({ class: "blocked", reason: "site_not_allowed" });
   });
 
-  it("never happens on Alpharouter itself", () => {
+  it("never happens on Alpharouter itself, told by its origin", () => {
     const own = { url: "https://ai.example.com/chat", host: "ai.example.com" };
     expect(classify("read_page", { page: own }, RULES)).toMatchObject({ class: "blocked", reason: "own_server" });
+    const dotted = { url: "https://AI.example.com./chat", host: "ai.example.com" };
+    expect(classify("read_page", { page: dotted }, RULES)).toMatchObject({ class: "blocked", reason: "own_server" });
+    const explicitPort = { url: "https://ai.example.com:443/chat", host: "ai.example.com" };
+    expect(classify("read_page", { page: explicitPort }, RULES)).toMatchObject({ class: "blocked", reason: "own_server" });
+    // Another program on the same host is not Alpharouter.
+    const otherPort = { url: "https://ai.example.com:8443/hr", host: "ai.example.com" };
+    expect(classify("read_page", { page: otherPort }, RULES)).toMatchObject({ class: "read" });
   });
 
   it("needs a web page", () => {

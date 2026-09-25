@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiError } from "../lib/api";
-import type { AgentMode, PolicyContext } from "../lib/agentPolicy";
+import { originOf, type AgentMode, type PolicyContext } from "../lib/agentPolicy";
 import { ChatStreamError, readChatStream } from "../lib/chatStream";
 import { getClient } from "../lib/client";
 import { fromTabScript, isExtensionMessage } from "../lib/messages";
@@ -118,6 +118,7 @@ export default function AgentView({ me, hidden = false, onDisconnected }: Props)
     () => ({
       policy: { allowed_sites: me.policy?.allowed_sites ?? [], blocked_sites: me.policy?.blocked_sites ?? [] },
       serverHost: serverHost(me.server.url),
+      serverOrigin: originOf(me.server.url),
     }),
     [me],
   );

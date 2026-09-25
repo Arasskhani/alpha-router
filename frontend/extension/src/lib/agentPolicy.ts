@@ -54,7 +54,27 @@ export type ProposedAction = {
   element?: ElementInfo;
 };
 
-export type PolicyContext = { policy: SitePolicy; serverHost: string | null };
+export type PolicyContext = {
+  policy: SitePolicy;
+  /** This Alpharouter's host, which an allow list never shuts out. */
+  serverHost: string | null;
+  /** This Alpharouter's origin ("https://ai.example.com"): the agent never works on its pages. */
+  serverOrigin: string | null;
+};
+
+/**
+ * An address's origin as the rules compare it: scheme, host without a
+ * trailing dot, and a port only when it is not the scheme's own.
+ */
+export function originOf(url: string | null | undefined): string | null {
+  try {
+    const parsed = new URL(url ?? "");
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    return `${parsed.protocol}//${parsed.hostname.replace(/\.$/, "").toLowerCase()}${parsed.port ? `:${parsed.port}` : ""}`;
+  } catch {
+    return null;
+  }
+}
 
 const READ_TOOLS = new Set(["tabs_list", "read_page", "find", "get_page_text", "scroll", "wait_for", "ask_user", "done"]);
 const PAGE_TOOLS = new Set(["read_page", "find", "get_page_text", "scroll", "wait_for", "click", "type_text", "select_option", "press_key", "submit_form"]);
@@ -84,9 +104,13 @@ function blocked(reason: string, message: string): Verdict {
   return verdict("blocked", reason, message);
 }
 
-/** Why the agent may not work on a site at all, or null. */
-function siteVerdict(host: string, ctx: PolicyContext): Verdict | null {
-  if (ctx.serverHost && host.toLowerCase() === ctx.serverHost.toLowerCase()) {
+/**
+ * Why the agent may not work on the page at `url` (on `host`) at all, or null.
+ * Alpharouter's own pages are told by their origin: another program on the
+ * same host, on another port, is not Alpharouter.
+ */
+function siteVerdict(url: string, host: string, ctx: PolicyContext): Verdict | null {
+  if (ctx.serverOrigin && originOf(url) === ctx.serverOrigin) {
     return blocked("own_server", "The agent does not work on Alpharouter itself.");
   }
   const refusal = siteRefusal(host, ctx.policy, ctx.serverHost);
@@ -99,7 +123,7 @@ function siteVerdict(host: string, ctx: PolicyContext): Verdict | null {
 function goingTo(rawUrl: unknown, fromHost: string | undefined, ctx: PolicyContext, what: string): Verdict {
   const target = typeof rawUrl === "string" ? readablePage(rawUrl) : null;
   if (!target) return blocked("special_scheme", `The agent opens web pages only (http or https), never ${typeof rawUrl === "string" ? "that address" : "a missing address"}.`);
-  const refused = siteVerdict(target.host, ctx);
+  const refused = siteVerdict(String(rawUrl), target.host, ctx);
   if (refused) return refused;
   if (fromHost && target.host === fromHost) return verdict("act", "same_site", `${what} on ${target.host}.`);
   return verdict("sensitive", "other_site", `${what} on another site: ${target.host}.`, target.host);
@@ -142,7 +166,7 @@ function clickVerdict(element: ElementInfo, page: { url: string; host: string },
   if (element.submits) {
     const target = element.formAction ? readablePage(element.formAction) : null;
     if (target) {
-      const refused = siteVerdict(target.host, ctx);
+      const refused = siteVerdict(element.formAction!, target.host, ctx);
       if (refused) return refused;
     }
     return verdict("sensitive", "submit", `Clicking ${named(element)} sends a form.`);
@@ -168,7 +192,7 @@ function submitVerdict(element: ElementInfo, ctx: PolicyContext): Verdict {
   }
   const target = element.formAction ? readablePage(element.formAction) : null;
   if (target) {
-    const refused = siteVerdict(target.host, ctx);
+    const refused = siteVerdict(element.formAction!, target.host, ctx);
     if (refused) return refused;
   }
   return verdict("sensitive", "submit", `Sending the form${element.name ? ` with ${named(element)}` : ""}.`);
@@ -179,7 +203,7 @@ export function classifyAction(action: ProposedAction, ctx: PolicyContext): Verd
   const { tool, args, page, element } = action;
   if (PAGE_TOOLS.has(tool)) {
     if (!page) return blocked("no_page", "The tab does not show a web page the agent can work on.");
-    const refused = siteVerdict(page.host, ctx);
+    const refused = siteVerdict(page.url, page.host, ctx);
     if (refused) return refused;
   }
   if (READ_TOOLS.has(tool)) return verdict("read", "read", "Looking, without changing anything.");

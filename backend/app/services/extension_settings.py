@@ -16,7 +16,9 @@ Kept as one JSON document in ``system_settings`` (``extension.settings``):
   for the agent.
 - ``agent_max_steps``, ``agent_auto_mode`` and ``agent_review_model``: the
   agent's limits. Auto mode (acting without asking on allowed sites) needs a
-  review model, which checks every action against the user's request.
+  review model, which checks every action against the user's request. It
+  reads what the agent found on pages, so when page content is kept to some
+  models, the review model has to be one of them.
 
 Who may use the extension and its agent at all is the Chat Tools ACL
 (``browser_extension``, ``browser_agent``), not this document.
@@ -176,6 +178,15 @@ def site_refusal(host: str, settings: ExtensionSettings, *, server_host: str | N
     if settings.allowed_sites and not any(host_matches(host, pattern) for pattern in settings.allowed_sites):
         return SITE_NOT_ALLOWED
     return None
+
+
+def page_content_allowed(settings: ExtensionSettings, model_ref: str | None) -> bool:
+    """Whether page content may go to the model ``model_ref`` (``model::<id>``) names.
+
+    Any model the user may use when the administrator lists none; otherwise
+    only a listed one, so a model that cannot be named is never allowed.
+    """
+    return not settings.page_content_models or (model_ref is not None and model_ref in settings.page_content_models)
 
 
 def _strings(value: Any) -> tuple[str, ...]:
@@ -339,7 +350,7 @@ async def validated_update(
     review_list = await _model_list(db, "Review model", [review] if review else [], enabled_only=True)
     if agent_auto_mode and not review_list:
         raise ExtensionSettingsError("Auto mode needs a review model to check each action.")
-    return replace(
+    updated = replace(
         current,
         site_access=site_access,
         allowed_sites=_site_list("Allowed sites", allowed_sites),
@@ -350,6 +361,13 @@ async def validated_update(
         agent_auto_mode=bool(agent_auto_mode),
         agent_review_model=review_list[0] if review_list else None,
     )
+    # The reviewer reads what the agent found on pages: element names, the text it would type.
+    if updated.agent_auto_mode and not page_content_allowed(updated, updated.agent_review_model):
+        raise ExtensionSettingsError(
+            "Auto mode's review model reads element names and text from pages, so it must be one of "
+            "the models for page content. Add it to that list or choose another review model."
+        )
+    return updated
 
 
 async def save_extension_settings(db: AsyncSession, settings: ExtensionSettings) -> None:

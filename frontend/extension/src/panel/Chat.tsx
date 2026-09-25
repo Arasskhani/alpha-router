@@ -440,6 +440,8 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
             { role: "user", content: question },
             { role: "assistant", content: answer },
           ],
+          // An answer about a page is titled only by a model the administrator lets pages reach.
+          chat_session_id: sid,
         }),
       });
       if (title) {

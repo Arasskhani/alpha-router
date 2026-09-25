@@ -241,6 +241,42 @@ class TestAnAdminsChange:
         assert updated.agent_auto_mode is True
         assert updated.agent_review_model == f"model::{model.id}"
 
+    async def test_auto_mode_s_review_model_must_be_one_pages_may_reach(self, db_session):
+        """The reviewer reads element names and the text the agent would type, both from pages."""
+        listed = await _model(db_session, "listed")
+        reviewer = await _model(db_session, "reviewer")
+        with pytest.raises(ExtensionSettingsError, match="must be one of the models for page content"):
+            await validated_update(
+                db_session,
+                ExtensionSettings(),
+                **_update(
+                    page_content_models=[f"model::{listed.id}"],
+                    agent_auto_mode=True,
+                    agent_review_model=f"model::{reviewer.id}",
+                ),
+            )
+        both = await validated_update(
+            db_session,
+            ExtensionSettings(),
+            **_update(
+                page_content_models=[f"model::{listed.id}", f"model::{reviewer.id}"],
+                agent_auto_mode=True,
+                agent_review_model=f"model::{reviewer.id}",
+            ),
+        )
+        assert both.agent_review_model == f"model::{reviewer.id}"
+        # Pages may go to any model, or Auto mode is off and the reviewer is never asked.
+        anyone = await validated_update(
+            db_session, ExtensionSettings(), **_update(agent_auto_mode=True, agent_review_model=f"model::{reviewer.id}")
+        )
+        assert anyone.agent_auto_mode is True
+        off = await validated_update(
+            db_session,
+            ExtensionSettings(),
+            **_update(page_content_models=[f"model::{listed.id}"], agent_review_model=f"model::{reviewer.id}"),
+        )
+        assert (off.agent_auto_mode, off.agent_review_model) == (False, f"model::{reviewer.id}")
+
     @pytest.mark.parametrize("steps", [4, 101])
     async def test_agent_steps_stay_in_bounds(self, db_session, steps):
         with pytest.raises(ExtensionSettingsError, match="between 5 and 100"):

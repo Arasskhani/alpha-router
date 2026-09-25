@@ -1411,7 +1411,11 @@ export default function ChatPanel({
 
       if (!msgs.some((m) => m.role === "assistant" && (m.content || "").trim())) return;
 
-      const generated = await fetchChatSessionTitle(modelId, plainMsgs.slice(0, 6));
+      const generated = await fetchChatSessionTitle(
+        modelId,
+        plainMsgs.slice(0, 6),
+        sessionPrivateMode(sid) ? undefined : sid,
+      );
       let title =
         generated && !isDefaultChatTitle(generated) ? generated : fallback;
       if (

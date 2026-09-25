@@ -8,6 +8,7 @@ from litellm import acompletion
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.branding import CHAT_CLIENT_APP
+from app.models.model_catalog import AIModel
 from app.models.user import User
 from app.services.budget_service import budget_request_blocked, get_user_budget_state
 from app.services.chat_markers import (
@@ -18,8 +19,11 @@ from app.services.chat_markers import (
     VIDEO_MESSAGE_PREFIX,
     VIDEO_PENDING_MARKER,
 )
+from app.services.chat_turn_context import earlier_page_answers
+from app.services.extension_settings import load_extension_settings, page_content_allowed
 from app.services.failure_details import failure_message
 from app.services.llm_providers import litellm_model_for_provider as _litellm_model_for_provider
+from app.services.model_access_service import resolve_access_subject, user_can_access_model
 from app.services.model_resolution_service import resolve_model_and_key
 from app.services.provider_utils import _apply_litellm_provider_kwargs
 from app.services.usage_logging_service import reserve_auxiliary_llm_usage, settle_auxiliary_usage
@@ -112,6 +116,22 @@ def _sanitize_title(raw: str) -> str:
     return f"{t[: _TITLE_MAX_CHARS - 1]}…"
 
 
+async def _may_title_with(db: AsyncSession, user: User, ai_model: AIModel, chat_session_id: str | None) -> bool:
+    """Whether the start of the conversation may go to this model for a title.
+
+    Only to a model the user may use, as a chat turn would check. And a chat
+    that holds an answer about a shared page carries the page's words, so it
+    goes only to a model the administrator lets page content reach; any other
+    model leaves it to the title made without one.
+    """
+    if not await user_can_access_model(db, ai_model, await resolve_access_subject(db, user_id=int(user.id))):
+        return False
+    if page_content_allowed(await load_extension_settings(db), f"model::{ai_model.id}"):
+        return True
+    marked, _sites = await earlier_page_answers(db, chat_session_id)
+    return not marked
+
+
 async def generate_chat_title(
     db: AsyncSession,
     user: User,
@@ -119,6 +139,7 @@ async def generate_chat_title(
     messages: list[dict],
     *,
     client_app: str = CHAT_CLIENT_APP,
+    chat_session_id: str | None = None,
 ) -> str:
     budget, usage = await get_user_budget_state(db, user)
     if budget_request_blocked(budget, usage):
@@ -126,6 +147,8 @@ async def generate_chat_title(
 
     ai_model, api_key, base_url, provider_type = await resolve_model_and_key(db, model_ref)
     if not ai_model or not api_key:
+        return _sanitize_title(_fallback_title(messages))
+    if not await _may_title_with(db, user, ai_model, chat_session_id):
         return _sanitize_title(_fallback_title(messages))
 
     model = _litellm_model_for_provider(ai_model.external_id, provider_type or ai_model.provider_type)

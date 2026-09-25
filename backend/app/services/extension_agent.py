@@ -31,7 +31,7 @@ from app.branding import EXTENSION_CLIENT_APP
 from app.models.extension import ExtensionEvent
 from app.models.user import User
 from app.services.budget_service import budget_request_blocked, get_user_budget_state
-from app.services.extension_settings import ExtensionSettings, normalize_page_host
+from app.services.extension_settings import ExtensionSettings, normalize_page_host, page_content_allowed
 from app.services.failure_details import failure_message
 from app.services.llm_providers import litellm_model_for_provider
 from app.services.model_resolution_service import resolve_model_and_key
@@ -250,10 +250,18 @@ async def review_action(
     arguments: dict,
     history: list[str],
 ) -> ReviewVerdict:
-    """Ask the administrator's review model about one action; ``ask`` on any failure."""
+    """Ask the administrator's review model about one action; ``ask`` on any failure.
+
+    The action carries what the agent found on pages - an element's name, the
+    text it would type - so a review model the administrator keeps page
+    content from is not asked: saving the settings refuses one, and a list
+    changed since then leaves the user to decide.
+    """
     model_ref = settings.agent_review_model
     if not model_ref:
         return _ask("No review model is set.")
+    if not page_content_allowed(settings, model_ref):
+        return _ask("The review model may not read page content.")
     budget, usage = await get_user_budget_state(db, user)
     if budget_request_blocked(budget, usage):
         return _ask("Your budget does not cover a review.")

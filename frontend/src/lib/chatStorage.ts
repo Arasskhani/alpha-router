@@ -2438,9 +2438,15 @@ export function sessionTitleFromMessages(messages: ChatMessage[]): string {
   return DEFAULT_CHAT_TITLE;
 }
 
+/**
+ * A title for the chat from the model. `sessionId` names a chat saved on the
+ * server, which then titles a chat that holds an answer about a shared page
+ * only with a model the administrator lets page content reach.
+ */
 export async function fetchChatSessionTitle(
   model: string,
   messages: Array<{ role: string; content: string }>,
+  sessionId?: string,
 ): Promise<string | null> {
   const payload = messages
     .map((m) => ({
@@ -2453,7 +2459,7 @@ export async function fetchChatSessionTitle(
   try {
     const data = await api<{ title: string }>("/api/chat/session-title", {
       method: "POST",
-      body: JSON.stringify({ model, messages: payload }),
+      body: JSON.stringify({ model, messages: payload, ...(sessionId ? { chat_session_id: sessionId } : {}) }),
     });
     const title = (data.title || "").trim();
     return title || null;

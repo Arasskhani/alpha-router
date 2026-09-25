@@ -141,6 +141,8 @@ describe("a saved chat", () => {
         { role: "user", content: "Hi there" },
         { role: "assistant", content: "Hello, Majid" },
       ],
+      // So the server titles a chat about a page only with a model allowed pages.
+      chat_session_id: body.chat_session_id,
     });
     const [patch] = server.callsTo("PATCH", `/api/user/chats/sessions/${body.chat_session_id as string}`);
     expect(patch.body).toEqual({ title: "A greeting", titleGenerated: true });

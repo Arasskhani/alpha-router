@@ -317,6 +317,44 @@ class TestReview:
         assert resp.json()["decision"] == "ask"
         model.assert_not_awaited()
 
+    async def test_a_review_model_pages_may_not_reach_means_ask(
+        self, client, browser, auto_mode, db_session, monkeypatch, session_factory
+    ):
+        """Settings saved before the rule, or a list edited around them: the reviewer is not sent page content."""
+        await save_extension_settings(
+            db_session,
+            ExtensionSettings(
+                agent_auto_mode=True,
+                agent_review_model=f"model::{auto_mode.id}",
+                page_content_models=(f"model::{auto_mode.id + 1}",),
+            ),
+        )
+        await db_session.commit()
+        model = AsyncMock()
+        monkeypatch.setattr(extension_agent, "acompletion", model)
+        resp = await client.post("/api/extension/review-action", json=REVIEW, headers=browser.headers)
+        assert resp.status_code == 200
+        assert resp.json() == {"decision": "ask", "reason": "The review model may not read page content."}
+        model.assert_not_awaited()
+        async with session_factory() as fresh:
+            assert (await fresh.execute(select(RequestLog))).scalars().all() == []
+
+    async def test_a_listed_review_model_is_asked(self, client, browser, auto_mode, db_session, monkeypatch):
+        await save_extension_settings(
+            db_session,
+            ExtensionSettings(
+                agent_auto_mode=True,
+                agent_review_model=f"model::{auto_mode.id}",
+                page_content_models=(f"model::{auto_mode.id}",),
+            ),
+        )
+        await db_session.commit()
+        model = AsyncMock(return_value=_reply('{"decision": "allow", "reason": "Asked for."}'))
+        monkeypatch.setattr(extension_agent, "acompletion", model)
+        resp = await client.post("/api/extension/review-action", json=REVIEW, headers=browser.headers)
+        assert resp.json() == {"decision": "allow", "reason": "Asked for."}
+        model.assert_awaited_once()
+
     async def test_no_budget_means_ask(self, client, browser, auto_mode, db_session, monkeypatch):
         await db_session.execute(BudgetPlan.__table__.update().values(monthly_budget_usd=0.0))
         await db_session.commit()

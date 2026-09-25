@@ -15,6 +15,10 @@ site, how much text, how many screenshots and which model, never the content.
 A screenshot of a page is page content like its text: the same rules apply,
 and it may only go to a model that reads images.
 
+An answer about a page can restate it, so a chat that holds one carries page
+content on: every later turn in it, in the extension or the web app, and the
+chat's title, go only to a model the administrator's list allows.
+
 The browser agent reads pages through its tools rather than declaring them;
 the extension checks the site rules before each action, and the server checks
 the agent's model against both model lists.
@@ -35,7 +39,12 @@ from app.models.extension import ExtensionEvent
 from app.models.model_catalog import AIModel
 from app.models.user import User
 from app.services.extension_package import normalize_origin
-from app.services.extension_settings import ExtensionSettings, normalize_page_host, site_refusal
+from app.services.extension_settings import (
+    ExtensionSettings,
+    normalize_page_host,
+    page_content_allowed,
+    site_refusal,
+)
 from app.services.model_capabilities import model_media_flags, supports_vision
 from app.services.model_resolution_service import resolve_model_row
 
@@ -113,6 +122,31 @@ def server_host() -> str | None:
         return None
 
 
+#: What a turn carrying page content is told when its model is not on the administrator's list.
+PAGES_NOT_FOR_MODEL = "Your administrator does not allow pages to be sent to this model. Choose another model."
+
+
+async def check_page_content_model(
+    db: AsyncSession,
+    *,
+    model_ref: str,
+    settings: ExtensionSettings,
+    message: str = PAGES_NOT_FOR_MODEL,
+) -> AIModel | None:
+    """Refuse a model the administrator keeps page content from; otherwise the model.
+
+    The model is the one a chat turn would resolve ``model_ref`` to, so naming
+    it by its external id instead of ``model::<id>`` changes nothing. None
+    when nothing usable is named and the admin set no list: the chat turn
+    itself then refuses the model as it would any other request.
+    """
+    found = await resolve_model_row(db, model_ref)
+    model = found[0] if found is not None else None
+    if not page_content_allowed(settings, f"model::{model.id}" if model is not None else None):
+        raise PageContextRefused(403, "model_not_allowed", message)
+    return model
+
+
 async def check_page_shares(
     db: AsyncSession,
     shares: list[PageShare],
@@ -121,12 +155,8 @@ async def check_page_shares(
     settings: ExtensionSettings,
 ) -> AIModel | None:
     """Refuse a blocked or unlisted site, a model outside the admin's list, or
-    screenshots for a model that reads no images; otherwise the model.
-
-    The model is the one a chat turn would resolve ``model_ref`` to, so naming
-    it by its external id instead of ``model::<id>`` changes nothing. None
-    when nothing usable is named and the admin set no list: the chat turn
-    itself then refuses the model as it would any other request.
+    screenshots for a model that reads no images; otherwise the model, as
+    ``check_page_content_model`` resolves it.
     """
     own_host = server_host()
     for share in shares:
@@ -137,14 +167,7 @@ async def check_page_shares(
                 f"Your administrator does not allow sharing pages from {share.host}.",
                 site=share.host,
             )
-    found = await resolve_model_row(db, model_ref)
-    model = found[0] if found is not None else None
-    if settings.page_content_models and (model is None or f"model::{model.id}" not in settings.page_content_models):
-        raise PageContextRefused(
-            403,
-            "model_not_allowed",
-            "Your administrator does not allow pages to be sent to this model. Choose another model.",
-        )
+    model = await check_page_content_model(db, model_ref=model_ref, settings=settings)
     if model is not None and any(share.images for share in shares) and not reads_images(model):
         raise PageContextRefused(400, "model_reads_no_images", "This model does not read images. Choose another model.")
     return model
@@ -166,12 +189,8 @@ async def check_agent_model(db: AsyncSession, *, model_ref: str, settings: Exten
             "model_not_allowed",
             "Your administrator does not allow the browser agent to use this model. Choose another model.",
         )
-    if settings.page_content_models and ref not in settings.page_content_models:
-        raise PageContextRefused(
-            403,
-            "model_not_allowed",
-            "Your administrator does not allow pages to be sent to this model. Choose another model.",
-        )
+    if not page_content_allowed(settings, ref):
+        raise PageContextRefused(403, "model_not_allowed", PAGES_NOT_FOR_MODEL)
     return model
 
 

@@ -1,8 +1,33 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as apiMod from "../api";
 import {
+  fetchChatSessionTitle,
   mergeSessionAfterMessageLoad,
   type ChatSession,
 } from "./chatStorage";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("fetchChatSessionTitle", () => {
+  const messages = [
+    { role: "user", content: "Summarize this page" },
+    { role: "assistant", content: "It says hello." },
+  ];
+
+  it("names the saved chat it titles, so the server knows whether it holds an answer about a page", async () => {
+    const api = vi.spyOn(apiMod, "api").mockResolvedValue({ title: "Page summary" });
+    await expect(fetchChatSessionTitle("model::3", messages, "chat-1")).resolves.toBe("Page summary");
+    expect(JSON.parse(String(api.mock.calls[0][1]?.body))).toEqual({ model: "model::3", messages, chat_session_id: "chat-1" });
+  });
+
+  it("names no chat for one kept only in this browser", async () => {
+    const api = vi.spyOn(apiMod, "api").mockResolvedValue({ title: "Page summary" });
+    await fetchChatSessionTitle("model::3", messages);
+    expect(JSON.parse(String(api.mock.calls[0][1]?.body))).toEqual({ model: "model::3", messages });
+  });
+});
 
 function session(partial: Partial<ChatSession> & { id: string }): ChatSession {
   return {

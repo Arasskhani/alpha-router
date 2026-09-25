@@ -37,6 +37,7 @@ from app.services.extension_page_context import (
     PageContextRefused,
     PageShare,
     check_agent_model,
+    check_page_content_model,
     check_page_shares,
     page_share_events,
     page_shares,
@@ -69,6 +70,7 @@ from app.services.chat_session_access import resolve_owned_chat_session
 from app.services.chat_title_service import generate_chat_title
 from app.services.chat_tool_access_service import assert_tool_for_user, permitted_tool_keys
 from app.services.chat_tool_registry import CHAT_TOOLS
+from app.services.chat_turn_context import earlier_page_answers
 from app.services.chat_xlsx_service import ChatExportError as XlsxExportError
 from app.services.chat_xlsx_service import render_chat_xlsx
 from app.services.image_prompt_service import (
@@ -457,9 +459,45 @@ async def _declared_page_shares(
     return shares
 
 
+#: What a turn in a chat with an earlier answer about a page is told when its model may not have page content.
+PAGE_CHAT_NOT_FOR_MODEL = (
+    "This chat holds an answer about a page shared from the browser extension, and your administrator "
+    "does not allow page content to be sent to this model. Choose another model."
+)
+
+
+async def _page_chat_model(db: AsyncSession, body: ChatRequest, payload: dict) -> None:
+    """Hold a turn in a chat that already holds an answer about a shared page to the page-content models.
+
+    The earlier answer can restate the page, so every later turn carries page
+    content whether or not it declares any, in the extension or the web app.
+    Checked before anything is spent, and the checked model pinned in the
+    payload, as for declared pages.
+    """
+    if not body.chat_session_id:
+        return
+    settings = await load_extension_settings(db)
+    if not settings.page_content_models:
+        return
+    marked, _sites = await earlier_page_answers(db, body.chat_session_id)
+    if not marked:
+        return
+    try:
+        model = await check_page_content_model(
+            db, model_ref=str(body.model or ""), settings=settings, message=PAGE_CHAT_NOT_FOR_MODEL
+        )
+    except PageContextRefused as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail()) from None
+    if model is not None:
+        payload["model"] = f"model::{model.id}"
+
+
 class ChatTitleIn(BaseModel):
     model: str
     messages: list[dict]
+    #: The chat being titled, so a chat that holds an answer about a shared page is titled only by a model
+    #: that may have page content.
+    chat_session_id: str | None = Field(None, max_length=64)
 
 
 class EnhancePromptIn(BaseModel):
@@ -525,7 +563,14 @@ async def chat_session_title(
     db: AsyncSession = Depends(get_db),
 ):
     """Short overview title from conversation start (not the first user message verbatim)."""
-    title = await generate_chat_title(db, user, body.model, body.messages, client_app=_client_app(request))
+    title = await generate_chat_title(
+        db,
+        user,
+        body.model,
+        body.messages,
+        client_app=_client_app(request),
+        chat_session_id=body.chat_session_id,
+    )
     return {"title": title}
 
 
@@ -601,6 +646,8 @@ async def chat_completions(
     shares = await _declared_page_shares(db, request, body, payload, tools)
     if shares:
         payload[PAGE_CONTEXT_BODY_KEY] = [share.host for share in shares]
+    else:
+        await _page_chat_model(db, body, payload)
     resolved = await preflight_stream_chat(
         db,
         payload,

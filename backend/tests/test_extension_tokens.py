@@ -448,7 +448,7 @@ class TestRefresh:
         assert (await authenticate(db_session, new.access_token)).session.id == pair.session_id
         row = await _row(session_factory, pair.session_id)
         assert row.prior_refresh_token_hash == token_hash(pair.refresh_token)
-        assert row.prior_refresh_valid_until == clock.value + datetime.timedelta(seconds=30)
+        assert row.prior_refresh_valid_until == clock.value + tokens.REFRESH_GRACE
         assert row.access_expires_at == clock.value + datetime.timedelta(hours=1)
         assert row.refresh_expires_at == clock.value + datetime.timedelta(days=30)
 
@@ -468,19 +468,19 @@ class TestRefresh:
         new = await refresh_session(db_session, pair.refresh_token)
         await db_session.commit()
         before = _columns(await _row(session_factory, pair.session_id))
-        clock.advance(seconds=30)
+        clock.value += tokens.REFRESH_GRACE
         again = await refresh_session(db_session, pair.refresh_token)
         await db_session.commit()
         assert again.access_token == new.access_token
         assert again.refresh_token == new.refresh_token
-        assert again.expires_in == 3600 - 30
+        assert again.expires_in == 3600 - int(tokens.REFRESH_GRACE.total_seconds())
         assert _columns(await _row(session_factory, pair.session_id)) == before
 
     async def test_after_the_grace_the_old_token_ends_the_session(self, db_session, session_factory, user, clock):
         pair = await _connect(db_session, user)
         new = await refresh_session(db_session, pair.refresh_token)
         await db_session.commit()
-        clock.advance(seconds=31)
+        clock.value += tokens.REFRESH_GRACE + datetime.timedelta(seconds=1)
         error = await _grant_error(refresh_session(db_session, pair.refresh_token))
         assert error.code == "invalid_grant"
         row = await _row(session_factory, pair.session_id)
@@ -488,6 +488,35 @@ class TestRefresh:
         # Whoever holds the new pair is out too: it may be the thief.
         assert (await _grant_error(authenticate(db_session, new.access_token))).code == "revoked"
         assert (await _grant_error(refresh_session(db_session, new.refresh_token))).code == "invalid_grant"
+
+    async def test_the_grace_starts_when_the_token_is_replaced_not_when_the_request_began(
+        self, db_session, session_factory, user, clock
+    ):
+        pair = await _connect(db_session, user)
+
+        class _SlowPool:
+            """The request's session, whose first statement waits longer than the grace for a connection."""
+
+            def __init__(self, inner):
+                self._inner = inner
+                self._waited = False
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+            async def execute(self, statement, *args, **kwargs):
+                if not self._waited:
+                    self._waited = True
+                    clock.value += tokens.REFRESH_GRACE + datetime.timedelta(seconds=10)
+                return await self._inner.execute(statement, *args, **kwargs)
+
+        new = await refresh_session(_SlowPool(db_session), pair.refresh_token)
+        await db_session.commit()
+        clock.advance(seconds=1)
+        retried = await refresh_session(db_session, pair.refresh_token)
+        await db_session.commit()
+        assert retried.refresh_token == new.refresh_token
+        assert (await _row(session_factory, pair.session_id)).revoked_at is None
 
     async def test_a_token_older_than_the_last_rotation_is_unknown(self, db_session, session_factory, user, clock):
         pair = await _connect(db_session, user)

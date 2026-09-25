@@ -10,8 +10,8 @@ The connect flow is OAuth's authorization code with PKCE, run in a normal tab
    the API opens a session (:func:`create_session`): an access token (one
    hour) and a refresh token (30 days of disuse, 180 days at most).
 3. Refreshing rotates the refresh token (:func:`refresh_session`). The token
-   just replaced still works for 30 seconds, so a response lost on the way can
-   be retried; presented after that, it can only be a stolen copy, and the
+   just replaced still works for two minutes, so a response lost on the way
+   can be retried; presented after that, it can only be a stolen copy, and the
    session ends.
 
 A refresh token always turns into the same new pair (:func:`next_pair`, keyed
@@ -63,7 +63,10 @@ REFRESH_TOKEN_PREFIX = f"{PRODUCT_SLUG}-ext-rt-"
 ACCESS_TOKEN_LIFETIME = datetime.timedelta(hours=1)
 REFRESH_IDLE_LIFETIME = datetime.timedelta(days=30)
 SESSION_MAX_LIFETIME = datetime.timedelta(days=180)
-REFRESH_GRACE = datetime.timedelta(seconds=30)
+#: How long a replaced refresh token still works. Longer than the extension's
+#: refresh timeout plus a retry; since a token always turns into the same pair,
+#: a longer grace hands nobody anything the rightful holder does not also get.
+REFRESH_GRACE = datetime.timedelta(minutes=2)
 #: last_used_at is written at most this often per session.
 TOUCH_INTERVAL = datetime.timedelta(minutes=1)
 
@@ -397,11 +400,14 @@ async def refresh_session(db: AsyncSession, refresh_token: str | None, *, ip: st
         raise _invalid_grant("Unknown refresh token.")
     presented = token_hash(refresh_token)
     access, refresh = next_pair(refresh_token)
-    now = _now()
     for _ in range(3):
         current = await _session_where(db, ExtensionSession.refresh_token_hash == presented)
         if current is not None:
-            await _require_usable(db, current, now)
+            await _require_usable(db, current, _now())
+            # Read the clock for the write itself: the grace starts when the
+            # token is replaced, not when a request that waited for a
+            # database connection began.
+            now = _now()
             result = await db.execute(
                 update(ExtensionSession)
                 .where(
@@ -426,6 +432,7 @@ async def refresh_session(db: AsyncSession, refresh_token: str | None, *, ip: st
         replaced = await _session_where(db, ExtensionSession.prior_refresh_token_hash == presented)
         if replaced is None or replaced.revoked_at is not None:
             raise _invalid_grant("Unknown refresh token.")
+        now = _now()
         if replaced.prior_refresh_valid_until is None or replaced.prior_refresh_valid_until < now:  # type: ignore[operator]
             # A replaced token, well after it was replaced: someone else holds a copy.
             await _revoke_now(str(replaced.id), reason=REVOKED_REFRESH_REUSE, ip=ip)

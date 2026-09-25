@@ -403,7 +403,7 @@ class TestRefresh:
         tokens = await _connect(client, browser, user, redirect)
         body = {"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"]}
         assert (await browser.post("/api/extension/token", json=body)).status_code == 200
-        later = extension_tokens._now() + datetime.timedelta(seconds=31)
+        later = extension_tokens._now() + extension_tokens.REFRESH_GRACE + datetime.timedelta(seconds=1)
         monkeypatch.setattr(extension_tokens, "_now", lambda: later)
         replay = await browser.post("/api/extension/token", json=body)
         assert replay.status_code == 400

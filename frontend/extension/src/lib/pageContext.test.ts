@@ -317,7 +317,7 @@ describe("reading a PDF tab", () => {
   it("downloads the file with the site's cookies, has the server read it, and takes its text", async () => {
     const fetchImpl = serve(new Response(PDF, { status: 200, headers: { "content-type": "application/pdf" } }));
     const page = await readPdf({ id: 7, url: PDF_URL, title: "Q3 report.pdf" }, OPEN, upload);
-    expect(fetchImpl).toHaveBeenCalledWith(PDF_URL, { credentials: "include", cache: "no-store" });
+    expect(fetchImpl).toHaveBeenCalledWith(PDF_URL, { credentials: "include", cache: "no-store", redirect: "manual" });
     const form = upload.mock.calls[0][0] as FormData;
     const file = form.get("files") as File;
     expect(file.name).toBe("Q3 report.pdf");
@@ -343,16 +343,19 @@ describe("reading a PDF tab", () => {
     expect(upload).not.toHaveBeenCalled();
   });
 
-  it("refuses a PDF the download redirects to another site, and follows the same site", async () => {
-    const elsewhere = new Response(PDF, { status: 200 });
-    Object.defineProperties(elsewhere, { redirected: { value: true }, url: { value: "https://hr.blocked.example/confidential.pdf" } });
-    serve(elsewhere);
-    await expect(readPdf({ id: 7, url: PDF_URL }, OPEN, upload)).rejects.toThrow("sent from another site (hr.blocked.example)");
+  it("follows no redirect, which could take the user's cookies to another site", async () => {
+    // What fetch gives for a redirect it was told not to follow: no status, no address, no body.
+    const redirect = new Response(null, { status: 200 });
+    Object.defineProperties(redirect, { type: { value: "opaqueredirect" }, status: { value: 0 }, ok: { value: false } });
+    const fetchImpl = serve(redirect);
+    await expect(readPdf({ id: 7, url: PDF_URL }, OPEN, upload)).rejects.toThrow("sends the download somewhere else");
+    expect(fetchImpl).toHaveBeenCalledWith(PDF_URL, expect.objectContaining({ redirect: "manual" }));
     expect(upload).not.toHaveBeenCalled();
-    const sameSite = new Response(PDF, { status: 200 });
-    Object.defineProperties(sameSite, { redirected: { value: true }, url: { value: "https://docs.example.com/files/v2/Q3.pdf" } });
-    serve(sameSite);
-    await expect(readPdf({ id: 7, url: PDF_URL }, OPEN, upload)).resolves.toMatchObject({ host: "docs.example.com" });
+    // A response that says it was redirected is refused as well, wherever it landed.
+    const followed = new Response(PDF, { status: 200 });
+    Object.defineProperties(followed, { redirected: { value: true }, url: { value: "https://docs.example.com/files/v2/Q3.pdf" } });
+    serve(followed);
+    await expect(readPdf({ id: 7, url: PDF_URL }, OPEN, upload)).rejects.toThrow("sends the download somewhere else");
   });
 
   it("says so when the server finds no text in it", async () => {

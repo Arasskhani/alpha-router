@@ -149,4 +149,39 @@ describe("Settings → Extension", () => {
     await render();
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("Server unavailable");
   });
+
+  it("never claims no browser is connected when the list could not be read", async () => {
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path === "/api/extension/info") return INFO as never;
+      throw new Error("Server unavailable");
+    });
+    await render();
+    expect(host.textContent).not.toContain("No browser is connected.");
+    expect(host.textContent).toContain("Could not load your connected browsers");
+    // The rest of the tab still works.
+    expect(host.querySelector('a[href="/api/extension/download"]')).not.toBeNull();
+  });
+
+  it("reloads the list after a failed disconnect too", async () => {
+    serve(INFO, [LAPTOP]);
+    await render();
+    const listCalls = () => vi.mocked(api).mock.calls.filter(([path]) => path === "/api/extension/sessions").length;
+    const before = listCalls();
+    confirm.mockResolvedValueOnce(true);
+    vi.mocked(api).mockImplementationOnce(async () => {
+      throw new Error("No such connected browser.");
+    });
+    await act(async () => button("Disconnect").click());
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("No such connected browser.");
+    expect(listCalls()).toBe(before + 1);
+  });
+
+  it("names each Disconnect button after its browser", async () => {
+    serve(INFO, [LAPTOP, { ...LAPTOP, id: "22222222-2222-2222-2222-222222222222", device_name: "Edge on Mac" }]);
+    await render();
+    const labels = [...host.querySelectorAll("button")]
+      .filter((b) => b.textContent === "Disconnect")
+      .map((b) => b.getAttribute("aria-label"));
+    expect(labels).toEqual(["Disconnect Chrome on Windows", "Disconnect Edge on Mac"]);
+  });
 });

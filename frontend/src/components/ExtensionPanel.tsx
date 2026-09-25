@@ -67,32 +67,45 @@ function CopyValue({ label, value }: { label: string; value: string }) {
 export default function ExtensionPanel() {
   const { confirm } = useConfirm();
   const [info, setInfo] = useState<ExtensionInfo | null>(null);
-  const [browsers, setBrowsers] = useState<ConnectedBrowser[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [infoError, setInfoError] = useState("");
+  const [infoLoading, setInfoLoading] = useState(true);
+  // null until loaded: "no browser is connected" is a claim, not a default.
+  const [browsers, setBrowsers] = useState<ConnectedBrowser[] | null>(null);
+  const [browsersError, setBrowsersError] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [browser, setBrowser] = useState<Browser>("chrome");
-
   const [reloads, setReloads] = useState(0);
 
   useEffect(() => {
     let active = true;
-    Promise.all([
-      api<ExtensionInfo>("/api/extension/info"),
-      api<{ items: ConnectedBrowser[] }>("/api/extension/sessions"),
-    ])
-      .then(([infoRow, sessions]) => {
-        if (!active) return;
-        setInfo(infoRow);
-        setBrowsers(sessions.items);
-        setError("");
+    api<ExtensionInfo>("/api/extension/info")
+      .then((row) => {
+        if (active) setInfo(row);
       })
       .catch((err) => {
-        if (active) setError(formatApiError(err));
+        if (active) setInfoError(formatApiError(err));
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active) setInfoLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Separately, and again after every Disconnect: one failing never blanks the other.
+  useEffect(() => {
+    let active = true;
+    api<{ items: ConnectedBrowser[] }>("/api/extension/sessions")
+      .then((rows) => {
+        if (!active) return;
+        setBrowsers(rows.items);
+        setBrowsersError("");
+      })
+      .catch((err) => {
+        if (active) setBrowsersError(formatApiError(err));
       });
     return () => {
       active = false;
@@ -114,15 +127,16 @@ export default function ExtensionPanel() {
     try {
       await api(`/api/extension/sessions/${encodeURIComponent(row.id)}`, { method: "DELETE" });
       setMessage(`${name} was disconnected.`);
-      setReloads((count) => count + 1);
     } catch (err) {
       setError(formatApiError(err));
     } finally {
       setBusyId(null);
+      // Whatever happened - it may have been disconnected elsewhere already.
+      setReloads((count) => count + 1);
     }
   }
 
-  if (loading) return <p className="muted">Loading extension settings…</p>;
+  if (infoLoading) return <p className="muted">Loading extension settings…</p>;
 
   const canDownload = Boolean(info?.permitted && info.available);
 
@@ -134,6 +148,11 @@ export default function ExtensionPanel() {
         are on. Chats are saved to your history, as they are here.
       </p>
 
+      {infoError && (
+        <p className="settings-error" role="alert">
+          Could not load the extension&apos;s details: {infoError}
+        </p>
+      )}
       {error && (
         <p className="settings-error" role="alert">
           {error}
@@ -205,7 +224,13 @@ export default function ExtensionPanel() {
       )}
 
       <h3 className="extension-panel__heading">Connected browsers</h3>
-      {browsers.length === 0 ? (
+      {browsersError ? (
+        <p className="settings-error" role="alert">
+          Could not load your connected browsers: {browsersError}
+        </p>
+      ) : browsers === null ? (
+        <p className="muted">Loading…</p>
+      ) : browsers.length === 0 ? (
         <p className="settings-hint">No browser is connected.</p>
       ) : (
         <div className="settings-list">
@@ -224,6 +249,7 @@ export default function ExtensionPanel() {
                     type="button"
                     className="settings-row__action settings-row__action--danger"
                     disabled={busyId !== null}
+                    aria-label={`Disconnect ${row.device_name || "browser"}`}
                     onClick={() => void disconnect(row)}
                   >
                     Disconnect

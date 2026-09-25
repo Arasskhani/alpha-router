@@ -229,6 +229,28 @@ describe("a run", () => {
     expect(second.messages.at(-1)).toMatchObject({ role: "tool", content: "The user answered: M" });
   });
 
+  it("waits out the server's per-minute limit instead of giving up", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let calls = 0;
+      server.routes["POST /api/chat/completions"] = (init) => {
+        calls += 1;
+        if (calls === 1) return json(429, { detail: "Too many requests." });
+        return sse(toolFrame([{ id: "c1", name: "done", args: { summary: "Done after waiting." } }]), { signal: init.signal }).response;
+      };
+      await render();
+      await start("Do something.");
+      await until(() => host.textContent!.includes("Too many requests in a minute"), "the note");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(16_000);
+      });
+      await until(() => host.textContent!.includes("Done after waiting."), "the run to go on");
+      expect(calls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("shows what went wrong when the server refuses the step", async () => {
     server.routes["POST /api/chat/completions"] = () =>
       json(403, { detail: { code: "model_not_allowed", message: "Your administrator does not allow the browser agent to use this model." } });

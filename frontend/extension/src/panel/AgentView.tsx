@@ -30,6 +30,25 @@ const DEFAULT_MAX_STEPS = 25;
 const EVENT_BATCH = 10;
 /** Each argument a review sees, cut to fit the reviewer's limit. */
 const REVIEW_ARGUMENT_CHARS = 1500;
+/** When the server's per-minute limit is reached: how long to wait, and how often, before the run gives up. */
+const RATE_LIMIT_WAIT_MS = 15_000;
+const RATE_LIMIT_RETRIES = 3;
+
+/** Wait `ms`, or less if the run is stopped (then it throws, as a stopped fetch does). */
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", stop);
+      resolve();
+    }, ms);
+    const stop = () => {
+      clearTimeout(timer);
+      reject(new DOMException("The run was stopped.", "AbortError"));
+    };
+    if (signal.aborted) stop();
+    else signal.addEventListener("abort", stop, { once: true });
+  });
+}
 
 type LogItem =
   | { kind: "task"; id: string; text: string }
@@ -205,20 +224,29 @@ export default function AgentView({ me, hidden = false, onDisconnected }: Props)
     const { api } = getClient();
     return {
       async model(messages, stepSignal) {
-        try {
-          const response = await api.request("/api/chat/completions", {
-            method: "POST",
-            // No chat, no history, no assistant message id: each step stands alone.
-            body: JSON.stringify({ model, messages, stream: true, browser_tools: AGENT_TOOLS, browser_tool_choice: "auto" }),
-            signal: stepSignal,
-          });
-          if (!response.ok) throw await ApiError.from(response);
-          const result = await readChatStream(response);
-          return { text: result.text, toolCalls: result.toolCalls };
-        } catch (err) {
-          if (err instanceof DisconnectedError) disconnected.current();
-          if (err instanceof DOMException && err.name === "AbortError") throw err;
-          throw new Error(describeError(err));
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            const response = await api.request("/api/chat/completions", {
+              method: "POST",
+              // No chat, no history, no assistant message id: each step stands alone.
+              body: JSON.stringify({ model, messages, stream: true, browser_tools: AGENT_TOOLS, browser_tool_choice: "auto" }),
+              signal: stepSignal,
+            });
+            if (!response.ok) throw await ApiError.from(response);
+            const result = await readChatStream(response);
+            return { text: result.text, toolCalls: result.toolCalls };
+          } catch (err) {
+            if (err instanceof DisconnectedError) disconnected.current();
+            if (err instanceof DOMException && err.name === "AbortError") throw err;
+            // A fast run can reach the server's per-minute limit: wait for it, a few times, rather than give up.
+            if (err instanceof ApiError && err.status === 429 && attempt < RATE_LIMIT_RETRIES) {
+              const note = randomHex(6);
+              append({ kind: "text", id: note, text: "Too many requests in a minute: waiting a little before the next step…" });
+              await pause(RATE_LIMIT_WAIT_MS, stepSignal);
+              continue;
+            }
+            throw new Error(describeError(err));
+          }
         }
       },
       browser: browser.current!,

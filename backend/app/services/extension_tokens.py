@@ -11,8 +11,8 @@ The connect flow is OAuth's authorization code with PKCE, run in a normal tab
    hour) and a refresh token (30 days of disuse, 180 days at most).
 3. Refreshing rotates the refresh token (:func:`refresh_session`). The token
    just replaced still works for two minutes, so a response lost on the way
-   can be retried; presented after that, it can only be a stolen copy, and the
-   session ends.
+   can be retried; presented after that - or any older token of the same
+   session - it can only be a stolen copy, and the session ends.
 
 A refresh token always turns into the same new pair (:func:`next_pair`, keyed
 with the server's secret). So a retry, or a second refresh racing the first,
@@ -43,7 +43,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 import redis.asyncio as redis_async
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.branding import PRODUCT_SLUG
@@ -67,6 +67,10 @@ SESSION_MAX_LIFETIME = datetime.timedelta(days=180)
 #: refresh timeout plus a retry; since a token always turns into the same pair,
 #: a longer grace hands nobody anything the rightful holder does not also get.
 REFRESH_GRACE = datetime.timedelta(minutes=2)
+#: How many rotations back a returning refresh token is still recognised as
+#: this session's - weeks of normal use - so that any old token, not only the
+#: one just replaced, ends the session when it comes back.
+REUSE_LOOKBACK = 256
 #: last_used_at is written at most this often per session.
 TOUCH_INTERVAL = datetime.timedelta(minutes=1)
 
@@ -127,18 +131,35 @@ def _new_token(prefix: str) -> str:
     return prefix + secrets.token_urlsafe(32)
 
 
+def _rotation_key() -> bytes:
+    return hmac.new(get_settings().secret_key.encode("utf-8"), _ROTATION_CONTEXT, hashlib.sha256).digest()
+
+
+def _derive(key: bytes, label: bytes, refresh_token: str) -> str:
+    return _b64url(hmac.new(key, label + b"\0" + refresh_token.encode("utf-8"), hashlib.sha256).digest())
+
+
 def next_pair(refresh_token: str) -> tuple[str, str]:
     """The access and refresh token that ``refresh_token`` turns into.
 
     Always the same two for the same token, and keyed with ``SECRET_KEY``, so
     nobody holding a token can work out its successor.
     """
-    key = hmac.new(get_settings().secret_key.encode("utf-8"), _ROTATION_CONTEXT, hashlib.sha256).digest()
+    key = _rotation_key()
+    return (
+        ACCESS_TOKEN_PREFIX + _derive(key, b"access", refresh_token),
+        REFRESH_TOKEN_PREFIX + _derive(key, b"refresh", refresh_token),
+    )
 
-    def derive(label: bytes) -> str:
-        return _b64url(hmac.new(key, label + b"\0" + refresh_token.encode("utf-8"), hashlib.sha256).digest())
 
-    return ACCESS_TOKEN_PREFIX + derive(b"access"), REFRESH_TOKEN_PREFIX + derive(b"refresh")
+def _successor_hashes(refresh_token: str, steps: int) -> list[str]:
+    """The hashes of the refresh tokens ``refresh_token`` turns into, one rotation after another."""
+    key = _rotation_key()
+    token, hashes = refresh_token, []
+    for _ in range(steps):
+        token = REFRESH_TOKEN_PREFIX + _derive(key, b"refresh", token)
+        hashes.append(token_hash(token))
+    return hashes
 
 
 def pkce_challenge(verifier: str) -> str:
@@ -390,6 +411,28 @@ async def _session_where(db: AsyncSession, condition: Any) -> ExtensionSession |
     return (await db.execute(query)).scalars().first()
 
 
+async def _session_of_an_older_token(db: AsyncSession, refresh_token: str) -> ExtensionSession | None:
+    """The live session a refresh token replaced several rotations ago, if any.
+
+    Tokens form a chain (:func:`next_pair`), so walking forward from the one
+    presented finds the session's current or last-replaced token when the
+    presented one is an ancestor. A random string walks into nothing.
+    """
+    hashes = _successor_hashes(refresh_token, REUSE_LOOKBACK)
+    query = (
+        select(ExtensionSession)
+        .where(
+            ExtensionSession.revoked_at.is_(None),
+            or_(
+                ExtensionSession.refresh_token_hash.in_(hashes),
+                ExtensionSession.prior_refresh_token_hash.in_(hashes),
+            ),
+        )
+        .limit(1)
+    )
+    return (await db.execute(query)).scalars().first()
+
+
 async def _require_usable(db: AsyncSession, session: ExtensionSession, now: datetime.datetime) -> None:
     """Refuse a refresh for a session that has ended.
 
@@ -442,7 +485,13 @@ async def refresh_session(db: AsyncSession, refresh_token: str | None, *, ip: st
             # this very pair, which the next pass hands out as the grace path.
             continue
         replaced = await _session_where(db, ExtensionSession.prior_refresh_token_hash == presented)
-        if replaced is None or replaced.revoked_at is not None:
+        if replaced is None:
+            older = await _session_of_an_older_token(db, refresh_token)
+            if older is not None:
+                await _revoke_now(str(older.id), reason=REVOKED_REFRESH_REUSE, ip=ip)
+                raise _invalid_grant("This browser's connection was ended for safety.")
+            raise _invalid_grant("Unknown refresh token.")
+        if replaced.revoked_at is not None:
             raise _invalid_grant("Unknown refresh token.")
         now = _now()
         if replaced.prior_refresh_valid_until is None or replaced.prior_refresh_valid_until < now:  # type: ignore[operator]

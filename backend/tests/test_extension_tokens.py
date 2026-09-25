@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy import Update, select, update
 
 from app.models.extension import ExtensionSession
+from app.models.security import SecurityAuditEvent
 from app.models.user import User
 from app.services import extension_tokens as tokens
 from app.services.extension_tokens import (
@@ -518,14 +519,43 @@ class TestRefresh:
         assert retried.refresh_token == new.refresh_token
         assert (await _row(session_factory, pair.session_id)).revoked_at is None
 
-    async def test_a_token_older_than_the_last_rotation_is_unknown(self, db_session, session_factory, user, clock):
+    @pytest.mark.parametrize("rotations", [2, 5])
+    async def test_any_older_token_ends_the_session_too(self, db_session, session_factory, user, clock, rotations):
         pair = await _connect(db_session, user)
-        second = await refresh_session(db_session, pair.refresh_token)
-        await db_session.commit()
-        await refresh_session(db_session, second.refresh_token)
-        await db_session.commit()
-        error = await _grant_error(refresh_session(db_session, pair.refresh_token))
+        token = pair.refresh_token
+        for _ in range(rotations):
+            token = (await refresh_session(db_session, token)).refresh_token
+            await db_session.commit()
+        error = await _grant_error(refresh_session(db_session, pair.refresh_token, ip="203.0.113.7"))
         assert error.code == "invalid_grant"
+        row = await _row(session_factory, pair.session_id)
+        assert row.revoked_reason == "refresh_reuse"
+        async with session_factory() as fresh:
+            (event,) = (await fresh.execute(select(SecurityAuditEvent))).scalars().all()
+        assert (event.action, event.actor_ip, event.resource_id) == (
+            "extension_session_revoked",
+            "203.0.113.7",
+            pair.session_id,
+        )
+
+    async def test_a_token_of_another_session_ends_only_that_one(self, db_session, session_factory, user, clock):
+        mine = await _connect(db_session, user)
+        other = await _connect(db_session, user)
+        token = mine.refresh_token
+        for _ in range(2):
+            token = (await refresh_session(db_session, token)).refresh_token
+            await db_session.commit()
+        await _grant_error(refresh_session(db_session, mine.refresh_token))
+        assert (await _row(session_factory, mine.session_id)).revoked_at is not None
+        assert (await _row(session_factory, other.session_id)).revoked_at is None
+
+    async def test_a_random_token_ends_nothing(self, db_session, session_factory, user, clock):
+        pair = await _connect(db_session, user)
+        await refresh_session(db_session, pair.refresh_token)
+        await db_session.commit()
+        assert (
+            await _grant_error(refresh_session(db_session, REFRESH_TOKEN_PREFIX + "random"))
+        ).code == "invalid_grant"
         assert (await _row(session_factory, pair.session_id)).revoked_at is None
 
     @pytest.mark.parametrize("token", [None, "", "alpha-router-ext-at-looks-like-access", REFRESH_TOKEN_PREFIX + "x"])
@@ -624,7 +654,8 @@ class TestRefresh:
         await db_session.commit()
         row = await _row(session_factory, pair.session_id)
         assert row.refresh_token_hash == token_hash(latest[0].refresh_token)
-        assert row.revoked_at is None
+        # Its token is now two rotations old: someone else holds the chain, so it ends.
+        assert row.revoked_reason == "refresh_reuse"
 
     async def test_a_disconnect_during_a_refresh_wins(self, db_session, session_factory, user, clock):
         pair = await _connect(db_session, user)

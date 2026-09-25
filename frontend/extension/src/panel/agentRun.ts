@@ -388,12 +388,19 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       const next = tool === "tab_open" ? await deps.browser.openTab(url) : await deps.browser.navigate(url);
       await Promise.race([deps.browser.settle(), stopped]);
       check();
-      const where = next.host ? `${next.host}` : "a page";
+      // Where the tab is once it settled - the browser answers the update with the page it was leaving -
+      // and inside the page tags: a page's address, down to its path, is the page's own words.
+      const now = await deps.browser.current();
+      check();
+      const shows = now?.host ? whereTo(now.url) : "a page the agent cannot read";
+      const moved = now?.host && !allowedSites.has(now.host) ? `\nThat is another site than the one allowed: the user will be asked before you act there.` : "";
+      const said = tool === "tab_open" ? `Opened a new tab (id ${next.id}); you work there now. It shows ${shows}.` : `The tab shows ${shows} now.`;
       return {
-        content: tool === "tab_open" ? `Opened ${where} in a new tab (id ${next.id}); you work there now.` : `The tab shows ${whereTo(next.url)} now.`,
+        content: "",
+        page: wrapPage(options.nonce, now?.host ?? "browser tabs", said + moved),
         status: "done",
         outcome: "ok",
-        site: next.host ?? undefined,
+        site: now?.host ?? next.host ?? undefined,
       };
     }
     if (tool === "tab_switch") {

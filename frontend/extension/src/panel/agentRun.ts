@@ -303,6 +303,13 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   let errorsInARow = 0;
   let steps = 0;
   let startSite: string | undefined;
+  /**
+   * The sites the user has let the agent work on: where the run started, and
+   * every other site the user allowed it to go to. A page can take the tab
+   * elsewhere by itself - a redirect, a script, a same-site link that
+   * bounces - and the agent acts on no such site until the user agrees.
+   */
+  const allowedSites = new Set<string>();
   const started = Date.now();
 
   const check = () => {
@@ -388,9 +395,15 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         extra: { error: result.error },
       };
     }
+    let moved = "";
     if (MAY_LOAD.has(tool)) {
       await Promise.race([deps.browser.settle(), stopped]);
       check();
+      const after = await deps.browser.current();
+      check();
+      if (after?.host && after.host !== site && !allowedSites.has(after.host)) {
+        moved = `\nThe page is now on another site: ${after.host}. The user will be asked before you act there.`;
+      }
     }
     let body: string;
     let detail: string | undefined;
@@ -407,7 +420,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       body = typeof result.note === "string" && result.note ? result.note : "Done.";
       detail = typeof result.note === "string" ? result.note : undefined;
     }
-    return { content: "", page: wrapPage(options.nonce, site, body), status: "done", detail, outcome: "ok" };
+    return { content: "", page: wrapPage(options.nonce, site, body + moved), status: "done", detail, outcome: "ok" };
   }
 
   /** One tool call from the model: through the rules, maybe past the user, then carried out. */
@@ -493,6 +506,12 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       };
     }
     let approval = approvalFor(verdict, options.mode);
+    // A site the page went to by itself: the user decides before the agent acts there, in Auto mode too.
+    const arrived = pageNow && verdict.class !== "read" && !allowedSites.has(pageNow.host) ? pageNow.host : null;
+    const judged: Verdict = arrived
+      ? { ...verdict, message: `${verdict.message} The page went to ${arrived} without being asked to; allowing this lets the agent work there.` }
+      : verdict;
+    if (arrived) approval = "user";
     // The browser has to allow a site before the agent can work there, and it asks only in a click.
     let access: ApprovalRequest["access"];
     const needs =
@@ -538,7 +557,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     let approvedBy = approval === "none" ? (base.extra.review === "allow" ? "review" : "not_needed") : "user";
     if (approval === "user") {
       deps.onStep({ id: call.id, tool: name, summary, status: "waiting" });
-      const allowed = await deps.approve({ tool: name, summary, verdict, review: reviewNote, access }, signal);
+      const allowed = await deps.approve({ tool: name, summary, verdict: judged, review: reviewNote, access }, signal);
       check();
       if (!allowed) {
         return {
@@ -551,6 +570,9 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         };
       }
       approvedBy = "user";
+      if (arrived) allowedSites.add(arrived);
+      // Going to another site the user allowed: the agent may work there.
+      if (verdict.site) allowedSites.add(verdict.site);
     }
     base.extra.approval = approvedBy;
     deps.onStep({ id: call.id, tool: name, summary, status: "running" });
@@ -561,6 +583,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   try {
     const first = await deps.browser.current();
     startSite = first?.host ?? undefined;
+    // The user started the run on this page.
+    if (startSite) allowedSites.add(startSite);
     for (steps = 1; steps <= options.maxSteps; steps += 1) {
       check();
       let reply: ModelReply;

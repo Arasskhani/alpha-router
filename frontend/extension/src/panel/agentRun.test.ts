@@ -397,6 +397,35 @@ describe("Auto mode", () => {
     expect(h.approvals).toEqual([expect.objectContaining({ summary: 'Press Enter in "Message"', verdict: expect.objectContaining({ reason: "enter_sends" }) })]);
   });
 
+  it("asks the user before acting on a site the page went to by itself, then lets the reviewer decide there", async () => {
+    const WEBMAIL = { id: 1, url: "https://webmail.example.org/inbox", host: "webmail.example.org", title: "Inbox" };
+    let where = TAB;
+    const browser = fakeBrowser({
+      click: () => {
+        // The page's own script takes the tab to another site.
+        where = WEBMAIL;
+        return { ok: true, note: "Done." };
+      },
+    });
+    browser.current.mockImplementation(async () => where);
+    const h = harness(
+      [
+        { text: "", toolCalls: [call("click", { ref: "e1" }, "c1")] },
+        { text: "", toolCalls: [call("type_text", { ref: "e3", text: "hello" }, "c2")] },
+        { text: "", toolCalls: [call("click", { ref: "e1" }, "c3")] },
+        { text: "", toolCalls: [call("done", { summary: "ok" })] },
+      ],
+      { review: { decision: "allow", reason: "Fits." }, browser },
+    );
+    await run(h, { mode: "auto" });
+    // The first click went to the reviewer; typing on the new site went to the user, once.
+    expect(h.approvals).toEqual([expect.objectContaining({ tool: "type_text", verdict: expect.objectContaining({ message: expect.stringContaining("went to webmail.example.org") }) })]);
+    expect(h.deps.review).toHaveBeenCalledTimes(2);
+    // And the model was told where the page went.
+    const told = h.sent[1].filter((m) => m.role === "tool").map((m) => (m as { content: string }).content).join("\n");
+    expect(told).toContain("now on another site: webmail.example.org");
+  });
+
   it("always asks the user before a sensitive action, whatever the reviewer would say", async () => {
     const h = harness(
       [{ text: "", toolCalls: [call("click", { ref: "e4" })] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }],

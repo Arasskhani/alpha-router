@@ -25,7 +25,7 @@ describe("the service worker", () => {
   it("makes the right-click menu when the extension is installed or updated, and only then", () => {
     expect(chromeFake.contextMenus.create).not.toHaveBeenCalled();
     chromeFake.runtime.onInstalled.emit();
-    expect(chromeFake.contextMenus.create).toHaveBeenCalledTimes(4);
+    expect(chromeFake.contextMenus.create).toHaveBeenCalledTimes(5);
   });
 
   it("answers a menu click from the moment it starts", () => {

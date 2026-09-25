@@ -114,6 +114,8 @@ export function installChromeFake(options: { version?: string } = {}) {
         if (tab) onRemoved.emit(id, { windowId: tab.windowId, isWindowClosing: false });
       }),
       getCurrent: vi.fn((callback?: (tab?: chrome.tabs.Tab) => void) => callback?.(undefined)),
+      /** What Chrome captures of the visible tab: a tiny JPEG data URL. */
+      captureVisibleTab: vi.fn(async (_windowId: number, _options?: unknown) => "data:image/jpeg;base64,/9j/4AAQSkZJRg=="),
       onActivated,
       onUpdated,
       onRemoved,

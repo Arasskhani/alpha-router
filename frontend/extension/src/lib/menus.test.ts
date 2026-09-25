@@ -24,12 +24,18 @@ async function stored() {
 }
 
 describe("the right-click menu", () => {
-  it("is made afresh, on web pages only: the page, and a selection", () => {
+  it("is made afresh, on web pages only: the page, a screenshot of it, and a selection", () => {
     createMenus();
     expect(chromeFake.contextMenus.removeAll).toHaveBeenCalledOnce();
     const made = chromeFake.contextMenus.create.mock.calls.map(([item]) => item);
     expect(made).toEqual([
       { id: "alpharouter-summarize", title: "Summarize this page", contexts: ["page"], documentUrlPatterns: ["http://*/*", "https://*/*"] },
+      {
+        id: "alpharouter-screenshot",
+        title: "Send a screenshot to Alpharouter",
+        contexts: ["page"],
+        documentUrlPatterns: ["http://*/*", "https://*/*"],
+      },
       { id: "alpharouter-explain", title: "Explain “%s”", contexts: ["selection"], documentUrlPatterns: ["http://*/*", "https://*/*"] },
       {
         id: "alpharouter-translate",
@@ -100,6 +106,24 @@ describe("a click on it", () => {
       TAB,
     );
     expect(await stored()).toMatchObject({ kind: "summarize", pageUrl: TAB.url, title: "The guide" });
+  });
+
+  it("takes the screenshot in the click, while Chrome lets it see the tab, and leaves it for the panel", async () => {
+    handleMenuClick({ menuItemId: "alpharouter-screenshot", pageUrl: TAB.url, editable: false } as chrome.contextMenus.OnClickData, TAB);
+    expect(chromeFake.sidePanel.open).toHaveBeenCalledWith({ windowId: 3 });
+    expect(chromeFake.tabs.captureVisibleTab).toHaveBeenCalledWith(3, { format: "jpeg", quality: 80 });
+    expect(await stored()).toMatchObject({
+      kind: "screenshot",
+      pageUrl: TAB.url,
+      image: "data:image/jpeg;base64,/9j/4AAQSkZJRg==",
+    });
+    await vi.waitFor(() => expect(chromeFake.runtime.sent).toEqual([{ type: "pending-action" }]));
+  });
+
+  it("still tells the panel when Chrome would not take the screenshot", async () => {
+    chromeFake.tabs.captureVisibleTab.mockRejectedValueOnce(new Error("Cannot access contents of the page."));
+    handleMenuClick({ menuItemId: "alpharouter-screenshot", pageUrl: TAB.url, editable: false } as chrome.contextMenus.OnClickData, TAB);
+    expect(await stored()).toMatchObject({ kind: "screenshot", image: "" });
   });
 
   it.each([

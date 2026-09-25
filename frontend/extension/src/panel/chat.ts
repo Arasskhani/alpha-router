@@ -3,7 +3,7 @@
  */
 
 import { modelSupportsTextChat } from "../../../src/lib/chatModels";
-import { declaredSites, pageMessage, type PageContext } from "../lib/pageContext";
+import { declaredSites, pageMessageContent, type MessageContent, type PageContext } from "../lib/pageContext";
 
 export type ChatModel = {
   id: string;
@@ -12,6 +12,8 @@ export type ChatModel = {
   kinds?: string[];
   is_system_default?: boolean;
   default_kinds?: string[];
+  /** Takes an image as input: a screenshot may go to it. */
+  supports_vision?: boolean;
 };
 
 export type Turn = {
@@ -51,11 +53,16 @@ function sentTurns(turns: Turn[]): Turn[] {
  * message just before the question it came with, so the question stays the
  * user's own words and the last message of its turn.
  */
-export function apiMessages(turns: Turn[]): Array<{ role: string; content: string }> {
+export function apiMessages(turns: Turn[]): Array<{ role: string; content: MessageContent }> {
   return sentTurns(turns).flatMap((turn) => [
-    ...(turn.pages ?? []).map((page) => ({ role: "user", content: pageMessage(page) })),
+    ...(turn.pages ?? []).map((page) => ({ role: "user", content: pageMessageContent(page) })),
     { role: turn.role, content: turn.content },
   ]);
+}
+
+/** Whether the conversation carries a screenshot, which only a model that reads images can take. */
+export function carriesScreenshots(pages: PageContext[]): boolean {
+  return pages.some((page) => page.part === "screenshot");
 }
 
 /** Every page the conversation carries. */

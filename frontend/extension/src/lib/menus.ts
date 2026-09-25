@@ -1,16 +1,18 @@
 /**
- * The right-click menu: summarize the page, or explain, translate or ask
- * about the selection. Each item opens the side panel and leaves the work
- * there (see pendingAction.ts).
+ * The right-click menu: summarize the page or send a screenshot of it, or
+ * explain, translate or ask about the selection. Each item opens the side
+ * panel and leaves the work there (see pendingAction.ts).
  *
  * A click on one of them also grants the extension that tab for as long as it
  * shows the same page (Chrome's activeTab), so it works on a site the user has
- * not granted yet, without a prompt.
+ * not granted yet, without a prompt - and the screenshot is taken here and
+ * then, the one moment Chrome allows it without access to every site.
  */
 
 import { broadcast } from "./messages";
 import { MAX_SELECTION_CHARS } from "./pageContext";
-import { savePendingAction, type PendingActionKind } from "./pendingAction";
+import { savePendingAction, type PendingAction, type PendingActionKind } from "./pendingAction";
+import { captureTab } from "./screenshot";
 
 const WEB_PAGES = ["http://*/*", "https://*/*"];
 
@@ -18,6 +20,7 @@ type MenuItem = { id: string; kind: PendingActionKind; title: string; on: "page"
 
 const MENU_ITEMS: MenuItem[] = [
   { id: "alpharouter-summarize", kind: "summarize", title: "Summarize this page", on: "page" },
+  { id: "alpharouter-screenshot", kind: "screenshot", title: "Send a screenshot to Alpharouter", on: "page" },
   { id: "alpharouter-explain", kind: "explain", title: "Explain “%s”", on: "selection" },
   { id: "alpharouter-translate", kind: "translate", title: "Translate “%s” to Persian", on: "selection" },
   { id: "alpharouter-ask", kind: "ask", title: "Ask Alpharouter about “%s”", on: "selection" },
@@ -44,7 +47,7 @@ export function handleMenuClick(info: chrome.contextMenus.OnClickData, tab?: chr
   const fromFrame = onSelection && Boolean(info.frameUrl) && info.frameUrl !== info.pageUrl;
   // One character past what the model is sent, so the panel can tell it the text was cut.
   const selection = onSelection ? (info.selectionText ?? "").slice(0, MAX_SELECTION_CHARS + 1) : "";
-  void savePendingAction({
+  const action: PendingAction = {
     id: crypto.randomUUID(),
     kind: item.kind,
     tabId: tab.id,
@@ -53,5 +56,12 @@ export function handleMenuClick(info: chrome.contextMenus.OnClickData, tab?: chr
     title: fromFrame ? "" : (tab.title ?? ""),
     selection,
     createdAt: Date.now(),
-  }).then(() => broadcast({ type: "pending-action" }));
+  };
+  const saved =
+    item.kind === "screenshot"
+      ? captureTab(tab.windowId)
+          .catch(() => "")
+          .then((image) => savePendingAction({ ...action, image }))
+      : savePendingAction(action);
+  void saved.then(() => broadcast({ type: "pending-action" }));
 }

@@ -9,16 +9,18 @@ import {
   PageReadError,
   pageRefusal,
   readPage,
+  screenshotContext,
   selectionContext,
   type PageContext,
   type SiteRules,
 } from "../lib/pageContext";
 import { PENDING_ACTION_MAX_AGE_MS, takePendingAction, type PendingAction, type PendingActionKind } from "../lib/pendingAction";
+import { captureTab } from "../lib/screenshot";
 import { readablePage } from "../lib/sites";
 import { DisconnectedError, TemporaryError } from "../lib/tokens";
 import { compareVersions } from "../lib/version";
 import { useActivePage, useSiteAccess } from "./activePage";
-import { completionBody, pagesIn, pickModel, textModels, type ChatModel, type Turn } from "./chat";
+import { carriesScreenshots, completionBody, pagesIn, pickModel, textModels, type ChatModel, type Turn } from "./chat";
 import { MAX_OTHER_TABS, matchingTabs, mentionAt, tabCandidates, useChosenTabs, type PickableTab } from "./otherTabs";
 import PanelMarkdown from "./PanelMarkdown";
 import TabPicker from "./TabPicker";
@@ -26,8 +28,8 @@ import type { Me } from "./types";
 
 const MODEL_KEY = "alpharouter.model";
 
-/** What a right-click action asks; the page or the selection goes with it. */
-const ACTION_QUESTIONS: Record<Exclude<PendingActionKind, "ask">, string> = {
+/** What a right-click action asks; the page or the selection goes with it. "Ask" and a screenshot wait for the user's question. */
+const ACTION_QUESTIONS: Record<Exclude<PendingActionKind, "ask" | "screenshot">, string> = {
   summarize: "Summarize this page.",
   explain: "Explain the selected text.",
   translate: "Translate the selected text to Persian.",
@@ -39,6 +41,18 @@ function hostOf(url: string): string | null {
   } catch {
     return null;
   }
+}
+
+const NO_IMAGES = "This model does not read images. Choose another model.";
+const NO_IMAGES_IN_CHAT = "This chat has a screenshot, which this model cannot read. Choose a model that reads images, or start a new chat.";
+
+function CameraIcon() {
+  return (
+    <svg className="chip__icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+      <path d="M2 5h2.5l1.2-1.8h4.6L11.5 5H14v8H2z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <circle cx="8" cy="9" r="2.3" fill="none" stroke="currentColor" strokeWidth="1.3" />
+    </svg>
+  );
 }
 
 function PageIcon() {
@@ -91,6 +105,10 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
   const [selections, setSelections] = useState<PageContext[]>([]);
   /** Other tabs added to the next question. */
   const otherTabs = useChosenTabs();
+  /** A screenshot of the page, sent with the next question. */
+  const [shot, setShot] = useState<PageContext | null>(null);
+  // Chrome takes a screenshot from the panel only with access to every site.
+  const allSites = useSiteAccess(me.features.page_context ? "<all_urls>" : null);
   /** The list of tabs to add: opened with "+ Tab", or by typing @ and part of a title. */
   const [picker, setPicker] = useState<{
     tabs: PickableTab[] | null;
@@ -217,6 +235,35 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
 
   /** "This page", unless the rules keep it from going right now. */
   const pageBlock = target ? pageBlockFor(target.host, modelId) : null;
+  const readsImages = Boolean(models?.find((model) => model.id === modelId)?.supports_vision);
+  const canScreenshot = me.features.page_context && allSites === true && Boolean(target && activePage);
+
+  async function takeScreenshot() {
+    if (!target || busyRef.current) return;
+    const refused = pageBlockFor(target.host, modelId);
+    if (refused) {
+      setBanner(refused);
+      return;
+    }
+    try {
+      const win = await chrome.windows.getCurrent();
+      if (win.id === undefined) throw new Error("no window");
+      const image = await captureTab(win.id);
+      // What was captured is the tab showing now: it is named by that tab's page.
+      const [shown] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const taken = shown?.url ? screenshotContext(shown.url, shown.title ?? "", image) : null;
+      if (!taken) throw new Error("not a page");
+      const refusedNow = pageBlockFor(taken.host, modelId);
+      if (refusedNow) {
+        setBanner(refusedNow);
+        return;
+      }
+      setShot(taken);
+      setBanner("");
+    } catch {
+      setBanner("Alpharouter could not take a screenshot of this page.");
+    }
+  }
   const pickerTabs = picker?.tabs ? matchingTabs(picker.tabs, picker.mention?.query ?? "") : null;
   const canAddTab = me.features.page_context && otherTabs.chosen.length < MAX_OTHER_TABS;
 
@@ -381,7 +428,7 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
   async function send() {
     const text = draft.trim();
     if (!text || busyRef.current || !modelId) return;
-    const pages = [...selections];
+    const pages = [...selections, ...(shot ? [shot] : [])];
     const tab =
       attached && activePage && target ? { id: activePage.tabId, url: activePage.url, host: target.host, title: activePage.title } : null;
     const toRead = [
@@ -389,7 +436,9 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
       ...otherTabs.chosen.map((other) => ({ id: other.tabId, url: other.url, host: other.target.host, title: other.title })),
     ];
     const hosts = [...pages.map((page) => page.host), ...toRead.map((item) => item.host)];
-    const refused = hosts.map((host) => pageBlockFor(host, modelId)).find(Boolean) ?? (hosts.length ? siteLimitError(hosts) : null);
+    const imagesRefused = readsImages ? null : shot ? NO_IMAGES : carriesScreenshots(pagesIn(turns)) ? NO_IMAGES_IN_CHAT : null;
+    const refused =
+      imagesRefused ?? hosts.map((host) => pageBlockFor(host, modelId)).find(Boolean) ?? (hosts.length ? siteLimitError(hosts) : null);
     if (refused) {
       setBanner(refused);
       return;
@@ -403,6 +452,7 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
     otherTabs.clear();
     setPicker(null);
     setSelections([]);
+    setShot(null);
     setDraft("");
     await sendTurn(text, pages, modelId);
   }
@@ -475,6 +525,18 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
       if (read) await sendTurn(ACTION_QUESTIONS.summarize, read, model);
       return;
     }
+    if (action.kind === "screenshot") {
+      // Taken by the worker when the menu was clicked: it waits here for the user's question.
+      const taken = action.image ? screenshotContext(action.pageUrl, action.title, action.image) : null;
+      if (!taken) {
+        setBanner("Alpharouter could not take a screenshot of this page.");
+        return;
+      }
+      setShot(taken);
+      setBanner("");
+      composer.current?.focus();
+      return;
+    }
     const selected = selectionContext(action.pageUrl, action.title, action.selection);
     if (!selected) {
       setBanner("Select some text on the page first.");
@@ -515,6 +577,7 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
     setSelections([]);
     otherTabs.clear();
     setPicker(null);
+    setShot(null);
     setBanner("");
     sessionId.current = null;
   }
@@ -619,15 +682,25 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
         )}
         {turns.map((turn) => (
           <article key={turn.id} className={`turn turn--${turn.role}`}>
-            {turn.pages?.map((shared, index) => (
-              <p key={index} className="turn__page" title={shared.url}>
-                <PageIcon />
-                <span className="turn__page-title">
-                  {shared.part === "selection" ? "Selected text" : shared.title || shared.host}
-                </span>
-                <span className="turn__page-site">{shared.truncated ? `${shared.host}, first part` : shared.host}</span>
-              </p>
-            ))}
+            {turn.pages?.map((shared, index) =>
+              shared.part === "screenshot" ? (
+                <p key={index} className="turn__page" title={shared.url}>
+                  <CameraIcon />
+                  <span className="turn__page-title">Screenshot</span>
+                  <span className="turn__page-site">{shared.host}</span>
+                  {/* Taken in this browser: a data URL, never a remote image. */}
+                  <img className="turn__shot" src={shared.image} alt={`Screenshot of ${shared.host}`} />
+                </p>
+              ) : (
+                <p key={index} className="turn__page" title={shared.url}>
+                  <PageIcon />
+                  <span className="turn__page-title">
+                    {shared.part === "selection" ? "Selected text" : shared.title || shared.host}
+                  </span>
+                  <span className="turn__page-site">{shared.truncated ? `${shared.host}, first part` : shared.host}</span>
+                </p>
+              ),
+            )}
             {turn.role === "user" ? <p className="turn__text">{turn.content}</p> : turn.content && <PanelMarkdown text={turn.content} />}
             {turn.streaming && !turn.content && <p className="turn__pending">Thinking…</p>}
             {turn.stopped && <p className="turn__meta">Stopped.</p>}
@@ -710,6 +783,34 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
                 </button>
               </span>
             ))}
+            {shot && (
+              <span className="chip chip--on chip--static" title={shot.url}>
+                <CameraIcon />
+                <span className="chip__label">Screenshot</span>
+                <span className="chip__site">{shot.host}</span>
+                <button
+                  type="button"
+                  className="chip__remove"
+                  aria-label="Remove the screenshot"
+                  disabled={busy}
+                  onClick={() => setShot(null)}
+                >
+                  ×
+                </button>
+              </span>
+            )}
+            {canScreenshot && !shot && (
+              <button
+                type="button"
+                className="chip-add"
+                aria-label="Take a screenshot of the page"
+                disabled={busy || Boolean(pageBlock)}
+                onClick={() => void takeScreenshot()}
+              >
+                <CameraIcon />
+                Screenshot
+              </button>
+            )}
             {canAddTab && (
               <button
                 type="button"
@@ -728,6 +829,7 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
               </span>
             )}
             {!reading && pageBlock && <span className="chat__context-note">{pageBlock}</span>}
+            {shot && !readsImages && <span className="chat__context-note">{NO_IMAGES}</span>}
           </div>
         )}
         <textarea

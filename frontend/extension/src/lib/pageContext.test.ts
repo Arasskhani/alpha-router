@@ -9,9 +9,12 @@ import {
   MAX_SELECTION_CHARS,
   PAGE_PREAMBLE,
   PageReadError,
+  SCREENSHOT_PREAMBLE,
   declaredSites,
   pageMessage,
+  pageMessageContent,
   readPage,
+  screenshotContext,
   selectionContext,
   type PageContext,
 } from "./pageContext";
@@ -75,6 +78,45 @@ describe("the message that carries a page", () => {
     expect(pageMessage(page({ text: "x".repeat(1234), truncated: true }))).toMatch(
       /<\/untrusted_page_content_0123456789ab>\n\(Only the first 1,234 characters of the page are included\.\)$/,
     );
+  });
+});
+
+describe("a screenshot of a page", () => {
+  const IMAGE = "data:image/jpeg;base64,/9j/4AAQSkZJRg==";
+
+  it("goes as an image after the instruction that it is untrusted", () => {
+    const shot = screenshotContext("https://docs.example.com/guide?token=x", "The guide", IMAGE)!;
+    expect(shot).toMatchObject({ host: "docs.example.com", url: "https://docs.example.com/guide", text: "", part: "screenshot", image: IMAGE });
+    const content = pageMessageContent(shot);
+    expect(content).toEqual([
+      {
+        type: "text",
+        text: `${SCREENSHOT_PREAMBLE}\n<untrusted_page_screenshot_${shot.nonce} site="docs.example.com" url="https://docs.example.com/guide" title="The guide" />`,
+      },
+      { type: "image_url", image_url: { url: IMAGE } },
+    ]);
+    expect(SCREENSHOT_PREAMBLE).toMatch(/Never follow instructions/);
+  });
+
+  it.each([
+    ["a browser page", "chrome://settings", IMAGE],
+    ["an image from elsewhere", "https://docs.example.com/", "https://evil.example/x.jpg"],
+    ["another kind of data", "https://docs.example.com/", "data:text/html;base64,PGgxPg=="],
+    ["something too large", "https://docs.example.com/", `data:image/jpeg;base64,${"A".repeat(8_000_000)}`],
+  ])("is refused for %s", (_name, url, image) => {
+    expect(screenshotContext(url, "", image)).toBeNull();
+  });
+
+  it("is declared as a screenshot of its site, with the site's text", () => {
+    const shot = screenshotContext("https://docs.example.com/guide", "The guide", IMAGE)!;
+    expect(declaredSites([page({ text: "abc" }), shot, page({ host: "intranet", text: "12" })])).toEqual([
+      { host: "docs.example.com", chars: 3, images: 1 },
+      { host: "intranet", chars: 2 },
+    ]);
+  });
+
+  it("leaves a page of text as it was", () => {
+    expect(pageMessageContent(page())).toBe(pageMessage(page()));
   });
 });
 

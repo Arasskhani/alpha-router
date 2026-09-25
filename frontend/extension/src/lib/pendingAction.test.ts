@@ -51,9 +51,18 @@ describe("work left for the side panel", () => {
     expect(await takePendingAction(1, NOW)).toBeNull();
   });
 
-  it.each([{ kind: "delete-everything" }, { tabId: "4" }, { selection: 5 }])("is refused when malformed: %j", async (bad) => {
-    await chrome.storage.session.set({ "alpharouter.pending-action": { ...action(), ...bad } });
-    expect(await takePendingAction(1, NOW)).toBeNull();
-    expect(await chrome.storage.session.get("alpharouter.pending-action")).toEqual({});
+  it("carries a screenshot's image", async () => {
+    const shot = action({ kind: "screenshot", image: "data:image/jpeg;base64,/9j/4AAQ" });
+    await savePendingAction(shot);
+    expect(await takePendingAction(1, NOW)).toEqual(shot);
   });
+
+  it.each([{ kind: "delete-everything" }, { tabId: "4" }, { selection: 5 }, { image: 42 }, { image: "x".repeat(8_000_001) }])(
+    "is refused when malformed: %j",
+    async (bad) => {
+      await chrome.storage.session.set({ "alpharouter.pending-action": { ...action(), ...bad } });
+      expect(await takePendingAction(1, NOW)).toBeNull();
+      expect(await chrome.storage.session.get("alpharouter.pending-action")).toEqual({});
+    },
+  );
 });

@@ -545,3 +545,16 @@ button {
   color: var(--muted);
   font-size: 0.75rem;
 }
+
+/* A screenshot on the question it went with: small, and taken in this browser. */
+.turn__shot {
+  display: block;
+  flex-basis: 100%;
+  max-width: 12rem;
+  max-height: 7rem;
+  margin-top: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  object-position: top left;
+}

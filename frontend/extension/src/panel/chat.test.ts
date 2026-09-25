@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { pageMessage, type PageContext } from "../lib/pageContext";
 import { compareVersions } from "../lib/version";
-import { apiMessages, completionBody, pagesIn, pickModel, textModels, type Turn } from "./chat";
+import { apiMessages, carriesScreenshots, completionBody, pagesIn, pickModel, textModels, type Turn } from "./chat";
 
 const user = (content: string, id = "u1"): Turn => ({ id, role: "user", content });
 const assistant = (content: string, extra: Partial<Turn> = {}): Turn => ({ id: "a1", role: "assistant", content, ...extra });
@@ -88,6 +88,19 @@ describe("a question about a page", () => {
   it("keeps the page with its question on later turns", () => {
     const messages = apiMessages([asked("Summarize this", [guide]), assistant("A summary."), user("And the second step?", "u2")]);
     expect(messages.map((m) => m.content)).toEqual([pageMessage(guide), "Summarize this", "A summary.", "And the second step?"]);
+  });
+
+  it("sends a screenshot as an image, just before the question", () => {
+    const shot: PageContext = { ...guide, text: "", part: "screenshot", image: "data:image/jpeg;base64,/9j/", nonce: "cccccccccccc" };
+    const messages = apiMessages([asked("What is this?", [shot])]);
+    expect(messages).toHaveLength(2);
+    expect(messages[0].content).toEqual([
+      expect.objectContaining({ type: "text" }),
+      { type: "image_url", image_url: { url: "data:image/jpeg;base64,/9j/" } },
+    ]);
+    expect(messages[1]).toEqual({ role: "user", content: "What is this?" });
+    expect(carriesScreenshots([guide, shot])).toBe(true);
+    expect(carriesScreenshots([guide])).toBe(false);
   });
 
   it("declares every page the request carries, per site", () => {

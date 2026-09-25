@@ -800,6 +800,125 @@ describe("other tabs", () => {
   });
 });
 
+describe("screenshots", () => {
+  const GUIDE = { url: "https://docs.example.com/guide", title: "The guide" };
+  const IMAGE = "data:image/jpeg;base64,/9j/4AAQSkZJRg==";
+  const MODELS_WITH_VISION = [
+    { id: "model::1", name: "Text only", kinds: ["text"] },
+    { id: "model::5", name: "Sees images", kinds: ["text"], supports_vision: true, default_kinds: ["chat"] },
+  ];
+
+  beforeEach(() => {
+    server.routes["GET /api/chat/models"] = () => json(200, MODELS_WITH_VISION);
+    server.routes["POST /api/chat/session-title"] = () => json(200, { title: "" });
+    chromeFake.tabs.add({ ...GUIDE, active: true });
+  });
+
+  function bodies() {
+    return server.callsTo("POST", "/api/chat/completions").map((c) => c.body as Record<string, unknown>);
+  }
+
+  async function chooseModel(id: string) {
+    const select = host.querySelector("select") as HTMLSelectElement;
+    await act(async () => {
+      select.value = id;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
+
+  async function takeOne() {
+    await act(async () => button("Take a screenshot of the page").click());
+    await act(async () => undefined);
+  }
+
+  it("with access to every site, takes one from the panel and sends it to a model that reads images", async () => {
+    chromeFake.permissions.granted.add("<all_urls>");
+    answerWith([textFrame("A chart.")]);
+    await render();
+    await takeOne();
+    expect(chromeFake.tabs.captureVisibleTab).toHaveBeenCalledWith(1, { format: "jpeg", quality: 80 });
+    expect(host.querySelector(".chip--static")?.textContent).toBe("Screenshotdocs.example.com×");
+    await send("What does it show?");
+    const [body] = bodies();
+    const messages = body.messages as Array<{ role: string; content: unknown }>;
+    expect(messages[0].content).toEqual([expect.objectContaining({ type: "text" }), { type: "image_url", image_url: { url: IMAGE } }]);
+    expect(messages[1]).toEqual({ role: "user", content: "What does it show?" });
+    expect(body.extension_page_context).toEqual({ sites: [{ host: "docs.example.com", chars: 0, images: 1 }] });
+    expect(host.querySelector<HTMLImageElement>(".turn--user img.turn__shot")?.getAttribute("src")).toBe(IMAGE);
+    expect(host.querySelector(".chip--static")).toBeNull();
+  });
+
+  it("is not offered from the panel with per-site access only: Chrome would refuse it", async () => {
+    chromeFake.permissions.granted.add("https://docs.example.com/*");
+    await render();
+    expect([...host.querySelectorAll("button")].some((b) => b.getAttribute("aria-label") === "Take a screenshot of the page")).toBe(false);
+  });
+
+  it("is not sent to a model that reads no images", async () => {
+    chromeFake.permissions.granted.add("<all_urls>");
+    await render();
+    await chooseModel("model::1");
+    await takeOne();
+    expect(host.textContent).toContain("This model does not read images. Choose another model.");
+    await send("What does it show?");
+    expect(host.querySelector('.chat__notice[role="alert"]')?.textContent).toBe("This model does not read images. Choose another model.");
+    expect(bodies()).toHaveLength(0);
+  });
+
+  it("keeps a chat that carries one away from a model that reads no images", async () => {
+    chromeFake.permissions.granted.add("<all_urls>");
+    answerWith([textFrame("A chart.")]);
+    await render();
+    await takeOne();
+    await send("What does it show?");
+    await chooseModel("model::1");
+    await send("And now?");
+    expect(host.querySelector('.chat__notice[role="alert"]')?.textContent).toContain("This chat has a screenshot");
+    expect(bodies()).toHaveLength(1);
+  });
+
+  it("takes the one the right-click menu left, and waits for the question", async () => {
+    answerWith([textFrame("A form.")]);
+    await savePendingAction({
+      id: "s1",
+      kind: "screenshot",
+      tabId: 1,
+      windowId: 1,
+      pageUrl: GUIDE.url,
+      title: GUIDE.title,
+      selection: "",
+      image: IMAGE,
+      createdAt: Date.now(),
+    });
+    await render();
+    await act(async () => undefined);
+    expect(host.querySelector(".chip--static")?.textContent).toBe("Screenshotdocs.example.com×");
+    expect(bodies()).toHaveLength(0);
+    expect(document.activeElement).toBe(host.querySelector("textarea"));
+    await send("What is this form?");
+    expect(bodies()).toHaveLength(1);
+    expect((bodies()[0].extension_page_context as { sites: unknown[] }).sites).toEqual([{ host: "docs.example.com", chars: 0, images: 1 }]);
+  });
+
+  it("says so when the right-click could not take one", async () => {
+    await savePendingAction({
+      id: "s2",
+      kind: "screenshot",
+      tabId: 1,
+      windowId: 1,
+      pageUrl: GUIDE.url,
+      title: GUIDE.title,
+      selection: "",
+      image: "",
+      createdAt: Date.now(),
+    });
+    await render();
+    await act(async () => undefined);
+    expect(host.textContent).toContain("Alpharouter could not take a screenshot of this page.");
+    expect(host.querySelector(".chip--static")).toBeNull();
+  });
+});
+
 describe("right-click actions", () => {
   const PAGE_URL = "https://docs.example.com/guide?session=abc";
   const EXTRACT = { url: PAGE_URL, title: "The guide", text: "Step one. Step two.", truncated: false, selection: "" };

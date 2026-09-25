@@ -8,7 +8,7 @@
  * in, is taken exactly once, and goes stale after two minutes.
  */
 
-export type PendingActionKind = "summarize" | "explain" | "translate" | "ask";
+export type PendingActionKind = "summarize" | "explain" | "translate" | "ask" | "screenshot";
 
 export type PendingAction = {
   id: string;
@@ -20,12 +20,16 @@ export type PendingAction = {
   title: string;
   /** The selected text, for the actions on a selection; empty otherwise. */
   selection: string;
+  /** For a screenshot: the image, as a data URL; empty when Chrome would not take it. */
+  image?: string;
   createdAt: number;
 };
 
 const KEY = "alpharouter.pending-action";
 export const PENDING_ACTION_MAX_AGE_MS = 2 * 60_000;
-const KINDS = new Set<PendingActionKind>(["summarize", "explain", "translate", "ask"]);
+const KINDS = new Set<PendingActionKind>(["summarize", "explain", "translate", "ask", "screenshot"]);
+/** More than any screenshot the worker takes. */
+const MAX_IMAGE_CHARS = 8_000_000;
 
 export async function savePendingAction(action: PendingAction): Promise<void> {
   await chrome.storage.session.set({ [KEY]: action });
@@ -37,6 +41,7 @@ function parse(value: unknown): PendingAction | null {
   const numbers = [v.tabId, v.windowId, v.createdAt].every((n) => typeof n === "number" && Number.isFinite(n));
   const strings = [v.id, v.pageUrl, v.title, v.selection].every((s) => typeof s === "string");
   if (!numbers || !strings || !KINDS.has(v.kind as PendingActionKind)) return null;
+  if (v.image !== undefined && (typeof v.image !== "string" || v.image.length > MAX_IMAGE_CHARS)) return null;
   return v as unknown as PendingAction;
 }
 

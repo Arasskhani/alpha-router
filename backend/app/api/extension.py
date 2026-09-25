@@ -16,8 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, require_active_user
 from app.database import get_db
 from app.models.user import User
-from app.services.chat_tool_access_service import permitted_tool_keys
 from app.services.client_ip import resolve_client_ip
+from app.services.extension_access import extension_permitted
 from app.services.extension_distribution import (
     ExtensionBuild,
     ExtensionUnavailable,
@@ -27,21 +27,11 @@ from app.services.extension_distribution import (
     update_xml,
     zip_bytes,
 )
-from app.services.resource_access_service import resolve_resource_access_subject
 
 router = APIRouter(tags=["extension"])
 
-EXTENSION_TOOL = "browser_extension"
 _NO_STORE = {"Cache-Control": "no-store"}
 _NO_CACHE = {"Cache-Control": "no-cache"}
-
-
-async def extension_permitted(db: AsyncSession, user: User) -> bool:
-    """The Chat Tools ACL for the browser extension, for an active account."""
-    if not user.is_active:
-        return False
-    subject = await resolve_resource_access_subject(db, user_id=int(user.id))
-    return EXTENSION_TOOL in await permitted_tool_keys(db, subject, keys=[EXTENSION_TOOL])
 
 
 async def _build_or_none(

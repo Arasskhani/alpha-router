@@ -11,6 +11,15 @@ from app.config import get_settings
 from app.core.security import decode_access_token
 from app.database import get_db
 from app.models.user import User
+from app.services.client_ip import resolve_client_ip
+from app.services.extension_access import extension_permitted
+from app.services.extension_tokens import (
+    ExtensionTokenError,
+    is_extension_access_token,
+    needs_touch,
+    touch_session,
+)
+from app.services.extension_tokens import authenticate as authenticate_extension
 from app.services.rbac import (
     MenuKey,
     user_can_access_menu,
@@ -22,13 +31,80 @@ from app.services.user_role_service import get_user_role_slugs
 
 bearer = HTTPBearer(auto_error=False)
 
+#: Everything a browser extension's access token may call, by method and route
+#: template. Anything else answers 403 ``extension_scope``: the token stands for
+#: a user, but only for what the extension does - chat, its history, and its
+#: own endpoints - never for settings, keys or administration.
+EXTENSION_SCOPE: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("GET", "/api/chat/models"),
+        ("POST", "/api/chat/completions"),
+        ("POST", "/api/chat/session-title"),
+        ("POST", "/api/chat/attachments/process"),
+        ("POST", "/api/user/chats/sessions"),
+        ("PATCH", "/api/user/chats/sessions/{session_id}"),
+        ("POST", "/api/user/chat-sessions/{session_id}/cancel-stream"),
+        ("GET", "/api/extension/me"),
+        ("POST", "/api/extension/revoke"),
+        ("POST", "/api/extension/events"),
+        ("POST", "/api/extension/review-action"),
+    }
+)
+#: Open to a connected browser even when the extension is switched off for the
+#: user: ``me`` reports it off, and ``revoke`` lets the browser disconnect.
+EXTENSION_UNGATED: frozenset[tuple[str, str]] = frozenset(
+    {("GET", "/api/extension/me"), ("POST", "/api/extension/revoke")}
+)
+
+
+def _extension_refusal(status_code: int, code: str, message: str) -> HTTPException:
+    headers = {"WWW-Authenticate": 'Bearer error="invalid_token"'} if status_code == 401 else None
+    return HTTPException(status_code=status_code, detail={"code": code, "message": message}, headers=headers)
+
+
+def _route_key(request: Request) -> tuple[str, str]:
+    route = request.scope.get("route")
+    return request.method.upper(), str(getattr(route, "path", None) or request.url.path)
+
+
+async def _extension_user(request: Request, token: str, db: AsyncSession) -> User:
+    """The user behind a browser extension's access token, for the calls it may make."""
+    try:
+        found = await authenticate_extension(db, token)
+    except ExtensionTokenError as exc:
+        raise _extension_refusal(401, exc.code, exc.message) from None
+    key = _route_key(request)
+    if key not in EXTENSION_SCOPE:
+        raise _extension_refusal(403, "extension_scope", "The browser extension cannot use this endpoint.")
+    user = found.user
+    if key not in EXTENSION_UNGATED:
+        if not user.is_active:
+            raise _extension_refusal(403, "account_disabled", "Your account is disabled.")
+        if not await extension_permitted(db, user):
+            # The session stays: re-enabling the extension for the user restores it.
+            raise _extension_refusal(
+                403, "extension_not_permitted", "The browser extension is not enabled for your account."
+            )
+    session_id = str(found.session.id)
+    request.state.extension_session_id = session_id
+    if needs_touch(found.session):
+        await touch_session(session_id, ip=resolve_client_ip(request))
+    return user
+
 
 async def get_current_user(
     request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """Resolve user from JWT. Inactive users remain authenticated (read-only chat/media/logs)."""
+    """Resolve user from JWT. Inactive users remain authenticated (read-only chat/media/logs).
+
+    A browser extension's access token (``Authorization: Bearer alpha-router-ext-at-…``)
+    takes its own path, whatever the cookie and legacy-bearer settings: it is
+    never a JWT, and it is good only for ``EXTENSION_SCOPE``.
+    """
+    if creds is not None and is_extension_access_token(creds.credentials):
+        return await _extension_user(request, creds.credentials, db)
     settings = get_settings()
     token = request.cookies.get(settings.session_cookie_name) if settings.enable_cookie_auth else None
     if not token and settings.allow_legacy_bearer_auth and creds:
@@ -229,9 +305,10 @@ async def get_bearer_token(
     request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(bearer),
 ) -> str:
+    """The caller's session JWT, for endpoints that pass it on. Never an extension token."""
     settings = get_settings()
     token = request.cookies.get(settings.session_cookie_name) if settings.enable_cookie_auth else None
-    if not token and settings.allow_legacy_bearer_auth and creds:
+    if not token and settings.allow_legacy_bearer_auth and creds and not is_extension_access_token(creds.credentials):
         token = creds.credentials
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")

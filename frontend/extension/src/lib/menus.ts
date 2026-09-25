@@ -9,11 +9,10 @@
  */
 
 import { broadcast } from "./messages";
+import { MAX_SELECTION_CHARS } from "./pageContext";
 import { savePendingAction, type PendingActionKind } from "./pendingAction";
 
 const WEB_PAGES = ["http://*/*", "https://*/*"];
-/** Selected text kept from a click; the model sees at most this much of it. */
-export const MAX_MENU_SELECTION_CHARS = 10_000;
 
 type MenuItem = { id: string; kind: PendingActionKind; title: string; on: "page" | "selection" };
 
@@ -43,7 +42,8 @@ export function handleMenuClick(info: chrome.contextMenus.OnClickData, tab?: chr
   // another site than the tab's: the site rules and the label go by where the
   // text came from, and the tab's title is not its title.
   const fromFrame = onSelection && Boolean(info.frameUrl) && info.frameUrl !== info.pageUrl;
-  const selection = onSelection ? (info.selectionText ?? "").slice(0, MAX_MENU_SELECTION_CHARS) : "";
+  // One character past what the model is sent, so the panel can tell it the text was cut.
+  const selection = onSelection ? (info.selectionText ?? "").slice(0, MAX_SELECTION_CHARS + 1) : "";
   void savePendingAction({
     id: crypto.randomUUID(),
     kind: item.kind,

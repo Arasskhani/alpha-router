@@ -602,6 +602,16 @@ describe("right-click actions", () => {
     expect(host.querySelector(".turn--user .turn__page")?.textContent).toBe("Selected textdocs.example.com");
   });
 
+  it("tells the model when the selection was cut", async () => {
+    answerWith([textFrame("Done.")]);
+    await savePendingAction(action({ kind: "explain", selection: "y".repeat(10_001) }));
+    await render();
+    await act(async () => undefined);
+    const messages = completions()[0].messages as Array<{ content: string }>;
+    expect(messages[0].content).toContain("(Only the first 10,000 characters of the selected text are included.)");
+    expect(messages[0].content).not.toContain("y".repeat(10_001));
+  });
+
   it("ask attaches the selection and waits for the user's question", async () => {
     await savePendingAction(action({ kind: "ask", selection: "The clause about renewal." }));
     await render();

@@ -4,7 +4,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { installChromeFake, type ChromeFake } from "../test/chromeFake";
-import { MAX_MENU_SELECTION_CHARS, createMenus, handleMenuClick } from "./menus";
+import { createMenus, handleMenuClick } from "./menus";
+import { MAX_SELECTION_CHARS } from "./pageContext";
 
 let chromeFake: ChromeFake;
 const TAB = { id: 7, windowId: 3, url: "https://docs.example.com/guide?x=1", title: "The guide" } as chrome.tabs.Tab;
@@ -68,12 +69,12 @@ describe("a click on it", () => {
     await vi.waitFor(() => expect(chromeFake.runtime.sent).toEqual([{ type: "pending-action" }]));
   });
 
-  it("keeps the selection for a selection action, capped", async () => {
-    const selectionText = "x".repeat(MAX_MENU_SELECTION_CHARS + 20);
+  it("keeps the selection for a selection action, capped one past what the model gets, to show it was cut", async () => {
+    const selectionText = "x".repeat(MAX_SELECTION_CHARS + 20);
     handleMenuClick({ menuItemId: "alpharouter-translate", pageUrl: TAB.url, selectionText, editable: false } as chrome.contextMenus.OnClickData, TAB);
     const action = await stored();
     expect(action.kind).toBe("translate");
-    expect(action.selection).toHaveLength(MAX_MENU_SELECTION_CHARS);
+    expect(action.selection).toHaveLength(MAX_SELECTION_CHARS + 1);
   });
 
   it("takes a selection made inside a frame from the frame's page, without the tab's title", async () => {

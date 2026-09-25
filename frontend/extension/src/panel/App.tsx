@@ -73,9 +73,13 @@ export default function App() {
 
   async function signOut() {
     const { tokens, api } = getClient();
-    await disconnect(tokens, () => api.request("/api/extension/revoke", { method: "POST" }));
-    await broadcast({ type: "auth-changed" });
-    setChecks((n) => n + 1);
+    try {
+      await disconnect(tokens, (signal) => api.request("/api/extension/revoke", { method: "POST", signal }));
+    } finally {
+      // The panel looks again whatever happened: it says what it finds.
+      await broadcast({ type: "auth-changed" }).catch(() => undefined);
+      setChecks((n) => n + 1);
+    }
   }
 
   if (view.kind === "loading") return <main className="panel panel__center" aria-busy="true" />;

@@ -131,12 +131,28 @@ export async function finishConnect(search: string, deps: FinishDeps): Promise<C
   return { kind: "connected" };
 }
 
-/** End this browser's connection: the server first (best effort), then the tokens here. */
-export async function disconnect(tokens: TokenManager, revoke: () => Promise<unknown>): Promise<void> {
+/** How long Disconnect waits for the server before it lets go of the tokens anyway. */
+export const REVOKE_TIMEOUT_MS = 10_000;
+
+/**
+ * End this browser's connection: the server first (best effort, and not for
+ * longer than `timeoutMs`), then the tokens here, whatever the server did.
+ */
+export async function disconnect(
+  tokens: TokenManager,
+  revoke: (signal: AbortSignal) => Promise<unknown>,
+  timeoutMs: number = REVOKE_TIMEOUT_MS,
+): Promise<void> {
+  const stop = new AbortController();
+  const timer = setTimeout(() => stop.abort(), timeoutMs);
+  const gaveUp = new Promise<never>((_, reject) => stop.signal.addEventListener("abort", () => reject(new Error("timeout"))));
   try {
-    await revoke();
+    await Promise.race([revoke(stop.signal), gaveUp]);
   } catch {
-    // Already ended, or the server is unreachable: the tokens still go.
+    // Already ended, unreachable, or too slow: the tokens still go.
+  } finally {
+    clearTimeout(timer);
+    stop.abort();
+    await tokens.clear();
   }
-  await tokens.clear();
 }

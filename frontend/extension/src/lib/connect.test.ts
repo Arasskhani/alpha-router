@@ -183,6 +183,23 @@ describe("disconnecting", () => {
     expect(state.access).toBeNull();
   });
 
+  it("forgets the tokens when the server does not answer in time, and gives up the request", async () => {
+    const { state, tokens } = memoryTokens();
+    await tokens.save({ access_token: "at", token_type: "Bearer", expires_in: 3600, refresh_token: "rt", session_id: "s1" });
+    let signal: AbortSignal | undefined;
+    await disconnect(
+      tokens,
+      (given) => {
+        signal = given;
+        return new Promise(() => undefined);
+      },
+      20,
+    );
+    expect(state.refresh).toBeNull();
+    expect(state.access).toBeNull();
+    expect(signal?.aborted).toBe(true);
+  });
+
   it("forgets the tokens even when the server cannot be told", async () => {
     const { state, tokens } = memoryTokens();
     await tokens.save({ access_token: "at", token_type: "Bearer", expires_in: 3600, refresh_token: "rt", session_id: "s1" });

@@ -19,7 +19,9 @@ import { DisconnectedError, TemporaryError } from "../lib/tokens";
 import { compareVersions } from "../lib/version";
 import { useActivePage, useSiteAccess } from "./activePage";
 import { completionBody, pagesIn, pickModel, textModels, type ChatModel, type Turn } from "./chat";
+import { MAX_OTHER_TABS, matchingTabs, mentionAt, tabCandidates, useChosenTabs, type PickableTab } from "./otherTabs";
 import PanelMarkdown from "./PanelMarkdown";
+import TabPicker from "./TabPicker";
 import type { Me } from "./types";
 
 const MODEL_KEY = "alpharouter.model";
@@ -87,6 +89,14 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
   const [reading, setReading] = useState(false);
   /** Text selected on a page ("Ask Alpharouter about…"), sent with the next question. */
   const [selections, setSelections] = useState<PageContext[]>([]);
+  /** Other tabs added to the next question. */
+  const otherTabs = useChosenTabs();
+  /** The list of tabs to add: opened with "+ Tab", or by typing @ and part of a title. */
+  const [picker, setPicker] = useState<{
+    tabs: PickableTab[] | null;
+    mention: { start: number; query: string } | null;
+    active: number;
+  } | null>(null);
   // Refs for the right-click actions, which arrive from Chrome at any time.
   const modelRef = useRef("");
   const busyRef = useRef(false);
@@ -207,6 +217,55 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
 
   /** "This page", unless the rules keep it from going right now. */
   const pageBlock = target ? pageBlockFor(target.host, modelId) : null;
+  const pickerTabs = picker?.tabs ? matchingTabs(picker.tabs, picker.mention?.query ?? "") : null;
+  const canAddTab = me.features.page_context && otherTabs.chosen.length < MAX_OTHER_TABS;
+
+  function openPicker(mention: { start: number; query: string } | null) {
+    setPicker({ tabs: null, mention, active: 0 });
+    const excluded = new Set([...(activePage ? [activePage.tabId] : []), ...otherTabs.chosen.map((tab) => tab.tabId)]);
+    tabCandidates(excluded)
+      .then((tabs) => setPicker((open) => (open ? { ...open, tabs } : open)))
+      .catch(() => setPicker((open) => (open ? { ...open, tabs: [] } : open)));
+  }
+
+  /** Follow an "@part" being typed: open the list, narrow it, or close it. */
+  function followMention(text: string, caret: number) {
+    const mention = canAddTab ? mentionAt(text, caret) : null;
+    if (mention) {
+      if (picker) setPicker({ ...picker, mention, active: 0 });
+      else openPicker(mention);
+    } else if (picker?.mention) {
+      setPicker(null);
+    }
+  }
+
+  function tabBlock(tab: PickableTab): string | null {
+    return pageBlockFor(tab.target.host, modelId);
+  }
+
+  function pickTab(tab: PickableTab) {
+    if (tabBlock(tab)) return;
+    const mention = picker?.mention ?? null;
+    const add = () => {
+      otherTabs.add(tab);
+      // The "@part" that found the tab has done its job.
+      if (mention) setDraft((text) => text.slice(0, mention.start) + text.slice(mention.start + 1 + mention.query.length));
+      setPicker(null);
+      setBanner("");
+    };
+    if (tab.granted) {
+      add();
+      return;
+    }
+    // Chrome asks the user only while the click or key press is being handled: nothing may come first.
+    chrome.permissions
+      .request({ origins: [tab.target.pattern] })
+      .then((granted) => {
+        if (granted) add();
+        else setBanner(`Alpharouter can read pages on ${tab.target.host} only if you allow it when Chrome asks.`);
+      })
+      .catch(() => setBanner("Chrome could not ask for permission. Try again."));
+  }
 
   /** A chat carries pages from at most as many sites as the server accepts in one request. */
   function siteLimitError(hosts: string[]): string | null {
@@ -279,19 +338,29 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
   }
 
   /**
-   * Read a tab's page for the question about to go; the banner says why not,
-   * and null comes back - also when the user stopped or moved on meanwhile.
+   * Read the tabs' pages for the question about to go; the banner says why
+   * not, and null comes back - also when the user stopped or moved on meanwhile.
    */
-  async function readForQuestion(tab: { id: number; url: string }): Promise<PageContext | null> {
+  async function readForQuestion(tabs: Array<{ id: number; url: string; title?: string }>): Promise<PageContext[] | null> {
     const started = generation.current;
     markBusy(true);
     setReading(true);
     setBanner("");
+    let current = tabs[0];
     try {
-      const { page } = await readPage(tab, rules);
-      return started === generation.current ? page : null;
+      const pages: PageContext[] = [];
+      for (const tab of tabs) {
+        current = tab;
+        pages.push((await readPage(tab, rules)).page);
+        if (started !== generation.current) return null;
+      }
+      return pages;
     } catch (err) {
-      if (started === generation.current) setBanner(err instanceof PageReadError ? err.message : "Alpharouter could not read this page.");
+      if (started === generation.current) {
+        const reason = err instanceof PageReadError ? err.message : "Alpharouter could not read this page.";
+        // With several tabs, which one could not be read.
+        setBanner(tabs.length > 1 && current?.title ? `“${current.title}”: ${reason}` : reason);
+      }
       return null;
     } finally {
       // After Stop the panel is already idle, and may be busy with something new.
@@ -313,19 +382,26 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
     const text = draft.trim();
     if (!text || busyRef.current || !modelId) return;
     const pages = [...selections];
-    const tab = attached && activePage && target ? { id: activePage.tabId, url: activePage.url, host: target.host } : null;
-    const hosts = [...pages.map((page) => page.host), ...(tab ? [tab.host] : [])];
+    const tab =
+      attached && activePage && target ? { id: activePage.tabId, url: activePage.url, host: target.host, title: activePage.title } : null;
+    const toRead = [
+      ...(tab ? [tab] : []),
+      ...otherTabs.chosen.map((other) => ({ id: other.tabId, url: other.url, host: other.target.host, title: other.title })),
+    ];
+    const hosts = [...pages.map((page) => page.host), ...toRead.map((item) => item.host)];
     const refused = hosts.map((host) => pageBlockFor(host, modelId)).find(Boolean) ?? (hosts.length ? siteLimitError(hosts) : null);
     if (refused) {
       setBanner(refused);
       return;
     }
-    if (tab) {
-      const page = await readForQuestion(tab);
-      if (!page) return;
-      pages.push(page);
+    if (toRead.length) {
+      const read = await readForQuestion(toRead);
+      if (!read) return;
+      pages.push(...read);
     }
     setAttachFor(null);
+    otherTabs.clear();
+    setPicker(null);
     setSelections([]);
     setDraft("");
     await sendTurn(text, pages, modelId);
@@ -395,8 +471,8 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
       return;
     }
     if (action.kind === "summarize") {
-      const read = await readForQuestion({ id: action.tabId, url: action.pageUrl });
-      if (read) await sendTurn(ACTION_QUESTIONS.summarize, [read], model);
+      const read = await readForQuestion([{ id: action.tabId, url: action.pageUrl }]);
+      if (read) await sendTurn(ACTION_QUESTIONS.summarize, read, model);
       return;
     }
     const selected = selectionContext(action.pageUrl, action.title, action.selection);
@@ -437,6 +513,8 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
     if (busy) stop();
     setTurns([]);
     setSelections([]);
+    otherTabs.clear();
+    setPicker(null);
     setBanner("");
     sessionId.current = null;
   }
@@ -574,7 +652,16 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
           void send();
         }}
       >
-        {(selections.length > 0 || (target && activePage)) && (
+        {picker && (
+          <TabPicker
+            tabs={pickerTabs}
+            active={pickerTabs?.length ? Math.min(picker.active, pickerTabs.length - 1) : 0}
+            blockFor={tabBlock}
+            onPick={pickTab}
+            onClose={() => setPicker(null)}
+          />
+        )}
+        {(selections.length > 0 || me.features.page_context) && (
           <div className="chat__context">
             {selections.map((selected, index) => (
               <span key={index} className="chip chip--on chip--static" title={selected.text.slice(0, 300)}>
@@ -607,6 +694,34 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
                 <span className="chip__site">{activePage.title || target.host}</span>
               </button>
             )}
+            {otherTabs.chosen.map((tab) => (
+              <span key={tab.tabId} className="chip chip--on chip--static" title={tab.url}>
+                <PageIcon />
+                <span className="chip__label">Tab</span>
+                <span className="chip__site">{tab.title}</span>
+                <button
+                  type="button"
+                  className="chip__remove"
+                  aria-label={`Remove the tab ${tab.title}`}
+                  disabled={busy}
+                  onClick={() => otherTabs.remove(tab.tabId)}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            {canAddTab && (
+              <button
+                type="button"
+                className="chip-add"
+                aria-label="Add a tab"
+                aria-expanded={Boolean(picker)}
+                disabled={busy}
+                onClick={() => (picker ? setPicker(null) : openPicker(null))}
+              >
+                + Tab
+              </button>
+            )}
             {reading && (
               <span className="chat__context-note" role="status">
                 Reading the page…
@@ -621,8 +736,31 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
           value={draft}
           rows={2}
           placeholder={privateMode ? "Private message…" : "Message Alpharouter…"}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            followMention(event.target.value, event.target.selectionStart ?? event.target.value.length);
+          }}
           onKeyDown={(event) => {
+            if (picker) {
+              const count = pickerTabs?.length ?? 0;
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setPicker(null);
+                return;
+              }
+              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
+                const step = event.key === "ArrowDown" ? 1 : -1;
+                setPicker({ ...picker, active: Math.max(0, Math.min(count - 1, picker.active + step)) });
+                return;
+              }
+              if (event.key === "Enter" && picker.mention && !event.nativeEvent.isComposing) {
+                // Enter picks the tab the list is on; it never sends the question meanwhile.
+                event.preventDefault();
+                if (pickerTabs?.length) pickTab(pickerTabs[Math.min(picker.active, count - 1)]);
+                return;
+              }
+            }
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
               void send();

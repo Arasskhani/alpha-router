@@ -64,6 +64,7 @@ export function installChromeFake(options: { version?: string } = {}) {
   const onClicked = event();
   const onActivated = event<(info: { tabId: number; windowId: number }) => void>();
   const onUpdated = event<(tabId: number, change: Record<string, unknown>, tab: chrome.tabs.Tab) => void>();
+  const onRemoved = event<(tabId: number, info: { windowId: number; isWindowClosing: boolean }) => void>();
   const onPermissionsAdded = event<(permissions: { origins?: string[] }) => void>();
   const onPermissionsRemoved = event<(permissions: { origins?: string[] }) => void>();
   const tabs = new Map<number, chrome.tabs.Tab>();
@@ -107,10 +108,15 @@ export function installChromeFake(options: { version?: string } = {}) {
             (!info.currentWindow || tab.windowId === CURRENT_WINDOW),
         ),
       ),
-      remove: vi.fn(async (id: number) => void tabs.delete(id)),
+      remove: vi.fn(async (id: number) => {
+        const tab = tabs.get(id);
+        tabs.delete(id);
+        if (tab) onRemoved.emit(id, { windowId: tab.windowId, isWindowClosing: false });
+      }),
       getCurrent: vi.fn((callback?: (tab?: chrome.tabs.Tab) => void) => callback?.(undefined)),
       onActivated,
       onUpdated,
+      onRemoved,
       /** Put a tab in place for the code under test to find. */
       add(tab: Partial<chrome.tabs.Tab>) {
         const full = { id: nextTab++, active: false, windowId: CURRENT_WINDOW, ...tab } as chrome.tabs.Tab;
@@ -135,6 +141,7 @@ export function installChromeFake(options: { version?: string } = {}) {
       /** What the user answers the next time Chrome asks. */
       answer: true,
       contains: vi.fn(async ({ origins = [] }: { origins?: string[] }) => origins.every((o) => fake.permissions.granted.has(o))),
+      getAll: vi.fn(async () => ({ origins: [...fake.permissions.granted], permissions: [] as string[] })),
       request: vi.fn(async ({ origins = [] }: { origins?: string[] }) => {
         if (!fake.permissions.answer) return false;
         const added = origins.filter((origin) => !fake.permissions.granted.has(origin));

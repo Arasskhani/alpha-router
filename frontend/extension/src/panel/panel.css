@@ -388,7 +388,8 @@ button {
   min-width: 0;
 }
 
-.chip {
+.chip,
+.chip-add {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
@@ -403,12 +404,14 @@ button {
   cursor: pointer;
 }
 
-.chip:hover:not(:disabled) {
+.chip:hover:not(:disabled),
+.chip-add:hover:not(:disabled) {
   border-color: var(--muted);
   color: var(--text);
 }
 
-.chip:disabled {
+.chip:disabled,
+.chip-add:disabled {
   opacity: 0.6;
   cursor: default;
 }
@@ -459,4 +462,86 @@ button {
 
 .chip__remove:disabled {
   cursor: default;
+}
+
+/* "+ Tab": add another tab of this window to the next question. */
+.chip-add {
+  border-style: dashed;
+}
+
+.tab-picker {
+  display: flex;
+  flex-basis: 100%;
+  flex-direction: column;
+  max-height: 14rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.tab-picker__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.2rem 0.3rem 0.2rem 0.6rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.tab-picker__close {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+}
+
+.tab-picker__note {
+  margin: 0;
+  padding: 0.4rem 0.6rem 0.6rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.tab-picker__item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.05rem;
+  padding: 0.35rem 0.6rem;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.tab-picker__item--active,
+.tab-picker__item:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.tab-picker__item:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.tab-picker__title,
+.tab-picker__site {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: plaintext;
+}
+
+.tab-picker__title {
+  font-size: 0.85rem;
+}
+
+.tab-picker__site {
+  color: var(--muted);
+  font-size: 0.75rem;
 }

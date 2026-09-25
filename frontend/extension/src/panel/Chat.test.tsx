@@ -625,6 +625,181 @@ describe("sharing the page next to the panel", () => {
   });
 });
 
+describe("other tabs", () => {
+  const GUIDE = { url: "https://docs.example.com/guide", title: "The guide" };
+  const WIKI = { url: "https://wiki.example.org/home", title: "Wiki home" };
+  const BUDGET = { url: "https://sheets.example.net/budget", title: "Budget sheet" };
+  const extractOf = (tab: { url: string; title: string }) => ({ url: tab.url, title: tab.title, text: `Text of ${tab.title}.`, truncated: false, selection: "" });
+
+  let ids: Record<string, number>;
+
+  beforeEach(() => {
+    server.routes["POST /api/chat/session-title"] = () => json(200, { title: "" });
+    ids = {
+      guide: chromeFake.tabs.add({ ...GUIDE, active: true }).id!,
+      wiki: chromeFake.tabs.add(WIKI).id!,
+      budget: chromeFake.tabs.add(BUDGET).id!,
+    };
+    chromeFake.permissions.granted.add("https://docs.example.com/*");
+    chromeFake.permissions.granted.add("https://sheets.example.net/*");
+    const byId: Record<number, unknown> = { [ids.guide]: extractOf(GUIDE), [ids.wiki]: extractOf(WIKI), [ids.budget]: extractOf(BUDGET) };
+    chromeFake.scripting.executeScript.mockImplementation((async (injection: { files?: string[]; target: { tabId: number } }) =>
+      injection.files ? [] : [{ result: byId[injection.target.tabId] }]) as never);
+    answerWith([textFrame("Compared.")]);
+  });
+
+  function rows(): HTMLButtonElement[] {
+    return [...host.querySelectorAll<HTMLButtonElement>(".tab-picker__item")];
+  }
+
+  function tabChips(): string[] {
+    return [...host.querySelectorAll(".chip--static")].map((chip) => chip.textContent ?? "");
+  }
+
+  function sentBodies() {
+    return server.callsTo("POST", "/api/chat/completions").map((c) => c.body as Record<string, unknown>);
+  }
+
+  async function openList() {
+    await act(async () => button("Add a tab").click());
+    await act(async () => undefined);
+  }
+
+  async function typeAtEnd(text: string) {
+    const box = host.querySelector("textarea") as HTMLTextAreaElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(box, text);
+      box.setSelectionRange(text.length, text.length);
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => undefined);
+  }
+
+  async function press(key: string) {
+    const box = host.querySelector("textarea") as HTMLTextAreaElement;
+    await act(async () => box.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })));
+    await act(async () => undefined);
+  }
+
+  it("adds a tab from the list, asking Chrome for its site in the click, and sends its page with the question", async () => {
+    await render();
+    await openList();
+    // The page next to the panel is "This page": the list offers the others.
+    expect(rows().map((row) => row.textContent)).toEqual(["Wiki homewiki.example.org", "Budget sheetsheets.example.net"]);
+    await act(async () => {
+      rows()[0].click();
+      expect(chromeFake.permissions.request).toHaveBeenCalledWith({ origins: ["https://wiki.example.org/*"] });
+    });
+    await act(async () => undefined);
+    expect(tabChips()).toEqual(["TabWiki home×"]);
+    expect(host.querySelector(".tab-picker")).toBeNull();
+    await send("Compare them");
+    const [body] = sentBodies();
+    const messages = body.messages as Array<{ content: string }>;
+    expect(messages).toHaveLength(2);
+    expect(messages[0].content).toContain('site="wiki.example.org"');
+    expect(messages[0].content).toContain("Text of Wiki home.");
+    expect(messages[1].content).toBe("Compare them");
+    expect(body.extension_page_context).toEqual({ sites: [{ host: "wiki.example.org", chars: 18 }] });
+    expect(tabChips()).toEqual([]);
+    expect(host.querySelector(".turn--user .turn__page")?.textContent).toBe("Wiki homewiki.example.org");
+  });
+
+  it("sends the page next to the panel and the added tabs together", async () => {
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>("button.chip")!.click());
+    await openList();
+    await act(async () => rows()[1].click());
+    await send("Both, please");
+    const [body] = sentBodies();
+    expect((body.extension_page_context as { sites: Array<{ host: string }> }).sites.map((site) => site.host)).toEqual([
+      "docs.example.com",
+      "sheets.example.net",
+    ]);
+  });
+
+  it("opens the list on @, narrows it as the user types, and picks with Enter without sending", async () => {
+    await render();
+    await typeAtEnd("Compare with @");
+    expect(rows()).toHaveLength(2);
+    await typeAtEnd("Compare with @bud");
+    expect(rows().map((row) => row.textContent)).toEqual(["Budget sheetsheets.example.net"]);
+    await press("Enter");
+    expect(tabChips()).toEqual(["TabBudget sheet×"]);
+    expect((host.querySelector("textarea") as HTMLTextAreaElement).value).toBe("Compare with ");
+    expect(sentBodies()).toHaveLength(0);
+    // Without the list, Enter sends again.
+    await typeAtEnd("Compare with it");
+    await press("Enter");
+    expect(sentBodies()).toHaveLength(1);
+  });
+
+  it("moves through the list with the arrow keys and closes it with Escape", async () => {
+    await render();
+    await typeAtEnd("@");
+    await press("ArrowDown");
+    expect(rows()[1].getAttribute("aria-selected")).toBe("true");
+    await press("Escape");
+    expect(host.querySelector(".tab-picker")).toBeNull();
+    expect(sentBodies()).toHaveLength(0);
+  });
+
+  it("drops a tab that closes, or goes to another site", async () => {
+    await render();
+    await openList();
+    await act(async () => rows()[1].click());
+    expect(tabChips()).toEqual(["TabBudget sheet×"]);
+    await act(async () => chromeFake.tabs.update(ids.budget, { url: "https://sheets.example.net/other", title: "Other sheet" }));
+    expect(tabChips()).toEqual(["TabOther sheet×"]);
+    await act(async () => chromeFake.tabs.update(ids.budget, { url: "https://elsewhere.example/" }));
+    expect(tabChips()).toEqual([]);
+    await openList();
+    await act(async () => rows()[0].click());
+    await act(async () => undefined);
+    expect(tabChips()).toEqual(["TabWiki home×"]);
+    await act(async () => chrome.tabs.remove(ids.wiki));
+    expect(tabChips()).toEqual([]);
+  });
+
+  it("shows a tab on a blocked site, with the reason, and does not add it", async () => {
+    await render({ ...ME, policy: { ...ME.policy!, blocked_sites: ["*.example.org"] } });
+    await openList();
+    expect(rows()[0].disabled).toBe(true);
+    expect(rows()[0].textContent).toContain("does not allow Alpharouter to read wiki.example.org");
+    await act(async () => rows()[0].click());
+    expect(tabChips()).toEqual([]);
+    expect(chromeFake.permissions.request).not.toHaveBeenCalled();
+  });
+
+  it("stops at four other tabs", async () => {
+    for (let i = 0; i < 4; i += 1) chromeFake.tabs.add({ url: `https://sheets.example.net/${i}`, title: `Sheet ${i}` });
+    await render();
+    for (let i = 0; i < 4; i += 1) {
+      await openList();
+      await act(async () => rows()[rows().length - 1].click());
+    }
+    expect(tabChips()).toHaveLength(4);
+    expect([...host.querySelectorAll("button")].some((b) => b.getAttribute("aria-label") === "Add a tab")).toBe(false);
+  });
+
+  it("names the tab that cannot be read, and sends nothing", async () => {
+    chromeFake.scripting.executeScript.mockImplementation((async (injection: { files?: string[]; target: { tabId: number } }) => {
+      if (injection.target.tabId === ids.budget) throw new Error("Frame with ID 0 was removed.");
+      return injection.files ? [] : [{ result: extractOf(GUIDE) }];
+    }) as never);
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>("button.chip")!.click());
+    await openList();
+    await act(async () => rows()[1].click());
+    await send("Both");
+    expect(host.querySelector('.chat__notice[role="alert"]')?.textContent).toBe(
+      "“Budget sheet”: Alpharouter could not read this page. Reload it and try again.",
+    );
+    expect(sentBodies()).toHaveLength(0);
+    expect(tabChips()).toEqual(["TabBudget sheet×"]);
+  });
+});
+
 describe("right-click actions", () => {
   const PAGE_URL = "https://docs.example.com/guide?session=abc";
   const EXTRACT = { url: PAGE_URL, title: "The guide", text: "Step one. Step two.", truncated: false, selection: "" };

@@ -983,6 +983,94 @@ describe("putting an answer into the page", () => {
   });
 });
 
+describe("quick prompts", () => {
+  const GUIDE = { url: "https://docs.example.com/guide", title: "The guide" };
+
+  beforeEach(() => {
+    server.routes["POST /api/chat/session-title"] = () => json(200, { title: "" });
+  });
+
+  function options(): string[] {
+    return [...host.querySelectorAll('[aria-label="Quick prompts"] .tab-picker__title')].map((el) => el.textContent ?? "");
+  }
+
+  async function typeAtEnd(text: string) {
+    const box = host.querySelector("textarea") as HTMLTextAreaElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(box, text);
+      box.setSelectionRange(text.length, text.length);
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  async function press(key: string) {
+    const box = host.querySelector("textarea") as HTMLTextAreaElement;
+    await act(async () => box.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })));
+  }
+
+  it("lists the built-in ones and the user's own on /, and narrows them as the user types", async () => {
+    await chrome.storage.local.set({ "alpharouter.prompts": [{ id: "p1", name: "weekly-report", text: "Write the weekly report:" }] });
+    await render();
+    await typeAtEnd("/");
+    expect(options()).toEqual(["/summarize", "/explain", "/translate", "/reply", "/improve", "/weekly-report"]);
+    await typeAtEnd("/wee");
+    expect(options()).toEqual(["/weekly-report"]);
+    await press("Enter");
+    expect((host.querySelector("textarea") as HTMLTextAreaElement).value).toBe("Write the weekly report: ");
+    expect(host.querySelector('[aria-label="Quick prompts"]')).toBeNull();
+    expect(server.callsTo("POST", "/api/chat/completions")).toHaveLength(0);
+  });
+
+  it("turns on This page with /summarize when the page may go", async () => {
+    chromeFake.tabs.add({ ...GUIDE, active: true });
+    chromeFake.permissions.granted.add("https://docs.example.com/*");
+    await render();
+    await typeAtEnd("/sum");
+    await press("Enter");
+    expect((host.querySelector("textarea") as HTMLTextAreaElement).value).toBe("Summarize this page.");
+    expect(host.querySelector("button.chip")?.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("closes on Escape, and a slash later in a message is only a slash", async () => {
+    await render();
+    await typeAtEnd("/");
+    await press("Escape");
+    expect(host.querySelector('[aria-label="Quick prompts"]')).toBeNull();
+    await typeAtEnd("Is it 1/2?");
+    expect(host.querySelector('[aria-label="Quick prompts"]')).toBeNull();
+  });
+
+  it("are saved, changed and deleted from the menu, in this browser only", async () => {
+    await render();
+    await act(async () => button("Saved prompts").click());
+    const field = (label: string) => [...host.querySelectorAll(".prompts__field")].find((f) => f.textContent?.startsWith(label))!.querySelector("input, textarea") as HTMLInputElement;
+    const fill = async (label: string, value: string) => {
+      const el = field(label);
+      const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, value);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    await fill("Name", "summarize");
+    await fill("Text", "Mine");
+    await act(async () => button("Add prompt").click());
+    expect(host.querySelector('.prompts [role="alert"]')?.textContent).toBe("There is already a prompt called /summarize.");
+    await fill("Name", "standup");
+    await fill("Text", "Turn these notes into a standup update:");
+    await act(async () => button("Add prompt").click());
+    await act(async () => undefined);
+    const saved = (await chrome.storage.local.get("alpharouter.prompts"))["alpharouter.prompts"] as Array<{ name: string }>;
+    expect(saved.map((p) => p.name)).toEqual(["standup"]);
+    expect(host.querySelector(".prompts__name")?.textContent).toBe("/standup");
+    await act(async () => button("Delete /standup").click());
+    await act(async () => undefined);
+    expect(await chrome.storage.local.get("alpharouter.prompts")).toEqual({ "alpharouter.prompts": [] });
+    await act(async () => button("Done").click());
+    expect(host.querySelector("textarea")).not.toBeNull();
+  });
+});
+
 describe("right-click actions", () => {
   const PAGE_URL = "https://docs.example.com/guide?session=abc";
   const EXTRACT = { url: PAGE_URL, title: "The guide", text: "Step one. Step two.", truncated: false, selection: "" };

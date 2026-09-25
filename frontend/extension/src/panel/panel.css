@@ -564,3 +564,101 @@ button {
   display: flex;
   gap: 0.25rem;
 }
+
+/* Saved prompts (⋯ → Saved prompts). */
+.prompts {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-height: 0;
+  padding: 0.75rem;
+  overflow-y: auto;
+}
+
+.prompts__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.prompts__title {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.prompts__hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.prompts__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.prompts__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.1rem 0.5rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.prompts__name {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+.prompts__text {
+  grid-column: 1;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: plaintext;
+}
+
+.prompts__actions {
+  display: flex;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-items: center;
+}
+
+.prompts__form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.prompts__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+}
+
+.prompts__field input,
+.prompts__field textarea {
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  unicode-bidi: plaintext;
+}
+
+.prompts__buttons {
+  display: flex;
+  gap: 0.4rem;
+}

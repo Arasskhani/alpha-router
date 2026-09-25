@@ -24,6 +24,9 @@ import { useActivePage, useSiteAccess } from "./activePage";
 import { carriesScreenshots, completionBody, pagesIn, pickModel, textModels, type ChatModel, type Turn } from "./chat";
 import { MAX_OTHER_TABS, matchingTabs, mentionAt, tabCandidates, useChosenTabs, type PickableTab } from "./otherTabs";
 import PanelMarkdown from "./PanelMarkdown";
+import PromptPicker from "./PromptPicker";
+import { BUILT_IN_PROMPTS, loadPrompts, matchingPrompts, savePrompts, slashAt, watchPrompts, type Prompt } from "./prompts";
+import PromptsView from "./PromptsView";
 import TabPicker from "./TabPicker";
 import type { Me } from "./types";
 
@@ -116,6 +119,10 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
   const otherTabs = useChosenTabs();
   /** A screenshot of the page, sent with the next question. */
   const [shot, setShot] = useState<PageContext | null>(null);
+  /** The user's saved prompts, and the list shown while a /part is typed. */
+  const [savedPrompts, setSavedPrompts] = useState<Prompt[]>([]);
+  const [promptPicker, setPromptPicker] = useState<{ query: string; active: number } | null>(null);
+  const [showPrompts, setShowPrompts] = useState(false);
   // Chrome takes a screenshot from the panel only with access to every site.
   const allSites = useSiteAccess(me.features.page_context ? "<all_urls>" : null);
   /** The list of tabs to add: opened with "+ Tab", or by typing @ and part of a title. */
@@ -192,6 +199,22 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
     const el = log.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [turns]);
+
+  useEffect(() => {
+    let active = true;
+    loadPrompts()
+      .then((prompts) => {
+        if (active) setSavedPrompts(prompts);
+      })
+      .catch(() => undefined);
+    const stop = watchPrompts((prompts) => {
+      if (active) setSavedPrompts(prompts);
+    });
+    return () => {
+      active = false;
+      stop();
+    };
+  }, []);
 
   // The latest render's handler: the listener below lives as long as the panel.
   useEffect(() => {
@@ -282,6 +305,36 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
     tabCandidates(excluded)
       .then((tabs) => setPicker((open) => (open ? { ...open, tabs } : open)))
       .catch(() => setPicker((open) => (open ? { ...open, tabs: [] } : open)));
+  }
+
+  const shownPrompts = promptPicker ? matchingPrompts([...BUILT_IN_PROMPTS, ...savedPrompts], promptPicker.query) : [];
+
+  /** Follow a "/part" typed at the start: open the quick prompts, narrow them, or close them. */
+  function followSlash(text: string, caret: number): boolean {
+    const slash = slashAt(text, caret);
+    if (slash) {
+      setPicker(null);
+      setPromptPicker({ query: slash.query, active: 0 });
+      return true;
+    }
+    if (promptPicker) setPromptPicker(null);
+    return false;
+  }
+
+  /** A quick prompt goes into the composer; the summary one also turns on "This page" when it may go. */
+  function choosePrompt(prompt: Prompt) {
+    const text = prompt.text.endsWith(":") ? `${prompt.text} ` : prompt.text;
+    setDraft(text);
+    setPromptPicker(null);
+    if (prompt.attachPage && target && activePage && siteAccess && !pageBlockFor(target.host, modelId)) {
+      setAttachFor({ tabId: activePage.tabId, origin: target.origin });
+    }
+    composer.current?.focus();
+  }
+
+  async function keepPrompts(prompts: Prompt[]) {
+    await savePrompts(prompts);
+    setSavedPrompts(prompts);
   }
 
   /** Follow an "@part" being typed: open the list, narrow it, or close it. */
@@ -703,6 +756,9 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
                 {privateMode ? "Leave Private" : "Private chat"}
               </button>
             )}
+            <button type="button" className="btn btn--quiet" onClick={() => setShowPrompts(true)}>
+              Saved prompts
+            </button>
             <a className="btn btn--quiet" href={`${server}/app/chat`} target="_blank" rel="noopener noreferrer">
               Open Alpharouter
             </a>
@@ -724,227 +780,261 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
         </p>
       )}
 
-      <div className="chat__log" role="log" aria-live="polite" ref={log}>
-        {turns.length === 0 && (
-          <p className="chat__empty">
-            {privateMode
-              ? "Private chat: nothing is saved, and it is gone when you start a new chat."
-              : `Ask anything, ${me.user.display_name || me.user.username}. Chats are saved to your Alpharouter history.`}
-            {me.features.page_context && " To ask about the page next to this panel, turn on “This page” below."}
-          </p>
-        )}
-        {turns.map((turn) => (
-          <article key={turn.id} className={`turn turn--${turn.role}`}>
-            {turn.pages?.map((shared, index) =>
-              shared.part === "screenshot" ? (
-                <p key={index} className="turn__page" title={shared.url}>
-                  <CameraIcon />
-                  <span className="turn__page-title">Screenshot</span>
-                  <span className="turn__page-site">{shared.host}</span>
-                  {/* Taken in this browser: a data URL, never a remote image. */}
-                  <img className="turn__shot" src={shared.image} alt={`Screenshot of ${shared.host}`} />
-                </p>
-              ) : (
-                <p key={index} className="turn__page" title={shared.url}>
-                  <PageIcon />
-                  <span className="turn__page-title">
-                    {shared.part === "selection" ? "Selected text" : shared.title || shared.host}
-                  </span>
-                  <span className="turn__page-site">{shared.truncated ? `${shared.host}, first part` : shared.host}</span>
-                </p>
-              ),
-            )}
-            {turn.role === "user" ? <p className="turn__text">{turn.content}</p> : turn.content && <PanelMarkdown text={turn.content} />}
-            {turn.streaming && !turn.content && <p className="turn__pending">Thinking…</p>}
-            {turn.stopped && <p className="turn__meta">Stopped.</p>}
-            {turn.error && (
-              <p className="banner banner--error" role="alert">
-                {turn.error}
+      {showPrompts ? (
+        <PromptsView prompts={savedPrompts} onSave={keepPrompts} onClose={() => setShowPrompts(false)} />
+      ) : (
+        <>
+          <div className="chat__log" role="log" aria-live="polite" ref={log}>
+            {turns.length === 0 && (
+              <p className="chat__empty">
+                {privateMode
+                  ? "Private chat: nothing is saved, and it is gone when you start a new chat."
+                  : `Ask anything, ${me.user.display_name || me.user.username}. Chats are saved to your Alpharouter history.`}
+                {me.features.page_context && " To ask about the page next to this panel, turn on “This page” below."}
               </p>
             )}
-            {turn.role === "assistant" && !turn.streaming && turn.content && (
-              <div className="turn__actions">
-                <button type="button" className="btn btn--quiet turn__copy" aria-label="Copy answer" onClick={() => void copy(turn)}>
-                  {copied === turn.id ? "Copied" : "Copy"}
-                </button>
-                {me.features.page_context && target && activePage && (
-                  <button
-                    type="button"
-                    className="btn btn--quiet turn__copy"
-                    aria-label="Insert answer into the page"
-                    title={`Into the field you left selected on ${target.host}`}
-                    onClick={() => insertAnswer(turn)}
-                  >
-                    {inserted === turn.id ? "Inserted" : "Insert"}
-                  </button>
+            {turns.map((turn) => (
+              <article key={turn.id} className={`turn turn--${turn.role}`}>
+                {turn.pages?.map((shared, index) =>
+                  shared.part === "screenshot" ? (
+                    <p key={index} className="turn__page" title={shared.url}>
+                      <CameraIcon />
+                      <span className="turn__page-title">Screenshot</span>
+                      <span className="turn__page-site">{shared.host}</span>
+                      {/* Taken in this browser: a data URL, never a remote image. */}
+                      <img className="turn__shot" src={shared.image} alt={`Screenshot of ${shared.host}`} />
+                    </p>
+                  ) : (
+                    <p key={index} className="turn__page" title={shared.url}>
+                      <PageIcon />
+                      <span className="turn__page-title">
+                        {shared.part === "selection" ? "Selected text" : shared.title || shared.host}
+                      </span>
+                      <span className="turn__page-site">{shared.truncated ? `${shared.host}, first part` : shared.host}</span>
+                    </p>
+                  ),
                 )}
-              </div>
-            )}
-          </article>
-        ))}
-      </div>
-
-      <form
-        className="chat__composer"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void send();
-        }}
-      >
-        {picker && (
-          <TabPicker
-            tabs={pickerTabs}
-            active={pickerTabs?.length ? Math.min(picker.active, pickerTabs.length - 1) : 0}
-            blockFor={tabBlock}
-            onPick={pickTab}
-            onClose={() => setPicker(null)}
-          />
-        )}
-        {(selections.length > 0 || me.features.page_context) && (
-          <div className="chat__context">
-            {selections.map((selected, index) => (
-              <span key={index} className="chip chip--on chip--static" title={selected.text.slice(0, 300)}>
-                <PageIcon />
-                <span className="chip__label">Selected text</span>
-                <span className="chip__site">{selected.host}</span>
-                <button
-                  type="button"
-                  className="chip__remove"
-                  aria-label={`Remove the text selected on ${selected.host}`}
-                  disabled={busy}
-                  onClick={() => setSelections((all) => all.filter((_, i) => i !== index))}
-                >
-                  ×
-                </button>
-              </span>
+                {turn.role === "user" ? <p className="turn__text">{turn.content}</p> : turn.content && <PanelMarkdown text={turn.content} />}
+                {turn.streaming && !turn.content && <p className="turn__pending">Thinking…</p>}
+                {turn.stopped && <p className="turn__meta">Stopped.</p>}
+                {turn.error && (
+                  <p className="banner banner--error" role="alert">
+                    {turn.error}
+                  </p>
+                )}
+                {turn.role === "assistant" && !turn.streaming && turn.content && (
+                  <div className="turn__actions">
+                    <button type="button" className="btn btn--quiet turn__copy" aria-label="Copy answer" onClick={() => void copy(turn)}>
+                      {copied === turn.id ? "Copied" : "Copy"}
+                    </button>
+                    {me.features.page_context && target && activePage && (
+                      <button
+                        type="button"
+                        className="btn btn--quiet turn__copy"
+                        aria-label="Insert answer into the page"
+                        title={`Into the field you left selected on ${target.host}`}
+                        onClick={() => insertAnswer(turn)}
+                      >
+                        {inserted === turn.id ? "Inserted" : "Insert"}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </article>
             ))}
-            {target && activePage && (
-              <button
-                type="button"
-                className={`chip${attached ? " chip--on" : ""}`}
-                aria-pressed={attached}
-                // A page that may not go any more can still be turned off.
-                disabled={busy || (Boolean(pageBlock) && !attached)}
-                onClick={togglePage}
-                title={activePage.url}
-              >
-                <PageIcon />
-                <span className="chip__label">{attached ? "Sending this page" : "This page"}</span>
-                <span className="chip__site">{activePage.title || target.host}</span>
-              </button>
-            )}
-            {otherTabs.chosen.map((tab) => (
-              <span key={tab.tabId} className="chip chip--on chip--static" title={tab.url}>
-                <PageIcon />
-                <span className="chip__label">Tab</span>
-                <span className="chip__site">{tab.title}</span>
-                <button
-                  type="button"
-                  className="chip__remove"
-                  aria-label={`Remove the tab ${tab.title}`}
-                  disabled={busy}
-                  onClick={() => otherTabs.remove(tab.tabId)}
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-            {shot && (
-              <span className="chip chip--on chip--static" title={shot.url}>
-                <CameraIcon />
-                <span className="chip__label">Screenshot</span>
-                <span className="chip__site">{shot.host}</span>
-                <button
-                  type="button"
-                  className="chip__remove"
-                  aria-label="Remove the screenshot"
-                  disabled={busy}
-                  onClick={() => setShot(null)}
-                >
-                  ×
-                </button>
-              </span>
-            )}
-            {canScreenshot && !shot && (
-              <button
-                type="button"
-                className="chip-add"
-                aria-label="Take a screenshot of the page"
-                disabled={busy || Boolean(pageBlock)}
-                onClick={() => void takeScreenshot()}
-              >
-                <CameraIcon />
-                Screenshot
-              </button>
-            )}
-            {canAddTab && (
-              <button
-                type="button"
-                className="chip-add"
-                aria-label="Add a tab"
-                aria-expanded={Boolean(picker)}
-                disabled={busy}
-                onClick={() => (picker ? setPicker(null) : openPicker(null))}
-              >
-                + Tab
-              </button>
-            )}
-            {reading && (
-              <span className="chat__context-note" role="status">
-                Reading the page…
-              </span>
-            )}
-            {!reading && pageBlock && <span className="chat__context-note">{pageBlock}</span>}
-            {shot && !readsImages && <span className="chat__context-note">{NO_IMAGES}</span>}
           </div>
-        )}
-        <textarea
-          ref={composer}
-          aria-label="Message"
-          value={draft}
-          rows={2}
-          placeholder={privateMode ? "Private message…" : "Message Alpharouter…"}
-          onChange={(event) => {
-            setDraft(event.target.value);
-            followMention(event.target.value, event.target.selectionStart ?? event.target.value.length);
-          }}
-          onKeyDown={(event) => {
-            if (picker) {
-              const count = pickerTabs?.length ?? 0;
-              if (event.key === "Escape") {
-                event.preventDefault();
-                setPicker(null);
-                return;
-              }
-              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                event.preventDefault();
-                const step = event.key === "ArrowDown" ? 1 : -1;
-                setPicker({ ...picker, active: Math.max(0, Math.min(count - 1, picker.active + step)) });
-                return;
-              }
-              if (event.key === "Enter" && picker.mention && !event.nativeEvent.isComposing) {
-                // Enter picks the tab the list is on; it never sends the question meanwhile.
-                event.preventDefault();
-                if (pickerTabs?.length) pickTab(pickerTabs[Math.min(picker.active, count - 1)]);
-                return;
-              }
-            }
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+
+          <form
+            className="chat__composer"
+            onSubmit={(event) => {
               event.preventDefault();
               void send();
-            }
-          }}
-        />
-        {busy ? (
-          <button type="button" className="btn" onClick={stop}>
-            Stop
-          </button>
-        ) : (
-          <button type="submit" className="btn btn--primary" disabled={!draft.trim() || !modelId}>
-            Send
-          </button>
-        )}
-      </form>
+            }}
+          >
+            {promptPicker && (
+              <PromptPicker
+                prompts={shownPrompts}
+                active={Math.min(promptPicker.active, Math.max(0, shownPrompts.length - 1))}
+                onPick={choosePrompt}
+              />
+            )}
+            {picker && (
+              <TabPicker
+                tabs={pickerTabs}
+                active={pickerTabs?.length ? Math.min(picker.active, pickerTabs.length - 1) : 0}
+                blockFor={tabBlock}
+                onPick={pickTab}
+                onClose={() => setPicker(null)}
+              />
+            )}
+            {(selections.length > 0 || me.features.page_context) && (
+              <div className="chat__context">
+                {selections.map((selected, index) => (
+                  <span key={index} className="chip chip--on chip--static" title={selected.text.slice(0, 300)}>
+                    <PageIcon />
+                    <span className="chip__label">Selected text</span>
+                    <span className="chip__site">{selected.host}</span>
+                    <button
+                      type="button"
+                      className="chip__remove"
+                      aria-label={`Remove the text selected on ${selected.host}`}
+                      disabled={busy}
+                      onClick={() => setSelections((all) => all.filter((_, i) => i !== index))}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                {target && activePage && (
+                  <button
+                    type="button"
+                    className={`chip${attached ? " chip--on" : ""}`}
+                    aria-pressed={attached}
+                    // A page that may not go any more can still be turned off.
+                    disabled={busy || (Boolean(pageBlock) && !attached)}
+                    onClick={togglePage}
+                    title={activePage.url}
+                  >
+                    <PageIcon />
+                    <span className="chip__label">{attached ? "Sending this page" : "This page"}</span>
+                    <span className="chip__site">{activePage.title || target.host}</span>
+                  </button>
+                )}
+                {otherTabs.chosen.map((tab) => (
+                  <span key={tab.tabId} className="chip chip--on chip--static" title={tab.url}>
+                    <PageIcon />
+                    <span className="chip__label">Tab</span>
+                    <span className="chip__site">{tab.title}</span>
+                    <button
+                      type="button"
+                      className="chip__remove"
+                      aria-label={`Remove the tab ${tab.title}`}
+                      disabled={busy}
+                      onClick={() => otherTabs.remove(tab.tabId)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                {shot && (
+                  <span className="chip chip--on chip--static" title={shot.url}>
+                    <CameraIcon />
+                    <span className="chip__label">Screenshot</span>
+                    <span className="chip__site">{shot.host}</span>
+                    <button
+                      type="button"
+                      className="chip__remove"
+                      aria-label="Remove the screenshot"
+                      disabled={busy}
+                      onClick={() => setShot(null)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                )}
+                {canScreenshot && !shot && (
+                  <button
+                    type="button"
+                    className="chip-add"
+                    aria-label="Take a screenshot of the page"
+                    disabled={busy || Boolean(pageBlock)}
+                    onClick={() => void takeScreenshot()}
+                  >
+                    <CameraIcon />
+                    Screenshot
+                  </button>
+                )}
+                {canAddTab && (
+                  <button
+                    type="button"
+                    className="chip-add"
+                    aria-label="Add a tab"
+                    aria-expanded={Boolean(picker)}
+                    disabled={busy}
+                    onClick={() => (picker ? setPicker(null) : openPicker(null))}
+                  >
+                    + Tab
+                  </button>
+                )}
+                {reading && (
+                  <span className="chat__context-note" role="status">
+                    Reading the page…
+                  </span>
+                )}
+                {!reading && pageBlock && <span className="chat__context-note">{pageBlock}</span>}
+                {shot && !readsImages && <span className="chat__context-note">{NO_IMAGES}</span>}
+              </div>
+            )}
+            <textarea
+              ref={composer}
+              aria-label="Message"
+              value={draft}
+              rows={2}
+              placeholder={privateMode ? "Private message…" : "Message Alpharouter…"}
+              onChange={(event) => {
+                const caret = event.target.selectionStart ?? event.target.value.length;
+                setDraft(event.target.value);
+                if (!followSlash(event.target.value, caret)) followMention(event.target.value, caret);
+              }}
+              onKeyDown={(event) => {
+                if (promptPicker) {
+                  const count = shownPrompts.length;
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setPromptPicker(null);
+                    return;
+                  }
+                  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                    event.preventDefault();
+                    const step = event.key === "ArrowDown" ? 1 : -1;
+                    setPromptPicker({ ...promptPicker, active: Math.max(0, Math.min(count - 1, promptPicker.active + step)) });
+                    return;
+                  }
+                  if ((event.key === "Enter" || event.key === "Tab") && count > 0 && !event.nativeEvent.isComposing) {
+                    // Enter chooses the prompt the list is on; it never sends "/sum".
+                    event.preventDefault();
+                    choosePrompt(shownPrompts[Math.min(promptPicker.active, count - 1)]);
+                    return;
+                  }
+                }
+                if (picker) {
+                  const count = pickerTabs?.length ?? 0;
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setPicker(null);
+                    return;
+                  }
+                  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                    event.preventDefault();
+                    const step = event.key === "ArrowDown" ? 1 : -1;
+                    setPicker({ ...picker, active: Math.max(0, Math.min(count - 1, picker.active + step)) });
+                    return;
+                  }
+                  if (event.key === "Enter" && picker.mention && !event.nativeEvent.isComposing) {
+                    // Enter picks the tab the list is on; it never sends the question meanwhile.
+                    event.preventDefault();
+                    if (pickerTabs?.length) pickTab(pickerTabs[Math.min(picker.active, count - 1)]);
+                    return;
+                  }
+                }
+                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  void send();
+                }
+              }}
+            />
+            {busy ? (
+              <button type="button" className="btn" onClick={stop}>
+                Stop
+              </button>
+            ) : (
+              <button type="submit" className="btn btn--primary" disabled={!draft.trim() || !modelId}>
+                Send
+              </button>
+            )}
+          </form>
+        </>
+      )}
     </main>
   );
 }

@@ -12536,6 +12536,58 @@ body.login-route #root {
   line-height: 1.4;
 }
 
+/* Connect the browser extension (pages/ExtensionConnect.tsx): the sign-in
+   page's backdrop with one card in the middle, scrolling when it is taller
+   than the window. */
+.extension-connect__shell {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  padding: 1.5rem 1rem;
+  box-sizing: border-box;
+}
+
+.extension-connect__panel {
+  max-width: 440px;
+  margin: auto;
+}
+
+.extension-connect__lead {
+  margin: 0.25rem 0 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.extension-connect__list {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.6rem 0 0.9rem;
+  padding-left: 1.1rem;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.extension-connect__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+
+.extension-connect__note {
+  margin: 0.9rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
 @media (min-width: 1380px) {
   .login-highlights {
     grid-template-columns: repeat(3, minmax(0, 1fr));

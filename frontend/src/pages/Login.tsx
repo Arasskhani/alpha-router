@@ -5,6 +5,7 @@ import { LOGIN_TAGLINE, PAGE_TITLE, PRODUCT_NAME_MARKED, TRADEMARK_OWNER } from 
 import { applyThemeToDocument } from "../lib/themeCache";
 import { markLoggedIn } from "../lib/session";
 import { homePathFor } from "../lib/homePath";
+import { takeAfterLogin } from "../lib/afterLogin";
 import { authFetch, bootstrapSession } from "../api";
 function FeatureProvidersArt() {
   return (
@@ -111,7 +112,8 @@ async function finishLogin(nav: NavigateFunction) {
   const session = await bootstrapSession(true);
   const active = session.is_active !== false;
   markLoggedIn(active);
-  nav(homePathFor(session));
+  // A page that sent the user here to sign in (only the extension's connect page).
+  nav(takeAfterLogin() ?? homePathFor(session));
 }
 
 export default function Login() {

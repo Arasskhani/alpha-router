@@ -32,6 +32,8 @@ export const STORAGE_KEYS = {
   mediaView: "alpha_router_media_view",
   /** The install suggestion's answers on this device (lib/pwa/installSuggestion.ts). Never sent to the server. */
   installPrompt: "alpha_router_install_prompt",
+  /** The page to go back to after signing in (lib/afterLogin.ts), in session storage. */
+  afterLogin: "alpha_router_after_login",
 } as const;
 
 export const BROWSER_EVENT_NAMES = {

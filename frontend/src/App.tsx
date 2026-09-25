@@ -58,6 +58,7 @@ const AgentApprovals = lazy(() => import("./pages/admin/AgentApprovals"));
 const AgentActivity = lazy(() => import("./pages/admin/AgentActivity"));
 const AgentUsageActivity = lazy(() => import("./pages/admin/AgentUsageActivity"));
 const SecuritySettings = lazy(() => import("./pages/admin/SecuritySettings"));
+const ExtensionConnect = lazy(() => import("./pages/ExtensionConnect"));
 
 
 function Private({ children }: { children: React.ReactNode }) {
@@ -82,6 +83,8 @@ export default function App() {
         <Routes>
       <Route path="/" element={<HomeRedirect />} />
       <Route path="/login" element={<Login />} />
+      {/* Outside the app shell: the extension opens it in a tab of its own, signed in or not. */}
+      <Route path="/extension/connect" element={<ExtensionConnect />} />
       <Route
         path="/admin"
         element={

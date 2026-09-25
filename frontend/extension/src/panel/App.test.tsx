@@ -182,6 +182,51 @@ describe("the side panel, connected", () => {
   });
 });
 
+describe("the side panel, when the answer does not come", () => {
+  beforeEach(() => connectWith({ token: "at", expiresAt: NOW + 3_600_000, sessionId: "s1" }, "rt"));
+
+  it("stops waiting for the server and offers to try again", async () => {
+    const stop = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(stop.signal);
+    try {
+      routes["GET /api/extension/me"] = (init) =>
+        new Promise<Response>((_, reject) =>
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("The operation timed out.", "TimeoutError"))),
+        );
+      await render();
+      expect(host.querySelector("main")?.getAttribute("aria-busy")).toBe("true");
+      await act(async () => stop.abort());
+      await act(async () => undefined);
+      expect(timeout).toHaveBeenCalledWith(15_000);
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain("could not be reached");
+      expect(button("Try again")).toBeTruthy();
+      expect(tokenState.refresh).toBe("rt");
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  it("offers to try again when the panel cannot read its own storage", async () => {
+    const failing = createTokenManager({
+      storage: {
+        getAccess: async () => null,
+        setAccess: async () => undefined,
+        getRefresh: async () => {
+          throw new Error("IndexedDB is broken");
+        },
+        setRefresh: async () => undefined,
+      },
+      lock: (fn) => fn(),
+      serverUrl: async () => SERVER,
+      fetch: serverFetch as unknown as typeof fetch,
+    });
+    setClient({ tokens: failing, api: createApi({ tokens: failing, serverUrl: async () => SERVER, fetch: serverFetch as unknown as typeof fetch }) });
+    await render();
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe("Something went wrong.");
+    expect(button("Try again")).toBeTruthy();
+  });
+});
+
 describe("a copy that belongs to no server", () => {
   it("says where to get one", async () => {
     connectWith(null, null);

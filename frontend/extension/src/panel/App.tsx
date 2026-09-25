@@ -10,6 +10,9 @@ import Chat from "./Chat";
 import ConnectView from "./ConnectView";
 import type { Me } from "./types";
 
+/** How long the panel waits for /api/extension/me before it offers to try again. */
+const ME_TIMEOUT_MS = 15_000;
+
 type View =
   | { kind: "loading" }
   | { kind: "unconfigured" }
@@ -26,7 +29,10 @@ async function currentView(): Promise<View> {
     return { kind: "disconnected", server: config.serverUrl, waiting: await hasPendingConnect(), message: "" };
   }
   try {
-    return { kind: "connected", server: config.serverUrl, me: await api.json<Me>("/api/extension/me") };
+    // A request that hangs would leave the panel blank: past the wait it is
+    // treated as the network trouble it is (TemporaryError).
+    const me = await api.json<Me>("/api/extension/me", { signal: AbortSignal.timeout(ME_TIMEOUT_MS) });
+    return { kind: "connected", server: config.serverUrl, me };
   } catch (err) {
     if (err instanceof DisconnectedError) {
       return { kind: "disconnected", server: config.serverUrl, waiting: false, message: err.message };
@@ -42,9 +48,12 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    currentView().then((next) => {
-      if (active) setView(next);
-    });
+    currentView()
+      // Storage the panel cannot read, say: it offers to try again rather than staying blank.
+      .catch((): View => ({ kind: "unreachable", message: "Something went wrong." }))
+      .then((next) => {
+        if (active) setView(next);
+      });
     return () => {
       active = false;
     };

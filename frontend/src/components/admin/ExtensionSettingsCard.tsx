@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 
 import { api, formatApiError } from "../../api";
 import { useReadOnly } from "../../context/ReadOnlyContext";
@@ -48,15 +48,27 @@ type ModelChoice = {
 
 type Overview = { settings: ExtensionSettings; models: ModelChoice[]; distribution: Distribution };
 
-/** The form keeps the site lists as the text the administrator types, one pattern per line. */
-type Form = Omit<ExtensionSettings, "allowed_sites" | "blocked_sites"> & { allowed_sites: string; blocked_sites: string };
+/**
+ * The form keeps what the administrator types: the site lists one pattern per
+ * line, and the steps as text, so the field can be cleared and typed again.
+ */
+type Form = Omit<ExtensionSettings, "allowed_sites" | "blocked_sites" | "agent_max_steps"> & {
+  allowed_sites: string;
+  blocked_sites: string;
+  agent_max_steps: string;
+};
 
 const SETTINGS_PATH = "/api/admin/extension/settings";
 const MIN_STEPS = 5;
 const MAX_STEPS = 100;
 
 function toForm(settings: ExtensionSettings): Form {
-  return { ...settings, allowed_sites: settings.allowed_sites.join("\n"), blocked_sites: settings.blocked_sites.join("\n") };
+  return {
+    ...settings,
+    allowed_sites: settings.allowed_sites.join("\n"),
+    blocked_sites: settings.blocked_sites.join("\n"),
+    agent_max_steps: String(settings.agent_max_steps),
+  };
 }
 
 export function siteLines(text: string): string[] {
@@ -98,6 +110,11 @@ function unavailableNote(choice: ModelChoice): string | null {
   return choice.state === "ok" ? null : UNAVAILABLE[choice.state];
 }
 
+/** Enter in a search box filters; it must not submit the settings form around it. */
+function keepEnterHere(event: KeyboardEvent<HTMLInputElement>) {
+  if (event.key === "Enter") event.preventDefault();
+}
+
 function ModelChecklist({
   label,
   models,
@@ -130,6 +147,7 @@ function ModelChecklist({
           aria-label={`Search ${label.toLowerCase()}`}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={keepEnterHere}
           disabled={disabled}
         />
       ) : null}
@@ -198,6 +216,12 @@ export default function ExtensionSettingsCard() {
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!form || readOnly) return;
+    const steps = Number(form.agent_max_steps.trim() || Number.NaN);
+    if (!Number.isInteger(steps) || steps < MIN_STEPS || steps > MAX_STEPS) {
+      setNotice("");
+      setError(`Most steps per task must be a whole number from ${MIN_STEPS} to ${MAX_STEPS}.`);
+      return;
+    }
     setSaving(true);
     setError("");
     setNotice("");
@@ -209,6 +233,7 @@ export default function ExtensionSettingsCard() {
           ...form,
           allowed_sites: siteLines(form.allowed_sites),
           blocked_sites: siteLines(form.blocked_sites),
+          agent_max_steps: steps,
           agent_review_model: form.agent_review_model || null,
         }),
       });
@@ -348,9 +373,10 @@ export default function ExtensionSettingsCard() {
               className="settings-row__control"
               min={MIN_STEPS}
               max={MAX_STEPS}
+              step={1}
               value={form.agent_max_steps}
               disabled={locked}
-              onChange={(e) => patch({ agent_max_steps: Number(e.target.value || MIN_STEPS) })}
+              onChange={(e) => patch({ agent_max_steps: e.target.value })}
             />
           </label>
           <label className="extension-admin__choice">

@@ -171,6 +171,36 @@ describe("the browser extension card", () => {
     expect(host.textContent).toContain("The review model is turned off: choose another, or None.");
   });
 
+  it("keeps Enter in the model search from submitting the form", async () => {
+    const many = Array.from({ length: 9 }, (_, i) => ({ ref: `model::${i + 1}`, label: `M${i + 1}`, provider: "p", state: "ok" }));
+    serve({ models: many });
+    await render();
+    const search = host.querySelector("input[aria-label='Search models that may receive page content']") as HTMLInputElement;
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    await act(async () => search.dispatchEvent(enter));
+    expect(enter.defaultPrevented).toBe(true);
+    expect(lastPut).toBeNull();
+  });
+
+  it("lets the steps be cleared and typed again, and checks them before saving", async () => {
+    serve();
+    await render();
+    const steps = field("Most steps per task") as HTMLInputElement;
+    await type(steps, "");
+    expect(steps.value).toBe("");
+    await type(steps, "40");
+    await save();
+    expect(lastPut?.agent_max_steps).toBe(40);
+
+    lastPut = null;
+    for (const value of ["", "3", "101", "7.5"]) {
+      await type(field("Most steps per task"), value);
+      await save();
+      expect(lastPut).toBeNull();
+      expect(host.querySelector(".alert-error")?.textContent).toBe("Most steps per task must be a whole number from 5 to 100.");
+    }
+  });
+
   it("saves what the administrator changed, with the site lists as lists", async () => {
     serve();
     await render();

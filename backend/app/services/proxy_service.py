@@ -934,6 +934,20 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                 provider_type=provider_type,
             )
 
+        def _absorb_cut_short(error_message: str) -> None:
+            """Book the attempt in flight, if any, when the reply is cut short, billing what it streamed.
+
+            Called from the cancellation handlers below, so it stays
+            synchronous: nothing may be awaited before they re-raise, and the
+            shielded settlement in ``finally`` reads what this books.
+            """
+            nonlocal attempt
+            if attempt is None:
+                return
+            _absorb(attempt, status="cancelled", error_message=error_message, completion=_finish_cut_short(attempt))
+            attempt = None
+            _compute_cost()
+
         was_cancelled = False
         error_code: str | None = None
         http_status: int | None = None
@@ -1255,15 +1269,14 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
             success = False
             error_code = "client_disconnected"
             error_message = "Request cancelled"
+            _absorb_cut_short(error_message)
             raise
         except asyncio.CancelledError as exc:
             was_cancelled = True
             success = False
             error_code = "cancelled"
             error_message = "Request cancelled"
-            if attempt is not None:
-                _absorb(attempt, status="cancelled", error_message=str(exc) or error_message, completion="")
-                attempt = None
+            _absorb_cut_short(str(exc) or error_message)
             raise
         except Exception as exc:  # noqa: BLE001 -- provider failures become an SSE error frame; settlement still runs
             failed_event = None
@@ -1394,6 +1407,29 @@ async def _end_request_transaction(db: AsyncSession) -> None:
             await db.rollback()
         except Exception:
             logger.debug("rollback after failed pre-provider commit failed", exc_info=True)
+
+
+def _finish_cut_short(attempt: ProviderAttempt) -> str:
+    """Finish an attempt the client cut short and return what it generated, to bill.
+
+    The provider reports usage in the last chunk of a stream, which an attempt
+    cut short has usually not received. ``finish`` then estimates the tokens
+    from what did arrive, as it does for a stream that ends without usage.
+    Booked without it, the attempt had no usage and was priced at nothing:
+    stopping a reply just before its last chunk made the reply free, and so did
+    stopping one of the browser agent's steps, whose tool calls are all it
+    generates.
+
+    Synchronous, because it runs in ``stream_chat``'s cancellation handlers. If
+    the estimate fails, the attempt is booked without one, as before, rather
+    than losing the settlement to the error.
+    """
+    try:
+        attempt.finish()
+        return attempt.billable_text
+    except Exception:
+        logger.exception("Could not estimate the usage of a reply cut short; booking it without an estimate")
+        return ""
 
 
 def _embedding_input_text(input_value) -> str:

@@ -28,6 +28,10 @@ describe("pages the extension can read at all", () => {
     "https://chrome.google.com/webstore/detail/x",
     "https://microsoftedge.microsoft.com/addons/detail/x",
     "https://user:pass@example.com/",
+    // Hosts only a URL parser accepts: as a permission pattern, "*" is every site.
+    "https://*/login",
+    "https://*.bank.example/",
+    "https://exa$mple.com/",
     "not a url",
     "",
     undefined,
@@ -42,6 +46,12 @@ describe("pages the extension can read at all", () => {
       pattern: "https://docs.example.com./*",
     });
     expect(siteRefusal(readablePage("https://ai.example.com./")!.host, { allowed_sites: ["wiki.example.com"], blocked_sites: [] }, "ai.example.com")).toBeNull();
+  });
+
+  it("reads hosts with underscores, IPv6 addresses and internationalized names", () => {
+    expect(readablePage("https://my_server.local/")?.host).toBe("my_server.local");
+    expect(readablePage("http://[::1]:8080/")?.pattern).toBe("http://[::1]:8080/*");
+    expect(readablePage("https://مثال.example/")?.host).toBe("xn--mgbh0fb.example");
   });
 
   it("reads Google's other sites", () => {

@@ -189,7 +189,7 @@ describe("the rest", () => {
       site: "partner.org",
     });
     expect(classify("navigate", { args: { url: "https://bank.example.com/" } }, RULES)).toMatchObject({ class: "blocked" });
-    for (const url of ["javascript:alert(1)", "file:///etc/passwd", "chrome://settings", "data:text/html,hi", "about:blank", 42]) {
+    for (const url of ["javascript:alert(1)", "file:///etc/passwd", "chrome://settings", "data:text/html,hi", "about:blank", 42, "https://*/login"]) {
       expect(classify("navigate", { args: { url } })).toMatchObject({ class: "blocked", reason: "special_scheme" });
     }
     expect(classify("navigate", { args: { url: "https://ai.example.com/admin" } })).toMatchObject({ class: "blocked", reason: "own_server" });

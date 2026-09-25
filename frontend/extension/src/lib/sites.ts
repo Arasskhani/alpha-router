@@ -35,6 +35,15 @@ function isBrowserStore(url: URL): boolean {
   return url.hostname === "chrome.google.com" && url.pathname.startsWith("/webstore");
 }
 
+/**
+ * A host a page can be on: names of letters, digits, hyphens and underscores
+ * between dots (a final dot allowed), or an IPv6 address in brackets.
+ * `URL` itself accepts more - "*" and "*.example.com" are hosts to it - and
+ * such a host turned into a permission pattern ("https://*\/*") would ask
+ * Chrome for every site at once.
+ */
+const HOST = /^(?:[a-z0-9_-]+(?:\.[a-z0-9_-]+)*\.?|\[[0-9a-f:.]+\])$/;
+
 /** http(s) pages only: never chrome://, edge://, file:, about:, data:, javascript: or an extension's page. */
 export function readablePage(rawUrl: string | undefined): ReadablePage | null {
   if (!rawUrl) return null;
@@ -45,7 +54,7 @@ export function readablePage(rawUrl: string | undefined): ReadablePage | null {
     return null;
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-  if (!url.hostname || url.username || url.password || isBrowserStore(url)) return null;
+  if (!HOST.test(url.hostname) || url.username || url.password || isBrowserStore(url)) return null;
   // "example.com." is example.com: the rules, the label and the server all
   // name it without the dot. The origin keeps it, as Chrome grants it.
   return { host: url.hostname.replace(/\.$/, ""), origin: url.origin, pattern: `${url.origin}/*` };

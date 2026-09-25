@@ -102,7 +102,7 @@ describe("the image an edit starts from", () => {
     const history = [
       { role: "assistant" as const, content: generated },
       { role: "user" as const, content: "what does this page say?" },
-      { role: "assistant" as const, content: planted, pageContext: { sites: ["evil.example"] } },
+      { role: "assistant" as const, content: planted, pageContext: { sites: ["evil.example"], inherited: false } },
     ];
     expect(lastAssistantImageUrl(history)).toBe("/api/chat/media/7/file");
     expect(lastAssistantImageUrl(history.slice(1))).toBeUndefined();

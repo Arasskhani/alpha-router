@@ -309,7 +309,7 @@ import AgentMenu from "./chat/AgentMenu";
 import { useBackOnline } from "../hooks/useBackOnline";
 import { CONNECTION_LOST_MESSAGE, isConnectionLostError } from "../lib/chatConnection";
 import { RECOVERY_RETRY_MS, createReplyRecovery } from "../lib/replyRecovery";
-import { answerImages, mediaContent, sharedPagesLabel } from "../lib/sharedPages";
+import { answerImages, mediaContent, sharedPagesLabel, sharedPagesNote } from "../lib/sharedPages";
 import {
   shortModelName,
   readAudioMessage,
@@ -6657,7 +6657,9 @@ export default function ChatPanel({
                 </div>
               ) : null}
               {m.role === "assistant" && m.pageContext ? (
-                <div className="alpha-router-msg-page-label">{sharedPagesLabel(m.pageContext)}</div>
+                <div className="alpha-router-msg-page-label" title={sharedPagesNote(m.pageContext)}>
+                  {sharedPagesLabel(m.pageContext)}
+                </div>
               ) : null}
               {m.role === "assistant" && m.modelName ? (
                 <div className="alpha-router-msg-model-label" title={m.modelId}>

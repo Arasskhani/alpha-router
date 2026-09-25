@@ -73,16 +73,40 @@ const READ_TOOLS = new Set(["tabs_list", "read_page", "find", "get_page_text", "
 const PAGE_TOOLS = new Set(["read_page", "find", "get_page_text", "scroll", "wait_for", "click", "type_text", "select_option", "press_key", "submit_form"]);
 
 /**
- * Words on a button (or a link, in English) that buy or pay. Order alone is
- * checked as the whole label or with a verb, so "Order history" is not one.
+ * Words on a button (or a link, in English) that buy, pay, bid or give
+ * money. Order alone is checked as the whole label or with a verb, so
+ * "Order history" is not one. Matched on `labelForm` of the label.
  */
-const PURCHASE = /\b(buy|pay|purchase|checkout|check out)\b|\b(place|submit|complete|confirm)( your| the| my)? order\b|^order( now)?$/i;
-const PURCHASE_FA = /خرید|پرداخت|سفارش|تسویه/;
+const PURCHASE =
+  /\b(buy|pay|purchase|checkout|check out|donate|pre-?order)\b|\b(place|submit|complete|confirm)( your| the| my| an)? order\b|^order( now)?$|\bplace (a )?bid\b|\bbid now\b|\b(continue|proceed|go) to (payment|checkout)\b|\b(complete|make|confirm|submit) (the |a |your )?payment\b|\badd funds\b/;
+const PURCHASE_FA = /خرید|پرداخت|سفارش|تسویه|اهدا|کمک مالی/;
 /** Persian words that buy even on a link; "سفارش" there is usually "my orders". */
-const PURCHASE_FA_LINK = /خرید|پرداخت/;
-/** Words that send, delete, confirm, move or publish something. */
-const SENSITIVE = /\b(send|submit|delete|remove|confirm|transfer|download|publish|post)\b/i;
-const SENSITIVE_FA = /ارسال|فرستادن|بفرست|حذف|پاک\s?کردن|تایید|تأیید|انتقال|دانلود|بارگیری|انتشار|منتشر|پست/;
+const PURCHASE_FA_LINK = /خرید|پرداخت|اهدا/;
+/** Words that send, delete, confirm, move, share, agree to or publish something. */
+const SENSITIVE =
+  /\b(send|submit|delete|remove|confirm|transfer|download|publish|post|reply|forward|share|approve|accept|agree|book|reserve|subscribe|unsubscribe|discard|erase|withdraw)\b|\bcancel (my |the |your )?(order|subscription|booking|reservation|account|membership|plan)\b/;
+const SENSITIVE_FA =
+  /ارسال|فرستادن|بفرست|حذف|پاک ?کردن|تایید|تأیید|انتقال|دانلود|بارگیری|انتشار|منتشر|پست|پاسخ|بازارسال|هدایت|اشتراک|قبول|موافق|ثبت|رزرو|لغو/;
+
+/**
+ * A label as the word lists read it: compatibility forms folded, in lower
+ * case, Persian written with Arabic yeh or kaf read as Persian, without the
+ * zero-width joiners, tatweel and diacritics that change how a word is drawn
+ * but not what it says, and without the marks around it ("Order now!",
+ * "Order now →", "🛒 Buy"). Otherwise "خريد" or "خریـــد" would not be
+ * "خرید", and "Order now!" would not be "Order now".
+ */
+function labelForm(text: string): string {
+  return text
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[يى]/g, "ی")
+    .replace(/ك/g, "ک")
+    .replace(/[\u200b-\u200d\u00ad\u0640\ufeff]/g, "")
+    .replace(/\p{M}/gu, "")
+    .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")
+    .replace(/\s+/g, " ");
+}
 /** Fields for a person's identity documents. */
 const ID_FIELD = /\b(ssn|social security|passport|national id|national identity|tax id|id number|identity number)\b/i;
 const ID_FIELD_FA = /کد\s?ملی|شماره\s?ملی|شناسنامه|گذرنامه|پاسپورت/;
@@ -122,12 +146,14 @@ function goingTo(rawUrl: unknown, fromHost: string | undefined, ctx: PolicyConte
 }
 
 function purchase(name: string, role: string): boolean {
-  if (PURCHASE.test(name)) return true;
-  return role === "link" ? PURCHASE_FA_LINK.test(name) : PURCHASE_FA.test(name);
+  const form = labelForm(name);
+  if (PURCHASE.test(form)) return true;
+  return role === "link" ? PURCHASE_FA_LINK.test(form) : PURCHASE_FA.test(form);
 }
 
 function sendsSomething(name: string): boolean {
-  return SENSITIVE.test(name) || SENSITIVE_FA.test(name);
+  const form = labelForm(name);
+  return SENSITIVE.test(form) || SENSITIVE_FA.test(form);
 }
 
 function named(element: ElementInfo): string {
@@ -181,7 +207,7 @@ function clickVerdict(element: ElementInfo, page: { url: string; host: string },
 function typeVerdict(element: ElementInfo): Verdict {
   const secret = () => blocked("sensitive_field", `The agent never types into ${named(element)}: passwords, card numbers and codes are for the user to enter.`);
   if (element.sensitive) return secret();
-  const described = `${element.name} ${element.type ?? ""}`;
+  const described = labelForm(`${element.name} ${element.type ?? ""}`);
   if (ID_FIELD.test(described) || ID_FIELD_FA.test(described)) {
     return blocked("id_field", `The agent never types into ${named(element)}: identity numbers are for the user to enter.`);
   }

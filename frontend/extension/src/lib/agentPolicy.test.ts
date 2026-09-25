@@ -103,6 +103,35 @@ describe("clicking", () => {
     expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "blocked", reason: "purchase_label" });
   });
 
+  it.each([
+    "Continue to payment",
+    "Complete payment",
+    "Order now!",
+    "Order now →",
+    "Pre-order",
+    "Place bid",
+    "Donate",
+    "🛒 Buy",
+    "خريد",
+    "تسويه حساب",
+    "خریـــد",
+    "پرداخـت",
+    "پیش‌خرید",
+  ])("a button labelled %s is refused however it is written", (name) => {
+    expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "blocked", reason: "purchase_label" });
+  });
+
+  it.each(["Subscribe", "Reply", "Forward", "Share", "Accept all", "I agree", "Book now", "Approve", "Cancel my subscription", "تاييد", "پاك كردن", "پاسخ", "ثبت نام"])(
+    "a button labelled %s always asks",
+    (name) => {
+      expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "sensitive", reason: "sensitive_label" });
+    },
+  );
+
+  it.each(["Order history", "Booking history", "Shared files", "Accepted payments", "Cancel", "Sort order", "Payroll"])("a button labelled %s acts", (name) => {
+    expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "act" });
+  });
+
   it("refuses a link that buys, in English or Persian", () => {
     expect(classify("click", { element: el({ role: "link", name: "Buy now", href: "https://shop.example.com/buy" }) })).toMatchObject({
       class: "blocked",

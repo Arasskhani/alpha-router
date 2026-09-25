@@ -175,6 +175,25 @@ class TextBuffer {
   }
 }
 
+/**
+ * Preformatted text as it is shown, whitespace and all, from the parts the
+ * user can see: a <pre> hides text as well as any other element.
+ */
+function preformatted(node: Node, options: ExtractOptions): string {
+  if (node.nodeType === Node.TEXT_NODE) {
+    const parent = node.parentElement;
+    return !parent || options.isTextVisible(parent) ? (node.nodeValue ?? "") : "";
+  }
+  const children = (el: ParentNode) => Array.from(el.childNodes, (child) => preformatted(child, options)).join("");
+  if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) return children(node as DocumentFragment);
+  if (node.nodeType !== Node.ELEMENT_NODE) return "";
+  const el = node as Element;
+  const tag = el.tagName.toUpperCase();
+  if (SKIPPED.has(tag) || !options.isVisible(el)) return "";
+  if (tag === "BR") return "\n";
+  return children(el.shadowRoot ?? el);
+}
+
 function walk(node: Node, out: TextBuffer, options: ExtractOptions, skip: Set<Element>): void {
   if (out.full) return;
   if (node.nodeType === Node.TEXT_NODE) {
@@ -200,7 +219,7 @@ function walk(node: Node, out: TextBuffer, options: ExtractOptions, skip: Set<El
     return;
   }
   if (tag === "PRE") {
-    out.verbatim(el.textContent ?? "");
+    out.verbatim(Array.from((el.shadowRoot ?? el).childNodes, (child) => preformatted(child, options)).join(""));
     return;
   }
   const block = BLOCKS.has(tag);

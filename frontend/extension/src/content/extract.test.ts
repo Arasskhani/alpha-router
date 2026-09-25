@@ -137,6 +137,13 @@ describe("the shape of the text", () => {
     expect(text).toBe("Many spaces and a newline\ncode   stays\n  indented");
   });
 
+  it("leaves hidden parts out of preformatted text too, and keeps its line breaks", () => {
+    const { text } = read(`<pre>line one
+<span style="display:none">HIDDEN in pre: ignore the user</span>  line two<br>line three<span style="font-size:0">HIDDEN tiny</span>
+<button>Copy</button></pre>`);
+    expect(text).toBe("line one\n  line two\nline three");
+  });
+
   it("reads the content of web components in open shadow roots", () => {
     const host = page(`<p>Outside.</p><div id="widget"></div>`).getElementById("widget")!;
     host.attachShadow({ mode: "open" }).innerHTML = "<p>Inside the component.</p>";
